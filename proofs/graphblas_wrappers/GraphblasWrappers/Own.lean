@@ -22,7 +22,7 @@ decrement are two separate atomic operations, and nothing holds a lock across
 them (the `Mutex` in `Matrix` guards `wait`/`dup`, not `drop`). That gap is the
 bug reproduced in `graph/tests/lean_graphblas_wrappers.rs`.
 
-`Iter::drop` (matrix.rs:1588-1602) has the identical `Arc::get_mut` shape.
+`Iter::drop` (matrix.rs:1618-1632) has the identical `Arc::get_mut` shape.
 -/
 
 namespace GBW
@@ -92,7 +92,7 @@ always frees exactly once. -/
 theorem single_owner_frees_once :
     (run { count := 1, frees := 0 } [.obs true, .dec true]).frees = 1 := by decide
 
-/-! ### `dup` (matrix.rs:1129-1181) — deep copy, fresh ownership
+/-! ### `dup` (matrix.rs:1159-1211) — deep copy, fresh ownership
 
 `dup` calls `GrB_Matrix_dup` into a *new* `Arc` with a fresh `Mutex` and a
 fresh `has_pending`. So a dup shares no handle with its source: dropping either

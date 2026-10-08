@@ -1,7 +1,7 @@
 import FalkorTemporal.Parse
 /-!
 # Temporal constructors: `*_pure`, `*_struct_pure`, the clock `*_fn`s and `register`
-(functions/temporal.rs:488-823)
+(functions/temporal.rs:503-838)
 
 `construct_duration_secs` (PROVEN in Duration.lean as `constructDuration`) and
 `date_from_components` (Constructors.lean) are parameters. `unreachable!()` is the result
@@ -26,21 +26,21 @@ abbrev CDS := Int → Int → Int → Int → Int → Int → Int → Except Str
 (`unwrap` cannot fail: 00:00:00 is always valid). -/
 def midnight (d : Int) : Int := d * 86400
 
-/-- `date_pure` (temporal.rs:488). -/
+/-- `date_pure` (temporal.rs:503). -/
 def datePure : List (TV F) → Res (TV F)
   | .map m :: _ => ofExcept (fun d => .date (midnight d)) (dateFromMap N dfc m)
   | .str s :: _ => ofExcept (fun d => .date (midnight d)) (parseDate C s)
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `localtime_pure` (temporal.rs:505): the time on 1970-01-01, i.e. its second of day. -/
+/-- `localtime_pure` (temporal.rs:520): the time on 1970-01-01, i.e. its second of day. -/
 def localtimePure : List (TV F) → Res (TV F)
   | .map m :: _ => ofExcept (fun (t : Nat) => TV.time (t : Int)) (timeFromMap N m)
   | .str s :: _ => ofExcept (fun (t : Nat) => TV.time (t : Int)) (parseTime C s)
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `localdatetime_pure` (temporal.rs:524). -/
+/-- `localdatetime_pure` (temporal.rs:539). -/
 def localdatetimePure : List (TV F) → Res (TV F)
   | .map m :: _ =>
     match dateFromMap N dfc m with
@@ -53,7 +53,7 @@ def localdatetimePure : List (TV F) → Res (TV F)
 /-- The seven duration fields, in `DURATION_SLOTS` order. -/
 def durKeys : List String := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
 
-/-- The `for (k, v) in map.iter()` loop of `duration_pure` (temporal.rs:544-566): a numeric
+/-- The `for (k, v) in map.iter()` loop of `duration_pure` (temporal.rs:559-581): a numeric
 value overwrites its field, anything else is skipped (`continue`), unknown keys ignored. -/
 def durLoop : List (String × TV F) → (String → Int) → (String → Int)
   | [], acc => acc
@@ -65,7 +65,7 @@ def durLoop : List (String × TV F) → (String → Int) → (String → Int)
 def applyCds (cds : CDS) (f : String → Int) : Except String Int :=
   cds (f "years") (f "months") (f "weeks") (f "days") (f "hours") (f "minutes") (f "seconds")
 
-/-- `duration_pure` (temporal.rs:541). -/
+/-- `duration_pure` (temporal.rs:556). -/
 def durationPure (cds : CDS) : List (TV F) → Res (TV F)
   | .map m :: _ => ofExcept .duration (applyCds cds (durLoop N m fun _ => 0))
   | .str s :: _ =>
@@ -78,21 +78,21 @@ def durationPure (cds : CDS) : List (TV F) → Res (TV F)
 /-- Slot `i` read with `slot_to_int` (missing slots are `Null`). -/
 def slot (args : List (TV F)) (i : Nat) : Option Int := slotToInt N (args.getD i .null)
 
-/-- `duration_struct_pure` (temporal.rs:621). -/
+/-- `duration_struct_pure` (temporal.rs:636). -/
 def durationStructPure (cds : CDS) (args : List (TV F)) : Res (TV F) :=
   ofExcept .duration (cds ((slot N args 0).getD 0) ((slot N args 1).getD 0) ((slot N args 2).getD 0)
     ((slot N args 3).getD 0) ((slot N args 4).getD 0) ((slot N args 5).getD 0) ((slot N args 6).getD 0))
 
-/-- `date_struct_pure` (temporal.rs:634). -/
+/-- `date_struct_pure` (temporal.rs:649). -/
 def dateStructPure (args : List (TV F)) : Res (TV F) :=
   ofExcept (fun d => .date (midnight d)) (dfc (slot N args 0) (slot N args 1) (slot N args 2)
     (slot N args 3) (slot N args 4) (slot N args 5) (slot N args 6))
 
-/-- `localtime_struct_pure` (temporal.rs:649). -/
+/-- `localtime_struct_pure` (temporal.rs:664). -/
 def localtimeStructPure (args : List (TV F)) : Res (TV F) :=
   ofExcept (fun (t : Nat) => TV.time (t : Int)) (timeFromComponents (slot N args 0) (slot N args 1) (slot N args 2))
 
-/-- `localdatetime_struct_pure` (temporal.rs:661). -/
+/-- `localdatetime_struct_pure` (temporal.rs:676). -/
 def localdatetimeStructPure (args : List (TV F)) : Res (TV F) :=
   match dfc (slot N args 0) (slot N args 1) (slot N args 2) (slot N args 3) (slot N args 4)
       (slot N args 5) (slot N args 6) with
@@ -206,33 +206,33 @@ theorem durationStruct_eq_map (cds : CDS) (m : List (String × TV F)) (hnd : (m.
     durLoop_get N "seconds" (by decide) m _ hnd]
   simp only [bind_slot]; rfl
 
-/-! ### Clock-reading functions (temporal.rs:687-805) -/
+/-! ### Clock-reading functions (temporal.rs:702-820) -/
 
 /-- `Utc::now()` / `transaction_timestamp` as a timestamp in seconds. -/
 def todayMidnight (now : Int) : Int := midnight (now / 86400)   -- `date_naive()` (floor)
 def timeOfDay (now : Int) : Int := now % 86400                  -- `.time()` on 1970-01-01
 
-/-- `timestamp_fn` (temporal.rs:687): `now.timestamp_millis()`. -/
+/-- `timestamp_fn` (temporal.rs:702): `now.timestamp_millis()`. -/
 def timestampFn (nowMs : Int) (args : List (TV F)) : Res (TV F) :=
   if args = [] then .ok (.int nowMs) else .unreachable   -- `debug_assert!(args.is_empty())`
 
-/-- `date_fn` (temporal.rs:703). -/
+/-- `date_fn` (temporal.rs:718). -/
 def dateFn (now : Int) (args : List (TV F)) : Res (TV F) :=
   if args = [] then .ok (.date (todayMidnight now)) else datePure N C dfc args
 
-/-- `localtime_fn` (temporal.rs:724). -/
+/-- `localtime_fn` (temporal.rs:739). -/
 def localtimeFn (now : Int) (args : List (TV F)) : Res (TV F) :=
   if args = [] then .ok (.time (timeOfDay now)) else localtimePure N C args
 
-/-- `localdatetime_fn` (temporal.rs:747). -/
+/-- `localdatetime_fn` (temporal.rs:762). -/
 def localdatetimeFn (now : Int) (args : List (TV F)) : Res (TV F) :=
   if args = [] then .ok (.datetime now) else localdatetimePure N C dfc args
 
-/-- `duration_fn` (temporal.rs:763). -/
+/-- `duration_fn` (temporal.rs:778). -/
 def durationFn (cds : CDS) (args : List (TV F)) : Res (TV F) := durationPure N C cds args
 
 /-- `date.transaction` / `localtime.transaction` / `localdatetime.transaction`
-(temporal.rs:773, :785, :799), reading the runtime's `transaction_timestamp`. -/
+(temporal.rs:788, :800, :814), reading the runtime's `transaction_timestamp`. -/
 def dateTransactionFn (txn : Int) : Res (TV F) := .ok (.date (todayMidnight txn))
 def localtimeTransactionFn (txn : Int) : Res (TV F) := .ok (.time (timeOfDay txn))
 def localdatetimeTransactionFn (txn : Int) : Res (TV F) := .ok (.datetime txn)
@@ -259,7 +259,7 @@ theorem transaction_consistent (txn : Int) :
     todayMidnight txn + timeOfDay txn = txn := by
   refine ⟨rfl, rfl, ?_⟩; simp only [todayMidnight, timeOfDay, midnight]; omega
 
-/-! ### `register` (temporal.rs:681) -/
+/-! ### `register` (temporal.rs:696) -/
 
 /-- What `register` adds: `cypher_fn!` names with (arity range, non-deterministic flag),
 then `set_pure_fn` and `set_struct_fn` (with the slot list) on four of them. -/

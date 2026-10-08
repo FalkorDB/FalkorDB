@@ -47,7 +47,7 @@ def cur : List Tok → Tok
   | t :: _ => t
 
 /-- The lexer's `next()`; at end of input it stays there (lexer.rs:295-300,
-`get_token` returns `(EndOfFile, 0)` at the end, lexer.rs:512). -/
+`get_token` returns `(EndOfFile, 0)` at the end, lexer.rs:492). -/
 def adv : List Tok → List Tok
   | [] => []
   | _ :: r => r

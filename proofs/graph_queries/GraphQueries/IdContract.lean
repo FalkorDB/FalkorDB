@@ -21,7 +21,7 @@ def ins (l : List Nat) (x : Nat) : List Nat := if x ∈ l then l else l ++ [x]
 def union (a b : List Nat) : List Nat := a ++ b.filter (fun x => x ∉ a)
 def diff (a b : List Nat) : List Nat := a.filter (fun x => x ∉ b)
 
-/-- `struct IdSpace` (id_space.rs:159). -/
+/-- `struct IdSpace` (id_space.rs:164). -/
 structure IdS where
   live : Nat
   recycled : List Nat
@@ -29,49 +29,51 @@ structure IdS where
   taken : List Nat
 
 namespace IdS
-/-- `bound` (id_space.rs:310): `live + recycled.len()`. -/
+/-- `bound` (id_space.rs:343): `live + recycled.len()`. -/
 def bound (s : IdS) : Nat := s.live + s.recycled.length
-/-- `max_id` (id_space.rs:320). -/
+/-- `max_id` (id_space.rs:353). -/
 def maxId (s : IdS) : Nat := if s.live = 0 then 0 else s.bound - 1
-/-- `is_free` (id_space.rs:296). -/
+/-- `is_free` (id_space.rs:329). -/
 def isFree (s : IdS) (id : Nat) : Bool := decide (id ∈ s.recycled)
-/-- `recycled_count` (id_space.rs:290). -/
+/-- `recycled_count` (id_space.rs:323). -/
 def recycledCount (s : IdS) : Nat := s.recycled.length
-/-- `restored` (id_space.rs:263): a fresh batch at the restored boundary. -/
+/-- `restored` (id_space.rs:280): a fresh batch at the restored boundary. -/
 def restored (live : Nat) (recycled : List Nat) : IdS := ⟨live, recycled, live + recycled.length, []⟩
-/-- `new` (id_space.rs:250). -/
+/-- `new` (id_space.rs:266). -/
 def new : IdS := ⟨0, [], 0, []⟩
-/-- `new_version` (id_space.rs:333). -/
+/-- `new_version` (id_space.rs:367). -/
 def newVersion (s : IdS) : IdS := restored s.live s.recycled
 end IdS
 
 /-- The mutating half of `IdSpace`; `none` = `Err(IdSpaceError)`. -/
 structure IdSpaceOps where
-  /-- `create` (id_space.rs:545). -/
+  /-- `create` (id_space.rs:582). -/
   create : IdS → List Nat → Option IdS
-  /-- `release(requested, freed)` (id_space.rs:642). -/
+  /-- `release(requested, freed)` (id_space.rs:703). -/
   release : IdS → List Nat → List Nat → Option IdS
-  /-- `cancel` (id_space.rs:492). -/
+  /-- `cancel` (id_space.rs:529). -/
   cancel : IdS → Nat → Option IdS
-  /-- `open_batch` (id_space.rs:411). -/
+  /-- `open_batch` (id_space.rs:447). -/
   openBatch : IdS → Option IdS
-  /-- `verify` (id_space.rs:676): `true` = `Ok(())`. -/
+  /-- `verify` (id_space.rs:737): `true` = `Ok(())`. -/
   verify : IdS → Bool
 
 /-- **Hypothesis** (owned by proofs/id_space): what each mutator does to the
 two halves of the boundary when it succeeds, and the refusals graph.rs
 documents. Each clause is the literal effect of the Rust body:
-`create`: `recycled -= nodes; live += nodes.len()` (:583-584);
-`release`: `refuse_recycled(requested)?` then `recycled |= freed;
-live -= freed.len()` (:653-656); `cancel`: `recycled.insert(id)` (:499);
-`open_batch` moves only `entry_bound`/`taken` (:413-414). -/
+`create`: `recycled -= nodes; live += nodes.len()` (:620-621);
+`release`: `refuse_not_live(requested)?` (#3022; = `refuse_recycled` +
+`refuse_undeletable`) then `recycled |= freed; live -= freed.len()` (:714-716),
+and `released |= freed` (:717, a per-batch field graph.rs never reads, so not
+part of `IdS`); `cancel`: `recycled.insert(id)` (:536);
+`open_batch` moves only `entry_bound`/`taken` (:449-450). -/
 structure IdSpaceContract (O : IdSpaceOps) : Prop where
   create_ok : ∀ s ns s', O.create s ns = some s' →
     s'.live = s.live + ns.length ∧ s'.recycled = diff s.recycled ns
   create_refuses_live : ∀ s ns n, n ∈ ns → n ∉ s.recycled → n < s.entryBound →
     O.create s ns = none
-  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:562);
-  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:107). Proven in proofs/id_space as
+  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:599);
+  `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:112). Proven in proofs/id_space as
   `create_out_of_range`. -/
   create_refuses_limit : ∀ s ns n, n ∈ ns → 2 ^ 60 - 1 ≤ n → O.create s ns = none
   release_ok : ∀ s req fr s', O.release s req fr = some s' →

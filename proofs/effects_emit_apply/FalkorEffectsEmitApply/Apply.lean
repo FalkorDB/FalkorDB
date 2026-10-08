@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Basic
 /-!
 # The apply side: which records check liveness, and what a missing check costs
 
-Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:152-494`)
+Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:157-531`)
 over an abstract replica: a node id space with a recycle bin, per-node labels
 and properties, and edges as endpoint pairs. The question is the one a hostile
 or divergent `GRAPH.EFFECT` asks: does applying a record the checks accept keep
@@ -33,7 +33,7 @@ structure RG.WF (σ : RG) : Prop where
 
 /-! ## The arms as Rust writes them -/
 
-/-- `Graph::create_nodes` for one id (`apply.rs:208-213`, checked by
+/-- `Graph::create_nodes` for one id (`apply.rs:213-218`, checked by
     `IdSpace::create`): a recycled id leaves the bin, a fresh id moves
     the boundary. It sets labels and does **not** reset properties — a recycled
     row keeps whatever the store holds for it (observed: `hostile_update_node_on_dead_id`). -/
@@ -43,20 +43,21 @@ def createOne (σ : RG) (id : Nat) (lbls : List Nat) : RG :=
       free   := fun i => if i = id then false else σ.free i
       labels := fun i => if i = id then lbls else σ.labels i }
 
-/-- `UPDATE_NODE` (`apply.rs:284-301`): `check_attr_shape` and
-    `checked_label_ids` only — no liveness check — then
+/-- `UPDATE_NODE`'s store write (`apply.rs:308-326`). Before #3022 the arm ran
+    `check_attr_shape` and `checked_label_ids` only — no liveness check — then
     `set_nodes_attributes_rows_of_labels` writes the store for every id. -/
 def updateNode (σ : RG) (ids : List Nat) (row : List (Nat × Val)) : RG :=
   { σ with props := fun i => if ids.contains i then row ++ σ.props i else σ.props i }
 
-/-- `SET_LABELS` (`apply.rs:322-331`): `checked_label_ids` only. -/
+/-- `SET_LABELS`'s store write (`apply.rs:348-358`); before #3022 guarded by `checked_label_ids` only. -/
 def setLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
   { σ with labels := fun i => if ids.contains i then lbls ++ σ.labels i else σ.labels i }
 
-/-- `DELETE_NODE` (`apply.rs:351-363`): `delete_nodes` refuses a recycled or
+/-- `DELETE_NODE` (`apply.rs:379-400`): `delete_nodes` refuses a recycled or
     never-created id (`okDelete`) and clears the node's labels and properties.
     It does not cascade to incident edges — on a real payload the master's
-    `DELETE_EDGE` records came first — and does not check that there are none. -/
+    `DELETE_EDGE` records came first. Before #3022 nothing checked that there are
+    none; now the arm refuses with `NodeHasRelationships` (`Liveness.lean`). -/
 def deleteNode (σ : RG) (ids : List Nat) : RG :=
   { σ with
       free   := fun i => if ids.contains i then true else σ.free i
@@ -150,7 +151,14 @@ theorem wf_setLabels_live (σ : RG) (h : σ.WF) (ids lbls : List Nat)
   have hn : i ∉ ids := fun m => hi (hl i m)
   simp [setLabels, hn, hd]
 
-/-! ## Counterexamples: the arms without a liveness check
+/-! ## Historical counterexamples: the arms without a liveness check
+
+**Fixed by #3022 (`18fc277b9`).** Before it, `UPDATE_NODE`, `SET_LABELS` and
+`DELETE_NODE` reached the store writes above with no liveness check. They now
+`require_live` first (and `DELETE_NODE` refuses a node with relationships):
+`Liveness.lean` models the checked arms, refuses each input below
+(`updates_on_dead_refused`, `delete_with_edges_refused`) and proves the whole
+buffer keeps the replica well formed (`apply_wf`).
 
     The seeded replica of the Rust repros (`seeded()` in
     `graph/tests/lean_effects_emit_apply.rs`): nodes 0, 1, 2 live, node 3 in the
@@ -170,19 +178,19 @@ theorem σ0_wf : σ0.WF := by
     the dead id now carries a property, and the next `CREATE` that recycles 3
     returns a node that already has `x: 666`. Rust run:
     `apply=Ok(())` ... `after "CREATE (:Fresh)"` ... `{x: 666}`. -/
-theorem update_dead_breaks_wf :
+theorem pre3022_update_dead_breaks_wf :
     let σ1 := updateNode σ0 [3] [(0, .int 666)]
     ¬ σ1.live 3 ∧ σ1.props 3 = [(0, .int 666)] ∧
     (createOne σ1 3 [7]).live 3 ∧ (createOne σ1 3 [7]).props 3 = [(0, .int 666)] := by
   decide
 
-theorem update_dead_not_wf : ¬ (updateNode σ0 [3] [(0, .int 666)]).WF := by
+theorem pre3022_update_dead_not_wf : ¬ (updateNode σ0 [3] [(0, .int 666)]).WF := by
   intro h
   have := (h.dead 3 (by decide)).2
   simp [updateNode, σ0] at this
 
 /-- `hostile_set_labels_on_dead_id`: the recycled node comes back with `:A`. -/
-theorem setlabels_dead_not_wf : ¬ (setLabels σ0 [3] [0]).WF := by
+theorem pre3022_setlabels_dead_not_wf : ¬ (setLabels σ0 [3] [0]).WF := by
   intro h
   have := (h.dead 3 (by decide)).1
   simp [setLabels, σ0] at this
@@ -190,7 +198,7 @@ theorem setlabels_dead_not_wf : ¬ (setLabels σ0 [3] [0]).WF := by
 /-- `hostile_delete_node_with_edges`: `DELETE_NODE [1]` passes `okDelete` and
     leaves edge `0 -> 1` hanging off a dead id; the next create recycles 1 and
     the new node inherits the edge. -/
-theorem delete_endpoint_not_wf :
+theorem pre3022_delete_endpoint_not_wf :
     okDelete σ0 [1] ∧ ¬ (deleteNode σ0 [1]).WF ∧
     (0, 1) ∈ (createOne (deleteNode σ0 [1]) 1 [7]).edges := by
   refine ⟨?_, ?_, by decide⟩

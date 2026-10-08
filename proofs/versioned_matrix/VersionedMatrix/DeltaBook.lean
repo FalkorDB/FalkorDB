@@ -2,25 +2,25 @@ import VersionedMatrix.Mat
 import VersionedMatrix.RowFilter
 import VersionedMatrix.Policy
 /-
-# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:296-640`)
+# `Delta<T>`: one delta layer plus its bookkeeping (`versioned_matrix.rs:297-641`)
 
 | here | there |
 | --- | --- |
-| `Delta`        | `struct Delta<T>` (:296): layer, `count`, `tx_nvals`, `fold`, `rows` |
-| `ofLayer`      | `Delta::new` (:346) |
-| `relayer`/`clone` | `relayer` (:374) / `impl Clone` (:330) |
-| `deref`        | `impl Deref` (:338) |
-| `transposed`   | `transposed` (:364) |
-| `newVersion`   | `new_version` (:391) |
-| `count`/`resync` | `count` (:406) / `resync` (:412) |
-| `latch`/`foldDecision`/`folding`/`takeFold` | :420 / :433 / :445 / :451 |
-| `clear`/`replace`/`resize` | :458 / :478 / :487 |
-| `layerMut`/`layerMutRow` | :502 / :513 (the mutation is passed as `f`) |
-| `mayHoldRows`  | `may_hold_rows` (:523) |
-| `erase`        | `erase` (:534) |
-| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>` :553 / :573 / :588 |
-| `removeAll`    | `remove_all` (:602) |
-| `insertV`      | `impl Delta<u64>::insert` (:620) |
+| `Delta`        | `struct Delta<T>` (:297): layer, `count`, `tx_nvals`, `fold`, `rows` |
+| `ofLayer`      | `Delta::new` (:347) |
+| `relayer`/`clone` | `relayer` (:375) / `impl Clone` (:331) |
+| `deref`        | `impl Deref` (:339) |
+| `transposed`   | `transposed` (:365) |
+| `newVersion`   | `new_version` (:392) |
+| `count`/`resync` | `count` (:407) / `resync` (:413) |
+| `latch`/`foldDecision`/`folding`/`takeFold` | :421 / :434 / :446 / :452 |
+| `clear`/`replace`/`resize` | :459 / :479 / :488 |
+| `layerMut`/`layerMutRow` | :503 / :514 (the mutation is passed as `f`) |
+| `mayHoldRows`  | `may_hold_rows` (:524) |
+| `erase`        | `erase` (:535) |
+| `insertB`/`insertProduct`/`tombstoneMasked` | `impl Delta<bool>` :554 / :574 / :589 |
+| `removeAll`    | `remove_all` (:603) |
+| `insertV`      | `impl Delta<u64>::insert` (:621) |
 
 `Atomic*` fields are plain values: every access is `Relaxed` under the
 single-writer discipline (`Cow.lean`), so only their values matter.
@@ -51,7 +51,7 @@ def RowsOk (d : Delta α) : Prop := Sound d.rows (rowsOf d.layer)
 /-- `count` is exact. -/
 def Exact (d : Delta α) : Prop := d.count = nvals d.layer
 
-/-- `Delta::new` (:346); `into_hyper` changes the format only. -/
+/-- `Delta::new` (:347); `into_hyper` changes the format only. -/
 def ofLayer (m : Mat α) : Delta α :=
   ⟨m, nvals m, 0, false, if nvals m = 0 then .empty else .unknown⟩
 
@@ -73,7 +73,7 @@ def replace (d : Delta α) (l : Mat α) : Delta α := { d with layer := l }
 def layerMut (d : Delta α) (f : Mat α → Mat α) : Delta α := { d with rows := .unknown, layer := f d.layer }
 def layerMutRow (d : Delta α) (i : Nat) (f : Mat α → Mat α) : Delta α :=
   { d with rows := add d.rows (BitVec.ofNat 64 i), layer := f d.layer }
-/-- `resize` (:487): `layer_mut` invalidates, then the saved filter is restored. -/
+/-- `resize` (:488): `layer_mut` invalidates, then the saved filter is restored. -/
 def resize (d : Delta α) (r c : Nat) : Delta α :=
   { layerMut d (fun m => resizeM m r c) with rows := d.rows }
 def mayHoldRows (d : Delta α) (lo hi : Nat) : Bool := mayHold d.rows lo hi

@@ -35,10 +35,10 @@ no clock and no plan choice for the two sides to disagree about.
 | here | there |
 | --- | --- |
 | `intern`                 | `Graph::get_label_id_mut`, `get_attribute_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
-| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1526`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:310`, #2846) — `absIds`, `createOne_refines` |
+| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1585`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:343`, #2846) — `absIds`, `createOne_refines` |
 | `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
-| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:446`) — recycled first, then fresh |
+| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:483`) — recycled first, then fresh |
 | `Pending`                | `runtime::pending::Pending` |
 | `commit`                 | `Pending::commit` (`runtime/pending.rs:1099`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
 | `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
@@ -48,11 +48,11 @@ no clock and no plan choice for the two sides to disagree about.
 | `schemaRecs`             | `emit_schema_additions`, against the `SchemaBaseline` |
 | `Record`                 | `effects::v3::Record` (`graph/src/effects/v3/records.rs`) |
 | `applyRec` / `applyRecs` | `apply_effects` (`graph/src/effects/v3/apply.rs`) |
-| `okCreate`               | `verify_schema`, `verify_attribute`, the refusals of `IdSpace::create` (`id_space.rs:545`) |
-| `okDelete`               | the refusals of `IdSpace::release` (`:642`): `refuse_recycled`, `refuse_undeletable` |
+| `okCreate`               | `verify_schema`, `verify_attribute`, the refusals of `IdSpace::create` (`id_space.rs:582`) |
+| `okDelete`               | the refusals of `IdSpace::release` (`:703`): `refuse_not_live` (`:679`) = `refuse_recycled`, `refuse_undeletable` |
 | `createOne` / `deleteOne` id-space half | `IdSpace::create` / `IdSpace::release` on one id: `createOne_refines`, `deleteOne_refines` (`Faithful.Ids`) |
 | `addLabel`'s id check    | `apply_add_schema` / `verify_id` — the replica re-derives the id and compares |
-| `Batch.verify`           | `IdSpace::verify` (`:676`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; since #2846 the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
+| `Batch.verify`           | `IdSpace::verify` (`:737`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; since #2846 the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
 | `PendingWF.disjoint`     | why `digest_cancelled` exists: a node created and deleted in one segment is unwound out of `Pending` and travels as its own create/delete pair |
 | `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
 | `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
@@ -115,6 +115,12 @@ Lean's three standard axioms.
    the index and constraint DDL, and `digest_cancelled`'s create/delete pair are
    not modelled; `PendingWF.disjoint` assumes the last of those rather than
    deriving it.
+   #3022 (`18fc277b9`) added liveness checks to the apply arms: on the arms
+   modelled here they change nothing — `DELETE_NODE`'s `require_live` is the
+   same `refuse_not_live` that `release` (= `okDelete`) already ran, and its
+   `NodeHasRelationships` refusal is vacuous in an edge-free graph — so every
+   theorem stands as is. The checked edge/update/label arms are proved in
+   `proofs/effects_emit_apply` (`Liveness.lean`, `apply_wf`).
 3. **Transport.** `stepsNode` folds the payloads in order; Redis replication
    supplies that ordering, and `GRAPH.EFFECT` supplies the atomicity by rolling
    the graph back on any error.
@@ -699,8 +705,8 @@ def specsOf (ids labels attrIds : List Nat) (rows : List Val) : List NodeSpec :=
   (ids.zip (chunk ids.length attrIds.length rows)).map
     (fun pr => ⟨pr.1, labels, attrIds.zip pr.2⟩)
 
-/-- `ID_LIMIT` (`id_space.rs:95`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
-    any id at or above it (#2911, `fe619ac5f`; `id_space.rs:549`). -/
+/-- `ID_LIMIT` (`id_space.rs:100`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
+    any id at or above it (#2911, `fe619ac5f`; `id_space.rs:586`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
 /-- `verify_schema` + `verify_attribute` + `IdSpace::create`'s refusals.
@@ -718,7 +724,8 @@ def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : L
   && ids.all (fun i => σ.free i || !b.created.contains i)
   && ids.all (fun i => decide (i < idLimit))
 
-/-- `IdSpace::release`'s refusals: `refuse_recycled` + `refuse_undeletable`. -/
+/-- `IdSpace::release`'s refusals: `refuse_not_live` (= `refuse_recycled` +
+`refuse_undeletable`, #3022). -/
 def okDelete (σ : GState) (b : Batch) (ids : List Nat) : Bool :=
   nodupB ids
   && ids.all (fun i => !σ.free i)

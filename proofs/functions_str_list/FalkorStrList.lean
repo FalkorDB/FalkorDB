@@ -160,6 +160,10 @@ in the same query are lost/resurrected. Repro: `lean_functions_str_list::
 bug_deleted_node_labels_ignore_staged_set` (`MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`
 → Rust `['A']|false`, expected `['A','C']|true`; C returns `[]`) and
 `..._staged_remove` (`REMOVE n:A … DELETE n RETURN labels(n)` → Rust `['A']`, expected `[]`).
+Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
+`parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
+`parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
+(`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/

@@ -1,16 +1,16 @@
 import Std.Tactic.BVDecide
 /-
-# `RowFilter` (`versioned_matrix.rs:217-292`)
+# `RowFilter` (`versioned_matrix.rs:218-293`)
 
 Faithful bit-level model: rows are `u64` (`BitVec 64`), the Fibonacci hash
 wraps (`wrapping_mul`), the bitmap is 512 words of `u64`.
 
 | here | there |
 | --- | --- |
-| `RF`        | `enum RowFilter` (:234) |
-| `slotH`/`slot` | `RowFilter::slot` (:249) |
-| `add`       | `RowFilter::add` (:254) |
-| `mayHold`   | `RowFilter::may_hold` (:276) |
+| `RF`        | `enum RowFilter` (:235) |
+| `slotH`/`slot` | `RowFilter::slot` (:250) |
+| `add`       | `RowFilter::add` (:255) |
+| `mayHold`   | `RowFilter::may_hold` (:277) |
 | `holds`     | "row r may be present" — the bit `slot r` is set |
 
 Safety property (the doc's "never says no when the answer is yes"):
@@ -61,14 +61,14 @@ def upd (f : Nat → BitVec 64) (w : Nat) (x : BitVec 64) : Nat → BitVec 64 :=
 def test (f : Nat → BitVec 64) (row : BitVec 64) : Bool :=
   f (slot row).1 &&& (slot row).2 != 0
 
-/-- `RowFilter::add` (:254). -/
+/-- `RowFilter::add` (:255). -/
 def add (F : RF) (row : BitVec 64) : RF :=
   match F with
   | .unknown => .unknown
   | .empty => let (w, b) := slot row; .bits (upd (fun _ => 0) w (0 ||| b))
   | .bits f => let (w, b) := slot row; .bits (upd f w (f w ||| b))
 
-/-- `RowFilter::may_hold` (:276). Rows are the `u64` values `min..=max`. -/
+/-- `RowFilter::may_hold` (:277). Rows are the `u64` values `min..=max`. -/
 def mayHold (F : RF) (minr maxr : Nat) : Bool :=
   match F with
   | .unknown => true

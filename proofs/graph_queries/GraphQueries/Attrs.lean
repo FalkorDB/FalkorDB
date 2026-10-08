@@ -6,16 +6,16 @@ import GraphQueries.Schema
 | --- | --- |
 | `nm : List String` | `AttrNameMap` (attribute_store.rs:139); `index` kept equal to `idx vec` by its only writers `insert`/`get_or_create` (:189,:224) |
 | `MAXA` | `MAX_ATTRIBUTES = u16::MAX` (attribute_store.rs:132) |
-| `getOrCreate` | `AttrNameMap::get_or_create` — `get_or_create_node_attr_id` / `get_or_create_rel_attr_id` (graph.rs:1777,1740) |
-| `nmInsert` | `AttrNameMap::insert` — `add_rel_attribute_name` (:4671); `addNodeAttrName` = `add_node_attribute_name` (:4659) |
+| `getOrCreate` | `AttrNameMap::get_or_create` — `get_or_create_node_attr_id` / `get_or_create_rel_attr_id` (graph.rs:1836,1740) |
+| `nmInsert` | `AttrNameMap::insert` — `add_rel_attribute_name` (:4789); `addNodeAttrName` = `add_node_attribute_name` (:4777) |
 | `u16c` | `as u16` |
-| `getAttrIdU16` | `get_node_attr_id` / `get_rel_attr_id` (:1786,:1804) |
-| `attrName` | `node_attr_name` / `rel_attr_name` (:1795,:1813) |
+| `getAttrIdU16` | `get_node_attr_id` / `get_rel_attr_id` (:1845,:1863) |
+| `attrName` | `node_attr_name` / `rel_attr_name` (:1854,:1872) |
 | `Store`, `byIdx` | `AttributeStore::get_attr_by_idx` (entity → [(attr id, value)]) |
-| `attrByName`/`attrNames`/`attrPairs` | :3257 / :3268 / :3279 |
-| `batchByIdx` | `get_node_attributes_by_idx` / `get_relationship_attributes_by_idx` (:2377,:3197) |
-| `trackOfType` / `track` | `track_edge_index_updates_of_type` / `track_edge_index_updates` (:1868,:1893) |
-| `rowsOfLabels` / `importResolvedTrack` | index bookkeeping of `set_nodes_attributes_rows_of_labels` (:1643) / `import_node_attrs_resolved` (:1749) |
+| `attrByName`/`attrNames`/`attrPairs` | :3375 / :3386 / :3397 |
+| `batchByIdx` | `get_node_attributes_by_idx` / `get_relationship_attributes_by_idx` (:2495,:3315) |
+| `trackOfType` / `track` | `track_edge_index_updates_of_type` / `track_edge_index_updates` (:1927,:1952) |
+| `rowsOfLabels` / `importResolvedTrack` | index bookkeeping of `set_nodes_attributes_rows_of_labels` (:1702) / `import_node_attrs_resolved` (:1808) |
 -/
 namespace GQ
 variable {V : Type}

@@ -7,7 +7,9 @@ sets (the abstraction proofs/versioned_matrix proves sound for
 `VersionedMatrix<bool>`/`Tensor`). Every non-FFI fn of both files has a
 theorem (COVERAGE.tsv); zero sorry/admit/axiom. Rust repros:
 `graph/tests/lean_graph_queries.rs`; live servers Rust (release module) vs C.
-Line numbers: origin/main `fe619ac5f` (re-targeted from `2c874022a`: #2911 bounds `grow_cap`).
+Line numbers: origin/main `e8f8a3017` (re-targeted from `8743953a8`: #3022 adds
+`verify_created_relationships` to `validate` and `first_node_with_relationships`; earlier
+`fe619ac5f`: #2911 bounds `grow_cap`).
 
 **Re-targeted to #2846 (IdSpace owns the ids).** `Graph` keeps two `IdSpace`s and
 no counters; `G`'s `nodeCount`/`delNodes` (+ new `nodeEB`/`nodeTaken`) are the
@@ -30,6 +32,7 @@ two refusals graph.rs relies on). Removed fns (`return_*_id`,
 | Index       | index glue, `memory_usage_report`, `encode_payload`, `get_plan` cache, `is_synced` |
 | Constraints | constraint.rs + constraint management |
 | Accessors   | projections, newtypes, attribute getters |
+| FirstRel    | `first_node_with_relationships` (#3022): `firstNodeWithRels_spec` |
 
 ## Headline theorems
 `growCap_ge_needed/_le_max/_reaches/_chunked`, `growStep_small` (#2911: `grow_cap` is total and
@@ -37,7 +40,12 @@ never exceeds `GrB_INDEX_MAX`), `resize_post`, `internLabel_spec`,
 `getLabelIdMut_spec`, `getRelMatMut_spec`, `markNodesLive_spec` (now via
 `create_nodes` + contract), `createNodes_refused`, `rollIdBatches_spec`
 (a rolled batch is anchored at the boundary with an empty ledger),
-`validate_ok_iff`, `newVersion_spec` (each version opens a fresh batch),
+`validate_ok_iff` (#3022: two verified batches **and** every relationship the batch
+created still ends at two live nodes), `verifyCreatedRels_spec` (the empty-bin fast paths are
+sound; an error names an offender from `taken`), **`firstNodeWithRels_spec`** (#3022: the
+adjacency `Aᵀ·x` + backward-matrix products + re-seeked iterators return exactly the lowest node
+of the set with a relationship in either direction, given the GraphBLAS `mxv`/iterator spec as
+the hypothesis `BulkOps` and an exact adjacency matrix), `newVersion_spec` (each version opens a fresh batch),
 `restore_ids`, `returnNode_bound`/`isNodeDeleted_return` (`cancel_*_id`),
 `deleteRels_refused`, `deleteNodes_ids`, `deleteImplicit_freed`,
 `createRelsBulk_ragged`/`_dup` (#2846's shape refusals; `createRelsBulk_endpoints`
@@ -54,17 +62,17 @@ no longer needs a Nodup hypothesis),
 ## CONFIRMED bugs (Rust vs C, live) — all three re-checked live at 2c874022a: still present
 (the code each one cites is unchanged at fe619ac5f; #2911 touched only `grow_cap`)
 1. **Deleted edge keeps its type after a type is registered without resize**
-   (graph.rs:1213 `get_type_id_mut` has no `self.resize()`; :2735/:2834
+   (graph.rs:1229 `get_type_id_mut` has no `self.resize()`; :2853/:2834
    mask `relationship_cap × |types|` vs narrower type matrix → eWiseMult
    `GrB_DIMENSION_MISMATCH`, only `debug_assert`ed). `CREATE (:N{i:1})-[:A]->(:N{i:2})`;
    `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`;
    `MATCH ()-[r:A]->() DELETE r`; `MATCH (a{i:1}),(b{i:2}) CREATE (a)-[:C]->(b)`;
    `MATCH ()-[r]->() RETURN type(r)` → Rust `A`, C `C`. Same via replica
-   schema apply (effects/v3/apply.rs:536). Lean: `stale_type_after_registration`.
+   schema apply (effects/v3/apply.rs:573). Lean: `stale_type_after_registration`.
    Test `deleted_edge_type_survives_type_registration` (debug: panics
    GrB_DIMENSION_MISMATCH). Fix: call `self.resize()` in `get_type_id_mut`.
    (2c874022a: Rust `A`, C `C`.)
-2. **Self-loop reported twice by `get_node_relationships`** (graph.rs:2155),
+2. **Self-loop reported twice by `get_node_relationships`** (graph.rs:2214),
    surfacing in UDF `node.getNeighbors` (udf/js_classes.rs:104): self-loop
    count Rust 2 / C 1 for outgoing, incoming, both (2c874022a: with
    `{returnType:'edges'}` Rust 2, C 1; node results are deduplicated). Lean:
@@ -114,3 +122,4 @@ import GraphQueries.Labels
 import GraphQueries.Index
 import GraphQueries.Constraints
 import GraphQueries.Accessors
+import GraphQueries.FirstRel

@@ -8,17 +8,17 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :478 |
-| `dropBg`          | `drop_index_bg` :725 |
-| `createIndex`     | `create_index` :3353 / `create_index_sync` :3391 |
-| `syncDocs`        | `populate_indexes_sync` :3431 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :3643 (via `commit_index` :3532, `commit_index_locked` :3545) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3567 (via `commit_edge_index` :3555) |
-| `dropIndex`       | `drop_index` :3687 |
-| `indexInfo`       | `index_info` :3965 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4416 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :4590 dispatch |
-| `getPlan`         | `get_plan` :1235 cache decision |
+| `populateStart`   | `populate_index` :494 |
+| `dropBg`          | `drop_index_bg` :741 |
+| `createIndex`     | `create_index` :3471 / `create_index_sync` :3509 |
+| `syncDocs`        | `populate_indexes_sync` :3549 (one label/type) |
+| `commitDocs`      | `commit_index_kind` :3761 (via `commit_index` :3650, `commit_index_locked` :3663) |
+| `commitEdgeDocs`  | `commit_edge_index_locked` :3685 (via `commit_edge_index` :3673) |
+| `dropIndex`       | `drop_index` :3805 |
+| `indexInfo`       | `index_info` :4083 |
+| `memEstimate`, `labelPass` | `memory_usage_report` :4534 sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload` :4708 dispatch |
+| `getPlan`         | `get_plan` :1251 cache decision |
 -/
 namespace GQ
 variable {V : Type}

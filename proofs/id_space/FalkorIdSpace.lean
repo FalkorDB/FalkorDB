@@ -1,5 +1,11 @@
 /-
-# IdSpace (`graph/src/graph/id_space.rs`, main @ fe619ac5f): the state machine, proven
+# IdSpace (`graph/src/graph/id_space.rs`, main @ e8f8a3017): the state machine, proven
+
+Re-targeted to #3022 (`18fc277b9`, "refuse GRAPH.EFFECT records that act on entities
+that are not live"): a fifth field `released` (what the open batch freed; set by
+`release`, cleared by `open_batch`, not carried by `new_version`), the accessors
+`taken()`/`released()`, and `refuse_not_live` (= `refuse_recycled` then
+`refuse_undeletable`), which `release` now calls. `Inv` gains `relOk`.
 
 Re-targeted to #2846 (`157d42ec1`, "make IdSpace the id allocation authority"):
 `IdSpace` now *owns* `live` and `recycled` (the entity count and free set that
@@ -17,25 +23,27 @@ the mutated state behind, every other refusal returns before any mutation.
 
 | here (`IdSpaceModel`) | there (`graph/src/graph/id_space.rs`) |
 | --- | --- |
-| `above`                    | `above` (:220) — `len - rank(bound-1)` |
-| `freeOf`, `reclaimIds`     | `reclaim_ids` (:228) — `pool - taken - issued`, lowest `count` |
-| `IdSpace.new`              | `IdSpace::new` (:250), `Default::default` (:242) |
-| `IdSpace.restored`         | `IdSpace::restored` (:263) |
-| `IdSpace.live/recycled`    | `live` (:278), `recycled` (:284) — field reads |
-| `IdSpace.recycledCount`    | `recycled_count` (:290) |
-| `IdSpace.isFree`           | `is_free` (:296) |
-| `IdSpace.bound`            | `bound` (:310) — `live + recycled.len()` |
-| `IdSpace.maxId`            | `max_id` (:320) |
-| `IdSpace.newVersion`       | `new_version` (:333) |
-| `IdSpace.checked`          | `checked` (:368) — `checked_add`, `unwrap_or(u64::MAX)` |
-| `IdSpace.openBatch`        | `open_batch` (:411) |
-| `IdSpace.reserve`          | `reserve` (:446); `allocOk` = `try_reserve_exact` result |
-| `IdSpace.cancel`           | `cancel` (:492) |
-| `IdSpace.refuseRecycled`   | `refuse_recycled` (:513) |
-| `idLimit`, `IdSpace.create`| `ID_LIMIT` (:95), `create` (:545) — `nodes.max() >= ID_LIMIT` refused first |
-| `IdSpace.refuseUndeletable`| `refuse_undeletable` (:601) |
-| `IdSpace.release`          | `release` (:642) |
-| `IdSpace.holeCheck/verify` | `verify` (:676) — `select`, `max`, the `||` order |
+| `above`                    | `above` (:236) — `len - rank(bound-1)` |
+| `freeOf`, `reclaimIds`     | `reclaim_ids` (:244) — `pool - taken - issued`, lowest `count` |
+| `IdSpace.new`              | `IdSpace::new` (:266), `Default::default` (:258) |
+| `IdSpace.restored`         | `IdSpace::restored` (:280) |
+| `IdSpace.live/recycled`    | `live` (:296), `recycled` (:302) — field reads |
+| `IdSpace.takenSet/releasedSet` | `taken` (:311), `released` (:317) — field reads (#3022) |
+| `IdSpace.refuseNotLive`    | `refuse_not_live` (:679) (#3022) |
+| `IdSpace.recycledCount`    | `recycled_count` (:323) |
+| `IdSpace.isFree`           | `is_free` (:329) |
+| `IdSpace.bound`            | `bound` (:343) — `live + recycled.len()` |
+| `IdSpace.maxId`            | `max_id` (:353) |
+| `IdSpace.newVersion`       | `new_version` (:367) |
+| `IdSpace.checked`          | `checked` (:403) — `checked_add`, `unwrap_or(u64::MAX)` |
+| `IdSpace.openBatch`        | `open_batch` (:447) |
+| `IdSpace.reserve`          | `reserve` (:483); `allocOk` = `try_reserve_exact` result |
+| `IdSpace.cancel`           | `cancel` (:529) |
+| `IdSpace.refuseRecycled`   | `refuse_recycled` (:550) |
+| `idLimit`, `IdSpace.create`| `ID_LIMIT` (:100), `create` (:582) — `nodes.max() >= ID_LIMIT` refused first |
+| `IdSpace.refuseUndeletable`| `refuse_undeletable` (:638) |
+| `IdSpace.release`          | `release` (:703) |
+| `IdSpace.holeCheck/verify` | `verify` (:737) — `select`, `max`, the `||` order |
 
 ## Theorems (all proven, no sorry)
 * `above_spec`, `select_above`, `sMax_sFrom` — the rank/select arithmetic is "members ≥ bound",
@@ -61,6 +69,15 @@ the mutated state behind, every other refusal returns before any mutation.
   taken ∧ `u64::MAX` never taken. `inv_new`, `inv_restored`, `create_succeeds`/`create_preserves`
   (a create its refusals accept always passes `checked`; needs only `ID_LIMIT < 2^64`), `cancel_succeeds` (iff free ↔ below the
   boundary), `reserve_then_cancel` (every reserved id can be cancelled), `release_succeeds`.
+* **#3022 (`Released.lean`)**: `refuseNotLive_ok`/`refuseNotLive_err` (passes iff `ReleaseOk`; names
+  the lowest free id, else the highest never-allocated one), **`refuseNotLive_live` — it accepts
+  exactly live ids**, `live_eq_accepted`; `released_new/restored/newVersion`, `openBatch_clears`
+  (empty after `open_batch`), `create_keeps_released`, `cancel_keeps_released`, `release_records`
+  (grows by exactly `freed`); `Inv.relOk` (every released id is below the entry boundary or taken),
+  preserved by `create_succeeds`/`cancel_succeeds`/`release_succeeds`/`roll_inv`;
+  **`refuseNotLive_minus_released`** — the effects `CreateEdge` check `(src ∪ dst) − released` admits
+  only ids live now or released by this batch (hence live in it), and **`freed_earlier_refused`** —
+  an id freed by an earlier batch is refused after the roll.
 * `live_eq` — **`live` is exactly the number of live ids**, hence `release_no_underflow`:
   `live -= freed.len()` never wraps in a reachable state.
 * `roll_inv` — `Graph::roll_id_batches` (`verify` then `open_batch`) on a reachable state opens a
@@ -84,7 +101,7 @@ it (assert in `GrB_Matrix_new` / `grow_cap` hang). Now `create` refuses every id
 GrB_INDEX_MAX` before anything is sized (`create_out_of_range`, `create_spec`), and every id it accepts
 has a matrix row (`< 2^60 - 1`). `grow_cap`'s side is proven in `graph_queries` (`Schema.lean`).
 -/
-import FalkorIdSpace.Lifecycle
+import FalkorIdSpace.Released
 
 namespace IdSpaceModel.Sanity
 open IdSpaceModel
@@ -97,14 +114,14 @@ def ver (sp : IdSpace) : Option IdSpaceError :=
 def resv (r : Except String (List Nat)) : Option (List Nat) := r.toOption
 def ob (sp : IdSpace) : IdSpace := match sp.openBatch 32 with | .ok s => s | .error _ => sp
 
--- Mirrors the Rust unit tests (`id_space.rs:727-1506`), universe N = 32 (`u64::MAX` = 31), ID_LIMIT = 28.
+-- Mirrors the Rust unit tests (`id_space.rs:788-1567`), universe N = 32 (`u64::MAX` = 31), ID_LIMIT = 28.
 def g0 : IdSpace := ob IdSpace.new
 -- ids_arriving_out_of_order_still_fill_the_range (scaled: 5..10 then 0..5)
 #guard ver ((g0.create 32 28 (set [5,6,7,8,9])).1.create 32 28 (set [0,1,2,3,4])).1 == none
 -- a_hole_left_at_the_end_is_reported
 #guard ver (g0.create 32 28 (set [5,6,7,8,9])).1 == some (.hole 0 9 5)
 -- a_node_the_batch_never_recorded_is_caught_by_the_counter (`wedged(4, {}, 0, 0..3)`)
-#guard ver ⟨4, set [], 0, set [0,1,2]⟩ == some (.inconsistent 4 0 4 0 3 3)
+#guard ver ⟨4, set [], 0, set [0,1,2], set []⟩ == some (.inconsistent 4 0 4 0 3 3)
 -- a_range_that_starts_above_the_boundary_is_a_hole
 #guard ver (g0.create 32 28 (set [1,2,3])).1 == some (.hole 0 3 3)
 -- an_id_claimed_twice_is_refused_at_the_record
@@ -142,6 +159,23 @@ def g0 : IdSpace := ob IdSpace.new
 -- release_refuses_a_free_id_it_would_not_have_freed
 #guard R ((IdSpace.restored 32 3 (set [3])).release 32 (set [2,3]) (set [2])) == some (.alreadyRecycled 3)
 
+-- #3022: `released` records what the batch freed; `refuse_not_live` refuses a free id
+-- (`AlreadyRecycled`) and a never-allocated one (`NeverCreated`); `ids − released` lets
+-- through what this batch freed; `open_batch` forgets it.
+#guard let s1 := (g0.create 32 28 (set [0,1])).1
+       let s2 := (s1.release 32 (set [1]) (set [1])).1
+       s2.released 1 && !s2.released 0 &&
+       (match s2.refuseNotLive 32 (set [1]) with | .error (.alreadyRecycled 1) => true | _ => false) &&
+       (match s2.refuseNotLive 32 (set [7]) with | .error (.neverCreated 7) => true | _ => false) &&
+       (match s2.refuseNotLive 32 (sDiff (set [0,1]) s2.released) with | .ok () => true | _ => false) &&
+       !(ob s2).released 1 &&
+       (match (ob s2).refuseNotLive 32 (sDiff (set [1]) (ob s2).released) with
+        | .error (.alreadyRecycled 1) => true | _ => false)
+-- a reclaimed id stays in `released` (created, deleted, recreated in one batch)
+#guard let s1 := (g0.create 32 28 (set [0])).1
+       let s3 := (((s1.release 32 (set [0]) (set [0])).1).create 32 28 (set [0])).1
+       s3.released 0 && (match s3.refuseNotLive 32 (set [0]) with | .ok () => true | _ => false)
+
 end IdSpaceModel.Sanity
 
 #print axioms IdSpaceModel.verify_ok_iff
@@ -150,3 +184,6 @@ end IdSpaceModel.Sanity
 #print axioms IdSpaceModel.release_no_underflow
 #print axioms IdSpaceModel.roll_inv
 #print axioms IdSpaceModel.lifecycle_fresh
+#print axioms IdSpaceModel.refuseNotLive_live
+#print axioms IdSpaceModel.refuseNotLive_minus_released
+#print axioms IdSpaceModel.freed_earlier_refused

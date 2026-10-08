@@ -4,13 +4,13 @@
 | here | there |
 | --- | --- |
 | `Slots`                 | `graph/src/index/mod.rs:987` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
-| `inc`                   | `mod.rs:2106` `increment_pending_for_generation` |
-| `dec`                   | `mod.rs:2124` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
-| `pendingFor`            | `mod.rs:2146` `pending_count_for_generation` |
-| `Slots.cur = 0`         | `mod.rs:2079` `is_operational` / `indexer.rs:704` `enabled` (`pending_count() == 0`) |
+| `inc`                   | `mod.rs:2110` `increment_pending_for_generation` |
+| `dec`                   | `mod.rs:2128` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
+| `pendingFor`            | `mod.rs:2150` `pending_count_for_generation` |
+| `Slots.cur = 0`         | `mod.rs:2083` `is_operational` / `indexer.rs:704` `enabled` (`pending_count() == 0`) |
 | `bump`                  | `mod.rs:1048` `bump_id` (called only from `recreate_index`, i.e. when a *vector* field is added) |
 | `acquire`/`release`     | `indexer.rs:626` `acquire_population_snapshot`, `:670` `release_population_ticket` |
-| `batch`                 | `graph/src/graph/graph.rs:505` `populate_index_batch` (the three exits at `:535`, `:546`, `:710`) |
+| `batch`                 | `graph/src/graph/graph.rs:521` `populate_index_batch` (the three exits at `:551`, `:562`, `:726`) |
 
 The counters are `i32` in Rust; `2^31` outstanding tickets is not reachable (one
 ticket per populate job), so `Nat` is faithful.
@@ -129,7 +129,7 @@ deriving DecidableEq, Repr
 def setAt (l : List (List String)) (i : Nat) (f : List String → List String) : List (List String) :=
   l.modify i f
 
-/-- `populate_index_batch` for worker `i` over `nb` batches (graph.rs:535-712). -/
+/-- `populate_index_batch` for worker `i` over `nb` batches (graph.rs:551-728). -/
 def batch (nb : Nat) (s : PState) (i : Nat) : PState :=
   match s.workers[i]? with
   | none => s

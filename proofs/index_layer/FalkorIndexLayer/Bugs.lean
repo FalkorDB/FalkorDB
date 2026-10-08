@@ -58,7 +58,7 @@ theorem bug_folded_temporal_constant :
     holds (one (.int 7)) (.equal 0 (.temporal 0 5)) = false := by bugsimp
 
 /-- [point_equality_empty] `is_indexable(Point) = true` but
-`build_query_node` has no `Equal`-`Point` arm (`mod.rs:1681` → null), so
+`build_query_node` has no `Equal`-`Point` arm (`mod.rs:1685` → null), so
 `n.p = point(...)` returns nothing even with the filter kept. (C: correct.) -/
 theorem bug_point_equality :
     canUtilize (.equal 0 (.point 1 2)) = true ∧
@@ -101,7 +101,7 @@ theorem bug_string_range_order_gt :
 
 /-- [string_exclusive_equal_bounds] **Historical** — FIXED by #3072 (1c9994e37).
 `build_string_range_node` used to turn `lo == hi` into an exact match ignoring the include flags
-(old `mod.rs:1430`): `n.v > 'a' AND n.v < 'a'` returned `'a'`. (C: correct.) -/
+(old `mod.rs:1434`): `n.v > 'a' AND n.v < 'a'` returned `'a'`. (C: correct.) -/
 theorem pre3072_exclusive_equal_bounds :
     pre3072_buildStrRange allF 0 (some [97]) (some [97]) false false = some (.tagToken 0 .main (tagEnc [97])) ∧
     rsMatch (docOf allF (one (.str [97]))) (.tagToken 0 .main (tagEnc [97])) = true ∧
@@ -115,23 +115,37 @@ theorem fixed3072_exclusive_equal_bounds :
     holds (one (.str [97])) (.range 0 (some (.str [97])) (some (.str [97])) false false) = false := by
   bugsimp
 
-/-- [open_bound_excludes_inf] a missing bound becomes `RSRANGE_INF` with
-the (always `false`) include flag of the missing side (`mod.rs:1388-1406`),
-so `+inf` fails `v < +inf`: `n.v > 0` misses a stored `+inf`. (C: same.) -/
-theorem bug_open_bound_excludes_inf :
-    indexHit allF (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = false ∧
-    holds (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = true := by bugsimp
+/-- [open_bound_excludes_inf] **Historical** (fixed by #3081, ff3d24ba7): a
+missing bound became `RSRANGE_INF` with the (always `false`) include flag of
+the missing side (old `mod.rs:1388-1406`), so `+inf` failed `v < +inf`:
+`n.v > 0` missed a stored `+inf`. (C: same.) -/
+theorem pre3081_open_bound_excludes_inf :
+    pre3081_buildNumRange allF 0 (some (.int 0)) none false false =
+      some (.numeric 0 .main (.fin 0) .posInf false false) ∧
+    rsMatch (docOf allF (one (.flt .posInf))) (.numeric 0 .main (.fin 0) .posInf false false) = false ∧
+    holds (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = true := by
+  simp (config := { decide := true }) [pre3081_buildNumRange, valueToNumeric, allF, rsMatch, docOf,
+    one, setRange, rsStore, holds, propOr, cyLt, cyLe, numOf, inNum, ENum.le, ENum.lt, ENum.eq, isTrue]
+
+/-- Since #3081 the same queries select the stored infinities, as Cypher
+does: `n.v > 0` finds `+inf`, `n.v < 0` finds `-inf`. (The general statement
+is `numRange_exact`, which now covers stored `±inf`.) -/
+theorem fixed3081_open_bound_includes_inf :
+    indexHit allF (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = true ∧
+    holds (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = true ∧
+    indexHit allF (one (.flt .negInf)) (.range 0 none (some (.int 0)) false false) = true ∧
+    holds (one (.flt .negInf)) (.range 0 none (some (.int 0)) false false) = true := by bugsimp
 
 /-- [multilabel_and] `try_filter_pushdown` merges conjuncts found on
 *different* labels into one query against the *first* label's index
 (`utilize_index.rs:503`); `build_query_node` returns null for the unknown
-field and the whole AND becomes empty (`mod.rs:1568`). (C: correct.) -/
+field and the whole AND becomes empty (`mod.rs:1572`). (C: correct.) -/
 theorem bug_multilabel_and :
     indexHit fieldsA both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = false ∧
     holds both (.and [.equal 0 (.int 1), .equal 1 (.int 2)]) = true := by bugsimp
 
 /-- [multilabel_or] same for OR (`utilize_index.rs:521`); the unknown-field
-branch is dropped from the union (`mod.rs:1585`) and the filter is gone. -/
+branch is dropped from the union (`mod.rs:1589`) and the filter is gone. -/
 theorem bug_multilabel_or :
     indexHit fieldsB both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = false ∧
     holds both' (.or [.equal 1 (.int 2), .equal 0 (.int 1)]) = true := by bugsimp

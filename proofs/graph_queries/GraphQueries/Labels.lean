@@ -9,10 +9,10 @@ are set insert/delete on logical contents (proofs/versioned_matrix
 
 | here | there (graph.rs) |
 | --- | --- |
-| `setLabelsProduct` | `set_node_labels_product` :1928 |
-| `setLabelsBulk`    | `set_nodes_labels_bulk` :2002 |
-| `removeLabels`     | `remove_nodes_labels` :2043 |
-| `deleteNodes`      | `delete_nodes` :2072 |
+| `setLabelsProduct` | `set_node_labels_product` :1987 |
+| `setLabelsBulk`    | `set_nodes_labels_bulk` :2061 |
+| `removeLabels`     | `remove_nodes_labels` :2102 |
+| `deleteNodes`      | `delete_nodes` :2131 |
 -/
 namespace GQ
 variable {V : Type}
@@ -107,7 +107,7 @@ theorem removeLabels_spec (g : G V) (pairs : List (Nat × Nat)) (hc : LabCons g)
     · rintro ⟨h1, h2⟩; exact ⟨h1, fun h => h2 ⟨trivial, h⟩⟩
     · rintro ⟨h1, h2⟩; exact ⟨h1, fun h => h2 h.2⟩
 
-/-- `delete_nodes` (:2072): `node_ids.release(dn, dn)` (:2080-2082) judges
+/-- `delete_nodes` (:2131): `node_ids.release(dn, dn)` (:2139-2141) judges
 and frees in one step, then the `(node, label)` pairs read per deleted row,
 per-pair removal from both label structures, and the attribute rows
 dropped. `.error "node"` = refused, nothing moved. -/

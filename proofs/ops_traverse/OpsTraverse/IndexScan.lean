@@ -262,11 +262,18 @@ theorem edgeIxNew_spec (f t e : Nat) (tr : Bool) :
     ((edgeIxNew f t e tr).toA = none ↔ t = f) ∧ (edgeIxNew f t e tr).cap = none := by
   refine ⟨by by_cases h : t = f <;> simp [edgeIxNew, h], rfl⟩
 
-/-- edge_by_index_scan.rs:316-366: the index answer (or the cached full edge list), then the
-bound-endpoint and same-alias filter (orientation by `transposed`). -/
+/-- edge_by_index_scan.rs:355-366 (#3081, `ff3d24ba7`): an undirected pattern
+(`rp.bidirectional`) sees each edge the index yields once, `src -> dst`, in both
+orientations — a self-loop once — as `CondTraverse` does. -/
+def orient (bidir : Bool) (base : List (Nat × Nat × Nat)) : List (Nat × Nat × Nat) :=
+  if bidir then base.flatMap fun (s, d, e) => (s, d, e) :: (if s ≠ d then [(d, s, e)] else [])
+  else base
+
+/-- edge_by_index_scan.rs:317-403: the index answer (or the cached full edge list), oriented
+(`orient`), then the bound-endpoint and same-alias filter (orientation by `transposed`). -/
 def edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
-    (bFrom bTo : Option Nat) (sameAlias transposed : Bool) : List (Nat × Nat × Nat) :=
-  let base := if canUseE q then idx q else all
+    (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool) : List (Nat × Nat × Nat) :=
+  let base := orient bidir (if canUseE q then idx q else all)
   if bFrom.isSome || bTo.isSome || sameAlias then
     base.filter fun (s, d, _) =>
       let (f, t) := if transposed then (d, s) else (s, d)
@@ -276,11 +283,12 @@ def edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat ×
 /-- Every emitted edge agrees with the bound endpoints (in pattern orientation) and is a loop
 when both endpoints share an alias. -/
 theorem edgeRow_sound (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
-    (bf bt : Option Nat) (sa tr : Bool) (s d e : Nat) (h : (s, d, e) ∈ edgeRow idx all q bf bt sa tr) :
+    (bf bt : Option Nat) (sa tr bd : Bool) (s d e : Nat)
+    (h : (s, d, e) ∈ edgeRow idx all q bf bt sa tr bd) :
     (∀ x, bf = some x → x = (if tr then d else s)) ∧ (∀ x, bt = some x → x = (if tr then s else d)) ∧
     (sa = true → (if tr then d else s) = (if tr then s else d)) := by
   unfold edgeRow at h
-  generalize (if canUseE q = true then idx q else all) = base at h
+  generalize orient bd (if canUseE q = true then idx q else all) = base at h
   by_cases hc : (bf.isSome || bt.isSome || sa) = true
   · rw [if_pos hc, List.mem_filter] at h
     obtain ⟨_, hp⟩ := h
@@ -292,6 +300,55 @@ theorem edgeRow_sound (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat
     simp only [Bool.or_eq_true, not_or, Bool.not_eq_true, Option.isSome_eq_false_iff, Option.isNone_iff_eq_none] at hc
     obtain ⟨⟨h1, h2⟩, h3⟩ := hc
     refine ⟨fun x hx => by simp [h1] at hx, fun x hx => by simp [h2] at hx, fun hs => by simp [h3] at hs⟩
+
+/-- **Undirected scans see both orientations** (#3081): an oriented hit is an index hit read
+either way round. -/
+theorem orient_mem (base : List (Nat × Nat × Nat)) (x y e : Nat) :
+    (x, y, e) ∈ orient true base ↔ (x, y, e) ∈ base ∨ (y, x, e) ∈ base := by
+  simp only [orient, ite_true, List.mem_flatMap]
+  constructor
+  · rintro ⟨⟨s, d, e'⟩, hm, hx⟩
+    simp only [List.mem_cons] at hx
+    rcases hx with h | h
+    · simp at h; obtain ⟨rfl, rfl, rfl⟩ := h; exact Or.inl hm
+    · split at h
+      · simp at h; obtain ⟨rfl, rfl, rfl⟩ := h; exact Or.inr hm
+      · simp at h
+  · rintro (h | h)
+    · exact ⟨_, h, by simp⟩
+    · refine ⟨_, h, ?_⟩
+      by_cases hxy : y = x
+      · subst hxy; simp
+      · simp [hxy]
+
+/-- ... and each index hit yields two rows, a self-loop one: the row count is the hit count
+plus the non-loop hit count. A directed scan is unchanged. -/
+theorem orient_length (base : List (Nat × Nat × Nat)) :
+    (orient true base).length = base.length + (base.filter fun (s, d, _) => s ≠ d).length ∧
+    orient false base = base := by
+  refine ⟨?_, rfl⟩
+  induction base with
+  | nil => rfl
+  | cons hd tl ih =>
+    obtain ⟨s, d, e⟩ := hd
+    simp only [orient, ite_true, List.flatMap_cons, List.length_append, List.length_cons] at ih ⊢
+    rw [ih]
+    by_cases h : s = d
+    · simp [h]; omega
+    · simp [h, List.filter_cons]; omega
+
+/-- **Historical** (before #3081, ff3d24ba7; FINDINGS index_layer bug 11): the scan ignored
+`bidirectional`, so `MATCH ()-[r:R]-() WHERE r.v >= 1` returned one row per edge (C: two). -/
+def pre3081_edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
+    (bFrom bTo : Option Nat) (sameAlias transposed : Bool) : List (Nat × Nat × Nat) :=
+  edgeRow idx all q bFrom bTo sameAlias transposed false
+
+theorem pre3081_undirected_once :
+    (pre3081_edgeRow (fun _ => [(1, 2, 0)]) [] (.eq "v" (.int 1)) none none false false).length = 1 ∧
+    (edgeRow (fun _ => [(1, 2, 0)]) [] (.eq "v" (.int 1)) none none false false true).length = 2 ∧
+    (edgeRow (fun _ => [(1, 1, 0)]) [] (.eq "v" (.int 1)) none none false false true).length = 1 := by
+  have h1 : losesPrecision 1 = false := by decide
+  simp [pre3081_edgeRow, edgeRow, orient, canUseE, canUse, indexable, h1]
 
 /-! ## Fulltext scans and the edge vector scan -/
 

@@ -154,7 +154,7 @@ theorem mergeRow_eq_lookup :
         rw [← key b (Nat.le_of_lt (hlt b hb))]
 
 /-- A width-`n` shape yields `n` cells per id, so `rows.len() == ids.len() * n`
-    — the shape check the decoder and `check_attr_shape` (`apply.rs:663`)
+    — the shape check the decoder and `check_attr_shape` (`apply.rs:721`)
     apply to it. -/
 theorem mergeRow_length : ∀ (as : List Nat) (ps : List (Nat × Val)),
     (mergeRow as ps).length = as.length := by
@@ -380,7 +380,7 @@ theorem gate_drops_schema_only :
 /-! ### Why a dropped payload is a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
-    assigns (`apply_add_schema`, `apply.rs:496`; `verify_id`, `apply.rs:516`).
+    assigns (`apply_add_schema`, `apply.rs:533`; `verify_id`, `apply.rs:553`).
     One dropped registration shifts every later id by one. -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/

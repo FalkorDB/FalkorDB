@@ -1,6 +1,6 @@
 import FalkorIdList.PushT
 /-!
-# `IdList`'s accessors and trait impls (`id_list.rs:804-1276`)
+# `IdList`'s accessors and trait impls (`id_list.rs:804-1283`)
 
 `IdList` is `IdListPush.St` (`segs`, `len`, `run.start`, `run.desc`).
 -/
@@ -16,13 +16,13 @@ def count (st : St) : Option Nat := if st.len < 4294967296 then some st.len else
 /-- `PartialEq for IdList` (`:818`): `len == len && iter().eq(iter())`. -/
 def eqList (a b : St) : Bool := a.len == b.len && flat a.segs == flat b.segs
 
-/-- `PartialEq<[u64]>` (`:1242`). -/
+/-- `PartialEq<[u64]>` (`:1249`). -/
 def eqSlice (a : St) (o : List Nat) : Bool := a.len == o.length && flat a.segs == o
 
-/-- `PartialEq<[u64; N]>` (`:1251`): `self == other.as_slice()`. -/
+/-- `PartialEq<[u64; N]>` (`:1258`): `self == other.as_slice()`. -/
 def eqArr (a : St) (o : List Nat) : Bool := eqSlice a o
 
-/-- `From<[u64; N]>` (`:1270`) and `From<&[u64]>` (`:1276`): `ids.into_iter().collect()`. -/
+/-- `From<[u64; N]>` (`:1277`) and `From<&[u64]>` (`:1283`): `ids.into_iter().collect()`. -/
 def fromIds (R : Roaring) (ids : List Nat) : Option (St × Tally) := pushAllT R St.empty restart ids
 
 /-- `Debug for IdList` (`:804`): `debug_struct("IdList").field("len").field("segments")`.

@@ -26,7 +26,7 @@ comparison (only `true` keeps a row).
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1367` (`id as u64` at 1322) |
 | `IdSeek.maxNodeId`, `seek` | `graph/graph.rs:1602` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:716-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1472-1683`, `Index::query` 1677 |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1476-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-287` |
 | `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |

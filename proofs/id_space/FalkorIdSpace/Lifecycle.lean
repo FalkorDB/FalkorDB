@@ -29,21 +29,28 @@ many), and nothing taken changes. -/
 theorem release_succeeds (N : Nat) (sp : IdSpace) (requested freed : IdSet)
     (h : Inv N sp) (hok : ReleaseOk N sp requested)
     (hsub : ∀ i, i < N → freed i = true → requested i = true) :
-    sp.release N requested freed = (sp.released N freed, .ok ()) ∧
-      Inv N (sp.released N freed) := by
+    sp.release N requested freed = (sp.afterRelease N freed, .ok ()) ∧
+      Inv N (sp.afterRelease N freed) := by
   have hrel := (release_spec N sp requested freed).1 hok
   have hu := release_no_underflow N sp requested freed h hok hsub
   have ⟨hfit, hc⟩ := (checked_ok_iff N sp).mp h.checked
-  have hchk : (sp.released N freed).checked N = .ok () := by
+  have hchk : (sp.afterRelease N freed).checked N = .ok () := by
     apply (checked_ok_iff N _).mpr
-    simp only [IdSpace.released, IdSpace.bound] at hfit hc ⊢
+    simp only [IdSpace.afterRelease, IdSpace.bound] at hfit hc ⊢
     have hd := cnt_or_disjoint N sp.recycled freed (fun i hi ⟨a, b⟩ =>
       hok.1 i hi ⟨hsub i hi b, a⟩)
     unfold sLen sUnion at *
     omega
   rw [hchk] at hrel
-  refine ⟨hrel, hchk, fun i hi hr => ?_, h.noMax⟩
-  simp only [IdSpace.released, sUnion, Bool.or_eq_true] at hr
+  refine ⟨hrel, hchk, fun i hi hr => ?_, h.noMax, fun i hi hr => ?_⟩
+  rotate_left
+  · simp only [IdSpace.afterRelease, sUnion, Bool.or_eq_true] at hr
+    rcases hr with hr | hr
+    · exact h.relOk i hi hr
+    · by_cases hlt : i < sp.eb
+      · exact .inl hlt
+      · exact .inr (hok.2 i hi (hsub i hi hr) (by omega))
+  simp only [IdSpace.afterRelease, sUnion, Bool.or_eq_true] at hr
   rcases hr with hr | hr
   · exact h.binOk i hi hr
   · by_cases hlt : i < sp.eb
@@ -67,7 +74,8 @@ theorem roll_inv (N : Nat) (sp : IdSpace) (h : Inv N sp) (hv : sp.verify N = .ok
   refine ⟨openBatch_eq_newVersion N sp hc, ?_⟩
   have hab : above N sEmpty (sp.bound N) = 0 := by
     rw [above_sFrom N _ (by omega)]; exact cnt_eq_zero.mpr (fun _ _ => rfl)
-  refine ⟨(checked_ok_iff N _).mpr ?_, fun i hi hr => .inl ?_, rfl⟩
+  refine ⟨(checked_ok_iff N _).mpr ?_, fun i hi hr => .inl ?_, rfl,
+    fun _ _ hr => absurd hr (by simp [IdSpace.newVersion, IdSpace.restored, sEmpty])⟩
   · simp only [IdSpace.newVersion, IdSpace.restored, IdSpace.bound] at hab ⊢
     rw [hab]; unfold IdSpace.bound at hcnt; omega
   · simp only [IdSpace.newVersion, IdSpace.restored]

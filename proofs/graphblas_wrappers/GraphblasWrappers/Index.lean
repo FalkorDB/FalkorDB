@@ -7,7 +7,7 @@ touches `GrB_Index` is a `u64` (`pub type GrB_Index = u64;`, mod.rs), so the
 *can* lose information are:
 
 * `rows.len() as u64` in `Matrix::build` / `assign_product_true` /
-  `Matrix::<u64>::build` (matrix.rs:1264, 1370, 1393) — `usize → u64`;
+  `Matrix::<u64>::build` (matrix.rs:1294, 1400, 1423) — `usize → u64`;
 * `n_bytes as usize` / `blob_size as usize` in `vector.rs` (`Decode`, blob io) —
   `u64 → usize`;
 * the dimension bounds GraphBLAS itself enforces (`GB_NMAX = 2^60`).
@@ -61,10 +61,10 @@ theorem me_dim_wide_constructs : matrixNewOk ME_DIM ME_DIM = true := by
 
 /-! ### `record_created` / bug #2892 boundary (already filed; modelled here)
 
-`IdSpace::record_created` (id_space.rs:292) refuses only `u64::MAX`, so an id in
+`IdSpace::record_created` (id_space.rs:325) refuses only `u64::MAX`, so an id in
 `(GrB_INDEX_MAX, u64::MAX)` reaches `mark_nodes_live`, which resizes a matrix to
 `id + 1`. If `id + 1 > GB_NMAX` the resize returns `GrB_INVALID_VALUE` and the
-`assert_eq!` at matrix.rs:1288/1064 panics. This is the arithmetic of that. -/
+`assert_eq!` at matrix.rs:1318/1064 panics. This is the arithmetic of that. -/
 
 /-- A create of node `id` resizes matrices to `id + 1`. It survives iff that
 dimension is within the GraphBLAS bound. -/
@@ -90,7 +90,7 @@ theorem guard_misses_2pow61 : (1 <<< 61 : Nat) ≠ 2^64 - 1 := by decide
 
 /-! ### `usize → u64` on `.len()` casts
 
-`rows.len() as u64` (matrix.rs:1264 etc.). On a 64-bit target `usize` is 64-bit,
+`rows.len() as u64` (matrix.rs:1294 etc.). On a 64-bit target `usize` is 64-bit,
 so this is lossless for any real slice; the model records the fact so a future
 32-bit port would flag it. Here `usize` is `Nat` bounded by `2^64`. -/
 
@@ -101,7 +101,7 @@ theorem len_cast_lossless (n : Nat) (h : n < 2 ^ 64) : (n % 2 ^ 64) = n := Nat.m
 /-! ### `u64 → usize` blob-size casts (`vector.rs`)
 
 `n_bytes as usize`, `blob_size as usize`. On 64-bit this is the identity. The
-`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:298)
+`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:332)
 before the cast drives `copy_nonoverlapping`, so even under truncation the copy
 length matches the source buffer. This is the check that makes it safe. -/
 

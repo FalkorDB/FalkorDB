@@ -25,7 +25,7 @@ two confirmed issues below).
 | `St` | `IdList { segments, len, run.start, run.desc }` :783/:182 |
 | `claim`, `claimStep`, `extend?`, `push`, `push.pushTail` | `claim_direction` :857, `push` :886 (line by line, same branch order) |
 | `collapse c` | `maybe_collapse_run` :1029; `none` = its `assert!` :1051 |
-| `fromSegments` | `IdList::from_segments` :1176 |
+| `fromSegments` | `IdList::from_segments` :1183 |
 | `le`/`ofLe`, `take`, `readU` | `to_le_bytes`/`from_le_bytes`, `Reader::take`/`u8..u64` (reader.rs:40, :99-113), `read_narrow` :1296 |
 | `widthFor`, `widthCode`, `widthOfCode` | `width_for` (narrow_int.rs:19), `width_code` :78, `width_of_code` :89 |
 | `pairHeader`, `writePair`, `encodeSeg`, `encodeIds` | header layout :534-541, `write_pair` :652, `Segment::encode` :601 (incl. `BitmapLengthLied`), `EffectEncode<3> for IdList` :1200 |
@@ -72,11 +72,16 @@ Wire (`Wire.lean`)
 
 ## CONFIRMED issues (Rust repro fails)
 
-1. **Pushing onto a decoded `IdList` reorders ids or panics** — `IdList::from_segments`
-   (id_list.rs:1176) sets `run.start = last segment`, `desc = None`, fresh tally, regardless of
+1. **FIXED by #2920 (`2ef102ae0`, issue #2919)** — now `from_segments` sets `run.start =
+   segments.len()`; Lean `decoded_then_pushed_keeps_order` (`Decoded.lean`) proves every push
+   sequence onto any decoded list keeps the ids in order. Historical record follows (the Lean
+   counterexamples are now `pre2920_decoded_then_pushed_reorders` / `_asserts` on
+   `fromSegmentsPre2920`).
+   **Pushing onto a decoded `IdList` reorders ids or panics** — `IdList::from_segments`
+   (id_list.rs:1183) sets `run.start = last segment`, `desc = None`, fresh tally, regardless of
    what that segment is. `Inv` does not hold there, and `push` is `pub`.
-   - Lean: `decoded_then_pushed_reorders` (decoded `[10,9,8]` + pushes `20,22` with a collapse
-     → `[8,9,10,20,22]`), `decoded_then_pushed_asserts` (decoded `[7,7]` → assert).
+   - Lean: `pre2920_decoded_then_pushed_reorders` (decoded `[10,9,8]` + pushes `20,22` with a collapse
+     → `[8,9,10,20,22]`), `pre2920_decoded_then_pushed_asserts` (decoded `[7,7]` → assert).
    - Rust: `push_after_decode_reorders_a_descending_tail` — decoded `[10,9,8]`, then
      `20,22,24,...`:
      `expected [10, 9, 8, 20, 22, 24]  got [8, 9, 10, 20, 22, 24]` (silent reorder, row↔id

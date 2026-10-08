@@ -1,10 +1,12 @@
 import FalkorIdSpace.Card
 /-!
-# The `IdSpace` state machine (`graph/src/graph/id_space.rs`, main @ fe619ac5f)
+# The `IdSpace` state machine (`graph/src/graph/id_space.rs`, main @ e8f8a3017)
 
 Since #2846 (`157d42ec1`) `IdSpace` *owns* the id space: `live` and `recycled`
 are the entity count and the free set (`Graph` keeps neither), `entry_bound`
-and `taken` are the open batch.
+and `taken` are the open batch. Since #3022 (`18fc277b9`) a fifth field,
+`released`, records what the open batch freed (outside the count equation;
+cleared with `taken`).
 
 A `RoaringTreemap` is an `IdSet` read over the universe `[0, N)` (`N = 2^64`
 in the engine). Its operations are the pointwise Boolean ones; `len = cnt N`,
@@ -41,12 +43,12 @@ def sDisjoint (a b : IdSet) : Bool := (asc N (sInter a b)).isEmpty
 /-- `u64::checked_add`. -/
 def checkedAdd (a b : Nat) : Option Nat := if a + b < N then some (a + b) else none
 
-/-- `above` (`id_space.rs:220`): `ids.len() - (if bound == 0 {0} else {ids.rank(bound-1)})`. -/
+/-- `above` (`id_space.rs:236`): `ids.len() - (if bound == 0 {0} else {ids.rank(bound-1)})`. -/
 def above (ids : IdSet) (bound : Nat) : Nat :=
   let below := if bound = 0 then 0 else cnt bound ids
   sLen N ids - below
 
-/-- `reclaim_ids` (`id_space.rs:228`): `free = pool - taken - issued`;
+/-- `reclaim_ids` (`id_space.rs:244`): `free = pool - taken - issued`;
 `out.extend(free.iter().take(count))`; return the number appended. -/
 def freeOf (pool taken issued : IdSet) : IdSet := sDiff (sDiff pool taken) issued
 
@@ -54,14 +56,16 @@ def reclaimIds (pool taken issued : IdSet) (count : Nat) (out : List Nat) : List
   let out' := out ++ (asc N (freeOf pool taken issued)).take count
   (out', out'.length - out.length)
 
-/-- `IdSpace { live, recycled, entry_bound, taken }` (`:159`). -/
+/-- `IdSpace { live, recycled, entry_bound, taken, released }` (`:164`). -/
 structure IdSpace where
   live     : Nat
   recycled : IdSet
   eb       : Nat
   taken    : IdSet
+  /-- `released` (`:207`, #3022): every id the open batch freed. -/
+  released : IdSet := fun _ => false
 
-/-- `IdSpaceError` (`:99`). `Miscounted` is gone (#2846); `Inconsistent` and
+/-- `IdSpaceError` (`:104`). `Miscounted` is gone (#2846); `Inconsistent` and
 `AlreadyTaken` are new. -/
 inductive IdSpaceError where
   | inconsistent (live recycled bound eb taken expected : Nat)
@@ -73,25 +77,30 @@ inductive IdSpaceError where
   | idOutOfRange (id : Nat)
 deriving DecidableEq, Repr
 
-/-- `IdSpace::new` (`:250`), also `Default::default` (`:242`). -/
-def IdSpace.new : IdSpace := ⟨0, sEmpty, 0, sEmpty⟩
+/-- `IdSpace::new` (`:266`), also `Default::default` (`:258`). -/
+def IdSpace.new : IdSpace := ⟨0, sEmpty, 0, sEmpty, sEmpty⟩
 
-/-- `IdSpace::restored` (`:263`): `entry_bound = live + recycled.len()`. -/
+/-- `IdSpace::restored` (`:280`): `entry_bound = live + recycled.len()`. -/
 def IdSpace.restored (live : Nat) (recycled : IdSet) : IdSpace :=
-  ⟨live, recycled, live + sLen N recycled, sEmpty⟩
+  ⟨live, recycled, live + sLen N recycled, sEmpty, sEmpty⟩
 
-/-- `recycled_count` (`:290`). -/
+/-- `taken` (`:311`) — a field read. -/
+def IdSpace.takenSet (sp : IdSpace) : IdSet := sp.taken
+/-- `released` (`:317`) — a field read. -/
+def IdSpace.releasedSet (sp : IdSpace) : IdSet := sp.released
+
+/-- `recycled_count` (`:323`). -/
 def IdSpace.recycledCount (sp : IdSpace) : Nat := sLen N sp.recycled
-/-- `is_free` (`:296`). -/
+/-- `is_free` (`:329`). -/
 def IdSpace.isFree (sp : IdSpace) (id : Nat) : Bool := sp.recycled id
-/-- `bound` (`:310`): `live + recycled.len()`. -/
+/-- `bound` (`:343`): `live + recycled.len()`. -/
 def IdSpace.bound (sp : IdSpace) : Nat := sp.live + sLen N sp.recycled
-/-- `max_id` (`:320`). -/
+/-- `max_id` (`:353`). -/
 def IdSpace.maxId (sp : IdSpace) : Nat := if sp.live = 0 then 0 else sp.bound N - 1
-/-- `new_version` (`:333`). -/
+/-- `new_version` (`:367`). -/
 def IdSpace.newVersion (sp : IdSpace) : IdSpace := IdSpace.restored N sp.live sp.recycled
 
-/-- `checked` (`:368`). -/
+/-- `checked` (`:403`). -/
 def IdSpace.checked (sp : IdSpace) : Except IdSpaceError Unit :=
   let taken := above N sp.taken sp.eb
   let bound := sp.bound N
@@ -101,13 +110,14 @@ def IdSpace.checked (sp : IdSpace) : Except IdSpaceError Unit :=
     else .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken expected)
   | none => .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken (umax N))
 
-/-- `open_batch` (`:411`): `checked()?` then re-anchor and clear. -/
+/-- `open_batch` (`:447`): `checked()?` then re-anchor and clear `taken` and
+(since #3022) `released`. -/
 def IdSpace.openBatch (sp : IdSpace) : Except IdSpaceError IdSpace :=
   match sp.checked N with
   | .error e => .error e
-  | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty }
+  | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty }
 
-/-- `reserve` (`:446`). `allocOk` is whether `try_reserve_exact(count)`
+/-- `reserve` (`:483`). `allocOk` is whether `try_reserve_exact(count)`
 succeeded (an allocator boundary). -/
 def IdSpace.reserve (sp : IdSpace) (allocOk : Bool) (count : Nat) (issued : IdSet) :
     Except String (List Nat) :=
@@ -116,24 +126,24 @@ def IdSpace.reserve (sp : IdSpace) (allocOk : Bool) (count : Nat) (issued : IdSe
   let start := sp.eb + above N sp.taken sp.eb + above N issued sp.eb
   .ok (ids ++ List.range' start (count - reclaimed))
 
-/-- `cancel` (`:492`): `if !taken.insert(id) {AlreadyTaken}; recycled.insert(id); checked()`. -/
+/-- `cancel` (`:529`): `if !taken.insert(id) {AlreadyTaken}; recycled.insert(id); checked()`. -/
 def IdSpace.cancel (sp : IdSpace) (id : Nat) : IdSpace × Except IdSpaceError Unit :=
   if sp.taken id then (sp, .error (.alreadyTaken id)) else
   let sp' := { sp with taken := sIns sp.taken id, recycled := sIns sp.recycled id }
   (sp', sp'.checked N)
 
-/-- `refuse_recycled` (`:513`). -/
+/-- `refuse_recycled` (`:550`). -/
 def IdSpace.refuseRecycled (sp : IdSpace) (nodes : IdSet) : Except IdSpaceError Unit :=
   match sMin N (sInter nodes sp.recycled) with
   | some id => .error (.alreadyRecycled id)
   | none    => .ok ()
 
-/-- `ID_LIMIT` (`id_space.rs:95`) = `GrB_INDEX_MAX` = `2^60 - 1` (`tensor.rs:144`): one past
+/-- `ID_LIMIT` (`id_space.rs:100`) = `GrB_INDEX_MAX` = `2^60 - 1` (`tensor.rs:144`): one past
 the highest id a batch may create. The model takes it as a parameter `L`; the
 theorems need only `L < N` (it is below `u64::MAX`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
-/-- `create` (`:545`). Since #2911 (`fe619ac5f`) the first refusal is
+/-- `create` (`:582`). Since #2911 (`fe619ac5f`) the first refusal is
 `nodes.max().filter(|&id| id >= ID_LIMIT)` → `IdOutOfRange(id)` (it used to be
 `nodes.contains(u64::MAX)`). -/
 def IdSpace.create (L : Nat) (sp : IdSpace) (nodes : IdSet) : IdSpace × Except IdSpaceError Unit :=
@@ -154,28 +164,34 @@ def IdSpace.create (L : Nat) (sp : IdSpace) (nodes : IdSet) : IdSpace × Except 
                              taken := sUnion sp.taken nodes }
         (sp', sp'.checked N)
 
-/-- `refuse_undeletable` (`:601`). -/
+/-- `refuse_undeletable` (`:638`). -/
 def IdSpace.refuseUndeletable (sp : IdSpace) (nodes : IdSet) : Except IdSpaceError Unit :=
   if (sMax N nodes).all (· < sp.eb) then .ok () else
   match (sMax N (sDiff nodes sp.taken)).filter (· ≥ sp.eb) with
   | some id => .error (.neverCreated id)
   | none    => .ok ()
 
-/-- `release` (`:642`). The `debug_assert!(freed ⊆ requested)` is a hypothesis
+/-- `refuse_not_live` (`:679`, #3022): `refuse_recycled(ids)?;
+refuse_undeletable(ids)`. Changes nothing. -/
+def IdSpace.refuseNotLive (sp : IdSpace) (ids : IdSet) : Except IdSpaceError Unit :=
+  match sp.refuseRecycled N ids with
+  | .error e => .error e
+  | .ok () => sp.refuseUndeletable N ids
+
+/-- `release` (`:703`): since #3022 the two refusals are `refuse_not_live`, and
+the freed ids are also added to `released`. The `debug_assert!(freed ⊆ requested)` is a hypothesis
 of the theorems, not a branch (it is compiled out of release builds). `live -=
 freed.len()` is `u64`; `release_no_underflow` proves it never wraps in a
 reachable state, so `Nat` subtraction is faithful there. -/
 def IdSpace.release (sp : IdSpace) (requested freed : IdSet) : IdSpace × Except IdSpaceError Unit :=
-  match sp.refuseRecycled N requested with
+  match sp.refuseNotLive N requested with
   | .error e => (sp, .error e)
   | .ok () =>
-  match sp.refuseUndeletable N requested with
-  | .error e => (sp, .error e)
-  | .ok () =>
-    let sp' := { sp with recycled := sUnion sp.recycled freed, live := sp.live - sLen N freed }
+    let sp' := { sp with recycled := sUnion sp.recycled freed, live := sp.live - sLen N freed,
+                         released := sUnion sp.released freed }
     (sp', sp'.checked N)
 
-/-- `verify`'s hole test (`:687-721`) over the part of `taken` at or above the
+/-- `verify`'s hole test (`:748-782`) over the part of `taken` at or above the
 boundary: `lowest_above = taken.select(taken.len() - created)`,
 `.zip(taken.max()).filter(lowest != entry || created - 1 != highest - entry)`. -/
 def IdSpace.holeCheck (sp : IdSpace) : Option Nat :=
@@ -185,7 +201,7 @@ def IdSpace.holeCheck (sp : IdSpace) : Option Nat :=
     if lo != sp.eb || created - 1 != hi - sp.eb then some hi else none
   | _, _ => none
 
-/-- `verify` (`:676`): `checked()?`, then the hole test. -/
+/-- `verify` (`:737`): `checked()?`, then the hole test. -/
 def IdSpace.verify (sp : IdSpace) : Except IdSpaceError Unit :=
   match sp.checked N with
   | .error e => .error e

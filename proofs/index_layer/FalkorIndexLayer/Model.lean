@@ -318,7 +318,7 @@ def docOf (fields : Attr → Bool) (p : Props) : Doc := fun k s =>
     | none => []
   else []
 
-/-! ## `build_query_node` (`mod.rs:1472`) -/
+/-! ## `build_query_node` (`mod.rs:1476`) -/
 
 /-- `value_to_numeric` (`mod.rs:1356`). -/
 def valueToNumeric : Val → Option ENum
@@ -327,10 +327,24 @@ def valueToNumeric : Val → Option ENum
   | .bool b => some (.fin (if b then 1 else 0))
   | _ => none
 
-/-- `build_numeric_range_node` (`mod.rs:1375`). Open bounds become
-`RSRANGE_NEG_INF`/`RSRANGE_INF` but keep the caller's include flag, which the
-optimizer always sets to `false` for a missing bound (`utilize_index.rs:335`). -/
+/-- `build_numeric_range_node` (`mod.rs:1375-1410`). Open bounds become
+`RSRANGE_NEG_INF`/`RSRANGE_INF`, and since #3081 (`ff3d24ba7`) an absent
+bound is inclusive whatever the caller's flag (`include_min || min.is_none()`,
+`mod.rs:1402-1403`), so the infinity standing in for it is itself selected. -/
 def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn imx : Bool) :
+    Option QN := do
+  let lo ← match mn with
+    | some v => valueToNumeric v
+    | none => some .negInf
+  let hi ← match mx with
+    | some v => valueToNumeric v
+    | none => some .posInf
+  if fields k then some (.numeric k .main lo hi (imn || mn.isNone) (imx || mx.isNone)) else none
+
+/-- **Historical** (before #3081, ff3d24ba7): an open bound kept the caller's
+include flag, which the optimizer always sets to `false` for a missing bound
+(`utilize_index.rs:335`). Kept for `pre3081_open_bound_excludes_inf`. -/
+def pre3081_buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn imx : Bool) :
     Option QN := do
   let lo ← match mn with
     | some v => valueToNumeric v
@@ -340,21 +354,21 @@ def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn 
     | none => some .posInf
   if fields k then some (.numeric k .main lo hi imn imx) else none
 
-/-- `build_string_range_node` (`mod.rs:1414`). -/
+/-- `build_string_range_node` (`mod.rs:1418`). -/
 def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
   if fields k then
     match mn, mx with
     | some lo, some hi =>
       if lo = hi then
-        if !(imn && imx) then some .empty                                        -- mod.rs:1429-1434 (#3072)
-        else some (.tagToken k .main (tagEnc lo))                                -- mod.rs:1439-1448
+        if !(imn && imx) then some .empty                                        -- mod.rs:1433-1438 (#3072)
+        else some (.tagToken k .main (tagEnc lo))                                -- mod.rs:1443-1452
       else some (.tagLex k (some (tagEnc lo)) (some (tagEnc hi)) imn imx)
     | lo, hi => some (.tagLex k (lo.map tagEnc) (hi.map tagEnc) imn imx)
   else none
 
 /-- **Historical** (before #3072, 1c9994e37): equal bounds always became the exact-token node, whatever
-the include flags (old `mod.rs:1430`). Kept for `pre3072_exclusive_equal_bounds`. -/
+the include flags (old `mod.rs:1434`). Kept for `pre3072_exclusive_equal_bounds`. -/
 def pre3072_buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
   if fields k then
@@ -373,14 +387,14 @@ def isStrVal : Option Val → Bool
   | some (.str _) => true
   | _ => false
 
-/-- The `IndexQuery::Equal` arms of `build_query_node` (`mod.rs:1478-1504`),
-factored out because `InList` re-enters them (`mod.rs:1600`). -/
+/-- The `IndexQuery::Equal` arms of `build_query_node` (`mod.rs:1482-1508`),
+factored out because `InList` re-enters them (`mod.rs:1604`). -/
 def buildEq (fields : Attr → Bool) (k : Attr) (v : Val) : Option QN :=
   match valueToNumeric v with
-  | some d => if fields k then some (.numeric k .main d d true true) else none      -- mod.rs:1478
+  | some d => if fields k then some (.numeric k .main d d true true) else none      -- mod.rs:1482
   | none => match v with
-    | .str s => if fields k then some (.tagToken k .main (tagEnc s)) else none      -- mod.rs:1488
-    | _ => none                                                                      -- mod.rs:1681
+    | .str s => if fields k then some (.tagToken k .main (tagEnc s)) else none      -- mod.rs:1492
+    | _ => none                                                                      -- mod.rs:1685
 
 /-- `build_query_node`. `none` is Rust's null pointer. -/
 def buildQ (fields : Attr → Bool) : IQ → Option QN
@@ -389,19 +403,19 @@ def buildQ (fields : Attr → Bool) : IQ → Option QN
       if isStrVal mn || isStrVal mx then
         match strBound mn, strBound mx with
         | some a, some b => buildStrRange fields k a b imn imx
-        | _, _ => none                                                               -- mod.rs:1521
+        | _, _ => none                                                               -- mod.rs:1525
       else buildNumRange fields k mn mx imn imx
-  | .and qs =>                                                                       -- mod.rs:1564
+  | .and qs =>                                                                       -- mod.rs:1568
       (qs.attach.mapM (m := Option) (fun (x : {q // q ∈ qs}) =>
         have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)).map QN.inter
-  | .or [] => some .empty                                                            -- mod.rs:1579
+  | .or [] => some .empty                                                            -- mod.rs:1583
   | .or (q :: qs) => some (.union ((q :: qs).attach.filterMap (fun (x : {q' // q' ∈ q :: qs}) =>
-        have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)))                      -- mod.rs:1582
+        have := List.sizeOf_lt_of_mem x.2; buildQ fields x.1)))                      -- mod.rs:1586
   | .inList k (.list xs) =>
       if xs.isEmpty then some .empty
-      else some (.union (xs.filterMap fun x => buildEq fields k x))                  -- mod.rs:1598
+      else some (.union (xs.filterMap fun x => buildEq fields k x))                  -- mod.rs:1602
   | .inList _ _ => none
-  | .arrayContains k v =>                                                            -- mod.rs:1610
+  | .arrayContains k v =>                                                            -- mod.rs:1614
       if fields k then
         match v with
         | .int i => some (.numeric k .numArr (.fin i) (.fin i) true true)
@@ -414,7 +428,7 @@ decreasing_by
   all_goals simp_wf
   all_goals (first | omega | (simp only [List.cons.sizeOf_spec] at *; omega))
 
-/-- `Index::query` (`mod.rs:1686`): a null node yields the empty iterator. -/
+/-- `Index::query` (`mod.rs:1690`): a null node yields the empty iterator. -/
 def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
   match buildQ fields q with
   | some n => rsMatch (docOf fields p) n
@@ -452,7 +466,7 @@ the post-filter when the optimizer kept it (`keep`). -/
 def scanEmits (fields : Attr → Bool) (keep : Bool) (p : Props) (q : IQ) : Bool :=
   (if canUtilize q then indexHit fields p q else true) && (!keep || holds p q)
 
-/-! ## Pending population tickets (`mod.rs:901` `PendingSlots`, `mod.rs:2106-2162`) -/
+/-! ## Pending population tickets (`mod.rs:901` `PendingSlots`, `mod.rs:2110-2166`) -/
 
 structure Slots where
   gen : Nat
@@ -460,11 +474,11 @@ structure Slots where
   stale : Int
   deriving DecidableEq, Repr
 
-/-- `increment_pending_for_generation` (`mod.rs:2106`). -/
+/-- `increment_pending_for_generation` (`mod.rs:2110`). -/
 def Slots.inc (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then { s with cur := s.cur + 1 } else { s with stale := s.stale + 1 }
 
-/-- `try_decrement_pending_for_generation` (`mod.rs:2124`). -/
+/-- `try_decrement_pending_for_generation` (`mod.rs:2128`). -/
 def Slots.dec (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then (if s.cur > 0 then { s with cur := s.cur - 1 } else s)
   else (if s.stale > 0 then { s with stale := s.stale - 1 } else s)
@@ -473,7 +487,7 @@ def Slots.dec (s : Slots) (g : Nat) : Slots :=
 def Slots.bump (s : Slots) (g' : Nat) : Slots :=
   { gen := g', cur := 0, stale := s.stale + s.cur }
 
-/-- `pending_count_for_generation` (`mod.rs:2146`). -/
+/-- `pending_count_for_generation` (`mod.rs:2150`). -/
 def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s.stale
 
 /-! ## Index maintenance: `Indexer::commit` (`indexer.rs:714`) -/
@@ -481,9 +495,9 @@ def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s
 /-- RS doc table for one label: entity id ↦ stored document. -/
 abbrev Table := Nat → Option Doc
 
-/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1902`). -/
+/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1906`). -/
 def Table.add (t : Table) (id : Nat) (d : Doc) : Table := fun j => if j = id then some d else t j
-/-- `delete_document` (`mod.rs:1924`). -/
+/-- `delete_document` (`mod.rs:1928`). -/
 def Table.del (t : Table) (id : Nat) : Table := fun j => if j = id then none else t j
 
 /-- `Indexer::commit`: all adds of the label first, then all removes

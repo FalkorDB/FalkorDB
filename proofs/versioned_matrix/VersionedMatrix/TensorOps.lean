@@ -10,14 +10,14 @@ import VersionedMatrix.Policy
 | `colDegree`   | `col_degree` (:1134) (`none` = the `unreachable!`) |
 | `extract`     | `extract` (:977) |
 | `rebuildBackward` | `rebuild_backward` (:998) |
-| `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :421 / :1390 / :1401 / :1410 / :1423 |
-| `memoryUsage` | :1432 |
+| `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :421 / :1403 / :1414 / :1423 / :1436 |
+| `memoryUsage` | :1445 |
 | `flushT`/`foldLatched`/`foldOversized` | :880 / :937 / :955 |
 | `dupT`        | `dup` (:1009) |
 | `resizeT`     | `resize` (:809) |
-| `encVal`/`decVal` | the inline value `encode` (:1451) writes / C's MSB reading of it |
-| `EdgeIds`/`sizeHint` | `enum EdgeIds` (:1635) / `size_hint` (:1650) |
-| `TIt`/`newTIt`/`seekTIt` | `Iter` (:1667) / `Iter::new` (:1678) / `Iter::seek` (:1710) |
+| `encVal`/`decVal` | the inline value `encode` (:1464) writes / C's MSB reading of it |
+| `EdgeIds`/`sizeHint` | `enum EdgeIds` (:1648) / `size_hint` (:1663) |
+| `TIt`/`newTIt`/`seekTIt` | `Iter` (:1680) / `Iter::new` (:1691) / `Iter::seek` (:1723) |
 
 `mt`/`me` are `VersionedMatrix`es whose own `wait`/`flush`/`fold_*` never
 change their logical contents (`VMOps.wait_eff`, `DeltaProofs.flush_eff`,
@@ -188,11 +188,11 @@ theorem waitFwd_exact (t : TT) (h : (t.dpB.synced && t.dmB.synced) = false) :
 
 def syncAll (me : List MeB) : List MeB := me.map (fun e => { e with synced := true })
 
-/-- `Tensor::wait` (:1390). -/
+/-- `Tensor::wait` (:1403). -/
 def waitT (t : TT) : TT := { waitFwd t with mtSynced := true, me := syncAll t.me }
-/-- `wait_base` (:1401): bases only (`m`; `mt.m`, `me.m` are inside the VMs). -/
+/-- `wait_base` (:1414): bases only (`m`; `mt.m`, `me.m` are inside the VMs). -/
 def waitBase (t : TT) : TT := { t with mSynced := true }
-/-- `wait_all` (:1410). -/
+/-- `wait_all` (:1423). -/
 def waitAll (t : TT) : TT :=
   { t with mSynced := true, dpB := { t.dpB with synced := true }, dmB := { t.dmB with synced := true },
            mtSynced := true, me := syncAll t.me }

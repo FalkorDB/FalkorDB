@@ -36,7 +36,8 @@ and with counterexamples, each reproduced against the real engine
   the optimizer delete `WHERE x ^ true` as constant-true (`pow_constant_true`);
 * the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX`
   (`rangeIter_wraps`) — panic in debug, wrong rows and non-termination in release;
-* `sign(<float>)` returning a Float;
+* `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
+  `sign_float_is_int` (historical `pre2907_sign_float_is_float`);
 * mixed Int/Float equality not being transitive (`int_float_eq_not_transitive`).
 
 ## What is modelled, and where it lives in the tree
@@ -65,11 +66,11 @@ and with counterexamples, each reproduced against the real engine
 | `CSt`, `whenPhase`/`thenPhase`/`elsePhase`, `vecCase`, `caseMatchVec` | `VectorEval::eval_case` (`vector_expr.rs:475`) |
 | `omap`, `ofold`          | Rust's `?` over a row set / over the children |
 | `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs:1762`), used by `ExprIR::In` (`eval.rs:774`) |
-| `applyPow`, `powFold`    | `apply_pow` (`math.rs:332`); `ExprIR::Pow` in `eval_compound` (`eval.rs:819-825`, the `flat_map`) |
+| `applyPow`, `powFold`    | `apply_pow` (`math.rs:329`); `ExprIR::Pow` in `eval_compound` (`eval.rs:819-825`, the `flat_map`) |
 | `pow_constant_true`      | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:49`) |
 | `rangeIterRel` / `rangeIterDbg` | `RangeIter::next` (`eval.rs:108-122`), release / debug build |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
-| `signRust`               | `sign` (`math.rs:207`) |
+| `signRust`               | `sign` (`math.rs:210`) |
 | `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs:41-88`) |
 | `coalesce`               | `coalesce` (`math.rs:314`) |
 
@@ -1347,7 +1348,7 @@ theorem null_in (l : List (V F)) :
 
 /-! ## `^`: the `flat_map` that drops errors (BUG) -/
 
-/-- `apply_pow` (math.rs:332): numeric pairs become a float power, anything
+/-- `apply_pow` (math.rs:329): numeric pairs become a float power, anything
 else — including a non-numeric operand — is `null`, never a type error. -/
 def applyPow (pw : F → F → F) : V F → V F → V F
   | .int a, .int b => .flt (pw (FM.ofInt a) (FM.ofInt b))
@@ -1499,15 +1500,43 @@ theorem int_float_eq_not_transitive (a b : Int) (f : F) (hab : a ≠ b)
 
 /-! ## `sign`, `toInteger`, `coalesce` -/
 
-/-- `sign` (math.rs:218): an `Int` for an `Int` or a zero float, but a
-**Float** for any other float. C's `AR_SIGN` and openCypher return an Integer. -/
-def signRust (signum : F → F) (isZero : F → Bool) : V F → V F
+/-- `sign` (math.rs:210-219, since #2907 `f04c3557a`): the Float arm is
+`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214), read
+through `partial_cmp` against `0.0` (`FM.ofInt 0`), so NaN gives `0`. -/
+def signRust : V F → V F
+  | .int n => .int (if n > 0 then 1 else if n < 0 then -1 else 0)
+  | .flt f => .int ((if fGt f (FM.ofInt 0) then 1 else 0) - (if fLt f (FM.ofInt 0) then 1 else 0))
+  | _ => .null
+
+/-- **#2906 fixed** (#2907 `f04c3557a`): `sign` of any Float is an Integer, as in C's
+`AR_SIGN` and openCypher. -/
+theorem sign_float_is_int (f : F) : ∃ n, signRust (.flt f) = .int n ∧ (n = 1 ∨ n = -1 ∨ n = 0) := by
+  refine ⟨_, rfl, ?_⟩
+  unfold fGt fLt
+  cases h : FM.pcmp f (FM.ofInt 0) with
+  | none => simp
+  | some o => cases o <;> simp
+
+/-- A Float sign follows the IEEE comparison with `0.0`; incomparable (NaN) and equal
+(`±0.0`) give `0`. -/
+theorem sign_float_cases (f : F) :
+    (FM.pcmp f (FM.ofInt 0) = some .gt → signRust (.flt f) = .int 1) ∧
+    (FM.pcmp f (FM.ofInt 0) = some .lt → signRust (.flt f) = .int (-1)) ∧
+    (FM.pcmp f (FM.ofInt 0) = some .eq → signRust (.flt f) = .int 0) ∧
+    (FM.pcmp f (FM.ofInt 0) = none → signRust (.flt f) = .int 0) := by
+  refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [signRust, fGt, fLt, h]
+
+/-- Historical: `sign` before #2907 (`f04c3557a`) answered `Float(f.signum().round())`
+for a non-zero float. -/
+def signRustPre2907 (signum : F → F) (isZero : F → Bool) : V F → V F
   | .int n => .int (if n > 0 then 1 else if n < 0 then -1 else 0)
   | .flt f => if isZero f then .int 0 else .flt (signum f)
   | _ => .null
 
-theorem sign_float_is_float (signum : F → F) (isZero : F → Bool) (f : F) (h : isZero f = false) :
-    ∃ g, signRust signum isZero (.flt f) = .flt g := ⟨signum f, by simp [signRust, h]⟩
+/-- Historical counterexample (pre-#2907): a non-zero float gave a **Float**. Fixed by
+#2907 (`f04c3557a`); see `sign_float_is_int`. -/
+theorem pre2907_sign_float_is_float (signum : F → F) (isZero : F → Bool) (f : F) (h : isZero f = false) :
+    ∃ g, signRustPre2907 signum isZero (.flt f) = .flt g := ⟨signum f, by simp [signRustPre2907, h]⟩
 
 /-- `toInteger` of a finite float, with `m = floor(f)` as a mathematical
 integer: `m as i64` saturates. The *string* path (`toInteger('1e30')`) instead
@@ -1522,7 +1551,7 @@ theorem toInteger_float_vs_string (m : Int) (h : m > I64MAX) :
   · congr 1; omega
   · simp only [ite_eq_right_iff, reduceCtorEq, imp_false]; omega
 
-/-- `coalesce` (math.rs:309) tests `*arg == Value::Null` through `PartialEq`,
+/-- `coalesce` (math.rs:314) tests `*arg == Value::Null` through `PartialEq`,
 i.e. the ordering half of `compare_value`. For every value whose type order is
 not `Null`'s, that is exactly "is not null". -/
 def coalesce : List (V F) → V F

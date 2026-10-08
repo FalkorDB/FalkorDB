@@ -84,10 +84,10 @@ graph/src/runtime/functions/math.rs	random_uuid	143	NOT COVERED	nondeterministic
 graph/src/runtime/functions/math.rs	pow	176	NOT COVERED	wrapper over apply_pow; wrapper not modelled
 graph/src/runtime/functions/math.rs	rand	186	NOT COVERED	nondeterministic; not modelled
 graph/src/runtime/functions/math.rs	round	196	NOT COVERED	not modelled
-graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_float (bug: Float result)
-graph/src/runtime/functions/math.rs	sqrt	228	NOT COVERED	not modelled
-graph/src/runtime/functions/math.rs	range	254	MODELLED	rangeMath: used as the spec in rangeIter_ok_up (argument validation not modelled)
-graph/src/runtime/functions/math.rs	coalesce	317	PROVEN	coalesce: coalesce_first_nonnull
-graph/src/runtime/functions/math.rs	apply_pow	332	PROVEN	applyPow: pow_agrees_without_errors, pow_drops_error
+graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_int, sign_float_cases (#2906 fixed by #2907 f04c3557a; pre2907_sign_float_is_float historical)
+graph/src/runtime/functions/math.rs	sqrt	225	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	range	251	MODELLED	rangeMath: used as the spec in rangeIter_ok_up (argument validation not modelled)
+graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce: coalesce_first_nonnull
+graph/src/runtime/functions/math.rs	apply_pow	329	PROVEN	applyPow: pow_agrees_without_errors, pow_drops_error
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	MODELLED	toIntegerFloat/toIntegerString fragment only (out-of-range floor): toInteger_float_vs_string
 graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	49	MODELLED	only its effect: constant evaluator = error-valued variables fed to powFold (pow_constant_true, bug); is_constant_true itself not modelled

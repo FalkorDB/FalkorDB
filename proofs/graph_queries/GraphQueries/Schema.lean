@@ -14,9 +14,9 @@ import GraphQueries.Basic
 | `getLabelIdMut`| `get_label_id_mut` :1135 |
 | `getTypeId`    | `get_type_id` :1162 |
 | `getTypeIdMut` | `get_type_id_mut` :1213 (no `resize` — BUG, see `Delete.lean`) |
-| `getRelMatMut` | `get_relationship_matrix_mut` :1327 |
-| `getRelMat`    | `get_relationship_matrix` :1353 |
-| `getLabelMat`/`getLabelMatMut` | :1306 / :1314 |
+| `getRelMatMut` | `get_relationship_matrix_mut` :1340 |
+| `getRelMat`    | `get_relationship_matrix` :1366 |
+| `getLabelMat`/`getLabelMatMut` | :1306 / :1327 |
 | `nodeHasLabel`/`nodeHasLabelId`/`edgeHasType` | :1174 / :1188 / :1200 |
 | `labelNodeCount`/`..ByIdx`/`typeEdgeCount` | :1030 / :1047 / :1056 |
 -/
@@ -157,7 +157,7 @@ theorem growStep_small (chunk cap : Nat) (h : nextMul chunk (cap + max (cap / 4)
   rw [if_pos (by omega)]
   exact Nat.min_eq_left h
 
--- The Rust tests `grow_cap_tests` (graph.rs:5317-5340), `chunk = DEFAULT_NODE_CREATION_BUFFER = 16384`.
+-- The Rust tests `grow_cap_tests` (graph.rs:5435-5598), `chunk = DEFAULT_NODE_CREATION_BUFFER = 16384`.
 #guard growCap 16384 16384 (2 ^ 64 - 2) (by decide) == grbMax
 #guard growCap 16384 16384 grbMax (by decide) == grbMax
 #guard growCap 16384 (grbMax - 1) grbMax (by decide) == grbMax
@@ -268,7 +268,7 @@ theorem internLabel_spec (g : G V) (s : String) (h : ∀ t, g.labelsIndex t = id
     · subst ht; rw [← h, hs]
     · simp only [ht, ite_false, ← h]; cases g.labelsIndex t <;> simp [Ne.symm ht]
 
-/-- `get_label_id_mut` (:1135): existing id, or intern + push a
+/-- `get_label_id_mut` (:1151): existing id, or intern + push a
 `node_cap × node_cap` matrix + `resize`. -/
 def getLabelIdMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   match getLabelId g s with
@@ -311,7 +311,7 @@ def vecInsert {α} (l : List α) (i : Nat) (x : α) : List α := l.take i ++ x :
 theorem vecInsert_end {α} (l : List α) (x : α) : vecInsert l l.length x = l ++ [x] := by
   simp [vecInsert]
 
-/-- `get_type_id_mut` (:1213). Note: no `self.resize()`. -/
+/-- `get_type_id_mut` (:1229). Note: no `self.resize()`. -/
 def getTypeIdMut (g : G V) (s : String) : G V × Nat :=
   match idx g.types s with
   | some p => (g, p)
@@ -319,7 +319,7 @@ def getTypeIdMut (g : G V) (s : String) : G V × Nat :=
     let types := g.types ++ [s]
     ({ g with types := types, relMs := vecInsert g.relMs (types.length - 1) [] }, types.length - 1)
 
-/-- `get_relationship_matrix_mut` (:1327): registers like `get_type_id_mut`
+/-- `get_relationship_matrix_mut` (:1343): registers like `get_type_id_mut`
 but then **resizes**, as its own comment requires. Returns the type index. -/
 def getRelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let g1 := if s ∈ g.types then g else
@@ -382,7 +382,7 @@ theorem getTypeIdMut_stale_width (g : G V) (s : String)
 
 def getLabelMat (g : G V) (s : String) : Option Mat := (getLabelId g s).bind (g.labelMs[·]?)
 
-/-- `get_label_matrix_mut` (:1314). Returns the label id. -/
+/-- `get_label_matrix_mut` (:1330). Returns the label id. -/
 def getLabelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let (g1, id) := internLabel g s
   if id = g1.labelMs.length then

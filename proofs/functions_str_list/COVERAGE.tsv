@@ -41,18 +41,18 @@ graph/src/runtime/functions/internal.rs	internal_add	145	PROVEN	Misc.internalAdd
 graph/src/runtime/functions/entity.rs	register	36	PROVEN	Entity.registered: register_nodup
 graph/src/runtime/functions/entity.rs	labels	40	PROVEN	Entity.labels/RT.labels: deleteNode_labels_iff, labels_lost_after_delete (BUG), deleteNode_preserves_all, entity_null
 graph/src/runtime/functions/entity.rs	type_of	56	PROVEN	Entity.typeOf/typeName: typeOf_total
-graph/src/runtime/functions/entity.rs	has_labels	86	PROVEN	Entity.hasLabels/hasLabelsLoop: hasLabels_all, hasLabels_typecheck, deleteNode_preserves_all
-graph/src/runtime/functions/entity.rs	id	130	PROVEN	Entity.id: id_small, deleteNode_preserves
-graph/src/runtime/functions/entity.rs	properties	149	PROVEN	Entity.properties: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
-graph/src/runtime/functions/entity.rs	start_node	166	PROVEN	Entity.startNode: deleteRel_preserves
-graph/src/runtime/functions/entity.rs	end_node	181	PROVEN	Entity.endNode: deleteRel_preserves
-graph/src/runtime/functions/entity.rs	length	196	PROVEN	Entity.length: length_path, entity_null
-graph/src/runtime/functions/entity.rs	keys	214	PROVEN	Entity.keys: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
-graph/src/runtime/functions/entity.rs	relationship_type	243	PROVEN	Entity.relationshipType: deleteRel_preserves, entity_null
-graph/src/runtime/functions/entity.rs	exists	257	PROVEN	Entity.exists: exists_spec
-graph/src/runtime/functions/entity.rs	indegree	268	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
-graph/src/runtime/functions/entity.rs	outdegree	284	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
-graph/src/runtime/functions/entity.rs	parse_degree_args	304	PROVEN	Entity.parseDegreeArgs/collectTypes: parseDegreeArgs_forms, collectTypes_strs
+graph/src/runtime/functions/entity.rs	has_labels	86	PROVEN	Entity.hasLabels/hasLabelsLoop/valueName: hasLabels_all, hasLabels_typecheck, hasLabels_mismatch_names, hasLabels_null_label (#3127), deleteNode_preserves_all
+graph/src/runtime/functions/entity.rs	id	135	PROVEN	Entity.id: id_small, deleteNode_preserves
+graph/src/runtime/functions/entity.rs	properties	154	PROVEN	Entity.properties: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	start_node	171	PROVEN	Entity.startNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	end_node	187	PROVEN	Entity.endNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	length	203	PROVEN	Entity.length: length_path, entity_null
+graph/src/runtime/functions/entity.rs	keys	221	PROVEN	Entity.keys: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	relationship_type	250	PROVEN	Entity.relationshipType: deleteRel_preserves, entity_null
+graph/src/runtime/functions/entity.rs	exists	264	PROVEN	Entity.exists: exists_spec
+graph/src/runtime/functions/entity.rs	indegree	275	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	outdegree	291	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	parse_degree_args	311	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
 math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples
 eval.rs	RangeIter::next	111	MODELLED	rangeIter_negate_overflows (variant of #2894)
 eval.rs	eval_compound/GetElement	573	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds

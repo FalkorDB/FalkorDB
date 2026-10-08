@@ -15,7 +15,7 @@ which are not.
 The confirmed bug is `Vector::<bool>::decode_blob` (and the identically-shaped
 `Vector::<u64>::decode`): both `assert_eq!` on `GxB_Vector_deserialize`, which
 returns `GrB_INVALID_OBJECT` on a corrupt blob (`GB_deserialize.c:51,83`).
-`Tensor::decode` (tensor.rs:1586) calls `decode_blob` for every multi-edge pair,
+`Tensor::decode` (tensor.rs:1599) calls `decode_blob` for every multi-edge pair,
 so a crafted `GRAPH.RESTORE` kills the server — reproduced in
 `graph/tests/lean_graphblas_wrappers.rs`
 (`bug_tensor_decode_panics_on_corrupt_multi_edge_blob`, live-server repro in a local repro script).
@@ -42,17 +42,17 @@ structure Wrapper where
   line : Nat
   disp : Disposition
 
-/-- `Vector::<bool>::decode_blob` (vector.rs:177): `assert_eq!(info, SUCCESS,
-"GxB_Vector_deserialize failed")` at vector.rs:188. -/
-def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 177, .assertPanic⟩
+/-- `Vector::<bool>::decode_blob` (vector.rs:211): `assert_eq!(info, SUCCESS,
+"GxB_Vector_deserialize failed")` at vector.rs:222. -/
+def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .assertPanic⟩
 
-/-- `Vector::<u64>::decode` (vector.rs:219): same `assert_eq!` shape. -/
-def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 219, .assertPanic⟩
+/-- `Vector::<u64>::decode` (vector.rs:253): same `assert_eq!` shape. -/
+def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 253, .assertPanic⟩
 
-/-- `Vector::<bool>::decode` (vector.rs:311): the hardened path — validates
+/-- `Vector::<bool>::decode` (vector.rs:345): the hardened path — validates
 lengths and NUL-termination, then `if info != SUCCESS { …free…; return Err }`
 for every GraphBLAS call. -/
-def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 311, .propagate⟩
+def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 345, .propagate⟩
 
 /-- **Confirmed bug.** `decode_blob` (and `Vector::<u64>::decode`) `assertPanic`
 on a code that a corrupt blob reaches, so a crafted payload kills the process. -/

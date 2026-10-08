@@ -6,6 +6,9 @@ its string-escape decoder (`graph/src/parser/string_escape.rs`), the literal
 handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
 / nesting guards added in `e7daadac8`, with machine-checked proofs of:
 
+* **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
+  `WHITESPACE`/`Comment` run wherever the spec accepts one (since #2908,
+  `dfa326583`); an unterminated `/*` is not skipped (`rs_unterminated_general`).
 * **`lexAll_total_cover`** — on every input the lexer never slices a `&str` off
   a char boundary (so never panics), and the whitespace/comment runs and token
   texts it walks over concatenate back to exactly the input.
@@ -26,9 +29,9 @@ and machine-checked *counterexamples* for the places where a property is false
 
 | theorem | what is wrong |
 | --- | --- |
-| `rs_block_comment_bug`      | `/* ... */` ends at the first `/`, not at `*/` |
-| `rs_trailing_slash_bug`     | a lone trailing `/` is skipped as whitespace |
-| `rs_unterminated_bug`       | an unterminated `/*` is accepted |
+| `pre2908_rs_block_comment_bug`  | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
+| `pre2908_rs_trailing_slash_bug` | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
+| `pre2908_rs_unterminated_bug`   | (fixed by #2908) an unterminated `/*` was accepted |
 | `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
 | `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
 | `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
@@ -42,17 +45,17 @@ and machine-checked *counterexamples* for the places where a property is false
 | --- | --- |
 | `u8`, `bytes`             | `char::len_utf8`, `str::len` |
 | `splitBytes`              | `&s[..n]` / `&s[n..]` — `none` is the panic "byte index is not a char boundary" |
-| `rs`                      | `Lexer::read_spaces` (lexer.rs:314-362) |
-| `strScan`                 | `Lexer::lex_string_literal` (lexer.rs:515-549) |
-| `btScan`                  | backtick identifier arm of `get_token` (lexer.rs:486-507) |
-| `btpScan`                 | backtick parameter arm (lexer.rs:430-446) |
-| `identRun`                | ASCII identifier / plain parameter arms (lexer.rs:447-452, 459-485) |
-| `getTok`                  | `Lexer::get_token` (lexer.rs:379-513) |
+| `rs`, `rsSlash`, `rsLine`, `rsBlock` | `Lexer::read_spaces` (lexer.rs:319-342) |
+| `strScan`                 | `Lexer::lex_string_literal` (lexer.rs:495-529) |
+| `btScan`                  | backtick identifier arm of `get_token` (lexer.rs:466-487) |
+| `btpScan`                 | backtick parameter arm (lexer.rs:410-426) |
+| `identRun`                | ASCII identifier / plain parameter arms (lexer.rs:427-432, 439-465) |
+| `getTok`                  | `Lexer::get_token` (lexer.rs:359-493) |
 | `lexAll`                  | the `Lexer::new` / `Lexer::next` loop (lexer.rs:287-300) |
 | `unesc`                   | `cypher_unescape` (string_escape.rs:71-129) |
 | `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
 | `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
-| `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:718-759) |
+| `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:698-739) |
 | `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2522-2540) + `parse_literal` (cypher.rs:429-453) |
 | `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1788-1798, 2989-3009) |
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
@@ -68,7 +71,7 @@ and machine-checked *counterexamples* for the places where a property is false
 * The numeric *scanner* (`lex_numeric`) is abstracted here to "some number of chars
   ≥ 1": its final length is `str[pos..].chars().take(len).collect().len()`,
   a char-prefix byte length by construction, and its inner slices
-  (lexer.rs:569,586,607,657) sit after an ASCII-only prefix
+  (lexer.rs:549,566,587,637) sit after an ASCII-only prefix
   (`ascii_boundary`). Its *values* are covered by `str2int`.
 * Floats (`str::parse::<f64>`) are not modelled.
 * Keyword lookup (`phf`) does not affect lengths and is omitted.
@@ -177,86 +180,135 @@ theorem ascii_boundary (cs : List Char) (k : Nat)
     simp only [bytes, List.length_cons]
     rw [h c (by simp), ih (fun x hx => h x (by simp [hx]))]; omega
 
-/-! ## 2. `read_spaces` (lexer.rs:314-362)
+/-! ## 2. `read_spaces` (lexer.rs:319-342)
 
-The Rust loop keeps a one-char lookahead `next`; its three states are the
-outer loop (`top`), inside `// ...` (`line`) and inside `/* ...` (`block`).
-Every `len +=` of the Rust is one `+` here, in the same order. -/
+Since #2908 (`dfa326583`) the Rust walks bytes with a cursor `end`:
+whitespace advances it, `//` jumps past the next `'\n'` (or to `str.len()`),
+`/*` jumps past the first `*/` after it, and anything else — a lone `/`, an
+unterminated `/*` — `break`s with `end` on that `/`. `end` only ever moves
+over whole ASCII chars or to just after a `'\n'` / `*/`, so it is always a
+char boundary (`rs_boundary`) and `bytes.get(end) == Some(b'/')` is "the char
+at `end` is `/`"; the model therefore works on chars. `rs` is the outer
+`loop`, `rsSlash` the `Some(b'/')` arm, `rsLine` the `find('\n')` jump and
+`rsBlock` the `find("*/")` jump (`none` = not found ⇒ `break`). -/
 
-inductive Mode
-  | top    -- the outer `while let Some(' ' | '\t' | '\n' | '/') = next`
-  | slash  -- just read a `/`, deciding on the char after it
-  | line   -- inside `// ...`
-  | block  -- inside `/* ...`
-  deriving DecidableEq
-
-/-- `' ' | '\t' | '\n'`, lexer.rs:322. -/
+/-- `' ' | '\t' | '\n'`, lexer.rs:327. -/
 def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n'
 
-/-- Bytes `read_spaces` skips. The Rust keeps a running `len` and undoes the
-`/` with `len -= 1 + c.len_utf8()` when it is not a comment; here each state
-returns what it adds, so "undo" is "the `.slash` state adds 0". -/
-def rs : Mode → List Char → Nat
-  | .top, [] => 0
-  | .top, c :: r =>
-    if isWs c then 1 + rs .top r                -- len += 1; next = chars.next()
-    else if c = '/' then rs .slash r
-    else 0
-  | .slash, [] => 1                             -- len += 1; next = None ⇒ break  (BUG: lone '/')
-  | .slash, d :: r =>
-    if d = '/' then 1 + (u8 d + rs .line r)            -- `//`
-    else if d = '*' then 1 + (u8 d + rs .block r)      -- `/*`
-    else 0                                      -- len -= 1 + c.len_utf8(); break
-  | .line, [] => 0
-  | .line, c :: r => u8 c + (if c = '\n' then rs .top r else rs .line r)
-  | .block, [] => 0                             -- BUG: unterminated `/*` accepted
-  | .block, c :: r =>
-    if c = '*' then 1 + rs .block r              -- len += 1; continue
-    else u8 c + (if c = '/' then rs .top r else rs .block r)   -- BUG: any '/' ends it
+mutual
+/-- `read_spaces(str, pos)` on `str[pos..]`: the bytes from `pos` to the final `end`. -/
+def rs : List Char → Nat
+  | [] => 0                                         -- `_ => break` (end of input)
+  | c :: r =>
+    if isWs c then 1 + rs r                         -- `end += 1`
+    else if c = '/' then rsSlash r                  -- `Some(b'/')`
+    else 0                                          -- `_ => break`
+/-- The `Some(b'/')` arm, with the `/` behind the cursor. -/
+def rsSlash : List Char → Nat
+  | '/' :: r => 2 + rsLine r                        -- `str[end..].find('\n')`
+  | '*' :: r =>
+    match rsBlock r with                            -- `str[end + 2..].find("*/")`
+    | some n => 2 + n                               -- `end += 2 + n + 2`
+    | none => 0                                     -- `None => break`
+  | _ => 0                                          -- `_ => break`: division
+/-- After `//`: `map_or(str.len(), |n| end + n + 1)` — through the first
+`'\n'`, then back to the loop; to the end of input if there is none. -/
+def rsLine : List Char → Nat
+  | [] => 0
+  | c :: r => u8 c + (if c = '\n' then rs r else rsLine r)
+/-- After `/*`: through the first `*/`, then back to the loop. -/
+def rsBlock : List Char → Option Nat
+  | [] => none
+  | '*' :: '/' :: r => some (2 + rs r)
+  | c :: r => (rsBlock r).map (u8 c + ·)
+end
 
 theorem isWs_u8 {c : Char} (h : isWs c = true) : u8 c = 1 := by
   simp [isWs] at h; rcases h with (rfl | rfl) | rfl <;> rfl
 
-/-- `.slash` is entered with the `/` already behind the cursor; its result is
-a boundary of the list *including* that `/`. -/
-theorem rs_boundary : ∀ (m : Mode) (cs : List Char),
-    Boundary (if m = .slash then '/' :: cs else cs) (rs m cs)
-  | .top, [] => bnd_zero _
-  | .top, c :: r => by
-    simp only [rs, reduceCtorEq, ite_false]
-    split
-    · rename_i h; exact bnd_cons1 (isWs_u8 h) (by simpa using rs_boundary .top r)
-    · split
-      · subst_vars; simpa using rs_boundary .slash r
-      · exact bnd_zero _
-  | .slash, [] => ⟨1, rfl⟩
-  | .slash, d :: r => by
-    simp only [rs, ite_true]
-    split
-    · subst_vars; exact bnd_cons1 rfl (bnd_cons (by simpa using rs_boundary .line r))
-    · split
-      · subst_vars; exact bnd_cons1 rfl (bnd_cons (by simpa using rs_boundary .block r))
-      · exact bnd_zero _
-  | .line, [] => bnd_zero _
-  | .line, c :: r => by
-    simp only [rs, reduceCtorEq, ite_false]; split
-    · exact bnd_cons (by simpa using rs_boundary .top r)
-    · exact bnd_cons (by simpa using rs_boundary .line r)
-  | .block, [] => bnd_zero _
-  | .block, c :: r => by
-    simp only [rs, reduceCtorEq, ite_false]; split
-    · subst_vars; exact bnd_cons1 rfl (by simpa using rs_boundary .block r)
-    · split
-      · exact bnd_cons (by simpa using rs_boundary .top r)
-      · exact bnd_cons (by simpa using rs_boundary .block r)
+theorem u8_slash : u8 '/' = 1 := by decide
+theorem u8_star : u8 '*' = 1 := by decide
 
-theorem rs_top_boundary (cs : List Char) : Boundary cs (rs .top cs) := by
-  simpa using rs_boundary .top cs
+/-- What each piece of `read_spaces` returns is a char boundary, so the
+slices `str[end..]`, `str[end + 2..]` and the caller's `&str[pos + len..]`
+never panic. -/
+def RsB (cs : List Char) : Prop :=
+  Boundary cs (rs cs) ∧ Boundary ('/' :: cs) (rsSlash cs) ∧ Boundary cs (rsLine cs) ∧
+    ∀ n, rsBlock cs = some n → Boundary cs n
+
+theorem rsB_all : ∀ (n : Nat) (cs : List Char), cs.length ≤ n → RsB cs := by
+  intro n
+  induction n with
+  | zero =>
+    intro cs h
+    match cs, h with
+    | [], _ => exact ⟨bnd_zero _, by simp [rsSlash]; exact bnd_zero _, bnd_zero _,
+        fun n h => by simp [rsBlock] at h⟩
+  | succ n ih =>
+    intro cs h
+    match cs, h with
+    | [], _ => exact ⟨bnd_zero _, by simp [rsSlash]; exact bnd_zero _, bnd_zero _,
+        fun n h => by simp [rsBlock] at h⟩
+    | c :: r, h =>
+      have hr := ih r (by simp at h; omega)
+      obtain ⟨h1, h2, h3, h4⟩ := hr
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · -- rs
+        simp only [rs]
+        split
+        · rename_i hw; exact bnd_cons1 (isWs_u8 hw) h1
+        · split
+          · subst_vars; exact h2
+          · exact bnd_zero _
+      · -- rsSlash (c :: r)
+        by_cases hc : c = '/'
+        · subst hc; simp only [rsSlash]
+          rw [show 2 + rsLine r = u8 '/' + (u8 '/' + rsLine r) by simp only [u8_slash]; omega]
+          exact bnd_cons (bnd_cons h3)
+        · by_cases hs : c = '*'
+          · subst hs; simp only [rsSlash]
+            split
+            · rename_i m hm
+              rw [show 2 + m = u8 '/' + (u8 '*' + m) by simp only [u8_slash, u8_star]; omega]
+              exact bnd_cons (bnd_cons (h4 m hm))
+            · exact bnd_zero _
+          · have : rsSlash (c :: r) = 0 :=
+              rsSlash.eq_3 _ (by intro _ h; cases h; exact hc rfl) (by intro _ h; cases h; exact hs rfl)
+            rw [this]; exact bnd_zero _
+      · -- rsLine
+        simp only [rsLine]; split
+        · exact bnd_cons h1
+        · exact bnd_cons h3
+      · -- rsBlock
+        intro m hm
+        have hgen : rsBlock (c :: r) = (rsBlock r).map (u8 c + ·) → Boundary (c :: r) m := by
+          intro he
+          rw [he] at hm
+          cases hb : rsBlock r with
+          | none => simp [hb] at hm
+          | some k => simp [hb] at hm; subst hm; exact bnd_cons (h4 k hb)
+        by_cases hc : c = '*'
+        · subst hc
+          cases r with
+          | nil => simp [rsBlock] at hm
+          | cons d r' =>
+            by_cases hd : d = '/'
+            · subst hd
+              simp only [rsBlock, Option.some.injEq] at hm; subst hm
+              have := (ih r' (by simp at h; omega)).1
+              rw [show 2 + rs r' = u8 '*' + (u8 '/' + rs r') by simp only [u8_slash, u8_star]; omega]
+              exact bnd_cons (bnd_cons this)
+            · exact hgen (rsBlock.eq_3 _ _ (by intro _ _ h; cases h; exact hd rfl))
+        · exact hgen (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
+
+theorem rs_boundary (cs : List Char) : RsB cs := rsB_all _ cs (Nat.le_refl _)
+
+theorem rs_top_boundary (cs : List Char) : Boundary cs (rs cs) := (rs_boundary cs).1
 
 /-- The openCypher `Comment` / `WHITESPACE` rule (Cypher.g4:697-733), for
 the whitespace chars the Rust accepts: a block comment ends at `*/` and an
 unterminated comment or a lone `/` is not whitespace. `none` = the rest is
-not a well-formed whitespace/comment run where the lexer thinks it is. -/
+not a well-formed whitespace/comment run (or the fuel ran out). -/
 def specSkip : Nat → List Char → Option Nat
   | 0, _ => none
   | _ + 1, [] => some 0
@@ -279,26 +331,182 @@ where
   | f + 1, '*' :: '/' :: r, acc => (specSkip f r).map (acc + 2 + ·)
   | f + 1, c :: r, acc => blockSpec f r (acc + u8 c)
 
-/-- `/* a/ -1 //*/`: the Rust stops the comment after `/* a/` (plus the space: 6 bytes)
-and lexes `-1` as code, then `//*/` as a line comment; the spec skips all 13. So
-`RETURN 5 /* a/ -1 //*/` evaluates to 4 (C FalkorDB: 5). -/
-theorem rs_block_comment_bug :
-    rs .top "/* a/ -1 //*/".toList = 6 ∧
+/-- The `//` jump in spec terms: up to the first `'\n'`, and past it back to the loop. -/
+theorem rsLine_spec : ∀ r : List Char,
+    rsLine r = match r.drop (r.takeWhile (· != '\n')).length with
+      | [] => bytes (r.takeWhile (· != '\n'))
+      | _ :: rest' => bytes (r.takeWhile (· != '\n')) + 1 + rs rest'
+  | [] => by simp [rsLine, bytes]
+  | c :: r => by
+    by_cases hc : c = '\n'
+    · subst hc; simp [rsLine, bytes]; rfl
+    · have ih := rsLine_spec r
+      have hne : (c != '\n') = true := by simp [hc]
+      simp only [rsLine, if_neg hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
+        List.drop_succ_cons, bytes]
+      rw [ih]
+      generalize List.drop (List.takeWhile (fun x => x != '\n') r).length r = d
+      cases d <;> simp <;> omega
+
+/-- **`read_spaces` is the spec's whitespace/comment rule** (fixed by #2908,
+`dfa326583`): wherever the openCypher `WHITESPACE`/`Comment` rule accepts the
+run, the Rust skips exactly that many bytes — a block comment ends at its
+first `*/`, a line comment at its `'\n'`. -/
+theorem rs_agrees_spec : ∀ f : Nat,
+    (∀ cs n, specSkip f cs = some n → rs cs = n) ∧
+    (∀ r acc n, specSkip.blockSpec f r acc = some n → ∃ m, rsBlock r = some m ∧ n = acc + m) := by
+  intro f
+  induction f with
+  | zero => exact ⟨fun _ _ h => by simp [specSkip] at h,
+      fun _ _ _ h => by simp [specSkip.blockSpec] at h⟩
+  | succ f ih =>
+    obtain ⟨ihS, ihB⟩ := ih
+    constructor
+    · intro cs n h
+      match cs with
+      | [] => simp [specSkip] at h; simp [rs, h]
+      | c :: r =>
+        simp only [specSkip] at h
+        by_cases hw : isWs c = true
+        · rw [if_pos hw] at h
+          cases hs : specSkip f r with
+          | none => simp [hs] at h
+          | some k => simp [hs] at h; subst h; simp [rs, hw, ihS r k hs]
+        · rw [if_neg hw] at h
+          have hrs : rs (c :: r) = if c = '/' then rsSlash r else 0 := by simp [rs, hw]
+          rw [hrs]
+          split at h
+          next _ _ r' =>
+            simp only [ite_true, rsSlash]
+            rw [rsLine_spec]
+            revert h
+            generalize List.drop (List.takeWhile (fun x => x != '\n') r').length r' = d
+            cases d with
+            | nil => intro h; simp at h; omega
+            | cons x rest' =>
+              intro h
+              cases hs : specSkip f rest' with
+              | none => simp [hs] at h
+              | some k => simp [hs] at h; simp only [ihS rest' k hs]; omega
+          · obtain ⟨m, hm, rfl⟩ := ihB _ 2 n h
+            simp [rsSlash, hm]
+          · simp at h; subst h
+            split
+            · subst_vars; unfold rsSlash; split <;> simp_all
+            · rfl
+    · intro r acc n h
+      match r with
+      | [] => simp [specSkip.blockSpec] at h
+      | c :: r =>
+        have hgen : specSkip.blockSpec (f + 1) (c :: r) acc =
+            specSkip.blockSpec f r (acc + u8 c) → rsBlock (c :: r) = (rsBlock r).map (u8 c + ·) →
+            ∃ m, rsBlock (c :: r) = some m ∧ n = acc + m := by
+          intro he hr
+          rw [he] at h
+          obtain ⟨m, hm, rfl⟩ := ihB r _ n h
+          exact ⟨u8 c + m, by simp [hr, hm], by omega⟩
+        by_cases hc : c = '*'
+        · subst hc
+          cases r with
+          | nil =>
+            exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ _ h; cases h))
+              (rsBlock.eq_3 _ _ (by intro _ _ h; cases h))
+          | cons d r' =>
+            by_cases hd : d = '/'
+            · subst hd
+              rw [specSkip.blockSpec.eq_3] at h
+              cases hs : specSkip f r' with
+              | none => simp [hs] at h
+              | some k =>
+                simp [hs] at h; subst h
+                exact ⟨2 + k, by simp [rsBlock, ihS r' k hs], by omega⟩
+            · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ _ h; cases h; exact hd rfl))
+                (rsBlock.eq_3 _ _ (by intro _ _ h; cases h; exact hd rfl))
+        · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ h _; exact hc h))
+            (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
+
+/-! ### Before #2908 (historical)
+
+The pre-`dfa326583` `read_spaces` (lexer.rs:314-362 at `8743953a8`) kept a
+one-char lookahead `next` in three states: the outer loop (`top`), inside
+`// ...` (`line`) and inside `/* ...` (`block`). Kept with the three
+counterexamples it had against `specSkip` (FINDINGS: #2901), all fixed by
+#2908 (`dfa326583`). -/
+
+inductive Pre2908Mode
+  | top    -- the outer `while let Some(' ' | '\t' | '\n' | '/') = next`
+  | slash  -- just read a `/`, deciding on the char after it
+  | line   -- inside `// ...`
+  | block  -- inside `/* ...`
+  deriving DecidableEq
+
+/-- Bytes `read_spaces` skips. The Rust keeps a running `len` and undoes the
+`/` with `len -= 1 + c.len_utf8()` when it is not a comment; here each state
+returns what it adds, so "undo" is "the `.slash` state adds 0". -/
+def pre2908Rs : Pre2908Mode → List Char → Nat
+  | .top, [] => 0
+  | .top, c :: r =>
+    if isWs c then 1 + pre2908Rs .top r                -- len += 1; next = chars.next()
+    else if c = '/' then pre2908Rs .slash r
+    else 0
+  | .slash, [] => 1                             -- len += 1; next = None ⇒ break  (BUG: lone '/')
+  | .slash, d :: r =>
+    if d = '/' then 1 + (u8 d + pre2908Rs .line r)            -- `//`
+    else if d = '*' then 1 + (u8 d + pre2908Rs .block r)      -- `/*`
+    else 0                                      -- len -= 1 + c.len_utf8(); break
+  | .line, [] => 0
+  | .line, c :: r => u8 c + (if c = '\n' then pre2908Rs .top r else pre2908Rs .line r)
+  | .block, [] => 0                             -- BUG: unterminated `/*` accepted
+  | .block, c :: r =>
+    if c = '*' then 1 + pre2908Rs .block r              -- len += 1; continue
+    else u8 c + (if c = '/' then pre2908Rs .top r else pre2908Rs .block r)   -- BUG: any '/' ends it
+
+/-- `/* a/ -1 //*/`: the old Rust stopped the comment after `/* a/` (plus the
+space: 6 bytes) and lexed `-1` as code, so `RETURN 5 /* a/ -1 //*/` gave 4
+(C FalkorDB: 5). Fixed by #2908 (`dfa326583`): `rs_block_comment_fixed`. -/
+theorem pre2908_rs_block_comment_bug :
+    pre2908Rs .top "/* a/ -1 //*/".toList = 6 ∧
     specSkip 20 "/* a/ -1 //*/".toList = some 13 := by decide
 
-/-- `RETURN 1 /`: the dangling `/` is swallowed (C FalkorDB: syntax error). -/
-theorem rs_trailing_slash_bug :
-    rs .top " /".toList = 2 ∧ specSkip 5 " /".toList = some 1 := by decide
+/-- `RETURN 1 /`: the dangling `/` was swallowed (C FalkorDB: syntax error).
+Fixed by #2908 (`dfa326583`): `rs_trailing_slash_fixed`. -/
+theorem pre2908_rs_trailing_slash_bug :
+    pre2908Rs .top " /".toList = 2 ∧ specSkip 5 " /".toList = some 1 := by decide
 
-/-- `RETURN 1 /* x`: an unterminated block comment is accepted (C: error). -/
-theorem rs_unterminated_bug :
-    rs .top "/* x".toList = 4 ∧ specSkip 10 "/* x".toList = none := by decide
+/-- `RETURN 1 /* x`: an unterminated block comment was accepted (C: error).
+Fixed by #2908 (`dfa326583`): `rs_unterminated_fixed`. -/
+theorem pre2908_rs_unterminated_bug :
+    pre2908Rs .top "/* x".toList = 4 ∧ specSkip 10 "/* x".toList = none := by decide
 
-/-- ... while a comment without an inner `/` agrees with the spec. -/
-example : rs .top "/* a * b */ x".toList = 12 ∧
-    specSkip 20 "/* a * b */ x".toList = some 12 := by decide
+/-! ### Now: the three inputs, and the Rust regression tests of #2908 -/
 
-/-! ## 3. Token scanners and `get_token` (lexer.rs:379-549) -/
+/-- The whole block comment is skipped, `/` inside it included, so
+`RETURN 5 /* a/ -1 //*/` is 5, as in C. -/
+theorem rs_block_comment_fixed :
+    rs "/* a/ -1 //*/".toList = 13 ∧ specSkip 20 "/* a/ -1 //*/".toList = some 13 :=
+  ⟨by simp [rs, rsSlash, rsBlock, isWs] <;> decide, by decide⟩
+
+/-- A lone trailing `/` is left for the parser (division, then a syntax error). -/
+theorem rs_trailing_slash_fixed :
+    rs " /".toList = 1 ∧ specSkip 5 " /".toList = some 1 :=
+  ⟨by simp [rs, rsSlash, isWs], by decide⟩
+
+/-- An unterminated `/*` is not a comment: `read_spaces` stops on its `/`, so
+the parser sees `/ *` and rejects the query, as C does. -/
+theorem rs_unterminated_fixed : rs "/* x".toList = 0 ∧ rs " /* x".toList = 1 := by
+  constructor <;> simp [rs, rsSlash, rsBlock, isWs]
+
+/-- In general: a `/*` with no `*/` after it is never skipped. -/
+theorem rs_unterminated_general (r : List Char) (h : rsBlock r = none) :
+    rs ('/' :: '*' :: r) = 0 := by
+  simp [rs, isWs, rsSlash, h]
+
+/-- `block_comment_ends_at_star_slash` / `lone_slash_is_division` (lexer.rs tests). -/
+example : rs " /* a/b */ + 1".toList = 11 ∧ rs " /*/ ** / * */ 2 /**/".toList = 15 ∧
+    rs " // a /* b\n2".toList = 11 ∧ rs " / 2".toList = 1 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [rs, rsSlash, rsBlock, rsLine, isWs] <;> decide
+
+/-! ## 3. Token scanners and `get_token` (lexer.rs:359-529) -/
 
 theorem bytes_append (a b : List Char) : bytes (a ++ b) = bytes a + bytes b := by
   induction a with
@@ -371,7 +579,7 @@ theorem strScan_spec {q : Char} : ∀ {r : List Char} {n : Nat}, strScan q r = s
           refine ⟨k + 1, t, ?_, by simpa using h2⟩
           simp [bytes, h1]; omega
 
-/-- Backtick identifier scan (lexer.rs:487-495), after the opening backtick:
+/-- Backtick identifier scan (lexer.rs:467-475), after the opening backtick:
 `some n` = `n` body bytes, then a closing backtick. -/
 def btScan : List Char → Option Nat
   | [] => none                                  -- !end ⇒ Err(&str[pos..pos + len])
@@ -391,7 +599,7 @@ theorem btScan_spec : ∀ {r : List Char} {n : Nat}, btScan r = some n →
         obtain ⟨k, t, h1, h2⟩ := btScan_spec hs
         exact ⟨k + 1, t, by simp [bytes, h1]; omega, by simpa using h2⟩
 
-/-- Backtick parameter scan (lexer.rs:433-439): the closing backtick is
+/-- Backtick parameter scan (lexer.rs:413-419): the closing backtick is
 counted (`len += ch.len_utf8()` before the `==` test). -/
 def btpScan : List Char → Option Nat
   | [] => none
@@ -449,7 +657,7 @@ theorem identRun_bytes : ∀ r : List Char, bytes (r.take (identRun r)) = identR
       simp only [bytes, isIdChar_u8 h, identRun_bytes r]; omega
     · rfl
 
-/-- One-char tokens of `get_token` (lexer.rs:386-395, 400, 414-415, 421, 508). -/
+/-- One-char tokens of `get_token` (lexer.rs:366-375, 380, 394-395, 401, 488). -/
 def singles : List Char := ['[', ']', '{', '}', '(', ')', '%', '^', '*', '/', '-', ',', ':', '|', ';']
 
 @[simp] theorem us_dollar : '$'.utf8Size = 1 := rfl
@@ -460,7 +668,7 @@ def singles : List Char := ['[', ']', '{', '}', '(', ')', '%', '^', '*', '/', '-
 
 theorem singles_u8 : ∀ c ∈ singles, u8 c = 1 := by decide
 
-/-- `Lexer::get_token` (lexer.rs:379-513), reduced to what decides lengths
+/-- `Lexer::get_token` (lexer.rs:359-493), reduced to what decides lengths
 and slices. `none` = a panic (a slice off a char boundary); `.ok n` = a token
 of `n` bytes (`0` only for `EndOfFile`); `.error` = an `Err` token, at which the
 parser stops. `num cs` is the char count `lex_numeric` settles on (≥ 1, or
@@ -675,7 +883,7 @@ def lexAll (num : List Char → Nat) (esc : List Char → Bool) :
     Nat → List Char → Option (List (List Char))
   | 0, _ => some []
   | f + 1, cs =>
-    match splitBytes cs (rs .top cs) with
+    match splitBytes cs (rs cs) with
     | none => none
     | some (sp, rest) =>
       match getTok num esc rest with
@@ -697,7 +905,7 @@ theorem lexAll_total_cover (num : List Char → Nat) (esc : List Char → Bool) 
   | 0, _, h => absurd h (Nat.not_lt_zero _)
   | f + 1, cs, hlen => by
     obtain ⟨k1, hk1⟩ := rs_top_boundary cs
-    have hs1 : splitBytes cs (rs .top cs) = some (cs.take k1, cs.drop k1) := by
+    have hs1 : splitBytes cs (rs cs) = some (cs.take k1, cs.drop k1) := by
       rw [← hk1]; exact splitBytes_take cs k1
     obtain ⟨e, he, hok⟩ := getTok_ok num esc (cs.drop k1)
     simp only [lexAll, hs1, he]
@@ -1013,7 +1221,7 @@ def canonF (radix : Nat) : Nat → Nat → List Nat
 
 def canon (radix n : Nat) : List Nat := canonF radix (n + 1) n
 
-/-- `Lexer::str2number_token`, integer half (lexer.rs:731-758), on the digits
+/-- `Lexer::str2number_token`, integer half (lexer.rs:711-738), on the digits
 after the radix prefix (`0x`, `0o`, `0b`, or the leading `0` of an octal).
 `MIN_I64` (lexer.rs:271-277) holds exactly the canonical spellings of `2^63`,
 which are returned as `i64::MIN` for the parser to sort out. -/

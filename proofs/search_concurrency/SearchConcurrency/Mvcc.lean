@@ -56,7 +56,7 @@ inductive Ev where
 deriving Repr
 
 /-- One atomic step. `none` = not enabled. `valid` is `Graph::validate`
-(graph.rs:1489) on the private version. -/
+(graph.rs:1507) on the private version. -/
 def step (valid : List W → Bool) (s : S) : Ev → Option S
   | .read _ => some { s with seen := s.pub :: s.seen }
   | .claim t => match s.slot with

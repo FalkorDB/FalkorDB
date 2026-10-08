@@ -39,7 +39,7 @@ endpoints no longer fit.
 | `Ix.clear`                      | `clear` (:692) |
 | `Ix.prepare`                    | `prepare` (:520) — `reserve_exact` has no semantic effect and is dropped |
 | `Ix.prepareTiers`               | `prepare_tiers` (:605) |
-| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2464-2475`, `prepare` then `set` per edge), `delete_relationships` (`graph.rs:2726`) and `delete_implicit_edges` (`graph.rs:2873`) via `clear_edge_endpoint`, `Graph::restore` (`graph.rs:888-893`, `prepare_tiers` then `set`) |
+| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2582-2593`, `prepare` then `set` per edge), `delete_relationships` (`graph.rs:2844`) and `delete_implicit_edges` (`graph.rs:2991`) via `clear_edge_endpoint`, `Graph::restore` (`graph.rs:904-909`, `prepare_tiers` then `set`) |
 
 ## What is proved (all without `sorry`; see `#print axioms` at the end)
 
@@ -923,7 +923,7 @@ theorem snapshot_isolated (ops₁ ops₂ : List Op) (hv₁ : ∀ op ∈ ops₁, 
     snap.get i = refRun (fun _ => none) ops₁ i :=
   fresh_refines ops₁ hv₁ i
 
-/-- `Graph::restore` (`graph.rs:888-893`): `prepare_tiers` with any boundaries,
+/-- `Graph::restore` (`graph.rs:904-909`): `prepare_tiers` with any boundaries,
 then `set` for every edge of every tensor. The index answers exactly the
 restored edge set (the last `set` of an id wins, which cannot matter since a
 tensor holds each edge id once). -/
@@ -1114,7 +1114,7 @@ theorem ensurePages_spec {α} (P : Nat) (hP : 0 < P) (fill : α) (pages : List (
 
 /-! ## Detach-delete: which edges `delete_implicit_edges` clears
 
-`Graph::delete_implicit_edges` (`graph.rs:2764-2879`) builds, per relationship
+`Graph::delete_implicit_edges` (`graph.rs:2882-2997`) builds, per relationship
 type, the list of edges to remove for a set `N` of deleted nodes: for each
 `n ∈ N`, the outgoing edges of `n`, then the incoming edges of `n` whose source
 is neither `n` (a self-loop, already seen outgoing) nor another deleted node

@@ -98,14 +98,31 @@ def mLog10 : V FC → Res
   | .int n => .ok (.float (m.log10 (fcOfInt n))) | .float f => .ok (.float (m.log10 f))
   | .null => .ok .null | _ => .panic
 
-/-- `sign` (math.rs:210). -/
+/-- IEEE `x > 0.0`. -/
+def fcGt0 : FC → Bool
+  | .pos | .pinf => true
+  | _ => false
+
+/-- `bool as i64` (`i64::from(b)`). -/
+def b2i (b : Bool) : Int := if b then 1 else 0
+
+/-- `sign` (math.rs:210-219, since #2907 `f04c3557a`): the Float arm is
+`Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214). -/
 def mSign : V FC → Res
+  | .int n => .ok (.int (signumI n))
+  | .float f => .ok (.int (b2i (fcGt0 f) - b2i (fcLt0 f)))
+  | .null => .ok .null
+  | _ => .panic
+
+/-- Historical: `sign` before #2907 (`f04c3557a`) — a non-zero Float answered
+`Float(f.signum().round())`. Kept for `pre2907_sign_float_is_float`. -/
+def mSignPre2907 : V FC → Res
   | .int n => .ok (.int (signumI n))
   | .float f => if fcEq0 f then .ok (.int 0) else .ok (.float (fcSignum f))
   | .null => .ok .null
   | _ => .panic
 
-/-- `sqrt` (math.rs:228): an explicit negative check before `f64::sqrt`. -/
+/-- `sqrt` (math.rs:225): an explicit negative check before `f64::sqrt`. -/
 def mSqrt : V FC → Res
   | .int n => if n < 0 then .ok (.float .nan) else .ok (.float (ieeeSqrt (fcOfInt n)))
   | .float f => if fcGe0 f then .ok (.float (ieeeSqrt f)) else .ok (.float .nan)
@@ -192,15 +209,46 @@ theorem abs_min_diverges :
     mAbs (.int I64MIN) = .err "ArgumentError: integer overflow in abs()" ∧ cAbs (.int I64MIN) = .ok (.int I64MIN) :=
   ⟨rfl, by simp [cAbs, cAbs_min]⟩
 
-/-! ## `sign` (also seen: issue #2906) -/
+/-! ## `sign` (issue #2906, fixed by #2907 `f04c3557a`) -/
 
-/-- `sign` of a non-zero Float is a *Float* (`-1.0`/`1.0`; NaN for NaN), while the
-declared return type is `Integer | Null` and C returns an Integer. -/
-theorem sign_float_is_float (f : FC) (h : fcEq0 f = false) : mSign (.float f) = .ok (.float (fcSignum f)) := by
-  simp [mSign, h]
+/-- **#2906 fixed** (#2907 `f04c3557a`): `sign` of every Float is an *Integer* — `1`
+for positive (incl. `+inf`), `-1` for negative (incl. `-inf`), `0` for `±0.0` and NaN —
+matching the declared `Integer | Null` return type and C's `AR_SIGN`. -/
+theorem sign_float_is_int (f : FC) :
+    mSign (.float f) = .ok (.int (if fcGt0 f then 1 else if fcLt0 f then -1 else 0)) := by
+  cases f <;> rfl
+
+theorem sign_float_nan : mSign (.float .nan) = .ok (.int 0) := rfl
 
 theorem sign_zero_is_int (f : FC) (h : fcEq0 f = true) : mSign (.float f) = .ok (.int 0) := by
-  simp [mSign, h]
+  cases f <;> simp_all [fcEq0] <;> rfl
+
+/-- `sign` of a Float agrees with `sign` of the Integer of the same sign class. -/
+theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.int n) := by
+  unfold fcOfInt
+  by_cases h0 : n = 0
+  · simp [h0]; rfl
+  · by_cases hp : n > 0
+    · simp [h0, hp, mSign, fcGt0, fcLt0, b2i, signumI]
+    · have : n < 0 := by omega
+      simp [h0, hp, this, mSign, fcGt0, fcLt0, b2i, signumI]
+
+/-- **The declared return type now holds** (`ret: Integer | Null`, math.rs:209): every
+validated `sign` call returns a value that `Integer | Null` accepts. Before #2907 a
+non-zero Float argument broke this (`pre2907_sign_float_is_float`). -/
+theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
+    ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
+  rcases numeric_body_cases v h with ⟨i, rfl⟩ | ⟨f, rfl⟩ | rfl
+  · exact ⟨_, rfl, .union _ _ .int (by simp) (.tag _ _ rfl)⟩
+  · exact ⟨_, rfl, .union _ _ .int (by simp) (.tag _ _ rfl)⟩
+  · exact ⟨_, rfl, .union _ _ .null (by simp) (.tag _ _ rfl)⟩
+
+/-- Historical (pre-#2907): `sign` of a non-zero Float was a *Float* (`-1.0`/`1.0`; NaN
+for NaN), while the declared return type is `Integer | Null` and C returns an Integer.
+Fixed by #2907 (`f04c3557a`); see `sign_float_is_int`. -/
+theorem pre2907_sign_float_is_float (f : FC) (h : fcEq0 f = false) :
+    mSignPre2907 (.float f) = .ok (.float (fcSignum f)) := by
+  simp [mSignPre2907, h]
 
 theorem sign_int (n : Int) : mSign (.int n) = .ok (.int (signumI n)) := rfl
 
@@ -216,7 +264,7 @@ theorem log_int_nonpos (n : Int) (hn : n ≤ 0) (hz : m.ln .pzero = .ninf) (hneg
   · have : ¬ n > 0 := by omega
     simp [h, this, hneg]
 
-/-! ## `coalesce` (math.rs:317) -/
+/-! ## `coalesce` (math.rs:314) -/
 
 /-- `OrderedEnum::order` (value.rs:1178). -/
 def order : V FC → Nat
@@ -307,7 +355,7 @@ theorem uuid_shape (bs : List Nat) (b6 b8 : Fin 256)
   refine ⟨by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout],
     by simp [uuidLayout], by simp [uuidLayout, hv], ⟨_, hw.1, hw.2, by simp [uuidLayout]⟩⟩
 
-/-! ## `pow` / `^` (math.rs:332; also seen: issue #2902) -/
+/-! ## `pow` / `^` (math.rs:329; also seen: issue #2902) -/
 
 def applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
   | .int a, .int b => .float (powf (fcOfInt a) (fcOfInt b))

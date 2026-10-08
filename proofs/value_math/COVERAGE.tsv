@@ -76,11 +76,11 @@ graph/src/runtime/functions/math.rs	random_uuid	143	PROVEN	uuid_shape, uuid_vers
 graph/src/runtime/functions/math.rs	pow	176	PROVEN	pow_nonnumeric_null
 graph/src/runtime/functions/math.rs	rand	186	PROVEN	AggScalar.randFn (Rng structure, rand-crate contract): randFn_range
 graph/src/runtime/functions/math.rs	round	196	PROVEN	int_rounding_identity (Float: libm round, half away from zero, same as C live)
-graph/src/runtime/functions/math.rs	sign	210	PROVEN	sign_float_is_float, sign_zero_is_int, sign_int
-graph/src/runtime/functions/math.rs	sqrt	228	PROVEN	sqrt_float_eq_ieee, sqrt_int_eq_sqrt_float, sqrt_nan_iff, sqrt_nzero
-graph/src/runtime/functions/math.rs	range	254	PROVEN	proofs/functions_str_list range
-graph/src/runtime/functions/math.rs	coalesce	317	PROVEN	coalesce_spec, eq_null_iff; coalesce_zero_args_rejected (#2956 fixed 648b41c5c: zero args rejected at validate)
-graph/src/runtime/functions/math.rs	apply_pow	332	PROVEN	pow_nonnumeric_null
+graph/src/runtime/functions/math.rs	sign	210	PROVEN	sign_float_is_int, sign_float_nan, sign_zero_is_int, sign_float_agrees_int, sign_ret, sign_int (#2906 fixed by #2907 f04c3557a; pre2907_sign_float_is_float historical)
+graph/src/runtime/functions/math.rs	sqrt	225	PROVEN	sqrt_float_eq_ieee, sqrt_int_eq_sqrt_float, sqrt_nan_iff, sqrt_nzero
+graph/src/runtime/functions/math.rs	range	251	PROVEN	proofs/functions_str_list range
+graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce_spec, eq_null_iff; coalesce_zero_args_rejected (#2956 fixed 648b41c5c: zero args rejected at validate)
+graph/src/runtime/functions/math.rs	apply_pow	329	PROVEN	pow_nonnumeric_null
 graph/src/runtime/functions/conversion.rs	register	40	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
 graph/src/runtime/functions/conversion.rs	value_to_float	103	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)

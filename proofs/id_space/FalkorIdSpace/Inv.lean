@@ -4,7 +4,8 @@ import FalkorIdSpace.Verify
 `Inv` = the count half (`checked` passes: `entry + |taken ≥ entry| = live +
 |recycled|`, no overflow), plus the two structural facts the Rust relies on
 without checking: every free id is below the entry boundary or was taken by the
-batch, and the batch never took `u64::MAX`.
+batch, and the batch never took `u64::MAX`; plus (#3022) every id the batch
+*released* is below the entry boundary or was taken by it (`relOk`).
 
 From it: `live` is exactly the number of live ids (`live_eq`), so `release`
 never underflows `live -= freed.len()` (`release_no_underflow`); every
@@ -17,6 +18,9 @@ structure Inv (N : Nat) (sp : IdSpace) : Prop where
   checked : sp.checked N = .ok ()
   binOk   : ∀ i, i < N → sp.recycled i = true → i < sp.eb ∨ sp.taken i = true
   noMax   : sp.taken (umax N) = false
+  /-- #3022: everything the open batch released was live in it — below the
+  entry boundary (live when the batch began) or taken by the batch. -/
+  relOk   : ∀ i, i < N → sp.released i = true → i < sp.eb ∨ sp.taken i = true
 
 /-- The ids that are live: below the boundary or taken by the batch, and not free. -/
 def liveSet (sp : IdSpace) : IdSet := fun i => !sp.recycled i && (decide (i < sp.eb) || sp.taken i)
@@ -82,7 +86,8 @@ theorem inv_restored (N live : Nat) (rec : IdSet) (hN : 1 ≤ N)
     Inv N (IdSpace.restored N live rec) := by
   have hab : above N sEmpty (live + sLen N rec) = 0 := by
     rw [above_sFrom N _ (by omega)]; exact cnt_eq_zero.mpr (fun _ _ => rfl)
-  refine ⟨(checked_ok_iff N _).mpr ?_, fun i hi hr => .inl (hrec i hi hr), rfl⟩
+  refine ⟨(checked_ok_iff N _).mpr ?_, fun i hi hr => .inl (hrec i hi hr), rfl,
+    fun _ _ hr => absurd hr (by simp [IdSpace.restored, sEmpty])⟩
   simp only [IdSpace.restored, IdSpace.bound, hab]; omega
 
 theorem inv_new (N : Nat) (hN : 1 ≤ N) : Inv N IdSpace.new := by
@@ -143,7 +148,8 @@ theorem create_succeeds (N L : Nat) (sp : IdSpace) (nodes : IdSet) (hN : 1 ≤ N
     unfold sLen sDiff at *
     omega
   rw [hchk] at hcr
-  refine ⟨hcr, hchk, fun i hi hr => ?_, hnoMax⟩
+  refine ⟨hcr, hchk, fun i hi hr => ?_, hnoMax, fun i hi hr =>
+    (h.relOk i hi hr).elim .inl (fun a => .inr (by simp [IdSpace.created, sUnion, a]))⟩
   simp [IdSpace.created, sDiff] at hr
   rcases h.binOk i hi hr.1 with a | a
   · exact .inl a
@@ -200,7 +206,8 @@ theorem cancel_succeeds (N : Nat) (sp : IdSpace) (id : Nat) (hN : 1 ≤ N) (h : 
       rw [e]
       have : sp.recycled id = true := hc.mpr (by omega)
       simp [this]; omega
-  refine ⟨hchk, hchk, fun i hi hr => ?_, hnoMax⟩
+  refine ⟨hchk, hchk, fun i hi hr => ?_, hnoMax, fun i hi hr =>
+    (h.relOk i hi hr).elim .inl (fun a => .inr (by simp [sIns, a]))⟩
   simp only [sIns] at hr ⊢
   by_cases e : i = id
   · subst e; exact .inr (by simp)

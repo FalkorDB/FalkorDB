@@ -311,7 +311,7 @@ theorem accepts_numArg (v : V F) :
 
 /-- A single-argument numeric function reaches its body only with Int, Float or Null:
 the `_ => unreachable!()` arms of `abs`, `ceil`, `exp`, `floor`, `log`, `log10`,
-`round`, `sign`, `sqrt` (math.rs:55-246) are dead after `validate_args_type`. -/
+`round`, `sign`, `sqrt` (math.rs:55-242) are dead after `validate_args_type`. -/
 theorem numeric_body_cases (v : V F) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     (∃ i, v = .int i) ∨ (∃ f, v = .float f) ∨ v = .null := by
   have := ((validateArgsType_go_none [numArg] [v] 0).1 h).1

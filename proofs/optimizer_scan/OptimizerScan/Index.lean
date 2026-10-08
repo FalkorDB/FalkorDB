@@ -13,8 +13,8 @@ their `sel` agree on every node of the graph.
 | `Q`                        | `IndexQuery<Value>` after evaluation, `index/indexer.rs` |
 | `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1356-1363` |
 | `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1370-1372` |
-| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1472-1683` (`null_mut` ↦ `none`) |
-| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1686`, `graph/graph.rs:3775`) |
+| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1476-1687` (`null_mut` ↦ `none`) |
+| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1690`, `graph/graph.rs:3775`) |
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:250-287` |
 | `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-244` (InList → `Or` of the scalar items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
@@ -162,7 +162,7 @@ def within (x : Int) (lo hi : Option Int) (il ih : Bool) : Bool :=
   (match hi with | none => true | some c => leB x c ih)
 
 mutual
-/-- `Index::build_query_node` (`index/mod.rs:1472-1683`); `none` is a null query node. -/
+/-- `Index::build_query_node` (`index/mod.rs:1476-1687`); `none` is a null query node. -/
 def build (F : List Nat) : Q → Option (Node → Bool)
   | .eq k v =>
     if k ∈ F then
@@ -177,8 +177,8 @@ def build (F : List Nat) : Q → Option (Node → Bool)
         match strB lo, strB hi with
         | some lo', some hi' =>
           -- `build_string_range_node`: equal bounds with an exclusive side select nothing
-          -- (#3072, `index/mod.rs:1429-1434`); both inclusive become an exact token match
-          -- (`index/mod.rs:1439-1451`).
+          -- (#3072, `index/mod.rs:1433-1438`); both inclusive become an exact token match
+          -- (`index/mod.rs:1443-1455`).
           some (fun n =>
             if lo'.isSome ∧ lo' = hi' then (il && ih) && enc (n.prop k) == some (.tag (lo'.getD 0))
             else match enc (n.prop k) with
@@ -204,14 +204,14 @@ def build (F : List Nat) : Q → Option (Node → Bool)
   | .and qs => (buildAll F qs).map (fun fs n => fs.all (· n))
   | .or qs => some (fun n => (buildSome F qs).any (· n))
 
-/-- AND: one null child nulls the whole intersection (`index/mod.rs:1564-1577`). -/
+/-- AND: one null child nulls the whole intersection (`index/mod.rs:1568-1581`). -/
 def buildAll (F : List Nat) : List Q → Option (List (Node → Bool))
   | [] => some []
   | q :: qs => match build F q, buildAll F qs with
     | some f, some fs => some (f :: fs)
     | _, _ => none
 
-/-- OR: null children are silently skipped (`index/mod.rs:1578-1590`). -/
+/-- OR: null children are silently skipped (`index/mod.rs:1582-1594`). -/
 def buildSome (F : List Nat) : List Q → List (Node → Bool)
   | [] => []
   | q :: qs => match build F q with

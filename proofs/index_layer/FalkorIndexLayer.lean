@@ -29,19 +29,19 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `tagEnc`, `escaped`, `hexDigit` | `mod.rs:565` `tag_encode_lower` |
 | `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:581` `hex_encode_into`, `Document::new` `mod.rs:657` |
 | `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:591` `hex_nibble`, `mod.rs:601` `decode_id` |
-| `edgeKey` | `Document::new_edge` `mod.rs:684`, `decode_triple` `mod.rs:612`, `delete_edge_document` `mod.rs:1941` |
+| `edgeKey` | `Document::new_edge` `mod.rs:684`, `decode_triple` `mod.rs:612`, `delete_edge_document` `mod.rs:1945` |
 | `intLosesPrecision` | `mod.rs:1370` `int_loses_f64_precision` |
 | `setRange`, `docOf` | `Document::set` `mod.rs:716` (Range field arm), field names `mod.rs:121` |
 | `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:730-744` (#3087 dimension guard) |
 | `valueToNumeric` | `mod.rs:1356` |
 | `buildNumRange` | `mod.rs:1375` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1414` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1472` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1686` (null node ⇒ empty iterator) |
+| `buildStrRange` | `mod.rs:1418` `build_string_range_node` |
+| `buildEq`, `buildQ` | `mod.rs:1476` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs:1690` (null node ⇒ empty iterator) |
 | `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1902` (ADD_REPLACE), `delete_document` `mod.rs:1924`, `Indexer::commit` `indexer.rs:714` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2106/2124/1048/2146`, `indexer.rs:608-701` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs:1906` (ADD_REPLACE), `delete_document` `mod.rs:1928`, `Indexer::commit` `indexer.rs:714` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:608-701` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -68,7 +68,7 @@ Query exactness (index hits = full scan plus the Cypher filter):
 - `ENum.le_le_iff_eq`, `inNum_point`, `rsMatch_union`, `rsMatch_inter`: RS node algebra.
 - `equal_exact`: `n.k = literal` is exact for stored Int, Float or non-empty String.
 - `inList_exact`: `n.k IN [scalar literals]` is exact under the same conditions.
-- `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for finite or NaN stored numbers.
+- `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for every stored number, ±inf included since #3081 (`numRange_exact_fin`: the earlier finite/NaN form).
 - `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_` and stored strings are non-empty (since #3072 equal bounds need no premise). `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
 
 Maintenance and tickets (`Maintenance.lean`):
@@ -90,7 +90,7 @@ scan.
    - Rust returns **every** node of the label: `['date']` → `['date','int']`. C: `['date']`.
    - Cause: the constant is folded to `Constant(Date)`, which `is_non_indexable_subexpr` treats as indexable, so the filter is dropped. The runtime then refuses the index and falls back to a label scan.
    - Fix: keep the filter for any non-scalar `Constant`, or treat an index-refused fallback as "filter required".
-2. `bug_point_equality` (`mod.rs:1681`; `node_by_index_scan.rs:257` says Point is indexable).
+2. `bug_point_equality` (`mod.rs:1685`; `node_by_index_scan.rs:257` says Point is indexable).
    - Query: `n.v = point({latitude:1.0, longitude:2.0})`.
    - Rust: `['p']` → `[]`. C: `['p']`.
    - Fix: add a Point `Equal` arm (a geo node with radius 0 plus the kept filter), or mark Point not indexable for `Equal`.
@@ -98,7 +98,7 @@ scan.
    - Query: `n.v IN [date('2020-01-01'), 2]`.
    - Rust: `['date','int']` → `['int']`. C: `['date','int']`.
    - Fix: if any item is dropped, fall back to a label scan (the filter is already kept).
-4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-531`, `mod.rs:1568,1585`).
+4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-531`, `mod.rs:1572,1589`).
    - Setup: `(n:A:B)`, with A indexing x and B indexing y.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
@@ -107,11 +107,11 @@ scan.
    - Query: `n.v > 0` matched a stored date: `['int']` → `['date','int']`. C: `['int']`.
    - Now temporals are not indexed (`mod.rs:803`): `Temporal.temporal_not_indexed`,
      `temporal_numRange_exact`, `temporal_equal_exact`, `fixed3076_temporal_in_numeric_range`.
-6. FIXED by #3072 (1c9994e37). `pre3072_exclusive_equal_bounds` (old `mod.rs:1430`).
+6. FIXED by #3072 (1c9994e37). `pre3072_exclusive_equal_bounds` (old `mod.rs:1434`).
    - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
-   - Now an exclusive side with equal bounds is the empty node (`mod.rs:1429-1434`):
+   - Now an exclusive side with equal bounds is the empty node (`mod.rs:1433-1438`):
      `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
-7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1453`).
+7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1457`).
    - The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong in both directions.
    - `n.v < 'JohnA'` with `'John Smith'` stored: `['js']` → `[]`. `n.v > 'a!'` with `'a b'` stored: `[]` → `['ab']`.
    - C is also wrong, differently (it does not encode). Batch runs show C's string range index is much worse.
@@ -119,14 +119,13 @@ scan.
 8. `bug_bool_eq_int` (`mod.rs:760,1360`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
-9. `bug_open_bound_excludes_inf` (`mod.rs:1388,1395`).
-   - An absent bound becomes ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` miss stored ±inf: `['-inf','inf']` → `[]`.
-   - C has the same bug.
-   - Fix: set the include flag to true for an absent bound.
+9. FIXED by #3081 (ff3d24ba7). `pre3081_open_bound_excludes_inf` (old `mod.rs:1388,1395`).
+   - An absent bound became ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` missed stored ±inf: `['-inf','inf']` → `[]`. C has the same bug.
+   - Now an absent bound is inclusive (`mod.rs:1402-1403`): `fixed3081_open_bound_includes_inf`, and `numRange_exact` covers stored ±inf.
 10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
-11. Edge index scan with an undirected pattern (`runtime/ops/edge_by_index_scan.rs`; outside the model, found by the differential run).
-    - Query: `MATCH ()-[r:R]-() WHERE r.v >= 1` returns each edge once instead of twice: `['e','e']` → `['e']`.
-    - C has the same bug.
+11. FIXED by #3081 (ff3d24ba7). Edge index scan with an undirected pattern (`runtime/ops/edge_by_index_scan.rs`; outside the model, found by the differential run).
+    - Query: `MATCH ()-[r:R]-() WHERE r.v >= 1` returned each edge once instead of twice: `['e','e']` → `['e']`. C has the same bug.
+    - Now proved in `ops_traverse` (`IndexScan.orient_mem`, `orient_length`; historical `pre3081_undirected_once`).
 12. Geo radius near the poles (RediSearch geohash is limited to |lat| ≤ 85.05).
     - Points at latitude 89.99: the full scan finds 21, the index finds 0.
     - C has the same bug. This is outside the axiomatised boundary; the fix would be to keep the distance filter and fall back beyond |lat| > 85.05.
@@ -179,7 +178,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1397,1422,1480,1492,1550,1611`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs:1397,1426,1484,1496,1554,1615`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,
@@ -205,7 +204,7 @@ W5-idx-2 no-options shape; fixed by #3087.
 
 ## Re-target to 8743953a8 (#3072, #3076, #2278)
 - `index/mod.rs`: #3076 dropped the temporal arm of `Document::set` (one line shorter from `mod.rs:797`)
-  and #3072 added the equal-bounds guard (10 lines at `mod.rs:1426`); every citation is updated.
+  and #3072 added the equal-bounds guard (10 lines at `mod.rs:1430`); every citation is updated.
   W2-index-5 (bug 5) and W2-index-6 (bug 6) are fixed: their counterexamples are now historical
   `pre3076_*` / `pre3072_*` theorems next to the correctness theorems above.
 - `cow_btree` (#2278): `AosLeaf` is generic over `DOC_BYTES`. `LeafAosD.lean` models `doc_le_bytes`
@@ -219,6 +218,13 @@ W5-idx-2 no-options shape; fixed by #3087.
   `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
   `DOC_BYTES ∈ {1, 2, 4, 8}`.
 - Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).
+
+## Re-target to e8f8a3017 (#3081)
+- `index/mod.rs`: #3081 (ff3d24ba7) makes an absent numeric bound inclusive (4 lines at
+  `mod.rs:1400`; later citations +4). Bug 9 is fixed (`pre3081_open_bound_excludes_inf` →
+  `fixed3081_open_bound_includes_inf`; `numRange_exact` drops its finite-only premise). Bug 11
+  (undirected edge-index scan once) is fixed in `edge_by_index_scan.rs`, proved in `ops_traverse`.
+- Still present: bugs 1-4, 7, 8, 10, 12, 13.
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

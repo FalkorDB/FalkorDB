@@ -3,7 +3,7 @@ import PlannerBuild.Stitch
 # Clause plans vs openCypher clause semantics
 
 For each clause kind, `planX` is the plan `Planner::plan` builds for it
-(mod.rs:2934-3471; `plan_project` mod.rs:2415-2586), and `specX` is the
+(mod.rs:2934-3481; `plan_project` mod.rs:2415-2586), and `specX` is the
 openCypher meaning of the clause as a map from the incoming driving table to
 the outgoing one (with the graph state threaded, clause at a time). The
 theorems say: filling the clause plan's insertion point with *any* input plan
@@ -411,6 +411,81 @@ theorem merge_path_last_skips_merge (p k : Nat) (m q y : Plan) (r : Rec V) (g : 
   show forRows (S.step (.pathBuilder k)) (ev S y r g).1 (ev S y r g).2 = _
   exact forRows_path S k _
 
+/-! ### CREATE with a named path (#2829, `eab2722c4`) -/
+
+/-- mod.rs:3134-3153: `Create(filtered)`, under a `PathBuilder` of the paths the
+clause itself declares (`filtered.paths()`) when there are any. Before #2829 it was
+`Create` alone and `CREATE p=(…) RETURN p` returned `null` (`pre2829_planCreate`). -/
+def planCreate (p : Nat) (path : Option Nat) : Plan :=
+  match path with
+  | none => .node (.create p) []
+  | some q => .node (.pathBuilder q) [.node (.create p) []]
+
+/-- **Historical** (before #2829): no `PathBuilder`, so a created path was never bound. -/
+def pre2829_planCreate (p : Nat) (_path : Option Nat) : Plan := .node (.create p) []
+
+/-- openCypher CREATE with an optional named path: create per record, then bind the path. -/
+def specCreatePath (p : Nat) (path : Option Nat) (T : Res V G) : Res V G :=
+  match path with
+  | none => specCreate S p T
+  | some q => ((specCreate S p T).1.map (S.path q), (specCreate S p T).2)
+
+/-- **CREATE (with or without a named path) is correct at the in-loop insertion
+point** — every position but the query's last clause: the walk steps over
+`PathBuilder` (mod.rs:2830) and the input lands below `Create`. Since #2829 the
+path is bound (`CREATE p=(…) RETURN p` returns the path). -/
+theorem create_loop_correct (p : Nat) (path : Option Nat) (ok : Plan → Prop)
+    (q y : Plan) (r : Rec V) (g : G) (hq : ok q) :
+    ev S (refill (planCreate p path) (slotLoop (planCreate p path)) q y) r g =
+      specCreatePath S p path (ev S y r g) := by
+  cases path with
+  | none => exact create_correct S walkLoop goodWalk_loop p ok q y r g hq
+  | some k =>
+    have hs := slotWith_step walkLoop (.pathBuilder k) (steps_loop _ rfl) (.node (.create p) [])
+    rw [show slotLoop (planCreate p (some k)) =
+        slotWith walkLoop (.node (.pathBuilder k) [.node (.create p) []]) from rfl, hs,
+      show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
+      refill_step _ _ _ q y (slotWith_valid _ walkLoop_valid _)]
+    show forRows (S.step (.pathBuilder k))
+      (ev S (refill (.node (.create p) []) (slotWith walkLoop (.node (.create p) [])) q y) r g).1
+      (ev S (refill (.node (.create p) []) (slotWith walkLoop (.node (.create p) [])) q y) r g).2 = _
+    rw [forRows_path, create_correct S walkLoop goodWalk_loop p ok q y r g hq]
+    rfl
+
+/-- CREATE without a path is also correct as the last clause. -/
+theorem create_first_correct (p : Nat) (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G)
+    (hq : ok q) :
+    ev S (refill (planCreate p none) (slotFirst (planCreate p none)) q y) r g =
+      specCreatePath S p none (ev S y r g) :=
+  create_correct S walkFirst goodWalk_first p ok q y r g hq
+
+/-- **Bug (new with #2829): CREATE with a named path as the last clause** — the
+MERGE bug 1 shape. The first walk (mod.rs:2743-2749) does not step over
+`PathBuilder`, so the previous clause becomes `PathBuilder`'s child 0 beside
+`Create`: -/
+theorem create_path_last_misplaced (p k : Nat) (q y : Plan) :
+    refill (planCreate p (some k)) (slotFirst (planCreate p (some k))) q y =
+      .node (.pathBuilder k) [y, .node (.create p) []] := by
+  have hslot : slotFirst (planCreate p (some k)) = [] := by
+    show slotWith walkFirst (.node (.pathBuilder k) [.node (.create p) []]) = []
+    unfold slotWith
+    simp only [walkFirst, firstPass, isApply, Bool.false_or, Bool.and_false, Bool.false_eq_true,
+      ite_false, Plan.get, List.nil_append, projDescend]
+    exact descendClause_nil _ rfl
+  rw [hslot, show planCreate p (some k) = .node (.pathBuilder k) [.node (.create p) []] from rfl,
+    refill, insertStep_nonCP _ [] q _ _ rfl (by simp)]
+  rfl
+
+/-- …so the `Create` never runs (`PathBuilder` runs child 0 only, runtime.rs
+`children_to_recurse`): the path is built from the previous clause's rows, which
+do not bind the pattern. -/
+theorem create_path_last_skips_create (p k : Nat) (q y : Plan) (r : Rec V) (g : G) :
+    ev S (refill (planCreate p (some k)) (slotFirst (planCreate p (some k))) q y) r g =
+      ((ev S y r g).1.map (S.path k), (ev S y r g).2) := by
+  rw [create_path_last_misplaced]
+  show forRows (S.step (.pathBuilder k)) (ev S y r g).1 (ev S y r g).2 = _
+  exact forRows_path S k _
+
 /-- A sub-plan implementing a sub-query on one argument row. -/
 def Body (b : Plan) (sb : Rec V → G → Res V G) : Prop := ∀ row g, ev S b row g = sb row g
 
@@ -426,7 +501,7 @@ theorem forItems_congr {A : Type} (f f' : A → G → G) (h : ∀ a g, f a g = f
   | nil => rfl
   | cons a as ih => simp [forItems, h, ih]
 
-/-- FOREACH (mod.rs:3406-3469, no comprehension in the list): `ForEach(body)`,
+/-- FOREACH (mod.rs:3416-3479, no comprehension in the list): `ForEach(body)`,
 the input becomes child 0. -/
 theorem foreach_correct (w : Plan → Path) (hw : GoodWalk w) (e : Nat) (x : Var) (b : Plan)
     (sb : Rec V → G → Res V G) (hb : Body S b sb) (q y : Plan) (r : Rec V) (g : G) :
@@ -443,7 +518,7 @@ theorem foreach_correct (w : Plan → Path) (hw : GoodWalk w) (e : Nat) (x : Var
 extend it). -/
 def specCall (sb : Rec V → G → Res V G) (T : Res V G) : Res V G := forRows sb T.1 T.2
 
-/-- Returning CALL {} (mod.rs:3320-3386): `Apply(body)` — with the body's root
+/-- Returning CALL {} (mod.rs:3330-3396): `Apply(body)` — with the body's root
 Project renamed in place, or a remapping Project on top: either way a plan
 `b` implementing the body. -/
 theorem call_correct (w : Plan → Path) (hw : GoodWalk w) (b : Plan) (sb : Rec V → G → Res V G)
@@ -460,7 +535,7 @@ def specUnitCall (sb : Rec V → G → Res V G) (T : Res V G) : Res V G :=
   forRows (fun row g => ([row], (sb row g).2)) T.1 T.2
 
 /-- The keyless, aggregation-free `Aggregate` the planner puts over a unit
-body (mod.rs:3392-3403) yields exactly one row, which Apply merges over the
+body (mod.rs:3402-3413) yields exactly one row, which Apply merges over the
 input row: the input row. -/
 def KeylessOne (p0 : Nat) : Prop := ∀ r rows, S.agg p0 r rows = [r]
 
@@ -520,7 +595,7 @@ theorem match_bound_correct (w : Plan → Path) (hw : GoodWalk w) (m : Plan)
   show forRows _ _ _ = _
   exact forRows_ro _ mt hm _ _
 
-/-- UNION / UNION ALL (mod.rs:3302-3319): every branch on the argument row,
+/-- UNION / UNION ALL (mod.rs:3312-3329): every branch on the argument row,
 concatenated; `Distinct` on top for UNION. -/
 def planUnion (bs : List Plan) (all : Bool) : Plan :=
   if all then .node .union bs else .node .distinct [.node .union bs]

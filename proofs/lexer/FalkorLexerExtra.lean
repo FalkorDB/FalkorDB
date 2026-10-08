@@ -12,7 +12,7 @@ parser files are unchanged since 55204c94b).
   (cypher.rs:2710) is well-ordered.
 * **`currentStr_ok`** — `current_str` never slices off a boundary.
 * **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes
-  (lexer.rs:569, 586, 607, 657) sits after an all-ASCII prefix, hence on a
+  (lexer.rs:549, 566, 587, 637) sits after an all-ASCII prefix, hence on a
   char boundary (`ascii_boundary`): `lex_numeric` never panics.
 * **`errCtx_ok`** — `err_ctx`'s window ends are boundaries, in order, so the
   slice never panics; a short query is quoted whole.
@@ -27,7 +27,7 @@ namespace FalkorLexer
 
 set_option linter.deprecated false
 
-/-! ## `pos`, `next`, `set_pos`, `current`, `current_str` (lexer.rs:287-377, 799-806) -/
+/-! ## `pos`, `next`, `set_pos`, `current`, `current_str` (lexer.rs:287-357, 779-786) -/
 
 theorem bytes_take_drop (cs : List Char) (k : Nat) :
     bytes cs = bytes (cs.take k) + bytes (cs.drop k) := by
@@ -48,7 +48,7 @@ structure LexSt where
 /-- `pos(true)` (lexer.rs:303-312). -/
 def LexSt.posT (l : LexSt) : Nat := bytes (l.cs.take l.k)
 /-- `pos(false)`: past the whitespace/comments. -/
-def LexSt.posF (l : LexSt) : Nat := l.posT + rs .top (l.cs.drop l.k)
+def LexSt.posF (l : LexSt) : Nat := l.posT + rs (l.cs.drop l.k)
 
 theorem posF_boundary (l : LexSt) : Boundary l.cs l.posF := by
   have h := bnd_append (l.cs.take l.k) (l.cs.drop l.k) _ (rs_top_boundary (l.cs.drop l.k))
@@ -85,9 +85,9 @@ theorem next_boundary (num : List Char → Nat) (esc : List Char → Bool) (l : 
 
 /-- The token cached at a position: `get_token(str, p + read_spaces(str, p))`,
 the expression both `next()` (lexer.rs:298-299) and `set_pos(p)`
-(lexer.rs:803-805) assign to `cached_current`. -/
+(lexer.rs:783-785) assign to `cached_current`. -/
 def cacheOf (num : List Char → Nat) (esc : List Char → Bool) (l : LexSt) : Option (Except Unit Nat) :=
-  match splitBytes (l.cs.drop l.k) (rs .top (l.cs.drop l.k)) with
+  match splitBytes (l.cs.drop l.k) (rs (l.cs.drop l.k)) with
   | some (_, rest) => getTok num esc rest
   | none => none
 
@@ -102,13 +102,13 @@ theorem setPos_next (num : List Char → Nat) (esc : List Char → Bool) (l : Le
   obtain ⟨e, he, -⟩ := getTok_ok num esc ((l.cs.drop l.k).drop k1)
   exact ⟨e, he⟩
 
-/-- `current()` (lexer.rs:364-369): the cached token, or the cached error. -/
+/-- `current()` (lexer.rs:344-349): the cached token, or the cached error. -/
 def current (c : Except String (Nat × Nat)) : Except String Nat := c.map (·.1)
 theorem current_spec (c : Except String (Nat × Nat)) :
     (∀ t n, c = .ok (t, n) → current c = .ok t) ∧ (∀ e, c = .error e → current c = .error e) := by
   constructor <;> intros <;> subst_vars <;> rfl
 
-/-- `current_str()` (lexer.rs:372-376): `&str[pos(false) .. pos(false) + len]`. -/
+/-- `current_str()` (lexer.rs:352-356): `&str[pos(false) .. pos(false) + len]`. -/
 def currentStr (l : LexSt) (len : Nat) : Option (List Char) := slice l.cs l.posF (l.posF + len)
 
 /-- **`current_str` never panics** when `len` is the length `get_token`
@@ -122,7 +122,7 @@ theorem currentStr_ok (l : LexSt) (k1 : Nat) (hk1 : bytes (l.cs.take k1) = l.pos
   · refine slice_ok' l.cs hk1 (kj := k1 + k2) ?_ (by omega)
     rw [List.take_add, bytes_append, hk1, hk2]
 
-/-! ## `lex_numeric` (lexer.rs:552-716) -/
+/-! ## `lex_numeric` (lexer.rs:532-696) -/
 
 /-- `char::is_digit(radix)` for the radixes used. -/
 def isDigitR (radix : Nat) (c : Char) : Bool :=
@@ -155,7 +155,7 @@ structure NS where
   isE : Bool
   sl : List Nat
 
-/-- The `while let Some(c) = chars.next()` loop of the integer part (lexer.rs:620-677);
+/-- The `while let Some(c) = chars.next()` loop of the integer part (lexer.rs:600-657);
 `alnum` is `char::is_alphanumeric`. `none` = an `Err` return. -/
 def intLoop (alnum : Char → Bool) (cs : List Char) : Nat → NS → Option NS
   | 0, st => some st
@@ -181,7 +181,7 @@ def intLoop (alnum : Char → Bool) (cs : List Char) : Nat → NS → Option NS
       else if alnum c then none
       else some st
 
-/-- The fraction / exponent loop (lexer.rs:679-709); no byte slices. -/
+/-- The fraction / exponent loop (lexer.rs:659-689); no byte slices. -/
 def floatLoop (cs : List Char) : Nat → NS → Option NS
   | 0, st => some st
   | f + 1, st =>
@@ -194,14 +194,14 @@ def floatLoop (cs : List Char) : Nat → NS → Option NS
         if st.isE then none else some { st with len := st.len + 1 }
       else some st
 
-/-- The radix prefix check `str[pos + len..].chars().next()` (lexer.rs:569, 586, 607). -/
+/-- The radix prefix check `str[pos + len..].chars().next()` (lexer.rs:549, 566, 587). -/
 def prefixCheck (cs : List Char) (st : NS) (ok : Char → Bool) : Option NS :=
   let st := { st with sl := st.sl ++ [st.len] }
   match cs[st.len]? with
   | some c => if ok c then some st else none
   | none => none
 
-/-- The radix-prefix part of `lex_numeric` (lexer.rs:563-627). `none` =
+/-- The radix-prefix part of `lex_numeric` (lexer.rs:543-607). `none` =
 `return Ok((Token::Integer(0), len))`; `some none` = an `Err`. -/
 def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) :=
   let st0 : NS := ⟨it, len, 10, false, false, []⟩
@@ -221,7 +221,7 @@ def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) 
   else if cur = '.' then some (some { st0 with isFloat := true })
   else some (some st0)
 
-/-- `lex_numeric` up to the final `take(len)` (lexer.rs:552-711). `cs` is
+/-- `lex_numeric` up to the final `take(len)` (lexer.rs:532-691). `cs` is
 `str[pos..]`, starting with the current char; entered on a digit with
 `(it, len) = (1, 1)` or on `.` + digit with `(2, 2)`. -/
 def lexNum (alnum : Char → Bool) (cs : List Char) (cur : Char) (it len : Nat) : Option NS :=
@@ -423,7 +423,7 @@ theorem lexNum_slices_ascii (alnum : Char → Bool) (cs : List Char) (cur : Char
   · rename_i st1 hst1
     exact finish st1 (numPrefix_inv cs cur it hpre st1 hst1) h
 
-/-! ## `err_ctx` / `format_error` (lexer.rs:763-797) -/
+/-! ## `err_ctx` / `format_error` (lexer.rs:743-777) -/
 
 /-- `floor_char_boundary(i)`: the number of chars whose bytes fit in `i`. -/
 def floorK : List Char → Nat → Nat

@@ -75,4 +75,4 @@ graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	78	PROVEN	Ind
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	116	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	265	PROVEN	IndexScan.canUseE: canUseE_spec
 graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	268	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	310	PROVEN	IndexScan.edgeRow: edgeRow_sound, scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	310	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7; historical pre3081_undirected_once), scans_stream

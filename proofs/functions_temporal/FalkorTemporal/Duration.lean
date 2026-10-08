@@ -5,12 +5,12 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:429` |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:470` (`y - 1970` is i32: `toI32`) |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:444` |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs:485` (`y - 1970` is i32: `toI32`) |
 | `addDur`                  | `add_duration_to_timestamp` — `value.rs:696` |
 | `subDur`                  | `sub_duration_from_timestamp` — `value.rs:730` |
 | `durAddDur`               | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1008` |
-| `wrapMul`                 | release-mode `n * 7` in `parse_duration_string` — `temporal.rs:376` |
+| `wrapMul`                 | release-mode `n * 7` in `parse_duration_string` — `temporal.rs:391` |
 
 Every Temporal value is one `i64` of seconds; a Duration is "the instant
 1970-01-01 + years/months + days/seconds", so its *components* are recovered by
@@ -30,7 +30,7 @@ theorem chk32_of (x : Int) (h : I32 x) : chk32 x = some x := by
   unfold chk32; unfold I32 at h
   rw [decide_eq_true h.1, decide_eq_true h.2]; rfl
 
-/-- `construct_duration_secs` (`temporal.rs:429-467`), `Err` ↦ `none`. -/
+/-- `construct_duration_secs` (`temporal.rs:444-482`), `Err` ↦ `none`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -54,7 +54,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
   simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind]
 
-/-- `decompose_duration` (`temporal.rs:470-480`) as built in release (i32 wrap). -/
+/-- `decompose_duration` (`temporal.rs:485-495`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
   let days := dur / 86400
   let tod := dur % 86400
@@ -227,7 +227,7 @@ theorem time_not_normalised :
     addDur 3600 ((constructDuration 0 0 0 1 0 0 0).getD 0) = 3600 + 86400 ∧
     addDur 3600 plus1M = 3600 + 31 * 86400 := by decide +kernel
 
-/-- Release-mode `n * 7` (`temporal.rs:376`): two's-complement wrap. -/
+/-- Release-mode `n * 7` (`temporal.rs:391`): two's-complement wrap. -/
 def wrapMul (a b : Int) : Int := (a * b + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
 /-- **Bug (confirmed live)**: `duration('P2635249153387078803W')` is `P5D`: the week

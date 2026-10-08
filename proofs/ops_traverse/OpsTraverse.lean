@@ -77,7 +77,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 * The emitter loops conserve rows and apply LIMIT exactly (`drive_flatten`,
   `capDrive_flatten`); the var-length frame machine yields every frame's items
   (`run_complete`); index scans are sound pre-filters under the RediSearch
-  contract (`scanRow_spec`); edge index scans honour bound endpoints (`edgeRow_sound`).
+  contract (`scanRow_spec`); edge index scans honour bound endpoints (`edgeRow_sound`) and, since #3081
+  (`ff3d24ba7`), read an undirected pattern both ways round, a self-loop once
+  (`orient_mem`, `orient_length`; historical `pre3081_undirected_once`).
 * PathBuilder's "other endpoint" rule reconstructs any walk's nodes when edge
   ids are unique (`buildNodes_walk`).
 * The bidir dedup keeps unique keys and never loses a key (`dedupRows_keys_nodup`,

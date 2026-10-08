@@ -15,9 +15,9 @@ support `ps` of pairs, each with its `PairSt`, plus the list of `me` blocks
 | `meBlock`       | `me_block` (:365) |
 | `meBlockMut`    | `me_block_mut` (:378) |
 | `widenMe`       | `widen_me_for_id` (:403) |
-| `countRows`     | the row-counting loop of `multi_pairs_in` (:1376-1384) |
-| `multiPairsIn`/`multiPairs` | :1357 / :1349 |
-| `hasMultiEdge`  | :1386 |
+| `countRows`     | the row-counting loop of `multi_pairs_in` (:1389-1397) |
+| `multiPairsIn`/`multiPairs` | :1370 / :1362 |
+| `hasMultiEdge`  | :1399 |
 | `block0`/`blocksAll` | `edge_versioned_block_0` (:1179) / `edge_versioned_all` (:1186) |
 | `fwdM`/`fwdDp`/`fwdDm`/`matrixT` | accessors :1025-1041, :1168 |
 -/
@@ -166,7 +166,7 @@ theorem widenMe_st (t : TT) (maxId : Nat) : (widenMe t maxId).st = t.st := by
 
 /-! ## `multi_pairs` -/
 
-/-- The loop of `multi_pairs_in` (:1376-1384) over `me.iter(0, MAX)`. -/
+/-- The loop of `multi_pairs_in` (:1389-1397) over `me.iter(0, MAX)`. -/
 def countRows : List (Nat × Nat) → Option Nat → Nat → Nat
   | [], _, n => n
   | (k, _) :: xs, last, n => if last = some k then countRows xs last n else countRows xs (some k) (n + 1)
@@ -198,7 +198,7 @@ theorem countRows_groups : ∀ (gs : List (Nat × List Nat)) (last : Option Nat)
       (by intro g hg h; injection h with h; exact hpw.1 g.1 (List.mem_map_of_mem hg) h)]
     simp; omega
 
-/-- `multi_pairs_in` (:1357): `0` on an empty block, the hypersparse vector
+/-- `multi_pairs_in` (:1370): `0` on an empty block, the hypersparse vector
 count (`GxB_Matrix_Iterator`-free `hyper_vector_count`, = number of non-empty
 rows) when both deltas are empty, the counting loop otherwise. Both paths
 are given the block's effective entries, grouped by row key. -/
@@ -236,7 +236,7 @@ theorem multiPairs_eq (blocks : List (List (Nat × List Nat) × Bool))
 /-- The ids a block holds: the `me` rows of its pairs. -/
 def blkIds (t : TT) (b : Blk) : List Nat := (t.ps.filter (blkOf · == b)).flatMap (fun p => (t.st p).me)
 
-/-- `has_multi_edge` (:1386). -/
+/-- `has_multi_edge` (:1399). -/
 def hasMultiEdge (t : TT) : Bool := t.me.any (fun e => (blkIds t e.blk).length != 0)
 
 theorem hasMultiEdge_iff {t : TT} (h : BlkInv t) :

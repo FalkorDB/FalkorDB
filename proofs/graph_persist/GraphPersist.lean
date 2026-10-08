@@ -17,9 +17,9 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 | `Layout.chunkType`, `covered` | `build_multi_key_payloads` entity loop (encoder/mod.rs:95-153) + `encode_with_range` offsets (attribute_store.rs:1409) |
 | `Layout.roaringRT` | `Encode/Decode<19> for RoaringTreemap` (serialization.rs:172-241) |
 | `Layout.decodeSpanFilter` | `AttributeStore::decode_with_count` filter (attribute_store.rs:1460) |
-| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4277), `check_node_constraint`/`check_edge_constraint` (pending.rs:1355,1469) |
+| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4395), `check_node_constraint`/`check_edge_constraint` (pending.rs:1355,1469) |
 | `Constraint.uniqueCollideC` | C `EnforceUniqueEntity` (observed behaviour) |
-| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` via `create_constraint` (graph.rs:4221,3859) |
+| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` via `create_constraint` (graph.rs:4339,3859) |
 | `Constraint.rustEnforceKeyBuilds` | nested scan in `check_node_constraint` (pending.rs:1393-1418) |
 
 ## Proven (headline)
@@ -49,7 +49,7 @@ vanish on reload — is identical in C (both write only operational ones).
 
 ## CONFIRMED bugs (Rust vs C on live servers)
 
-1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs:4285
+1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs:4403
    `format!("{v:?}")`). Under `UNIQUE NODE L (v)`: `CREATE (:L {v:1})` then
    `{v:1.0}` / `{v:true}`, and `{v:0.0}` then `{v:-0.0}` — Rust admits, C rejects
    ("unique constraint violation"). Conversely duplicate lists, points, dates,
@@ -58,7 +58,7 @@ vanish on reload — is identical in C (both write only operational ones).
    `unique_key_int_eq_float_like_c`, `unique_key_neg_zero_eq_zero_like_c`,
    `unique_key_bool_eq_int_like_c` FAIL (keys `Int(1)|` vs `Float(1.0)|`).
 2. **Constraint created over already-violating data comes up OPERATIONAL**
-   (consequence of 1, graph.rs:4221): graph with `(:L {v:1}),(:L {v:1.0})`,
+   (consequence of 1, graph.rs:4339): graph with `(:L {v:1}),(:L {v:1.0})`,
    `(:M {v:0.0}),(:M {v:-0.0})`, `(:K {v:1}),(:K {v:true})` + range indexes +
    `GRAPH.CONSTRAINT CREATE g UNIQUE NODE <X> PROPERTIES 1 v` →
    `db.constraints()` Rust: all OPERATIONAL; C: all FAILED.
@@ -85,7 +85,7 @@ vanish on reload — is identical in C (both write only operational ones).
 | --- | --- |
 | `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs:1984) as an `Out` reader |
 | `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
-| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4598), `load_graph_from_reader` |
+| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4716), `load_graph_from_reader` |
 | `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
 | `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:44-174), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
 | `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:345-400) |

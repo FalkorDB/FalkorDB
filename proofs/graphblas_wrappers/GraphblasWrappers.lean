@@ -11,11 +11,12 @@ the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:388, `Iter::drop` :1588 (`Arc::get_mut` then Arc drop) |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1669, `Iter::next` :1702 |
-| `Codes.decodeBlob`/`decodeBoolHardened` | `vector.rs:177` `decode_blob`, `:219` `Vector<u64>::decode`, `:311` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf` | `Tensor::edge_count` tensor.rs:1221; invariant unchecked by `Tensor::decode` :1530 |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` :701, `Tensor::resize` :809, `tensor::Iter::next` :1727, `vector::Iter::next` |
+| `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:388, `Iter::drop` :1618 (`Arc::get_mut` then Arc drop) |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1699, `Iter::next` :1732 |
+| `Codes.decodeBlob`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:253` `Vector<u64>::decode`, `:345` `Vector<bool>::decode` |
+| `Decode.edgeCount`, `Wf` | `Tensor::edge_count` tensor.rs:1221; invariant unchecked by `Tensor::decode` :1543 |
+| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` :701, `Tensor::resize` :809, `tensor::Iter::next` :1740, `vector::Iter::next` |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:774 (#3022) |
 
 ## Theorems (all proved, no sorry)
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
@@ -29,16 +30,20 @@ row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
 `orphan_row_panics`, `more_me_rows_than_pattern_panics`; `grown_rejects_shrink`,
 `resize_grow_iff_grownOk`, `vecDrain_eq`, `iterExpand_eq_flatMap`,
 `iterExpand_length`, `iterExpand_all_single`; plus GrbInfo helper lemmas.
+#3022 (`Bulk.lean`): `fromSortedIndices_spec`, `VecU.sum_spec`, **`countInRows_spec`**
+(`GrB_mxv` over `PLUS_PAIR` with `DESC_T0`, then a `PLUS` reduce, counts exactly the stored
+entries in the selected rows — the double-counting argument over columns), `countInRows_pos`,
+`countInRows_fromSorted`. The four C calls are the hypothesis `BulkSpec`, not axioms.
 
 ## Confirmed bugs (repros: `graph/tests/lean_graphblas_wrappers.rs`)
 1. **Crafted `GRAPH.RESTORE` kills the server.** `Vector::<bool>::decode_blob`
-   (vector.rs:188) `assert_eq!`s `GxB_Vector_deserialize`, which returns
+   (vector.rs:222) `assert_eq!`s `GxB_Vector_deserialize`, which returns
    `GrB_INVALID_OBJECT` on a corrupt blob; reached from `Tensor::decode`
-   (tensor.rs:1586) per multi-edge pair. Tests `bug_decode_blob_panics_on_corrupt_blob`,
+   (tensor.rs:1599) per multi-edge pair. Tests `bug_decode_blob_panics_on_corrupt_blob`,
    `bug_tensor_decode_panics_on_corrupt_multi_edge_blob`. Live: genuine COPY
    payload from AOF, one id blob truncated to 8 bytes → release server exits,
-   log "FalkorDB panic: … vector.rs:188:13 … GxB_Vector_deserialize failed:
-   GrB_INVALID_OBJECT". Same shape: `Vector<u64>::decode` (vector.rs:219). Fix:
+   log "FalkorDB panic: … vector.rs:222:13 … GxB_Vector_deserialize failed:
+   GrB_INVALID_OBJECT". Same shape: `Vector<u64>::decode` (vector.rs:253). Fix:
    return `Err` like `Vector<bool>::decode` does. (C not comparable: different payload format.)
 2. **`Tensor::decode` accepts an `me` row with no forward pair**; `edge_count`
    then panics ("multi exceeds the effective pattern … |m|=0 multi=1 |me|=1"),
@@ -54,7 +59,7 @@ row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
    `bug_matrix_decode_leaks_on_error_path` (8.00/call). Fix: free the fresh
    components first (or copy only scalar fields); free on error.
 4. **Concurrent drop of two `Matrix` clones leaks the GrB_Matrix**
-   (matrix.rs:390, same in `Iter::drop` :1592): `Arc::get_mut` then Arc
+   (matrix.rs:390, same in `Iter::drop` :1622): `Arc::get_mut` then Arc
    decrement is not atomic. `race_leaks` witness; `never_double_free` shows it's
    only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
    leaked. Fix: put the `GrB_Matrix_free` in the Drop of an inner owned type
@@ -90,3 +95,4 @@ import GraphblasWrappers.Decode
 import GraphblasWrappers.Misc
 import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial
+import GraphblasWrappers.Bulk

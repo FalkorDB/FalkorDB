@@ -2,6 +2,7 @@ import FalkorEffectsEmitApply.Basic
 import FalkorEffectsEmitApply.Emit
 import FalkorEffectsEmitApply.Apply
 import FalkorEffectsEmitApply.EmitDDL
+import FalkorEffectsEmitApply.Liveness
 
 /-!
 # effects v3: emit / apply (wave 2) — report
@@ -9,7 +10,7 @@ import FalkorEffectsEmitApply.EmitDDL
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
 `Pending::effects_count` at `runtime/pending.rs:1688`). Coverage per Rust fn:
-`COVERAGE.tsv` (8 PROVEN, 9 MODELLED, 0 AXIOMATISED, 17 NOT COVERED). Repros:
+`COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
 Builds with `lake build`; no `sorry`, `admit` or `axiom`.
@@ -27,12 +28,16 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 | `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:325` (opcode granularity)       |
 | `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1688`                 |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
-| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:496,516`        |
-| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:202`                    |
-| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:284`                    |
-| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:322`                     |
-| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:351`                    |
+| `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:533,516`        |
+| `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:207`                    |
+| `Apply.updateNode`                     | `Record::UpdateNode` arm, `apply.rs:308`                    |
+| `Apply.setLabels`                      | `Record::SetLabels` arm, `apply.rs:348`                     |
+| `Apply.deleteNode`, `okDelete`         | `Record::DeleteNode` arm, `apply.rs:379`                    |
 | `Apply.RG.WF`                          | "nothing hangs off a dead id; edge endpoints live"          |
+| `Live.applyRec`, `Live.applyAll`       | the checked arms of `apply_record` since #3022 (`apply.rs:157`) |
+| `Live.needLive`, `ApplyHelpers.requireLive` | `require_live`, `apply.rs:648` (#3022)                  |
+| `Live.firstWithRels`                   | `Graph::first_node_with_relationships`, `graph.rs:2245` (spec) |
+| `Live.danglingRel`                     | `verify_created_relationships`, `graph.rs:1524`            |
 
 ## Proven (53 theorems)
 
@@ -56,8 +61,27 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
   `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`, `update_dead_not_wf`, `update_dead_breaks_wf`,
-  `setlabels_dead_not_wf`, `delete_endpoint_not_wf`.
+  `cancelled_edge_attr_dropped`. Historical, fixed by #3022 (`18fc277b9`):
+  `pre3022_update_dead_not_wf`, `pre3022_update_dead_breaks_wf`,
+  `pre3022_setlabels_dead_not_wf`, `pre3022_delete_endpoint_not_wf`.
+
+## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
+
+* **`apply_wf`** — from a well-formed replica, a buffer whose records all apply and
+  whose end-of-buffer `validate` passes leaves it well formed: no dead id carries a
+  label, property or relationship, and every relationship ends at two live nodes.
+  Via `applyRec_binv` (each checked arm keeps the batch invariant `BInv`, which lets
+  a relationship *this batch created* end at a node *this batch released*) and
+  `wf_of_validate` (`verify_created_relationships` closes exactly that gap).
+* `needLive_ok`, `needDead_ok`, `firstWithRels_none`/`_some`; `requireLive_ok`,
+  `requireLive_notLive` (`ApplyHelpers`): `require_live` refuses only as `NotLive` of
+  the right kind; `fromNodeOp_spec` (`DanglingRelationship`), `validateG_ok` (now
+  `verify_id_batches` then `verify_created_relationships`).
+* The new Rust tests, replayed by `decide`: `edge_to_dead_refused` (#2924),
+  `edge_to_created_applies`, `cancelled_pair` (nets out; without its `DELETE_EDGE`
+  `validate` names relationship 1), `updates_on_dead_refused` /
+  `updates_on_live_apply` (W2-effects-2), `delete_with_edges_refused` /
+  `detach_delete_applies` (W2-effects-3).
 
 ## Wave 4 additions (`Digests`, `ApplyHelpers`, `EmitDDL`)
 
@@ -95,6 +119,10 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 
 ## CONFIRMED bugs
 
+**Status at e8f8a3017:** 2 and 3 are **fixed by #3022 (`18fc277b9`)**, as is #2924
+(`CREATE_EDGE` to non-live endpoints) — see `Liveness.lean`. 1 and 4 are still
+present (their code is unchanged by #3022). The text below is the record as found.
+
 Re-checked against main `2c874022a` (after #2846 IdSpace refactor and #2916), live
 release build on Redis 8.6.2, 2026-10-04: **all four still present** (1: replica
 refuses the next payload "label id 0 out of range" / "attribute id 0 out of
@@ -129,7 +157,7 @@ node).
    C agrees). Fix: gate on "the emitter produced a record" (or add
    `cancelled_*` and the schema delta to the count).
 2. **UPDATE_NODE / UPDATE_EDGE / SET_LABELS / REMOVE_LABELS never check
-   liveness** (`apply.rs:284,303,322,333`; `checked_label_ids` bounds-checks
+   liveness** (`apply.rs:308,303,322,333`; `checked_label_ids` bounds-checks
    label ids only). A `GRAPH.EFFECT` naming a recycled id is accepted, and the
    next node that recycles that id is born with the property / label
    (`hostile_update_node_on_dead_id`: fresh node gets `{x: 666}`;
@@ -139,15 +167,15 @@ node).
    (`update_dead` → next CREATE id 5 `{x: 666}`). Fix: route these ids through
    `IdSpace` like CREATE/DELETE (`wf_updateNode_live` proves it suffices).
    REMOVE_LABELS / SET_LABELS on 2^40 trip a GraphBLAS `debug_assert`
-   (`matrix.rs:1109,1339`) in debug and are silently accepted in release —
+   (`matrix.rs:1139,1339`) in debug and are silently accepted in release —
    same family as #2892 (not re-reported).
-3. **DELETE_NODE of a node with edges is accepted** (`apply.rs:351`,
+3. **DELETE_NODE of a node with edges is accepted** (`apply.rs:379`,
    `delete_nodes` does not cascade or refuse): a dangling edge remains and the
    next created node inherits it (`hostile_delete_node_with_edges`; live server
    same). Sibling of #2924 (CREATE_EDGE to non-live endpoints), different
    record.
 4. **A refused buffer is not rolled back for CREATE_INDEX**
-   (`apply_effects`, `apply.rs:53`; `Graph::create_index`, `graph.rs:3214`): the
+   (`apply_effects`, `apply.rs:54`; `Graph::create_index`, `graph.rs:3332`): the
    `Indexer` is shared by `Arc` across versions (`Graph::new_version` clones the
    handle), so `MvccGraph::rollback` cannot undo it. Live: payload
    `[ADD_ATTRIBUTE 1 zz, CREATE_INDEX A(zz), CREATE_NODE 0]` → `ERR ... the
@@ -171,8 +199,11 @@ node).
   not the exact grouping of edges/updates/labels (FxHashMap order unmodelled).
   Row-level emit→apply agreement for nodes is the replication project's theorem;
   here it is only exercised by the differential Rust tests.
-* The apply model has no edge ids, types or indexes; properties are merged by
-  prepend (only emptiness matters for WF). IdSpace `verify` is not re-modelled
+* The apply models are abstract replicas (`Apply.RG`, `Live.G`): no types or
+  indexes, properties merged by prepend (only emptiness matters for WF), error
+  payload strings not modelled. `Live` takes `require_live`'s meaning from
+  `proofs/id_space` (`refuseNotLive_live`: accepts exactly the live ids) and
+  `first_node_with_relationships`' from `proofs/graph_queries`. IdSpace `verify` is not re-modelled
   (see `proofs/id_space`).
 * Index/constraint DDL is checked only by a live Rust-vs-C differential (18
   steps, all agree).

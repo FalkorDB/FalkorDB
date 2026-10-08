@@ -4,21 +4,21 @@ import GraphQueries.Ids
 
 | here | there (graph.rs) |
 | --- | --- |
-| `nodeRels`        | `get_node_relationships` :2155 |
-| `nodeRelsByType`  | `get_node_relationships_by_type` :2178 |
-| `inDeg`/`outDeg`/`..ByType` | `get_node_indegree` :2220 / `_by_type` :2232 / `get_node_outdegree` :2246 / `_by_type` :2258 |
-| `getNodesAll`/`getNodesOne`/`getNodesMany` | the three arms of `get_nodes` :2271 |
-| `nodeLabelIds`/`nodeLabelNames` | `get_node_label_ids` :2336 / `get_node_labels` :2345 |
-| `srcDestRels`     | `get_src_dest_relationships` :2954 |
-| `relMatUnrestricted` | `build_relationship_matrix_unrestricted` :2978 (`set_pattern` = pattern union) |
-| `resolveLabelIds` | `resolve_label_ids` :3012 |
-| `relMatrix`       | `build_relationship_matrix` :3022 (`rmxm`/`lmxm` by a label diagonal = row / column restriction) |
-| `getRelationships`| `get_relationships` :3090 |
-| `relTypeId`       | `get_relationship_type_id` :3106 (`expect` = `none`) |
-| `relEndpoints`    | `endpoints_for_edge` :3122 / `get_relationship_endpoints` :3140 |
-| `relTypeIter`     | `relationship_type_matrix_iter` :3154 |
-| `allEdges`        | `get_all_edges` :3808 |
-| `adjMatrix`/`symAdj` | `build_adjacency_matrix` :4372 / `build_symmetric_adjacency_matrix` :4400 |
+| `nodeRels`        | `get_node_relationships` :2214 |
+| `nodeRelsByType`  | `get_node_relationships_by_type` :2296 |
+| `inDeg`/`outDeg`/`..ByType` | `get_node_indegree` :2338 / `_by_type` :2350 / `get_node_outdegree` :2364 / `_by_type` :2376 |
+| `getNodesAll`/`getNodesOne`/`getNodesMany` | the three arms of `get_nodes` :2389 |
+| `nodeLabelIds`/`nodeLabelNames` | `get_node_label_ids` :2454 / `get_node_labels` :2463 |
+| `srcDestRels`     | `get_src_dest_relationships` :3072 |
+| `relMatUnrestricted` | `build_relationship_matrix_unrestricted` :3096 (`set_pattern` = pattern union) |
+| `resolveLabelIds` | `resolve_label_ids` :3130 |
+| `relMatrix`       | `build_relationship_matrix` :3140 (`rmxm`/`lmxm` by a label diagonal = row / column restriction) |
+| `getRelationships`| `get_relationships` :3208 |
+| `relTypeId`       | `get_relationship_type_id` :3224 (`expect` = `none`) |
+| `relEndpoints`    | `endpoints_for_edge` :3240 / `get_relationship_endpoints` :3258 |
+| `relTypeIter`     | `relationship_type_matrix_iter` :3272 |
+| `allEdges`        | `get_all_edges` :3926 |
+| `adjMatrix`/`symAdj` | `build_adjacency_matrix` :4490 / `build_symmetric_adjacency_matrix` :4518 |
 -/
 namespace GQ
 variable {V : Type}
@@ -29,7 +29,7 @@ def nodeRels (g : G V) (n : Nat) : Ten := g.relMs.flatMap (fun t => Ten.out t n 
 
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
-/-- `EdgeDirection::from_str` (graph.rs:157). -/
+/-- `EdgeDirection::from_str` (graph.rs:158). -/
 def dirOfStr : String → Option Dir
   | "outgoing" => some .outgoing | "incoming" => some .incoming | "both" => some .both | _ => none
 

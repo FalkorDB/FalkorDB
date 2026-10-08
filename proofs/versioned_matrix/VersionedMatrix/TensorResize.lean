@@ -5,9 +5,9 @@ import VersionedMatrix.TensorOps
 | here | there (`tensor.rs`) |
 | --- | --- |
 | `resizeT`  | `resize` (:809): shrink (:814-828) / grow (:829-867) |
-| `encVal`/`decVal` | value `encode` (:1451) puts in the C forward matrix / C's reading |
-| `sizeHint` | `EdgeIds::size_hint` (:1650) |
-| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1678), `Iter::seek` (:1710), remaining output |
+| `encVal`/`decVal` | value `encode` (:1464) puts in the C forward matrix / C's reading |
+| `sizeHint` | `EdgeIds::size_hint` (:1663) |
+| `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1691), `Iter::seek` (:1723), remaining output |
 
 **Bug (confirmed, API level):** `resize`'s shrink branch resizes `m`/`dp`/
 `dm`/`mt` but not `me`. `shrink_orphans_me` exhibits a pair satisfying

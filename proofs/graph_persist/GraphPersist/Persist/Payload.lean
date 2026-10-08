@@ -148,7 +148,7 @@ structure G (M Tn Nm Ix Cn : Type) where
 variable {M Tn Nm Ix Cn : Type}
 
 /-- The ids `encode_with_range` walks: `0..=max_id` (`max_id = count + |deleted| - 1`,
-graph.rs:1602), skipping deleted ones. -/
+graph.rs:1661), skipping deleted ones. -/
 def live (n : Nat) (del : List Nat) : List Nat := (List.range (n + del.length)).filter fun i => decide (i ∉ del)
 
 /-- `Header::from_graph(graph, graph_name, key_count)` (serializers/mod.rs:212). -/
@@ -172,7 +172,7 @@ still writes one — never reached: every payload entry has `count > 0`). -/
 def encRange (S : Store) (ids : List Nat) (count off : Nat) : Stream :=
   ((ids.drop off).take (max count 1)).flatMap (encEnt S)
 
-/-- `Graph::encode_payload` (graph.rs:4598-4651). -/
+/-- `Graph::encode_payload` (graph.rs:4716-4769). -/
 def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : Stream :=
   match e.st with
   | .nodes => encRange g.nodes (live g.nodeCount g.delNodes) e.count e.offset

@@ -9,7 +9,7 @@ FalkorDB-rs passes through:
 | `isLeap`          | `is_leap` — `graph/src/runtime/value.rs:764` |
 | `daysInMonth`     | `days_in_month` — `value.rs:752` |
 | `daysFromCivil`   | `days_from_civil` — `value.rs:771` (`div_euclid`/`rem_euclid` = Lean `/`,`%` for a positive divisor) |
-| `daysFromCivilT`  | `days_from_civil` — `graph/src/runtime/functions/temporal.rs:413` (a second copy, i32 arithmetic, truncating `/`) |
+| `daysFromCivilT`  | `days_from_civil` — `graph/src/runtime/functions/temporal.rs:428` (a second copy, i32 arithmetic, truncating `/`) |
 | `civilFromDays`   | `civil_from_days` — `value.rs:788` (the final `y as i32` is `toI32`) |
 
 Era-local pieces (`yoeOf`, `doyOf`, `mpOf`, `dOf`, `dfcEra`) are the
@@ -41,7 +41,7 @@ def daysFromCivil (y m d : Int) : Int :=
   let doe := yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 
-/-- `days_from_civil` in `temporal.rs:413`: `era = (if y >= 0 { y } else { y - 399 }) / 400`
+/-- `days_from_civil` in `temporal.rs:428`: `era = (if y >= 0 { y } else { y - 399 }) / 400`
 with Rust's *truncating* i32 division, `yoe = (y - era * 400) as u32`. -/
 def daysFromCivilT (y m d : Int) : Int :=
   let y := if m ≤ 2 then y - 1 else y

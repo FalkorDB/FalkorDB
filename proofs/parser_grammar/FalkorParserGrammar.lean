@@ -125,7 +125,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 
 | here | there |
 | --- | --- |
-| `Tok`, `cur`, `adv` | `Token`, `Lexer::current`, `Lexer::next` (lexer.rs:295-300, 364) |
+| `Tok`, `cur`, `adv` | `Token`, `Lexer::current`, `Lexer::next` (lexer.rs:295-300, 344) |
 | `Frame`, `St`, `step`, `loop` | the `(level, Option<tree>, height)` stack of `parse_expr_inner` (2177-2618) |
 | `ret` | `parse_expr_return!` (macro.rs:115-133) |
 | `binStep`, `opTok` | `parse_operators!` (macro.rs:135-168), levels 0,1,2,6,7,8 |

@@ -34,7 +34,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:180, :910, :925, :1042, :1091, :1120, :1148; `OrderMap::insert/extend` ordermap.rs:76,218 |
 | `cAdd`, `cMul` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks |
 | `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1079 |
-| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow`, `cAbs` (MathFns) | math.rs:46-345; C `AR_ABS` |
+| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow`, `cAbs` (MathFns) | math.rs:46-342; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
 | `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode/decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :1899/:1985, :1887, :1591 |
@@ -91,7 +91,9 @@ arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
   '1.5' vs '1.500000'; `toFloatList([' 3'])`/`toIntegerList([' 3'])` null vs 3.
 - `p.LATITUDE` Rust 1.5, C null (Rust component names are ASCII case-insensitive).
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
-- Also seen (known): `sign(-2.5)` Float (#2906), `^` not type-checked (#2902),
+- Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`
+  (historical `pre2907_sign_float_is_float`).
+- Also seen (known): `^` not type-checked (#2902),
   `toString(1.0)` '1', `toInteger('1e3')`, leading whitespace (functions_temporal).
 
 ## Suspicions / latent

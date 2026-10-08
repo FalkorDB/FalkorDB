@@ -401,7 +401,7 @@ theorem clear_spec (f : Full) :
     exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `end_segment` (:1569): the reset above, then `g.roll_id_batches()`
-(graph.rs:1584; `roll` here, `none` = its `Err`). The `Pending` reset happens
+(graph.rs:1643; `roll` here, `none` = its `Err`). The `Pending` reset happens
 whether or not the roll succeeds; the error is returned to `CommitOp`. -/
 def endSegment {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) : Full × Option Gr :=
   (clear f, roll g)

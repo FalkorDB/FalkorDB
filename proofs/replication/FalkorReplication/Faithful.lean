@@ -19,39 +19,39 @@ def internF (d : List String) (n : String) : Nat × List String :=
   | some i => (i, d)
   | none => (d.length, d ++ [n])
 
-/-- `verify_id` (`apply.rs:543`), success only. -/
+/-- `verify_id` (`apply.rs:580`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
-/-- `apply_add_schema` (`apply.rs:523`): intern, then `verify_id`. -/
+/-- `apply_add_schema` (`apply.rs:560`): intern, then `verify_id`. -/
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none
 
-/-- `IdSpace::reserve` (`id_space.rs:446`) on a batch opened at `bound` that has
-taken and been issued nothing: `reclaim_ids` (`:228`) takes the lowest `count`
+/-- `IdSpace::reserve` (`id_space.rs:483`) on a batch opened at `bound` that has
+taken and been issued nothing: `reclaim_ids` (`:244`) takes the lowest `count`
 ids of `recycled - ∅ - ∅`, then fresh ids from `entry_bound + above(∅) +
 above(∅) = bound + 0`. `bin` is the bin's ascending listing. -/
 def reserveFresh (bound : Nat) (bin : List Nat) (count : Nat) : List Nat :=
   let reclaimed := bin.take count
   reclaimed ++ List.range' (bound + 0) (count - reclaimed.length)
 
-/-- The half of the node `IdSpace` (`id_space.rs:159`) that `Graph` reads since
+/-- The half of the node `IdSpace` (`id_space.rs:164`) that `Graph` reads since
 #2846: `live` and `recycled` (a set, here a duplicate-free list). -/
 structure Ids where
   live : Nat
   bin  : List Nat
 
-/-- `IdSpace::bound` (`:310`) = `Graph::node_id_bound` (`graph.rs:1526`). -/
+/-- `IdSpace::bound` (`:343`) = `Graph::node_id_bound` (`graph.rs:1585`). -/
 def Ids.bound (s : Ids) : Nat := s.live + s.bin.length
 
-/-- The state `IdSpace::create` (`:545`) moves to on `{id}` once its refusals
+/-- The state `IdSpace::create` (`:582`) moves to on `{id}` once its refusals
 pass: `recycled -= nodes; live += nodes.len()` — what `Graph::create_nodes`
-(`graph.rs:1565`) does to the id space. -/
+(`graph.rs:1624`) does to the id space. -/
 def Ids.create1 (s : Ids) (id : Nat) : Ids := ⟨s.live + 1, s.bin.erase id⟩
 
-/-- The state `IdSpace::release` (`:642`) moves to on `requested = freed = {id}`
+/-- The state `IdSpace::release` (`:703`) moves to on `requested = freed = {id}`
 once its refusals pass (`id` not free): `recycled |= freed; live -= freed.len()`
-— `Graph::delete_nodes` (`graph.rs:2072`). -/
+— `Graph::delete_nodes` (`graph.rs:2131`). -/
 def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, id :: s.bin⟩
 
 end FalkorFaithful

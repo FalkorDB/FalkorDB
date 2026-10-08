@@ -46,7 +46,7 @@ graph/src/planner/mod.rs	is_redundant_optional_match	2687	PROVEN	Misc.isRedundan
 graph/src/planner/mod.rs	plan_query	2719	PROVEN	rustStitch/stitchLoop; stitchLoop_eq_nest, rustStitch_eq_nestStitch, query_correct, merge_path_last_misplaced (bug 1; PR #3101 adds PathBuilder to the walk)
 graph/src/planner/mod.rs	needs_apply_wrapping	2874	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
 graph/src/planner/mod.rs	ensure_apply_has_input	2911	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
-graph/src/planner/mod.rs	Planner::plan	2934	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct
+graph/src/planner/mod.rs	Planner::plan	2934	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct; planCreate (PathBuilder over Create since #2829): create_loop_correct, create_first_correct, create_path_last_misplaced/_skips_create (bug 8)
 graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)

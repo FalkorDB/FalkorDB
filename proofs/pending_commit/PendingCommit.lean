@@ -35,7 +35,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 * W2-pending-2 — **still present**: `CREATE (a) DELETE a` Rust no counters, C
   `Nodes created: 1, Nodes deleted: 1` (`c_eq_rust_plus_cancelled`).
 * #2769 — **still present**: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
-  outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3148
+  outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3266
   (server killed); C `0|0` (`deg_panics_on_pending_deleted`).
 * W4-fn-1 (labels staged before DELETE) — **still present**: `MATCH (n:A) SET n:C DELETE n
   RETURN labels(n), n:C` Rust `[A]|false` (the snapshot copies the committed labels,
@@ -59,8 +59,8 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1126-1146) |
 | `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:440, :791) |
 | `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1479) + evaluator's null |
-| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1706, attribute_store.rs:1351) |
-| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1674) |
+| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1765, attribute_store.rs:1351) |
+| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1733) |
 | `Props.replaceFromMap/FromNode`   | `SET n = map` / `SET n = m` (ops/set.rs:185-224) |
 | `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1459-1789) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
@@ -102,7 +102,7 @@ Wave-4 findings:
   committed graph for the endpoints of every pending-deleted edge, including
   one created in the same batch: `CREATE (a)-[r:R]->(b) DELETE r SET b.d =
   indegree(b)` kills the Rust server (`relationship 0 not found`,
-  graph.rs:3148); C `0`. Already #2769 (re-found; reproduced live on origin/main
+  graph.rs:3266); C `0`. Already #2769 (re-found; reproduced live on origin/main
   code).
 * `setSpan_u16_wrap` — `set_span` stores `n as u16`; with ≥ 65,536 entries for
   one entity the slot reads empty while the arena keeps the entries no counter

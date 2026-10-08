@@ -10,7 +10,7 @@ import PendingCommit.PendingRels
 * `deletedDeg_some` / `deletedDeg_none` — `pending_deleted_*degree` (:1059,
   :1081) count the deleted edges with the right endpoint (and type), but call
   `Graph::get_relationship_endpoints`, which panics for an id the committed
-  graph does not have (graph.rs:3140-3149). `deg_panics_on_pending_deleted`:
+  graph does not have (graph.rs:3258-3267). `deg_panics_on_pending_deleted`:
   after `CREATE (a)-[r:R]->(b) DELETE r` the deleted set holds `r`, which was
   never committed, so `indegree(b)` in the same segment panics — #2769,
   reproduced live: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)`

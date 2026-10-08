@@ -138,4 +138,4 @@ graph/src/effects/mod.rs	EffectsBuffer::build_constraint	514	PROVEN	delegates: f
 graph/src/effects/mod.rs	EffectsBuffer::replicate	530	PROVEN	delegates: fmtReplicate_transparent
 graph/src/effects/announce.rs	SchemaBaseline::of	39	PROVEN	Format.baselineOf: baselineOf_spec
 graph/src/effects/payload.rs	take_effects_buffer	25	PROVEN	Format.takeEffectsBuffer: takeEffectsBuffer_spec
-graph/src/effects/error.rs	LocalName::fmt	433	PROVEN	Format.localName: localName_none, localName_some
+graph/src/effects/error.rs	LocalName::fmt	460	PROVEN	Format.localName: localName_none, localName_some

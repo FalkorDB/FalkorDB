@@ -25,10 +25,21 @@ Gap: `bitmap_bytes` = roaring's `serialized_size()` is a hypothesis of `collapse
 comparison charges only the run's *closed* segments, while the collapsed bitmap also holds the newly
 pushed id, so in an edge case the collapsed list can be a few bytes longer than not collapsing.
 
+* `FalkorIdList.Decoded` — **#2920 (`2ef102ae0`, issue #2919) fixed `from_segments`**: the run now
+  starts after every decoded segment. `DInv` (run empty past the decoded segments; a claimed
+  direction belongs to the last decoded segment, extended in place), `push_dinv` (a push from `DInv`
+  lands in `DInv` or `Inv`), `pushAll_dinv`, **`decoded_then_pushed_keeps_order`** (pushing any `xs`
+  onto any well-formed decoded list gives `flat segs ++ xs`, for every collapse decision — no
+  reorder, no `assert!`), `readIds_then_pushed_keeps_order` (end to end from the wire). Historical:
+  `pre2920_decoded_then_pushed_reorders` / `_asserts` (the counterexamples on the pre-fix
+  `fromSegmentsPre2920`, `start = len - 1`).
+
 Headline results: `IdListWire.push_encode_decode`, `IdListWire.readIds_safe`,
-`IdListWire.readIds_never_panics`, `IdListPush.decoded_then_pushed_reorders`.
+`IdListWire.readIds_never_panics`, `IdListPush.decoded_then_pushed_keeps_order`.
+No open bugs (the decoded-list push bug is fixed by #2920).
 See REPORT.md.
 -/
 import FalkorIdList.Push
+import FalkorIdList.Decoded
 import FalkorIdList.Wire
 import FalkorIdList.Misc

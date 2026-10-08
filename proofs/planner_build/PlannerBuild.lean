@@ -25,9 +25,9 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
 | `planProject`, `ProjC` | `plan_project` mod.rs:2415-2586 |
 | `planMerge` | MERGE arm mod.rs:3100-3133 |
 | `planProc` | CALL procedure arm mod.rs:2941-3032 |
-| `planUnion` | UNION arm mod.rs:3302-3319 |
-| `.apply [.aggregate _ [b]]`, `.apply [b]` | CALL {} arm mod.rs:3320-3405 |
-| `.forEach e x [b]` | FOREACH arm mod.rs:3406-3469 |
+| `planUnion` | UNION arm mod.rs:3312-3329 |
+| `.apply [.aggregate _ [b]]`, `.apply [b]` | CALL {} arm mod.rs:3330-3415 |
+| `.forEach e x [b]` | FOREACH arm mod.rs:3416-3479 |
 | `.optional vs [m]`, `.apply [.optional vs [m]]`, `.apply [m]` | MATCH arm mod.rs:3034-3083 |
 | `isPlannerScanSubtree` | optimizer/select_scan_node.rs:239-252 |
 | `E.Ex`, `E.D`, `E.QG`, `E.V` (Expr.lean) | `DynTree<ExprIR<Variable>>`, `QueryGraph`, `(id, scope_id)` |
@@ -58,7 +58,8 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
   `unit_call_correct` (keyless Aggregate yields one row), `optional_correct`,
   `optional_apply_correct`, `match_bound_correct`, `union_correct` (UNION / UNION ALL),
   `merge_loop_correct` (MERGE with or without named path, not last), `merge_first_correct`
-  (MERGE without path as last clause).
+  (MERGE without path as last clause), `create_loop_correct` (CREATE with or without named path, not
+  last; the path bound since #2829), `create_first_correct` (CREATE without path as last clause).
 * `cp_stitch_sound`: prepending a MATCH plan to a CartesianProduct is right when no other component
   reads its variables.
 * WHERE decomposition (Decomp/ToPlan/Filter/FilterPlan): `collect_value`, `collect_passes` — rebuilding a
@@ -87,6 +88,7 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
   `ensureInput_ev_local`/`_saturates`, `setIP_scansLeaf`, `redundant_optional_identity`, `renameProj_*`,
   `inlineAttrs_passes`, EXPLAIN strings.
 * Counterexamples backing the bugs: `merge_path_last_misplaced`, `merge_path_last_skips_merge`,
+  `create_path_last_misplaced`, `create_path_last_skips_create`,
   `selfloop_ignores_chain`, `cp_stitch_shape` + `cp_stitch_loses_correlation` (by `decide`),
   `where_scan_indistinguishable`.
 
@@ -94,7 +96,7 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
 Graph: `CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->(b), (b)-[:S {w:1}]->(:C {v:7})`.
 Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still reproduce; 3 is fixed.
 1. **MERGE with a named path as the last clause** (of a query, a `CALL {}` body or a FOREACH body)
-   fails: the first walk mod.rs:2743-2749 (and FOREACH's mod.rs:3440) does not step over
+   fails: the first walk mod.rs:2743-2749 (and FOREACH's mod.rs:3450) does not step over
    `PathBuilder`, so the previous clause becomes `PathBuilder(prev, Merge(..))` and `Merge` never runs.
    `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` → Rust `Variable _anon_0 not found`; C creates 1 node, 1 edge.
    Also `UNWIND [1,2] AS i MERGE p=(x:X {v:i})`, `… CALL { WITH a MERGE p=… }`,
@@ -148,6 +150,15 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
 7. **A query may end with WITH** (NEW, deviation from C and openCypher): the `With`/`Return` arm
    (ast.rs:1268-1271) accepts a final WITH: `MATCH (n) WITH n` / `UNWIND [1] AS x WITH x` → Rust returns
    rows, C `Query cannot conclude with WITH (must be a RETURN clause, …)`. Lean `with_last_accepted`.
+8. **CREATE with a named path as the last clause, after any other clause** (NEW — a regression from
+   #2829, `eab2722c4`, which wraps a CREATE that declares a path in `PathBuilder`, mod.rs:3134-3153):
+   bug 1's shape — the first walk (mod.rs:2743-2749) does not step over `PathBuilder`, so the previous
+   clause lands as `PathBuilder(prev, Create(..))` and `Create` never runs. Live on e8f8a3017 (Rust
+   release vs C): `MATCH (a:A) CREATE p=(a)-[:R]->(:B)` → Rust `Variable _anon_0 not found`, nothing
+   created; C creates 1 node + 1 edge; the pre-#2829 Rust build created them too. Same for
+   `UNWIND [1,2] AS x CREATE p=(:N {x:x})` (Rust error, C 2 nodes). With `RETURN p` (not last) it works:
+   `create_loop_correct`. Lean `create_path_last_misplaced`, `create_path_last_skips_create`.
+   Fix: the bug 1 fix (#3101 adds `PathBuilder` to the first walk) covers this too.
 
 ## Open PRs touching planner/mod.rs (model = origin/main)
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
@@ -164,8 +175,12 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
   present on 8743953a8 (live: `MATCH (a:A), (b:B {v: a.v})` Rust [], C 2 rows).
 
 ## Deviations vs openCypher (and C)
-* `CREATE p=(…) RETURN p` → Rust `null` (Create arm mod.rs:3135 adds no PathBuilder); openCypher: the
-  path; C rejects (`'p' not defined`). Test `bug_create_named_path_is_null`.
+* (FIXED by #2829, `eab2722c4`) `CREATE p=(…) RETURN p` → Rust `null` (the Create arm added no
+  PathBuilder); now the path (openCypher), live `[(0), [0], (1)]`; C rejects (`'p' not defined`).
+  Lean `create_loop_correct` (historical `pre2829_planCreate`). Interplay with parser_grammar's
+  `create_named_path_drops_dup_rel` (W4-parse-2): `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q`
+  now returns `q = [(2), [0], (3)]`, a path through edge 0, whose endpoints are (0)→(1) — the dropped
+  duplicate `r` is now visible as an inconsistent path (C rejects the query).
 * `SET n.v = 10, n.w = n.v` → Rust `n.w = 10` (items in order, openCypher/Neo4j), C uses the old value.
 * `Labels added` counts differ (C counts per node) — known (#2655).
 

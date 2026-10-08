@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-07): proofs cite `origin/main` @ 8743953a8. There is one
+Current state (2026-10-08): proofs cite `origin/main` @ e8f8a3017. There is one
 Lake project per area under `proofs/<area>/` (35 projects).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
@@ -8,7 +8,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files:
-2466/2466 non-FFI, non-test functions are PROVEN (1295 FFI functions are
+2478/2478 non-FFI, non-test functions are PROVEN (1295 FFI functions are
 AXIOMATISED). See `.claude/skills/proofs/SKILL.md` for how to work with them.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
@@ -290,6 +290,23 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-08 on main (now e8f8a3017): #2907 (closes #2906), #2908 (closes #2901), #2920 (closes #2919), #3022 (closes #2924, #2978), #3081 (closes #2963 in part, #2100), plus #2829 (CREATE named paths), #3125 (compact date/time strings reject non-digits), #3127, #3132 (startNode/endNode accept null), #2489 (tests), #3179/#3182 (CI/deps). Proofs re-targeted: 35 projects green, 2478/2478 non-FFI, non-test fns PROVEN, 0 unlisted, 0 unmatched.
+  - Fixed, with the counterexamples turned into correctness theorems (`pre<PR>_` history kept):
+    - #2906 `sign(float)` returns an Integer (`sign_float_is_int`);
+    - #2901 block comments, a lone `/` and an unterminated `/*` (`rs_agrees_spec`; re-checked live);
+    - #2919 pushing onto a decoded IdList (`decoded_then_pushed_keeps_order`);
+    - #2924, W2-effects-2 and W2-effects-3 GRAPH.EFFECT liveness (`apply_wf`, `firstNodeWithRels_spec`, `validate_ok_iff`);
+    - from the index shared-with-C list, open bounds now include ±inf and undirected edge-index scans emit both orientations (`numRange_exact`, `orient_length`; re-checked live);
+    - `CREATE p=(…) RETURN p` returns the path (#2829).
+  - **Regression on main from #2829** (W8-plan-1): a CREATE that declares a named path and comes after another clause never runs. `MATCH (a:A) CREATE p=(a)-[:R]->(:B)` and `UNWIND [1,2] AS x CREATE p=(:N {x:x})` give "Variable _anon_0 not found" and create nothing; the build before #2829 and C both create them. The planner's first walk does not step over PathBuilder, the same shape as planner_build bug 1. Open PR #3101 (adds PathBuilder to that walk) should fix both. Lean `create_path_last_misplaced`, `create_path_last_skips_create`.
+  - W4-parse-2 has a new shape after #2829: `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p,q` returns an inconsistent path for `q` (edge 0 joins (0)→(1)); C rejects the query.
+  - Still present:
+    - W2-effects-1 and W2-effects-4;
+    - W2-temporal-1..9, including `date('2020W1é')`: week strings are parsed before the #3125 digit check;
+    - the deleted-node labels bug (W4-fn-1);
+    - the #2909 lexer bugs;
+    - planner_build bug 1;
+    - index_layer bugs 1-4, 7, 8, 10, 12 and 13.
 - 2026-10-07 on main (now 8743953a8): #3072 (closes #2961, W2-index-6), #3074 (closes #3073), #3076 (closes #2959, W2-index-5), #3079 (closes #3077), #2390 (plans an inline property map once; adds `optimizer/references.rs`), #2278 (CowBTree point lookups, memory accounting, tuple cursor, narrowable doc width), plus #2487 and #2488 (tests only). Proofs re-targeted: 35 projects green, 2466/2466 non-FFI, non-test fns PROVEN, 0 unlisted, 0 unmatched.
   - Fixed and re-checked live: W2-index-5 (#3076), W2-index-6 (#3072); the UDF -0.0, constructor-key and vecf32-inf round trips (#3074); the `graph` global at LOAD (#3079); W1 #13 bug 1, `insert_batch` dropping `(MAX,MAX)` (#2278); and from #2390, the per-operator part of #2896 (UNWIND/CREATE/FOREACH/var-length reads) and the earlier `MATCH … WHERE` dropped under a traversal (#2972). W2-rewrites-4 now matches C (most likely fixed by #2845). W4-plan-4 no longer crashes on current builds, but the `parent().unwrap()` at `utilize_node_by_id.rs:106` is still there.
   - Still present: the sibling part of #2896 (CALL body, pattern comprehension), W2-traverse-1/2/3, W2-binder-2 / #2923, W6-opt-1, W4-plan-1/2/3/5, planner_build bugs 1, 2 and 4, W2-scan-1, W1 #13 bug 2 (BRANCH_MAX=3), W3-algo-1/2, W5-udf-1..4. The W3-conc-1 cite is now `graph_core.rs:1002`.

@@ -5,31 +5,31 @@ graph/src/runtime/functions/temporal.rs	date_from_map	105	PROVEN	Fns.dateFromMap
 graph/src/runtime/functions/temporal.rs	time_from_components	117	PROVEN	Fns.timeFromComponents (as-u32 truncation, from_hms_opt): timeFromComponents_ok, u32-wrap example
 graph/src/runtime/functions/temporal.rs	time_from_map	129	PROVEN	Fns.timeFromMap: timeFromMap_eq_slots, localtimeStruct_eq_map
 graph/src/runtime/functions/temporal.rs	slot_to_int	139	PROVEN	Fns.slotToInt: slotToInt_range, slotToInt_nan, getIntField_eq_slot
-graph/src/runtime/functions/temporal.rs	parse_date_string	148	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative
-graph/src/runtime/functions/temporal.rs	parse_week_date	233	PROVEN	sliceOk: week_slice_panics, sliceOk_ascii
-graph/src/runtime/functions/temporal.rs	parse_time_string	272	PROVEN	Parse.parseTime: parseTime_ok (result < 86400)
-graph/src/runtime/functions/temporal.rs	parse_datetime_string	329	PROVEN	Parse.parseDatetime: parseDatetime_ok, parseDatetime_noT
-graph/src/runtime/functions/temporal.rs	parse_duration_string	347	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP (+ Duration.week_string_wraps)
-graph/src/runtime/functions/temporal.rs	days_from_civil	413	PROVEN	daysFromCivilT_eq
-graph/src/runtime/functions/temporal.rs	construct_duration_secs	429	PROVEN	constructDuration: construct_decompose, construct_ym_s
-graph/src/runtime/functions/temporal.rs	decompose_duration	470	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
-graph/src/runtime/functions/temporal.rs	date_pure	488	PROVEN	Pure.datePure: pure_not_unreachable, pure_null, datePure_midnight, dateStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localtime_pure	505	PROVEN	Pure.localtimePure: pure_not_unreachable, localtimePure_range, localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localdatetime_pure	524	PROVEN	Pure.localdatetimePure: pure_not_unreachable, pure_null
-graph/src/runtime/functions/temporal.rs	duration_pure	541	PROVEN	Pure.durationPure/durLoop: durLoop_get, durationStruct_eq_map, pure_not_unreachable
-graph/src/runtime/functions/temporal.rs	duration_struct_pure	621	PROVEN	Pure.durationStructPure: durationStruct_eq_map
-graph/src/runtime/functions/temporal.rs	date_struct_pure	634	PROVEN	Pure.dateStructPure: dateStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localtime_struct_pure	649	PROVEN	Pure.localtimeStructPure: localtimeStruct_eq_map
-graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	661	PROVEN	Pure.localdatetimeStructPure (date slots 0-6, time slots 7-9): register_wf (slot count 10)
-graph/src/runtime/functions/temporal.rs	register	681	PROVEN	Pure.registered/pureFns/structSlots: register_wf, register_nondet
-graph/src/runtime/functions/temporal.rs	timestamp_fn	687	PROVEN	Pure.timestampFn (clock as argument): definitional (returns Int(nowMs))
-graph/src/runtime/functions/temporal.rs	date_fn	703	PROVEN	Pure.dateFn: clock_fns_shape, fns_with_args
-graph/src/runtime/functions/temporal.rs	localtime_fn	724	PROVEN	Pure.localtimeFn: clock_fns_shape, fns_with_args
-graph/src/runtime/functions/temporal.rs	localdatetime_fn	747	PROVEN	Pure.localdatetimeFn: clock_fns_shape, fns_with_args
-graph/src/runtime/functions/temporal.rs	duration_fn	763	PROVEN	Pure.durationFn = durationPure (rfl) + durationPure theorems
-graph/src/runtime/functions/temporal.rs	date_transaction_fn	773	PROVEN	Pure.dateTransactionFn: transaction_consistent
-graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	785	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
-graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	799	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	parse_date_string	148	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
+graph/src/runtime/functions/temporal.rs	parse_week_date	243	PROVEN	sliceOk: week_slice_panics, sliceOk_ascii
+graph/src/runtime/functions/temporal.rs	parse_time_string	282	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
+graph/src/runtime/functions/temporal.rs	parse_datetime_string	344	PROVEN	Parse.parseDatetime: parseDatetime_ok, parseDatetime_noT
+graph/src/runtime/functions/temporal.rs	parse_duration_string	362	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP (+ Duration.week_string_wraps)
+graph/src/runtime/functions/temporal.rs	days_from_civil	428	PROVEN	daysFromCivilT_eq
+graph/src/runtime/functions/temporal.rs	construct_duration_secs	444	PROVEN	constructDuration: construct_decompose, construct_ym_s
+graph/src/runtime/functions/temporal.rs	decompose_duration	485	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
+graph/src/runtime/functions/temporal.rs	date_pure	503	PROVEN	Pure.datePure: pure_not_unreachable, pure_null, datePure_midnight, dateStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localtime_pure	520	PROVEN	Pure.localtimePure: pure_not_unreachable, localtimePure_range, localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_pure	539	PROVEN	Pure.localdatetimePure: pure_not_unreachable, pure_null
+graph/src/runtime/functions/temporal.rs	duration_pure	556	PROVEN	Pure.durationPure/durLoop: durLoop_get, durationStruct_eq_map, pure_not_unreachable
+graph/src/runtime/functions/temporal.rs	duration_struct_pure	636	PROVEN	Pure.durationStructPure: durationStruct_eq_map
+graph/src/runtime/functions/temporal.rs	date_struct_pure	649	PROVEN	Pure.dateStructPure: dateStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localtime_struct_pure	664	PROVEN	Pure.localtimeStructPure: localtimeStruct_eq_map
+graph/src/runtime/functions/temporal.rs	localdatetime_struct_pure	676	PROVEN	Pure.localdatetimeStructPure (date slots 0-6, time slots 7-9): register_wf (slot count 10)
+graph/src/runtime/functions/temporal.rs	register	696	PROVEN	Pure.registered/pureFns/structSlots: register_wf, register_nondet
+graph/src/runtime/functions/temporal.rs	timestamp_fn	702	PROVEN	Pure.timestampFn (clock as argument): definitional (returns Int(nowMs))
+graph/src/runtime/functions/temporal.rs	date_fn	718	PROVEN	Pure.dateFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localtime_fn	739	PROVEN	Pure.localtimeFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	localdatetime_fn	762	PROVEN	Pure.localdatetimeFn: clock_fns_shape, fns_with_args
+graph/src/runtime/functions/temporal.rs	duration_fn	778	PROVEN	Pure.durationFn = durationPure (rfl) + durationPure theorems
+graph/src/runtime/functions/temporal.rs	date_transaction_fn	788	PROVEN	Pure.dateTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	800	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
+graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	814	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
 graph/src/runtime/value.rs	Point::distance	121	PROVEN	SpatialFns.distance (Flt structure): distance_self; NaN bug: Spatial.haversine + bug_distance_antipodal_nan
 graph/src/runtime/value.rs	Point::validate	144	NOT COVERED	f32 range checks; live-tested
 graph/src/runtime/value.rs	Value::format_datetime	256	PROVEN	Components.formatDatetime: format_invalid, fields_roundtrip

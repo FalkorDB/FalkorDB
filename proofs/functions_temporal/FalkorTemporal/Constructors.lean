@@ -9,7 +9,7 @@ import FalkorTemporal.Duration
 | `Outcome`           | `Result<NaiveDate, String>` plus the panic that kills the server |
 | `weekPath`          | `date_from_components`, `week` branch — `temporal.rs:73-86` |
 | `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs:89-96` |
-| `sliceOk`           | `&rest[..2]` in `parse_week_date` — `temporal.rs:248` (byte slice of a UTF-8 `str`) |
+| `sliceOk`           | `&rest[..2]` in `parse_week_date` — `temporal.rs:258` (byte slice of a UTF-8 `str`) |
 | `formatDateDigits`  | `format_date` + `write_date_into` — `value.rs:274`, `value.rs:803` |
 -/
 namespace FalkorTemporal

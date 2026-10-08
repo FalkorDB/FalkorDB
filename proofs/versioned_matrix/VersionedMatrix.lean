@@ -24,6 +24,10 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
   `node_cap` ≥ every node id (`shrink_safe` proves that case correct).
 
+Re-target to e8f8a3017 (#3022): `CountRows` — `VersionedMatrix::count_in_rows` is exact
+(`vmCountInRows_spec`: `|m| + |dp| − |dm|` over the selected rows = the effective entries
+there, no underflow, given `dm ⊆ m`), `Tensor::count_pairs_into` (`countPairsInto_spec`).
+
 Re-target to 2c874022a (#2846): `MvccGraph::commit` (mvcc_graph.rs:139) validates the
 write version first and rolls back on a refusal (:148-151). `sstep` takes `valid`
 (= `Graph::validate`); `snapshot_isolation`/`reader_view_frozen` hold for every
@@ -46,3 +50,4 @@ import VersionedMatrix.TensorBlocks
 import VersionedMatrix.TensorOps
 import VersionedMatrix.TensorResize
 import VersionedMatrix.CowGlue
+import VersionedMatrix.CountRows

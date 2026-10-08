@@ -1,7 +1,7 @@
 import FalkorIndexLayer.Meta
 import FalkorIndexLayer.Model
 /-
-# `Index` (`graph/src/index/mod.rs:874-2244`): metadata, RS spec lifecycle
+# `Index` (`graph/src/index/mod.rs:874-2248`): metadata, RS spec lifecycle
 
 The RediSearch spec is abstract: `spec : Option Nat` is the handle identity
 (`None` = the former null), `rs` the list of fields registered on it. The FFI
@@ -123,7 +123,7 @@ def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tie
   | .ok r => .ok { x with rs := x.rs ++ r }
   | .error e => .error e
 
-/-! Field-map operations (`mod.rs:1964-2073`). -/
+/-! Field-map operations (`mod.rs:1968-2077`). -/
 def getFields (x : Idx) (a : String) : Option (List Field) := x.fields.get a
 def containsField (x : Idx) (a : String) : Bool := (x.fields.get a).isSome
 def hasFieldWithType (x : Idx) (a : String) (t : IType) : Bool :=
@@ -150,16 +150,16 @@ def languageOf (x : Idx) : Option String := x.language
 def setLanguage (x : Idx) (l : Option String) : Idx := { x with language := l }
 def stopwordsOf (x : Idx) : Option (List String) := x.stopwords
 def setStopwords (x : Idx) (s : Option (List String)) : Idx := { x with stopwords := s }
-/-- `memory_usage` (`mod.rs:2200`); `mem` = `RediSearch_MemUsage` (FFI). -/
+/-- `memory_usage` (`mod.rs:2204`); `mem` = `RediSearch_MemUsage` (FFI). -/
 def memoryUsage (x : Idx) (mem : Nat → Nat) : Nat := match x.spec with | none => 0 | some s => mem s
-/-- `index_count` (`mod.rs:2210`). -/
+/-- `index_count` (`mod.rs:2214`). -/
 def indexCount (x : Idx) : Nat := (x.fields.map (·.2.length)).sum
 
 /-- The field `build_query_node` targets for attribute `a`:
-`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1422,1480,1492,1550,1611`). -/
+`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1426,1484,1496,1554,1615`). -/
 def queryField (x : Idx) (a : String) : Option Field := (x.fields.get a).bind (·.head?)
 
-/-- `recreate_index` (`mod.rs:2214`). -/
+/-- `recreate_index` (`mod.rs:2218`). -/
 def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredOk : Bool)
     (fresh g' : Nat) : Except String Idx :=
   match createRsIndex { x with spec := none } label x.stopwords x.language langOk fresh with

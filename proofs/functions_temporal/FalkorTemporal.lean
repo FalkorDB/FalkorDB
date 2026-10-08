@@ -34,15 +34,15 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | --- | --- |
 | `isLeap`, `daysInMonth` | `is_leap` `value.rs:764`, `days_in_month` `value.rs:752` |
 | `daysFromCivil` | `days_from_civil` `value.rs:771` |
-| `daysFromCivilT` | `days_from_civil` `temporal.rs:413` (second copy, truncating i32 `/`) |
+| `daysFromCivilT` | `days_from_civil` `temporal.rs:428` (second copy, truncating i32 `/`) |
 | `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:788` (without / with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:429` |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:470` |
+| `constructDuration` | `construct_duration_secs` `temporal.rs:444` |
+| `decomposeDuration` | `decompose_duration` `temporal.rs:485` |
 | `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:696` / `sub_duration_from_timestamp` `value.rs:730` |
 | `weekPath`, `quarterPath` | `date_from_components` `temporal.rs:62` (week / quarter branches) |
 | `dateAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
-| `sliceOk` | `&rest[..2]` in `parse_week_date` `temporal.rs:248` |
-| `wrapMul` | `n * 7` in `parse_duration_string` `temporal.rs:376` (release) |
+| `sliceOk` | `&rest[..2]` in `parse_week_date` `temporal.rs:258` |
+| `wrapMul` | `n * 7` in `parse_duration_string` `temporal.rs:391` (release) |
 | `formatDateDigits` | `format_date` `value.rs:274` + `write_date_into` `value.rs:803` |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:392` / `ExprIR::And`,`Or` in `eval.rs:629-697` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:878` / `Add..Rem for Value` `value.rs:903-1160` |
@@ -81,7 +81,7 @@ Counterexamples as theorems: `sub_vs_add_neg`, `neg_days_encoding`,
    C: "Invalid value for dayOfQuarter (valid values 1 - 92)". Test
    `bug_date_day_of_quarter_panics`. Fix: `TimeDelta::try_days`, validate 1..=92.
 3. **Server crash** `RETURN date('2020W1é')` — `&rest[..2]` not a char boundary
-   (`temporal.rs:248`); C: "Failed to parse date". Test
+   (`temporal.rs:258`); C: "Failed to parse date". Test
    `bug_date_week_string_char_boundary_panics`. Fix: `rest.get(..2)` / require ASCII.
 4. **Wrong result** `distance(point({latitude:-88.3, longitude:-180}),
    point({latitude:88.3, longitude:0}))` is `nan` (Rust) vs 20037518 (C); 35 428 of
@@ -100,7 +100,7 @@ Counterexamples as theorems: `sub_vs_add_neg`, `neg_days_encoding`,
    duration({years:300000}))` = "<invalid timestamp: 9468663474030>" (C
    "302020-01-01T10:20:30") — `format_datetime` via chrono range.
 8. **Wrong result** `duration('P2635249153387078803W')` = `P5D` (release wrap of `n * 7`,
-   `temporal.rs:376`; debug panics). C returns a (garbage) non-P5D value; the map form
+   `temporal.rs:391`; debug panics). C returns a (garbage) non-P5D value; the map form
    errors. Test `bug_duration_week_string_wraps`. Fix: `checked_mul`/`checked_add`.
 9. **Divergence** map `dayOfWeek` is 0..6 with 0 = Sunday (`temporal.rs:75,84`):
    `date({year:2021, week:1, dayOfWeek:7})` errors (C: 2021-01-10); `dayOfWeek:0` accepted
@@ -155,6 +155,11 @@ date / ordinal / ISO-week date), `parseTime_ok`, `parseDuration_weeks`,
 positional-slot rewrite preserves values), `datePure_midnight`, `localtimePure_range`,
 `clock_fns_shape`, `transaction_consistent`, `calendar_ranges`, `fields_roundtrip`,
 `formatTime_length`, `distance_self`, `point_eq_struct`, `vecDist_kernel`.
+Re-targeted to e8f8a3017: #3125 (`1ea868116`) makes the compact date/time branches reject
+any non-digit (`allDigits` guard, temporal.rs:195, :309) instead of silently dropping it —
+`parseDate_compact_rejects`, `parseDate_compact_ok_allDigits`, `parseTime_compact_rejects`,
+`compact_junk_examples`. It does not touch the `W` path (`parseDate_week_first`), so bug 3
+(`date('2020W1é')`, `week_slice_panics`) is still present.
 Suspicion (message only): `point({latitude: null, ..})` errors "requires 'latitude'
 field" for a literal map (slot form) but "must be a number, got Null" for a map value
 (`point_null_lat_msgs`); C uses one message for both.

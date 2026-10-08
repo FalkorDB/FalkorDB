@@ -87,14 +87,14 @@ graph/src/index/mod.rs	make_arr_names	121	PROVEN	Search.arrNames used by range_n
 graph/src/index/mod.rs	new	137	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	154	MODELLED	Search.Field.vdim (vector_options.map dimension)
 graph/src/index/mod.rs	set	716	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; historical pre3087_*), docSet_temporal_not_indexed, docSet_eq_pre3076_off_temporal (historical pre3076_temporal_in_numeric), fulltext_only_strings, range_never_vector_or_text
-graph/src/index/mod.rs	add_document	1902	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	add_document	1906	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
 graph/src/index/mod.rs	register_fields	1180	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
 graph/src/index/mod.rs	bump_id	1048	PROVEN	Tickets.bump_inv, stale_release_isolated
-graph/src/index/mod.rs	increment_pending_for_generation	2106	PROVEN	Tickets.inc_inv
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2124	PROVEN	Tickets.dec_inv, release_exact
-graph/src/index/mod.rs	pending_count_for_generation	2146	PROVEN	Tickets.pendingFor
-graph/src/index/mod.rs	pending_count	2160	PROVEN	Tickets.operational_iff
-graph/src/index/mod.rs	is_operational	2079	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	increment_pending_for_generation	2110	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2128	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2150	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2164	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2083	PROVEN	Tickets.operational_iff
 graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.createRange: no generation bump for non-vector fields -> second_index_never_populated (BUG 2)
 graph/src/index/indexer.rs	acquire_population_ticket	608	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	acquire_population_snapshot	626	PROVEN	Tickets.inc_inv / Worker.attrs snapshot
@@ -103,8 +103,8 @@ graph/src/index/indexer.rs	release_population_ticket	670	PROVEN	Tickets.dec_inv
 graph/src/index/indexer.rs	is_ticket_current	682	PROVEN	Tickets.batch stale branch (fixed_trace_complete)
 graph/src/index/indexer.rs	ticket_pending_changes	694	PROVEN	Tickets.batch >1 bail (second_index_never_populated)
 graph/src/index/indexer.rs	enabled	704	PROVEN	Tickets.operational_iff
-graph/src/graph/graph.rs	populate_index_batch	504	PROVEN	Tickets.batch; second_index_never_populated, lucky_order_complete
-graph/src/graph/graph.rs	vector_query_nodes	3860	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
-graph/src/graph/graph.rs	vector_query_edges	3920	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	populate_index_batch	520	PROVEN	Tickets.batch; second_index_never_populated, lucky_order_complete
+graph/src/graph/graph.rs	vector_query_nodes	3978	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	vector_query_edges	4038	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	1881	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)

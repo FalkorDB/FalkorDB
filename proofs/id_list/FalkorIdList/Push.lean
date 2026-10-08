@@ -16,7 +16,7 @@ Model of the segment builder in `graph/src/effects/v3/id_list.rs`.
 | `extend?`             | the `match self.segments.last_mut()` hot paths (:913-952) |
 | `collapse`            | `IdList::maybe_collapse_run` (:1029), including its `assert!` (:1051) as `none` |
 | `push`                | `IdList::push` (:886) |
-| `fromSegments`        | `IdList::from_segments` (:1176) |
+| `fromSegments`        | `IdList::from_segments` (:1183) — `start = segments.len()` since #2920 |
 
 **The collapse decision is a free Boolean.** `Run::prefers_bitmap` (:337) is
 roaring-size arithmetic over the run's history. It decides *whether* to build a
@@ -1115,7 +1115,7 @@ theorem pushAll_ok : ∀ (cs : List Bool) (st : St) (xs : List Nat), Inv st → 
 theorem iter_length {s : Seg} (hw : WF s) : s.iter.length = s.len := by
   cases s <;> simp [iter, Seg.len]
 
-/-- `IdList::from_iter` (:1259): the ids come back as pushed. -/
+/-- `IdList::from_iter` (:1266): the ids come back as pushed. -/
 theorem fromIter_iter (cs : List Bool) (xs : List Nat) (hx : ∀ x ∈ xs, x < W) :
     ∃ st, pushAll cs St.empty xs = some st ∧ Inv st ∧ flat st.segs = xs ∧ st.len = xs.length := by
   obtain ⟨st, h1, h2, h3, h4⟩ := pushAll_ok cs St.empty xs inv_empty hx
@@ -1132,32 +1132,42 @@ theorem segs_le_len {segs : List Seg} (hw : ∀ s ∈ segs, WF s) : segs.length 
     have : 0 < s.iter.length := List.length_pos_iff.2 this
     have := ih (fun x hx => hw x (by simp [hx])); omega
 
-/-! ## Counterexample: pushing onto a *decoded* list
+/-! ## Pushing onto a *decoded* list (`from_segments`)
 
-`from_segments` (:1176) starts the run AT the last decoded segment with
-`desc = None` and a fresh tally, whatever that segment is. `Inv` does not hold
-there: the run may hold a `Repeat` or a bitmap, or a descending range under an
-undecided direction. `push` is `pub`, so a decoded list can be extended. -/
+Fixed by #2920 (`2ef102ae0`, issue #2919): `from_segments` (:1183) now starts
+the run *after* every decoded segment (`start = segments.len()`), the place
+`maybe_collapse_run` leaves it after a collapse. `fromSegments` below is the
+current code; the correctness theorem (`decoded_then_pushed_keeps_order`) is in
+`Decoded.lean`. The pre-fix model and its two counterexamples are kept as a
+historical note. -/
 
-/-- `IdList::from_segments` (:1176). -/
-def fromSegments (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length - 1, none⟩
+/-- `IdList::from_segments` (:1183), since #2920: `run.start = segments.len()`. -/
+def fromSegments (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length, none⟩
 
-/-- A decoded `[10, 9, 8]` (one `RangeDescending`), then `20, 22` with the
-bitmap winning at the second: the collapse reads the descending range back
-ascending. Reproduced in Rust: `push_after_decode_reorders_a_descending_tail`. -/
-theorem decoded_then_pushed_reorders :
-    ((pushAll [false, true] (fromSegments [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
+/-- **Historical** (before #2920, `2ef102ae0`): the run started AT the last decoded
+segment, `segments.len().saturating_sub(1)`, whatever that segment was. -/
+def fromSegmentsPre2920 (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length - 1, none⟩
+
+/-- **Historical counterexample, fixed by #2920 (`2ef102ae0`).** A decoded `[10, 9, 8]`
+(one `RangeDescending`), then `20, 22` with the bitmap winning at the second: the
+pre-fix collapse read the descending range back ascending. Rust repro was
+`push_after_decode_reorders_a_descending_tail`; main's regression test is
+`pushing_onto_a_decoded_list::a_descending_tail_is_not_reversed_by_a_later_collapse`. -/
+theorem pre2920_decoded_then_pushed_reorders :
+    ((pushAll [false, true] (fromSegmentsPre2920 [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
       = some [8, 9, 10, 20, 22] := by decide
 
-/-- A decoded `[7, 7]` (one `Repeat`), then `20, 22` with the bitmap winning:
-the run starts at the `Repeat` and the `assert!` fires (`none`). Reproduced in
-Rust: `push_after_decode_of_a_repeat_hits_the_collapse_assert`. -/
-theorem decoded_then_pushed_asserts :
-    pushAll [false, true] (fromSegments [.rep 7 2]) [20, 22] = none := by decide
+/-- **Historical counterexample, fixed by #2920.** A decoded `[7, 7]` (one `Repeat`),
+then `20, 22` with the bitmap winning: the pre-fix run started at the `Repeat` and
+the `assert!` fired (`none`). Main's regression test:
+`a_repeat_tail_is_not_folded_into_a_later_collapse`. -/
+theorem pre2920_decoded_then_pushed_asserts :
+    pushAll [false, true] (fromSegmentsPre2920 [.rep 7 2]) [20, 22] = none := by decide
 
-/-- The same sequences pushed from empty are fine (the property that fails is
-only the decoded-list precondition). -/
-example : ((pushAll [false, false, false, false, true] St.empty [10, 9, 8, 20, 22]).map
-    (fun st => flat st.segs)) = some [10, 9, 8, 20, 22] := by decide
+/-- The same two inputs on the current `from_segments` keep every id in order. -/
+example : ((pushAll [false, true] (fromSegments [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
+    = some [10, 9, 8, 20, 22] := by decide
+example : ((pushAll [false, true] (fromSegments [.rep 7 2]) [20, 22]).map (fun st => flat st.segs))
+    = some [7, 7, 20, 22] := by decide
 
 end IdListPush

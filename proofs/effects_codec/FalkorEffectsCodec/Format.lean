@@ -192,7 +192,7 @@ def baselineOf {G} (labels types attrs : G → List Bytes) (g : G) : Baseline :=
 theorem baselineOf_spec {G} (l t a : G → List Bytes) (g : G) :
     baselineOf l t a g = ⟨(l g).length, (t g).length, (a g).length⟩ := rfl
 
-/-- `Display for LocalName` (`error.rs:433`). -/
+/-- `Display for LocalName` (`error.rs:460`). -/
 def localName (n : Option String) : String :=
   match n with
   | some n => " (that id is '" ++ n ++ "' here)"

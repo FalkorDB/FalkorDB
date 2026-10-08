@@ -290,14 +290,15 @@ theorem enum_le_eq (a b : ENum) : (ENum.lt a b || ENum.eq a b) = ENum.le a b := 
 
 set_option maxHeartbeats 4000000 in
 /-- Numeric ranges (any combination of open/closed/absent bounds, with at
-least one bound, as the optimizer builds them) are exact for finite (or NaN)
-stored numbers. `±inf` stored values are excluded: see
-`bug_open_bound_excludes_inf`. -/
+least one bound, as the optimizer builds them) are exact for every stored
+number: finite, NaN, and — since #3081 (`ff3d24ba7`) made an absent bound
+inclusive — `±inf` too (before it they were missed:
+`pre3081_open_bound_excludes_inf`). -/
 theorem numRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     (mn mx : Option Val) (imn imx : Bool) (hf : fields k = true)
     (hb : mn.isSome ∨ mx.isSome)
     (hmn : ∀ v, mn = some v → NumConst v) (hmx : ∀ v, mx = some v → NumConst v)
-    (hp : ∀ v, p k = some v → FinNum v) :
+    (hp : ∀ v, p k = some v → NumConst v) :
     indexHit fields p (.range k mn mx imn imx) = holds p (.range k mn mx imn imx) := by
   have key : ∀ (o : Option Val), (∀ v, o = some v → NumConst v) →
       o = none ∨ (∃ i, o = some (.int i)) ∨ (∃ f, o = some (.flt f)) := by
@@ -307,22 +308,28 @@ theorem numRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     · cases ho v rfl with
       | int i => exact Or.inr (Or.inl ⟨i, rfl⟩)
       | flt f => exact Or.inr (Or.inr ⟨f, rfl⟩)
-  have hv : p k = none ∨ (∃ i, p k = some (.int i)) ∨ (∃ i, p k = some (.flt (.fin i))) ∨
-      p k = some (.flt .nan) := by
-    rcases h : p k with _ | v
-    · exact Or.inl rfl
-    · cases hp v h with
-      | int i => exact Or.inr (Or.inl ⟨i, rfl⟩)
-      | flt i => exact Or.inr (Or.inr (Or.inl ⟨i, rfl⟩))
-      | nan => exact Or.inr (Or.inr (Or.inr rfl))
   rcases key mn hmn with rfl | ⟨a, rfl⟩ | ⟨a, rfl⟩ <;>
   rcases key mx hmx with rfl | ⟨b, rfl⟩ | ⟨b, rfl⟩ <;>
-  rcases hv with h | ⟨c, h⟩ | ⟨c, h⟩ | h <;>
+  rcases key (p k) hp with h | ⟨c, h⟩ | ⟨c, h⟩ <;>
   (try simp at hb) <;>
   (try (rcases a with _ | a | _ | _)) <;> (try (rcases b with _ | b | _ | _)) <;>
+  (try (rcases c with _ | c | _ | _)) <;>
   cases imn <;> cases imx <;>
   simp [indexHit, buildQ, isStrVal, buildNumRange, valueToNumeric, hf, rsMatch, docOf, h,
     setRange, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, inNum, ENum.le, ENum.lt, ENum.eq] <;>
   omega
+
+/-- The pre-#3081 statement (finite or NaN stored numbers) is an instance. -/
+theorem numRange_exact_fin (fields : Attr → Bool) (p : Props) (k : Attr)
+    (mn mx : Option Val) (imn imx : Bool) (hf : fields k = true)
+    (hb : mn.isSome ∨ mx.isSome)
+    (hmn : ∀ v, mn = some v → NumConst v) (hmx : ∀ v, mx = some v → NumConst v)
+    (hp : ∀ v, p k = some v → FinNum v) :
+    indexHit fields p (.range k mn mx imn imx) = holds p (.range k mn mx imn imx) :=
+  numRange_exact fields p k mn mx imn imx hf hb hmn hmx (fun v hv => by
+    cases hp v hv with
+    | int i => exact .int i
+    | flt i => exact .flt _
+    | nan => exact .flt _)
 
 end IndexLayer

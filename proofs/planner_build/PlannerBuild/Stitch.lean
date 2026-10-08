@@ -12,7 +12,7 @@ computes the nested fill `pₙ[pₙ₋₁[…p₁]]` (`stitch_eq_nest`), where `
 
 The one place where the two walks disagree on a plan a clause can end with is
 `PathBuilder`: the first walk (mod.rs:2743-2749, and the FOREACH body walk
-mod.rs:3440) does not step over it, the in-loop walk (mod.rs:2817-2830) does
+mod.rs:3450) does not step over it, the in-loop walk (mod.rs:2817-2830) does
 (`walkFirst_pathBuilder`, `walkLoop_pathBuilder`). MERGE with a named path is
 planned as `PathBuilder(Merge(match))` (mod.rs:3128-3132), so when it is the
 last clause the previous clause lands beside `Merge`, under `PathBuilder`,

@@ -143,10 +143,10 @@ nothing); otherwise it re-anchors at `bound` with an empty ledger. -/
 theorem openBatch_spec (N : Nat) (sp : IdSpace) :
     sp.openBatch N = (match sp.checked N with
       | .error e => .error e
-      | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty }) := rfl
+      | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty }) := rfl
 
 theorem openBatch_ok (N : Nat) (sp : IdSpace) (h : sp.checked N = .ok ()) :
-    sp.openBatch N = .ok { sp with eb := sp.bound N, taken := sEmpty } := by
+    sp.openBatch N = .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty } := by
   simp [IdSpace.openBatch, h]
 
 /-- An opened batch is the same space as `new_version` would fork. -/

@@ -4,19 +4,19 @@ import GraphQueries.Queries
 
 | here | there (graph.rs) |
 | --- | --- |
-| `resolveRels`  | `delete_relationships` phase 1 (:2659-2682) |
-| `deleteRels`   | `delete_relationships` :2649 (phase 2 :2684-2770; `release(rels, resolved)` :2689) |
-| `collectImplicit` | `delete_implicit_edges` collection loop (:2786-2830) |
-| `deleteImplicit`  | `delete_implicit_edges` :2776 (`release(freed, freed)` :2914-2917) |
-| `createRelsBulk`  | `create_relationships_bulk` :2400 (shape refusals :2420/:2420, `create` :2439) |
+| `resolveRels`  | `delete_relationships` phase 1 (:2777-2800) |
+| `deleteRels`   | `delete_relationships` :2767 (phase 2 :2802-2888; `release(rels, resolved)` :2807) |
+| `collectImplicit` | `delete_implicit_edges` collection loop (:2904-2948) |
+| `deleteImplicit`  | `delete_implicit_edges` :2894 (`release(freed, freed)` :3032-3035) |
+| `createRelsBulk`  | `create_relationships_bulk` :2518 (shape refusals :2538/:2420, `create` :2557) |
 
 Every id-space move goes through `O` (IdContract.lean); theorems that need
 its behaviour take `IdSpaceContract O`.
 
 `remove_mask` builds its mask as `relationship_cap × relationship_types.len()`
-(:2735, :2844). `Mat.removeMask` is a no-op on a dimension mismatch, which is
+(:2853, :2962). `Mat.removeMask` is a no-op on a dimension mismatch, which is
 what the release build does (`GrB_DIMENSION_MISMATCH` is only
-`debug_assert`ed, matrix.rs:897).
+`debug_assert`ed, matrix.rs:927).
 -/
 namespace GQ
 variable {V : Type}
@@ -85,7 +85,7 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
         obtain ⟨tn0, -, rfl⟩ := htn
         simp [het]
 
-/-- **BUG (graph.rs:1213 + :2735).** When `relationship_type_matrix` is
+/-- **BUG (graph.rs:1229 + :2853).** When `relationship_type_matrix` is
 narrower than the type table — exactly what `get_type_id_mut` leaves behind —
 the bulk type-matrix removal is a no-op: a deleted edge keeps its type. -/
 theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
@@ -167,8 +167,8 @@ theorem collectImplicit_mem (tn : Ten) (dn ex : List Nat) (x : Nat × Nat × Nat
 /-- `RoaringTreemap::from_iter`: the ids as a set (first occurrence kept). -/
 def toSet (l : List Nat) : List Nat := l.foldl ins []
 
-/-- `delete_implicit_edges` (:2776). The tensors, endpoint index and masks
-move first; the freed ids go through `release(freed, freed)` (:2914) at
+/-- `delete_implicit_edges` (:2894). The tensors, endpoint index and masks
+move first; the freed ids go through `release(freed, freed)` (:3032) at
 the end, once, as one set. -/
 def deleteImplicit (O : IdSpaceOps) (g : G V) (dn ex : List Nat) :
     Except String (G V × List (Nat × Nat × Nat × Nat)) :=
@@ -263,9 +263,9 @@ theorem deleteImplicit_freed (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V)
 
 /-! ## `create_relationships_bulk` -/
 
-/-- `create_relationships_bulk` (:2400): refuse slices that disagree in
-length (:2420) or repeat an id (:2430) — both before anything moves — then
-`relationship_ids.create(ids)` (:2439), capacity growth, registration and
+/-- `create_relationships_bulk` (:2518): refuse slices that disagree in
+length (:2538) or repeat an id (:2548) — both before anything moves — then
+`relationship_ids.create(ids)` (:2557), capacity growth, registration and
 the logical effect: tensor, endpoint index, adjacency and type matrix all
 gain the batch. -/
 def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)

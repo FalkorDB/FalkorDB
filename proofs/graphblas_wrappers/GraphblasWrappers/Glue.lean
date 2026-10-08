@@ -8,11 +8,11 @@
 | `newMatrix`       | `MatrixType::new_matrix` (:290, impls :297, :306) |
 | `Desc`/`descOf`   | `enum Descriptor` (:224) / `From<Descriptor> for GrB_Descriptor` (:315) |
 | `encodeM`         | `Encode<19> for Matrix` (:510) |
-| `MatH.inner`/`isSynced` | `inner` (:721) / `is_synced` (:803) |
-| `sparsityName`    | `sparsity_status` (:1073) |
-| `posB`/`posU`     | `IterExtract::pos` (:1532, impls :1549 bool, :1569 u64) |
-| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs:78, :87) / `ptr` (:140) |
-| `vIterNew`        | `vector::Iter::new` (vector.rs:543) |
+| `MatH.inner`/`isSynced` | `inner` (:721) / `is_synced` (:833) |
+| `sparsityName`    | `sparsity_status` (:1103) |
+| `posB`/`posU`     | `IterExtract::pos` (:1562, impls :1579 bool, :1599 u64) |
+| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs:82, :91) / `ptr` (:174) |
+| `vIterNew`        | `vector::Iter::new` (vector.rs:599) |
 
 The GraphBLAS constants are named by their C meaning (`GrB_DESC_RC` =
 replace + complemented mask, …); that naming is the C API spec, here a
@@ -187,7 +187,7 @@ def vecFrom (h : Nat) : VecH := ⟨h⟩
 def VecH.ptr (x : VecH) : Nat := x.v
 theorem ptr_vecFrom (h : Nat) : (vecFrom h).ptr = h := rfl
 
-/-- `Iter::new` (vector.rs:543): attach, `GxB_Vector_Iterator_seek(0)`;
+/-- `Iter::new` (vector.rs:599): attach, `GxB_Vector_Iterator_seek(0)`;
 `depleted` iff the seek reported `GxB_EXHAUSTED`, which per the GraphBLAS
 spec happens iff the vector has no entry at position ≥ 0, i.e. is empty. -/
 def vIterNew (entries : List Nat) (seekExhausted : Bool) : List Nat × Bool := (entries, seekExhausted)

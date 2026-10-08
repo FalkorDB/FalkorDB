@@ -2,7 +2,7 @@
 # `versioned_matrix::Iter`: the three-way sorted merge yields the logical
 # matrix, sorted, each entry exactly once
 
-Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs:1452-1495`).
+Model of `impl Iterator for Iter<E>` (`versioned_matrix.rs:1478-1521`).
 
 A GraphBLAS row iterator yields a layer's stored entries in ascending
 `(row, col)` order; a coordinate is modelled by its position in that order, a
@@ -18,9 +18,9 @@ produced. So the iterator state is three lists `M`, `D`, `P`.
 
 | here | there |
 | --- | --- |
-| `dropLt`   | `while let Some(dm) = self.dm_next { if dm < mp { advance } else break }` (:1462-1468) |
-| `skipDel`  | the outer `while let Some(m) = &self.m_next` loop (:1460-1475) |
-| `next`     | the final `match (&self.m_next, &self.dp_next)` (:1479-1494) |
+| `dropLt`   | `while let Some(dm) = self.dm_next { if dm < mp { advance } else break }` (:1488-1494) |
+| `skipDel`  | the outer `while let Some(m) = &self.m_next` loop (:1486-1501) |
+| `next`     | the final `match (&self.m_next, &self.dp_next)` (:1505-1520) |
 | `drain`    | `Iterator::collect` over `next` |
 | `mergeW`   | the specification: sorted union, `dp` wins on a shared key |
 

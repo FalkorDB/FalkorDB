@@ -54,7 +54,7 @@ theorem vecDrain_eq (idxs : List Nat) : vecDrain idxs = idxs := by
 theorem vecDrain_count (idxs : List Nat) (x : Nat) :
     (vecDrain idxs).count x = idxs.count x := by rw [vecDrain_eq]
 
-/-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1727) / `EdgeIds`
+/-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1740) / `EdgeIds`
 
 `Iter::next` yields the inline id of a single-edge pair, or every id of a
 `MULTI_EDGE` pair's `me` row (ascending), buffered and drained one at a time
@@ -69,13 +69,13 @@ inductive PairEdges where
   | multi (ids : List Nat)
 deriving Repr
 
-/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs:1640). -/
+/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs:1653). -/
 def expand : PairEdges → List Nat
   | .single id => [id]
   | .multi ids => ids
 
 /-- `Iter::next` streamed over the base pairs: the inline id, or the buffered
-`me` row, for each pair in turn (tensor.rs:1727-1785). -/
+`me` row, for each pair in turn (tensor.rs:1740-1798). -/
 def iterExpand : List PairEdges → List Nat
   | [] => []
   | p :: rest => expand p ++ iterExpand rest

@@ -50,9 +50,9 @@ graph/src/graph/endpoint_index.rs	Paged::put	741	PROVEN	putAt: view_set; paged f
 graph/src/graph/endpoint_index.rs	Paged::vacate	750	PROVEN	vacate: view_clear; paged form Paged.vacate_spec
 graph/src/graph/endpoint_index.rs	Paged::len	758	PROVEN	Paged.PG.length: length_view; tierLen_eq
 graph/src/graph/endpoint_index.rs	Paged::reserve_exact	761	PROVEN	Paged.reserveCap: reserve_covers (covers ceil((len+extra)/P), saturating_sub never wraps; contents untouched)
-graph/src/graph/graph.rs	Graph::restore	831	MODELLED	endpoint-index part only (prepare_tiers then set): restore_agrees; rest of restore not modelled
-graph/src/graph/graph.rs	Graph::delete_implicit_edges	2776	MODELLED	per-type endpoint collection only: mem_collect, collect_nodup, detach_delete_index; rest not modelled
-graph/src/graph/graph.rs	Graph::clear_edge_endpoint	3131	PROVEN	= EndpointIndex::clear: get_clear, run_refines
+graph/src/graph/graph.rs	Graph::restore	847	MODELLED	endpoint-index part only (prepare_tiers then set): restore_agrees; rest of restore not modelled
+graph/src/graph/graph.rs	Graph::delete_implicit_edges	2894	MODELLED	per-type endpoint collection only: mem_collect, collect_nodup, detach_delete_index; rest not modelled
+graph/src/graph/graph.rs	Graph::clear_edge_endpoint	3249	PROVEN	= EndpointIndex::clear: get_clear, run_refines
 graph/src/graph/endpoint_index.rs	w16_page_ids	679	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
 graph/src/graph/endpoint_index.rs	the_widest_id_of_each_tier_is_not_an_empty_slot	784	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
 graph/src/graph/endpoint_index.rs	early_edges_keep_their_narrow_tier	809	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)

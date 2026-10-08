@@ -125,14 +125,32 @@ def typeOf : List EV → Res
   | v :: _ => .ok (.str (typeName v))
   | [] => .unreachable
 
-/-- `hasLabels` (entity.rs:86): the whole list is type-checked even once settled. -/
+/-- `Value::name` (value.rs:1352). Note `Relationship`/`VecF32`, unlike `typeOf`. -/
+def valueName : EV → String
+  | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float => "Float"
+  | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
+  | .rel _ => "Relationship" | .path _ => "Path" | .vecf32 => "VecF32" | .point => "Point"
+  | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
+
+/-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1328) then
+`Display for Type` (functions/mod.rs:610). `List(_)` prints `List`, `Relationship` prints
+`Edge`. -/
+def tyDisp : EV → String
+  | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float => "Float"
+  | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
+  | .rel _ => "Edge" | .path _ => "Path" | .vecf32 => "VecF32" | .point => "Point"
+  | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
+
+/-- `hasLabels` (entity.rs:86-125): the whole list is type-checked even once settled.
+Since #3127 (`d739765e1`) the fallback arm names the received type via `Value::name`
+(entity.rs:107-112). -/
 def hasLabelsLoop (r : RT) (id : Nat) : List EV → Bool → Res
   | [], acc => .ok (.bool acc)
   | .str n :: ls, acc => hasLabelsLoop r id ls (acc && r.hasLabel id n)
   | .int _ :: _, _ => .err "Type mismatch: expected String but was Integer"
   | .float :: _, _ => .err "Type mismatch: expected String but was Float"
   | .bool _ :: _, _ => .err "Type mismatch: expected String but was Boolean"
-  | _ :: _, _ => .err "Type mismatch: expected String"
+  | v :: _, _ => .err s!"Type mismatch: expected String but was {valueName v}"
 
 def hasLabels (r : RT) : List EV → Res
   | [.node id, .list ls] => hasLabelsLoop r id ls true
@@ -142,13 +160,13 @@ def hasLabels (r : RT) : List EV → Res
 /-- `u64 as i64` -/
 def asI64 (n : Nat) : Int := if n < 2^63 then n else (n : Int) - 2^64
 
-/-- `id` (entity.rs:130). -/
+/-- `id` (entity.rs:135). -/
 def id : List EV → Res
   | .node n :: _ | .rel n :: _ => .ok (.int (asI64 n))
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `properties` (entity.rs:149). -/
+/-- `properties` (entity.rs:154). -/
 def properties (r : RT) : List EV → Res
   | .map m :: _ => .ok (.map m)
   | .node n :: _ => .ok (.map (r.getNodeAttrs n))
@@ -156,21 +174,24 @@ def properties (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `startNode` / `endNode` (entity.rs:166, :181). -/
+/-- `startNode` / `endNode` (entity.rs:171, :187). Since #3132 (`58d7c2c49`) the
+declared argument is `Relationship | Null` and `Null` maps to `Null` (entity.rs:177, :193). -/
 def startNode (r : RT) : List EV → Res
   | .rel e :: _ => .ok (.node (r.getRelEnds e).1)
+  | .null :: _ => .ok .null
   | _ => .unreachable
 def endNode (r : RT) : List EV → Res
   | .rel e :: _ => .ok (.node (r.getRelEnds e).2)
+  | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `length` (entity.rs:196): `path.len() / 2`. -/
+/-- `length` (entity.rs:203): `path.len() / 2`. -/
 def length : List EV → Res
   | .path p :: _ => .ok (.int (p.length / 2 : Nat))
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `keys` (entity.rs:214). -/
+/-- `keys` (entity.rs:221). -/
 def keys (r : RT) : List EV → Res
   | .map m :: _ => .ok (.list (m.map fun kv => .str kv.1))
   | .node n :: _ => .ok (.list ((r.getNodeAttrs n).map fun kv => .str kv.1))
@@ -178,7 +199,7 @@ def keys (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `type` (entity.rs:243). -/
+/-- `type` (entity.rs:250). -/
 def relationshipType (r : RT) : List EV → Res
   | .rel e :: _ => match r.getRelType e with
     | some t => .ok (.str t)
@@ -186,20 +207,21 @@ def relationshipType (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `exists` (entity.rs:257). -/
+/-- `exists` (entity.rs:264). -/
 def «exists» : List EV → Res
   | .null :: _ => .ok (.bool false)
   | _ :: _ => .ok (.bool true)
   | [] => .ok (.bool true)
 
 /-- Collect distinct type names, rejecting non-strings (`parse_degree_args` loops). -/
-def collectTypes (tyDbg : EV → String) : List EV → List String → Except String (List String)
+def collectTypes : List EV → List String → Except String (List String)
   | [], acc => .ok acc
-  | .str s :: vs, acc => collectTypes tyDbg vs (if acc.contains s then acc else acc ++ [s])
-  | v :: _, _ => .error s!"Type mismatch: expected String but was {tyDbg v}"
+  | .str s :: vs, acc => collectTypes vs (if acc.contains s then acc else acc ++ [s])
+  | v :: _, _ => .error s!"Type mismatch: expected String but was {tyDisp v}"
 
-/-- `parse_degree_args` (entity.rs:304). `tyDbg` is `{:?}` of `get_type()`. -/
-def parseDegreeArgs (tyDbg : EV → String) (fn : String) (args : List EV) :
+/-- `parse_degree_args` (entity.rs:311). Since #3127 (`d739765e1`) the received type is
+printed with `{}` (`Display for Type`, `tyDisp`) instead of `{:?}`. -/
+def parseDegreeArgs (fn : String) (args : List EV) :
     Except String (Option Nat × List String) :=
   match args with
   | [] => .error s!"Received 0 arguments to function '{fn}', expected at least 1"
@@ -207,20 +229,20 @@ def parseDegreeArgs (tyDbg : EV → String) (fn : String) (args : List EV) :
     let idr : Except String (Option Nat) := match a0 with
       | .node n => .ok (some n)
       | .null => .ok none
-      | other => .error s!"Type mismatch: expected Node but was {tyDbg other}"
+      | other => .error s!"Type mismatch: expected Node but was {tyDisp other}"
     match idr with
     | .error e => .error e
     | .ok i =>
       match rest with
       | [] => .ok (i, [])
-      | [.list l] => (collectTypes tyDbg l []).map fun ts => (i, ts)
+      | [.list l] => (collectTypes l []).map fun ts => (i, ts)
       | .list _ :: _ => .error s!"Received {rest.length + 1} arguments to function '{fn}', expected at most 2"
-      | _ => (collectTypes tyDbg rest []).map fun ts => (i, ts)
+      | _ => (collectTypes rest []).map fun ts => (i, ts)
 
-/-- `indegree` / `outdegree` (entity.rs:268, :284). -/
-def degree (deg : RT → Nat → List String → Nat) (tyDbg : EV → String) (fn : String) (r : RT)
+/-- `indegree` / `outdegree` (entity.rs:275, :291). -/
+def degree (deg : RT → Nat → List String → Nat) (fn : String) (r : RT)
     (args : List EV) : Res :=
-  match parseDegreeArgs tyDbg fn args with
+  match parseDegreeArgs fn args with
   | .error e => .err e
   | .ok (none, _) => .ok .null
   | .ok (some n, ts) => .ok (.int (deg r n ts))   -- `count as i64`; counts ≪ 2^63
@@ -297,6 +319,28 @@ theorem hasLabels_typecheck (r : RT) (n : Nat) (i : Int) :
     hasLabels r [.node n, .list [.str "Nope", .int i]] = .err "Type mismatch: expected String but was Integer" := by
   rfl
 
+/-- **#3127** (`d739765e1`): every non-string label `hasLabels` rejects is named by its
+`Value::name` — the three hand-written arms (Integer/Float/Boolean) agree with it, and the
+fallback no longer drops the type (pre-#3127 it said just "expected String"). -/
+theorem hasLabels_mismatch_names (r : RT) (n : Nat) (v : EV) (rest : List EV) (acc : Bool)
+    (hv : ∀ s, v ≠ .str s) :
+    hasLabelsLoop r n (v :: rest) acc = .err s!"Type mismatch: expected String but was {valueName v}" := by
+  cases v <;> simp_all [hasLabelsLoop, valueName] <;> rfl
+
+theorem hasLabels_null_label (r : RT) (n : Nat) :
+    hasLabels r [.node n, .list [.str "A", .null]] = .err "Type mismatch: expected String but was Null" := rfl
+
+/-- **#3132** (`58d7c2c49`): `startNode(null)` / `endNode(null)` return `null` (previously
+the argument type rejected `null`). -/
+theorem startEndNode_null (r : RT) :
+    startNode r [.null] = .ok .null ∧ endNode r [.null] = .ok .null := ⟨rfl, rfl⟩
+
+/-- Under the declared argument type `Relationship | Null` neither body reaches
+`unreachable!()`. -/
+theorem startEndNode_total (r : RT) (v : EV) (hv : v = .null ∨ ∃ e, v = .rel e) :
+    startNode r [v] ≠ .unreachable ∧ endNode r [v] ≠ .unreachable := by
+  rcases hv with rfl | ⟨e, rfl⟩ <;> simp [startNode, endNode]
+
 /-- `typeOf` never hits `unreachable!()` (its argument type is `Any`, arity 1). -/
 theorem typeOf_total (v : EV) (rest : List EV) : typeOf (v :: rest) = .ok (.str (typeName v)) := rfl
 
@@ -325,25 +369,45 @@ theorem keys_eq_props_keys (r : RT) (n : Nat) :
 
 /-- `parse_degree_args`: zero args is an error; node alone means "all types"; the list form
 and the varargs form give the same distinct type list. -/
-theorem parseDegreeArgs_forms (d : EV → String) (fn : String) (n : Nat) (ts : List String) :
-    parseDegreeArgs d fn [] = .error s!"Received 0 arguments to function '{fn}', expected at least 1" ∧
-    parseDegreeArgs d fn [.node n] = .ok (some n, []) ∧
-    parseDegreeArgs d fn [.node n, .list (ts.map .str)] =
-      (collectTypes d (ts.map .str) []).map (fun x => (some n, x)) := by
+theorem parseDegreeArgs_forms (fn : String) (n : Nat) (ts : List String) :
+    parseDegreeArgs fn [] = .error s!"Received 0 arguments to function '{fn}', expected at least 1" ∧
+    parseDegreeArgs fn [.node n] = .ok (some n, []) ∧
+    parseDegreeArgs fn [.node n, .list (ts.map .str)] =
+      (collectTypes (ts.map .str) []).map (fun x => (some n, x)) := by
   refine ⟨rfl, rfl, rfl⟩
 
-theorem collectTypes_strs (d : EV → String) (ts acc : List String) :
-    collectTypes d (ts.map .str) acc = .ok (ts.foldl (fun a s => if a.contains s then a else a ++ [s]) acc) := by
+theorem collectTypes_strs (ts acc : List String) :
+    collectTypes (ts.map .str) acc = .ok (ts.foldl (fun a s => if a.contains s then a else a ++ [s]) acc) := by
   induction ts generalizing acc with
   | nil => rfl
   | cons t ts ih => simp [collectTypes, ih]
 
-theorem degree_null (deg : RT → Nat → List String → Nat) (d : EV → String) (fn : String) (r : RT) :
-    degree deg d fn r [.null] = .ok .null := rfl
+/-- **#3127** (`d739765e1`): every mismatch `parse_degree_args` reports names the
+received type in the `Display` vocabulary (`Integer`, `List`, `Edge`), never the
+`{:?}` form (`Int`, `List(Any)`, `Relationship`) it printed before. Mirrors the Rust tests
+`node_argument_mismatch_names_the_received_type` and siblings (entity.rs:411-433). -/
+theorem parseDegreeArgs_mismatch_names (fn : String) (v : EV)
+    (hv : ∀ n, v ≠ .node n) (hn : v ≠ .null) :
+    parseDegreeArgs fn [v] = .error s!"Type mismatch: expected Node but was {tyDisp v}" := by
+  cases v <;> simp_all [parseDegreeArgs]
 
-theorem degree_deleted (d : EV → String) (r : RT) (n : Nat) :
-    indegree d "indegree" (deleteNode r n) [.node n] = .ok (.int 0) ∧
-    outdegree d "outdegree" (deleteNode r n) [.node n] = .ok (.int 0) := by
+theorem parseDegreeArgs_examples :
+    parseDegreeArgs "indegree" [.int 1] = .error "Type mismatch: expected Node but was Integer" ∧
+    parseDegreeArgs "outdegree" [.null, .list [.int 1]] = .error "Type mismatch: expected String but was Integer" ∧
+    parseDegreeArgs "outdegree" [.null, .int 1] = .error "Type mismatch: expected String but was Integer" ∧
+    parseDegreeArgs "outdegree" [.null, .str "R", .int 1] = .error "Type mismatch: expected String but was Integer" ∧
+    parseDegreeArgs "outdegree" [.null, .list [.str "R"], .str "R"] =
+      .error "Received 3 arguments to function 'outdegree', expected at most 2" ∧
+    parseDegreeArgs "indegree" [.list []] = .error "Type mismatch: expected Node but was List" ∧
+    parseDegreeArgs "indegree" [.rel 0] = .error "Type mismatch: expected Node but was Edge" :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem degree_null (deg : RT → Nat → List String → Nat) (fn : String) (r : RT) :
+    degree deg fn r [.null] = .ok .null := rfl
+
+theorem degree_deleted (r : RT) (n : Nat) :
+    indegree "indegree" (deleteNode r n) [.node n] = .ok (.int 0) ∧
+    outdegree "outdegree" (deleteNode r n) [.node n] = .ok (.int 0) := by
   simp [indegree, outdegree, degree, parseDegreeArgs, RT.inDegree, RT.outDegree, deleteNode]
 
 /-- `register` (entity.rs:36): the names, in order; all distinct. -/

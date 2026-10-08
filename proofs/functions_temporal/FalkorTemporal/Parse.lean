@@ -1,7 +1,7 @@
 import FalkorTemporal.Fns
 /-!
-# String parsers of temporal.rs (parse_date_string :148, parse_time_string :272,
-# parse_datetime_string :329, parse_duration_string :347)
+# String parsers of temporal.rs (parse_date_string :148, parse_time_string :282,
+# parse_datetime_string :344, parse_duration_string :362)
 
 Control flow followed line by line over Lean `String`; the integer parsers and the chrono
 constructors are the abstract `Chrono` fields. `digits_only[..4]` etc. slice bytes of an
@@ -25,7 +25,11 @@ def pI32 (x err : String) : Except String Int :=
 def ymd (y : Int) (m d : Nat) (s : String) : Except String Int :=
   match C.fromYmd y m d with | some z => .ok z | none => .error s!"Invalid date: {s}"
 
-/-- `parse_date_string` (temporal.rs:148). -/
+/-- `s.chars().all(|c| c.is_ascii_digit())` — the guard #3125 (`1ea868116`) added to the
+compact branches (temporal.rs:195, :309). `Char.isDigit` is ASCII `'0'..='9'`. -/
+def allDigits (s : String) : Bool := s.toList.all Char.isDigit
+
+/-- `parse_date_string` (temporal.rs:148-237). -/
 def parseDate (s : String) : Except String Int :=
   if s.contains 'W' then C.parseWeek s
   else if s.startsWith "-" then .error s!"Unsupported date string: {s}"
@@ -44,6 +48,7 @@ def parseDate (s : String) : Except String Int :=
           let d ← pU32 C p2 s!"Invalid day: {s}"
           ymd C y m d s
       | _ => .error s!"Invalid date string: {s}"
+    else if !allDigits s then .error s!"Invalid date string: {s}"   -- :195-197 (#3125)
     else
       match digits.length with
       | 4 => do let y ← pI32 C digits s!"Invalid year: {s}"; ymd C y 1 1 s
@@ -99,6 +104,8 @@ theorem parseDate_ok (s : String) (z : Int) (h : parseDate C s = .ok z) :
       obtain ⟨d, -, h⟩ := bind_ok h
       exact Or.inl ⟨_, _, _, ymd_ok C _ _ _ _ _ h⟩
   · split at h
+    · cases h
+    split at h
     · obtain ⟨y, -, h⟩ := bind_ok h; exact Or.inl ⟨_, _, _, ymd_ok C _ _ _ _ _ h⟩
     · obtain ⟨y, -, h⟩ := bind_ok h; obtain ⟨m, -, h⟩ := bind_ok h
       exact Or.inl ⟨_, _, _, ymd_ok C _ _ _ _ _ h⟩
@@ -120,7 +127,7 @@ theorem parseDate_negative (s : String) (hW : s.contains 'W' = false) (h : s.sta
 def optPart (parts : List String) (i : Nat) (err : String) : Except String Nat :=
   if parts.length > i then pU32 C (parts.getD i "") err else .ok 0
 
-/-- `parse_time_string` (temporal.rs:272). -/
+/-- `parse_time_string` (temporal.rs:282-339). -/
 def parseTime (s0 : String) : Except String Nat :=
   let s := (s0.splitOn ".").headD s0
   let hms (h m sec : Nat) : Except String Nat :=
@@ -134,6 +141,8 @@ def parseTime (s0 : String) : Except String Nat :=
       hms hour minute second
   else
     let digits := digitsOnly s
+    if !allDigits s then .error s!"Invalid time string: {s}"   -- :309-311 (#3125)
+    else
     match digits.length with
     | 2 => do let h ← pU32 C digits s!"Invalid hour: {s}"; hms h 0 0
     | 4 => do
@@ -161,13 +170,71 @@ theorem parseTime_ok (s : String) (t : Nat) (h : parseTime C s = .ok t) : t < 86
   · obtain ⟨_, -, h⟩ := bind_ok h; obtain ⟨_, -, h⟩ := bind_ok h
     obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
   · split at h
+    · cases h
+    split at h
     · obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
     · obtain ⟨_, -, h⟩ := bind_ok h; obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
     · obtain ⟨_, -, h⟩ := bind_ok h; obtain ⟨_, -, h⟩ := bind_ok h
       obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
     · cases h
 
-/-- `parse_datetime_string` (temporal.rs:329): split at the first `T`. -/
+/-! ## #3125 (`1ea868116`): the compact forms reject non-digits -/
+
+theorem digitsOnly_of_allDigits (s : String) (h : allDigits s = true) : digitsOnly s = s := by
+  unfold digitsOnly
+  unfold allDigits at h
+  rw [List.filter_eq_self.mpr (by simpa using h)]
+  simp
+
+/-- **#3125**: in the compact branch (no `W`, no leading `-`, no `-`) a string with any
+non-digit character is rejected outright — it is no longer reduced to its digits. -/
+theorem parseDate_compact_rejects (s : String) (hW : s.contains 'W' = false)
+    (hn : s.startsWith "-" = false) (hh : s.contains '-' = false) (hd : allDigits s = false) :
+    parseDate C s = .error s!"Invalid date string: {s}" := by
+  simp [parseDate, hW, hn, hh, hd]
+
+/-- The compact branch now dispatches on `s` itself: `digits_only == s` whenever the
+branch gets past the guard, so nothing is silently dropped. -/
+theorem parseDate_compact_ok_allDigits (s : String) (z : Int) (hW : s.contains 'W' = false)
+    (hh : s.contains '-' = false) (h : parseDate C s = .ok z) :
+    allDigits s = true ∧ digitsOnly s = s := by
+  by_cases hd : allDigits s = true
+  · exact ⟨hd, digitsOnly_of_allDigits s hd⟩
+  · have hd' : allDigits s = false := by simpa using hd
+    by_cases hn : s.startsWith "-" = true
+    · simp [parseDate, hW, hn] at h
+    · have hn' : s.startsWith "-" = false := by simpa using hn
+      rw [parseDate_compact_rejects C s hW hn' hh hd'] at h; cases h
+
+/-- Same guard for colon-less times (the fraction is stripped first). -/
+theorem parseTime_compact_rejects (s0 : String) (hc : ((s0.splitOn ".").headD s0).contains ':' = false)
+    (hd : allDigits ((s0.splitOn ".").headD s0) = false) :
+    parseTime C s0 = .error s!"Invalid time string: {(s0.splitOn ".").headD s0}" := by
+  unfold parseTime
+  simp only
+  generalize (s0.splitOn ".").headD s0 = s at hc hd ⊢
+  simp [hc, hd]
+
+/-- The `W` dispatch comes before the #3125 guard, so the guard does not reach
+`parse_week_date`: `date('2020W1é')` still goes to `&rest[..2]` (W2-temporal-3,
+`week_slice_panics`, temporal.rs:258). -/
+theorem parseDate_week_first (s : String) (hW : s.contains 'W' = true) :
+    parseDate C s = C.parseWeek s := by
+  simp [parseDate, hW]
+
+/-- The Rust tests' junk dates (temporal.rs:850-860) are rejected (`localtime('xx123456yy')`
+is `parseTime_compact_rejects`: core `String.splitOn` does not reduce on literals). -/
+theorem compact_junk_examples :
+    parseDate C "2o15o7o21" = .error "Invalid date string: 2o15o7o21" ∧
+    parseDate C "hello20230506world" = .error "Invalid date string: hello20230506world" ∧
+    parseDate C "+2015" = .error "Invalid date string: +2015" ∧
+    parseDate C "2015 07 21" = .error "Invalid date string: 2015 07 21" :=
+  ⟨parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
+   parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
+   parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
+   parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide)⟩
+
+/-- `parse_datetime_string` (temporal.rs:344): split at the first `T`. -/
 def parseDatetime (s : String) : Except String (Int × Nat) :=
   match s.splitOn "T" with
   | [] | [_] => do let d ← parseDate C s; pure (d, 0)
@@ -189,7 +256,7 @@ theorem parseDatetime_noT (s : String) (h : s.splitOn "T" = [s]) :
     parseDatetime C s = (do let d ← parseDate C s; pure (d, 0)) := by
   simp [parseDatetime, h]
 
-/-! ## `parse_duration_string` (temporal.rs:347) -/
+/-! ## `parse_duration_string` (temporal.rs:362) -/
 
 /-- The seven accumulators `(years, months, 0, days, hours, minutes, seconds)`. -/
 structure DurAcc where

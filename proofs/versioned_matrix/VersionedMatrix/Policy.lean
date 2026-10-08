@@ -1,13 +1,13 @@
 /-
-# Fold policy (`versioned_matrix.rs:140-200`)
+# Fold policy (`versioned_matrix.rs:141-201`)
 
 | here | there |
 | --- | --- |
 | `satMul`            | `u64::saturating_mul` |
-| `foldBalance`       | `fold_balance` (:175) |
-| `shouldFold`        | `should_fold` (:154), `WRITE_FOLD_K = 20_500_000` |
-| `shouldFoldRead`    | `should_fold_read` (:166), `READ_FOLD_K = 82_000` |
-| `deltaDominatesBase`| `delta_dominates_base` (:195), `MIN_FOLD_DELTA = 256` |
+| `foldBalance`       | `fold_balance` (:176) |
+| `shouldFold`        | `should_fold` (:155), `WRITE_FOLD_K = 20_500_000` |
+| `shouldFoldRead`    | `should_fold_read` (:167), `READ_FOLD_K = 82_000` |
+| `deltaDominatesBase`| `delta_dominates_base` (:196), `MIN_FOLD_DELTA = 256` |
 
 The policy is performance-only (the layer theorems in `DeltaProofs` hold
 for every fold decision); what is proved here is that it means what its
@@ -90,7 +90,7 @@ theorem foldBalance_exact {d tx base k : Nat} (hd : d < 2 ^ 32) (hk : k * tx ≤
   · rintro ⟨⟨a, b⟩, c⟩; exact ⟨a, b, by omega⟩
   · rintro ⟨a, b, c⟩; exact ⟨⟨a, b⟩, by omega⟩
 
-/-! Concrete checks mirroring the unit tests (:1509-1590). -/
+/-! Concrete checks mirroring the unit tests (:1535-1616). -/
 example : shouldFoldRead 286 1 (10 ^ 9) = false := by decide
 example : shouldFoldRead 287 1 (10 ^ 9) = true := by decide
 example : shouldFold 4528 1 (10 ^ 9) = true := by decide

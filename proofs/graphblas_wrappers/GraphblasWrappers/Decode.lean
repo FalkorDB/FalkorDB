@@ -1,9 +1,9 @@
 /-
 # `Tensor::decode` trusts the tensor section → `edge_count` underflow-panics
 
-`Tensor::decode` (tensor.rs:1530) rebuilds the inline forward matrix `m` from the
+`Tensor::decode` (tensor.rs:1543) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
-section (tensor.rs:1573-1611). It never checks the *promotion-completeness*
+section (tensor.rs:1586-1624). It never checks the *promotion-completeness*
 invariant that ties them together:
 
 > `eff_get (src,dst) = MULTI_EDGE`  ⟺  row `κ(src,dst)` of `me` is non-empty

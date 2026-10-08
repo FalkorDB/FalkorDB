@@ -65,7 +65,7 @@ graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter); counterexamples negative/float/null/empty-graph; hazard: parent().unwrap() at line 106 (W4-plan-4 repro no longer reaches it)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
 graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1309	PROVEN	IdSeek.evalIdFilter; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound
-graph/src/index/mod.rs	build_query_node (support, not a target file)	1472	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
+graph/src/index/mod.rs	build_query_node (support, not a target file)	1476	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
 graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	98	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
 graph/src/runtime/ops/node_by_index_scan.rs	new	56	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
 graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	250	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge

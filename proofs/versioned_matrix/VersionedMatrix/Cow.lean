@@ -6,7 +6,7 @@ Model of `graph/src/graph/cow.rs` and `graph/src/graph/mvcc_graph.rs`.
 A GraphBLAS handle is a location in a heap `Nat → α` (its contents: for a
 matrix, the coordinate set of `Delta.lean`). `Matrix::clone` shares the
 handle (`Arc<GrB_Matrix>`, `matrix.rs:374`), `Matrix::dup` allocates a fresh
-one (`matrix.rs:1130`). A `Cow` is a handle plus the `dup` flag.
+one (`matrix.rs:1160`). A `Cow` is a handle plus the `dup` flag.
 
 | here | there |
 | --- | --- |
@@ -15,7 +15,7 @@ one (`matrix.rs:1130`). A `Cow` is a handle plus the `dup` flag.
 | `derefMut`       | `DerefMut for Cow` (cow.rs:84): dup on first write |
 | `replace`        | `Cow::replace` (cow.rs:66): fresh contents, `dup = false` |
 | `mutate`         | any `&mut Matrix` write through a `Cow` (`Delta::layer_mut`, `insert`, `erase`, `resize`, ...) |
-| `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:960) |
+| `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:976) |
 | `Mvcc`           | `MvccGraph` (mvcc_graph.rs:68): committed version + `write` flag |
 | `Mvcc.write`     | `MvccGraph::write` (:108): CAS, then `new_version` |
 | `Mvcc.commit`    | `MvccGraph::commit` (:139): since #2846 `Graph::validate` first (`valid`, :148) — refused ⇒ `rollback` (:149); else publish, clear the flag |
@@ -154,7 +154,7 @@ structure Sys (α : Type) where
   g : Mvcc
   W : Option Version        -- the in-flight write version, if any
 
-/-- `valid` is `Graph::validate` (graph.rs:1479) on the write version. -/
+/-- `valid` is `Graph::validate` (graph.rs:1495) on the write version. -/
 def sstep (valid : Version → Bool) (S : Sys α) : Ev α → Sys α
   | .begin => if S.g.writing then S else { S with g := { S.g with writing := true }, W := some S.g.committed.newVersion }
   | .op o => match S.W with

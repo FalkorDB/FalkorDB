@@ -3,16 +3,16 @@ graph/src/parser/lexer.rs	fmt	168	PROVEN	FalkorLexerExtra tokDisplay_injective_p
 graph/src/parser/lexer.rs	Lexer::new	287	PROVEN	lexAll (initial read_spaces + first token): lexAll_total_cover, lexer_never_panics
 graph/src/parser/lexer.rs	Lexer::next	295	PROVEN	lexAll step: lexAll_total_cover, lexer_never_panics
 graph/src/parser/lexer.rs	Lexer::pos	303	PROVEN	FalkorLexerExtra posF_boundary, posT_le_posF, next_pos_ge, next_boundary
-graph/src/parser/lexer.rs	Lexer::read_spaces	314	PROVEN	rs: rs_boundary, rs_top_boundary; rs_block_comment_bug, rs_trailing_slash_bug, rs_unterminated_bug (bugs vs specSkip)
-graph/src/parser/lexer.rs	Lexer::current	364	PROVEN	FalkorLexerExtra current_spec
-graph/src/parser/lexer.rs	Lexer::current_str	372	PROVEN	FalkorLexerExtra currentStr_ok
-graph/src/parser/lexer.rs	Lexer::get_token	379	PROVEN	getTok/getTokC: getTok_ok (every token slice on a char boundary); btScan_spec, btpScan_spec, identRun_bytes; keyword lookup omitted
-graph/src/parser/lexer.rs	Lexer::lex_string_literal	515	PROVEN	strScan: strScan_spec
-graph/src/parser/lexer.rs	Lexer::lex_numeric	552	PROVEN	FalkorLexerExtra lexNum/numPrefix/intLoop/floatLoop: lexNum_slices_ascii (every byte slice after an ASCII prefix)
-graph/src/parser/lexer.rs	Lexer::str2number_token	718	PROVEN	str2int (integer half): int_literal_correct, canon_min_val, min_noncanonical_bug (bug); float half not modelled
-graph/src/parser/lexer.rs	Lexer::err_ctx	772	PROVEN	FalkorLexerExtra errCtx_ok, floorK_le_ceilK
-graph/src/parser/lexer.rs	Lexer::format_error	792	PROVEN	FalkorLexerExtra formatError_prefix
-graph/src/parser/lexer.rs	Lexer::set_pos	799	PROVEN	FalkorLexerExtra cacheOf, setPos_next
+graph/src/parser/lexer.rs	Lexer::read_spaces	319	PROVEN	rs/rsSlash/rsLine/rsBlock: rs_boundary, rs_top_boundary (every slice on a char boundary); rs_agrees_spec (= openCypher WHITESPACE/Comment); rs_unterminated_general; rs_*_fixed (pre2908_rs_* bugs fixed by #2908 dfa326583)
+graph/src/parser/lexer.rs	Lexer::current	344	PROVEN	FalkorLexerExtra current_spec
+graph/src/parser/lexer.rs	Lexer::current_str	352	PROVEN	FalkorLexerExtra currentStr_ok
+graph/src/parser/lexer.rs	Lexer::get_token	359	PROVEN	getTok/getTokC: getTok_ok (every token slice on a char boundary); btScan_spec, btpScan_spec, identRun_bytes; keyword lookup omitted
+graph/src/parser/lexer.rs	Lexer::lex_string_literal	495	PROVEN	strScan: strScan_spec
+graph/src/parser/lexer.rs	Lexer::lex_numeric	532	PROVEN	FalkorLexerExtra lexNum/numPrefix/intLoop/floatLoop: lexNum_slices_ascii (every byte slice after an ASCII prefix)
+graph/src/parser/lexer.rs	Lexer::str2number_token	698	PROVEN	str2int (integer half): int_literal_correct, canon_min_val, min_noncanonical_bug (bug); float half not modelled
+graph/src/parser/lexer.rs	Lexer::err_ctx	752	PROVEN	FalkorLexerExtra errCtx_ok, floorK_le_ceilK
+graph/src/parser/lexer.rs	Lexer::format_error	772	PROVEN	FalkorLexerExtra formatError_prefix
+graph/src/parser/lexer.rs	Lexer::set_pos	779	PROVEN	FalkorLexerExtra cacheOf, setPos_next
 graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees_spec, hexN_rust; unesc_plus_bug (bug), unesc_upper_kept
 graph/src/parser/string_escape.rs	cypher_escape	161	PROVEN	FalkorLexerExtra unesc_escape (cypher_unescape ∘ cypher_escape = id)
 graph/src/parser/cypher.rs	is_param_value_error	155	NOT COVERED	parser routine not modelled by the lexer project

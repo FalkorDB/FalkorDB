@@ -223,43 +223,81 @@ theorem refuseUndeletable_err (N : Nat) (sp : IdSpace) (nodes : IdSet) (e : IdSp
     cases hc : sp.taken i <;> simp_all [sDiff]
   · cases h
 
-/-! ### `release` -/
+/-! ### `release` and `refuse_not_live` -/
 
-/-- What `release`'s refusals let through: nothing requested is already free,
-and everything requested at or above the boundary was taken by this batch. -/
+/-- What `refuse_not_live` (and so `release`'s refusals) let through: nothing
+requested is already free, and everything requested at or above the boundary
+was taken by this batch. -/
 def ReleaseOk (N : Nat) (sp : IdSpace) (requested : IdSet) : Prop :=
   (∀ i, i < N → ¬ (requested i = true ∧ sp.recycled i = true)) ∧
   (∀ i, i < N → requested i = true → sp.eb ≤ i → sp.taken i = true)
 
+/-- **`refuse_not_live` (#3022) passes exactly on `ReleaseOk`.** -/
+theorem refuseNotLive_ok (N : Nat) (sp : IdSpace) (ids : IdSet) :
+    sp.refuseNotLive N ids = .ok () ↔ ReleaseOk N sp ids := by
+  unfold IdSpace.refuseNotLive ReleaseOk
+  cases h1 : sp.refuseRecycled N ids with
+  | error e =>
+    obtain ⟨id, rfl, hid, hn, hr, _⟩ := refuseRecycled_err N sp ids e h1
+    simp only [reduceCtorEq, false_iff]
+    exact fun ⟨h, _⟩ => h id hid ⟨hn, hr⟩
+  | ok u =>
+    cases u
+    have h1' := (refuseRecycled_ok N sp ids).mp h1
+    simp only
+    rw [refuseUndeletable_ok]
+    exact ⟨fun h => ⟨h1', h⟩, fun h => h.2⟩
+
+/-- …and when it refuses, it names the lowest free id (`AlreadyRecycled`, checked
+first) or else the highest never-allocated one (`NeverCreated`). -/
+theorem refuseNotLive_err (N : Nat) (sp : IdSpace) (ids : IdSet) (e : IdSpaceError)
+    (h : sp.refuseNotLive N ids = .error e) :
+    (∃ id, e = .alreadyRecycled id ∧ id < N ∧ ids id = true ∧ sp.recycled id = true ∧
+      ∀ i, i < id → ¬ (ids i = true ∧ sp.recycled i = true)) ∨
+    ((∀ i, i < N → ¬ (ids i = true ∧ sp.recycled i = true)) ∧
+     ∃ id, e = .neverCreated id ∧ id < N ∧ ids id = true ∧ sp.eb ≤ id ∧ sp.taken id = false ∧
+      ∀ i, id < i → i < N → ids i = true → sp.taken i = true) := by
+  unfold IdSpace.refuseNotLive at h
+  cases h1 : sp.refuseRecycled N ids with
+  | error e' =>
+    rw [h1] at h; cases h
+    exact .inl (refuseRecycled_err N sp ids _ h1)
+  | ok u =>
+    cases u; rw [h1] at h
+    exact .inr ⟨(refuseRecycled_ok N sp ids).mp h1, refuseUndeletable_err N sp ids e h⟩
+
+/-- `refuse_not_live` changes nothing: it is a pure check (`&self`). -/
+theorem refuseNotLive_pure (N : Nat) (sp : IdSpace) (ids : IdSet) :
+    sp.refuseNotLive N ids = (match sp.refuseRecycled N ids with
+      | .error e => .error e | .ok () => sp.refuseUndeletable N ids) := rfl
+
 /-- The state `release` moves to once its refusals pass. -/
-def IdSpace.released (N : Nat) (sp : IdSpace) (freed : IdSet) : IdSpace :=
-  { sp with recycled := sUnion sp.recycled freed, live := sp.live - sLen N freed }
+def IdSpace.afterRelease (N : Nat) (sp : IdSpace) (freed : IdSet) : IdSpace :=
+  { sp with recycled := sUnion sp.recycled freed, live := sp.live - sLen N freed,
+            released := sUnion sp.released freed }
 
 /-- **`release` is all or nothing**, judged over everything *requested*: the
-refusals pass iff `ReleaseOk`, and then the state frees `freed`; otherwise it is
-untouched and the error is `AlreadyRecycled` (checked first) or `NeverCreated`. -/
+refusals pass iff `ReleaseOk`, and then the state frees `freed` (and records it
+in `released`); otherwise it is untouched and the error is `AlreadyRecycled`
+(checked first) or `NeverCreated`. -/
 theorem release_spec (N : Nat) (sp : IdSpace) (requested freed : IdSet) :
     (ReleaseOk N sp requested →
-      sp.release N requested freed = (sp.released N freed, (sp.released N freed).checked N)) ∧
+      sp.release N requested freed = (sp.afterRelease N freed, (sp.afterRelease N freed).checked N)) ∧
     (¬ ReleaseOk N sp requested → (sp.release N requested freed).1 = sp ∧
       ∃ e, (sp.release N requested freed).2 = .error e ∧
         ((∃ id, e = .alreadyRecycled id) ∨ ∃ id, e = .neverCreated id)) := by
-  unfold IdSpace.release ReleaseOk
-  cases h1 : sp.refuseRecycled N requested with
+  unfold IdSpace.release
+  cases h : sp.refuseNotLive N requested with
   | error e =>
-    obtain ⟨id, rfl, hid, hn, hr, _⟩ := refuseRecycled_err N sp requested e h1
-    exact ⟨fun ⟨h, _⟩ => absurd ⟨hn, hr⟩ (h id hid), fun _ => ⟨rfl, _, rfl, .inl ⟨id, rfl⟩⟩⟩
+    have hn : ¬ ReleaseOk N sp requested := fun hk => by
+      rw [(refuseNotLive_ok N sp requested).mpr hk] at h; cases h
+    refine ⟨fun hk => absurd hk hn, fun _ => ⟨rfl, e, rfl, ?_⟩⟩
+    rcases refuseNotLive_err N sp requested e h with ⟨id, rfl, _⟩ | ⟨_, id, rfl, _⟩
+    · exact .inl ⟨id, rfl⟩
+    · exact .inr ⟨id, rfl⟩
   | ok u =>
     cases u
-    have h1' := (refuseRecycled_ok N sp requested).mp h1
-    cases h2 : sp.refuseUndeletable N requested with
-    | error e =>
-      obtain ⟨id, rfl, hid, hn, hge, ht, _⟩ := refuseUndeletable_err N sp requested e h2
-      refine ⟨fun ⟨_, h⟩ => ?_, fun _ => ⟨rfl, _, rfl, .inr ⟨id, rfl⟩⟩⟩
-      have := h id hid hn hge; rw [ht] at this; cases this
-    | ok u =>
-      cases u
-      have h2' := (refuseUndeletable_ok N sp requested).mp h2
-      exact ⟨fun _ => rfl, fun h => absurd ⟨h1', h2'⟩ h⟩
+    have hk := (refuseNotLive_ok N sp requested).mp h
+    exact ⟨fun _ => rfl, fun hn => absurd hk hn⟩
 
 end IdSpaceModel

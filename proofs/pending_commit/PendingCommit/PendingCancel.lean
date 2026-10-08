@@ -5,14 +5,14 @@ import PendingCommit.PendingDocs
 Since #2846 `delete_pending_node` (pending.rs:659) and
 `remove_pending_relationships_for_node` (:710) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs:1411/:1414) themselves, instead of
+`cancel_relationship_id` (graph.rs:1427/:1414) themselves, instead of
 leaving `ops/delete.rs` to call `return_*_id` afterwards. Each call is `?`:
 the first refusal aborts the unwind.
 
 The graph is abstract here (`Gr`); what is needed of its cancel is the
 hypothesis `CancelSpec` — after `cancel g id = some g'`, `id` is free in `g'`
 and nothing free in `g` stops being free. That is `IdSpace::cancel`'s
-`recycled.insert(id)` (id_space.rs:499) read through `is_free`; proofs/id_space
+`recycled.insert(id)` (id_space.rs:536) read through `is_free`; proofs/id_space
 owns it, and proofs/graph_queries states it as `IdSpaceContract.cancel_ok`.
 
 * `removeRelsG_spec`: on success the `Pending` side is exactly the pure

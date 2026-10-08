@@ -19,7 +19,7 @@ function on it. Relationship type names (`Arc<String>`) are `Nat`s.
   exactly the incident edges (`removeRels_spec`);
   `get_created_relationship_endpoints` answers from the unique entry.
 * degrees: `pendingDeg_spec`; `pending_deleted_*degree` returns `none`
-  (= `get_relationship_endpoints` panics, graph.rs:3148) as soon as a
+  (= `get_relationship_endpoints` panics, graph.rs:3266) as soon as a
   deleted id has no committed endpoints, which is the state after
   `CREATE ()-[r]->() DELETE r` (`deg_panics_on_pending_deleted`, #2769, seen live).
 -/
