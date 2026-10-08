@@ -842,3 +842,17 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
+        # With every node bound and no named relationship, MERGE kept only the
+        # first match. A path variable still tells parallel edges apart (#3040).
+        g = self.db.select_graph("merge_path_all_bound")
+        g.query("CREATE (a:A), (b:B), (a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)")
+        res = g.query("""MATCH (a:A), (b:B) MERGE p = (a)-[:R]->(b)
+                         RETURN [r IN relationships(p) | r.k][0] AS k ORDER BY k""")
+        self.env.assertEqual(res.result_set, [[1], [2]])
+        self.env.assertEqual(res.relationships_created, 0)
+        # without a path variable one row is still enough
+        res = g.query("MATCH (a:A), (b:B) MERGE (a)-[:R]->(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+        g.delete()
