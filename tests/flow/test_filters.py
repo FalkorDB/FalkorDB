@@ -262,3 +262,32 @@ class testFilters():
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
         self.env.assertEqual(columnar.result_set, [['else']] * 5)
+
+    def test10_filter_after_aggregating_with_is_not_pushed_into_one_branch(self):
+        # A variable ID is an index into its own scope's env, so variables
+        # bound before a WITH that aggregates share IDs with unrelated ones
+        # bound after it. Filter push-down used to take the pre-WITH
+        # variables as available inside the next MATCH, mistook `b` for
+        # one of them, and pushed `c.v = b.v` into the `c` branch alone,
+        # where `b` is unbound: every row was filtered out.
+        g = self.db.select_graph("filter_after_aggregate")
+
+        q = """CREATE (:B {v: 0}), (:B {v: 5})
+               WITH count(*) AS s
+               MATCH (b:B), (c:B) WHERE c.v = b.v
+               RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[2]])
+
+        # The same shape without a write: two pre-WITH variables.
+        for q, expected in [
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)", 2),
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v AND s > 0 RETURN count(*)", 2),
+            ("MATCH (x:B), (y:B) WITH collect(x) AS s MATCH (b:B), (c:B) WHERE c.v >= b.v RETURN count(*)", 3),
+            ("MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B) MATCH (c:B) WHERE c.v = b.v RETURN count(*)", 2),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], depth=1)
+
+        # The equality is planned as a join between the branches again.
+        plan = str(g.explain(
+            "MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)"))
+        self.env.assertContains("Value Hash Join", plan)
