@@ -4069,6 +4069,31 @@ impl Graph {
             .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
     }
 
+    /// Nodes of `label` whose `attrs` equal one of `rows`, from the range index.
+    /// `None` when the index cannot find all of them.
+    pub fn find_nodes_by_values(
+        &self,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+        self.node_indexer
+            .query_equal_rows(label, attrs, rows)
+            .map(|ids| ids.map(NodeId))
+    }
+
+    /// [`Self::find_nodes_by_values`] for relationships of type `label`.
+    pub fn find_relationships_by_values(
+        &self,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<impl Iterator<Item = RelationshipId> + use<>> {
+        self.edge_indexer
+            .query_equal_rows_edges(label, attrs, rows)
+            .map(|triples| triples.map(|(_, _, eid)| RelationshipId(eid)))
+    }
+
     /// Get all edges of a given type (fallback when index can't be utilized).
     pub fn get_all_edges(
         &self,

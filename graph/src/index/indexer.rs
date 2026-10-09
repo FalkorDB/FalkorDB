@@ -489,6 +489,32 @@ impl Indexer {
         super::EdgeTripleIter::empty()
     }
 
+    /// `None` also when `label` has no index or its index is still populating.
+    #[must_use]
+    pub fn query_equal_rows(
+        &self,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<IdIter> {
+        let map = self.index.load();
+        let index = map.get(label).filter(|index| index.is_operational())?;
+        index.query_equal_rows(attrs, rows)
+    }
+
+    /// [`Self::query_equal_rows`] for relationship type `label`.
+    #[must_use]
+    pub fn query_equal_rows_edges(
+        &self,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<super::EdgeTripleIter> {
+        let map = self.index.load();
+        let index = map.get(label).filter(|index| index.is_operational())?;
+        index.query_equal_rows_edges(attrs, rows)
+    }
+
     pub fn fulltext_query(
         &self,
         label: &Arc<String>,

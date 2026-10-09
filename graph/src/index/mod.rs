@@ -565,7 +565,7 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len());
     for &b in src {
-        if b <= 0x20 || b == b'\\' || b == b'_' {
+        if tag_escapes(b) {
             out.push(b'_');
             out.push(HEX_DIGITS[(b >> 4) as usize]);
             out.push(HEX_DIGITS[(b & 0x0f) as usize]);
@@ -575,6 +575,22 @@ fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+/// Whether [`tag_encode_lower`] writes `b` as an escape sequence.
+const fn tag_escapes(b: u8) -> bool {
+    b <= 0x20 || b == b'\\' || b == b'_'
+}
+
+/// The length of `tag_encode_lower(src)`, without building it.
+fn tag_encoded_len(src: &[u8]) -> usize {
+    src.iter()
+        .map(|&b| if tag_escapes(b) { 3 } else { 1 })
+        .sum()
+}
+
+/// RediSearch indexes only the first `MAX_TAG_LEN` bytes of a tag, but looks
+/// a query token up whole.
+const MAX_TAG_LEN: usize = 0x1000;
 
 /// Hex-encode `bytes` into `out` (high nibble first). `out.len()` must be
 /// `bytes.len() * 2`.
@@ -1725,6 +1741,134 @@ impl Index {
             let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
             EdgeTripleIter::new(iter, Some(index))
         }
+    }
+
+    /// Whether an exact-match query on a range field finds every document that
+    /// holds `value`. It can find more: numbers compare as `f64`.
+    #[must_use]
+    pub fn equal_query_is_complete(value: &Value) -> bool {
+        match value {
+            Value::Bool(_) => true,
+            Value::Int(i) => i.unsigned_abs() <= 1 << f64::MANTISSA_DIGITS,
+            // NaN matches no range.
+            Value::Float(f) => f.is_finite(),
+            // An empty tag is not indexed.
+            Value::String(s) => !s.is_empty() && tag_encoded_len(s.as_bytes()) < MAX_TAG_LEN,
+            _ => false,
+        }
+    }
+
+    /// Node documents whose range fields `attrs` equal one of `rows`. `None`
+    /// when an attribute has no range field or a value cannot be looked up.
+    #[must_use]
+    pub fn query_equal_rows(
+        &self,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<IdIter> {
+        let (query_node, index) = self.build_equal_rows(attrs, rows)?;
+        let iter = unsafe { RediSearch_GetResultsIterator(query_node, index.as_ptr()) };
+        if iter.is_null() {
+            return None;
+        }
+        Some(IndexResultsIter::new(iter, Some(index), |_, id| id))
+    }
+
+    /// [`Self::query_equal_rows`] for an edge index.
+    #[must_use]
+    pub fn query_equal_rows_edges(
+        &self,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<EdgeTripleIter> {
+        let (query_node, index) = self.build_equal_rows(attrs, rows)?;
+        let iter = unsafe { RediSearch_GetResultsIterator(query_node, index.as_ptr()) };
+        if iter.is_null() {
+            return None;
+        }
+        Some(EdgeTripleIter::new(iter, Some(index)))
+    }
+
+    /// A union of rows, each an intersection of one exact match per attribute.
+    fn build_equal_rows(
+        &self,
+        attrs: &[Arc<String>],
+        rows: &[&[Value]],
+    ) -> Option<(*mut redisearch::RSQNode, OwnedIndex)> {
+        enum Leaf<'f> {
+            Numeric(&'f CStr, f64),
+            Tag(&'f CStr, CString),
+        }
+
+        let fields = attrs
+            .iter()
+            .map(|attr| {
+                self.fields
+                    .get(attr)?
+                    .iter()
+                    .find(|field| field.ty == IndexType::Range)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if fields.is_empty() || rows.is_empty() {
+            return None;
+        }
+        // Build every leaf before the first RediSearch node, so a refusal leaks none.
+        let mut leaves = Vec::with_capacity(rows.len());
+        for row in rows {
+            if row.len() != fields.len() {
+                return None;
+            }
+            let mut row_leaves = Vec::with_capacity(row.len());
+            for (field, value) in fields.iter().zip(row.iter()) {
+                if !Self::equal_query_is_complete(value) {
+                    return None;
+                }
+                let name = field.name.as_c_str();
+                row_leaves.push(match value {
+                    Value::String(s) => {
+                        Leaf::Tag(name, CString::new(tag_encode_lower(s.as_bytes())).ok()?)
+                    }
+                    _ => Leaf::Numeric(name, Self::value_to_numeric(value)?),
+                });
+            }
+            leaves.push(row_leaves);
+        }
+        let index = self.spec.as_ref().and_then(|h| h.try_clone_ref())?;
+
+        let rs = index.as_ptr();
+        let query_node = unsafe {
+            let union = (leaves.len() > 1).then(|| RediSearch_CreateUnionNode(rs));
+            let mut row_node = null_mut();
+            for row_leaves in leaves {
+                let intersect =
+                    (row_leaves.len() > 1).then(|| RediSearch_CreateIntersectNode(rs, 0));
+                for leaf in row_leaves {
+                    let leaf_node = match leaf {
+                        Leaf::Numeric(name, d) => {
+                            RediSearch_CreateNumericNode(rs, name.as_ptr(), d, d, 1, 1)
+                        }
+                        Leaf::Tag(name, token) => {
+                            let tag = RediSearch_CreateTagNode(rs, name.as_ptr());
+                            let child = RediSearch_CreateTagTokenNode(rs, token.as_ptr());
+                            RediSearch_QueryNodeAddChild(tag, child);
+                            tag
+                        }
+                    };
+                    match intersect {
+                        Some(intersect) => RediSearch_QueryNodeAddChild(intersect, leaf_node),
+                        None => row_node = leaf_node,
+                    }
+                }
+                if let Some(intersect) = intersect {
+                    row_node = intersect;
+                }
+                if let Some(union) = union {
+                    RediSearch_QueryNodeAddChild(union, row_node);
+                }
+            }
+            union.unwrap_or(row_node)
+        };
+        Some((query_node, index))
     }
 
     /// Execute a fulltext query and return matching entity IDs with scores.

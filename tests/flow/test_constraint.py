@@ -1211,6 +1211,98 @@ class testCompositeUniqueConstraintNulls():
 
         self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
 
+INDEX_LOOKUP_GRAPH_ID = "unique_index_lookup"
+
+class testUniqueConstraintIndexLookup():
+    """UNIQUE enforcement looks a commit's keys up in the supporting range
+    index when the graph is large compared to the write, and scans the label
+    otherwise. Both paths must reject every duplicate, and admit a write whose
+    index documents are only stale until the commit publishes them."""
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(INDEX_LOOKUP_GRAPH_ID)
+        self.g = self.db.select_graph(INDEX_LOOKUP_GRAPH_ID)
+
+    def _rejects(self, q, msg):
+        try:
+            self.g.query(q)
+            self.env.assertTrue(False, message=q)
+        except ResponseError as e:
+            self.env.assertContains(msg, str(e))
+
+    def _count(self, q):
+        return self.g.query(q).result_set[0][0]
+
+    def test01_bulk_load(self):
+        g = self.g
+        create_unique_node_constraint(g, "B", "v", sync=True)
+
+        # a check that rescans the label per key takes minutes here
+        start = time.time()
+        g.query("UNWIND range(1, 20000) AS x CREATE (:B {v: x})")
+        self.env.assertLess(time.time() - start, 10)
+        self.env.assertEqual(self._count("MATCH (n:B) RETURN count(n)"), 20000)
+
+    def test02_node_duplicates(self):
+        g = self.g
+        msg = "unique constraint violation on node of type B"
+
+        # 1 and 500 keys take the index lookup on a label of 20k, 10000 keys
+        # take the scan
+        for n in [1, 500, 10000]:
+            # a duplicate of an existing node, after n - 1 new keys
+            self._rejects(f"UNWIND range(1, {n}) AS j CREATE (:B {{v: CASE WHEN j = {n} THEN 7 ELSE -j END}})", msg)
+            # a duplicate among the query's own keys
+            self._rejects(f"UNWIND range(1, {n}) + [1] AS j CREATE (:B {{v: -j}})", msg)
+            # an existing node set to another existing node's value
+            self._rejects(f"MATCH (n:B) WHERE n.v <= {n} SET n.v = CASE n.v WHEN {n} THEN 20000 ELSE n.v + 100000 END", msg)
+            self.env.assertEqual(self._count("MATCH (n:B) RETURN count(n)"), 20000)
+            self.env.assertEqual(self._count("MATCH (n:B) WHERE n.v < 1 OR n.v > 20000 RETURN count(n)"), 0)
+
+        # swapping two values leaves no duplicate
+        g.query("MATCH (a:B {v: 1}), (b:B {v: 2}) SET a.v = 2, b.v = 1")
+
+        # a value freed earlier in the same query can be reused: the index
+        # still lists its old holder until the query commits
+        g.query("MATCH (n:B {v: 3}) DELETE n CREATE (:B {v: 3})")
+        g.query("MATCH (n:B {v: 4}) SET n.v = NULL CREATE (:B {v: 4})")
+        g.query("MATCH (n:B {v: 5}) REMOVE n:B CREATE (:B {v: 5})")
+        g.query("MATCH (n:B {v: 6}) SET n.v = 'six' CREATE (:B {v: 6})")
+        self.env.assertEqual(self._count("MATCH (n:B) RETURN count(n)"), 20002)
+
+        # a value an earlier clause of the same query wrote is a duplicate
+        self._rejects("CREATE (:B {v: 30000}) WITH 1 AS x CREATE (:B {v: 30000})", msg)
+        # MERGE that cannot match an existing node creates a duplicate
+        self._rejects("MERGE (n:B {v: 8, tag: 'other'})", msg)
+        # a label added to an existing node that holds an existing value
+        g.query("CREATE (:Other {v: 9})")
+        self._rejects("MATCH (m:Other {v: 9}) SET m:B", msg)
+
+        # the string '10' is not the integer 10
+        g.query("CREATE (:B {v: '10'})")
+        self._rejects("CREATE (:B {v: '10'})", msg)
+        self.env.assertEqual(self._count("MATCH (n:B) RETURN count(n)"), 20003)
+
+    def test03_edge_duplicates(self):
+        g = self.g
+        msg = "unique constraint violation, on edge of relationship-type T"
+        create_unique_edge_constraint(g, "T", "v", sync=True)
+        g.query("CREATE (:A), (:Z)")
+        g.query("MATCH (a:A), (z:Z) UNWIND range(1, 20000) AS x CREATE (a)-[:T {v: x}]->(z)")
+
+        for n in [1, 500, 10000]:
+            self._rejects(f"MATCH (a:A), (z:Z) UNWIND range(1, {n}) AS j CREATE (a)-[:T {{v: CASE WHEN j = {n} THEN 7 ELSE -j END}}]->(z)", msg)
+            self._rejects(f"MATCH (a:A), (z:Z) UNWIND range(1, {n}) + [1] AS j CREATE (a)-[:T {{v: -j}}]->(z)", msg)
+            self.env.assertEqual(self._count("MATCH ()-[e:T]->() RETURN count(e)"), 20000)
+
+        self._rejects("MATCH ()-[e:T {v: 1}]->() SET e.v = 20000", msg)
+        g.query("MATCH ()-[a:T {v: 1}]->(), ()-[b:T {v: 2}]->() SET a.v = 2, b.v = 1")
+        g.query("MATCH ()-[e:T {v: 3}]->() DELETE e WITH 1 AS x MATCH (a:A), (z:Z) CREATE (a)-[:T {v: 3}]->(z)")
+        g.query("MATCH (a:A), (z:Z) CREATE (a)-[:T {v: 'x'}]->(:Z)")
+        g.query("MATCH (n:Z)<-[:T {v: 'x'}]-() DETACH DELETE n WITH 1 AS x MATCH (a:A), (z:Z) CREATE (a)-[:T {v: 'x'}]->(z)")
+        self.env.assertEqual(self._count("MATCH ()-[e:T]->() RETURN count(e)"), 20001)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
