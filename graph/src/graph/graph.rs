@@ -658,6 +658,13 @@ fn populate_index_batch(
 
                 let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
 
+                // Entities a writer re-indexed (or removed) since population began:
+                // its documents come from state newer than the committed graph this
+                // batch reads, so building them here would overwrite them with stale
+                // values (or resurrect a deleted entity) until the next write.
+                let written = indexer.written_during_population(&ticket);
+                let skip = |id: u64| written.as_ref().is_some_and(|w| w.contains(id));
+
                 // Build a document for `id`, allocating the RSDoc only once we
                 // know the entity has at least one indexed field. Populating an
                 // index created before its fields are seeded would otherwise
@@ -692,6 +699,9 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
+                            if skip(id) {
+                                continue;
+                            }
                             let g = graph.borrow();
                             if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
                                 batch.push(doc);
@@ -708,6 +718,9 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
+                            if skip(eid) {
+                                continue;
+                            }
                             let g = graph.borrow();
                             if let Some(doc) =
                                 build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
@@ -3783,6 +3796,7 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
+            indexer.note_written(name, ids.iter());
             let fields = indexer.get_fields(name);
 
             // Resolve `(src, dst)` only for the edge ids we actually
@@ -3834,6 +3848,7 @@ impl Graph {
         let mut remove: HashMap<Arc<String>, HashMap<u64, (u64, u64)>> = HashMap::new();
         for (type_id, edges) in remove_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
+            indexer.note_written(name, edges.keys().copied());
             remove.insert(name.clone(), edges.into_iter().collect());
         }
 
@@ -3873,6 +3888,7 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
+            indexer.note_written(name, ids.iter());
             let fields = indexer.get_fields(name);
             let mut docs = vec![];
             for id in ids {
@@ -3892,6 +3908,7 @@ impl Graph {
         let mut remove = HashMap::new();
         for (slot, ids) in remove_docs.drain() {
             let name = &names[slot as usize];
+            indexer.note_written(name, ids.iter());
             remove.insert(name.clone(), ids);
         }
 
