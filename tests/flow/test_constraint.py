@@ -1303,6 +1303,24 @@ class testUniqueConstraintIndexLookup():
         g.query("MATCH (n:Z)<-[:T {v: 'x'}]-() DETACH DELETE n WITH 1 AS x MATCH (a:A), (z:Z) CREATE (a)-[:T {v: 'x'}]->(z)")
         self.env.assertEqual(self._count("MATCH ()-[e:T]->() RETURN count(e)"), 20001)
 
+    def test04_partial_composite_change(self):
+        # a write that sets one property of a composite key is judged by the
+        # whole key of every node it touches
+        g = self.g
+        msg = "unique constraint violation on node of type C"
+        create_unique_node_constraint(g, "C", "a", "b", sync=True)
+        g.query("UNWIND range(1, 5000) AS x CREATE (:C {a: x, b: 'k' + toString(x)})")
+        g.query("CREATE (:C {a: -1, b: 'x'}), (:C {a: -2, b: 'y'}), (:C {a: -2, b: 'x'})")
+
+        # swapping 'a' gives the first node the key of the third
+        self._rejects("MATCH (p:C {a: -1, b: 'x'}), (q:C {a: -2, b: 'y'}) SET p.a = -2, q.a = -1", msg)
+        # swapping 'a' between two keys that stay distinct is admitted
+        g.query("MATCH (p:C {a: 7, b: 'k7'}), (q:C {a: 8, b: 'k8'}) SET p.a = 8, q.a = 7")
+        self.env.assertEqual(self._count("MATCH (n:C {a: 8, b: 'k7'}) RETURN count(n)"), 1)
+        # a write that leaves the key alone needs no check, and passes
+        g.query("MATCH (n:C) WHERE n.a > 0 SET n.touched = true")
+        self.env.assertEqual(self._count("MATCH (n:C) RETURN count(n)"), 5003)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():

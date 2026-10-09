@@ -66,6 +66,22 @@ const UNIQUE_PROBE_COST: u64 = 4;
 /// Keys looked up by one UNIQUE index query.
 const UNIQUE_PROBE_ROWS: usize = 1024;
 
+/// Attribute ids of the constraint's properties. A property the graph has
+/// never seen has no id, and no write in this commit can have set it.
+fn constrained_attr_ids(
+    g: &Graph,
+    constraint: &Constraint,
+) -> Vec<u16> {
+    constraint
+        .properties
+        .iter()
+        .filter_map(|prop| match constraint.entity_type {
+            EntityType::Node => g.get_node_attr_id(prop),
+            EntityType::Relationship => g.get_rel_attr_id(prop),
+        })
+        .collect()
+}
+
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
@@ -1372,10 +1388,17 @@ impl Pending {
         };
         let label_id = usize::from(label_id) as u64;
 
-        // UNIQUE: key -> values of every affected member; a repeated key is a
-        // duplicate within this commit.
+        // UNIQUE: key -> values of every member whose key this commit can have
+        // changed; a repeated key is a duplicate within this commit.
+        let constrained = constrained_attr_ids(g, constraint);
+        let mut checked = RoaringTreemap::new();
         let mut keys: FxHashMap<Vec<u8>, Vec<Value>> = FxHashMap::default();
         for node_id in affected_node_ids {
+            if matches!(constraint.ct, ConstraintType::Unique)
+                && !self.node_key_may_change(node_id, label_id, &constrained)
+            {
+                continue;
+            }
             // Check if this node has the constrained label
             if !self.constraint_node_has_label(g, node_id, label_id) {
                 continue;
@@ -1395,6 +1418,7 @@ impl Pending {
                     }
                 }
                 ConstraintType::Unique => {
+                    checked.insert(node_id);
                     let mut values = Vec::with_capacity(constraint.properties.len());
                     let key = Graph::build_composite_key(&constraint.properties, |prop| {
                         let value = g.get_node_attribute(node_id.into(), prop);
@@ -1418,18 +1442,17 @@ impl Pending {
             return Ok(());
         }
 
-        let duplicate =
-            match self.unique_node_by_index(g, constraint, label_id, affected_node_ids, &keys) {
-                Some(found) => {
-                    debug_assert_eq!(
-                        found,
-                        Self::unique_node_by_scan(g, constraint, affected_node_ids, &keys),
-                        "the index and the label scan disagree on UNIQUE :{label}"
-                    );
-                    found
-                }
-                None => Self::unique_node_by_scan(g, constraint, affected_node_ids, &keys),
-            };
+        let duplicate = match self.unique_node_by_index(g, constraint, label_id, &checked, &keys) {
+            Some(found) => {
+                debug_assert_eq!(
+                    found,
+                    Self::unique_node_by_scan(g, constraint, &checked, &keys),
+                    "the index and the label scan disagree on UNIQUE :{label}"
+                );
+                found
+            }
+            None => Self::unique_node_by_scan(g, constraint, &checked, &keys),
+        };
         if duplicate {
             return Err(format!(
                 "unique constraint violation on node of type {label}"
@@ -1438,20 +1461,40 @@ impl Pending {
         Ok(())
     }
 
-    /// Whether a node outside `affected` holds one of `keys`, by lookups in the
+    /// Whether this commit can have changed the key of node `node_id` on label
+    /// `label_id` or made it a member: it created the node, added the label or
+    /// set a constrained attribute. A new duplicate needs at least one such node.
+    fn node_key_may_change(
+        &self,
+        node_id: u64,
+        label_id: u64,
+        constrained: &[u16],
+    ) -> bool {
+        self.created_nodes.contains(node_id)
+            || self
+                .set_labels
+                .get(&node_id)
+                .is_some_and(|labels| labels.contains(&label_id))
+            || self
+                .existing_nodes_attrs
+                .get(&node_id)
+                .is_some_and(|attrs| attrs.iter().any(|(id, _)| constrained.contains(id)))
+    }
+
+    /// Whether a node outside `checked` holds one of `keys`, by lookups in the
     /// label's range index. `None` when the index cannot answer completely, or
     /// when a scan of the label would be cheaper.
     ///
-    /// Exact because the index holds every node this commit did not change with
-    /// its current values: committed state plus the documents earlier commits
-    /// of this query published. A stale document belongs to an affected node,
-    /// or to one this commit deleted or unlabelled, which are skipped.
+    /// Exact because the index holds the constrained values of every node
+    /// outside `checked` as they are now: committed state plus the documents
+    /// earlier commits of this query published. A stale document belongs to a
+    /// node in `checked`, or to one this commit deleted or unlabelled.
     fn unique_node_by_index(
         &self,
         g: &Graph,
         constraint: &Constraint,
         label_id: u64,
-        affected: &RoaringTreemap,
+        checked: &RoaringTreemap,
         keys: &FxHashMap<Vec<u8>, Vec<Value>>,
     ) -> Option<bool> {
         if (keys.len() as u64).saturating_mul(UNIQUE_PROBE_COST) > g.node_count() {
@@ -1463,7 +1506,7 @@ impl Pending {
                 g.find_nodes_by_values(&constraint.label, &constraint.properties, chunk)?
             {
                 let id = u64::from(candidate);
-                if affected.contains(id) {
+                if checked.contains(id) {
                     continue;
                 }
                 let key = Graph::build_composite_key(&constraint.properties, |prop| {
@@ -1480,18 +1523,18 @@ impl Pending {
         Some(false)
     }
 
-    /// Whether a node outside `affected` holds one of `keys`, by a label scan.
+    /// Whether a node outside `checked` holds one of `keys`, by a label scan.
     fn unique_node_by_scan(
         g: &Graph,
         constraint: &Constraint,
-        affected: &RoaringTreemap,
+        checked: &RoaringTreemap,
         keys: &FxHashMap<Vec<u8>, Vec<Value>>,
     ) -> bool {
         let Some(lm) = g.get_label_matrix(&constraint.label) else {
             return false;
         };
         lm.iter(0, u64::MAX).any(|(other_id, _)| {
-            !affected.contains(other_id)
+            !checked.contains(other_id)
                 && keys.contains_key(&Graph::build_composite_key(
                     &constraint.properties,
                     |prop| g.get_node_attribute(other_id.into(), prop),
@@ -1508,8 +1551,15 @@ impl Pending {
         let type_name = &constraint.label;
 
         // UNIQUE: as in `check_node_constraint`.
+        let constrained = constrained_attr_ids(g, constraint);
+        let mut checked = RoaringTreemap::new();
         let mut keys: FxHashMap<Vec<u8>, Vec<Value>> = FxHashMap::default();
         for edge_id in affected_edge_ids {
+            if matches!(constraint.ct, ConstraintType::Unique)
+                && !self.edge_key_may_change(edge_id, &constrained)
+            {
+                continue;
+            }
             // Edges created this transaction resolve their type from
             // Pending's reverse index — no relationship-matrix read, which
             // would materialize the delta's pending tuples on every commit.
@@ -1537,6 +1587,7 @@ impl Pending {
                     }
                 }
                 ConstraintType::Unique => {
+                    checked.insert(edge_id);
                     let mut values = Vec::with_capacity(constraint.properties.len());
                     let key = Graph::build_composite_key(&constraint.properties, |prop| {
                         let value = g.get_relationship_attribute(edge_id.into(), prop);
@@ -1560,16 +1611,16 @@ impl Pending {
             return Ok(());
         }
 
-        let duplicate = match self.unique_edge_by_index(g, constraint, affected_edge_ids, &keys) {
+        let duplicate = match self.unique_edge_by_index(g, constraint, &checked, &keys) {
             Some(found) => {
                 debug_assert_eq!(
                     found,
-                    Self::unique_edge_by_scan(g, constraint, affected_edge_ids, &keys),
+                    Self::unique_edge_by_scan(g, constraint, &checked, &keys),
                     "the index and the type scan disagree on UNIQUE [:{type_name}]"
                 );
                 found
             }
-            None => Self::unique_edge_by_scan(g, constraint, affected_edge_ids, &keys),
+            None => Self::unique_edge_by_scan(g, constraint, &checked, &keys),
         };
         if duplicate {
             return Err(format!(
@@ -1579,13 +1630,27 @@ impl Pending {
         Ok(())
     }
 
-    /// [`Self::unique_node_by_index`] for relationships. An edge never changes
-    /// type, so a stale document belongs to an affected or a deleted edge.
+    /// [`Self::node_key_may_change`] for relationships: an edge never changes
+    /// type, so only creation or a constrained attribute can change its key.
+    fn edge_key_may_change(
+        &self,
+        edge_id: u64,
+        constrained: &[u16],
+    ) -> bool {
+        self.created_rel_types.contains_key(&edge_id.into())
+            || self
+                .existing_relationships_attrs
+                .get(&edge_id)
+                .is_some_and(|attrs| attrs.iter().any(|(id, _)| constrained.contains(id)))
+    }
+
+    /// [`Self::unique_node_by_index`] for relationships. A stale document
+    /// belongs to an edge in `checked` or to a deleted edge.
     fn unique_edge_by_index(
         &self,
         g: &Graph,
         constraint: &Constraint,
-        affected: &RoaringTreemap,
+        checked: &RoaringTreemap,
         keys: &FxHashMap<Vec<u8>, Vec<Value>>,
     ) -> Option<bool> {
         if (keys.len() as u64).saturating_mul(UNIQUE_PROBE_COST) > g.relationship_count() {
@@ -1597,7 +1662,7 @@ impl Pending {
                 g.find_relationships_by_values(&constraint.label, &constraint.properties, chunk)?
             {
                 let id = u64::from(candidate);
-                if affected.contains(id) {
+                if checked.contains(id) {
                     continue;
                 }
                 let key = Graph::build_composite_key(&constraint.properties, |prop| {
@@ -1611,18 +1676,18 @@ impl Pending {
         Some(false)
     }
 
-    /// Whether an edge outside `affected` holds one of `keys`, by a type scan.
+    /// Whether an edge outside `checked` holds one of `keys`, by a type scan.
     fn unique_edge_by_scan(
         g: &Graph,
         constraint: &Constraint,
-        affected: &RoaringTreemap,
+        checked: &RoaringTreemap,
         keys: &FxHashMap<Vec<u8>, Vec<Value>>,
     ) -> bool {
         let Some(tensor) = g.get_relationship_matrix(&constraint.label) else {
             return false;
         };
         tensor.iter(0, u64::MAX, false).any(|(_, _, other_eid)| {
-            !affected.contains(other_eid)
+            !checked.contains(other_eid)
                 && keys.contains_key(&Graph::build_composite_key(
                     &constraint.properties,
                     |prop| g.get_relationship_attribute(other_eid.into(), prop),
