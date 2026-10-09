@@ -21,6 +21,7 @@
 //! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
+use graph::index::release_open_queries;
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
@@ -219,6 +220,9 @@ impl QuerySession {
     /// can commit, and it has not yet touched the shared index — a reader entering
     /// the window sees a consistent older state.
     pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
+        // On every call, not only on escalation: a writer can open new index
+        // scans between two commits, and an inline session starts as a writer.
+        release_open_queries();
         if self.escalate() {
             // The key could have been deleted in the window where we held no
             // per-graph lock, so re-verify the graph is still reachable before

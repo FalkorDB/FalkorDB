@@ -50,6 +50,7 @@ use graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
+    index::release_open_queries,
     planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
@@ -1454,6 +1455,8 @@ pub(crate) fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
+    // The resync writes the index.
+    release_open_queries();
     let committed = session.with_graph(|tg| tg.graph.read());
     runtime.resync_published_indexes(&committed);
     session.with_graph(|tg| tg.graph.rollback());
