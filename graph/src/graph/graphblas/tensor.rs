@@ -32,20 +32,24 @@
 //!
 //! ## Compound Key Encoding
 //!
-//! The edge matrix `me` stores edge IDs using a compound row key that packs
-//! both source and destination node IDs into a single u64:
+//! Multi-edge storage uses one `me` matrix per block. [`compound_key`] splits
+//! each endpoint into high bits that select the block and low [`BLOCK_SHIFT`]
+//! bits (currently 30) that pack into a 60-bit row key within that block:
 //!
 //! ```text
-//!   row = (src << 32) | dst
+//!   block = (src >> BLOCK_SHIFT, dst >> BLOCK_SHIFT)
+//!   row = ((src & BLOCK_MASK) << BLOCK_SHIFT) | (dst & BLOCK_MASK)
 //!
 //!   Example: edge from node 3 to node 7
-//!     row = (3 << 32) | 7 = 0x0000_0003_0000_0007
+//!     block = (0, 0)
+//!     row = (3 << 30) | 7 = 0x0000_0000_C000_0007
 //!
-//!   me[row, edge_id] = true
+//!   In the selected block's matrix: me[row, edge_id] = true
 //! ```
 //!
 //! This encoding allows multiple edge IDs per (src, dst) pair by storing
-//! each edge ID as a separate column in the same row.
+//! each edge ID as a separate column in the same row of the selected block.
+//! Larger endpoint IDs select another block rather than overflowing the row key.
 //!
 //! ## Delta-Layer Invariants
 //!
