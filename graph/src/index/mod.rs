@@ -2156,6 +2156,9 @@ impl Index {
     }
 
     /// Get the current pending changes count.
+    ///
+    /// Reads a lock-free copy, so a BGSAVE fork child can call it. Under a
+    /// concurrent change it may return the count from before that change.
     #[must_use]
     pub fn pending_count(&self) -> i32 {
         self.current_pending.load(Ordering::Relaxed)
