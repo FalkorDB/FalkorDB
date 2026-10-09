@@ -652,7 +652,7 @@ fn reply_result<const COMPACT: bool>(
         for row in batch.active_indices() {
             raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
             for name in &runtime.return_names {
-                let value = batch.value_at(name.id, row).unwrap();
+                let value = batch.value_at(name.id, row).unwrap_or(Value::Null);
                 if COMPACT {
                     raw::reply_with_array(ctx.ctx, 2);
                     reply_compact_value(ctx, runtime, &value);

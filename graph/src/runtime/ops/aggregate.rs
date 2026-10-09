@@ -1194,12 +1194,26 @@ impl<'a> Iterator for AggregateOp<'a> {
                 for (_, tree) in self.agg {
                     unbind_agg_accumulators(&tree.root(), &mut acc);
                 }
-                // Re-bind aggregate output names last: an accumulator slot id
-                // can coincide with another aggregate's output name (the binder
-                // may reuse slot IDs), and the unbind above would otherwise
-                // clear that output. Output bindings must win. This also matters
-                // for keyless empty-input groups where the output value is Null,
-                // since an unbound Null slot is dropped during columnar finish.
+                // Re-bind grouping keys and aggregate output names: an accumulator slot id
+                // can coincide with a grouping key or another aggregate's output name (the
+                // binder may reuse slot IDs), and the unbind above would otherwise clear that
+                // binding. Output bindings must win. This also matters for null grouping keys
+                // and for keyless empty-input groups where the output value is Null, since an
+                // unbound Null slot is dropped during columnar finish.
+                for (name, tree) in self.keys {
+                    if let ExprIR::Variable(original_var) = tree.root().data()
+                        && let Some(value) = key.get(name)
+                        && !self
+                            .agg
+                            .iter()
+                            .any(|(agg_name, _)| agg_name.id == original_var.id)
+                    {
+                        acc.insert(original_var, value.clone());
+                    }
+                    if let Some(value) = key.get(name) {
+                        acc.insert(name, value.clone());
+                    }
+                }
                 for (name, val) in agg_outputs {
                     acc.insert(name, val);
                 }

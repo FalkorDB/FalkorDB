@@ -231,3 +231,16 @@ class testNullHandlingFlow(FlowTestsBase):
             "UNWIND [1, null, 2] AS x "
             "RETURN CASE x WHEN null THEN 'isnull' WHEN 1 THEN 'one' ELSE 'other' END AS v")
         self.env.assertEqual(res.result_set, [['one'], ['other'], ['other']])
+
+    # A RETURN projection with a null column before an aggregate must not crash
+    # the server (issue #3150: accumulator slot reuse unbinding grouping key).
+    def test10_null_preceding_aggregate(self):
+        res = self.graph.query("RETURN null AS x, count(1) AS n")
+        self.env.assertEqual(res.result_set, [[None, 1]])
+
+        res = self.graph.query("RETURN null AS x, collect(1) AS c")
+        self.env.assertEqual(res.result_set, [[None, [1]]])
+
+        self.graph.query("CREATE (:Item {name: 'item1'})")
+        res = self.graph.query("MATCH (i:Item) RETURN i.missing AS m, count(i) AS c")
+        self.env.assertEqual(res.result_set, [[None, 1]])
