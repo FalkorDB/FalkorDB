@@ -17,6 +17,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 # accurate source mapping. Output lands in target/debug/.
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
+# cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
+# manifest -- and graph/Cargo.toml carries a path build-dependency on
+# ../native-deps. Without the crate present, `cook` fails with
+# "failed to read /src/native-deps/Cargo.toml". It is ~140KB of source and its
+# own workspace, so copying it here costs nothing and does not disturb the
+# dependency layer chef is caching.
+COPY native-deps native-deps
+COPY deps/native-deps.lock deps/native-deps.lock
 RUN CXX=clang++-23 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
     cargo chef cook --recipe-path recipe.json
 COPY . .
@@ -79,8 +87,8 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 && \
     apt-get upgrade -y && \
-    # Match upstream redis image's uid/gid 999 before purging passwd.
-    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis && \
+    # The falkordb user (uid/gid 999, as in the release image) before purging passwd.
+    groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
     (dpkg --force-remove-essential --purge perl-base || true) && \
@@ -108,7 +116,11 @@ ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
     BROWSER=0 \
     FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
-    LLVM_PROFILE_FILE=/var/lib/falkordb/cov/profraw_%p_%m.profraw
+    LLVM_PROFILE_FILE=/var/lib/falkordb/cov/profraw_%p_%m.profraw \
+    # run.sh drops root to `falkordb` in the release image. Not here: this image
+    # has no gosu, and as `falkordb` the profraw writes into the root-owned cov
+    # dir (and its bind mounts) would fail without a sound.
+    SKIP_DROP_PRIVS=1
 
 EXPOSE 6379/tcp
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]

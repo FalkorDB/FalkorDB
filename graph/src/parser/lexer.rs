@@ -268,14 +268,6 @@ static KEYWORD_MAP: phf::Map<&'static str, Keyword> = phf::phf_map! {
     "UNION" => Keyword::Union,
 };
 
-const MIN_I64: [&str; 5] = [
-    "0b1000000000000000000000000000000000000000000000000000000000000000", // binary
-    "0o1000000000000000000000",                                           // octal
-    "01000000000000000000000",                                            // octal
-    "9223372036854775808",                                                // decimal
-    "0x8000000000000000",                                                 // hex
-];
-
 pub struct Lexer<'a> {
     pub str: &'a str,
     pos: usize,
@@ -311,54 +303,34 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Length of the whitespace and comments starting at `pos`.
+    ///
+    /// A `//` comment runs to the end of its line, a `/*` comment to the
+    /// first `*/`. Any other `/` is the division operator, and so is the `/`
+    /// of a `/*` that is never closed: it is left for the parser to reject.
     fn read_spaces(
         str: &'a str,
         pos: usize,
     ) -> usize {
-        let mut len = 0;
-        let mut chars = str[pos..].chars();
-        let mut next = chars.next();
-
-        while let Some(' ' | '\t' | '\n' | '/') = next {
-            if next == Some('/') {
-                len += 1;
-                next = chars.next();
-                let Some(c) = next else {
-                    break;
-                };
-                len += c.len_utf8();
-                if c == '/' {
-                    next = chars.next();
-                    while let Some(c) = next {
-                        len += c.len_utf8();
-                        if c == '\n' {
-                            next = chars.next();
-                            break;
-                        }
-                        next = chars.next();
+        let bytes = str.as_bytes();
+        let mut end = pos;
+        loop {
+            match bytes.get(end) {
+                Some(b' ' | b'\t' | b'\r' | b'\n') => end += 1,
+                Some(b'/') => match bytes.get(end + 1) {
+                    Some(b'/') => {
+                        end = str[end..].find('\n').map_or(str.len(), |n| end + n + 1);
                     }
-                } else if c == '*' {
-                    for c in chars.by_ref() {
-                        if c == '*' {
-                            len += 1;
-                            continue;
-                        }
-                        len += c.len_utf8();
-                        if c == '/' {
-                            break;
-                        }
-                    }
-                    next = chars.next();
-                } else {
-                    len -= 1 + c.len_utf8();
-                    break;
-                }
-                continue;
+                    Some(b'*') => match str[end + 2..].find("*/") {
+                        Some(n) => end += 2 + n + 2,
+                        None => break,
+                    },
+                    _ => break,
+                },
+                _ => break,
             }
-            len += 1;
-            next = chars.next();
         }
-        len
+        end - pos
     }
 
     pub fn current(&self) -> Result<Token, String> {
@@ -626,6 +598,16 @@ impl<'a> Lexer<'a> {
                         return Ok((Token::Integer(0), len));
                     }
                 },
+                Some('e' | 'E') => {
+                    // `0e5`: the exponent is read by the float loop below.
+                    is_float = true;
+                    is_e = true;
+                    len += 1;
+                    if let Some('-' | '+') = str[pos + len..].chars().next() {
+                        chars.next();
+                        len += 1;
+                    }
+                }
                 Some(_) | None => {
                     return Ok((Token::Integer(0), len));
                 }
@@ -728,15 +710,6 @@ impl<'a> Lexer<'a> {
             };
         }
 
-        if str.eq_ignore_ascii_case(MIN_I64[0])
-            || str.eq_ignore_ascii_case(MIN_I64[1])
-            || str.eq_ignore_ascii_case(MIN_I64[2])
-            || str.eq_ignore_ascii_case(MIN_I64[3])
-            || str.eq_ignore_ascii_case(MIN_I64[4])
-        {
-            return Ok(Token::Integer(i64::MIN));
-        }
-
         let mut offset = 0;
         if radix == 8 {
             if str.starts_with("0o") || str.starts_with("0O") {
@@ -748,6 +721,11 @@ impl<'a> Lexer<'a> {
             offset = 2;
         }
         let number_str = &str[offset..];
+        // 2^63, however it is spelled, is handed back as i64::MIN: it is only
+        // valid negated, and the parser rejects it anywhere else.
+        if u64::from_str_radix(number_str, radix) == Ok(1 << 63) {
+            return Ok(Token::Integer(i64::MIN));
+        }
         i64::from_str_radix(number_str, radix).map_or_else(
             |err| match err.kind() {
                 IntErrorKind::PosOverflow => Err(format!("Integer overflow '{number_str}'")),
@@ -869,6 +847,101 @@ mod tests {
         lexer.set_pos(5000);
         let msg = lexer.format_error("boom");
         assert!(msg.contains('é'));
+    }
+
+    // Regression (#2909): `\r` was not whitespace, so CRLF queries failed.
+    #[test]
+    fn carriage_return_is_whitespace() {
+        assert_eq!(
+            lex_all("1\r\n2\r3").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2), Token::Integer(3)]
+        );
+    }
+
+    // Regression (#2909): a leading `0` returned before the exponent was
+    // seen, so `0e5` lexed as `0` followed by the identifier `e5`.
+    #[test]
+    fn zero_with_exponent_is_float() {
+        for input in ["0e5", "0E1", "0e+1", "0e-2"] {
+            assert_eq!(lex_all(input).unwrap(), vec![Token::Float(0.0)], "{input}");
+        }
+        assert!(lex_all("0e").is_err());
+    }
+
+    // Regression (#2909): 2^63 - the digits of i64::MIN - was recognised by
+    // five fixed spellings only, so e.g. a leading zero made it overflow.
+    #[test]
+    fn every_spelling_of_two_to_the_63_lexes_as_min() {
+        for input in [
+            "9223372036854775808",
+            "0x8000000000000000",
+            "0x08000000000000000",
+            "0X0008000000000000000",
+            "0o1000000000000000000000",
+            "0o01000000000000000000000",
+            "01000000000000000000000",
+            "0b1000000000000000000000000000000000000000000000000000000000000000",
+            "0b01000000000000000000000000000000000000000000000000000000000000000",
+        ] {
+            assert_eq!(
+                lex_all(input).unwrap(),
+                vec![Token::Integer(i64::MIN)],
+                "{input}"
+            );
+        }
+        assert!(lex_all("0x8000000000000001").is_err());
+        assert!(lex_all("9223372036854775809").is_err());
+    }
+
+    // Regression (#2901): a block comment ended at the first `/`, so the
+    // rest of it was lexed as code (`RETURN 5 /* a/ -1 //*/` returned 4).
+    #[test]
+    fn block_comment_ends_at_star_slash() {
+        assert_eq!(lex_all("5 /* a/ -1 //*/").unwrap(), vec![Token::Integer(5)]);
+        assert_eq!(
+            lex_all("1 /* a/b */ + 1").unwrap(),
+            vec![Token::Integer(1), Token::Plus, Token::Integer(1)]
+        );
+        assert_eq!(
+            lex_all("1 /*/ ** / * */ 2 /**/").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2)]
+        );
+        assert_eq!(
+            lex_all("1 // a /* b\n2").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2)]
+        );
+    }
+
+    // Regression (#2901): a `/` at the end of the input was swallowed as
+    // whitespace, so `RETURN 1 /` returned 1.
+    #[test]
+    fn lone_slash_is_division() {
+        assert_eq!(
+            lex_all("1 /").unwrap(),
+            vec![Token::Integer(1), Token::Slash]
+        );
+        assert_eq!(
+            lex_all("1 / 2").unwrap(),
+            vec![Token::Integer(1), Token::Slash, Token::Integer(2)]
+        );
+    }
+
+    // Regression (#2901): an unterminated `/*` hid the rest of the query.
+    // It is not a comment, so the parser gets to reject the `/` `*`.
+    #[test]
+    fn unterminated_block_comment_is_not_a_comment() {
+        assert_eq!(
+            lex_all("1 /* never").unwrap(),
+            vec![
+                Token::Integer(1),
+                Token::Slash,
+                Token::Star,
+                Token::IdentifierOrKeyword {
+                    ident: Arc::new(String::from("never")),
+                    keyword: None,
+                },
+            ]
+        );
     }
 
     #[test]

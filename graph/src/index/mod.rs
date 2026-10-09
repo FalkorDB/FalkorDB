@@ -794,14 +794,13 @@ impl Document {
                         RSFLDTYPE_TAG,
                     );
                 }
-                Value::Datetime(ts) | Value::Date(ts) | Value::Time(ts) | Value::Duration(ts) => {
-                    RediSearch_DocumentAddFieldNumber(
-                        self.rs_doc,
-                        field.name.as_ptr().cast::<c_char>(),
-                        *ts as f64,
-                        RSFLDTYPE_NUMERIC,
-                    );
-                }
+                // Temporals are not indexed. Stored as their raw number in the
+                // numeric field they would match numeric queries (`n.v > 0`
+                // returned dates), and no index query is ever built for a
+                // temporal value: the scan ops refuse them (`can_utilize_index`), so
+                // a temporal predicate is answered by a label scan and its
+                // retained filter.
+                Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
                 Value::List(items) => {
                     // Index array elements in separate fields for contains queries.
                     // Numeric elements go to "range:{attr}:numeric:arr",
@@ -1398,6 +1397,10 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+        // An absent bound is unbounded, so it must include the infinity
+        // that stands in for it: `n.v > 0` selects a stored `+inf`.
+        let include_min = include_min || min.is_none();
+        let include_max = include_max || max.is_none();
         unsafe {
             RediSearch_CreateNumericNode(
                 self.rs_ptr(),
@@ -1423,6 +1426,16 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+
+        // Equal bounds with an exclusive side (`> 'a' AND < 'a'`, `>= 'a'
+        // AND < 'a'`) select nothing; the exact-match shortcut below is
+        // only right when both sides are inclusive.
+        if let (Some(lo), Some(hi)) = (min, max)
+            && lo == hi
+            && !(include_min && include_max)
+        {
+            return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
+        }
 
         let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
 

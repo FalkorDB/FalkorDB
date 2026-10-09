@@ -516,6 +516,15 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.env.assertEqual(row[0], row[1])
             self.env.assertEqual(row[2], row[3])
 
+        # startNode(null) and endNode(null) must return null per Cypher specification
+        query = """OPTIONAL MATCH (n)-[r:NONEXISTENT]->() WHERE false RETURN startNode(r), endNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
+        query = """RETURN startNode(null) AS s, endNode(null) AS e"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
     def test17_to_json(self):
         # Test JSON literal values in an array.
         query = """RETURN toJSON([1, 0.000000000000001, 'str', true, NULL])"""
@@ -625,6 +634,30 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
+
+    def test19a_hasLabels_type_mismatch_names_the_received_type(self):
+        # The three explicit arms in `has_labels` name the received type; the
+        # catch-all covers the other 12 Value variants and used to say nothing
+        # about what it got, which is the only type-mismatch message in the file
+        # without a `but was X` clause.
+        for value, expected in [('null', 'Null'),
+                                ('{a: 1}', 'Map'),
+                                ('[1]', 'List'),
+                                ('1', 'Integer'),
+                                ('1.5', 'Float'),
+                                ('true', 'Boolean')]:
+            query = ("MATCH (n) WHERE hasLabels(n, ['person', %s]) "
+                     "RETURN n.name" % value)
+            error = None
+            try:
+                self.graph.query(query)
+            except redis.ResponseError as e:
+                error = str(e)
+            self.env.assertTrue(
+                error is not None,
+                message="hasLabels(n, ['person', %s]) was accepted" % value)
+            self.env.assertContains(
+                "Type mismatch: expected String but was %s" % expected, error)
 
     def test20_keys(self):
         # Test retrieving keys of a nested map
@@ -2075,6 +2108,20 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # a range whose bounds sit at the i64 limits must be rejected
+        # cleanly, negating i64::MIN used to crash the server
+        queries_with_errors = [
+            "RETURN range(0, -9223372036854775808, -1)",
+            "RETURN range(0, -9223372036854775807, -1)",
+            "RETURN range(-9223372036854775808, 0, 1)",
+        ]
+        for query in queries_with_errors:
+            self.expect_error(query, "Range too large")
+
+        # a zero step is a distinct, equally clean error
+        self.expect_error("RETURN range(0, 10, 0)",
+                          "step argument to range() can't be 0")
     
     def test80_IN(self):
         query_to_expected_result = {
@@ -2104,6 +2151,13 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # coalesce needs at least one argument, as in C
+        try:
+            self.graph.query("RETURN coalesce()")
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertIn("Received 0 arguments to function 'coalesce', expected at least 1", str(e))
     
     def test83_Replace(self):
         query_to_expected_result = {
@@ -2882,3 +2936,23 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [])
         res = self.graph.query("MATCH (n:NoSuchLabel) RETURN split(1, 2)")
         self.env.assertEqual(res.result_set, [])
+
+    def test98_exists_unbound_variables(self):
+        # exists() over a traversal pattern referencing unbound variables,
+        # reusing the same relationship variable in both patterns, used to
+        # dereference unresolved entities and crash the server
+        q = "RETURN exists( (n0)-[r1]-(n1), (n1)-[r1]-(n0) ) AS has_path"
+        self.expect_error(q, "'n0' not defined")
+
+        # a traversal pattern is not a valid exists() argument at all,
+        # whether or not its variables resolve
+        q = "RETURN exists( (n0)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        q = "MATCH (a) RETURN exists( (a)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        # the server is still responsive
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])

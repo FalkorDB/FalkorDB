@@ -9,9 +9,10 @@ The development container includes:
 - **Ubuntu 24.04** as the base image
 - **Redis server** installed via apt
 - **Rust toolchain** with all necessary components
-- **LLVM 21** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
-- **GraphBLAS** (v10.5.0) compiled and installed using `graphblas.sh`
-- **RediSearch** with vector similarity support, built using `redisearch.sh`
+- **LLVM 23** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
+- **GraphBLAS**, **LAGraph** and **RediSearch** (with vector
+  similarity support) prebuilt by the `native-deps` crate into its artifact
+  cache, so `cargo build` in the container links them without recompiling
 - **Python 3 virtual environment** at `/data/venv` with all test dependencies
 
 ## Usage

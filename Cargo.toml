@@ -3,6 +3,9 @@ members = [
     "graph",
     "fuzz",
     "runtime-fuzz-target", ]
+# native-deps is its own workspace: graph/build.rs uses it as a build-dependency,
+# so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
+exclude = ["native-deps"]
 
 [package]
 name = "falkordb-rs"
@@ -77,8 +80,11 @@ strip = false
 
 [features]
 fuzz = []
+# Pass-through for graph's native numeric index. Enables `index::falkordb` in the
+# shipped `.so`; off by default. See graph/Cargo.toml for the full contract.
+index-falkordb = ["graph/index-falkordb"]
 # Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
 # JIT cache populates as we exercise the test suite. Consumed by graph's
-# matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —
+# matrix.rs and forwarded by `native-deps prejit`; never enable in shipped builds —
 # the runtime image has no compiler and no on-disk cache.
 prejit_harvest = ["graph/prejit_harvest"]
