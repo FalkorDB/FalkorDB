@@ -44,6 +44,14 @@ impl<'a> LimitOp<'a> {
     }
 }
 
+impl LimitOp<'_> {
+    /// The input is never pulled again once the limit is met, and an index scan
+    /// in it would hold RediSearch's read locks until the query ends.
+    fn release_child(&mut self) {
+        *self.child = BatchOp::Once(None);
+    }
+}
+
 // TODO: implement size_hint for all operators
 
 impl<'a> Iterator for LimitOp<'a> {
@@ -70,6 +78,9 @@ impl<'a> Iterator for LimitOp<'a> {
             if self.remaining >= active {
                 // Entire batch fits within the limit window — pass through.
                 self.remaining -= active;
+                if self.remaining == 0 {
+                    self.release_child();
+                }
                 return Some(Ok(batch));
             }
 
@@ -81,6 +92,7 @@ impl<'a> Iterator for LimitOp<'a> {
                 .map(|i| i as u16)
                 .collect();
             self.remaining = 0;
+            self.release_child();
             batch.set_selection(new_sel);
             return Some(Ok(batch));
         }
