@@ -1,0 +1,5 @@
+name = "falkor-index-layer"
+defaultTargets = ["FalkorIndexLayer"]
+
+[[lean_lib]]
+name = "FalkorIndexLayer"

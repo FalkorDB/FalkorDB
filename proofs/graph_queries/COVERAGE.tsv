@@ -1,0 +1,197 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/graph/graph.rs	from_str	158	PROVEN	Queries.dirOfStr_spec
+graph/src/graph/graph.rs	from	169	PROVEN	Accessors newtype identity (LabelId.0)
+graph/src/graph/graph.rs	from	175	PROVEN	Accessors newtype identity (TypeId.0)
+graph/src/graph/graph.rs	from	181	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	187	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	193	PROVEN	Accessors.nodeId_roundtrip (RelId)
+graph/src/graph/graph.rs	from	199	PROVEN	Accessors.nodeId_roundtrip (RelId)
+graph/src/graph/graph.rs	new	206	PROVEN	Accessors.planNew_spec
+graph/src/graph/graph.rs	from	342	PROVEN	Accessors.nodeOpErrorOf_spec
+graph/src/graph/graph.rs	populate_index	494	PROVEN	Index.populateStart_spec
+graph/src/graph/graph.rs	populate_index_batch	520	PROVEN	see proofs/search_concurrency Tickets.batch
+graph/src/graph/graph.rs	drop_index_bg	741	PROVEN	Index.dropBg_spec
+graph/src/graph/graph.rs	grow_cap	788	PROVEN	Schema.growCap/growStep: growCap_ge_needed (needed <= GrB_INDEX_MAX), growCap_le_max, growCap_reaches, growCap_ge_cap, growCap_noop, growCap_chunked, growStep_small (#2911 checked/clamped step; total)
+graph/src/graph/graph.rs	new	804	PROVEN	Ids.newG_spec
+graph/src/graph/graph.rs	restore	847	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, fillEndpoints_spec
+graph/src/graph/graph.rs	rebuild_derived_matrices	956	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose)
+graph/src/graph/graph.rs	trim_attr_stores	980	PROVEN	Ids.trimAttrStores_id
+graph/src/graph/graph.rs	new_version	986	PROVEN	Ids.newVersion_spec (fresh batch per version)
+graph/src/graph/graph.rs	name	1035	PROVEN	Accessors (field projection; newVersion_spec keeps it)
+graph/src/graph/graph.rs	node_count	1040	PROVEN	Ids.markNodesLive_spec / nodeBound_eq (IdSpace::live)
+graph/src/graph/graph.rs	label_node_count	1046	PROVEN	Schema.labelNodeCount_eq, labelNodeCount_unknown
+graph/src/graph/graph.rs	relationship_count	1057	PROVEN	Ids.relBound_eq (IdSpace::live)
+graph/src/graph/graph.rs	label_node_count_by_idx	1063	PROVEN	Accessors.labelNodeCountByIdx_eq
+graph/src/graph/graph.rs	type_edge_count	1072	PROVEN	Accessors.typeEdgeCount_eq
+graph/src/graph/graph.rs	property_key_count	1086	PROVEN	Accessors.propertyKeyCount_eq
+graph/src/graph/graph.rs	node_cap	1091	PROVEN	Ids.markNodesLive_spec (cap covers ids)
+graph/src/graph/graph.rs	labels_count	1096	PROVEN	Accessors.labelsCount_eq
+graph/src/graph/graph.rs	get_labels	1101	PROVEN	Accessors.labelById_getLabelId
+graph/src/graph/graph.rs	get_label_by_id	1106	PROVEN	Accessors.labelById_getLabelId
+graph/src/graph/graph.rs	get_types	1114	PROVEN	Accessors.typeById_getTypeId
+graph/src/graph/graph.rs	get_type	1119	PROVEN	Accessors.typeById_getTypeId
+graph/src/graph/graph.rs	get_attrs	1131	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	intern_label	1137	PROVEN	Schema.internLabel_spec
+graph/src/graph/graph.rs	get_label_id_mut	1151	PROVEN	Schema.getLabelIdMut_spec
+graph/src/graph/graph.rs	get_label_id	1171	PROVEN	Schema.internLabel_spec, getLabelIdMut_spec
+graph/src/graph/graph.rs	get_type_id	1178	PROVEN	Schema.getTypeIdMut_spec, Accessors.typeById_getTypeId
+graph/src/graph/graph.rs	node_has_label	1190	PROVEN	Schema.nodeHasLabel_iff
+graph/src/graph/graph.rs	node_has_label_id	1204	PROVEN	Schema.nodeHasLabel_iff
+graph/src/graph/graph.rs	edge_has_type	1216	PROVEN	Schema.edgeHasType_iff
+graph/src/graph/graph.rs	get_type_id_mut	1229	PROVEN	Schema.getTypeIdMut_spec, getTypeIdMut_stale_width (BUG), Delete.stale_type_after_registration
+graph/src/graph/graph.rs	get_plan	1251	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
+graph/src/graph/graph.rs	get_label_matrix	1322	PROVEN	Schema.labelNodeCount_eq (getLabelMat)
+graph/src/graph/graph.rs	get_label_matrix_mut	1330	PROVEN	Schema.getLabelMatMut_spec
+graph/src/graph/graph.rs	get_relationship_matrix_mut	1343	PROVEN	Schema.getRelMatMut_spec
+graph/src/graph/graph.rs	get_relationship_matrix	1369	PROVEN	Queries.allEdges_unknown, srcDestRels_mem (getRelMat)
+graph/src/graph/graph.rs	get_node_attribute_id	1384	PROVEN	Accessors.getNodeAttribute_spec (getGlobalAttributeId)
+graph/src/graph/graph.rs	node_attribute_count	1392	PROVEN	Accessors.propertyKeyCount_eq
+graph/src/graph/graph.rs	get_relationship_attribute_id	1397	PROVEN	Accessors.getRelAttribute_spec
+graph/src/graph/graph.rs	get_global_attribute_id	1410	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	node_id_bound	1585	PROVEN	Ids.maxNodeId_lt, returnNode_bound
+graph/src/graph/graph.rs	relationship_id_bound	1591	PROVEN	Ids.maxRelId_lt, returnRel_bound
+graph/src/graph/graph.rs	create_nodes	1624	PROVEN	Ids.markNodesLive_spec, createNodes_refused, createNodes_ok (IdSpaceContract hypothesis)
+graph/src/graph/graph.rs	max_node_id	1661	PROVEN	Ids.maxNodeId_lt
+graph/src/graph/graph.rs	max_relationship_id	1666	PROVEN	Ids.maxRelId_lt
+graph/src/graph/graph.rs	set_nodes_attributes_rows_of_labels	1702	PROVEN	Attrs.rowsOfLabels_mem
+graph/src/graph/graph.rs	set_nodes_attributes	1733	PROVEN	see proofs/pending_commit Span.mergeSpan_correct
+graph/src/graph/graph.rs	import_node_attrs	1765	PROVEN	see proofs/pending_commit Props.read_your_writes_new
+graph/src/graph/graph.rs	import_node_attrs_resolved	1808	PROVEN	Attrs.importResolvedTrack (rowsOfLabels_mem per node), store import = pending_commit
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1836	PROVEN	Attrs.getOrCreate_spec, getOrCreate_cap
+graph/src/graph/graph.rs	get_node_attr_id	1845	PROVEN	Attrs.getAttrIdU16_eq
+graph/src/graph/graph.rs	node_attr_name	1854	PROVEN	Attrs.attrName_getAttrId
+graph/src/graph/graph.rs	get_rel_attr_id	1863	PROVEN	Attrs.getAttrIdU16_eq
+graph/src/graph/graph.rs	rel_attr_name	1872	PROVEN	Attrs.attrName_getAttrId
+graph/src/graph/graph.rs	import_relationship_attrs_resolved	1885	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	1900	PROVEN	Attrs.getOrCreate_spec
+graph/src/graph/graph.rs	import_relationship_attrs	1907	PROVEN	see proofs/pending_commit Props.read_your_writes_new
+graph/src/graph/graph.rs	track_edge_index_updates_of_type	1927	PROVEN	Attrs.track_eq_ofType, trackOfType_noindex
+graph/src/graph/graph.rs	track_edge_index_updates	1952	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	set_node_labels_product	1987	PROVEN	Labels.setLabelsProduct_spec
+graph/src/graph/graph.rs	set_nodes_labels_bulk	2061	PROVEN	Labels.setLabelsBulk_spec
+graph/src/graph/graph.rs	remove_nodes_labels	2102	PROVEN	Labels.removeLabels_spec
+graph/src/graph/graph.rs	delete_nodes	2131	PROVEN	Labels.deleteNodes_spec, deleteNodes_refused, deleteNodes_ids
+graph/src/graph/graph.rs	get_node_relationships	2214	PROVEN	Queries.nodeRels_selfloop_twice (BUG via UDF getNeighbors)
+graph/src/graph/graph.rs	relationship_matrices_iter	2288	PROVEN	Queries.inDeg_eq (relMs iteration)
+graph/src/graph/graph.rs	get_node_relationships_by_type	2296	PROVEN	Queries.byType_both_once, byType_out, byType_in
+graph/src/graph/graph.rs	get_node_indegree	2338	PROVEN	Queries.inDeg_eq
+graph/src/graph/graph.rs	get_node_indegree_by_type	2350	PROVEN	Queries.inDegByType_eq
+graph/src/graph/graph.rs	get_node_outdegree	2364	PROVEN	Queries.outDeg_eq
+graph/src/graph/graph.rs	get_node_outdegree_by_type	2376	PROVEN	Queries.outDegByType_eq
+graph/src/graph/graph.rs	get_nodes	2389	PROVEN	Queries.getNodesAll_mem, getNodesAll_empty, getNodesMany_mem, getNodesMany_missing
+graph/src/graph/graph.rs	get_node_label_ids	2454	PROVEN	Queries.nodeLabelIds_mem
+graph/src/graph/graph.rs	get_node_labels	2463	PROVEN	Queries.nodeLabelNames_mem
+graph/src/graph/graph.rs	get_node_attribute	2472	PROVEN	Accessors.getNodeAttribute_spec
+graph/src/graph/graph.rs	get_node_attribute_by_idx	2484	PROVEN	Accessors.getNodeAttribute_spec (byIdx)
+graph/src/graph/graph.rs	get_node_attributes_by_idx	2495	PROVEN	Accessors.getNodeAttributesByIdx_spec
+graph/src/graph/graph.rs	create_relationships_bulk	2518	PROVEN	Delete.createRelsBulk_endpoints (no Nodup hypothesis), createRelsBulk_ragged, createRelsBulk_dup, foldl_set_get
+graph/src/graph/graph.rs	flush_for_bulk	2611	AXIOMATISED	GraphBLAS fold_latched; logical content unchanged (proofs/versioned_matrix fold theorems)
+graph/src/graph/graph.rs	fold_oversized_deltas	2636	AXIOMATISED	GraphBLAS fold_oversized + GrB_wait; logical content unchanged (proofs/versioned_matrix)
+graph/src/graph/graph.rs	wait_all	2657	AXIOMATISED	GrB_Matrix_wait on every matrix (pthread_atfork)
+graph/src/graph/graph.rs	is_synced	2675	PROVEN	Index.isSynced_iff
+graph/src/graph/graph.rs	set_relationships_attributes	2684	PROVEN	see proofs/pending_commit Span.mergeSpan_correct; Attrs.track_eq_ofType
+graph/src/graph/graph.rs	set_relationships_attributes_of_type	2705	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	is_node_deleted	2717	PROVEN	Ids.isNodeDeleted_return
+graph/src/graph/graph.rs	deleted_nodes_count	2725	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_nodes	2730	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_relationships_count	2735	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_relationships	2740	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	label_matrices	2745	PROVEN	Labels.LabCons (labelMs projection)
+graph/src/graph/graph.rs	adjacency_matrix	2750	PROVEN	Queries.adjMatrix (adj projection)
+graph/src/graph/graph.rs	relationship_tensors	2755	PROVEN	Queries.inDeg_eq (relMs projection)
+graph/src/graph/graph.rs	is_relationship_deleted	2760	PROVEN	Accessors.isRelDeleted_return; Delete.deleteRels_clears
+graph/src/graph/graph.rs	delete_relationships	2767	PROVEN	Delete.deleteRels_clears, deleteRels_adj, deleteRels_refused, deleteRels_stale (BUG)
+graph/src/graph/graph.rs	delete_implicit_edges	2894	PROVEN	Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed
+graph/src/graph/graph.rs	get_src_dest_relationships	3072	PROVEN	Queries.srcDestRels_mem
+graph/src/graph/graph.rs	build_relationship_matrix_unrestricted	3096	PROVEN	Queries.relMatUnrestricted_mem, relMatUnrestricted_none
+graph/src/graph/graph.rs	resolve_label_ids	3130	PROVEN	Queries.resolveLabelIds_none
+graph/src/graph/graph.rs	build_relationship_matrix	3140	PROVEN	Queries.relMatrix_mem
+graph/src/graph/graph.rs	get_relationships	3208	PROVEN	Queries.getRelationships_all
+graph/src/graph/graph.rs	get_relationship_type_id	3224	PROVEN	Queries.relTypeId_unique, Delete.relTypeId_two
+graph/src/graph/graph.rs	endpoints_for_edge	3240	PROVEN	Queries.relEndpoints_eq, Delete.createRelsBulk_endpoints
+graph/src/graph/graph.rs	clear_edge_endpoint	3249	PROVEN	see proofs/endpoint_index get_clear; Delete.deleteRels_clears
+graph/src/graph/graph.rs	get_relationship_endpoints	3258	PROVEN	Queries.relEndpoints_eq (panic = none)
+graph/src/graph/graph.rs	relationship_type_matrix_iter	3272	PROVEN	Queries.relTypeIter_mem
+graph/src/graph/graph.rs	get_relationship_attribute	3281	PROVEN	Accessors.getRelAttribute_spec
+graph/src/graph/graph.rs	get_relationship_attribute_by_idx	3294	PROVEN	Accessors.getRelAttribute_spec (byIdx)
+graph/src/graph/graph.rs	relationship_attrs	3308	PROVEN	Accessors (relAttrs projection) getRelAttribute_spec
+graph/src/graph/graph.rs	get_relationship_attributes_by_idx	3315	PROVEN	Accessors.getRelAttributesByIdx_spec
+graph/src/graph/graph.rs	resize_node_matrices	3328	PROVEN	Schema.resize_post (resizeNodeMs)
+graph/src/graph/graph.rs	resize_relationship_matrices	3340	PROVEN	Schema.resize_post (resizeRelMs)
+graph/src/graph/graph.rs	resize	3345	PROVEN	Schema.resize_post, resize_keeps
+graph/src/graph/graph.rs	attr_by_name	3375	PROVEN	Attrs.attrByName_spec
+graph/src/graph/graph.rs	attr_names	3386	PROVEN	Attrs.attrNames_length
+graph/src/graph/graph.rs	attr_pairs	3397	PROVEN	Attrs.attrPairs_names
+graph/src/graph/graph.rs	get_node_attrs	3409	PROVEN	Accessors.getNodeAttrs_eq
+graph/src/graph/graph.rs	get_node_all_attrs	3417	PROVEN	Accessors.getNodeAttrs_eq
+graph/src/graph/graph.rs	get_node_all_attrs_by_id	3424	PROVEN	Accessors.getNodeAttrCount_eq
+graph/src/graph/graph.rs	get_node_attr_count	3433	PROVEN	Accessors.getNodeAttrCount_eq
+graph/src/graph/graph.rs	get_relationship_attrs	3440	PROVEN	Accessors.getRelAttrs_eq
+graph/src/graph/graph.rs	get_relationship_all_attrs	3448	PROVEN	Accessors.getRelAttrs_eq
+graph/src/graph/graph.rs	get_relationship_all_attrs_by_id	3455	PROVEN	Accessors.getRelAttrCount_eq
+graph/src/graph/graph.rs	get_relationship_attr_count	3464	PROVEN	Accessors.getRelAttrCount_eq
+graph/src/graph/graph.rs	create_index	3471	PROVEN	Index.createIndex_node_spec
+graph/src/graph/graph.rs	create_index_sync	3509	PROVEN	Index.createIndex_node_spec (same state effect, no spawn)
+graph/src/graph/graph.rs	populate_indexes_sync	3549	PROVEN	Index.syncDocs_mem
+graph/src/graph/graph.rs	index_locks	3642	AXIOMATISED	clones of the indexers' parking_lot mutexes
+graph/src/graph/graph.rs	commit_index	3650	PROVEN	Index.commitDocs_noop, commitDocs_every_id (takes lock, = commit_index_kind)
+graph/src/graph/graph.rs	commit_index_locked	3663	PROVEN	Index.commitDocs_every_id
+graph/src/graph/graph.rs	commit_edge_index	3673	PROVEN	Index.commitEdgeDocs_mem (takes lock)
+graph/src/graph/graph.rs	commit_edge_index_locked	3685	PROVEN	Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_index_kind	3761	PROVEN	Index.commitDocs_noop, commitDocs_every_id
+graph/src/graph/graph.rs	drop_index	3805	PROVEN	Index.dropIndex_protects, Constraints.drop_blocked
+graph/src/graph/graph.rs	is_indexed	3884	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	get_indexed_nodes	3893	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
+graph/src/graph/graph.rs	is_edge_indexed	3902	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	get_indexed_edges	3911	AXIOMATISED	RediSearch Indexer::query_edges delegation
+graph/src/graph/graph.rs	get_all_edges	3926	PROVEN	Queries.allEdges_unknown
+graph/src/graph/graph.rs	fulltext_query_nodes	3939	AXIOMATISED	RediSearch fulltext_query delegation
+graph/src/graph/graph.rs	fulltext_query_edges	3954	AXIOMATISED	RediSearch fulltext_query_edges delegation
+graph/src/graph/graph.rs	vector_query_nodes	3978	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	vector_query_edges	4038	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	index_info	4091	PROVEN	Index.indexInfo_length
+graph/src/graph/graph.rs	constraints	4107	PROVEN	Constraints.two_phase_eq (constraints projection)
+graph/src/graph/graph.rs	constraints_mut	4111	PROVEN	Constraints.upsert_twice (constraints_mut projection)
+graph/src/graph/graph.rs	create_constraint	4124	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
+graph/src/graph/graph.rs	add_constraint_raw	4178	PROVEN	Accessors.addRaw_spec
+graph/src/graph/graph.rs	upsert_constraint_raw	4194	PROVEN	Constraints.upsert_twice
+graph/src/graph/graph.rs	get_constraint_entity_count	4216	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
+graph/src/graph/graph.rs	validate_constraint	4228	PROVEN	Constraints.validate / two_phase_eq
+graph/src/graph/graph.rs	validate_pending_constraints	4239	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	compute_pending_constraint_results	4268	PROVEN	Constraints.lookup_compute, two_phase_eq
+graph/src/graph/graph.rs	apply_constraint_validation_results	4280	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	validate_mandatory_constraint	4299	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4339	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4395	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	drop_constraint	4413	PROVEN	Constraints.dropC_length, swapRemove_length
+graph/src/graph/graph.rs	has_supporting_index	4436	PROVEN	Constraints.hasSupporting_nil
+graph/src/graph/graph.rs	constraint_depends_on_index	4455	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	cancel_indexing	4474	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
+graph/src/graph/graph.rs	set_indexer_graph	4486	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
+graph/src/graph/graph.rs	build_adjacency_matrix	4498	PROVEN	Queries.adjMatrix_single
+graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	4526	PROVEN	Queries.symAdj_symm
+graph/src/graph/graph.rs	memory_usage_report	4542	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
+graph/src/graph/graph.rs	estimate_entity_attr_size	4707	PROVEN	Accessors.estimateSize_eq
+graph/src/graph/graph.rs	encode_payload	4716	PROVEN	Index.encodeOp_nodes
+graph/src/graph/graph.rs	get_node_attribute_names	4773	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_relationship_attribute_names	4779	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	add_node_attribute_name	4785	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	add_rel_attribute_name	4797	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	build_global_attrs	4813	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/constraint.rs	fmt	14	PROVEN	Constraints.str_spec
+graph/src/graph/constraint.rs	fmt	34	PROVEN	Constraints.str_spec
+graph/src/graph/constraint.rs	new	60	PROVEN	Constraints.cnew_fresh
+graph/src/graph/constraint.rs	matches	79	PROVEN	Constraints.cmatches_iff, cmatches_order_sensitive (BUG vs C)
+graph/src/graph/graph.rs	node	324	PROVEN	Accessors.nodeOpErrorKind_spec
+graph/src/graph/graph.rs	relationship	333	PROVEN	Accessors.nodeOpErrorKind_spec
+graph/src/graph/graph.rs	cancel_node_id	1427	PROVEN	Ids.returnNode_bound, isNodeDeleted_return, cancelNodeId_err (IdSpaceContract hypothesis)
+graph/src/graph/graph.rs	cancel_relationship_id	1440	PROVEN	Ids.returnRel_bound, cancelRelId_err; Accessors.isRelDeleted_return
+graph/src/graph/graph.rs	open_id_batches	1470	PROVEN	Ids.rollIdBatches_spec (open half)
+graph/src/graph/graph.rs	roll_id_batches	1489	PROVEN	Ids.rollIdBatches_spec, rollIdBatches_refused
+graph/src/graph/graph.rs	validate	1507	PROVEN	Ids.validateGraph: validate_ok_iff (verify_id_batches then verify_created_relationships, #3022)
+graph/src/graph/graph.rs	verify_created_relationships	1524	PROVEN	Ids.verifyCreatedRels/liveB/offends: liveB_iff, skip_iff, offends_iff, verifyCreatedRels_spec (accepts iff every created, unfreed relationship ends at two live nodes, #3022)
+graph/src/graph/graph.rs	verify_id_batches	1557	PROVEN	Ids.verifyIdBatches: verifyIdBatches_ok_iff, validate_ok_iff, rollIdBatches_spec, rollIdBatches_refused
+graph/src/graph/graph.rs	node_id_space	1571	PROVEN	Ids.openNodeSpace_eq
+graph/src/graph/graph.rs	relationship_id_space	1577	PROVEN	Ids.openRelSpace_eq
+graph/src/graph/graph.rs	grow_for_nodes	1643	PROVEN	Ids.growForNodes_spec
+graph/src/graph/graph.rs	first_node_with_relationships	2245	PROVEN	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022)

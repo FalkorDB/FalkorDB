@@ -1,0 +1,5 @@
+name = "falkor-value-order"
+defaultTargets = ["FalkorValueOrder"]
+
+[[lean_lib]]
+name = "FalkorValueOrder"

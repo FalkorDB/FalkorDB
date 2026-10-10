@@ -1,0 +1,87 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/planner/mod.rs	subtree_contains	331	PROVEN	Misc.subtreeContains_iff (BFS any = some op of the subtree satisfies the predicate)
+graph/src/planner/mod.rs	fmt_var_len_rel	347	PROVEN	Fmt.fmtVarLen, hopsStr_empty (range printed unless exactly *1..1), hopsStr_inf
+graph/src/planner/mod.rs	fmt_rel_with_labels	375	PROVEN	Fmt.fmtRel_eq (= fmt_rel_with_labels_dir(rel, false))
+graph/src/planner/mod.rs	fmt_rel_with_labels_dir	379	PROVEN	Fmt.fmtRelDir, arrows_table, fmtRelDir_anon (anonymous edges print no bracket)
+graph/src/planner/mod.rs	IR::fmt	420	PROVEN	Fmt.irFmt (every variant), fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain
+graph/src/planner/mod.rs	inline_attrs_to_filter	543	PROVEN	E.inlineAttrsToFilter_none, inlineAttrsToFilter_conj, Rename.inlineAttrs_passes (passes iff every n.k = v is true)
+graph/src/planner/mod.rs	lower_inline_attrs	598	PROVEN	E.lowerInline: lowerInline_fresh, lowerInline_once (at most once per (alias, map)), lowerInline_two_maps (identity, not equality), lowerInline_mem/_mono/_other
+graph/src/planner/mod.rs	strip_node_attrs	623	PROVEN	E.stripNode: stripNode_spec (attrs [], alias/labels kept), stripNode_self (same node when nothing to strip)
+graph/src/planner/mod.rs	strip_rel_attrs	644	PROVEN	E.stripRel: stripRel_spec (edge and endpoint attrs [], everything else kept)
+graph/src/planner/mod.rs	strip_endpoint_attrs	673	PROVEN	E.stripEndpoints: stripEndpoints_spec (edge attrs kept, endpoint attrs []), walk_keeps_edge_attrs
+graph/src/planner/mod.rs	has_labels_filter	696	PROVEN	E.hasLabelsFilter_shape (hasLabels(var, [labels...]) exactly)
+graph/src/planner/mod.rs	PatternMode::descend	795	PROVEN	E.descend_table (SemiApply survives only under AND/OR/NOT/Paren, else Exists)
+graph/src/planner/mod.rs	Planner::new	814	PROVEN	E.newPSt_spec (nothing bound, no nested plans, first fresh id = binder length)
+graph/src/planner/mod.rs	Planner::finish	828	PROVEN	E.finish_empty, finish_nonempty (NestedPlans root iff nested plans exist)
+graph/src/planner/mod.rs	Planner::fresh_var	843	PROVEN	E.fresh_minv / extract_fresh (minted ids pairwise distinct and >= binder lengths); proofs/binder mint_fresh_iff
+graph/src/planner/mod.rs	add_argument_to_leaves	870	PROVEN	Misc.addArgs_leaves (every walked leaf is an Argument, MERGE match branch skipped), addArgs_leaf_ev (tap transparent for per-row leaves)
+graph/src/planner/mod.rs	set_include_pending_on_scans	909	PROVEN	Misc.setIP_scan, setIP_other, setIP_scansLeaf (every scan ends up a leaf under IncludePending)
+graph/src/planner/mod.rs	contains_inline_var	933	PROVEN	E.containsInlineVar_iff (by id only: containsInlineVar_ignores_scope)
+graph/src/planner/mod.rs	has_pattern_expr	944	PROVEN	E.hasPatternExpr_eq (= some node is Pattern/PatternComprehension)
+graph/src/planner/mod.rs	is_saturated_apply	958	PROVEN	saturated (Stitch.lean), used in walkFirst/walkLoop; rustStitch_eq_nestStitch; Misc.satChain_get
+graph/src/planner/mod.rs	descend_clause_expr_applies	974	PROVEN	descendClause; descendClause_valid, stitch theorems
+graph/src/planner/mod.rs	descend_one_clause_expr_chain	990	PROVEN	descendOne; descendOne_valid
+graph/src/planner/mod.rs	stitch_below_apply_chain	1022	PROVEN	Misc.stitchBelow_get (input becomes child 0 of the first unsaturated Apply), stitchBelow_ev
+graph/src/planner/mod.rs	build_pattern_sub_plan	1038	PROVEN	E.buildPatternSubPlan_restores (visited/verified restored, = add_argument_to_leaves(plan_match))
+graph/src/planner/mod.rs	extract_pattern_comprehensions	1064	PROVEN	E.extract_frame (loop/pattern vars and visited restored), extract_fresh (minted vars distinct and new), extract_clean (nothing left to extract), extract_noPat (Collect/Exists: no pattern left)
+graph/src/planner/mod.rs	hoist_or_nest	1200	PROVEN	E.hoist_spec (hoisted iff no loop var read), hoist_nested (nested plan id/free vars), hoisted_loop_invariant
+graph/src/planner/mod.rs	pattern_expr_variables	1250	PROVEN	E.patternExprVariables_spec (each mentioned variable exactly once)
+graph/src/planner/mod.rs	extract_list_expr_comprehensions	1292	PROVEN	E.extractClause with Some scope (Nested2): chainOf_innermost, chainOf_some, extractClause_visited, clauseStep_noPat
+graph/src/planner/mod.rs	extract_clause_expr_comprehensions	1309	PROVEN	E.extractClause/chainOf: chainOf_innermost (innermost Apply single-child), chainOf_some, extractClause_visited, clauseStep_noPat
+graph/src/planner/mod.rs	pattern_expr_scope	1345	PROVEN	E.patternExprScope_eq (scope of first variable of first pattern in pre-order)
+graph/src/planner/mod.rs	extract_filter_comprehensions	1364	PROVEN	E.extractFilter_clean (result always satisfies plan_filter precondition), extract_* theorems
+graph/src/planner/mod.rs	needs_extraction	1369	PROVEN	E.needsExtraction_exists (= has_pattern_expr outside SemiApply mode), needs_le_exists, needs_semi_pat/xor
+graph/src/planner/mod.rs	build_pattern_comprehension_plan	1406	PROVEN	E.build_shape (Aggregate(collect) / Filter / nested Applys / PathBuilder / plan_match; acc minted after nested), build_frame, build_minv
+graph/src/planner/mod.rs	expr_to_plan	1493	PROVEN	E.toPlan_correct (exact with two-valued atoms); toPlan_not_null_bug (3VL counterexample, CONFIRMED bug mod.rs:1421-1427)
+graph/src/planner/mod.rs	or_expr_to_plan	1560	PROVEN	E.orClass_correct (row passes OrApplyMultiplexer iff some disjunct is true), anyBr_append
+graph/src/planner/mod.rs	and_expr_to_plan	1626	PROVEN	E.andFold_correct, scalarFilter_correct, and_split (scalars first then non-scalars = all conjuncts)
+graph/src/planner/mod.rs	collect_patterns_and_rebuild	1692	PROVEN	E.collect_value (exact rebuild, 3VL), collect_passes (extracted conjuncts), collect_inv/good_final/fresh_final (inline ids distinct, fresh), collect_wf
+graph/src/planner/mod.rs	mark_labels_verified	1787	PROVEN	E.markLabels: unverified_after_mark, markLabels_mono
+graph/src/planner/mod.rs	unverified_labels	1809	PROVEN	E.unverified_spec, unverified_mark_self
+graph/src/planner/mod.rs	plan_match	1832	PROVEN	E.firstRel_core/chainRel_core (operator table firstOp/chainOp), chainRel_selfloop_unbound (bug 4 shape), sortRels_spec/tiers, planComp_binds, labelStep_spec/verifies, nodeOnly_*, elide_*, planMatch_join/cp; #2390: firstRel_/chainRel_lowers_from/_to, firstRel_/chainRel_edge_pred, walk_keeps_edge_attrs, planComp_stripped/planMatch_stripped, pre2390_firstRel_varlen_drops; Match.selfloop_ignores_chain
+graph/src/planner/mod.rs	plan_project	2415	PROVEN	planProject; project_correct (without pattern comprehensions)
+graph/src/planner/mod.rs	plan_filter	2597	PROVEN	E.planFilter_correct (two-valued), planFilter_scalar_correct (3VL, no inline pattern); preceded by extractFilter_clean
+graph/src/planner/mod.rs	rename_projection_outputs	2646	PROVEN	E.renameProj_none, renameProj_some, renameProj_row (= Project then rename columns)
+graph/src/planner/mod.rs	is_redundant_optional_match	2687	PROVEN	Misc.isRedundantOptional, redundant_optional_identity (OPTIONAL MATCH of bound nodes only is the identity)
+graph/src/planner/mod.rs	plan_query	2719	PROVEN	rustStitch/stitchLoop; stitchLoop_eq_nest, rustStitch_eq_nestStitch, query_correct, merge_path_last_misplaced (bug 1; PR #3101 adds PathBuilder to the walk)
+graph/src/planner/mod.rs	needs_apply_wrapping	2874	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
+graph/src/planner/mod.rs	ensure_apply_has_input	2911	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
+graph/src/planner/mod.rs	Planner::plan	2934	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct; planCreate (PathBuilder over Create since #2829): create_loop_correct, create_first_correct, create_path_last_misplaced/_skips_create (bug 8)
+graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
+graph/src/parser/ast.rs	Variable::eq	113	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
+graph/src/parser/ast.rs	Variable::hash	124	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)
+graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	Ast.AV.asStr_spec
+graph/src/parser/ast.rs	ExprIR::fmt	331	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
+graph/src/parser/ast.rs	QuantifierType::fmt	425	PROVEN	Ast2.quantFmt, quantFmt_injective
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	442	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
+graph/src/parser/ast.rs	is_aggregation	446	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
+graph/src/parser/ast.rs	is_aggregation	457	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
+graph/src/parser/ast.rs	QueryNode::fmt	482	PROVEN	Ast.fmtNode, fmtNode_plain
+graph/src/parser/ast.rs	QueryNode::new	495	PROVEN	Ast.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	543	PROVEN	Ast.fmtRel, fmtRel_untyped
+graph/src/parser/ast.rs	QueryRelationship::new	571	PROVEN	Ast.new_spec (all_shortest_paths = No)
+graph/src/parser/ast.rs	QueryPath::new	608	PROVEN	Ast.new_spec
+graph/src/parser/ast.rs	QueryGraph::default	631	PROVEN	Ast.new_spec (empty nodes/rels/paths)
+graph/src/parser/ast.rs	QueryGraph::fmt	644	PROVEN	Ast.fmtGraph, fmtGraph_empty
+graph/src/parser/ast.rs	merge_attr_maps	667	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
+graph/src/parser/ast.rs	QueryGraph::add_node	685	PROVEN	Ast.addNode_spec
+graph/src/parser/ast.rs	QueryGraph::merge_node	705	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
+graph/src/parser/ast.rs	QueryGraph::replace_node	723	PROVEN	Ast.replaceNode_spec
+graph/src/parser/ast.rs	QueryGraph::add_relationship	733	PROVEN	Ast.addRel_spec
+graph/src/parser/ast.rs	QueryGraph::add_path	749	PROVEN	Ast.addPath_spec
+graph/src/parser/ast.rs	QueryGraph::variables	761	PROVEN	Ast.variables_order (nodes, then rels, then paths)
+graph/src/parser/ast.rs	QueryGraph::nodes	770	PROVEN	Ast.accessors
+graph/src/parser/ast.rs	QueryGraph::nodes_mut	774	PROVEN	Ast.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships	779	PROVEN	Ast.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships_mut	783	PROVEN	Ast.accessors
+graph/src/parser/ast.rs	QueryGraph::paths	788	PROVEN	Ast.accessors
+graph/src/parser/ast.rs	QueryGraph::filter_visited	795	PROVEN	Ast.filterVisited_nodes (only unvisited (id, scope) entities survive)
+graph/src/parser/ast.rs	QueryGraph::connected_components	823	PROVEN	Ast2.components_cover (every node visited / in some component), dfs_mono
+graph/src/parser/ast.rs	QueryGraph::dfs	844	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
+graph/src/parser/ast.rs	SetItem::fmt	897	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
+graph/src/parser/ast.rs	QueryIR::fmt	1042	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
+graph/src/parser/ast.rs	QueryIR::validate	1151	PROVEN	Ast.validate: call_then_match_accepted (CONFIRMED crash path), with_last_accepted, validate_ends
+graph/src/parser/ast.rs	QueryIR::inner_validate	1157	PROVEN	Ast.innerValidate: call_skips_rest (CONFIRMED bug ast.rs:1166-1206), with_last_accepted, validate_ends, create_multi_type
+graph/src/parser/ast.rs	validate_set_items	1329	PROVEN	Ast.setItemsOk_spec
+graph/src/parser/ast.rs	validate_inlined_properties	1348	PROVEN	Ast.inlinedOk_spec
+graph/src/parser/ast.rs	QueryIR::return_column_names	1370	PROVEN	Ast.returnColumns: returnColumns_last_return, returnColumns_skips_updates, returnColumns_nonquery

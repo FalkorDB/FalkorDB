@@ -1,0 +1,89 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/parser/lexer.rs	fmt	168	PROVEN	FalkorLexerExtra tokDisplay_injective_punct, identDisplay_spec
+graph/src/parser/lexer.rs	Lexer::new	287	PROVEN	lexAll (initial read_spaces + first token): lexAll_total_cover, lexer_never_panics
+graph/src/parser/lexer.rs	Lexer::next	295	PROVEN	lexAll step: lexAll_total_cover, lexer_never_panics
+graph/src/parser/lexer.rs	Lexer::pos	303	PROVEN	FalkorLexerExtra posF_boundary, posT_le_posF, next_pos_ge, next_boundary
+graph/src/parser/lexer.rs	Lexer::read_spaces	319	PROVEN	rs/rsSlash/rsLine/rsBlock: rs_boundary, rs_top_boundary (every slice on a char boundary); rs_agrees_spec (= openCypher WHITESPACE/Comment); rs_unterminated_general; rs_*_fixed (pre2908_rs_* bugs fixed by #2908 dfa326583)
+graph/src/parser/lexer.rs	Lexer::current	344	PROVEN	FalkorLexerExtra current_spec
+graph/src/parser/lexer.rs	Lexer::current_str	352	PROVEN	FalkorLexerExtra currentStr_ok
+graph/src/parser/lexer.rs	Lexer::get_token	359	PROVEN	getTok/getTokC: getTok_ok (every token slice on a char boundary); btScan_spec, btpScan_spec, identRun_bytes; keyword lookup omitted
+graph/src/parser/lexer.rs	Lexer::lex_string_literal	495	PROVEN	strScan: strScan_spec
+graph/src/parser/lexer.rs	Lexer::lex_numeric	532	PROVEN	FalkorLexerExtra lexNum/numPrefix/intLoop/floatLoop: lexNum_slices_ascii (every byte slice after an ASCII prefix)
+graph/src/parser/lexer.rs	Lexer::str2number_token	698	PROVEN	str2int (integer half): int_literal_correct, canon_min_val, min_noncanonical_bug (bug); float half not modelled
+graph/src/parser/lexer.rs	Lexer::err_ctx	752	PROVEN	FalkorLexerExtra errCtx_ok, floorK_le_ceilK
+graph/src/parser/lexer.rs	Lexer::format_error	772	PROVEN	FalkorLexerExtra formatError_prefix
+graph/src/parser/lexer.rs	Lexer::set_pos	779	PROVEN	FalkorLexerExtra cacheOf, setPos_next
+graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees_spec, hexN_rust; unesc_plus_bug (bug), unesc_upper_kept
+graph/src/parser/string_escape.rs	cypher_escape	161	PROVEN	FalkorLexerExtra unesc_escape (cypher_unescape ∘ cypher_escape = id)
+graph/src/parser/cypher.rs	is_param_value_error	155	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	is_too_deep	165	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	is_end_token	176	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	new	262	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	too_deep	274	NOT COVERED	error message construction
+graph/src/parser/cypher.rs	check_depth	287	PROVEN	check_depth guard in Reach: guarded, guarded_height_le, chain_rejected
+graph/src/parser/cypher.rs	with_child_height	302	MODELLED	child-height tally abstracted into Reach frame heights (height_sound)
+graph/src/parser/cypher.rs	tree_height	314	MODELLED	height (Lean spec of tree height); iterative walk not proved equal
+graph/src/parser/cypher.rs	nested	328	PROVEN	Call/runCall: nested_bound, nested_boundL, nested_depth_bound
+graph/src/parser/cypher.rs	save_state	341	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	restore_state	348	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_parameters	360	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_param_value	409	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_literal	429	PROVEN	evalLit: int_literal_correct (i64::MIN special case, checked_neg)
+graph/src/parser/cypher.rs	parse_unsigned_literal	455	MODELLED	Integer token arm feeds evalLit/int_literal_correct; other arms not modelled
+graph/src/parser/cypher.rs	parse_literal_list	483	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_literal_map	498	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	expect_end_of_input	516	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse	535	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_index_ops	551	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_query	755	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_single_query	780	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_reading_clasue	913	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_writing_clause	966	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_call_clause	1015	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	body_has_return	1089	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_dotted_ident	1099	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_match_clause	1110	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_unwind_clause	1121	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_create_clause	1131	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_merge_clause	1135	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_delete_clause	1162	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_where	1198	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_orderby_skip_limit	1217	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_with_clause	1277	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_return_clause	1307	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	add_pattern_node	1343	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_pattern	1356	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_case_expression	1568	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_quantifier_expr	1600	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_reduce_expr	1659	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_shortest_path_expr	1737	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
+graph/src/parser/cypher.rs	parse_primary_expr	1926	MODELLED	PRIMARY_LEVELS premise checked per constructor shape (primary_levels); parsing itself not modelled
+graph/src/parser/cypher.rs	parse_list_operator_expression	2120	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_property_lookup	2142	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_expr	2159	PROVEN	runCall (parse_expr under nested): nested_depth_bound
+graph/src/parser/cypher.rs	parse_expr_inner	2170	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level9: min_postfix_bug (bug)
+graph/src/parser/cypher.rs	match_dot_property_separator	2623	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_ident	2642	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	try_parse_ident	2661	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_property_name	2673	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_named_exprs	2687	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_expression_list	2723	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	without_pattern_comprehensions	2752	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	reject_forbidden_pattern_comprehension	2763	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_list_literal_or_comprehension	2778	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_list_comprehension	2824	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_pattern_comprehension	2867	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_inline_properties	2915	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_node_pattern	2931	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_relationship_pattern	2954	MODELLED	fragment: hop bound casts i as u32 = asU32 (hop_truncation_bug, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_labels	3102	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_map	3111	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_map_projection	3143	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_orderby	3201	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_set_clause	3219	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_set_items	3231	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_remove_clause	3300	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_remove_items	3312	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_foreach_clause	3348	MODELLED	recursion shape only = foreachChain (foreach_unbounded, bug: bypasses nested)
+graph/src/parser/cypher.rs	reject_aggregate	3430	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	find_aggregate_name	3442	NOT COVERED	parser routine not modelled by the lexer project

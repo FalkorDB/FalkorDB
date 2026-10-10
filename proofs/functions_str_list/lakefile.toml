@@ -1,0 +1,5 @@
+name = "falkor-functions-str-list"
+defaultTargets = ["FalkorStrList"]
+
+[[lean_lib]]
+name = "FalkorStrList"

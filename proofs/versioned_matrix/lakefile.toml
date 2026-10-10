@@ -1,0 +1,5 @@
+name = "falkor-versioned-matrix"
+defaultTargets = ["VersionedMatrix"]
+
+[[lean_lib]]
+name = "VersionedMatrix"

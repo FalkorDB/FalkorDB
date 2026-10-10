@@ -1,0 +1,31 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["8717160cfd977459.olean"],
+  "m": false,
+  "i": "819767e952f8f242.ilean",
+  "c": "1d1a035fdae7c696.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean /Users/aviavni/.elan/toolchains/leanprover--lean4---v4.34.0/bin/lean /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/Pr2845Review/Batch.lean -o /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Batch.olean -i /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Batch.ilean -c /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/ir/Pr2845Review/Batch.c --setup /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/ir/Pr2845Review/Batch.setup.json --json",
+   "level": "trace"}],
+ "inputs":
+ [["deps",
+   [["«pr2845-review»/Pr2845Review:extraDep",
+     [["@«pr2845-review»:extraDep", "00000000000006bb"]]],
+    ["imports", "00000000000006bb"]]],
+  ["libs",
+   [["import dynlibs", "00000000000006bb"],
+    ["package external libraries", "00000000000006bb"],
+    ["module dynlibs", "00000000000006bb"],
+    ["module plugins", "00000000000006bb"]]],
+  ["Lean 4.34.0, commit 293d5d0c0c3f3dded4688b3ccd6a33939ac5102b",
+   "a1c6c7aa3e9abfe7"],
+  ["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/Pr2845Review/Batch.lean",
+   "897d1c8ca7353dba"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pr2845Review.Batch", "013b1634463ccbc5"],
+  ["Package.id?: (some pr2845-review)", "9a51612c439adf66"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "0799a55982530e27"}

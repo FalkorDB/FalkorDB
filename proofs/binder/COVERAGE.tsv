@@ -1,0 +1,45 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/planner/binder.rs	Binder::default	74	PROVEN	Stack.default_spec (one empty scope, no parent lookup)
+graph/src/planner/binder.rs	Binder::bind	99	PROVEN	mergeSV_ge, mergeSV_covers (bind merges live + retired scope_vars)
+graph/src/planner/binder.rs	Binder::scope_vars	114	PROVEN	Stack.scopeVars_lengths (one sorted table per live scope, lengths preserved); sortedScopeVars_spec
+graph/src/planner/binder.rs	Binder::update_all_node_labels	122	PROVEN	accumulate/specScanLabels: labels_agree_match_only, labels_leak (counterexample, bug)
+graph/src/planner/binder.rs	Binder::update_graph_labels	160	PROVEN	Stack.updNode_replace (MATCH: accumulated set), updNode_union (OPTIONAL: own labels kept + accumulated added), updNode_none, updNode_idem
+graph/src/planner/binder.rs	Binder::current_env	239	PROVEN	Stack.BSt.current, current_setCurrent
+graph/src/planner/binder.rs	Binder::current_env_mut	245	PROVEN	Stack.current_setCurrent, setCurrent_outer (only the innermost table changes)
+graph/src/planner/binder.rs	Binder::push_scope	251	PROVEN	Stack.push_current, push_toSt (empty child table, parent = old current, p2c/cfp kept)
+graph/src/planner/binder.rs	Binder::commit_scope	256	PROVEN	Stack.commit_spec
+graph/src/planner/binder.rs	Binder::bind_ir	262	PROVEN	BindIR.bindIR (every arm) : shortestOk_iff, match_shortest_unbound, match_nonbool, optional_labels_restored, mergeOk_*, unwind_order, delete_nonentity, return_star_empty, yieldLoop_ok/yield_duplicate/yield_requires_entity, bindYield_alias/hidden, query_seq, union_columns/union_state; foreachRestore_covers; unionCheck_ok_iff
+graph/src/planner/binder.rs	Binder::bind_call_subquery	716	PROVEN	BindIR.bindCallSubquery: callSubquery_nonreturning, callSubquery_collision, subqueryReturns_noInternal, callSubquery_covers; Scopes.callBody_query_disjoint
+graph/src/planner/binder.rs	Binder::bind_call_body	824	PROVEN	callBody_query_disjoint, callBody_union_aliases (bug: UNION branch starts at scope 0); the #2845 always-emitted entry projection is proved in pr2845_review (bodyNew_entry, branchNew_entry)
+graph/src/planner/binder.rs	Binder::build_import_projections	979	PROVEN	BindIR.importProjections_covers (fresh inner ids), sortProj_spec (sorted by name, permutation)
+graph/src/planner/binder.rs	Binder::validate_import_with	1003	PROVEN	validateImport_ok, validateImport_rejects_expr
+graph/src/planner/binder.rs	Binder::bind_projection	1059	PROVEN	bindProjection: projectItems_keys, with_plain, orderBy_leaks, where_copy_removed, where_copy_id_reused, orderBy_old_name_of_projected, agg_orderBy_by_name, agg_orderBy_rejects (WITH * branch not modelled)
+graph/src/planner/binder.rs	Binder::bind_graph	1328	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_rejects, node_attr_on_own_rel, rel_attr_forward_node, self_reference_ok; defineName_ignores_parent
+graph/src/planner/binder.rs	Binder::bind_graph_create	1557	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1682	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct
+graph/src/planner/binder.rs	Binder::bind_set_items	1700	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
+graph/src/planner/binder.rs	Binder::bind_expr	1725	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
+graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1732	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
+graph/src/planner/binder.rs	Binder::bind_expr_node	1746	PROVEN	BindExpr.bindNode: bindNode_covers (pattern-free exprs keep table covering), loop_var_shadows, bind_iterable_outer, reduce_same_name, prop_on_path, exists_pattern, func_arg_mismatch; Scopes.comprehension_cleanup_breaks; Fold.foldCall_sound
+graph/src/planner/binder.rs	Binder::define_name_in_scope	2143	PROVEN	defineName: defineName_ignores_parent; ensureType_table
+graph/src/planner/binder.rs	Binder::project_name	2165	PROVEN	projectName_new_covers, projectName_present_uncovered
+graph/src/planner/binder.rs	Binder::resolve_name	2175	PROVEN	resolve: resolve_ok_iff, resolve_innermost, resolve_covers
+graph/src/planner/binder.rs	Binder::fresh_var	2243	PROVEN	freshVar: fresh_not_used, mint_new_covers
+graph/src/planner/binder.rs	Binder::ensure_type	2259	PROVEN	ensureType_table, ensureType_accepts_any_binding
+graph/src/planner/binder.rs	Binder::validate_boolean_operands	2280	PROVEN	Types.validate_logical, validate_nonlogical
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2284	PROVEN	Types.validate (recursive), validate_logical/nonlogical
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2306	PROVEN	Types.mayBool_sound_except; getElement_rejected (CONFIRMED bug binder.rs:2338), negate_rejected, arith_accepted
+graph/src/planner/binder.rs	Binder::expr_may_return_entity	2375	PROVEN	Types.mayEntity_eq (= reference canEnt)
+graph/src/planner/binder.rs	expr_tree_to_value	2448	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
+graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2450	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
+graph/src/planner/binder.rs	collect_constant_args	2480	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
+graph/src/planner/binder.rs	rewrite_struct_constructor	2498	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_compiled_regex	2563	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
+graph/src/planner/binder.rs	replace_agg_subtrees	2597	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	2627	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_wrong_aggregate (CONFIRMED bug), order_by_int_distinguished
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2631	PROVEN	AggEq.isAggPlaceholder_iff
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2635	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2665	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause binder.rs:2682)
+graph/src/planner/binder.rs	sorted_scope_vars	2686	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	2694	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/mod.rs	Planner::fresh_var	843	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)

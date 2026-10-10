@@ -1,0 +1,15 @@
+[package]
+name = "falkor_aeneas_pilot"
+version = "0.1.0"
+edition = "2024"
+
+# Standalone crate so charon does not have to compile the whole `graph` crate
+# (GraphBLAS / RediSearch FFI). The modules are included by #[path] from
+# graph/src, NOT copied, so the extracted Lean cannot drift from the Rust.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thin-vec = "0.2"
+
+[workspace]

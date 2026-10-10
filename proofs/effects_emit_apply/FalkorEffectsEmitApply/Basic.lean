@@ -1,0 +1,531 @@
+/-!
+# Basics: values, canonical label sets, first-appearance grouping, the memo loop
+
+Everything here is about the *digest* loops of `graph/src/effects/v3/emit.rs`
+and is independent of any graph state.
+-/
+
+namespace FalkorEA
+
+abbrev Name := String
+
+/-- The runtime `Value`, cut down to what the emitter moves around. The emitter
+    never inspects a value except to ask "is it `Null`" (a `T_NULL` slot means
+    *remove*), so three constructors are enough to make that distinction
+    non-vacuous. -/
+inductive Val where
+  | null
+  | int (i : Int)
+  | str (s : String)
+deriving Repr, DecidableEq, Inhabited
+
+/-! ## Bool-valued helpers -/
+
+def nodupB [BEq α] : List α → Bool
+  | []      => true
+  | a :: as => !as.contains a && nodupB as
+
+theorem nodupB_iff {α} [BEq α] [LawfulBEq α] : ∀ {l : List α}, nodupB l = true ↔ l.Nodup := by
+  intro l
+  induction l with
+  | nil => simp [nodupB]
+  | cons a as ih => simp [nodupB, List.nodup_cons, ih]
+
+/-- `attr_ids.windows(2).all(|w| w[0] < w[1])` — strictly ascending. -/
+def ascB : List Nat → Bool
+  | []           => true
+  | [_]          => true
+  | a :: b :: tl => decide (a < b) && ascB (b :: tl)
+
+/-! ## `labels.sort_unstable(); labels.dedup()`
+
+    The canonical form of a label set. Modelled as insertion into a strictly
+    ascending list, which is what sort-then-dedup produces. -/
+
+def insU (x : Nat) : List Nat → List Nat
+  | []      => [x]
+  | y :: ys => if x < y then x :: y :: ys else if x = y then y :: ys else y :: insU x ys
+
+def sortDedup : List Nat → List Nat
+  | []      => []
+  | x :: xs => insU x (sortDedup xs)
+
+theorem mem_insU (x a : Nat) : ∀ l : List Nat, a ∈ insU x l ↔ a = x ∨ a ∈ l := by
+  intro l
+  induction l with
+  | nil => simp [insU]
+  | cons y ys ih =>
+    simp only [insU]
+    by_cases h1 : x < y
+    · simp [h1]
+    · by_cases h2 : x = y
+      · subst h2; simp [h1]
+      · simp only [h1, h2, ↓reduceIte, List.mem_cons, ih]
+        constructor
+        · rintro (h | h | h) <;> simp_all
+        · rintro (h | h | h) <;> simp_all
+
+theorem mem_sortDedup (a : Nat) : ∀ l : List Nat, a ∈ sortDedup l ↔ a ∈ l := by
+  intro l
+  induction l with
+  | nil => simp [sortDedup]
+  | cons x xs ih => simp [sortDedup, mem_insU, ih]
+
+theorem insU_pairwise (x : Nat) : ∀ l : List Nat, List.Pairwise (· < ·) l →
+    List.Pairwise (· < ·) (insU x l) := by
+  intro l
+  induction l with
+  | nil => intro _; simp [insU]
+  | cons y ys ih =>
+    intro hp
+    have hy : ∀ a ∈ ys, y < a := (List.pairwise_cons.mp hp).1
+    have hys : List.Pairwise (· < ·) ys := (List.pairwise_cons.mp hp).2
+    unfold insU
+    by_cases h1 : x < y
+    · rw [if_pos h1]
+      refine List.Pairwise.cons ?_ hp
+      intro a ha
+      rcases List.mem_cons.mp ha with rfl | ha
+      · exact h1
+      · exact Nat.lt_trans h1 (hy a ha)
+    · rw [if_neg h1]
+      by_cases h2 : x = y
+      · rw [if_pos h2]; exact hp
+      · rw [if_neg h2]
+        refine List.Pairwise.cons ?_ (ih hys)
+        intro a ha
+        rcases (mem_insU x a ys).mp ha with rfl | ha'
+        · omega
+        · exact hy a ha'
+
+theorem sortDedup_pairwise : ∀ l : List Nat, List.Pairwise (· < ·) (sortDedup l) := by
+  intro l
+  induction l with
+  | nil => simp [sortDedup]
+  | cons x xs ih => exact insU_pairwise x _ ih
+
+/-- A strictly ascending list is determined by its members. -/
+theorem pairwise_lt_ext : ∀ (l₁ l₂ : List Nat), List.Pairwise (· < ·) l₁ →
+    List.Pairwise (· < ·) l₂ → (∀ a, a ∈ l₁ ↔ a ∈ l₂) → l₁ = l₂ := by
+  intro l₁
+  induction l₁ with
+  | nil =>
+    intro l₂ _ _ h
+    cases l₂ with
+    | nil => rfl
+    | cons b bs => exact absurd ((h b).mpr (List.mem_cons_self ..)) (by simp)
+  | cons a as ih =>
+    intro l₂ h1 h2 h
+    cases l₂ with
+    | nil => exact absurd ((h a).mp (List.mem_cons_self ..)) (by simp)
+    | cons b bs =>
+      simp only [List.pairwise_cons] at h1 h2
+      have hab : a = b := by
+        have ha : a ∈ b :: bs := (h a).mp (List.mem_cons_self ..)
+        have hb : b ∈ a :: as := (h b).mpr (List.mem_cons_self ..)
+        rcases List.mem_cons.mp ha with e | ha'
+        · exact e
+        · rcases List.mem_cons.mp hb with e | hb'
+          · exact e.symm
+          · have := h2.1 a ha'; have := h1.1 b hb'; omega
+      subst hab
+      congr 1
+      refine ih bs h1.2 h2.2 (fun x => ⟨fun hx => ?_, fun hx => ?_⟩)
+      · have hx' := (h x).mp (List.mem_cons_of_mem _ hx)
+        rcases List.mem_cons.mp hx' with e | e
+        · subst e; exact absurd (h1.1 x hx) (Nat.lt_irrefl _)
+        · exact e
+      · have hx' := (h x).mpr (List.mem_cons_of_mem _ hx)
+        rcases List.mem_cons.mp hx' with e | e
+        · subst e; exact absurd (h2.1 x hx) (Nat.lt_irrefl _)
+        · exact e
+
+/-- **`label_order_does_not_split_a_shape`, proved**: two label vectors with the
+    same members canonicalise to the same key, whatever order `set_labels` kept
+    them in and however many duplicates they carried. -/
+theorem sortDedup_set_eq (l₁ l₂ : List Nat) (h : ∀ a, a ∈ l₁ ↔ a ∈ l₂) :
+    sortDedup l₁ = sortDedup l₂ :=
+  pairwise_lt_ext _ _ (sortDedup_pairwise l₁) (sortDedup_pairwise l₂)
+    (fun a => by rw [mem_sortDedup, mem_sortDedup]; exact h a)
+
+/-! ## First-appearance grouping (the specification)
+
+    A slot per key in first-appearance order, members appended in input order. -/
+
+def addTo {K} [DecidableEq K] {A} (k : K) (x : A) : List (K × List A) → List (K × List A)
+  | []              => [(k, [x])]
+  | (k', g) :: rest => if k' = k then (k', g ++ [x]) :: rest else (k', g) :: addTo k x rest
+
+def groupAux {K} [DecidableEq K] {A} (key : A → K) :
+    List A → List (K × List A) → List (K × List A)
+  | [],        acc => acc
+  | x :: rest, acc => groupAux key rest (addTo (key x) x acc)
+
+def groupBy {K} [DecidableEq K] {A} (key : A → K) (l : List A) : List (K × List A) :=
+  groupAux key l []
+
+/-! ## The memo loop, as `digest_created_nodes` / `digest_deleted_nodes` write it
+
+    ```text
+    let slot = match last {
+        Some(i) if slots[i].0 == key => i,
+        _ => { let i = index.get(&key) or push-and-insert; last = Some(i); i }
+    };
+    slots[slot].1.push(id);
+    ```
+    (`emit.rs:525-563`, `emit.rs:814-846`). `index` is an `FxHashMap<Shape,
+    usize>`; here an association list, since only `get` and `insert` of a fresh
+    key are used and the map's iteration order never leaks into the output. -/
+
+structure Memo (K A : Type) where
+  slots : List (K × List A)
+  index : List (K × Nat)
+  last  : Option Nat
+
+/-- `index.get(&key)` -/
+def lookupIdx {K} [DecidableEq K] (k : K) : List (K × Nat) → Option Nat
+  | []            => none
+  | (k', i) :: tl => if k' = k then some i else lookupIdx k tl
+
+/-- The position of the slot holding key `k` — what a correct `index` returns. -/
+def pos {K} [DecidableEq K] {A} (k : K) : List (K × List A) → Option Nat
+  | []            => none
+  | (k', _) :: tl => if k' = k then some 0 else (pos k tl).map (· + 1)
+
+/-- `slots[i].0` (in bounds under `MemoInv`; Rust would panic otherwise). -/
+def keyAt {K A} : Nat → List (K × List A) → Option K
+  | _,     []            => none
+  | 0,     (k, _) :: _   => some k
+  | i + 1, _ :: tl       => keyAt i tl
+
+/-- `slots[i].1.push(x)` -/
+def pushAt {K A} (i : Nat) (x : A) : List (K × List A) → List (K × List A)
+  | []            => []
+  | (k, g) :: tl  => match i with
+                     | 0     => (k, g ++ [x]) :: tl
+                     | j + 1 => (k, g) :: pushAt j x tl
+
+def memoMiss {K} [DecidableEq K] {A} (m : Memo K A) (k : K) (x : A) : Memo K A :=
+  match lookupIdx k m.index with
+  | some j => { m with slots := pushAt j x m.slots, last := some j }
+  | none   =>
+    let j := m.slots.length
+    { slots := m.slots ++ [(k, [x])], index := m.index ++ [(k, j)], last := some j }
+
+def memoStep {K} [DecidableEq K] {A} (key : A → K) (m : Memo K A) (x : A) : Memo K A :=
+  match m.last with
+  | some i => if keyAt i m.slots = some (key x) then { m with slots := pushAt i x m.slots }
+              else memoMiss m (key x) x
+  | none   => memoMiss m (key x) x
+
+def memoGroup {K} [DecidableEq K] {A} (key : A → K) (l : List A) : List (K × List A) :=
+  (l.foldl (memoStep key) ⟨[], [], none⟩).slots
+
+/-- The memo's invariant: `index` answers exactly what `pos` does, `last` is a
+    valid position, and slot keys are distinct. -/
+structure MemoInv {K} [DecidableEq K] {A} (m : Memo K A) : Prop where
+  idx  : ∀ k, lookupIdx k m.index = pos k m.slots
+  last : ∀ i, m.last = some i → i < m.slots.length
+  nd   : (m.slots.map Prod.fst).Nodup
+
+theorem lookupIdx_append {K} [DecidableEq K] (k : K) (l : List (K × Nat)) (k' : K) (j : Nat) :
+    lookupIdx k (l ++ [(k', j)]) = match lookupIdx k l with
+      | some i => some i
+      | none   => if k' = k then some j else none := by
+  induction l with
+  | nil => simp [lookupIdx]
+  | cons hd tl ih =>
+    obtain ⟨a, i⟩ := hd
+    simp only [List.cons_append, lookupIdx]
+    by_cases h : a = k <;> simp [h, ih]
+
+theorem pos_append {K} [DecidableEq K] {A} (k k' : K) (g : List A) :
+    ∀ l : List (K × List A), pos k (l ++ [(k', g)]) = match pos k l with
+      | some i => some i
+      | none   => if k' = k then some l.length else none := by
+  intro l
+  induction l with
+  | nil => simp [pos]
+  | cons hd tl ih =>
+    obtain ⟨a, b⟩ := hd
+    simp only [List.cons_append, pos]
+    by_cases h : a = k
+    · simp [h]
+    · simp only [h, ↓reduceIte, ih, List.length_cons]
+      cases pos k tl with
+      | some i => rfl
+      | none => by_cases e : k' = k <;> simp [e]
+
+theorem pos_pushAt {K} [DecidableEq K] {A} (k : K) (x : A) :
+    ∀ (i : Nat) (l : List (K × List A)), pos k (pushAt i x l) = pos k l := by
+  intro i l
+  induction l generalizing i with
+  | nil => simp [pushAt]
+  | cons hd tl ih => obtain ⟨a, b⟩ := hd; cases i <;> simp [pushAt, pos, ih]
+
+theorem pushAt_length {K A} (x : A) : ∀ (i : Nat) (l : List (K × List A)),
+    (pushAt i x l).length = l.length := by
+  intro i l
+  induction l generalizing i with
+  | nil => simp [pushAt]
+  | cons hd tl ih => obtain ⟨k, g⟩ := hd; cases i <;> simp [pushAt, ih]
+
+theorem pushAt_fst {K A} (x : A) : ∀ (i : Nat) (l : List (K × List A)),
+    (pushAt i x l).map Prod.fst = l.map Prod.fst := by
+  intro i l
+  induction l generalizing i with
+  | nil => simp [pushAt]
+  | cons hd tl ih => obtain ⟨k, g⟩ := hd; cases i <;> simp [pushAt, ih]
+
+theorem pos_lt {K} [DecidableEq K] {A} (k : K) :
+    ∀ (l : List (K × List A)) (i : Nat), pos k l = some i → i < l.length := by
+  intro l
+  induction l with
+  | nil => intro i h; simp [pos] at h
+  | cons hd tl ih =>
+    obtain ⟨a, b⟩ := hd
+    intro i h
+    simp only [pos] at h
+    by_cases e : a = k
+    · simp only [e, ↓reduceIte, Option.some.injEq] at h; subst h; simp
+    · simp only [e, ↓reduceIte] at h
+      cases hp : pos k tl with
+      | none => simp [hp] at h
+      | some j => simp only [hp, Option.map_some, Option.some.injEq] at h; subst h
+                  have := ih j hp; simp; omega
+
+theorem pos_none {K} [DecidableEq K] {A} (k : K) :
+    ∀ (l : List (K × List A)), pos k l = none → k ∉ l.map Prod.fst := by
+  intro l
+  induction l with
+  | nil => intro _; simp
+  | cons hd tl ih =>
+    obtain ⟨a, b⟩ := hd
+    intro h
+    simp only [pos] at h
+    by_cases e : a = k
+    · simp [e] at h
+    · simp only [e, ↓reduceIte] at h
+      have h' : pos k tl = none := by cases hp : pos k tl <;> simp_all
+      simp only [List.map_cons, List.mem_cons, not_or]
+      exact ⟨fun h2 => e h2.symm, ih h'⟩
+
+/-- `addTo` on the slot holding key `k` is `pushAt` at that slot's position. -/
+theorem addTo_eq_pushAt {K} [DecidableEq K] {A} (k : K) (x : A) :
+    ∀ (l : List (K × List A)) (i : Nat), pos k l = some i → addTo k x l = pushAt i x l := by
+  intro l
+  induction l with
+  | nil => intro i h; simp [pos] at h
+  | cons hd tl ih =>
+    obtain ⟨k', g⟩ := hd
+    intro i h
+    simp only [pos] at h
+    by_cases hk : k' = k
+    · simp only [hk, ↓reduceIte, Option.some.injEq] at h
+      subst h; subst hk; simp [addTo, pushAt]
+    · simp only [hk, ↓reduceIte] at h
+      cases hj : pos k tl with
+      | none => simp [hj] at h
+      | some j =>
+        simp only [hj, Option.map_some, Option.some.injEq] at h
+        subst h
+        simp only [addTo, hk, ↓reduceIte, pushAt]
+        rw [ih j hj]
+
+theorem addTo_eq_append {K} [DecidableEq K] {A} (k : K) (x : A) :
+    ∀ (l : List (K × List A)), pos k l = none → addTo k x l = l ++ [(k, [x])] := by
+  intro l
+  induction l with
+  | nil => intro _; rfl
+  | cons hd tl ih =>
+    obtain ⟨k', g⟩ := hd
+    intro h
+    simp only [pos] at h
+    by_cases hk : k' = k
+    · simp [hk] at h
+    · simp only [hk, ↓reduceIte] at h
+      have h' : pos k tl = none := by cases hp : pos k tl <;> simp_all
+      simp [addTo, hk, ih h']
+
+theorem keyAt_mem {K A} : ∀ (i : Nat) (l : List (K × List A)) (k : K),
+    keyAt i l = some k → k ∈ l.map Prod.fst := by
+  intro i l
+  induction l generalizing i with
+  | nil => intro k h; simp [keyAt] at h
+  | cons hd tl ih =>
+    obtain ⟨a, b⟩ := hd
+    intro k h
+    cases i with
+    | zero => simp only [keyAt, Option.some.injEq] at h; subst h; simp
+    | succ j => simp only [keyAt] at h; exact List.mem_cons_of_mem _ (ih j k h)
+
+/-- With distinct keys, the `last` fast path picks the slot `pos` would. -/
+theorem keyAt_pos {K} [DecidableEq K] {A} (k : K) :
+    ∀ (l : List (K × List A)) (i : Nat), (l.map Prod.fst).Nodup →
+      keyAt i l = some k → pos k l = some i := by
+  intro l
+  induction l with
+  | nil => intro i _ h; simp [keyAt] at h
+  | cons hd tl ih =>
+    obtain ⟨a, b⟩ := hd
+    intro i hnd h
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    cases i with
+    | zero => simp only [keyAt, Option.some.injEq] at h; subst h; simp [pos]
+    | succ j =>
+      simp only [keyAt] at h
+      have hk : a ≠ k := fun e => hnd.1 (e ▸ keyAt_mem j tl k h)
+      simp [pos, hk, ih j hnd.2 h]
+
+theorem memoMiss_spec {K} [DecidableEq K] {A} (m : Memo K A) (k : K) (x : A)
+    (hinv : MemoInv m) :
+    (memoMiss m k x).slots = addTo k x m.slots ∧ MemoInv (memoMiss m k x) := by
+  unfold memoMiss
+  cases hl : lookupIdx k m.index with
+  | some j =>
+    have hf : pos k m.slots = some j := by rw [← hinv.idx]; exact hl
+    refine ⟨(addTo_eq_pushAt _ _ _ _ hf).symm, ⟨?_, ?_, ?_⟩⟩
+    · intro k'; simp only; rw [hinv.idx, pos_pushAt]
+    · intro i hi; simp only [Option.some.injEq] at hi; subst hi
+      rw [pushAt_length]; exact pos_lt _ _ _ hf
+    · simp only [pushAt_fst]; exact hinv.nd
+  | none =>
+    have hf : pos k m.slots = none := by rw [← hinv.idx]; exact hl
+    refine ⟨(addTo_eq_append _ _ _ hf).symm, ⟨?_, ?_, ?_⟩⟩
+    · intro k'
+      simp only
+      rw [lookupIdx_append, hinv.idx k', pos_append]
+    · intro i hi; simp only [Option.some.injEq] at hi; subst hi; simp
+    · simp only [List.map_append, List.map_cons, List.map_nil]
+      rw [List.nodup_append]
+      refine ⟨hinv.nd, by simp, ?_⟩
+      intro a ha b hb e
+      simp only [List.mem_singleton] at hb
+      subst hb; subst e
+      exact pos_none _ _ hf ha
+
+/-- One step of the memo loop is one step of first-appearance grouping, and it
+    keeps the memo's invariant. -/
+theorem memoStep_spec {K} [DecidableEq K] {A} (key : A → K) (m : Memo K A) (x : A)
+    (hinv : MemoInv m) :
+    (memoStep key m x).slots = addTo (key x) x m.slots ∧ MemoInv (memoStep key m x) := by
+  unfold memoStep
+  cases hl : m.last with
+  | none => exact memoMiss_spec m (key x) x hinv
+  | some i =>
+    simp only
+    by_cases he : keyAt i m.slots = some (key x)
+    · rw [if_pos he]
+      have hf := keyAt_pos (key x) m.slots i hinv.nd he
+      refine ⟨(addTo_eq_pushAt _ _ _ _ hf).symm, ⟨?_, ?_, ?_⟩⟩
+      · intro k; simp only; rw [hinv.idx, pos_pushAt]
+      · intro i' hi'; simp only at hi'; rw [pushAt_length]; simp only [Option.some.injEq] at hi'; subst hi'; exact hinv.last i hl
+      · simp only [pushAt_fst]; exact hinv.nd
+    · rw [if_neg he]; exact memoMiss_spec m (key x) x hinv
+
+theorem memoFold_spec {K} [DecidableEq K] {A} (key : A → K) :
+    ∀ (l : List A) (m : Memo K A), MemoInv m →
+      (l.foldl (memoStep key) m).slots = groupAux key l m.slots := by
+  intro l
+  induction l with
+  | nil => intro m _; rfl
+  | cons x rest ih =>
+    intro m hinv
+    obtain ⟨h1, h2⟩ := memoStep_spec key m x hinv
+    simp only [List.foldl_cons, groupAux]
+    rw [ih _ h2, h1]
+
+/-- **`memoGroup_eq_groupBy`: the memo is an optimisation over first-appearance
+    grouping, exactly.** `digest_created_nodes`' and `digest_deleted_nodes'`
+    `slots`/`index`/`last` loop yields the same slots, in the same order, with
+    the same members in the same order, as plain first-appearance `groupBy`:
+    the `last` fast path only skips a lookup that would have returned `last`,
+    and a slot is pushed only for a key in no slot yet. -/
+theorem memoGroup_eq_groupBy {K} [DecidableEq K] {A} (key : A → K) (l : List A) :
+    memoGroup key l = groupBy key l := by
+  unfold memoGroup groupBy
+  exact memoFold_spec key l ⟨[], [], none⟩
+    ⟨fun k => by simp [lookupIdx, pos], fun i h => by simp at h, by simp⟩
+
+/-! ### What first-appearance grouping preserves -/
+
+theorem addTo_flat {K} [DecidableEq K] {A} (k : K) (x : A) :
+    ∀ (acc : List (K × List A)),
+      ((addTo k x acc).flatMap Prod.snd).Perm ((acc.flatMap Prod.snd) ++ [x]) := by
+  intro acc
+  induction acc with
+  | nil => exact List.Perm.refl _
+  | cons hd rest ih =>
+    obtain ⟨k', g⟩ := hd
+    by_cases hk : k' = k
+    · simp only [addTo, hk, ↓reduceIte, List.flatMap_cons, List.append_assoc]
+      exact List.Perm.append_left g (List.perm_append_comm)
+    · simp only [addTo, hk, ↓reduceIte, List.flatMap_cons, List.append_assoc]
+      exact List.Perm.append_left g ih
+
+theorem groupAux_flat {K} [DecidableEq K] {A} (key : A → K) :
+    ∀ (l : List A) (acc : List (K × List A)),
+      ((groupAux key l acc).flatMap Prod.snd).Perm ((acc.flatMap Prod.snd) ++ l) := by
+  intro l
+  induction l with
+  | nil => intro acc; simp only [groupAux, List.append_nil]; exact List.Perm.refl _
+  | cons x rest ih =>
+    intro acc
+    refine ((ih (addTo (key x) x acc)).trans ?_)
+    have h1 : ((addTo (key x) x acc).flatMap Prod.snd ++ rest).Perm
+              ((acc.flatMap Prod.snd ++ [x]) ++ rest) :=
+      List.Perm.append_right rest (addTo_flat (key x) x acc)
+    refine h1.trans ?_
+    simp only [List.append_assoc, List.cons_append, List.nil_append]
+    exact List.Perm.refl _
+
+/-- Nothing is dropped or duplicated by the grouping. -/
+theorem groupBy_flat {K} [DecidableEq K] {A} (key : A → K) (l : List A) :
+    ((groupBy key l).flatMap Prod.snd).Perm l := by
+  show ((groupAux key l []).flatMap Prod.snd).Perm l
+  have h := groupAux_flat key l []
+  simp only [List.flatMap_nil, List.nil_append] at h
+  exact h
+
+theorem addTo_keyed {K} [DecidableEq K] {A} (key : A → K) (x : A) :
+    ∀ (acc : List (K × List A)),
+      (∀ q ∈ acc, ∀ y ∈ q.2, key y = q.1) →
+      ∀ q ∈ addTo (key x) x acc, ∀ y ∈ q.2, key y = q.1 := by
+  intro acc
+  induction acc with
+  | nil => intro _ q hq y hy; simp only [addTo, List.mem_singleton] at hq; subst hq
+           simp only [List.mem_singleton] at hy; subst hy; rfl
+  | cons hd rest ih =>
+    obtain ⟨k', g⟩ := hd
+    intro hinv q hq y hy
+    by_cases hk : k' = key x
+    · subst hk
+      simp only [addTo, ↓reduceIte, List.mem_cons] at hq
+      rcases hq with he | hr
+      · subst he
+        rcases List.mem_append.mp hy with h1 | h2
+        · exact hinv _ (List.mem_cons_self ..) y h1
+        · simp only [List.mem_singleton] at h2; subst h2; rfl
+      · exact hinv q (List.mem_cons_of_mem _ hr) y hy
+    · simp only [addTo, hk, ↓reduceIte, List.mem_cons] at hq
+      rcases hq with he | hr
+      · subst he; exact hinv (k', g) (List.mem_cons_self ..) y hy
+      · exact ih (fun z hz => hinv z (List.mem_cons_of_mem _ hz)) q hr y hy
+
+theorem groupAux_keyed {K} [DecidableEq K] {A} (key : A → K) :
+    ∀ (l : List A) (acc : List (K × List A)),
+      (∀ q ∈ acc, ∀ y ∈ q.2, key y = q.1) →
+      ∀ q ∈ groupAux key l acc, ∀ y ∈ q.2, key y = q.1 := by
+  intro l
+  induction l with
+  | nil => intro acc h; exact h
+  | cons x rest ih =>
+    intro acc h
+    exact ih (addTo (key x) x acc) (addTo_keyed key x acc h)
+
+/-- Every member of a slot carries that slot's key. -/
+theorem groupBy_keyed {K} [DecidableEq K] {A} (key : A → K) (l : List A) :
+    ∀ q ∈ groupBy key l, ∀ y ∈ q.2, key y = q.1 :=
+  groupAux_keyed key l [] (by intro q hq; exact absurd hq List.not_mem_nil)
+
+end FalkorEA

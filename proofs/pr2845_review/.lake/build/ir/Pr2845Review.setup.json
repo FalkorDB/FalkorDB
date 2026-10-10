@@ -1,0 +1,15 @@
+{"plugins": [],
+ "package": "pr2845-review",
+ "options": {},
+ "name": "Pr2845Review",
+ "isModule": false,
+ "importArts":
+ {"Pr2845Review.Row":
+  [["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Row.olean"]],
+  "Pr2845Review.Optimizer":
+  [["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Optimizer.olean"]],
+  "Pr2845Review.Binder":
+  [["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Binder.olean"]],
+  "Pr2845Review.Batch":
+  [["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Batch.olean"]]},
+ "dynlibs": []}

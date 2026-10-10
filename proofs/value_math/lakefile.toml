@@ -1,0 +1,5 @@
+name = "falkor-value-math"
+defaultTargets = ["FalkorValueMath"]
+
+[[lean_lib]]
+name = "FalkorValueMath"

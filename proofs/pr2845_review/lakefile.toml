@@ -1,0 +1,5 @@
+name = "pr2845-review"
+defaultTargets = ["Pr2845Review"]
+
+[[lean_lib]]
+name = "Pr2845Review"

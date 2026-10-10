@@ -1,0 +1,5 @@
+name = "falkor-parser-grammar"
+defaultTargets = ["FalkorParserGrammar"]
+
+[[lean_lib]]
+name = "FalkorParserGrammar"

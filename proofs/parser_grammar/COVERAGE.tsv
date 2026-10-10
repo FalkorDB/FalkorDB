@@ -1,0 +1,112 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/parser/cypher.rs	is_param_value_error	155	PROVEN	C.Params isParamValueError_spec
+graph/src/parser/cypher.rs	is_too_deep	165	PROVEN	C.Params isTooDeep_tooDeep (every too_deep message is recognised)
+graph/src/parser/cypher.rs	ExpressionListType::is_end_token	176	PROVEN	C.Params ELT.isEnd_spec; exprList/argsP use it
+graph/src/parser/cypher.rs	Parser::new	262	PROVEN	C.Params newState_spec (counter starts at 0); Model parseExpr initial frame
+graph/src/parser/cypher.rs	Parser::too_deep	274	PROVEN	C.Params tooDeep / isTooDeep_tooDeep
+graph/src/parser/cypher.rs	Parser::check_depth	287	PROVEN	proofs/lexer guarded_height_le (abstracted here)
+graph/src/parser/cypher.rs	Parser::with_child_height	302	PROVEN	C.Params withChildHeight_spec (outer tally restored, inner starts at 0)
+graph/src/parser/cypher.rs	Parser::tree_height	314	PROVEN	C.Params thLoop/treeHeight_spec (iterative walk = recursive height)
+graph/src/parser/cypher.rs	Parser::nested	328	PROVEN	proofs/lexer nested_depth_bound
+graph/src/parser/cypher.rs	Parser::save_state	341	PROVEN	C.Params save_state_spec
+graph/src/parser/cypher.rs	Parser::restore_state	348	PROVEN	C.Params restore_state_spec
+graph/src/parser/cypher.rs	Parser::parse_parameters	360	PROVEN	C.Params paramsP/paramPairs: np_paramsP, params_stop_at_query, hmInsert_lookup
+graph/src/parser/cypher.rs	Parser::parse_param_value	409	PROVEN	C.Params paramValueP: paramValue_fast, np_paramValueP
+graph/src/parser/cypher.rs	Parser::parse_literal	429	PROVEN	C.Params litP: lit_sound (GLit), lit_min_neg/lit_min_pos, np_lit; proofs/lexer int_literal_correct
+graph/src/parser/cypher.rs	Parser::parse_unsigned_literal	455	PROVEN	C.Params ulitP: lit_sound (GULit), np_lit
+graph/src/parser/cypher.rs	Parser::parse_literal_list	483	PROVEN	C.Params listLitV/listItems: lit_sound (GLItems)
+graph/src/parser/cypher.rs	Parser::parse_literal_map	498	PROVEN	C.Params mapLitV/mapItems: lit_sound (GMItems), omInsert_replaces
+graph/src/parser/cypher.rs	Parser::expect_end_of_input	516	PROVEN	C.ClausesG3 endP_sound (GSemis), np_endP
+graph/src/parser/cypher.rs	Parser::parse	535	PROVEN	C.Index parseP_sound (GCypher), parse_no_panic
+graph/src/parser/cypher.rs	Parser::parse_index_ops	551	PROVEN	C.Index indexOps/idxBody: idxBody_sound (GIdx), np_indexOps
+graph/src/parser/cypher.rs	Parser::parse_query	755	PROVEN	C.ClausesG3 queryP_sound (GQuery), C.ClausesNP queryP_no_panic; union_mix_rejected
+graph/src/parser/cypher.rs	Parser::parse_single_query	780	PROVEN	C.ClausesG3 sound_mut (GSingle/GSegs/GReads/GWrites), np_mut; match_after_create_rejected
+graph/src/parser/cypher.rs	Parser::parse_reading_clasue	913	PROVEN	C.ClausesG2 readingP_sound (GReading, no MATCH MATCH since #3060), C.ClausesNP readingP_np (unreachable! not reached); match_match_refused, reading_match_at_adv, load_csv_with_from_refused, no_load_with_from
+graph/src/parser/cypher.rs	Parser::parse_writing_clause	966	PROVEN	C.ClausesG3 writing_arm (GWriting), np_mut (unreachable! not reached)
+graph/src/parser/cypher.rs	Parser::parse_call_clause	1015	PROVEN	C.ClausesG3 GCall in sound_mut; C.ClausesG2 callProcP_sound; np_callProcP; call_implicit_accepted
+graph/src/parser/cypher.rs	Parser::body_has_return	1089	PROVEN	C.IR bodyHasReturn_query, bodyHasReturn_union
+graph/src/parser/cypher.rs	Parser::parse_dotted_ident	1099	PROVEN	C.ClausesG2 dottedP_sound (GDotted); Model dotted_np
+graph/src/parser/cypher.rs	Parser::parse_match_clause	1110	PROVEN	C.ClausesG2 matchP_sound, np_matchP
+graph/src/parser/cypher.rs	Parser::parse_unwind_clause	1121	PROVEN	C.ClausesG unwindP_sound (GUnwind), np_unwindP
+graph/src/parser/cypher.rs	Parser::parse_create_clause	1131	PROVEN	C.ClausesG2 createP_sound, np_createP
+graph/src/parser/cypher.rs	Parser::parse_merge_clause	1135	PROVEN	C.ClausesG2 mergeP_sound (GMergeActions), np_mergeP
+graph/src/parser/cypher.rs	Parser::parse_delete_clause	1162	PROVEN	C.ClausesG2 deleteP_sound (GExprs1/GDelMore), np_deleteP; delete_detach_folded
+graph/src/parser/cypher.rs	Parser::parse_where	1198	PROVEN	C.ClausesG whereP_sound (GWhere), np_whereP
+graph/src/parser/cypher.rs	Parser::parse_orderby_skip_limit	1217	PROVEN	C.ClausesG oslP_sound (GOsl/GCount), np_oslP
+graph/src/parser/cypher.rs	Parser::parse_with_clause	1277	PROVEN	C.ClausesG withP_sound (GProj+GWhere), np_withP
+graph/src/parser/cypher.rs	Parser::parse_return_clause	1307	PROVEN	C.ClausesG returnP_sound (GProj), np_returnP
+graph/src/parser/cypher.rs	Parser::add_pattern_node	1343	PROVEN	C.Fmt addPatNode_spec; anon_name_collides (bug)
+graph/src/parser/cypher.rs	Parser::parse_pattern	1356	PROVEN	C.PatternG2 patternP_sound (GPat/GPart/GChainA/GChainN/GAsp), np_patternP; create_named_path_drops_dup_rel, anon_name_collides (bugs)
+graph/src/parser/cypher.rs	Parser::parse_case_expression	1568	PROVEN	C.ExprC caseP_sound (GCase/GAlts), np_caseP
+graph/src/parser/cypher.rs	Parser::parse_quantifier_expr	1600	PROVEN	C.ExprC quantP_sound (GQuant), quantP_np (unreachable! guarded)
+graph/src/parser/cypher.rs	Parser::parse_reduce_expr	1659	PROVEN	C.ExprC reduceP_sound (GReduce), np_reduceP
+graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1737	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; C.ExprC2 skipP_eof; skipFilter_eof_diverges (bug)
+graph/src/parser/cypher.rs	Parser::parse_primary_expr	1926	PROVEN	C.PrimaryG primaryC_sound (GAtom, all tokens), C.Primary primaryC_np; Model primary/bounded_agree
+graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2120	PROVEN	listOp, listOp_ok, slice_bound_error_swallowed (counterexample)
+graph/src/parser/cypher.rs	Parser::parse_property_lookup	2142	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound
+graph/src/parser/cypher.rs	Parser::parse_expr	2159	PROVEN	parseExpr, parseExpr_no_panic
+graph/src/parser/cypher.rs	Parser::parse_expr_inner	2170	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems
+graph/src/parser/cypher.rs	Parser::match_dot_property_separator	2623	PROVEN	C.Fmt dotSep_spec; C.Index idxMore_sound
+graph/src/parser/cypher.rs	Parser::parse_ident	2642	PROVEN	C.Core ident_tryIdent, ident_ok; Model parseIdent_np
+graph/src/parser/cypher.rs	Parser::try_parse_ident	2661	PROVEN	C.Core ident_tryIdent, tryIdent_ok
+graph/src/parser/cypher.rs	Parser::parse_property_name	2673	PROVEN	C.Fmt propName_spec (= parse_ident)
+graph/src/parser/cypher.rs	Parser::parse_named_exprs	2687	PROVEN	C.ClausesG namedExprs_sound (GProjItems), np_namedExprs; lexer next_pos_ge (slice ordered)
+graph/src/parser/cypher.rs	Parser::parse_expression_list	2723	PROVEN	Model exprList/exprItems; C.ClausesG2 exprListR_sound/exprItemsR_sound/exprList1_sound, C.PrimaryG argsP_sound/argItemsP_sound (no trailing comma, #3060); call_trailing_comma_refused, C.call_trailing_comma_refused
+graph/src/parser/cypher.rs	Parser::without_pattern_comprehensions	2752	PROVEN	C.ExprC2 withoutPC_spec (flag restored)
+graph/src/parser/cypher.rs	Parser::reject_forbidden_pattern_comprehension	2763	PROVEN	C.ExprC2 rejectForbidden_spec
+graph/src/parser/cypher.rs	Parser::parse_list_literal_or_comprehension	2778	PROVEN	C.ExprC3 listLitP_sound (GBracket), C.ExprC4 np_listLitP; Model listLit_ok
+graph/src/parser/cypher.rs	Parser::parse_list_comprehension	2824	PROVEN	C.ExprC listCompP_sound (GListComp), np_listCompP
+graph/src/parser/cypher.rs	Parser::parse_pattern_comprehension	2867	PROVEN	C.ExprC3 patCompP_sound (GPatComp/GPcChain), C.ExprC4 np_patCompP
+graph/src/parser/cypher.rs	Parser::parse_inline_properties	2915	PROVEN	C.ExprC2 inlineErr_spec; C.PatternG propsP_sound
+graph/src/parser/cypher.rs	Parser::parse_node_pattern	2931	PROVEN	C.PatternG nodeP_sound (GNode), np_nodeP
+graph/src/parser/cypher.rs	Parser::parse_relationship_pattern	2954	PROVEN	C.PatternG relP_sound (GRel/GDetail/GTypes/GRange), np_relP; type_colon_accepted
+graph/src/parser/cypher.rs	Parser::parse_labels	3102	PROVEN	C.PatternG labelsP_sound (GLabels); Model labels_np
+graph/src/parser/cypher.rs	Parser::parse_map	3111	PROVEN	parseMap/mapBody, parseMap_ok (oracle o.pmap at clause level)
+graph/src/parser/cypher.rs	Parser::parse_map_projection	3143	PROVEN	mapProj/mapProjBody/mapProjItem, mapProj_ok
+graph/src/parser/cypher.rs	Parser::parse_orderby	3201	PROVEN	C.ClausesG orderItems_sound (GSortItems), np_orderbyP
+graph/src/parser/cypher.rs	Parser::parse_set_clause	3219	PROVEN	C.ClausesG2 setP_sound (GSetItems/GSetMore), np_setP
+graph/src/parser/cypher.rs	Parser::parse_set_items	3231	PROVEN	C.ClausesG2 setItems_sound (GSetItem/GTarget: nested target only after `(`), np_setItems; Clauses.setTarget: set_bracket_paren_refused, setTarget_only_paren; C.set_bracket_target_refused, set_paren_property_accepted
+graph/src/parser/cypher.rs	Parser::reject_unparenthesized_target	3289	PROVEN	Clauses.rejectUnparen / C.rejectUnparenP (Ok iff root is Paren): setTarget_only_paren, targetP_sound (GTarget.paren needs `(`), np_targetP
+graph/src/parser/cypher.rs	Parser::parse_remove_clause	3300	PROVEN	C.ClausesG2 removeP_sound (GRemoveMore), np_removeP
+graph/src/parser/cypher.rs	Parser::parse_remove_items	3312	PROVEN	C.ClausesG2 removeItems_sound (GRemoveItem), np_removeItems; C.set_bracket_target_refused (REMOVE [n).x refused)
+graph/src/parser/cypher.rs	Parser::parse_foreach_clause	3348	PROVEN	C.ClausesG3 GForeach/GBody in sound_mut, np_mut
+graph/src/parser/cypher.rs	Parser::reject_aggregate	3430	PROVEN	C.ExprC2 rejectAggregate_spec
+graph/src/parser/cypher.rs	Parser::find_aggregate_name	3442	PROVEN	C.Core find_aggregate_name_spec (aggName ↔ HasAgg)
+graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	C.Graph Var.fmt_anon, Var.fmt_named
+graph/src/parser/ast.rs	Variable::eq	113	PROVEN	C.Graph Var.eq_spec (by id only)
+graph/src/parser/ast.rs	Variable::hash	124	PROVEN	C.Graph Var.hash_eq (equal variables hash alike)
+graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	C.Graph Var.asStr_spec
+graph/src/parser/ast.rs	ExprIR::fmt	331	PROVEN	C.Fmt fmtOp, fmtOp_var/fmtOp_param/fmtOp_prop
+graph/src/parser/ast.rs	QuantifierType::fmt	425	PROVEN	C.Fmt fmtQuant_spec
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	442	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	446	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	457	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	QueryNode::fmt	482	PROVEN	C.Fmt fmtNode_nolabel
+graph/src/parser/ast.rs	QueryNode::new	495	PROVEN	C.Graph QNode.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	543	PROVEN	C.Fmt fmtRel_untyped_undirected
+graph/src/parser/ast.rs	QueryRelationship::new	571	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
+graph/src/parser/ast.rs	QueryPath::new	608	PROVEN	C.Graph QPath.new_spec
+graph/src/parser/ast.rs	QueryGraph::default	631	PROVEN	C.Graph QG.default_spec
+graph/src/parser/ast.rs	QueryGraph::fmt	644	PROVEN	C.Fmt fmtGraph_empty
+graph/src/parser/ast.rs	merge_attr_maps	667	PROVEN	C.Graph mergeAttrs_kids, mergeAttrs_map
+graph/src/parser/ast.rs	QueryGraph::add_node	685	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
+graph/src/parser/ast.rs	QueryGraph::merge_node	705	PROVEN	C.Graph QG.mergeNode_spec, QG.mergeNode_rels, extendSet_mem
+graph/src/parser/ast.rs	QueryGraph::replace_node	723	PROVEN	C.Graph QG.replaceNode_spec
+graph/src/parser/ast.rs	QueryGraph::add_relationship	733	PROVEN	C.Graph QG.addRel_spec, QG.addRel_distinct
+graph/src/parser/ast.rs	QueryGraph::add_path	749	PROVEN	C.Graph QG.addPath_spec
+graph/src/parser/ast.rs	QueryGraph::variables	761	PROVEN	C.Graph QG.variables_length
+graph/src/parser/ast.rs	QueryGraph::nodes	770	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::nodes_mut	774	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships	779	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships_mut	783	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::paths	788	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::filter_visited	795	PROVEN	C.Components filterVisited_nodes
+graph/src/parser/ast.rs	QueryGraph::connected_components	823	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
+graph/src/parser/ast.rs	QueryGraph::dfs	844	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
+graph/src/parser/ast.rs	SetItem::fmt	897	PROVEN	C.Fmt fmtSetItem_attr
+graph/src/parser/ast.rs	QueryIR::fmt	1042	PROVEN	C.Fmt fmtIR_return
+graph/src/parser/ast.rs	QueryIR::validate	1151	PROVEN	C.IR validate; vClause_simple; call_skips_rest_validation (BUG)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1157	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, match_last_after_call_accepted (BUG)
+graph/src/parser/ast.rs	validate_set_items	1329	PROVEN	C.IR vSetItems_np
+graph/src/parser/ast.rs	validate_inlined_properties	1348	PROVEN	C.IR vInlined (used in vClause_simple)
+graph/src/parser/ast.rs	QueryIR::return_column_names	1370	PROVEN	C.IR returnCols_last_return, colsL_append_return

@@ -1,0 +1,5 @@
+name = "falkor-ops-apply"
+defaultTargets = ["FalkorOpsApply"]
+
+[[lean_lib]]
+name = "FalkorOpsApply"

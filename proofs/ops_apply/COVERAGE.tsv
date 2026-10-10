@@ -1,0 +1,74 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/ops/merge.rs	MergeOp::new	68	PROVEN	Ctors.MergeSt.new: mergeNew_spec
+graph/src/runtime/ops/merge.rs	MergeOp::resolve_pattern	98	PROVEN	Ctors.onceGet: onceGet_spec, onceGet_from_new
+graph/src/runtime/ops/merge.rs	MergeOp::resolve_on_create_set_items	103	PROVEN	Ctors.onceGet: onceGet_spec
+graph/src/runtime/ops/merge.rs	MergeOp::resolve_on_match_set_items	108	PROVEN	Ctors.onceGet: onceGet_spec
+graph/src/runtime/ops/merge.rs	MergeOp::do_create_fallback	113	PROVEN	Merge.createFallback; rust_eq_ref_noSet; cross_clause_unbound (bug); per_clause_cache_fixes
+graph/src/runtime/ops/merge.rs	MergeOp::compute_merge_pattern_hash	180	PROVEN	Ctors.mergeHash/mergeHashInput: mergeHash_spec, nodeToks_bound, nodeToks_null, relToks_null, firstNull_none_iff
+graph/src/runtime/ops/merge.rs	MergeOp::drain_pending	252	PROVEN	Merge.phaseB; phaseB_noSet; heads_tails_perm
+graph/src/runtime/ops/merge.rs	MergeOp::next	279	PROVEN	Merge.rustBatch/phaseA/rustMerge; phaseA_ref; rust_eq_ref_noSet; merge_noSet_any_batch_size; batch_dependent (bug); allBound_first_only (bug)
+graph/src/runtime/ops/apply.rs	ApplyOp::new	103	PROVEN	Correlated.canBatchApply; canBatchApply_admits_vhj (bug: ValueHashJoin missing from blacklist)
+graph/src/runtime/ops/apply.rs	ApplyOp::next_batched	152	PROVEN	Correlated.applyBatched/optionalBatched; applyBatched_eq_ref; optionalBatched_perm_ref; vhj_batched_16_vs_8 (bug)
+graph/src/runtime/ops/apply.rs	ApplyOp::next_per_row	238	PROVEN	Correlated.applyPerRow/optionalPerRow; applyPerRow_eq_ref; optionalPerRow_eq_ref (batch-boundary buffering not modelled, flattened stream only)
+graph/src/runtime/ops/apply.rs	ApplyOp::next	343	PROVEN	dispatch on can_batch; covered by the two theorems above
+graph/src/runtime/ops/optional.rs	OptionalOp::new	92	PROVEN	Correlated.canBatchOptional; canBatchApply_admits_vhj (bug)
+graph/src/runtime/ops/optional.rs	OptionalOp::next_batched	125	PROVEN	Correlated.optionalBatched; optionalBatched_perm_ref; optionalBatched_order_differs (divergence)
+graph/src/runtime/ops/optional.rs	OptionalOp::next_per_row	195	PROVEN	Correlated.optionalPerRow; optionalPerRow_eq_ref
+graph/src/runtime/ops/optional.rs	OptionalOp::next	292	PROVEN	dispatch on can_batch
+graph/src/runtime/ops/semi_apply.rs	SemiApplyOp::new	45	PROVEN	Ctors.semiRight: semiRight_spec
+graph/src/runtime/ops/semi_apply.rs	SemiApplyOp::next	66	PROVEN	Correlated.semiBatched; semiBatched_eq_ref (under Separable; planner only feeds pattern sub-plans)
+graph/src/runtime/ops/or_apply_multiplexer.rs	OrApplyMultiplexerOp::new	46	PROVEN	Ctors.orBranches: orBranches_spec
+graph/src/runtime/ops/or_apply_multiplexer.rs	OrApplyMultiplexerOp::next	73	PROVEN	Correlated.orApply; orApply_eq_ref; orApply_single
+graph/src/runtime/ops/foreach.rs	ForEachOp::new	57	PROVEN	Ctors.forEachBody: forEachBody_spec
+graph/src/runtime/ops/foreach.rs	ForEachOp::execute_list	86	PROVEN	ForEach.execList/runChunks/chunks; chunks_flatten; chunks_size; execList_ok
+graph/src/runtime/ops/foreach.rs	ForEachOp::next	124	PROVEN	ForEach.next/go/inner/drainP; go_ok; next_ok; run_ok; foreach_correct; calls_items
+graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	ForEach.drainP (used in go_ok)
+graph/src/runtime/ops/union.rs	UnionOp::new	43	PROVEN	Union.St initial state in union_drain
+graph/src/runtime/ops/union.rs	UnionOp::store_argument_batch	57	PROVEN	Ctors.storeArg: storeArg_spec
+graph/src/runtime/ops/union.rs	UnionOp::next	68	PROVEN	Union.next; next_spec; drain_eq; union_drain; stream_all_ok; next_none_stays
+graph/src/runtime/batch.rs	Batch::clone_active_rows_seq_origin	1163	MODELLED	Correlated.tag (sequential origins; n<=1 sidecar omission equals tag 0)
+graph/src/runtime/batch.rs	Batch::merge_over_input	943	MODELLED	Correlated.applyBatched (abstract merge x y); column-level is_bound_at(id,0) test not modelled
+graph/src/runtime/batch.rs	Batch::origin_row	1298	MODELLED	Correlated.SubPlan origin tag
+graph/src/runtime/batch.rs	Batch::gather	897	MODELLED	Correlated.optionalBatched fallback (gather by unmatched origins)
+graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1590	AXIOMATISED	Correlated.Separable is a hypothesis on the sub-plan (not an axiom): argument leaves + per-row ops; ValueHashJoin arm shown non-separable (vhj_not_separable)
+graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	CreateAttrs.tplSet/tplBuild/rank: tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict, rank_lt
+graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
+graph/src/runtime/ops/create.rs	new	102	PROVEN	CreateBatch.CreateSt.new: createNew_spec
+graph/src/runtime/ops/create.rs	next	121	PROVEN	CreateBatch.createNext: createNext_spec
+graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix
+graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	CreateAttrs.resolveLabels/resolveNodes: resolveLabels_spec, resolveLabels_length, resolveNodes_shape
+graph/src/runtime/ops/delete.rs	node_attrs_to_map	38	PROVEN	Delete.attrsToMap: attrsToMap_spec
+graph/src/runtime/ops/delete.rs	rel_attrs_to_map	49	PROVEN	Delete.attrsToMap: attrsToMap_spec
+graph/src/runtime/ops/delete.rs	snapshot_required	69	PROVEN	Delete.snapshotRequired: snapshotRequired_spec
+graph/src/runtime/ops/delete.rs	new	93	PROVEN	Delete.DeleteSt.new: deleteNew_spec
+graph/src/runtime/ops/delete.rs	next	113	PROVEN	Delete.deleteNext: deleteNext_spec
+graph/src/runtime/ops/delete.rs	delete_batch	127	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	191	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	297	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
+graph/src/runtime/ops/delete.rs	delete_entity	393	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
+graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
+graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
+graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow: perRow_spec
+graph/src/runtime/ops/set.rs	resolve_set_items	96	PROVEN	SetRemove.resolveItems: resolveItems_length, resolveItems_attr
+graph/src/runtime/ops/set.rs	set_inner	124	PROVEN	SetRemove.setAttrItem/setProp/setFromMapNode/setFromNoClear/setLabelItem: setProp_spec, setAll_get, setFromMapNode_replace, setAttrItem_spec, setLabelItem_live, noClear_keeps_pending
+graph/src/runtime/ops/remove.rs	new	30	PROVEN	SetRemove.RemoveSt.new: removeNew_spec
+graph/src/runtime/ops/remove.rs	next	48	PROVEN	SetRemove.opNext: opNext_spec
+graph/src/runtime/ops/remove.rs	remove_batch	62	PROVEN	SetRemove.perRow: perRow_spec
+graph/src/runtime/ops/remove.rs	remove	74	PROVEN	SetRemove.removeItem: removeItem_spec
+graph/src/runtime/ops/cartesian_product.rs	RightSide::new	80	PROVEN	CartVhj.rsNew: rs_spec
+graph/src/runtime/ops/cartesian_product.rs	RightSide::is_empty	94	PROVEN	CartVhj.rsEmpty: rs_spec
+graph/src/runtime/ops/cartesian_product.rs	RightSide::advance	105	PROVEN	CartVhj.adv (odometer): adv_valid, adv_wrap, orbit_valid, allTuples_mem, allTuples_length
+graph/src/runtime/ops/cartesian_product.rs	RightSide::rewind	117	PROVEN	CartVhj.rewind: rs_spec
+graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::new	123	PROVEN	CartVhj.CpSt.new: cpNew_spec
+graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::materialize_right	144	PROVEN	CartVhj.materialize: materialize_ok
+graph/src/runtime/ops/cartesian_product.rs	CartesianProductOp::next	162	PROVEN	CartVhj.cpRows (+ Columnar.BB.pushPlanned): cpRows_length, orbit_valid
+graph/src/runtime/ops/value_hash_join.rs	JoinHashTable::is_empty	96	PROVEN	CartVhj.jtEmpty: jtEmpty_spec
+graph/src/runtime/ops/value_hash_join.rs	hash_value	118	PROVEN	CartVhj.hashValue: hashValue_det
+graph/src/runtime/ops/value_hash_join.rs	keys_match	137	PROVEN	CartVhj.keysMatch: keysMatch_spec
+graph/src/runtime/ops/value_hash_join.rs	key_as_i64	153	PROVEN	CartVhj.keyAsI64: keyAsI64_spec (W2-rewrites-3: exact-int keying vs `=`)
+graph/src/runtime/ops/value_hash_join.rs	insert_value	176	PROVEN	CartVhj.insertValue/addRef: insertValue_spec, probe_insert_fresh
+graph/src/runtime/ops/value_hash_join.rs	promote_int_table	196	PROVEN	CartVhj.promote: promote_bucket
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	228	PROVEN	CartVhj.VhjSt.new: vhjNew_spec
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	256	PROVEN	CartVhj.build: build_int
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	324	PROVEN	CartVhj.fillMatches/probe: fillMatches_int, probe_insert_fresh
+graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	366	PROVEN	CartVhj.vhjRows: vhjRows_spec

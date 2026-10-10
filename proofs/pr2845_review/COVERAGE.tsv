@@ -1,0 +1,10 @@
+# PR #2845 review project. #2845 merged as eb470521b; the modelled code is origin/main a9377c636 = 8743953a8 for these fns (#2390 only appended tests to push_filters_down.rs).
+# The pre-#2845 counterexamples are kept as pre2845_* historical theorems.
+#file	function	line	bucket	lean_name_or_reason
+graph/src/planner/binder.rs	Binder::bind_call_body	824	PROVEN	bodyNew_entry, branchNew_entry, bodyNew_eq_old, body_own_unbound; historical pre2845_bodyOld_empty, pre2845_old_aliases; union_branch_label_alias (open, #3027)
+graph/src/planner/binder.rs	Binder::build_import_projections	979	PROVEN	importProj_spec, entry_ids_below
+graph/src/runtime/batch.rs	Batch::rows_only	853	PROVEN	projectEmpty_fast_eq_general
+graph/src/runtime/batch.rs	Batch::has_origins	1312	PROVEN	hasOrigins_iff, originRow_none
+graph/src/runtime/ops/batched_result_emitter.rs	BatchedResultEmitter::start_batch	602	PROVEN	emit_origin_sound, emit_len; historical pre2845_emit_origin_lost_old
+graph/src/runtime/ops/project.rs	ProjectOp::eval	54	PROVEN	projectEmpty_fast_eq_general, projectMerged_eq_main
+graph/src/planner/optimizer/push_filters_down.rs	push_filters_down	102	MODELLED	filter_pushed_through_boundary (Case 2 walk only)

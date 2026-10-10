@@ -1,0 +1,5 @@
+name = "search-concurrency"
+defaultTargets = ["SearchConcurrency"]
+
+[[lean_lib]]
+name = "SearchConcurrency"

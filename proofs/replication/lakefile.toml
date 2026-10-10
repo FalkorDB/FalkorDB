@@ -1,0 +1,5 @@
+name = "falkor-replication"
+defaultTargets = ["FalkorReplication"]
+
+[[lean_lib]]
+name = "FalkorReplication"

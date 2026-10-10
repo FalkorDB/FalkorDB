@@ -1,0 +1,6 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages": [],
+ "name": "«pr2845-review»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

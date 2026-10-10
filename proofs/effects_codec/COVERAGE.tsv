@@ -1,0 +1,141 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/effects/writer.rs	EffectWrite::u8	45	PROVEN	w8 = le 1: u8_w8, unle_le_of_lt
+graph/src/effects/writer.rs	EffectWrite::u16	51	PROVEN	w16 = le 2: u16_w16
+graph/src/effects/writer.rs	EffectWrite::u32	57	PROVEN	w32 = le 4: u32_w32
+graph/src/effects/writer.rs	EffectWrite::u64	63	PROVEN	w64 = le 8: u64_w64
+graph/src/effects/writer.rs	EffectWrite::i64	69	PROVEN	w64 of two's-complement bits: i64_w64
+graph/src/effects/writer.rs	EffectWrite::f64	75	PROVEN	w64 of the bit pattern: i64_w64, decodeV_encV (float arm)
+graph/src/effects/writer.rs	EffectWrite::string	154	PROVEN	wString: rString_wString
+graph/src/effects/reader.rs	Reader::take	40	PROVEN	take: take_append', take_consumes, take_noPanic
+graph/src/effects/reader.rs	Reader::guard_count	70	PROVEN	guardCount: guardCount_bound, guardCount_noPanic, guardCount_consumes
+graph/src/effects/reader.rs	Reader::u8	99	PROVEN	rdU 1: u8_w8, rdU_noPanic
+graph/src/effects/reader.rs	Reader::u16	103	PROVEN	rdU 2: u16_w16, rdU_noPanic
+graph/src/effects/reader.rs	Reader::u32	107	PROVEN	rdU 4: u32_w32, rdU_noPanic
+graph/src/effects/reader.rs	Reader::u64	111	PROVEN	rdU 8: u64_w64, rdU_noPanic
+graph/src/effects/reader.rs	Reader::i64	115	PROVEN	i64: i64_w64, i64_noPanic
+graph/src/effects/reader.rs	Reader::f32	119	PROVEN	f32 (bit pattern): f32_w32, f32_noPanic
+graph/src/effects/reader.rs	Reader::string	159	PROVEN	rString: rString_wString, rString_noPanic, rString_consumes
+graph/src/effects/v3/value.rs	EffectEncode::encode	34	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
+graph/src/effects/v3/value.rs	EffectDecode::decode	161	PROVEN	decodeV/loop/deliver: decodeV_encV, decodeV_safe (no panic, consumes, fuel enough), nest_decodes
+graph/src/effects/v3/value.rs	read_one	197	PROVEN	readOne/readBody: readOne_scalar, readOne_list, good_readOne, readOne_progress
+graph/src/effects/v3/blocks.rs	LabelSet::encode	55	PROVEN	wLabelSet: encRec_createNode, readRec_createNode
+graph/src/effects/v3/blocks.rs	LabelSet::decode	77	PROVEN	rLabelSet: readN_u32, readRec_createNode
+graph/src/effects/v3/blocks.rs	AttrIds::encode	101	PROVEN	wAttrIds: encRec_createNode, readRec_createNode
+graph/src/effects/v3/blocks.rs	AttrIds::decode	120	PROVEN	rAttrIds: readN_u16, readRec_createNode
+graph/src/effects/v3/blocks.rs	AttrValues::encode	155	PROVEN	wRows = encL: readN_decodeV (no count*attrs check on write, noted)
+graph/src/effects/v3/blocks.rs	AttrValues::decode_sized	177	PROVEN	rRows: readN_decodeV, readRec_createNode
+graph/src/effects/v3/records.rs	write_header	21	PROVEN	RecFull.writeHeader: writeHeader_spec, writeHeader_empty (#2916: refuses count 0), batched_ok
+graph/src/effects/v3/records.rs	IndexFieldOptions::none_given	108	PROVEN	RecOpts.bOpts with text = all-none (default TextT); bOpts.rt via readRecord_encRecord
+graph/src/effects/v3/records.rs	put_opt	123	PROVEN	RecBlocks.bOpt (enc): bOpt.rt
+graph/src/effects/v3/records.rs	take_opt	137	PROVEN	RecBlocks.bOpt (dec, BadBool on other tag): bOpt.rt
+graph/src/effects/v3/records.rs	IndexFieldOptions::encode_sized	162	PROVEN	RecOpts.bOpts/bText/bVecPart/bSim: bOpts.rt; bSim_lossy (similarity normalised: also seen in wave 1)
+graph/src/effects/v3/records.rs	IndexFieldOptions::decode_sized	217	PROVEN	RecOpts.bOpts dec: bOpts.rt, bVecPart.rt
+graph/src/effects/v3/records.rs	IndexFields::encode	324	PROVEN	RecArms.bFields (u16 count, BlockCountTooLarge): bItems.rt
+graph/src/effects/v3/records.rs	IndexFields::decode	346	PROVEN	RecArms.bFields (guard_count 11): bItems.rt
+graph/src/effects/v3/records.rs	IndexSchemas::encode	388	PROVEN	RecArms.bSchemas (sorts by id): bSchemas_enc_sorted, bSchemas.rt
+graph/src/effects/v3/records.rs	IndexSchemas::decode	421	PROVEN	RecArms.bSchemas (EmptyIndexSchemaList on 0): bSchemas.rt, readN_length
+graph/src/effects/v3/records.rs	check_index_record	456	PROVEN	RecFull.checkIndex: checkIndex_ok
+graph/src/effects/v3/records.rs	read_record	611	PROVEN	RecFull.readRecord/arm: readRecord_encRecord (all 14 opcodes), readRecord_encRecord_wf, readRecord_empty, readRecord_batched, readRecord_single
+graph/src/effects/v3/records.rs	read_constraint_props	818	PROVEN	RecArms.bProps (u8 count, guard 11): bItems.rt
+graph/src/effects/v3/records.rs	check_endpoint_columns	838	PROVEN	RecFull.checkEndpoints: checkEndpoints_ok
+graph/src/effects/v3/records.rs	check_row_shape	864	PROVEN	RecFull.checkRowShape (checked_mul == Some(len)): checkRowShape_ok, encRecord_rowShape_refused, encRecord_ok_shape (#2916)
+graph/src/effects/v3/records.rs	write_constraint_tail	883	PROVEN	RecFull.bodyConstraint tail (schema_id, string, u8 props; >255 = panic): readRecord_encRecord
+graph/src/effects/v3/records.rs	Record::encode	917	PROVEN	RecFull.encRecord: readRecord_encRecord, readRecord_encRecord_wf (no shape hypothesis since #2916), encRecord_ok_shape, encRecord_rowShape_refused, encRecord_empty_refused/never_ok; Records.encRec_refuses_shape
+graph/src/effects/v3/records.rs	Record::decode	1186	PROVEN	= readRecord: readRecord_encRecord
+graph/src/effects/v3/records.rs	Payload::deref	1211	PROVEN	Payload.openPayload result bytes: openPayload_plain, openPayload_maybeCompress
+graph/src/effects/v3/records.rs	Payload::records	1219	PROVEN	Payload.readAllRecords from the start: records_concat
+graph/src/effects/v3/records.rs	Records::next	1242	PROVEN	Payload.readAllRecords (stop at end, fuse on error): records_concat
+graph/src/effects/v3/records.rs	open_payload	1261	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
+graph/src/effects/v3/records.rs	maybe_compress	1361	PROVEN	Payload.maybeCompress: openPayload_maybeCompress (transparent if records < 4GiB), maybeCompress_shrinks, seal_disabled
+graph/src/effects/v3/blocks.rs	RelType::encode	29	PROVEN	RecBlocks.bU32 via schemaId: relType_rt, schemaId_roundtrip
+graph/src/effects/v3/blocks.rs	RelType::decode	39	PROVEN	RecBlocks.bU32: relType_rt; used in bodyUpdEdge/bodyCrEdge/bodyDelEdge
+graph/src/effects/writer.rs	EffectWrite::schema_id	95	PROVEN	Cursor.schemaId: schemaId_roundtrip
+graph/src/effects/writer.rs	EffectWrite::bytes	109	PROVEN	Cursor.EffectWrite.bytes (trait method; impls Vec/EffectsBuffer): vec_bytes, eb_is_vec
+graph/src/effects/writer.rs	EffectWrite::written	120	PROVEN	Cursor.EffectWrite.written (trait method): vec_written
+graph/src/effects/writer.rs	EffectWrite::reserve	126	PROVEN	Cursor.EffectWrite.reserve default no-op: default_reserve
+graph/src/effects/writer.rs	Vec::bytes	165	PROVEN	Cursor.vecWrite.bytes: vec_bytes
+graph/src/effects/writer.rs	Vec::written	172	PROVEN	Cursor.vecWrite.written: vec_written
+graph/src/effects/writer.rs	Vec::reserve	176	PROVEN	Cursor.vecWrite.reserve (capacity only): vec_reserve
+graph/src/effects/reader.rs	Reader::new	18	PROVEN	Cursor.Rd.new: Rd.new_wf, Rd.new_rest
+graph/src/effects/reader.rs	Reader::remaining	24	PROVEN	Cursor.Rd.remaining: Rd.remaining_eq
+graph/src/effects/reader.rs	Reader::is_empty	30	PROVEN	Cursor.Rd.isEmpty: Rd.isEmpty_iff
+graph/src/effects/reader.rs	Reader::rest	36	PROVEN	Cursor.Rd.rest: Rd.take_refines, Rd.new_rest
+graph/src/effects/reader.rs	Reader::take_array	93	PROVEN	Cursor.Rd.takeArray = take: Rd.take_refines, Rd.bits_refines
+graph/src/effects/reader.rs	Reader::f64	123	PROVEN	Cursor.Rd.f64 (bit transmute): Rd.bits_refines
+graph/src/effects/reader.rs	Reader::take_n	138	PROVEN	Cursor.Rd.takeN (one slice + chunks_exact): Rd.takeN_refines (= per-element reads), readN_take_chunks
+graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	22	PROVEN	Format.fmtNewBuffer: fmtIsEmpty_iff, ebNew_eq
+graph/src/effects/v3/format.rs	EffectsPayload::is_empty	27	PROVEN	Format.fmtIsEmpty: fmtIsEmpty_iff
+graph/src/effects/v3/format.rs	EffectsPayload::replicate	32	PROVEN	Format.fmtReplicate (seal then sink): fmtReplicate_transparent
+graph/src/effects/v3/format.rs	EffectsPayload::describe	46	PROVEN	Format.describe/describeLoop: describe_spec, describeLoop_spec
+graph/src/effects/v3/format.rs	EffectsPayload::apply	108	PROVEN	Format.fmtApply delegates to apply_effects (proofs/effects_emit_apply): fmtApply_eq
+graph/src/effects/v3/format.rs	EffectsPayload::build	115	PROVEN	Format.build/buildLoop: build_ok, buildLoop_after_fail
+graph/src/effects/v3/format.rs	EffectsPayload::build_index	144	PROVEN	Format.fmtBuildIndex delegates to build_index_buffer: fmtBuildIndex_eq
+graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	154	PROVEN	Format.fmtBuildConstraint delegates: fmtBuildConstraint_eq
+graph/src/effects/v3/staging.rs	label_set	23	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_created_node	29	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_updated_node	37	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_updated_edge	44	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_label_change	51	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_deleted_edges	58	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_deleted_node	64	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_created_node	72	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_updated_node	88	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_updated_edge	97	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_label_change	106	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_deleted_edges	114	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/staging.rs	stage_deleted_node	121	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	graph	36	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	graph_cell	42	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	with_attrs	47	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	with_edge	59	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	live_node	71	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	digest	101	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	encode_all	112	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	round_trip	121	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	read_buffer	141	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/mod.rs	compression_min_bytes	106	PROVEN	Format.compressionMinBytes: compressionMinBytes_neg, seal_disabled
+graph/src/effects/v3/mod.rs	seal	120	PROVEN	ModRs.sealBuf: seal_transparent
+graph/src/effects/v3/mod.rs	Opcode::is_batchable	180	PROVEN	RecFull.isBatchable: isBatchable_spec
+graph/src/effects/v3/mod.rs	schema_tag	206	PROVEN	RecArms.schemaTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	entity_from_schema_tag	214	PROVEN	RecArms.entityFromSchemaTag: tags_roundtrip, entityFromSchemaTag_err
+graph/src/effects/v3/mod.rs	entity_tag	228	PROVEN	RecArms.entityTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	entity_from_tag	236	PROVEN	RecArms.entityFromTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	update_opcode	246	PROVEN	ModRs.updateOpcode: updateOpcode_batchable
+graph/src/effects/v3/mod.rs	IndexFieldBit::index_type	288	PROVEN	RecArms.bitKind: bitKind_spec
+graph/src/effects/v3/mod.rs	field_type_bits	329	PROVEN	RecArms.setBits: setBits_spec
+graph/src/effects/v3/mod.rs	index_type_of	361	PROVEN	RecArms.indexTypeOf: indexTypeOf_mixed, #guards; used by bFieldType.rt
+graph/src/effects/v3/mod.rs	constraint_tag	398	PROVEN	RecArms.ctypeTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	constraint_status_tag	414	PROVEN	RecArms.statusTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	constraint_status_from_tag	423	PROVEN	RecArms.statusFromTag: tags_roundtrip, statusFromTag_err
+graph/src/effects/v3/mod.rs	constraint_from_tag	433	PROVEN	RecArms.ctypeFromTag: tags_roundtrip
+graph/src/effects/v3/mod.rs	new_buffer	472	PROVEN	Payload.newBuffer: ebNew_eq, openPayload_plain
+graph/src/effects/mod.rs	ReplicationSink::replicate	66	AXIOMATISED	trait implemented in src/ by RedisModule_Replicate (Redis FFI); format.rs replicate proven up to the sink (fmtReplicate_transparent)
+graph/src/effects/mod.rs	EffectsFormat::new_buffer	103	PROVEN	trait decl; sole impl format.rs: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsFormat::is_empty	110	PROVEN	trait decl; sole impl: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsFormat::replicate	117	PROVEN	trait decl; sole impl: fmtReplicate_transparent
+graph/src/effects/mod.rs	EffectsFormat::describe	132	PROVEN	trait decl; sole impl: describe_spec
+graph/src/effects/mod.rs	EffectsFormat::apply	144	PROVEN	trait decl; sole impl: fmtApply_eq
+graph/src/effects/mod.rs	EffectsFormat::build	167	PROVEN	trait decl; sole impl: build_ok
+graph/src/effects/mod.rs	EffectsFormat::build_index	179	PROVEN	trait decl; sole impl: fmtBuildIndex_eq
+graph/src/effects/mod.rs	EffectsFormat::build_constraint	193	PROVEN	trait decl; sole impl: fmtBuildConstraint_eq
+graph/src/effects/mod.rs	EffectsPayload::describe	246	PROVEN	ModRs.describeTop/chunks32: describeTop_spec, chunks32_flatten
+graph/src/effects/mod.rs	EffectsPayload::apply	292	PROVEN	ModRs.applyTop: applyTop_spec
+graph/src/effects/mod.rs	EffectEncode::encode	328	PROVEN	trait decl; impls proven: encRecord (readRecord_encRecord), blocks (Blk.rt), Value (decodeV_encV)
+graph/src/effects/mod.rs	EffectDecode::decode	340	PROVEN	trait decl; impls proven: readRecord, rLabelSet/rAttrIds, bU32 (RelType)
+graph/src/effects/mod.rs	EffectEncodeSized::encode_sized	366	PROVEN	trait decl; impls: bOpts (IndexFieldOptions), AttrValues (bRows)
+graph/src/effects/mod.rs	EffectDecodeSized::decode_sized	393	PROVEN	trait decl; impls: bOpts.rt, bRows.rt, IdList (proofs/id_list)
+graph/src/effects/mod.rs	EffectsBuffer::write	422	PROVEN	ModRs.ebWrite: ebWrite_spec
+graph/src/effects/mod.rs	EffectsBuffer::flush	430	PROVEN	ModRs.ebFlush: ebWrite_spec
+graph/src/effects/mod.rs	EffectsBuffer::bytes	436	PROVEN	ModRs.ebEffectWrite = vecWrite: eb_is_vec, vec_bytes
+graph/src/effects/mod.rs	EffectsBuffer::written	443	PROVEN	eb_is_vec, vec_written
+graph/src/effects/mod.rs	EffectsBuffer::reserve	447	PROVEN	eb_is_vec, vec_reserve
+graph/src/effects/mod.rs	EffectsBuffer::default	456	PROVEN	ModRs.ebNew: ebNew_eq
+graph/src/effects/mod.rs	EffectsBuffer::new	464	PROVEN	ModRs.ebNew: ebNew_eq, ebNew_isEmpty
+graph/src/effects/mod.rs	EffectsBuffer::is_empty	473	PROVEN	fmtIsEmpty: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsBuffer::build	484	PROVEN	delegates to format build: build_ok
+graph/src/effects/mod.rs	EffectsBuffer::build_index	497	PROVEN	delegates: fmtBuildIndex_eq
+graph/src/effects/mod.rs	EffectsBuffer::build_constraint	514	PROVEN	delegates: fmtBuildConstraint_eq
+graph/src/effects/mod.rs	EffectsBuffer::replicate	530	PROVEN	delegates: fmtReplicate_transparent
+graph/src/effects/announce.rs	SchemaBaseline::of	39	PROVEN	Format.baselineOf: baselineOf_spec
+graph/src/effects/payload.rs	take_effects_buffer	25	PROVEN	Format.takeEffectsBuffer: takeEffectsBuffer_spec
+graph/src/effects/error.rs	LocalName::fmt	460	PROVEN	Format.localName: localName_none, localName_some

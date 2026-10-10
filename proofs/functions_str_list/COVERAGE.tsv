@@ -1,0 +1,71 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/functions/string.rs	register	35	PROVEN	Misc.stringRegistered: stringRegistered_nodup
+graph/src/runtime/functions/string.rs	intern	40	PROVEN	Misc.intern (Pool structure): intern_id
+string.rs	substring	58	PROVEN	substring2_spec, substring3_spec, substring3_agrees_C
+string.rs	split	109	PROVEN	split_agrees_C, splitAux_eq_cSplit
+string.rs	string_to_lower	142	PROVEN	toLower_rejects_valid (BUG D), case_size_preserved_if_simple
+string.rs	string_to_upper	164	PROVEN	toLower_rejects_valid (BUG D, same branch)
+graph/src/runtime/functions/string.rs	string_replace	190	PROVEN	Misc.stringReplace/strReplace/replaceNE: strReplace_self, replaceNE_self, stringReplace_null; earlier: replaceRust, replace_examples, cReplace_empty_breaks_utf8
+string.rs	string_left	213	PROVEN	left_agrees_C, left_right_spec
+string.rs	string_ltrim	236	PROVEN	ltrim_idem, ltrim_head
+string.rs	string_rtrim	251	PROVEN	rtrim_cons, trim_agrees_C
+string.rs	string_trim	266	PROVEN	trim_agrees_C
+string.rs	string_right	282	PROVEN	right_agrees_C, left_right_spec
+string.rs	string_join	307	PROVEN	joinLen_correct, joinStr_eq_intercalate
+graph/src/runtime/functions/string.rs	to_string_vec	309	PROVEN	Misc.toStringVec: toStringVec_strs, toStringVec_err
+string.rs	compute_join_length	324	PROVEN	joinLen_correct
+string.rs	join_with_preallocate	364	PROVEN	joinStr_length, joinStr_eq_intercalate
+graph/src/runtime/functions/string.rs	string_match_reg_ex	417	PROVEN	Misc.matchRegEx (Rx structure): matchRegEx_null, capturesList_shape
+graph/src/runtime/functions/string.rs	string_replace_reg_ex	440	PROVEN	Misc.replaceRegEx: replaceRegEx_default, replaceRegEx_null; earlier: expandRust, replaceRegex_dollar (BUG E)
+graph/src/runtime/functions/string.rs	regex_captures_list	490	PROVEN	Misc.capturesList: capturesList_shape
+graph/src/runtime/functions/list.rs	remove_span	41	PROVEN	removeSpan: removeSpan_wf, removeSpan_clamps_huge_count, listRemove_eq_spec
+graph/src/runtime/functions/list.rs	register	56	PROVEN	Misc.listRegistered: listRegistered_nodup
+list.rs	size	64	PROVEN	size_le_bytes, str_size_concat, size_reverse
+list.rs	head	80	PROVEN	head_eq
+list.rs	last	101	PROVEN	last_eq_head_reverse
+list.rs	tail	116	PROVEN	tail_eq, tail_length
+list.rs	reverse	142	PROVEN	reverse_involutive, reverse_agrees_C
+list.rs	list_remove	165	PROVEN	listRemove_eq_spec, listRemove_huge_count; historical pre2952_listRemove_end_overflows (BUG B, fixed by #2952)
+graph/src/runtime/functions/list.rs	list_sort	200	PROVEN	Misc.listSort (Sorter structure: permutation law): listSort_perm, listSort_default, listSort_badAsc; earlier: listSort_cmp_not_antisymmetric (BUG A)
+list.rs	list_insert	234	PROVEN	insertNorm_safe, insertNorm_minus_one
+list.rs	list_insert_list_elements	285	PROVEN	insertNorm_safe (same normalisation)
+graph/src/runtime/functions/list.rs	list_dedup	341	PROVEN	Misc.listDedup/dedupLoop: listDedup_spec (sublist + pairwise not =)
+graph/src/runtime/functions/internal.rs	register	31	PROVEN	Misc.internalRegistered: internalRegistered_nodup
+internal.rs	internal_starts_with	39	PROVEN	startsWith_nonString, startsWith_empty, prefix_chars_to_bytes
+graph/src/runtime/functions/internal.rs	internal_ends_with	57	PROVEN	Misc.internalEndsWith: internalEndsWith_spec, internal_null
+graph/src/runtime/functions/internal.rs	internal_contains	75	PROVEN	Misc.internalContains: internalContains_spec, internal_null
+graph/src/runtime/functions/internal.rs	internal_is_null	90	PROVEN	Misc.internalIsNull: internalIsNull_spec
+internal.rs	internal_regex_matches	107	PROVEN	regex_spec_implies_rust, regexMatches_unanchored (BUG C)
+graph/src/runtime/functions/internal.rs	internal_case	130	PROVEN	Misc.internalCase: internal_stubs
+graph/src/runtime/functions/internal.rs	internal_add	145	PROVEN	Misc.internalAdd: internal_stubs
+graph/src/runtime/functions/entity.rs	register	36	PROVEN	Entity.registered: register_nodup
+graph/src/runtime/functions/entity.rs	labels	40	PROVEN	Entity.labels/RT.labels: deleteNode_labels_iff, labels_lost_after_delete (BUG), deleteNode_preserves_all, entity_null
+graph/src/runtime/functions/entity.rs	type_of	56	PROVEN	Entity.typeOf/typeName: typeOf_total
+graph/src/runtime/functions/entity.rs	has_labels	86	PROVEN	Entity.hasLabels/hasLabelsLoop/valueName: hasLabels_all, hasLabels_typecheck, hasLabels_mismatch_names, hasLabels_null_label (#3127), deleteNode_preserves_all
+graph/src/runtime/functions/entity.rs	id	135	PROVEN	Entity.id: id_small, deleteNode_preserves
+graph/src/runtime/functions/entity.rs	properties	154	PROVEN	Entity.properties: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	start_node	171	PROVEN	Entity.startNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	end_node	187	PROVEN	Entity.endNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	length	203	PROVEN	Entity.length: length_path, entity_null
+graph/src/runtime/functions/entity.rs	keys	221	PROVEN	Entity.keys: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	relationship_type	250	PROVEN	Entity.relationshipType: deleteRel_preserves, entity_null
+graph/src/runtime/functions/entity.rs	exists	264	PROVEN	Entity.exists: exists_spec
+graph/src/runtime/functions/entity.rs	indegree	275	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	outdegree	291	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	parse_degree_args	311	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
+math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples
+eval.rs	RangeIter::next	111	MODELLED	rangeIter_negate_overflows (variant of #2894)
+eval.rs	eval_compound/GetElement	573	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds
+eval.rs	eval_compound/GetElements	613	PROVEN	getElements_spec, getElements_bounds
+eval.rs	eval_compound/In	774	PROVEN	contains_false_iff, contains_nil
+eval.rs	eval_compound/Quantifier	979	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+eval.rs	eval_compound/ListComprehension	1018	MODELLED	comprehension_diverges (BUG F)
+eval.rs	eval_compound/Reduce	1035	PROVEN	reduce_nil, reduce_append
+eval.rs	eval_iter_expr	1178	MODELLED	comprehensionRust (fallback arm); range arm = rangeLen
+eval.rs	eval_compiled_regex	1254	MODELLED	isMatchRust, expandRust (BUG C, E)
+eval.rs	check_string_or_null	1261	NOT COVERED	type check only
+eval.rs	eval_quantifier	1616	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+eval.rs	list_contains	1708	PROVEN	contains_false_iff
+eval.rs	get_elements	1722	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
+value.rs	Contains::contains	1763	PROVEN	contains_false_iff
+value.rs	add_slow (String/List arms)	969	PROVEN	str_concat_size, size_concat

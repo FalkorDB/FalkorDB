@@ -1,0 +1,5 @@
+name = "falkor-effects-emit-apply"
+defaultTargets = ["FalkorEffectsEmitApply"]
+
+[[lean_lib]]
+name = "FalkorEffectsEmitApply"

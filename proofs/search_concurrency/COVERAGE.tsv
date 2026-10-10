@@ -1,0 +1,110 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/threadpool.rs	new	56	PROVEN	Pool.new_spec, shutdown_drains; Locks.pool_deadlock_reachable (capacity)
+graph/src/threadpool.rs	spawn	89	PROVEN	Locks.pool_deadlock_reachable, fixed_never_stuck; Pool.spawn_after_exit
+graph/src/threadpool.rs	pending_count	105	PROVEN	Pool.pendingCount_spawn
+graph/src/threadpool.rs	shutdown	115	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit)
+graph/src/threadpool.rs	spawn	128	PROVEN	Locks.pool_deadlock_reachable (global wrapper)
+graph/src/threadpool.rs	pending_count	141	PROVEN	Pool.global_spec (gPending)
+graph/src/threadpool.rs	init_thread_pool	152	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	shutdown	161	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
+graph/src/thread_id.rs	set_main_thread	13	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	set_process_is_child	32	PROVEN	Once.thread_id_spec
+graph/src/thread_id.rs	process_is_child	39	PROVEN	Once.thread_id_spec
+graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
+graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
+graph/src/graph/mvcc_graph.rs	new	80	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	from_graph	95	MODELLED	Mvcc.init (arbitrary pub)
+graph/src/graph/mvcc_graph.rs	read	103	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
+graph/src/graph/mvcc_graph.rs	write	108	PROVEN	Mvcc.private_on_committed (Ev.claim CAS)
+graph/src/graph/mvcc_graph.rs	commit	139	PROVEN	Mvcc.no_lost_writes/history_linear (Ev.commit), refused_commit_releases_slot, valid_commit_publishes (Graph::validate as `valid`); schema_version/trim/fold not modelled
+graph/src/graph/mvcc_graph.rs	rollback	221	PROVEN	Mvcc.inv_step (Ev.rollback)
+graph/src/graph/mvcc_graph.rs	drop	227	NOT COVERED	cancel_indexing on drop
+src/graph_core.rs	up_to_nul	87	NOT COVERED	string helper, not concurrency
+src/graph_core.rs	c_graph_name	104	NOT COVERED	string helper
+src/graph_core.rs	c_graph_key	119	NOT COVERED	string helper
+src/graph_core.rs	register_graph	140	MODELLED	Mvcc.S.registered := true
+src/graph_core.rs	graph_is_registered	188	PROVEN	Mvcc.delete_blocks_writes (registered guard on mutate/commit)
+src/graph_core.rs	rename_graph	202	NOT COVERED	registry re-key; RENAME not modelled
+src/graph_core.rs	new	251	NOT COVERED	WriteQueryOk::new modified predicate
+src/graph_core.rs	sanitise_error	313	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	block_client	328	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	unblock_client	339	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	get_thread_safe_context	348	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_thread_safe_context	359	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	reply_error	368	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	signal_modified_key	385	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	yield_ctx	407	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_start	424	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_end	434	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	hold_string	451	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_string	462	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	trim_string_allocation	477	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	replicate_argv	492	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	new	543	MODELLED	ThreadedGraph: write channel cap 1024 (Locks.Pool second cycle)
+src/graph_core.rs	from_mvcc	559	MODELLED	as new
+src/graph_core.rs	execute_query	576	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
+src/graph_core.rs	execute_profile	659	MODELLED	as execute_query
+src/graph_core.rs	execute_query_write	715	PROVEN	Mvcc.multi_write_refused: slot claimed before escalation (BUG 5); claim/mutate/commit/rollback
+src/graph_core.rs	reply_profile	823	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	860	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	868	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	883	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	920	NOT COVERED	reply formatting
+src/graph_core.rs	query_mut	932	PROVEN	Locks.pool_deadlock_reachable (spawn from main, GIL held) + drain producer (send then CAS)
+src/graph_core.rs	query_sync	1141	PROVEN	Mvcc.multi_write_refused (inline writer = escalate 0 then claim)
+src/graph_core.rs	profile_mut	1262	MODELLED	same producer protocol as query_mut
+src/graph_core.rs	profile_sync	1356	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1423	PROVEN	Mvcc Ev.commit / Ev.rollback
+src/graph_core.rs	abandon_write	1453	PROVEN	Mvcc Ev.rollback; index resync not modelled
+src/graph_core.rs	commit_and_replicate	1468	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1512	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1658	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1671	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/query_session.rs	begin	127	MODELLED	reader mode (graphR acquire)
+src/query_session.rs	begin_with	134	MODELLED	reader mode
+src/query_session.rs	begin_writer	148	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
+src/query_session.rs	release_locks	172	MODELLED	Op.rel sequence
+src/query_session.rs	graph_arc	180	NOT COVERED	accessor
+src/query_session.rs	with_graph	189	NOT COVERED	borrow helper
+src/query_session.rs	with_graph_mut	205	NOT COVERED	borrow helper
+src/query_session.rs	upgrade_to_write	221	PROVEN	Mvcc.delete_blocks_writes (registry check after escalation)
+src/query_session.rs	escalate	242	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726)
+src/query_session.rs	reauthorize_write	276	NOT COVERED	pause/role flags (Redis state) not modelled
+src/query_session.rs	upgrade_to_write	317	PROVEN	delegates to QuerySession::upgrade_to_write
+src/query_session.rs	drop	327	MODELLED	release in reverse order (Mode field order)
+src/query_session.rs	hold_gil	347	PROVEN	Locks.telemetryProg ordered
+src/query_session.rs	acquire	369	MODELLED	Mvcc Ev.escalate; main thread no-op = Tid 0
+src/query_session.rs	drop	392	MODELLED	Mvcc Ev.release
+src/query_session.rs	lock_gil	413	AXIOMATISED	RM_ThreadSafeContextLock FFI
+src/query_session.rs	release_gil	426	AXIOMATISED	RM_ThreadSafeContextUnlock/Free FFI
+src/dispatch.rs	must_run_inline	36	MODELLED	inline path = Tid 0 in Mvcc (query_sync)
+src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with GIL; delete_blocks_writes, fork_excludes_commit
+graph/src/index/mod.rs	make_arr_names	121	PROVEN	Search.arrNames used by range_never_vector_or_text
+graph/src/index/mod.rs	new	137	MODELLED	Search.Field
+graph/src/index/mod.rs	new_with_vector_options	154	MODELLED	Search.Field.vdim (vector_options.map dimension)
+graph/src/index/mod.rs	set	716	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; historical pre3087_*), docSet_temporal_not_indexed, docSet_eq_pre3076_off_temporal (historical pre3076_temporal_in_numeric), fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	add_document	1906	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1180	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	bump_id	1048	PROVEN	Tickets.bump_inv, stale_release_isolated
+graph/src/index/mod.rs	increment_pending_for_generation	2110	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2128	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2150	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2164	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2083	PROVEN	Tickets.operational_iff
+graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.createRange: no generation bump for non-vector fields -> second_index_never_populated (BUG 2)
+graph/src/index/indexer.rs	acquire_population_ticket	608	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	acquire_population_snapshot	626	PROVEN	Tickets.inc_inv / Worker.attrs snapshot
+graph/src/index/indexer.rs	acquire_population_snapshots	648	PROVEN	Tickets.inc_inv
+graph/src/index/indexer.rs	release_population_ticket	670	PROVEN	Tickets.dec_inv
+graph/src/index/indexer.rs	is_ticket_current	682	PROVEN	Tickets.batch stale branch (fixed_trace_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	694	PROVEN	Tickets.batch >1 bail (second_index_never_populated)
+graph/src/index/indexer.rs	enabled	704	PROVEN	Tickets.operational_iff
+graph/src/graph/graph.rs	populate_index_batch	520	PROVEN	Tickets.batch; second_index_never_populated, lucky_order_complete
+graph/src/graph/graph.rs	vector_query_nodes	3978	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	vector_query_edges	4038	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/runtime/runtime.rs	map_to_index_options	1881	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
+graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)

@@ -1,0 +1,279 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/index/mod.rs	make_arr_names	121	PROVEN	Meta.makeArrNames_range/_other (and Search.arrNames)
+graph/src/index/mod.rs	new	137	PROVEN	Meta.Field.new_spec
+graph/src/index/mod.rs	new_with_vector_options	154	PROVEN	Meta.Field.newVec_spec
+graph/src/index/mod.rs	options	171	PROVEN	Meta.Field.accessors
+graph/src/index/mod.rs	vector_options	176	PROVEN	Meta.Field.accessors
+graph/src/index/mod.rs	numeric_arr_name	181	PROVEN	Meta.Field.accessors
+graph/src/index/mod.rs	string_arr_name	186	PROVEN	Meta.Field.accessors
+graph/src/index/mod.rs	eq	192	PROVEN	Meta.Field.beqF_refl/beqF_symm, Field.eq_hash
+graph/src/index/mod.rs	hash	203	PROVEN	Meta.Field.eq_hash (Eq/Hash consistency)
+graph/src/index/mod.rs	new	277	PROVEN	Iter.RIter.new_frees, RIter.items_next
+graph/src/index/mod.rs	empty	288	PROVEN	Iter.RIter.empty_spec
+graph/src/index/mod.rs	empty_scored	299	PROVEN	Iter.RIter.empty_spec (scoredIds)
+graph/src/index/mod.rs	next	311	PROVEN	Iter.drain_next, RIter.items_next, mem_drainN
+graph/src/index/mod.rs	drop	337	PROVEN	Iter.RIter.frees (free iff non-null), RIter.empty_spec
+graph/src/index/mod.rs	new	362	PROVEN	Iter.RIter.new_frees (EdgeTripleIter)
+graph/src/index/mod.rs	empty	370	PROVEN	Iter.RIter.empty_spec
+graph/src/index/mod.rs	next	381	PROVEN	Iter.drain_next, decTriple_edgeKey
+graph/src/index/mod.rs	drop	407	PROVEN	Iter.RIter.frees
+graph/src/index/mod.rs	new	426	PROVEN	Iter.RIter.new_frees (ScoredEdgeTripleIter)
+graph/src/index/mod.rs	empty	434	PROVEN	Iter.RIter.empty_spec
+graph/src/index/mod.rs	next	445	PROVEN	Iter.drain_next, decTriple_edgeKey (scoredTriples)
+graph/src/index/mod.rs	drop	473	PROVEN	Iter.RIter.frees
+graph/src/index/mod.rs	empty	498	PROVEN	Iter.RIter.empty_spec (VectorScoredIdIter delegates)
+graph/src/index/mod.rs	next	509	PROVEN	Iter.RIter.items_next (delegates to inner)
+graph/src/index/mod.rs	empty	524	PROVEN	Iter.RIter.empty_spec (VectorScoredEdgeTripleIter)
+graph/src/index/mod.rs	next	535	PROVEN	Iter.RIter.items_next (delegates)
+graph/src/index/mod.rs	tag_encode_lower	565	PROVEN	tagEnc; tagEnc_injective, tagEnc_printable, tagEnc_no_backslash, tagEnc_nil_iff, tagEnc_not_monotone
+graph/src/index/mod.rs	hex_encode_into	581	PROVEN	hexEncode; hexDecode_hexEncode, decodeId_nodeKey
+graph/src/index/mod.rs	hex_nibble	591	PROVEN	hexNibble; nib_digit, hex_roundtrip_byte
+graph/src/index/mod.rs	decode_id	601	PROVEN	decodeId; decodeId_nodeKey, nodeKey_injective
+graph/src/index/mod.rs	decode_triple	612	PROVEN	Iter.decTriple_edgeKey, Proofs.decode_edgeKey
+graph/src/index/mod.rs	drop	641	PROVEN	Iter.DocLife.freed_once (consumed gate: exactly one free)
+graph/src/index/mod.rs	new	657	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injective
+graph/src/index/mod.rs	new_edge	684	PROVEN	edgeKey; decode_edgeKey
+graph/src/index/mod.rs	id	712	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
+graph/src/index/mod.rs	set	716	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range (historical pre3076_temporal_in_numeric_range); vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams (historical pre3087_*)
+graph/src/index/mod.rs	from_owned	925	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
+graph/src/index/mod.rs	as_ptr	930	PROVEN	Iter.RC (transient handle; not_freed while owned)
+graph/src/index/mod.rs	try_clone	936	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
+graph/src/index/mod.rs	into_raw	943	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
+graph/src/index/mod.rs	drop	951	PROVEN	Iter.RC.release_inv, RC.not_freed
+graph/src/index/mod.rs	new	979	PROVEN	Iter.RC.create_inv (SpecHandle)
+graph/src/index/mod.rs	as_ptr	984	PROVEN	Iter.RC.not_freed
+graph/src/index/mod.rs	try_clone_ref	990	PROVEN	Iter.RC.clone_inv, clone_after_drop
+graph/src/index/mod.rs	drop	996	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
+graph/src/index/mod.rs	default	1013	PROVEN	Meta.Idx.default_spec, default_inv
+graph/src/index/mod.rs	id	1039	PROVEN	Meta.Idx.idOf_spec
+graph/src/index/mod.rs	bump_id	1048	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump
+graph/src/index/mod.rs	clone_for_update	1067	PROVEN	Meta.Idx.cloneForUpdate_eq
+graph/src/index/mod.rs	has_rs_index	1087	PROVEN	Meta.Idx.hasRsIndex_spec
+graph/src/index/mod.rs	rs_ptr	1094	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
+graph/src/index/mod.rs	create_rs_index	1100	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle)
+graph/src/index/mod.rs	register_fields	1180	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok
+graph/src/index/mod.rs	value_to_numeric	1356	PROVEN	valueToNumeric; equal_exact, numRange_exact
+graph/src/index/mod.rs	int_loses_f64_precision	1370	PROVEN	intLosesPrecision; intLosesPrecision_sound
+graph/src/index/mod.rs	build_numeric_range_node	1375	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf (historical pre3081_open_bound_excludes_inf)
+graph/src/index/mod.rs	build_string_range_node	1418	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds (historical pre3072_exclusive_equal_bounds), bug_string_range_order
+graph/src/index/mod.rs	build_query_node	1476	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
+graph/src/index/mod.rs	query	1690	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
+graph/src/index/mod.rs	query_edges	1713	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
+graph/src/index/mod.rs	fulltext_query	1731	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
+graph/src/index/mod.rs	fulltext_query_edges	1760	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
+graph/src/index/mod.rs	vector_query	1797	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
+graph/src/index/mod.rs	vector_query_edges	1859	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
+graph/src/index/mod.rs	add_document	1906	PROVEN	Table.add; commit_lookup, commit_preserves_inv
+graph/src/index/mod.rs	delete_document	1928	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
+graph/src/index/mod.rs	delete_edge_document	1945	PROVEN	Iter.delEdgeKey_spec
+graph/src/index/mod.rs	has_fulltext_field	1968	PROVEN	Meta.Idx.hasFulltextField_iff
+graph/src/index/mod.rs	contains_field	1976	PROVEN	Meta.Idx.containsField_iff
+graph/src/index/mod.rs	has_field_with_type	1985	PROVEN	Meta.Idx.hasFieldWithType_iff
+graph/src/index/mod.rs	get_fields	1997	PROVEN	Meta.Idx.getFields_spec
+graph/src/index/mod.rs	add_field_to_existing	2005	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
+graph/src/index/mod.rs	insert_field	2016	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
+graph/src/index/mod.rs	remove_field	2028	PROVEN	Meta.Idx.removeField_spec, removeField_inv
+graph/src/index/mod.rs	retain_fields	2040	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
+graph/src/index/mod.rs	is_empty	2052	PROVEN	Meta.Idx.isEmpty_iff
+graph/src/index/mod.rs	field_keys	2058	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
+graph/src/index/mod.rs	fields	2064	PROVEN	Meta.Idx.accessors
+graph/src/index/mod.rs	field_order	2070	PROVEN	Meta.Idx.accessors, Inv
+graph/src/index/mod.rs	all_fields	2075	PROVEN	Meta.Idx.allFields_mem
+graph/src/index/mod.rs	is_operational	2083	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
+graph/src/index/mod.rs	set_progress	2088	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	progress	2099	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	increment_pending_for_generation	2110	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2128	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
+graph/src/index/mod.rs	pending_count_for_generation	2150	PROVEN	Slots.countFor; bump_fresh
+graph/src/index/mod.rs	pending_count	2164	PROVEN	Slots.countFor s.gen; bump_fresh
+graph/src/index/mod.rs	language	2172	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_language	2177	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	stopwords	2188	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_stopwords	2193	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	memory_usage	2204	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
+graph/src/index/mod.rs	index_count	2214	PROVEN	Meta.Idx.indexCount_eq
+graph/src/index/mod.rs	recreate_index	2218	PROVEN	Meta.Idx.recreateIndex_ok
+graph/src/index/indexer.rs	generation_id	89	PROVEN	Meta.Ticket.accessors
+graph/src/index/indexer.rs	label	94	PROVEN	Meta.Ticket.accessors
+graph/src/index/indexer.rs	language	102	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	stopwords	111	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	field_options	120	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	vector_options	140	PROVEN	Meta.IdxOptions.spec
+graph/src/index/indexer.rs	has_indices	168	PROVEN	Meta.Ixr.hasIndices_iff
+graph/src/index/indexer.rs	memory_usage	173	PROVEN	Meta.Ixr.memoryUsage_spec
+graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG)
+graph/src/index/indexer.rs	drop_index	359	PROVEN	Meta.Ixr.dropIndex_spec, dropAttrs_wf, retain_nonempty
+graph/src/index/indexer.rs	remove	411	PROVEN	Meta.Ixr.remove_spec
+graph/src/index/indexer.rs	has_field_for_label	425	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_label_indexed	438	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_attr_indexed	453	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query	467	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query_edges	481	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	fulltext_query	492	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	fulltext_query_edges	506	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query	525	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query_edges	540	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	get_vector_metric	562	PROVEN	Meta.Ixr.getVectorMetric_spec
+graph/src/index/indexer.rs	get_vector_dimension	585	PROVEN	Meta.Ixr.getVectorDimension_spec
+graph/src/index/indexer.rs	acquire_population_ticket	608	PROVEN	Slots.inc; inc_dec_cur, ok_inc
+graph/src/index/indexer.rs	acquire_population_snapshot	626	PROVEN	Slots.inc; inc_dec_cur
+graph/src/index/indexer.rs	acquire_population_snapshots	648	PROVEN	Slots.inc per label; inc_dec_cur
+graph/src/index/indexer.rs	release_population_ticket	670	PROVEN	Slots.dec; inc_dec_cur, inc_dec_stale, dec_stale_keeps_current
+graph/src/index/indexer.rs	is_ticket_current	682	MODELLED	ticket.gen = Slots.gen
+graph/src/index/indexer.rs	ticket_pending_changes	694	PROVEN	Slots.countFor
+graph/src/index/indexer.rs	enabled	704	PROVEN	Slots.countFor s.gen = 0; bump_fresh
+graph/src/index/indexer.rs	commit	714	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
+graph/src/index/indexer.rs	commit_edge	744	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec
+graph/src/index/indexer.rs	get_fields	770	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	get_all_fields	783	PROVEN	Meta.Ixr.getAllFields_spec
+graph/src/index/indexer.rs	index_info	793	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
+graph/src/index/indexer.rs	has_index	821	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	has_indexed_attr	829	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	update_progress	840	PROVEN	Meta.Ixr.updateProgress_spec
+graph/src/index/indexer.rs	write_lock	857	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	cancel	861	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	is_cancelled	869	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	recreate_index	879	PROVEN	Meta.Ixr.recreate_spec
+graph/src/index/indexer.rs	set_graph	901	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	get_graph	909	PROVEN	Meta.Ixr.misc
+graph/src/index/redisearch/mod.rs	RediSearch_GetCApiVersion	167	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateIndexOptions	226	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_FreeIndexOptions	231	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetGetValueCallback	234	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetStopwords	241	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetScore	248	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetLanguage	254	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ValidateLanguage	260	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetFlags	266	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateIndex	272	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DropIndex	278	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexClone	285	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexRelease	291	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_VecSimTieredParams_Init	299	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_SetNumWorkerThreads	308	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_SetDefaultScorer	314	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_StopwordsList_Contains	320	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_StopwordsList_Free	327	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexGetStopwords	334	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexGetScore	340	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexGetLanguage	343	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateField	352	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_TextFieldSetWeight	360	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_TagFieldSetSeparator	367	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_TagFieldSetCaseSensitive	374	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_VectorFieldSetParams	538	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateDocument	545	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateDocument2	553	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_FreeDocument	562	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DeleteDocument	565	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddField	578	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldString	586	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldNumber	595	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldVector	603	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldGeo	614	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldNumericArray	623	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentAddFieldStringArray	632	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexAddDocument	641	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTokenNode	649	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateNumericNode	656	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateGeoNode	666	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreatePrefixNode	676	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateContainsNode	683	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateSuffixNode	690	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateLexRangeNode	697	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagNode	707	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateVecSimNode	719	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagTokenNode	728	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagPrefixNode	734	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagContainsNode	740	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagSuffixNode	746	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateTagLexRangeNode	752	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateIntersectNode	762	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateUnionNode	768	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateEmptyNode	771	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CreateNotNode	774	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeFree	777	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeAddChild	780	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeClearChildren	786	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeGetChild	789	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeNumChildren	795	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeType	798	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_QueryNodeGetFieldMask	801	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_GetResultsIterator	804	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_SetCriteriaTesterThreshold	810	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IterateQuery	821	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IterateQueryWithDialect	838	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_DocumentExists	847	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ResultsIteratorNext	854	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ResultsIteratorFree	861	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ResultsIteratorReset	864	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ResultsIteratorGetScore	867	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexOptionsSetGCPolicy	870	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_MemUsage	876	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_TotalMemUsage	879	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_TotalInfo	882	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_GC_total	885	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexInfo	891	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_IndexInfoFree	897	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_ExportCapi	902	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_Init	905	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
+# graph/src/index/redisearch/redis.rs	(no fns; bindgen consts/types)	0	AXIOMATISED	Redis module ABI types
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	88	PROVEN	Leaf.readWidth_eq (widths 1/2/4/8); LeafAosD.docBytes3_reads_garbage (any other width reads 8 bytes: BUG for DOC_BYTES 3/5/6/7)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	133	PROVEN	Leaf.emptyTree_contents
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	155	PROVEN	Leaf.emptyTree_contents (new = default)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	173	PROVEN	Leaf.fromSorted_contents
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	224	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	431	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	457	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	Leaf.buildRoot_contents
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	565	PROVEN	Leaf.makePrivate_cow
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	PROVEN	Leaf.partitionPoint_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_walk	97	PROVEN	Leaf.mergeWI_fst, mergeWI_idx, mergeW_fst
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	count	180	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	key	189	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	201	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	233	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	238	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	350	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	213	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	260	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	319	PROVEN	Leaf.fromParts_spec, fromParts_format
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	471	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	18	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	23	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	31	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	build	39	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	merge_batch	51	PROVEN	Leaf.aosMerge_spec; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	read_u16	18	PROVEN	Leaf.header_read (readU16)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	is_indexed	28	PROVEN	Leaf.isIndexed_spec, fromParts_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	read	49	PROVEN	Leaf.cLayout, ciLayout (CompactLayout::read)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	write_compact_header	72	PROVEN	Leaf.header_read, header_len
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	append_spliced_docs	91	PROVEN	Leaf.cInsert_spec, ciInsert_spec (docs splice)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	packing_fits	108	PROVEN	Leaf.packingFits_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	count	126	PROVEN	Leaf.cBytes_read, cBuild_roundtrip
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	key	131	PROVEN	Leaf.cBytes_read, cBuild_roundtrip
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	doc	140	PROVEN	Leaf.cBytes_read, cBuild_roundtrip
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	doc_layout	150	PROVEN	Leaf.cBytes_read, cBuild_roundtrip
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	build	161	PROVEN	Leaf.cBytes_read, cBuild_roundtrip
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	splice_insert	187	PROVEN	Leaf.cInsert_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	splice_remove	217	PROVEN	Leaf.cRemove_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	merge	247	PROVEN	Leaf.cMerge_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	gallop_lower_bound	19	PROVEN	Leaf.gallop_spec, gallop_bounds, gallop_congr
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	count	44	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	index_offset	49	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	key	56	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	doc	66	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	doc_layout	76	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	distinct_count	130	PROVEN	Leaf.ciRead
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	build	87	PROVEN	Leaf.ciBuild_roundtrip, runs_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	distinct_slot	136	PROVEN	Leaf.distinctSlot_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splice_insert	159	PROVEN	Leaf.ciInsert_spec (Ok and Err arms)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splice_remove	240	PROVEN	Leaf.ciRemove_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge	283	PROVEN	Leaf.ciMerge_spec, slotOf_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec

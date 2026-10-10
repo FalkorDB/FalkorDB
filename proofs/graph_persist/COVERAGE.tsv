@@ -1,0 +1,68 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/graph/graphblas/serialization.rs	write_unsigned	14	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	write_signed	18	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	write_double	22	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	write_buffer	26	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	read_unsigned	56	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	read_signed	57	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	read_double	58	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	read_buffer	59	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
+graph/src/graph/graphblas/serialization.rs	encode	34	NOT COVERED	trait default declaration
+graph/src/graph/graphblas/serialization.rs	encode_with_range	40	NOT COVERED	trait default (unimplemented!)
+graph/src/graph/graphblas/serialization.rs	decode	64	NOT COVERED	trait declaration
+graph/src/graph/graphblas/serialization.rs	decode_with_count	76	NOT COVERED	trait default (unimplemented!)
+graph/src/graph/graphblas/serialization.rs	from_u64	146	MODELLED	payload directory state tags; exercised via live roundtrip
+graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
+graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
+graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip
+src/redis_type.rs	io_key_name	77	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
+src/redis_type.rs	graph_rdb_load	90	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_ignored (BUG, live)
+src/redis_type.rs	graph_rdb_save	178	PROVEN	RedisType.rdbSave (= saveKeySlice.getD whole): save_main, save_vkey (slice i, key_count K), save_single
+src/redis_type.rs	save_key_slice	203	PROVEN	RedisType.saveKeySlice: save_main, save_vkey, save_single, metaSave_of_slice (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
+src/redis_type.rs	save_string_nul	241	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	strip_trailing_nul	259	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	graph_aux_save	265	PROVEN	RedisType.auxSave: aux_roundtrip, aux_after
+src/redis_type.rs	graph_aux_load	286	PROVEN	RedisType.auxLoad: aux_roundtrip, aux_after, aux_truncated, strip_keeps_inner_nul (UdfRepo::deserialize/register_udf are inputs)
+src/redis_type.rs	pre_fork_prepare	350	PROVEN	RedisType.preFork: preFork_spec (wait_all = GraphBLAS effect)
+src/redis_type.rs	on_persistence	368	PROVEN	RedisType.onPersistence: onPersistence_spec
+src/redis_type.rs	create_virtual_keys	410	PROVEN	RedisType.createVKeys: save_main, save_vkey, createdKeys_spec; names Uuid.vkeyName_inj/vkeyName_ne (OpenKey/SetValue = effects, key_holds_graph = input); vkeys typed graphmeta (vkeyType, #3161)
+src/redis_type.rs	delete_virtual_keys	523	PROVEN	RedisType.deleteVKeys: deleteVKeys_spec, createdKeys_spec
+src/redis_type.rs	delete_key	542	AXIOMATISED	Redis module API DeleteKey
+src/redis_type.rs	key_holds_graph	562	AXIOMATISED	Redis module API ModuleTypeGetValue ptr compare
+src/redis_type.rs	delete_stale_graphmeta_keys	584	PROVEN	RedisType.deleteStaleGraphmeta: scanKeys_spec
+src/redis_type.rs	delete_stale_virtual_keys	618	PROVEN	RedisType.deleteStaleVirtual: deleteStaleVirtual_spec; Persist.multi_meta (meta keys = exactly the virtual keys)
+src/redis_type.rs	scan_keys_by_type	635	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
+src/redis_type.rs	finalize_pending_graphs	722	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
+src/redis_type.rs	install_graph	757	PROVEN	RedisType.finalizePending (install arm): load_main_first
+src/redis_type.rs	uuid_v4	783	PROVEN	RedisType.uuid: uuid_injective, uuid_same_clock_distinct, uuid_collision_iff, uuid_collision_example (uniqueness rests on the clock)
+src/redis_type.rs	graphmeta_rdb_load	851	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys)
+src/redis_type.rs	graphmeta_rdb_save	874	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
+src/redis_type.rs	graphmeta_free	886	PROVEN	RedisType.metaFree: metaFree_spec
+src/redis_type.rs	graphmeta_aux_load	896	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
+graph/src/graph/mvcc_graph.rs	new	80	NOT COVERED	constructor
+graph/src/graph/mvcc_graph.rs	from_graph	95	MODELLED	RDB load path, live
+graph/src/graph/mvcc_graph.rs	read	103	NOT COVERED	Arc clone
+graph/src/graph/mvcc_graph.rs	write	108	NOT COVERED	CAS; concurrency not modelled (proofs/versioned_matrix covers COW)
+graph/src/graph/mvcc_graph.rs	commit	139	NOT COVERED	schema_version bump/concurrency not modelled
+graph/src/graph/mvcc_graph.rs	rollback	221	NOT COVERED	atomic store
+graph/src/graph/mvcc_graph.rs	drop	227	NOT COVERED	cancel indexing
+graph/src/graph/graph.rs	rebuild_derived_matrices	956	AXIOMATISED	GraphBLAS transpose/set
+graph/src/graph/graph.rs	create_constraint	4124	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4299	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4339	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4395	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
+src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
+src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: load_encode, truncated_payload_eof; byte layer redis_layer vec_roundtrip
+src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
+src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
+src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
+src/serializers/decoder/mod.rs	rdb_load_graph	44	PROVEN	Persist.rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	260	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
+src/serializers/decoder/mod.rs	finalize_pending_graph	310	PROVEN	Persist.finalizePG: run_keys, multi_load
+src/serializers/decoder/mod.rs	rebuild_indexes	345	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	406	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	421	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	431	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof

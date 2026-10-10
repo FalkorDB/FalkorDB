@@ -1,0 +1,82 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/planner/optimizer/mod.rs	collect_expr_variables	92	PROVEN	Passes.routesIdOnly / id_only_routing_unsound (id-only unsound), routesScoped_sound
+graph/src/planner/optimizer/mod.rs	collect_subtree_variables	103	PROVEN	Helpers.mem_subtreeIds (ids of get_variables); ids only — Passes.id_only_routing_unsound
+graph/src/planner/optimizer/mod.rs	optimize	125	PROVEN	Sequence.passes_order (exact order, reduce_var_len_path twice), applyAll_sound (each pass preserves R => optimize does), optimize_nested/optimize_plain
+graph/src/planner/optimizer/absorb_edge_filters_into_vlt.rs	find_descendant_vlt	58	PROVEN	Sequence.findVlt_spec (Filter -> (PathBuilder|Filter)* -> VLT single-child chain)
+graph/src/planner/optimizer/absorb_edge_filters_into_vlt.rs	absorb_edge_filters_into_vlt	90	PROVEN	Sequence.absorb_correct (per-edge reading, C-parity, through PathBuilder/Filter), keepAll_split, absorbSplit_none
+graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	49	PROVEN	Basic.eliminate_whole_filter (under const-eval = runtime hypothesis; false for ^ #2902)
+graph/src/planner/optimizer/eliminate_true_filters.rs	expr_has_parameter	75	PROVEN	Helpers.hasParam_iff
+graph/src/planner/optimizer/eliminate_true_filters.rs	substitute_params	83	PROVEN	Helpers.subst_params (only unknown params remain), evX_subst (value unchanged)
+graph/src/planner/optimizer/eliminate_true_filters.rs	eliminate_true_filters	103	PROVEN	Basic.filter_true, andLoop_drop_true, filter_and_single, eliminate_whole_filter
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	is_anon	37	PROVEN	Helpers.isAnon_some, isAnon_none
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	rel_attrs_empty	42	PROVEN	Helpers.attrsEmpty_iff (exactly the empty Map)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	intermediate_unreferenced	70	PROVEN	References2.wholeRead (whole-plan BFS since #2390): anyRead_plug, wholeRead_covers (sees readers inside and outside the hops), fuse_unread_sound (with refsNew_complete)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	can_fuse	83	PROVEN	Helpers.canFuse_spec (all preconditions of Passes.fuse_same_support; #2390: no node_attrs_empty, both edges also unreferenced)
+graph/src/planner/optimizer/fuse_anonymous_traverse.rs	fuse_anonymous_traverse	194	PROVEN	Passes.fuse_same_support, fuse_changes_multiplicity; Helpers.canFuse_spec; References2.fuse_unread_sound
+graph/src/planner/optimizer/references.rs	ir_references_variable	41	PROVEN	References.refsNew: refsNew_complete (every read seen, under the planner invariant PlanInv = planner_build planMatch_stripped), refsNew_sound (only reads or bound vars), refsNew_sees_unwind/create/foreach; refsNew_misses_sibling_edges (W2-traverse-1)
+graph/src/planner/optimizer/references.rs	index_query_references_variable	204	PROVEN	References.iqLoop/iqRefs: iqLoop_iff (explicit stack = some operand mentions v, any And/Or depth), iqRefs_iff
+graph/src/planner/optimizer/references.rs	query_graph_references_variable	287	PROVEN	References.qgRefs (node attrs then rel attrs), within refsNew_complete/refsNew_sound
+graph/src/planner/optimizer/references.rs	set_items_reference_variable	302	PROVEN	References.setItemsRefs: setItemsRefs_iff (= v in SetItem.reads, label by (id, scope))
+graph/src/planner/optimizer/references.rs	expr_references_variable	317	PROVEN	References.exprRefs_iff; Helpers.refsVar_iff (BFS by (id, scope) on the tree model)
+graph/src/planner/optimizer/references.rs	subtree_references_variable	327	PROVEN	References.subtreeRefs_iff; Helpers.refsVar_iff (same BFS on a subtree)
+graph/src/planner/optimizer/fuse_optional_traverse.rs	fusable_traverse	40	PROVEN	Helpers.fusable_spec (= hypothesis of Passes.fuse_optional_correct)
+graph/src/planner/optimizer/fuse_optional_traverse.rs	fused_traverse	81	PROVEN	Helpers.fusedCT_spec (same traverse, optional = true); Passes.optCT
+graph/src/planner/optimizer/fuse_optional_traverse.rs	fuse_optional_traverse	105	PROVEN	Passes.fuse_optional_correct
+graph/src/planner/optimizer/push_filters_down.rs	branch_output_variables	59	PROVEN	Helpers.branchOut_spec (Project/Aggregate outputs, ids only; none otherwise)
+graph/src/planner/optimizer/push_filters_down.rs	push_filters_down	102	PROVEN	Basic.push_cp_left, push_cp_right, push_extend, push_sort_perm, push_sort_sorted, push_limit_const, limit_not_transparent, skip_not_transparent, merge_order_rust_errors, merge_child_first_row; Passes.limit_skip_not_excluded, id_only_routing_unsound
+graph/src/planner/optimizer/push_filters_down.rs	rebuild_with_cp_split	389	PROVEN	Basic.push_cp_left/right (CP associativity/regrouping of branches as the same identity)
+graph/src/planner/optimizer/push_filters_down.rs	rebuild_node	396	PROVEN	Sequence.rebuildCP_off (copy off target), rebuildCP_on, splitCP_perm (CP children permuted, none lost)
+graph/src/planner/optimizer/reduce_bound_edge.rs	reduce_bound_edge	30	PROVEN	References2.ancestorsRead refsNew (ancestor walk), ancestors_le_outside; main_misses_call_sibling (#2896 sibling case, still open); References.refsNew_complete
+graph/src/planner/optimizer/reduce_count.rs	reduce_count	54	PROVEN	Passes.reduce_count_correct, reduce_count_stale
+graph/src/planner/optimizer/reduce_count.rs	extract_count_variable	193	PROVEN	Helpers.countVar_spec (count(var) -> var.id, scope dropped)
+graph/src/planner/optimizer/reduce_expand_into.rs	reduce_expand_into	19	PROVEN	References2.ancestorsRead refsNew vs readOutside_iff, main_misses_call_sibling (still open); References.refsNew_misses_sibling_edges (W2-traverse-1, still open)
+graph/src/planner/optimizer/reduce_var_len_path.rs	reduce_var_len_path	27	PROVEN	References2.ancestorsRead refsNew (same oracle and walk); References.refsNew_complete (CVLT edge attrs/edge_filter/path_var seen); UNWIND r loss fixed by #2390 (pre2390_misses_unwind)
+graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	Passes.reorder_perm, reorder_preserves
+graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	replace_cartesian_with_hash_join	73	PROVEN	Passes.vhj_correct, hash_join_drops_row
+graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	rebuild_with_hash_joins	80	PROVEN	Sequence.rebuildHJ_id (copy when nothing fires), rebuildHJ_sound (congruence + sound local rewrite vhj_correct)
+graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	try_hash_join_rewrite	101	PROVEN	Passes.vhj_correct (side selection is the coverage test of push_cp_left)
+graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	51	PROVEN	Passes.flip_holds
+graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	107	PROVEN	Passes.idFilter_correct, step_correct, step_no_wrap, id_gt_neg_empty, id_le_neg_all, id_eq_null_errors (with runtime.rs:1309 evaluate_id_filter); Helpers.root_scan_has_no_parent (CONFIRMED panic utilize_node_by_id.rs:118 on a root scan)
+graph/src/planner/optimizer/reduce_bound_edge.rs	optimized_plan	82	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	bound_edges	98	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	unread_edge_is_not_bound	113	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	named_but_unread_edge_is_not_bound	119	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	returned_edge_is_bound	127	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	filtered_edge_is_bound	133	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	deleted_edge_is_bound	139	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	anonymous_edge_in_a_named_path_is_bound	149	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	edge_read_after_a_with_barrier_is_bound	155	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_bound_edge.rs	optional_traverse_keeps_the_distinction	161	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	optimized_varlen_plan	73	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	emit_paths	87	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	has_value_hash_join	97	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	absorbed_edge_filter_lets_unused_path_be_skipped	104	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	consumed_path_is_kept_despite_absorption	113	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+graph/src/planner/optimizer/reduce_var_len_path.rs	path_consumed_through_value_hash_join_is_kept	121	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
+# graphblas *_bench.rs: benchmark harnesses, no production callers; listed here so the aggregator can exclude them
+graph/src/graph/graphblas/block_scaling_bench.rs	per_op	32	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/block_scaling_bench.rs	spread	47	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/block_scaling_bench.rs	block_scaling_zero_cost	72	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/block_scaling_bench.rs	block_scaling_crossover	101	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/block_scaling_bench.rs	block_scaling_index_width	153	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/block_scaling_bench.rs	block_scaling_top_row_probe	214	NOT COVERED	TEST-ONLY: benchmark harness (block_scaling_bench.rs), not production code
+graph/src/graph/graphblas/degree_bench.rs	per_op	41	NOT COVERED	TEST-ONLY: benchmark harness (degree_bench.rs), not production code
+graph/src/graph/graphblas/degree_bench.rs	built	55	NOT COVERED	TEST-ONLY: benchmark harness (degree_bench.rs), not production code
+graph/src/graph/graphblas/degree_bench.rs	degree_decomposition	74	NOT COVERED	TEST-ONLY: benchmark harness (degree_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	scatter	71	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	assembled	87	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	pending	95	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	time_us	104	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	fold_cost_dup_vs_nvals	117	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	fold_cost_fold_vs_base	172	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	fold_cost_empty_matrix_floor	213	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	fold_cost_write_cycle	250	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	assembled_u64	299	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	rebuild	310	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	grow_cost_rebuild_vs_resize	369	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	grow_cost_post_grow_usage	412	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/fold_cost_bench.rs	grow_resize_burble_path	497	NOT COVERED	TEST-ONLY: benchmark harness (fold_cost_bench.rs), not production code
+graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
+graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
