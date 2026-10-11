@@ -1629,3 +1629,60 @@ fn insert_batch_handles_the_maximal_tuple() {
     );
     check_invariants(&t, false);
 }
+
+/// A batch removal that drains all but one leaf of a subtree must not leave a one-child branch below
+/// the root. Root -> 3 subtrees of 32 at `(LEAF_MAX, BRANCH_MAX) = (2, 4)`; removing 33..64 leaves the
+/// middle subtree with a single leaf under a chain of single-child branches, which the parent's
+/// `merge_underfull` cannot repair (it only runs with >= 2 children) and `combine` then splices into
+/// its neighbour verbatim. One later `remove` drained that lone leaf into an empty non-root page, and
+/// the next `insert_batch` panicked in `Node::min`.
+#[test]
+fn remove_batch_never_leaves_a_single_child_branch() {
+    let pairs: Vec<(u64, u64)> = (0..96u64).map(|d| (d, 0)).collect();
+    let mut t = CowBTree::<2, 4>::from_sorted(&pairs);
+    t.remove_batch(&(33..64u64).map(|d| (d, 0)).collect::<Vec<_>>());
+    check_invariants(&t, false);
+    assert!(t.remove(32, 0));
+    check_invariants(&t, false);
+    t.insert_batch(&[(0, 1), (95, 1)]);
+    check_invariants(&t, false);
+    let mut expected: Vec<(u64, u64)> = (0..32u64).chain(64..96).map(|d| (d, 0)).collect();
+    expected.extend([(0, 1), (95, 1)]);
+    expected.sort_unstable();
+    assert_eq!(tree_pairs(&t), expected);
+}
+
+/// The same shape across fan-outs and every contiguous drain window: after `remove_batch` the tree is
+/// well-formed, and a follow-up `remove` + `insert_batch` keeps it so with the right contents.
+#[test]
+fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
+    fn sweep<const L: usize, const B: usize>(n: u64) {
+        let all: Vec<(u64, u64)> = (0..n).map(|d| (d, 0)).collect();
+        for lo in (0..n).step_by(3) {
+            for hi in (lo + 1..=n).step_by(5) {
+                let mut t = CowBTree::<L, B>::from_sorted(&all);
+                t.remove_batch(&all[lo as usize..hi as usize]);
+                check_invariants(&t, false);
+                let mut expected: Vec<(u64, u64)> = all
+                    .iter()
+                    .copied()
+                    .filter(|&(d, _)| d < lo || d >= hi)
+                    .collect();
+                if let Some(&(k, d)) = expected.get(expected.len() / 2) {
+                    assert!(t.remove(k, d));
+                    expected.retain(|&p| p != (k, d));
+                    check_invariants(&t, false);
+                }
+                t.insert_batch(&[(0, 1), (n, 1)]);
+                check_invariants(&t, false);
+                expected.extend([(0, 1), (n, 1)]);
+                expected.sort_unstable();
+                assert_eq!(tree_pairs(&t), expected, "<{L},{B}> n={n} drain {lo}..{hi}");
+            }
+        }
+    }
+    sweep::<2, 4>(96);
+    sweep::<2, 5>(120);
+    sweep::<2, 8>(200);
+    sweep::<4, 4>(160);
+}
