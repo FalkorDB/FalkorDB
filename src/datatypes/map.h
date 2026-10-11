@@ -157,17 +157,31 @@ void Map_GetIdx
 // {a:1, c:1} > {b:1, a:1} as 'c' > 'b'
 //
 // the returned order does not depend on 'disjointOrNull'
-// when requested, 'disjointOrNull' is set to DISJOINT if any pair of values
-// are of disjoint types, otherwise to COMPARED_NAN or COMPARED_NULL if no
-// pair of comparable values differ and a NaN or null was compared
+// when requested, 'disjointOrNull' is set from the first pair of values
+// that are not equal, so ordering two maps follows the scalar rules for that
+// pair: null or disjoint types make '<' null and NaN makes it false
 //
-// {a:1.0} = {a:'x'} is false, {a:null, b:1} = {a:1, b:2} is false
-// {a:null, b:1} = {a:1, b:1} is null
+// {a:null, b:1} < {a:1, b:2} is null, {a:1, b:null} < {a:2, b:1} is true
+//
+// use Map_Equals to test two maps for equality
 int Map_Compare
 (
 	SIValue mapA,
 	SIValue mapB,
 	int *disjointOrNull
+);
+
+// test two maps for equality
+// maps with different keys are not equal
+// otherwise the maps are not equal if any pair of values is not equal,
+// unknown if any pair is unknown and equal if all pairs are equal
+//
+// {a:1.0} = {a:'x'} is false, {a:null, b:1} = {a:1, b:2} is false
+// {a:null, b:1} = {a:1, b:1} is null, {a:0.0/0.0} = {a:0.0/0.0} is false
+SIValueEquality Map_Equals
+(
+	SIValue mapA,
+	SIValue mapB
 );
 
 // merge two maps

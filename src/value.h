@@ -252,6 +252,22 @@ SIValue SIValue_Modulo(const SIValue a, const SIValue b);
 // if the the values are not of the same type, the macro DISJOINT is returned in disjointOrNull value. */
 int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull);
 
+// result of testing two values for equality
+typedef enum {
+	SI_EQ_FALSE = 0,  // values are not equal
+	SI_EQ_TRUE  = 1,  // values are equal
+	SI_EQ_NULL  = 2   // unknown, a null was compared
+} SIValueEquality;
+
+// tests two values for equality the way the '=' operator does
+// null compared to any value is unknown
+// NaN is not equal to any value, NaN included
+// values of disjoint types are not equal
+// lists and maps are unequal if any pair of their elements is unequal,
+// otherwise unknown if any pair is unknown, otherwise equal
+// SIValue_Compare orders values, use this function to test equality
+SIValueEquality SIValue_Equals(const SIValue a, const SIValue b);
+
 /* Update the provided hash state with the given SIValue. */
 void SIValue_HashUpdate(SIValue v, XXH64_state_t *state);
 

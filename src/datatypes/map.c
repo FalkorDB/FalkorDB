@@ -382,45 +382,65 @@ int Map_Compare
 	//
 	// the returned order is the first non-zero value comparison
 	// it must not depend on whether the caller asked for 'disjointOrNull':
-	// sort and binary search pass NULL while equality checks pass a pointer
-	// and both must agree on the order of the same two maps
+	// sort and binary search pass NULL while relational operators pass a
+	// pointer and both must agree on the order of the same two maps
 	//
-	// 'disjointOrNull' summarizes all value comparisons:
-	// a pair of disjoint types makes the maps disjoint,
-	// otherwise a pair of unequal comparable values makes them unequal,
-	// otherwise a NaN makes them unequal,
-	// otherwise a null makes the comparison null
-	int  first        = 0;      // first non-zero value comparison
-	bool has_unequal  = false;  // a pair of comparable values differ
-	bool has_disjoint = false;  // a pair of values are of disjoint types
-	bool has_nan      = false;  // a pair of values involve NaN
-	bool has_null     = false;  // a pair of values involve null
+	// 'disjointOrNull' is taken from the first pair of values which are not
+	// equal, the pair that decides the order, so '<' follows the scalar rules
+	// for that pair: null or disjoint types give null and NaN gives false
+	// equality is not decided here, see Map_Equals
+	bool decided = false;  // a pair of values which are not equal was seen
+
+	if(disjointOrNull) *disjointOrNull = 0;
 
 	for(uint i = 0; i < key_count; i++) {
 		// key lookup succeeded; compare values
 		int flag = 0;
 		order = SIValue_Compare(A[i].val, B[i].val, &flag);
-		if(first == 0) first = order;
 
-		if(flag == DISJOINT)           has_disjoint = true;
-		else if(flag == COMPARED_NULL) has_null     = true;
-		else if(flag == COMPARED_NAN)  has_nan      = true;
-		else if(order != 0)            has_unequal  = true;
+		if(!decided && (order != 0 || flag != 0)) {
+			decided = true;
+			if(disjointOrNull) *disjointOrNull = flag;
+		}
 
-		// a disjoint pair is final: its order is non-zero
-		// and no later pair can change the outcome
-		if(has_disjoint) break;
+		if(order != 0) break;
 	}
 
-	if(disjointOrNull) {
-		*disjointOrNull = 0;
-		if(has_disjoint)      *disjointOrNull = DISJOINT;
-		else if(has_unequal)  *disjointOrNull = 0;
-		else if(has_nan)      *disjointOrNull = COMPARED_NAN;
-		else if(has_null)     *disjointOrNull = COMPARED_NULL;
+	return order;
+}
+
+SIValueEquality Map_Equals
+(
+	SIValue mapA,
+	SIValue mapB
+) {
+	Map   A          =  mapA.map;
+	Map   B          =  mapB.map;
+	uint  key_count  =  Map_KeyCount(mapA);
+
+	if(key_count != Map_KeyCount(mapB)) return SI_EQ_FALSE;
+
+	// sort both maps
+	qsort(A, key_count, sizeof(Pair),
+			(int(*)(const void*, const void*))_key_cmp);
+	qsort(B, key_count, sizeof(Pair),
+			(int(*)(const void*, const void*))_key_cmp);
+
+	// maps with different keys are not equal
+	for(uint i = 0; i < key_count; i++) {
+		if(SIValue_Compare(A[i].key, B[i].key, NULL) != 0) return SI_EQ_FALSE;
 	}
 
-	return first;
+	// an unequal pair of values decides, wherever it is
+	// otherwise a null pair makes the result unknown
+	bool compared_null = false;
+	for(uint i = 0; i < key_count; i++) {
+		SIValueEquality eq = SIValue_Equals(A[i].val, B[i].val);
+		if(eq == SI_EQ_FALSE) return SI_EQ_FALSE;
+		if(eq == SI_EQ_NULL)  compared_null = true;
+	}
+
+	return compared_null ? SI_EQ_NULL : SI_EQ_TRUE;
 }
 
 // merge two maps

@@ -180,15 +180,88 @@ class testHashJoin(FlowTestsBase):
 
     def test_join_on_nan(self):
         # NaN is not equal to NaN, a join must not match it
-        self.graph.query("CREATE (:A {v: 0.0/0.0}), (:B {v: 0.0/0.0})")
+        # NaN compares as 0 to every number when sorting,
+        # it must not hide the match 1 = 1 either
+        self.graph.query("""CREATE (:A {v: 0.0/0.0}), (:B {v: 0.0/0.0}),
+                                   (:A {v: 1}), (:B {v: 1}),
+                                   (:A {v: 'x'}), (:B {v: [1, 'x']})""")
 
         q = "MATCH (a:A), (b:B) WHERE a.v = b.v RETURN count(*)"
         plan = str(self.graph.explain(q))
         self.env.assertIn("Value Hash Join", plan)
 
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set, [[0]])
+        self.env.assertEquals(res.result_set, [[1]])
 
         q = "MATCH (a:A), (b:B) WHERE {v: a.v} = {v: b.v} RETURN count(*)"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set, [[0]])
+        self.env.assertEquals(res.result_set, [[1]])
+
+    def test_join_with_unequal_candidates(self):
+        # the join finds candidates by sorting, values which sort the same
+        # e.g. NaN and 1 or {v: null} and {v: 1}, must still be equal
+        # under '=' to be joined, wherever they sit in the cache
+        M = "1"
+        # (intruder, equals M, equals itself)
+        intruders = [
+            ("0.0/0.0",            False, False),  # NaN
+            ("null",               False, False),
+            ("'x'",                False, True),
+            ("1.0",                True,  True),   # equal to M
+            ("[1, 'x']",           False, True),
+            ("{k: 0.0/0.0}",       False, False),  # map holding NaN
+            ("{k: null}",          False, False),  # map holding null
+            ("[null]",             False, False),  # list holding null
+        ]
+
+        # value forms, each must agree with its projected boolean
+        forms = [
+            "V[a.i] = V[b.i]",
+            "V[b.i] = V[a.i]",
+            "{v: V[a.i]} = {v: V[b.i]}",
+            "[{v: V[a.i]}] = [{v: V[b.i]}]",
+            "{v: V[a.i], w: 1} = {v: V[b.i], w: 1}",
+        ]
+
+        def check(values, a_idx, b_idx, expected):
+            self.graph.query("MATCH (n) DELETE n")
+            nodes = [f"(:A {{o: {o}, i: {i}}})" for o, i in enumerate(a_idx)]
+            nodes += [f"(:B {{o: {o}, i: {i}}})" for o, i in enumerate(b_idx)]
+            self.graph.query(f"CREATE {', '.join(nodes)}")
+
+            V = f"[{', '.join(values)}]"
+            for form in forms:
+                exp = form.replace("V", V)
+                for match in ["(a:A), (b:B)", "(b:B), (a:A)"]:
+                    q = f"""MATCH {match} WHERE {exp}
+                            RETURN a.o, b.o ORDER BY a.o, b.o"""
+                    plan = str(self.graph.explain(q))
+                    self.env.assertIn("Value Hash Join", plan)
+                    joined = self.graph.query(q).result_set
+
+                    q = f"""MATCH {match} WITH a, b, {exp} AS same
+                            WHERE same
+                            RETURN a.o, b.o ORDER BY a.o, b.o"""
+                    projected = self.graph.query(q).result_set
+
+                    msg = f"{form} {match} {values} {a_idx} {b_idx}"
+                    self.env.assertEquals(joined, projected, message=msg)
+                    self.env.assertEquals(len(joined), expected, message=msg)
+
+        # a run of L records equal to M with an intruder placed
+        # first, in the middle or last, joined with M and the intruder
+        for intruder, eq_m, eq_self in intruders:
+            values = [M, intruder]
+            for L in [1, 2, 5]:
+                for pos in sorted({0, L // 2, L}):
+                    a_idx = [0] * L
+                    a_idx.insert(pos, 1)
+                    b_idx = [0, 1]
+                    expected = L + L * eq_m + eq_m + eq_self
+                    check(values, a_idx, b_idx, expected)
+
+        # many NaN and null values mixed with the matching ones
+        values = [M, "0.0/0.0", "null", "2", "0"]
+        a_idx = [1, 0, 2, 0, 1, 3, 0, 1, 4, 0, 2]
+        b_idx = [1, 0, 2, 0, 1]
+        check(values, a_idx, b_idx, 4 * 2)

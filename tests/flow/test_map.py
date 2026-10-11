@@ -305,3 +305,109 @@ class testMap(FlowTestsBase):
         for exp, expected in cases:
             res = self.graph.query(f"RETURN {exp}").result_set
             self.env.assertEquals(res[0][0], expected, message=exp)
+
+    # Validate every operator on maps holding NaN, null and mixed types.
+    # Equality (=, <>, IN, list equality) fails on any unequal pair
+    # of values, otherwise it is null if any pair is null.
+    # Ordering (<, >, <=, >=) is decided by the first pair of values which
+    # are not equal, using the scalar rules for that pair:
+    # null or disjoint types give null and NaN gives false.
+    def test12_map_operators_with_null_and_nan(self):
+        NaN = "0.0/0.0"
+        T, F, N = True, False, None
+        cases = [
+            # (m, n, =, <, >, <=, >=)
+            ("{a: 1, b: 2}",          "{a: 1, b: 2}",         T, F, F, T, T),
+            ("{a: 1, b: 2}",          "{a: 1, b: 3}",         F, T, F, T, F),
+            ("{a: 1}",                "{a: 1.0}",             T, F, F, T, T),
+            ("{a: 1}",                "{b: 1}",               F, T, F, T, F),
+            ("{a: 1.0}",              "{a: 'x'}",             F, N, N, N, N),
+            ("{a: null}",             "{a: 1}",               N, N, N, N, N),
+            ("{a: null}",             "{a: null}",            N, N, N, N, N),
+            (f"{{a: {NaN}}}",         "{a: 1}",               F, F, F, F, F),
+            (f"{{a: {NaN}}}",         f"{{a: {NaN}}}",        F, F, F, F, F),
+            ("{a: null, b: 1}",       "{a: 1, b: 1}",         N, N, N, N, N),
+            ("{a: null, b: 1}",       "{a: 1, b: 2}",         F, N, N, N, N),
+            ("{a: 1, b: null}",       "{a: 2, b: 1}",         F, T, F, T, F),
+            ("{a: 1, b: null}",       "{a: 1, b: 1}",         N, N, N, N, N),
+            (f"{{a: null, b: {NaN}}}", "{a: null, b: 1}",     F, N, N, N, N),
+            (f"{{a: {NaN}, b: null}}", "{a: 1, b: 1}",        F, F, F, F, F),
+            (f"{{a: {NaN}, b: 1}}",   "{a: 1, b: 2}",         F, F, F, F, F),
+            (f"{{a: 1, b: {NaN}}}",   "{a: 2, b: 1}",         F, T, F, T, F),
+            (f"{{a: 1, b: {NaN}}}",   "{a: 1, b: 1}",         F, F, F, F, F),
+            ("{a: 1.0, b: null}",     "{a: 'x', b: 1}",       F, N, N, N, N),
+            ("{a: null, b: 1.0}",     "{a: 1, b: 'x'}",       F, N, N, N, N),
+            ("{a: {x: null}, b: 1}",  "{a: {x: 1}, b: 2}",    F, N, N, N, N),
+            (f"{{a: {{x: {NaN}}}, b: 1}}", "{a: {x: 1}, b: 1}", F, F, F, F, F),
+        ]
+
+        def neg(v):
+            return None if v is None else not v
+
+        for m, n, eq, lt, gt, le, ge in cases:
+            # each comparison is checked in both directions
+            for x, y, xlt, xgt, xle, xge in [(m, n, lt, gt, le, ge),
+                                             (n, m, gt, lt, ge, le)]:
+                # IN with a null element is true if an element is equal,
+                # null otherwise
+                in_null = True if eq else None
+                exps = [
+                    (f"{x} = {y}",                eq),
+                    (f"{x} <> {y}",               neg(eq)),
+                    (f"{x} IN [{y}]",             eq),
+                    (f"{x} IN [{y}, null]",       in_null),
+                    (f"[{x}] = [{y}]",            eq),
+                    (f"[{x}] <> [{y}]",           neg(eq)),
+                    (f"[0, {x}] = [0, {y}]",      eq),
+                    (f"{x} < {y}",                xlt),
+                    (f"{x} > {y}",                xgt),
+                    (f"{x} <= {y}",               xle),
+                    (f"{x} >= {y}",               xge),
+                ]
+                q = f"RETURN {', '.join(e for e, _ in exps)}"
+                res = self.graph.query(q).result_set[0]
+                for (exp, expected), actual in zip(exps, res):
+                    self.env.assertEquals(actual, expected, message=exp)
+
+                # the same comparisons as WHERE filters
+                for i, (exp, expected) in enumerate(exps):
+                    q = f"WITH 1 AS one WHERE {exp} RETURN count(*)"
+                    res = self.graph.query(q).result_set
+                    self.env.assertEquals(res[0][0], int(expected is True),
+                                          message=f"WHERE {exp}")
+
+                    # a filter treats '<' with NaN as null rather than
+                    # false, for scalars as well, so NOT is only checked
+                    # for equality
+                    if i >= 7:
+                        continue
+                    q = f"WITH 1 AS one WHERE NOT ({exp}) RETURN count(*)"
+                    res = self.graph.query(q).result_set
+                    self.env.assertEquals(res[0][0], int(expected is False),
+                                          message=f"WHERE NOT {exp}")
+
+    # Validate equality of scalars and lists holding NaN or null
+    def test13_equality_with_nan_and_null(self):
+        NaN = "(0.0/0.0)"
+        cases = [
+            # (expression, expected)
+            (f"{NaN} = {NaN}", False),
+            (f"{NaN} IN [1]", False),
+            (f"{NaN} IN [{NaN}]", False),
+            (f"1 IN [{NaN}, 1]", True),
+            (f"1 IN [{NaN}, null]", None),
+            (f"[{NaN}] = [1]", False),
+            (f"[{NaN}] = [{NaN}]", False),
+            (f"[1, {NaN}] <> [1, 1]", True),
+            ("[null] = [null]", None),
+            ("[1, null] = [1, 1]", None),
+            ("[1, null] = [2, 1]", False),
+            ("[null, 1] = [1, 2]", False),
+            ("[1, 2] = [1, 2.0]", True),
+            ("[1] = [1, 2]", False),
+            ("CASE 1 WHEN 1.0 THEN 1 ELSE 0 END", 1),
+        ]
+
+        for exp, expected in cases:
+            res = self.graph.query(f"RETURN {exp}").result_set
+            self.env.assertEquals(res[0][0], expected, message=exp)
