@@ -54,7 +54,7 @@ use graph::{
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
-use orx_tree::{Collection, Dfs, NodeRef};
+use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -818,34 +818,21 @@ pub fn execute_query_write(
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
-/// with `Records produced: N, Execution time: T.TTTTTT ms`.
-/// Skips `Commit` nodes (internal implementation detail).
+/// with `Records produced: N, Execution time: T.TTTTTT ms`. Every operator is
+/// listed, as `GRAPH.EXPLAIN` lists every plan node.
 fn reply_profile(
     ctx: &Context,
     runtime: &Runtime,
-    plan: &orx_tree::DynTree<IR>,
+    plan: &DynTree<IR>,
 ) {
-    let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
-    // Filter out Commit nodes and adjust depth accordingly.
-    let ops: Vec<_> = all_ops
-        .iter()
-        .filter(|idx| !matches!(plan.node(**idx).data(), IR::Commit))
-        .collect();
+    let ops: Vec<_> = plan.root().indices::<Dfs>().collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
-        let node = plan.node(*idx);
-        // Calculate effective depth (subtract number of Commit ancestors).
-        let mut depth = node.depth();
-        let mut cur = *idx;
-        while let Some(parent) = plan.node(cur).parent() {
-            if matches!(parent.data(), IR::Commit) {
-                depth -= 1;
-            }
-            cur = parent.idx();
-        }
+        let node = plan.node(idx);
+        let depth = node.depth();
         let (records, time) = profile_data
-            .get(idx)
+            .get(&idx)
             .copied()
             .unwrap_or((0, std::time::Duration::ZERO));
         let time_ms = time.as_secs_f64() * 1000.0;
@@ -1487,7 +1474,16 @@ fn commit_and_replicate(
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
-    g.graph.commit(Arc::clone(&wq.graph));
+    // `commit` validates the version before publishing it. It cannot refuse one
+    // from here: every write query ends its last segment through
+    // `Pending::end_segment`, which verifies the batch and rolls it over, so the
+    // batch reaching this point is empty and passes trivially. A query with no
+    // `Commit` operator at all — index DDL — creates no ids and passes for the
+    // same reason. There is also nothing this could do about a refusal: the
+    // query has already succeeded and its reply is about to be serialized.
+    if g.graph.commit(Arc::clone(&wq.graph)).is_err() {
+        unreachable!("a committed write query leaves an empty, verified id batch");
+    }
     // Signal the key as modified so WATCH gets triggered.
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
 
