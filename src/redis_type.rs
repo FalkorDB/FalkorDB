@@ -789,19 +789,53 @@ fn uuid_v4() -> String {
         .unwrap_or_default()
         .as_nanos();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let a = (t as u64) ^ seq;
-    let b = a
+    let [f1, f2, f3, f4, f5] = uuid_fields(t as u64, seq);
+    format!("{f1:08x}-{f2:04x}-4{f3:03x}-{f4:04x}-{f5:012x}")
+}
+
+/// The five printed fields of the name [`uuid_v4`] gives for clock reading `t`
+/// and call number `seq`.
+///
+/// The clock and the counter go in separate fields rather than being mixed:
+/// `t ^ seq` gave two calls the same name whenever the clock moved by exactly
+/// the bits the counter did (`4 ^ 2 == 5 ^ 3`), and the second virtual key then
+/// replaced the first one's slice of the graph. The last 48 bits are `seq` times
+/// an odd constant, a bijection modulo 2^48, so names differ for every call in
+/// a process whatever the clock does; the clock keeps them apart across restarts.
+const fn uuid_fields(
+    t: u64,
+    seq: u64,
+) -> [u64; 5] {
+    let a = t;
+    let b = seq
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        (a >> 32) as u32,
-        (a >> 16) as u16,
-        (a & 0xFFF) as u16,
-        (0x8000 | (b & 0x3FFF)) as u16,
-        b & 0xFFFF_FFFF_FFFF
-    )
+    [
+        a >> 32,
+        (a >> 16) & 0xFFFF,
+        a & 0xFFF,
+        0x8000 | (b & 0x3FFF),
+        b & 0xFFFF_FFFF_FFFF,
+    ]
 }
+
+/// Two calls 1 ns apart must not share a name. Checked at compile time because
+/// this crate's unit tests cannot run outside Redis: its global allocator is
+/// Redis's.
+const _: () = {
+    let x = uuid_fields(4, 2);
+    let y = uuid_fields(5, 3);
+    let mut i = 0;
+    let mut same = true;
+    while i < 5 {
+        same &= x[i] == y[i];
+        i += 1;
+    }
+    assert!(
+        !same,
+        "virtual key names collide for (t=4, seq=2) and (t=5, seq=3)"
+    );
+};
 
 // ---------------------------------------------------------------------------
 // Type statics
