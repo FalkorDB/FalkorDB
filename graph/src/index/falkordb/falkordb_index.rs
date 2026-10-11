@@ -416,7 +416,7 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::super::pending_writes::PendingIndexWrites;
+    use super::super::pending_writes::{IndexChanges, PendingIndexWrites};
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
 
@@ -432,10 +432,16 @@ mod tests {
         attr: &Arc<String>,
         changes: &[(i64, u64, bool)],
     ) {
-        let mut writes = PendingIndexWrites::default();
+        let mut staged = IndexChanges::new(Node);
         for &(v, id, add) in changes {
-            writes.record(idx, Node, label, attr, &Value::Int(v), id, add);
+            if add {
+                staged.add(idx, label, attr, &Value::Int(v), id);
+            } else {
+                staged.remove(idx, label, attr, &Value::Int(v), id);
+            }
         }
+        let mut writes = PendingIndexWrites::default();
+        writes.extend(staged);
         writes.apply(idx);
     }
 

@@ -1,11 +1,13 @@
 //! Native-index changes a unit of work has staged but not yet applied.
 //!
-//! The graph's write paths record into the [`PendingIndexWrites`] carried by the unit of work's
-//! [`IndexDocs`](crate::index::index_docs::IndexDocs) instead of changing the index themselves,
-//! and whoever owns the unit of work applies it once, where it publishes RediSearch's documents:
+//! Each write function in [`graph_writes`](super::graph_writes) reads the graph and returns the
+//! [`IndexChanges`] its write makes; it holds no state. The graph's write method that called it
+//! adds them to the [`PendingIndexWrites`] carried by the unit of work's
+//! [`IndexDocs`](crate::index::index_docs::IndexDocs), next to the RediSearch documents it fills
+//! there, and whoever owns the unit of work applies it once, where it publishes those documents:
 //! a Cypher query at the end of each `Commit` segment, a replicated effects buffer at the end of
 //! the buffer, `GRAPH.BULK` after each token. One application per unit instead of one per write
-//! call, and the functions in [`graph_writes`](super::graph_writes) need only read the graph.
+//! call.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +25,74 @@ pub(crate) struct IndexWrite {
     pub(crate) key: u64,
     pub(crate) id: u64,
     pub(crate) add: bool,
+}
+
+/// The native-index changes one graph write makes, in the order it makes them: what each write
+/// function in [`graph_writes`](super::graph_writes) returns. It only describes the changes;
+/// [`PendingIndexWrites::extend`] stages them.
+pub struct IndexChanges {
+    entity: EntityType,
+    changes: Vec<(IndexKey, IndexWrite)>,
+}
+
+impl IndexChanges {
+    /// No changes yet, for one entity kind. Allocates nothing.
+    #[must_use]
+    pub fn new(entity: EntityType) -> Self {
+        Self {
+            entity,
+            changes: Vec::new(),
+        }
+    }
+
+    /// Whether the write changes nothing in the index.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+
+    /// `(value, id)` comes out of column `(label, attr)`, if `index` has that column and the
+    /// column indexes `value`.
+    pub(crate) fn remove(
+        &mut self,
+        index: &FalkorDbIndex,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+        id: u64,
+    ) {
+        self.push(index, label, attr, value, id, false);
+    }
+
+    /// `(value, id)` goes into column `(label, attr)`, if `index` has that column and the column
+    /// indexes `value`.
+    pub(crate) fn add(
+        &mut self,
+        index: &FalkorDbIndex,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+        id: u64,
+    ) {
+        self.push(index, label, attr, value, id, true);
+    }
+
+    /// Encoded now, so a change holds 17 bytes of payload and no `Value`.
+    fn push(
+        &mut self,
+        index: &FalkorDbIndex,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+        id: u64,
+        add: bool,
+    ) {
+        let Some(key) = index.encode_value(self.entity, label, attr, value) else {
+            return;
+        };
+        self.changes
+            .push(((label.clone(), attr.clone()), IndexWrite { key, id, add }));
+    }
 }
 
 /// Native-index changes staged by graph writes, applied once by their owner.
@@ -68,31 +138,18 @@ impl PendingIndexWrites {
         self.edges.clear();
     }
 
-    /// Stage `(value, id)` going into or out of column `(label, attr)`, if `index` has that
-    /// column and the column indexes `value`. Encoded now, so the buffer holds 17 bytes per
-    /// change and no `Value`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn record(
+    /// Stage one write's changes after everything already staged, keeping their order.
+    pub fn extend(
         &mut self,
-        index: &FalkorDbIndex,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-        value: &Value,
-        id: u64,
-        add: bool,
+        changes: IndexChanges,
     ) {
-        let Some(key) = index.encode_value(entity, label, attr, value) else {
-            return;
-        };
-        let columns = match entity {
+        let columns = match changes.entity {
             EntityType::Node => &mut self.nodes,
             EntityType::Relationship => &mut self.edges,
         };
-        columns
-            .entry((label.clone(), attr.clone()))
-            .or_default()
-            .push(IndexWrite { key, id, add });
+        for (key, write) in changes.changes {
+            columns.entry(key).or_default().push(write);
+        }
     }
 }
 

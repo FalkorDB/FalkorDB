@@ -1732,7 +1732,9 @@ impl Graph {
         let index_add_docs = &mut docs.node_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::node_rows_set(self, ids, label_ids, attr_ids, rows, &mut docs.native);
+        docs.native.extend(graph_writes::node_rows_set(
+            self, ids, label_ids, attr_ids, rows,
+        ));
         let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
 
         if self.node_indexer.has_indices() {
@@ -1764,7 +1766,8 @@ impl Graph {
         let index_add_docs = &mut docs.node_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::node_attrs_set(self, attrs, &mut docs.native);
+        docs.native
+            .extend(graph_writes::node_attrs_set(self, attrs));
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
@@ -1802,7 +1805,8 @@ impl Graph {
         let nset = self.node_attrs.import_attrs(attrs);
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::new_node_attrs(self, attrs, new_labels, &mut docs.native);
+        docs.native
+            .extend(graph_writes::new_node_attrs(self, attrs, new_labels));
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1847,7 +1851,8 @@ impl Graph {
     ) -> usize {
         let index_add_docs = &mut docs.node_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::bulk_node_attrs(self, data, label_ids, &mut docs.native);
+        docs.native
+            .extend(graph_writes::bulk_node_attrs(self, data, label_ids));
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in data.iter() {
@@ -1928,7 +1933,8 @@ impl Graph {
     ) -> usize {
         let index_add_edge_docs = &mut docs.edge_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::bulk_edge_attrs(self, data, type_id, &mut docs.native);
+        docs.native
+            .extend(graph_writes::bulk_edge_attrs(self, data, type_id));
 
         self.track_edge_index_updates_of_type(
             type_id,
@@ -1955,7 +1961,8 @@ impl Graph {
         let nset = self.relationship_attrs.import_attrs(attrs);
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::new_edge_attrs(self, attrs, &mut docs.native);
+        docs.native
+            .extend(graph_writes::new_edge_attrs(self, attrs));
 
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         nset
@@ -2040,7 +2047,8 @@ impl Graph {
     ) {
         let index_add_docs = &mut docs.node_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_product_added(self, ids, label_ids, &mut docs.native);
+        docs.native
+            .extend(graph_writes::labels_product_added(self, ids, label_ids));
 
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
@@ -2120,7 +2128,8 @@ impl Graph {
         self.resize();
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_added(self, label_rows, label_cols, &mut docs.native);
+        docs.native
+            .extend(graph_writes::labels_added(self, label_rows, label_cols));
 
         // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
@@ -2164,7 +2173,8 @@ impl Graph {
         self.resize();
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_removed(self, label_rows, label_cols, &mut docs.native);
+        docs.native
+            .extend(graph_writes::labels_removed(self, label_rows, label_cols));
 
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
@@ -2203,7 +2213,8 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the labels and attributes are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::nodes_deleted(self, deleted_nodes, &mut docs.native);
+        docs.native
+            .extend(graph_writes::nodes_deleted(self, deleted_nodes));
 
         // Every removal below is a per-entity tombstone, and every lookup below
         // is a row seek. Nothing here touches an entry that does not belong to a
@@ -2754,7 +2765,8 @@ impl Graph {
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edge_attrs_set(self, attrs, &mut docs.native);
+        docs.native
+            .extend(graph_writes::edge_attrs_set(self, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2780,7 +2792,8 @@ impl Graph {
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edge_attrs_set_of_type(self, type_id, attrs, &mut docs.native);
+        docs.native
+            .extend(graph_writes::edge_attrs_set_of_type(self, type_id, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2884,7 +2897,8 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the attributes and types are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edges_deleted(self, &resolved, &mut docs.native);
+        docs.native
+            .extend(graph_writes::edges_deleted(self, &resolved));
 
         self.relationship_attrs.remove_all(&resolved);
 
@@ -3066,7 +3080,8 @@ impl Graph {
             }
             // Before the type matrix and attributes are torn down below.
             #[cfg(feature = "index-falkordb")]
-            graph_writes::edges_deleted(self, del_keys.iter(), &mut docs.native);
+            docs.native
+                .extend(graph_writes::edges_deleted(self, del_keys.iter()));
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
 

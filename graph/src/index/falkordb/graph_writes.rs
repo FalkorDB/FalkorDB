@@ -7,10 +7,10 @@
 //! graph.
 //!
 //! Each write function only reads the graph. It works out which entries come out and which go
-//! in, and records them in the caller's [`PendingIndexWrites`]. The owner of the unit of work
-//! applies that buffer once, where it publishes RediSearch's documents (see
-//! [`pending_writes`](super::pending_writes)), so the index changes once per unit of work and not
-//! once per write call.
+//! in, and returns them as [`IndexChanges`]; it keeps no state. The graph's write method that
+//! called it stages them for its unit of work, whose owner applies them once, where it publishes
+//! RediSearch's documents (see [`pending_writes`](super::pending_writes)), so the index changes
+//! once per unit of work and not once per write call.
 //!
 //! The graph calls each function **before** it changes anything itself, so the old values,
 //! labels and types are still there to read: the B-tree is keyed by `(value, id)`, so removing an
@@ -34,8 +34,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::falkordb_index::FalkorDbIndex;
-use super::pending_writes::PendingIndexWrites;
+use super::pending_writes::{IndexChanges, PendingIndexWrites};
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
 /// Range indexes alone, and the graph skips the redundant RediSearch feed on the write path.
@@ -63,12 +62,11 @@ pub fn index_only_writes() -> bool {
 pub fn node_attrs_set(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     let mut labels = Vec::new();
     for (&id, written) in attrs {
         node_label_ids_into(g, id, &mut labels);
@@ -81,12 +79,13 @@ pub fn node_attrs_set(
             for label_id in &labels {
                 let label = &g.get_labels()[label_id.0];
                 if let Some(old) = &old {
-                    staged.remove(&g.falkordb_index, label, &attr, old, id);
+                    changes.remove(&g.falkordb_index, label, &attr, old, id);
                 }
-                staged.add(&g.falkordb_index, label, &attr, new_value, id);
+                changes.add(&g.falkordb_index, label, &attr, new_value, id);
             }
         }
     }
+    changes
 }
 
 /// The replica's CREATE_NODE and UPDATE_NODE: node `ids[i]` takes
@@ -102,12 +101,11 @@ pub fn node_rows_set(
     label_ids: &[u64],
     attr_ids: &[u16],
     rows: &[Value],
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) || attr_ids.is_empty() {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     let attrs: Vec<Option<Arc<String>>> = attr_ids.iter().map(|&a| g.node_attr_name(a)).collect();
     for (&id, row) in ids.iter().zip(rows.chunks_exact(attr_ids.len())) {
         for ((&attr_id, attr), new_value) in attr_ids.iter().zip(&attrs).zip(row) {
@@ -118,12 +116,13 @@ pub fn node_rows_set(
             for &label_id in label_ids {
                 let label = &g.get_labels()[label_id as usize];
                 if let Some(old) = &old {
-                    staged.remove(&g.falkordb_index, label, attr, old, id);
+                    changes.remove(&g.falkordb_index, label, attr, old, id);
                 }
-                staged.add(&g.falkordb_index, label, attr, new_value, id);
+                changes.add(&g.falkordb_index, label, attr, new_value, id);
             }
         }
     }
+    changes
 }
 
 /// Nodes created in this transaction: every attribute is an add, under the labels in
@@ -135,12 +134,11 @@ pub fn new_node_attrs(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
     new_labels: &FxHashMap<u64, Vec<u64>>,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, written) in attrs {
         let Some(label_ids) = new_labels.get(&id) else {
             continue; // no labels this transaction, so nothing routes to a column
@@ -151,10 +149,11 @@ pub fn new_node_attrs(
             };
             for &label_id in label_ids {
                 let label = &g.get_labels()[label_id as usize];
-                staged.add(&g.falkordb_index, label, &attr, value, id);
+                changes.add(&g.falkordb_index, label, &attr, value, id);
             }
         }
     }
+    changes
 }
 
 /// Bulk-loaded nodes (`GRAPH.BULK`): every attribute is an add, under `label_ids`, the label set
@@ -163,12 +162,11 @@ pub fn bulk_node_attrs(
     g: &Graph,
     rows: &[(u64, Vec<(u16, Value)>)],
     label_ids: &[LabelId],
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     for (id, written) in rows {
         for (attr_id, value) in written {
             let Some(attr) = g.node_attr_name(*attr_id) else {
@@ -176,10 +174,11 @@ pub fn bulk_node_attrs(
             };
             for label_id in label_ids {
                 let label = &g.get_labels()[label_id.0];
-                staged.add(&g.falkordb_index, label, &attr, value, *id);
+                changes.add(&g.falkordb_index, label, &attr, value, *id);
             }
         }
     }
+    changes
 }
 
 /// SET `:Label`: each `(label_rows[i], label_cols[i])` node gains a label, so its current
@@ -191,15 +190,15 @@ pub fn labels_added(
     g: &Graph,
     label_rows: &[u64],
     label_cols: &[u64],
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, &label_id) in label_rows.iter().zip(label_cols) {
-        staged.add_node_under_label(g, id, label_id);
+        add_node_under_label(&mut changes, g, id, label_id);
     }
+    changes
 }
 
 /// The replica's label add: every node in `ids` gains every label in `label_ids`. As
@@ -208,17 +207,17 @@ pub fn labels_product_added(
     g: &Graph,
     ids: &[u64],
     label_ids: &[u64],
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     for &label_id in label_ids {
         for &id in ids {
-            staged.add_node_under_label(g, id, label_id);
+            add_node_under_label(&mut changes, g, id, label_id);
         }
     }
+    changes
 }
 
 /// REMOVE `:Label`: each `(label_rows[i], label_cols[i])` node loses a label, so its attributes
@@ -228,15 +227,15 @@ pub fn labels_removed(
     g: &Graph,
     label_rows: &[u64],
     label_cols: &[u64],
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     for (&id, &label_id) in label_rows.iter().zip(label_cols) {
-        staged.remove_node_under_label(g, id, label_id);
+        remove_node_under_label(&mut changes, g, id, label_id);
     }
+    changes
 }
 
 /// DELETE: remove every indexed value of each deleted node. Called while its labels and
@@ -244,22 +243,22 @@ pub fn labels_removed(
 pub fn nodes_deleted(
     g: &Graph,
     ids: &RoaringTreemap,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Node) {
-        return;
+        return IndexChanges::new(EntityType::Node);
     }
-    let mut staged = Staged::new(EntityType::Node, out);
+    let mut changes = IndexChanges::new(EntityType::Node);
     let mut labels = Vec::new();
     for id in ids {
         node_label_ids_into(g, id, &mut labels);
         for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
             for label_id in &labels {
                 let label = &g.get_labels()[label_id.0];
-                staged.remove(&g.falkordb_index, label, &attr, &value, id);
+                changes.remove(&g.falkordb_index, label, &attr, &value, id);
             }
         }
     }
+    changes
 }
 
 // ---- Relationships ----
@@ -274,9 +273,8 @@ pub fn nodes_deleted(
 pub fn edge_attrs_set(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-    out: &mut PendingIndexWrites,
-) {
-    edge_attrs_set_with(g, attrs, None, out);
+) -> IndexChanges {
+    edge_attrs_set_with(g, attrs, None)
 }
 
 /// [`edge_attrs_set`] for edges all of type `type_id`: the replica's UPDATE_EDGE, where one
@@ -285,9 +283,8 @@ pub fn edge_attrs_set_of_type(
     g: &Graph,
     type_id: TypeId,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-    out: &mut PendingIndexWrites,
-) {
-    edge_attrs_set_with(g, attrs, Some(type_id), out);
+) -> IndexChanges {
+    edge_attrs_set_with(g, attrs, Some(type_id))
 }
 
 /// `type_id` is the edges' shared type when the caller knows it; `None` looks it up per edge.
@@ -295,12 +292,11 @@ fn edge_attrs_set_with(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
     type_id: Option<TypeId>,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
-        return;
+        return IndexChanges::new(EntityType::Relationship);
     }
-    let mut staged = Staged::new(EntityType::Relationship, out);
+    let mut changes = IndexChanges::new(EntityType::Relationship);
     for (&id, written) in attrs {
         if written.is_empty() {
             continue;
@@ -316,23 +312,23 @@ fn edge_attrs_set_with(
             if let Some(old) =
                 g.get_relationship_attribute_by_idx(RelationshipId::from(id), *attr_id)
             {
-                staged.remove(&g.falkordb_index, type_name, &attr, &old, id);
+                changes.remove(&g.falkordb_index, type_name, &attr, &old, id);
             }
-            staged.add(&g.falkordb_index, type_name, &attr, new_value, id);
+            changes.add(&g.falkordb_index, type_name, &attr, new_value, id);
         }
     }
+    changes
 }
 
 /// Edges created in this transaction: every attribute is an add.
 pub fn new_edge_attrs(
     g: &Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
-        return;
+        return IndexChanges::new(EntityType::Relationship);
     }
-    let mut staged = Staged::new(EntityType::Relationship, out);
+    let mut changes = IndexChanges::new(EntityType::Relationship);
     for (&id, written) in attrs {
         if written.is_empty() {
             continue;
@@ -340,10 +336,11 @@ pub fn new_edge_attrs(
         let type_name = edge_type(g, id);
         for (attr_id, value) in written {
             if let Some(attr) = g.rel_attr_name(*attr_id) {
-                staged.add(&g.falkordb_index, type_name, &attr, value, id);
+                changes.add(&g.falkordb_index, type_name, &attr, value, id);
             }
         }
     }
+    changes
 }
 
 /// Bulk-loaded edges (`GRAPH.BULK`), all of type `type_id`: every attribute is an add.
@@ -354,20 +351,20 @@ pub fn bulk_edge_attrs(
     g: &Graph,
     rows: &[(u64, Vec<(u16, Value)>)],
     type_id: TypeId,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
-        return;
+        return IndexChanges::new(EntityType::Relationship);
     }
-    let mut staged = Staged::new(EntityType::Relationship, out);
+    let mut changes = IndexChanges::new(EntityType::Relationship);
     let type_name = &g.get_types()[type_id.0];
     for (id, written) in rows {
         for (attr_id, value) in written {
             if let Some(attr) = g.rel_attr_name(*attr_id) {
-                staged.add(&g.falkordb_index, type_name, &attr, value, *id);
+                changes.add(&g.falkordb_index, type_name, &attr, value, *id);
             }
         }
     }
+    changes
 }
 
 /// DELETE, explicit or cascading from a deleted node: remove every indexed value of each edge.
@@ -375,12 +372,11 @@ pub fn bulk_edge_attrs(
 pub fn edges_deleted(
     g: &Graph,
     ids: impl IntoIterator<Item = u64>,
-    out: &mut PendingIndexWrites,
-) {
+) -> IndexChanges {
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
-        return;
+        return IndexChanges::new(EntityType::Relationship);
     }
-    let mut staged = Staged::new(EntityType::Relationship, out);
+    let mut changes = IndexChanges::new(EntityType::Relationship);
     for id in ids {
         let mut attrs = g
             .get_relationship_all_attrs(RelationshipId::from(id))
@@ -390,9 +386,10 @@ pub fn edges_deleted(
         }
         let type_name = edge_type(g, id);
         for (attr, value) in attrs {
-            staged.remove(&g.falkordb_index, type_name, &attr, &value, id);
+            changes.remove(&g.falkordb_index, type_name, &attr, &value, id);
         }
     }
+    changes
 }
 
 /// Apply a unit of work's staged changes to `g`'s index — for an owner outside this crate, which
@@ -445,73 +442,30 @@ pub fn populate(
 
 // ---- Shared ----
 
-/// Where one call records its changes: the caller's [`PendingIndexWrites`], tagged with the
-/// entity kind every change in the call shares.
-struct Staged<'a> {
-    entity: EntityType,
-    out: &'a mut PendingIndexWrites,
+/// Every indexed value node `id` carries, added under the one label `label_id`. Label add and
+/// remove change only that label's columns.
+fn add_node_under_label(
+    changes: &mut IndexChanges,
+    g: &Graph,
+    id: u64,
+    label_id: u64,
+) {
+    let label = &g.get_labels()[label_id as usize];
+    for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
+        changes.add(&g.falkordb_index, label, &attr, &value, id);
+    }
 }
 
-impl<'a> Staged<'a> {
-    /// Record into `out`. Allocates nothing.
-    fn new(
-        entity: EntityType,
-        out: &'a mut PendingIndexWrites,
-    ) -> Self {
-        Self { entity, out }
-    }
-
-    /// Record `(value, id)` coming out of column `(label, attr)`, if `index` has it.
-    fn remove(
-        &mut self,
-        index: &FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-        value: &Value,
-        id: u64,
-    ) {
-        self.out
-            .record(index, self.entity, label, attr, value, id, false);
-    }
-
-    /// Record `(value, id)` going into column `(label, attr)`, if `index` has it.
-    fn add(
-        &mut self,
-        index: &FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-        value: &Value,
-        id: u64,
-    ) {
-        self.out
-            .record(index, self.entity, label, attr, value, id, true);
-    }
-
-    /// Every indexed value node `id` carries, added under the one label `label_id`. Label add
-    /// and remove change only that label's columns.
-    fn add_node_under_label(
-        &mut self,
-        g: &Graph,
-        id: u64,
-        label_id: u64,
-    ) {
-        let label = &g.get_labels()[label_id as usize];
-        for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
-            self.add(&g.falkordb_index, label, &attr, &value, id);
-        }
-    }
-
-    /// As [`add_node_under_label`](Self::add_node_under_label), for removal.
-    fn remove_node_under_label(
-        &mut self,
-        g: &Graph,
-        id: u64,
-        label_id: u64,
-    ) {
-        let label = &g.get_labels()[label_id as usize];
-        for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
-            self.remove(&g.falkordb_index, label, &attr, &value, id);
-        }
+/// As [`add_node_under_label`], for removal.
+fn remove_node_under_label(
+    changes: &mut IndexChanges,
+    g: &Graph,
+    id: u64,
+    label_id: u64,
+) {
+    let label = &g.get_labels()[label_id as usize];
+    for (attr, value) in g.get_node_all_attrs(NodeId::from(id)) {
+        changes.remove(&g.falkordb_index, label, &attr, &value, id);
     }
 }
 
