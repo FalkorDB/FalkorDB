@@ -2536,6 +2536,11 @@ fn rewrite_struct_constructor(
     let Some(entries) = entries else {
         return (new_data, children);
     };
+    // A constructor that needs every slot keeps the general path when one is
+    // missing, so it can report the key as missing rather than as `null`.
+    if func.struct_slots_required && slots.iter().any(|slot| !entries.contains_key(*slot)) {
+        return (new_data, children);
+    }
 
     // Build positional children: one per slot, missing entries → Constant(Null).
     let mut new_children: Vec<DynTree<ExprIR<Variable>>> = Vec::with_capacity(slots.len());

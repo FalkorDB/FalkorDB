@@ -73,6 +73,37 @@ class testPath():
             # Expecting an error.
             self.env.assertContains('longitude should be within', str(e))
 
+    def test_point_map_errors(self):
+        # the same map gets C's error whether it is written in the call or
+        # passed in as a value
+        cases = [
+            ("{latitude: null, longitude: 1}",
+             "'latitude' and 'longitude' values in point map were not both valid numerics"),
+            ("{latitude: 1, longitude: 'a'}",
+             "'latitude' and 'longitude' values in point map were not both valid numerics"),
+            ("{latitude: 1}",
+             "A point map should have 2 elements, latitude and longitude"),
+            ("{}",
+             "A point map should have 2 elements, latitude and longitude"),
+            ("{latitude: 1, longitude: 2, x: 3}",
+             "A point map should have 2 elements, latitude and longitude"),
+            ("{Latitude: 1, longitude: 2}",
+             "Did not find 'latitude' value in point map"),
+            ("{latitude: 1, Longitude: 2}",
+             "Did not find 'longitude' value in point map"),
+            ("{latitude: 90.0000001, longitude: 2}",
+             "latitude should be within the -90 to 90 range"),
+            ("{latitude: 1, longitude: -180.0000001}",
+             "longitude should be within the -180 to 180 range"),
+        ]
+        for m, expected in cases:
+            for q in [f"RETURN point({m})", f"WITH {m} AS m RETURN point(m)"]:
+                try:
+                    self.graph.query(q)
+                    self.env.assertTrue(False, message=q)
+                except ResponseError as e:
+                    self.env.assertEqual(str(e), expected, message=q)
+
     def test_point_index_lookup(self):
         home = {'lat': 32.070794860, 'lon': 34.820751118}
         univ = {'lat': 30.621734079, 'lon': -96.33775507}
