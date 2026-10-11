@@ -12,7 +12,7 @@ covers line by line and proves properties about that model. Lean 4 only, no
 Mathlib. The toolchain comes from each project's `lean-toolchain`.
 
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
-- `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / AXIOMATISED / MODELLED / NOT COVERED.
+- `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.
 - `proofs/FINDINGS.md` — the bug ledger. Every bug has a confirmed repro, and later notes record which commits fixed it.
 - `proofs/lean_ci.sh`, `proofs/coverage.sh` — the two gates.
 
@@ -36,7 +36,7 @@ a clean worktree: `git worktree add --detach ../fdb-main origin/main` then
 2. Find the projects to update: `grep -l "<file>" proofs/*/COVERAGE.tsv` for each changed file.
 3. For each changed fn: update the Lean model to the new code, re-prove, fix `file:line` cites. Add rows for new fns and delete rows for removed ones.
 4. If the commit fixed a bug, turn its counterexample theorem into a correctness theorem. Keep the old one as a labelled historical note: `pre<PR>_…`, fixed by `#PR (sha)`.
-5. Run `lean_ci.sh` (all green) and `coverage.sh` (100% non-FFI, 0 unlisted), then update FINDINGS.md "Current state".
+5. Run `lean_ci.sh` (all green) and `coverage.sh` (0 unlisted; PROVEN + CONDITIONAL = 100% non-FFI, and no new CONDITIONAL), then update FINDINGS.md "Current state".
 
 **Prove a new or changed function**: model it in the owning project, or start a new
 project by copying the shape of an existing one. Then add the COVERAGE row and prove.
@@ -50,7 +50,17 @@ a Rust test, or a live query compared with the C module. Record it in FINDINGS.m
 **Review a PR with the proofs**: in a new `proofs/pr<N>_review/` project, copy the
 definitions you need from the owning projects. Model the PR's merged code for the
 changed functions, and prove or refute each claim the PR makes. Confirm any refutation
-live. Also check that the existing theorems still hold for the new code.
+live. Also check that the existing theorems still hold for the new code. A PR that
+changes `Eq`/`Hash`/`Ord`/`sort_cmp`/`compare_value` (or anything a `HashMap` key or a
+sort uses) **must** get a `pr<N>_review` project proving Eq ⇒ equal Hash and the order
+laws on the PR's code (see `pr2917_review`). Until it merges, its COVERAGE rows stay
+commented out.
+
+**Hypotheses about Rust code**: a theorem that takes a premise about another Rust
+fn's behaviour (a contract structure, `(hc : ∀ …)`, an invariant some other code
+maintains) proves nothing about main until that premise is discharged: instantiate it
+with the model of the real fn (copy it and prove the premise), or bucket the row
+CONDITIONAL and name the hypothesis. Only C APIs (FFI) may stay assumed.
 
 ## Hazards
 

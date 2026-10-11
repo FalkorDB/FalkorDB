@@ -8,17 +8,17 @@ graph/src/runtime/ops/merge.rs	MergeOp::compute_merge_pattern_hash	180	PROVEN	Ct
 graph/src/runtime/ops/merge.rs	MergeOp::drain_pending	252	PROVEN	Merge.phaseB; phaseB_noSet; heads_tails_perm
 graph/src/runtime/ops/merge.rs	MergeOp::next	279	PROVEN	Merge.rustBatch/phaseA/rustMerge; phaseA_ref; rust_eq_ref_noSet; merge_noSet_any_batch_size; batch_dependent (bug); allBound_first_only (bug)
 graph/src/runtime/ops/apply.rs	ApplyOp::new	103	PROVEN	Correlated.canBatchApply; canBatchApply_admits_vhj (bug: ValueHashJoin missing from blacklist)
-graph/src/runtime/ops/apply.rs	ApplyOp::next_batched	152	PROVEN	Correlated.applyBatched/optionalBatched; applyBatched_eq_ref; optionalBatched_perm_ref; vhj_batched_16_vs_8 (bug)
+graph/src/runtime/ops/apply.rs	ApplyOp::next_batched	152	CONDITIONAL	Correlated.applyBatched/optionalBatched; applyBatched_eq_ref; optionalBatched_perm_ref; vhj_batched_16_vs_8 (bug) || CONDITIONAL on Separable sub-plan (child operators row-local) is FALSE for ValueHashJoin (vhj_not_separable, canBatchApply_admits_vhj)
 graph/src/runtime/ops/apply.rs	ApplyOp::next_per_row	238	PROVEN	Correlated.applyPerRow/optionalPerRow; applyPerRow_eq_ref; optionalPerRow_eq_ref (batch-boundary buffering not modelled, flattened stream only)
 graph/src/runtime/ops/apply.rs	ApplyOp::next	343	PROVEN	dispatch on can_batch; covered by the two theorems above
 graph/src/runtime/ops/optional.rs	OptionalOp::new	92	PROVEN	Correlated.canBatchOptional; canBatchApply_admits_vhj (bug)
-graph/src/runtime/ops/optional.rs	OptionalOp::next_batched	125	PROVEN	Correlated.optionalBatched; optionalBatched_perm_ref; optionalBatched_order_differs (divergence)
+graph/src/runtime/ops/optional.rs	OptionalOp::next_batched	125	CONDITIONAL	Correlated.optionalBatched; optionalBatched_perm_ref; optionalBatched_order_differs (divergence) || CONDITIONAL on Separable sub-plan (child operators row-local) is FALSE for ValueHashJoin (vhj_not_separable)
 graph/src/runtime/ops/optional.rs	OptionalOp::next_per_row	195	PROVEN	Correlated.optionalPerRow; optionalPerRow_eq_ref
 graph/src/runtime/ops/optional.rs	OptionalOp::next	292	PROVEN	dispatch on can_batch
 graph/src/runtime/ops/semi_apply.rs	SemiApplyOp::new	45	PROVEN	Ctors.semiRight: semiRight_spec
-graph/src/runtime/ops/semi_apply.rs	SemiApplyOp::next	66	PROVEN	Correlated.semiBatched; semiBatched_eq_ref (under Separable; planner only feeds pattern sub-plans)
+graph/src/runtime/ops/semi_apply.rs	SemiApplyOp::next	66	CONDITIONAL	Correlated.semiBatched; semiBatched_eq_ref (under Separable; planner only feeds pattern sub-plans) || CONDITIONAL on Separable sub-plan (child operators row-local; the planner feeds only pattern sub-plans, not proven)
 graph/src/runtime/ops/or_apply_multiplexer.rs	OrApplyMultiplexerOp::new	46	PROVEN	Ctors.orBranches: orBranches_spec
-graph/src/runtime/ops/or_apply_multiplexer.rs	OrApplyMultiplexerOp::next	73	PROVEN	Correlated.orApply; orApply_eq_ref; orApply_single
+graph/src/runtime/ops/or_apply_multiplexer.rs	OrApplyMultiplexerOp::next	73	CONDITIONAL	Correlated.orApply; orApply_eq_ref; orApply_single || CONDITIONAL on Separable sub-plan (child operators row-local; not proven for the real children)
 graph/src/runtime/ops/foreach.rs	ForEachOp::new	57	PROVEN	Ctors.forEachBody: forEachBody_spec
 graph/src/runtime/ops/foreach.rs	ForEachOp::execute_list	86	PROVEN	ForEach.execList/runChunks/chunks; chunks_flatten; chunks_size; execList_ok
 graph/src/runtime/ops/foreach.rs	ForEachOp::next	124	PROVEN	ForEach.next/go/inner/drainP; go_ok; next_ok; run_ok; foreach_correct; calls_items

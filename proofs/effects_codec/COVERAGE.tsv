@@ -43,8 +43,8 @@ graph/src/effects/v3/records.rs	write_constraint_tail	883	PROVEN	RecFull.bodyCon
 graph/src/effects/v3/records.rs	Record::encode	917	PROVEN	RecFull.encRecord: readRecord_encRecord, readRecord_encRecord_wf (no shape hypothesis since #2916), encRecord_ok_shape, encRecord_rowShape_refused, encRecord_empty_refused/never_ok; Records.encRec_refuses_shape
 graph/src/effects/v3/records.rs	Record::decode	1186	PROVEN	= readRecord: readRecord_encRecord
 graph/src/effects/v3/records.rs	Payload::deref	1211	PROVEN	Payload.openPayload result bytes: openPayload_plain, openPayload_maybeCompress
-graph/src/effects/v3/records.rs	Payload::records	1219	PROVEN	Payload.readAllRecords from the start: records_concat
-graph/src/effects/v3/records.rs	Records::next	1242	PROVEN	Payload.readAllRecords (stop at end, fuse on error): records_concat
+graph/src/effects/v3/records.rs	Payload::records	1219	CONDITIONAL	Payload.readAllRecords from the start: records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
+graph/src/effects/v3/records.rs	Records::next	1242	CONDITIONAL	Payload.readAllRecords (stop at end, fuse on error): records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
 graph/src/effects/v3/records.rs	open_payload	1261	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
 graph/src/effects/v3/records.rs	maybe_compress	1361	PROVEN	Payload.maybeCompress: openPayload_maybeCompress (transparent if records < 4GiB), maybeCompress_shrinks, seal_disabled
 graph/src/effects/v3/blocks.rs	RelType::encode	29	PROVEN	RecBlocks.bU32 via schemaId: relType_rt, schemaId_roundtrip

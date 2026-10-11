@@ -26,20 +26,20 @@ graph/src/runtime/runtime.rs	memo_lookup	1407	PROVEN	Accessors.memoLookup_ok
 graph/src/runtime/runtime.rs	memo_insert	1417	PROVEN	Accessors.attrIdM_correct (validity + 32-entry cap)
 graph/src/runtime/runtime.rs	node_attr_id	1432	PROVEN	Accessors.attrIdM_correct, memo_ok_mono
 graph/src/runtime/runtime.rs	rel_attr_id	1446	PROVEN	Accessors.attrIdM_correct (same code over rel memo)
-graph/src/runtime/runtime.rs	get_node_attribute	1459	PROVEN	Accessors.getNodeAttribute; attrs_agree, materialize_eq
-graph/src/runtime/runtime.rs	get_node_attribute_no_delete_check	1479	PROVEN	Accessors.noDelete; attrs_agree
+graph/src/runtime/runtime.rs	get_node_attribute	1459	CONDITIONAL	Accessors.getNodeAttribute; attrs_agree, materialize_eq || CONDITIONAL on hc/hbg (Graph all-attrs and batch reads agree with the by-index read; graph.rs, not linked) and hdisj (one pending map per node; fails under #2876, reuse_diverges)
+graph/src/runtime/runtime.rs	get_node_attribute_no_delete_check	1479	CONDITIONAL	Accessors.noDelete; attrs_agree || CONDITIONAL on hc (Graph all-attrs read agrees with the by-index read; graph.rs, not linked) and hdisj (fails under #2876, reuse_diverges)
 graph/src/runtime/runtime.rs	get_relationship_attribute_no_delete_check	1493	PROVEN	RelAccessors.relNoDelete: relNoDelete_eq, relNoDelete_spec
-graph/src/runtime/runtime.rs	get_relationship_attribute	1510	PROVEN	RelAccessors.getRelAttribute: getRelAttribute_eq
-graph/src/runtime/runtime.rs	materialize_node_property	1542	PROVEN	RelAccessors.materializeNodeProp: materializeNodeProp_eq
-graph/src/runtime/runtime.rs	materialize_node_property_values	1556	PROVEN	Accessors.materialize_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property	1604	PROVEN	RelAccessors.materializeRelProp: materializeRelProp_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property_values	1616	PROVEN	RelAccessors.materializeRel: materializeRel_eq
+graph/src/runtime/runtime.rs	get_relationship_attribute	1510	CONDITIONAL	RelAccessors.getRelAttribute: getRelAttribute_eq || CONDITIONAL on hName (Graph by-name relationship read = attr_id then by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	materialize_node_property	1542	CONDITIONAL	RelAccessors.materializeNodeProp: materializeNodeProp_eq || CONDITIONAL on hbg (Graph batch read = per-id by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1556	CONDITIONAL	Accessors.materialize_eq || CONDITIONAL on hbg (Graph batch read = per-id by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1604	CONDITIONAL	RelAccessors.materializeRelProp: materializeRelProp_eq || CONDITIONAL on hName/hbg (Graph by-name and batch reads agree with the by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1616	CONDITIONAL	RelAccessors.materializeRel: materializeRel_eq || CONDITIONAL on hName/hbg (Graph by-name and batch reads agree with the by-index read; graph.rs, not linked)
 graph/src/runtime/runtime.rs	get_node_labels	1660	PROVEN	Accessors.getLabelIds; hasLabelId_iff, hasLabel_iff
 graph/src/runtime/runtime.rs	node_has_label	1690	PROVEN	Accessors.hasLabel_iff
 graph/src/runtime/runtime.rs	label_id	1711	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
 graph/src/runtime/runtime.rs	node_has_label_id	1725	PROVEN	Accessors.hasLabelId_iff
-graph/src/runtime/runtime.rs	get_node_attrs	1739	PROVEN	Accessors.attrs_agree (and reuse_diverges witness)
-graph/src/runtime/runtime.rs	get_relationship_attrs	1757	PROVEN	RelAccessors.getRelAttrs: relAttrs_agree
+graph/src/runtime/runtime.rs	get_node_attrs	1739	CONDITIONAL	Accessors.attrs_agree (and reuse_diverges witness) || CONDITIONAL on hc (Graph all-attrs read agrees with the by-index read; graph.rs, not linked) and hdisj (fails under #2876, reuse_diverges)
+graph/src/runtime/runtime.rs	get_relationship_attrs	1757	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree || CONDITIONAL on hName/hc (Graph by-name and all-attrs reads agree with the by-index read; graph.rs, not linked)
 graph/src/runtime/runtime.rs	get_relationship_endpoints	1777	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
 graph/src/runtime/runtime.rs	get_relationship_type	1790	PROVEN	RelAccessors.relType: relType_spec
 graph/src/runtime/runtime.rs	get_node_indegree	1804	PROVEN	Accessors.degree_exact (endp = dst, types = [])

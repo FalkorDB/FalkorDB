@@ -1,6 +1,6 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/functions/string.rs	register	35	PROVEN	Misc.stringRegistered: stringRegistered_nodup
-graph/src/runtime/functions/string.rs	intern	40	PROVEN	Misc.intern (Pool structure): intern_id
+graph/src/runtime/functions/string.rs	intern	40	PROVEN	Misc.intern (Pool structure): intern_id || Pool.intern_eq discharged: rustPool (StringPool::intern by-content lookup), intern_id_rust
 string.rs	substring	58	PROVEN	substring2_spec, substring3_spec, substring3_agrees_C
 string.rs	split	109	PROVEN	split_agrees_C, splitAux_eq_cSplit
 string.rs	string_to_lower	142	PROVEN	toLower_rejects_valid (BUG D), case_size_preserved_if_simple

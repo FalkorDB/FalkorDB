@@ -255,7 +255,9 @@ theorem gkEq_iff (veq : Z → Z → Bool) (a b : List Z) :
         exact ⟨hall 0 (by simp) (by simp), hl, fun i h1 h2 => hall (i + 1) (by simpa using h1) (by simpa using h2)⟩
 
 /-- The `HashMap` contract: keys equal under `GroupKey::eq` hash equally, given that
-`Value`'s `Hash` agrees with its `Eq` (hypothesis `hc`). -/
+`Value`'s `Hash` agrees with its `Eq` (hypothesis `hc`). **`hc` is false on main**
+(proofs/value_order `hash_not_consistent_with_eq`), so the COVERAGE row is CONDITIONAL;
+proofs/pr2917_review discharges it for PR #2917 (`hc_pr`, `gk_hash_consistent`). -/
 theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → S)
     (hc : ∀ s x y, veq x y = true → hv s x = hv s y) (st : S) (a b : List Z)
     (h : gkEq veq a b = true) : gkHash hv st a = gkHash hv st b := by

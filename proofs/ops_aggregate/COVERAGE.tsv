@@ -1,6 +1,6 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/ops/aggregate.rs	eq	90	PROVEN	gkEq: gkEq_iff
-graph/src/runtime/ops/aggregate.rs	hash	101	PROVEN	gkHash: gkHash_consistent (Hash agrees with Eq given Value Hash/Eq agree)
+graph/src/runtime/ops/aggregate.rs	hash	101	CONDITIONAL	gkHash: gkHash_consistent (Hash agrees with Eq given Value Hash/Eq agree) || CONDITIONAL on hc (Value Hash agrees with Value::eq) is FALSE on main: value_order hash_not_consistent_with_eq, vec_zero_eq_but_hash_differs; PR #2917 discharges it for sort_cmp (pr2917_review gk_hash_consistent)
 graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	167	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
 graph/src/runtime/ops/aggregate.rs	args_for	208	PROVEN	argsFor: argsFor_spec
 graph/src/runtime/ops/aggregate.rs	fold	229	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
@@ -20,14 +20,14 @@ graph/src/runtime/ops/aggregate.rs	hash_u64	1254	PROVEN	hashU64: hashU64_spec (t
 graph/src/runtime/ops/aggregate.rs	hash_u64	1258	PROVEN	hashU64: hashU64_spec (collision bug: hashed_dedup_merges_groups)
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
 graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
-graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey: cmpKey_spec, cmpKey_lawful (compare_value laws as hypothesis, #2891)
+graph/src/runtime/ops/sort.rs	cmp_key	76	CONDITIONAL	SortCmp.cmpKey: cmpKey_spec, cmpKey_lawful (compare_value laws as hypothesis, #2891) || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
 graph/src/runtime/ops/sort.rs	eq	90	PROVEN	SortCmp.okEq: cmpKey_spec
 graph/src/runtime/ops/sort.rs	partial_cmp	99	PROVEN	SortCmp.okPartialCmp: cmpKey_spec
-graph/src/runtime/ops/sort.rs	cmp	107	PROVEN	SortCmp.okCmp: cmpKey_spec, cmpKey_lawful
+graph/src/runtime/ops/sort.rs	cmp	107	CONDITIONAL	SortCmp.okCmp: cmpKey_spec, cmpKey_lawful || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
 graph/src/runtime/ops/sort.rs	compare_row_content	125	PROVEN	SortCmp.rowContent: rcLoop_eq_fold, rowContent_swap, rowContent_refl
 graph/src/runtime/ops/sort.rs	eq	156	PROVEN	SortCmp.heEq: heEq_partial, heapCmp_seq_strict
 graph/src/runtime/ops/sort.rs	partial_cmp	165	PROVEN	SortCmp.hePartialCmp: heEq_partial
-graph/src/runtime/ops/sort.rs	cmp	173	PROVEN	SortCmp.heapCmp: heapCmp_swap, heapCmp_refl, heapCmp_seq_strict, lexCmp_swap
+graph/src/runtime/ops/sort.rs	cmp	173	CONDITIONAL	SortCmp.heapCmp: heapCmp_swap, heapCmp_refl, heapCmp_seq_strict, lexCmp_swap || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
 graph/src/runtime/ops/sort.rs	classify_sort_key	203	PROVEN	SortKey.classifySortKey: classifySortKey_get, classifyPure_lossless
 graph/src/runtime/ops/sort.rs	new	249	PROVEN	SortSt.new: sort_new_spec
 graph/src/runtime/ops/sort.rs	build_full_sort	274	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)

@@ -17,7 +17,10 @@ node space's four fields, likewise for relationships. Every id move goes through
 `O : IdSpaceOps`; its behaviour is the *hypothesis* `IdSpaceContract O`
 (IdContract.lean — proofs/id_space owns the proof; the contract is the literal
 effect of `create`/`release`/`cancel`/`open_batch` on `live`/`recycled` plus the
-two refusals graph.rs relies on). Removed fns (`return_*_id`,
+two refusals graph.rs relies on). **Discharged (2026-10-11):** `IdRust.lean` models
+the five id_space.rs mutators over `IdS` (`rustIdOps`) and proves
+`rustIdOps_contract : IdSpaceContract rustIdOps`; `IdRustUse.lean` instantiates every
+contract-taking theorem at it (`*_rust`). Removed fns (`return_*_id`,
 `open_*_id_space`, `mark_nodes_live`) are gone from the model and COVERAGE.
 
 | module | covers |
@@ -32,7 +35,8 @@ two refusals graph.rs relies on). Removed fns (`return_*_id`,
 | Index       | index glue, `memory_usage_report`, `encode_payload`, `get_plan` cache, `is_synced` |
 | Constraints | constraint.rs + constraint management |
 | Accessors   | projections, newtypes, attribute getters |
-| FirstRel    | `first_node_with_relationships` (#3022): `firstNodeWithRels_spec` |
+| FirstRel    | `first_node_with_relationships` (#3022): `firstNodeWithRels_spec` (CONDITIONAL on `AdjExact`) |
+| IdRust, IdRustUse | the Rust `IdSpace` mutators (`rustIdOps`) satisfy `IdSpaceContract` (`rustIdOps_contract`); `*_rust` instances |
 
 ## Headline theorems
 `growCap_ge_needed/_le_max/_reaches/_chunked`, `growStep_small` (#2911: `grow_cap` is total and
@@ -123,3 +127,5 @@ import GraphQueries.Index
 import GraphQueries.Constraints
 import GraphQueries.Accessors
 import GraphQueries.FirstRel
+import GraphQueries.IdRust
+import GraphQueries.IdRustUse

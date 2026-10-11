@@ -26,7 +26,7 @@ graph/src/runtime/value.rs	is_leap	764	NOT COVERED	calendar helper; outside the 
 graph/src/runtime/value.rs	days_from_civil	771	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	civil_from_days	788	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	write_date_into	803	NOT COVERED	formatting helper; outside the order model
-graph/src/runtime/value.rs	Hash::hash	823	PROVEN	hwords/floatWord (+fx): sane_hash_consistent, hash_not_consistent_with_eq (bug), nan_eq_irreflexive; Str words abstracted; Path/Rel/Point/VecF32/temporal arms not modelled
+graph/src/runtime/value.rs	Hash::hash	823	PROVEN	hwords/floatWord (+fx): sane_hash_consistent, hash_not_consistent_with_eq (bug), nan_eq_irreflexive; Str words abstracted; Path/Rel/Point/VecF32/temporal arms not modelled; extended model: SC.main_hash_not_consistent (sort_cmp-equal NaN/-NaN, vector/point -0.0/NaN hash apart), vec_zero_eq_but_hash_differs
 graph/src/runtime/value.rs	Add::add	910	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Value::add_slow	925	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Sub::sub	1042	NOT COVERED	arithmetic; outside the order model
@@ -55,9 +55,9 @@ graph/src/runtime/value.rs	write_node_json	1716	PROVEN	Json.writeNodeJson: write
 graph/src/runtime/value.rs	Contains::contains	1756	PROVEN	Glue.Contains class / containsImpl: containsImpl_false
 graph/src/runtime/value.rs	Contains::contains	1763	NOT COVERED	IN-list membership; not modelled here
 graph/src/runtime/value.rs	PartialOrd::partial_cmp	1788	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
-graph/src/runtime/value.rs	compare_floats	1801	PROVEN	cmpF: nan_breaks_antisymmetry (bug), floatLane_eq_cmpV
-graph/src/runtime/value.rs	compare_vecf32	1817	NOT COVERED	VecF32 appears only as a Tag
-graph/src/runtime/value.rs	first_difference	1821	NOT COVERED	VecF32 appears only as a Tag
+graph/src/runtime/value.rs	compare_floats	1801	PROVEN	cmpF: nan_breaks_antisymmetry (bug), floatLane_eq_cmpV; extended F (NaN payload, -0.0, fractions, ±inf) via fpcmp
+graph/src/runtime/value.rs	compare_vecf32	1817	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
+graph/src/runtime/value.rs	first_difference	1821	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
 graph/src/runtime/value.rs	ValuesDeduper::with_capacity	1859	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
 graph/src/runtime/value.rs	ValuesDeduper::is_seen	1869	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
 graph/src/runtime/value.rs	ValuesDeduper::has_hash	1880	NOT COVERED	hash-set membership not modelled (only the hash stream is)

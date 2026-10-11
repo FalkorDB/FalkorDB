@@ -22,6 +22,8 @@ project's definitions, copy them and say where they came from.
 - Follow the Rust line by line: same branch structure, same names, and a `file:line` cite for each modelled fn.
 - Model machine integers faithfully where overflow matters: `BitVec 64` or `Int` with Rust's semantics (debug panic vs release wrap, `checked_*`, `wrapping_*`, `as` casts).
 - f64 stays abstract: use a float structure or class with only the laws you need. Never add an `axiom` for it.
+- Where hashing or equality is involved, the float model must represent `-0.0` and NaN sign/payload (and vector/point components, not just a type tag): `to_bits` tells them apart while `==`/`partial_cmp` do not (see value_order `F`).
+- A premise about another Rust fn's behaviour must be discharged (copy that fn's model and prove the premise) or the row is CONDITIONAL with the hypothesis named in the reason.
 - FFI (GraphBLAS, LAGraph, RediSearch, the Redis module API, QuickJS, libc): state the C API spec you rely on as a hypothesis structure (preferred), or as an `axiom` with a `-- AXIOM-OK: <C doc>` comment. Those fns are AXIOMATISED.
 
 ## COVERAGE.tsv
@@ -33,12 +35,14 @@ files the project targets; `#` lines are comments.
 | bucket | meaning |
 | --- | --- |
 | PROVEN | a theorem (no sorry) about a faithful model of that fn; for glue or accessors, a small theorem stating exactly what it returns is enough |
+| CONDITIONAL | a theorem about a faithful model, but resting on an undischarged hypothesis about *other Rust code* (a contract proven elsewhere, an invariant maintained elsewhere, or one known false); the reason names it. Covered, not proven |
 | AXIOMATISED | true FFI only |
 | MODELLED | modelled, but checked only by `#eval`/`decide`, or no theorem about it |
 | NOT COVERED | with a reason; test-only code uses a reason starting `TEST-ONLY:` |
 
-`coverage.sh` keeps each fn's best bucket across projects (PROVEN > AXIOMATISED >
-MODELLED > NOT COVERED), and excludes test code (`#[cfg(test)]`, `*_bench.rs`,
+`coverage.sh` keeps each fn's best bucket across projects (PROVEN > CONDITIONAL >
+AXIOMATISED > MODELLED > NOT COVERED), reports CONDITIONAL as its own column (it counts in
+cov% but not in prov% or the non-FFI PROVEN numerator), and excludes test code (`#[cfg(test)]`, `*_bench.rs`,
 `tests.rs`, `test_aux.rs`) from the denominator. The target is 100% of non-FFI,
 non-test fns PROVEN, with 0 unlisted.
 

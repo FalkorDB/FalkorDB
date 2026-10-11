@@ -140,8 +140,8 @@ graph/src/runtime/pending.rs	remove_node_labels	570	PROVEN	Labels.removeLabels_c
 graph/src/runtime/pending.rs	node_has_label	596	PROVEN	Labels.nodeHas_eq_ref
 graph/src/runtime/pending.rs	update_node_labels	625	PROVEN	Labels.overlay_eq_ref
 graph/src/runtime/pending.rs	deleted_node	643	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	delete_pending_node	659	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example
-graph/src/runtime/pending.rs	remove_pending_relationships_for_node	710	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken
+graph/src/runtime/pending.rs	delete_pending_node	659	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
+graph/src/runtime/pending.rs	remove_pending_relationships_for_node	710	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
 graph/src/runtime/pending.rs	created_relationship	770	PROVEN	PS.createdRel_spec
 graph/src/runtime/pending.rs	set_relationship_attributes	787	PROVEN	PS.setAttrs_spec
 graph/src/runtime/pending.rs	set_relationship_attribute	813	PROVEN	PS.setAttr_spec

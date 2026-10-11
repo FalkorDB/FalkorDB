@@ -26,6 +26,10 @@ New theorems: `removeRelsG_spec`, `foldl_rmStep_taken`, `deletePendingNode_spec`
 `removeRels_spec` now also states `taken` loses the cascaded ids. The graph's
 cancel is the hypothesis `PS.CancelSpec` (= `IdSpace::cancel` inserts into the
 free set; proofs/id_space, and `IdSpaceContract.cancel_ok` in proofs/graph_queries).
+**Discharged (2026-10-11):** `CancelRust.lean` models `cancel_node_id` /
+`cancel_relationship_id` over the two id spaces (`IdSpace::cancel`, id_space.rs:529)
+and proves `cancelN_spec`/`cancelR_spec`; `deletePendingNode_spec_rust`,
+`removeRelsG_spec_rust` are the instantiated theorems.
 
 Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-release`):
 * #2876 / W2-pending-1 — **still present**: `MATCH (n) DELETE n WITH count(*) AS c
@@ -249,4 +253,5 @@ import PendingCommit.PendingDeg
 import PendingCommit.PendingDocs
 import PendingCommit.PendingCommitOp
 import PendingCommit.PendingCancel
+import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext

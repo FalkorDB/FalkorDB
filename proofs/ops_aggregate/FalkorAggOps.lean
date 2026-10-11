@@ -72,6 +72,14 @@ Sort order is abstracted to a total order on Nat, so it is only valid where `com
 builders, classify_*, concat, gather) are not modelled. The scalar aggregate bodies are dead code
 because `batch_agg` is always preferred.
 
+**CONDITIONAL rows (2026-10-11).** `gkHash_consistent` (`GroupKey::hash`) takes "`Value`'s Hash
+agrees with its Eq" as the hypothesis `hc`; on main that is false (proofs/value_order
+`hash_not_consistent_with_eq`, `vec_zero_eq_but_hash_differs`), so the row is CONDITIONAL.
+PR #2917 discharges it for its `sort_cmp`-based `GroupKey::eq` (proofs/pr2917_review `hc_pr`).
+`cmpKey_lawful`/`heapCmp_swap`/`heapCmp_refl` take `Lawful compare_value`, false at e8f8a3017
+(value_order `sortCmp_not_antisymmetric`); #2912's `sort_cmp` satisfies it (value_order
+`SC.scMain_total`), so those sort.rs rows become PROVEN on the re-target to #2912.
+
 ## Wave-5 additions
 | Lean | Rust |
 |---|---|

@@ -11,9 +11,18 @@
 # COVERAGE_RUST_ROOT at a worktree of origin/main (`git worktree add --detach
 # <dir> origin/main`).
 #
-# Buckets: PROVEN, AXIOMATISED, MODELLED, NOT COVERED. A function listed by
-# several projects counts once, in its best bucket (PROVEN > AXIOMATISED >
-# MODELLED > NOT COVERED). Rust functions no TSV mentions are UNLISTED.
+# Buckets: PROVEN, CONDITIONAL, AXIOMATISED, MODELLED, NOT COVERED. A function
+# listed by several projects counts once, in its best bucket (PROVEN >
+# CONDITIONAL > AXIOMATISED > MODELLED > NOT COVERED). Rust functions no TSV
+# mentions are UNLISTED.
+#
+# CONDITIONAL: the theorem holds only under an undischarged hypothesis about
+# *other Rust code* (a contract of a fn modelled/proven in another project, an
+# invariant maintained elsewhere, or one known to be false); the reason column
+# names the hypothesis. It counts as covered (cov%) but NOT as proven: prov%
+# and the "non-FFI PROVEN" numerator count PROVEN only. FFI hypothesis
+# structures (GraphBLAS/RediSearch/Redis/QuickJS C APIs) stay AXIOMATISED-style
+# and do not make a row CONDITIONAL.
 #
 # Test code (wave 5 change): a function is TEST if it is
 #   - inside a `#[cfg(test)]` module (inline, or an out-of-line `mod x;` file),
@@ -47,12 +56,12 @@ proofs, repo, *flags = sys.argv[1:]
 ALL_FILES = '--all-files' in flags
 UNMATCHED = '--unmatched' in flags
 FNS_FILE = flags[flags.index('--fns') + 1] if '--fns' in flags else None
-BUCKETS = ['PROVEN', 'AXIOMATISED', 'MODELLED', 'NOT COVERED']
+BUCKETS = ['PROVEN', 'CONDITIONAL', 'AXIOMATISED', 'MODELLED', 'NOT COVERED']
 RANK = {b: i for i, b in enumerate(BUCKETS)}
 TEST = 'TEST-ONLY'
 ALIASES = {'AXIOMATIZED': 'AXIOMATISED', 'MODELED': 'MODELLED', 'NOT_COVERED': 'NOT COVERED',
            'NOTCOVERED': 'NOT COVERED', 'UNCOVERED': 'NOT COVERED', 'TEST_ONLY': TEST,
-           'TESTONLY': TEST}
+           'TESTONLY': TEST, 'COND': 'CONDITIONAL'}
 FN_RE = re.compile(r'\bfn\s+([A-Za-z_][A-Za-z0-9_]*)')
 MOD_BLOCK = re.compile(r'(pub(\([^)]*\))?\s+)?mod\s+\w+\s*\{')
 MOD_DECL = re.compile(r'(pub(\([^)]*\))?\s+)?mod\s+(\w+)\s*;')
@@ -213,15 +222,15 @@ for rel in rust:
         elif key in best:
             per[rel][best[key]] += 1
             per[rel]['_listed'] += 1
-hdr = (f"{'file':58} {'fns':>5} {'PROV':>5} {'AXIOM':>5} {'MODEL':>5} {'NOTCV':>5} {'UNLST':>5} "
+hdr = (f"{'file':58} {'fns':>5} {'PROV':>5} {'COND':>5} {'AXIOM':>5} {'MODEL':>5} {'NOTCV':>5} {'UNLST':>5} "
        f"{'cov%':>6} {'prov%':>6} {'TEST':>5}")
 print(f'Rust root: {repo}')
 print(hdr); print('-' * len(hdr))
 def row(label, n, c):
     listed = sum(c[b] for b in BUCKETS)
-    cov = c['PROVEN'] + c['AXIOMATISED'] + c['MODELLED']
+    cov = c['PROVEN'] + c['CONDITIONAL'] + c['AXIOMATISED'] + c['MODELLED']
     pct = lambda x: f'{100.0 * x / n:5.1f}%' if n else '    -'
-    return (f"{label[:58]:58} {n:5d} {c['PROVEN']:5d} {c['AXIOMATISED']:5d} {c['MODELLED']:5d} "
+    return (f"{label[:58]:58} {n:5d} {c['PROVEN']:5d} {c['CONDITIONAL']:5d} {c['AXIOMATISED']:5d} {c['MODELLED']:5d} "
             f"{c['NOT COVERED']:5d} {n - listed:5d} {pct(cov):>6} {pct(c['PROVEN']):>6} {c['TEST']:5d}")
 tot, tc = defaultdict(int), defaultdict(int)
 tot_n = tf = touched = 0
@@ -248,6 +257,9 @@ print(f'all fns {all_fns} = non-test {tot_n} + TEST {tot["TEST"]} (excluded from
 print(f'non-test PROVEN {tot["PROVEN"]}/{tot_n} = {100.0 * tot["PROVEN"] / max(tot_n, 1):.1f}%; '
       f'non-FFI non-test PROVEN {tot["PROVEN"]}/{nonffi} = {100.0 * tot["PROVEN"] / max(nonffi, 1):.1f}% '
       f'(AXIOMATISED {tot["AXIOMATISED"]} dropped)')
+print(f'non-FFI non-test CONDITIONAL {tot["CONDITIONAL"]}/{nonffi} (covered, not proven: rests on an '
+      f'undischarged hypothesis about other Rust code); PROVEN+CONDITIONAL '
+      f'{tot["PROVEN"] + tot["CONDITIONAL"]}/{nonffi}')
 print(f'{len(tsvs)} COVERAGE.tsv files, {nrows} rows, {len(best)} distinct fns matched, '
       f'{len(unmatched)} rows unmatched, {len(bad_bucket)} bad buckets')
 if missing:

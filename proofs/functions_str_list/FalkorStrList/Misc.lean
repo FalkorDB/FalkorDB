@@ -95,6 +95,37 @@ theorem intern_id (P : Pool) (v : SV) (h : v = .null ∨ ∃ s, v = .str s) : in
   · rfl
   · simp [intern, P.intern_eq]
 
+/-! ### Discharging `Pool.intern_eq` for the Rust pool
+
+`StringPool::intern` (string_pool.rs:28; modelled in proofs/runtime_ds
+`StringPoolModel.intern`): `m.get(&*a)` looks the entry up *by content* and
+returns a clone of it; a miss inserts and returns `Arc::new((*a).clone())`.
+The pool is its list of `(content, pointer)` entries; `rustPool` is the content
+of the `Arc` handed back, so `intern_eq` holds by construction of the lookup. -/
+
+/-- The `(content, pointer)` entry `intern` hands back. -/
+def poolInternEntry (es : List (List Char × Nat)) (next : Nat) (s : List Char) : List Char × Nat :=
+  match es.find? (fun e => e.1 == s) with
+  | some e => e            -- `existing.clone()`
+  | none => (s, next)      -- `Arc::new((*a).clone())`
+
+theorem poolInternEntry_content (es : List (List Char × Nat)) (next : Nat) (s : List Char) :
+    (poolInternEntry es next s).1 = s := by
+  unfold poolInternEntry
+  split
+  · rename_i e he
+    have := List.find?_some he
+    simpa using this
+  · rfl
+
+/-- The Rust pool, in any state: `Pool.intern_eq` is discharged. -/
+def rustPool (es : List (List Char × Nat)) (next : Nat) : Pool :=
+  ⟨fun s => (poolInternEntry es next s).1, poolInternEntry_content es next⟩
+
+theorem intern_id_rust (es : List (List Char × Nat)) (next : Nat) (v : SV)
+    (h : v = .null ∨ ∃ s, v = .str s) : intern (rustPool es next) [v] = .ok v :=
+  intern_id _ v h
+
 /-- `str::replace` (string.rs:197) for a non-empty pattern: left-to-right, non-overlapping. -/
 def replaceNE (pat rep : List Char) (hp : pat ≠ []) : List Char → List Char
   | [] => []

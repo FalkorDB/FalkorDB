@@ -34,8 +34,8 @@ graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	compareValues: vec_cmp
 graph/src/runtime/vectorized.rs	compare_value_column_3vl	279	MODELLED	column loop over compareValues; loop itself not modelled
 graph/src/runtime/eval.rs	classify_join_keys	86	PROVEN	EvalMore.classifyJoinKeys (classify_numeric FloatLane::None): classifyJoinKeys_lossless
 graph/src/runtime/eval.rs	RangeIter::next	111	PROVEN	rangeIterRel/rangeIterDbg: rangeIter_ok_up, rangeIter_wraps, rangeIter_panics, rangeIter_panics_down (bug)
-graph/src/runtime/eval.rs	NeighborIter::new	153	PROVEN	BFS.NI.new (matrix rows abstract, G structure laws): new_directed_typed, new_directed_untyped
-graph/src/runtime/eval.rs	NeighborIter::new_reversed	193	PROVEN	BFS.NI.newReversed: newReversed_typed (exactly the in-neighbours)
+graph/src/runtime/eval.rs	NeighborIter::new	153	CONDITIONAL	BFS.NI.new (matrix rows abstract, G structure laws): new_directed_typed, new_directed_untyped || CONDITIONAL on G laws adj_union/transpose (adjacency = union of relation matrices, matrix_t = transpose; graph/tensor invariants, not linked)
+graph/src/runtime/eval.rs	NeighborIter::new_reversed	193	CONDITIONAL	BFS.NI.newReversed: newReversed_typed (exactly the in-neighbours) || CONDITIONAL on G laws adj_union/transpose (adjacency = union of relation matrices, matrix_t = transpose; graph/tensor invariants, not linked)
 graph/src/runtime/eval.rs	NeighborIter::neighbors	221	PROVEN	BFS.NI.neighbors: neighbors_mem
 graph/src/runtime/eval.rs	ExprEval::from_runtime	266	PROVEN	Eval.Ev.fromRuntime: rt_cases
 graph/src/runtime/eval.rs	ExprEval::constant	273	PROVEN	Eval.Ev.constant: rt_cases, constant_param, constant_prop_node
@@ -46,8 +46,8 @@ graph/src/runtime/eval.rs	ExprEval::eval_operand	316	PROVEN	Eval.evalOperand: ev
 graph/src/runtime/eval.rs	ExprEval::eval_node	330	PROVEN	Eval.evalNode (all fast-path arms; compound = parameter): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq; arithmetic arms vArith/evalCmp (arith_agrees, vec_cmp_*)
 graph/src/runtime/eval.rs	ExprEval::eval_case	485	PROVEN	scalarCase/caseMatchScalar: case_agrees, case_match_agrees
 graph/src/runtime/eval.rs	ExprEval::eval_compound	525	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit), Xor (xor_kleene), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold: pow_drops_error bug), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled
-graph/src/runtime/eval.rs	ExprEval::eval_batch	1102	PROVEN	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation)
-graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1118	PROVEN	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1102	CONDITIONAL	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation) || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1118	CONDITIONAL	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
 graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1148	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
 graph/src/runtime/eval.rs	ExprEval::eval_iter_expr	1178	PROVEN	EvalMore.evalIterExpr: evalIter_cases, evalIter_list (RangeIter: rangeIter_ok_up)
 graph/src/runtime/eval.rs	ExprEval::eval_compiled_regex	1254	PROVEN	EvalMore.evalCompiledRegex (Regex structure): compiledRegex_spec

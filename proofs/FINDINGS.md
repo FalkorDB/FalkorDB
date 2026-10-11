@@ -1,15 +1,19 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-08): proofs cite `origin/main` @ e8f8a3017. There is one
-Lake project per area under `proofs/<area>/` (35 projects).
+Current state (2026-10-11): proofs cite `origin/main` @ e8f8a3017 (value_order's
+`SortCmp` module and proofs/pr2917_review also model #2912's `sort_cmp` from b033aecc6).
+There is one Lake project per area under `proofs/<area>/` (36 projects, including
+`pr2845_review` and `pr2917_review`).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
 Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
-`bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files:
-2478/2478 non-FFI, non-test functions are PROVEN (1295 FFI functions are
-AXIOMATISED). See `.claude/skills/proofs/SKILL.md` for how to work with them.
+`bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
+2478 non-FFI, non-test functions, 2452 are PROVEN and 26 CONDITIONAL (proven only
+under an undischarged hypothesis about other Rust code, named in the row); 1295 FFI
+functions are AXIOMATISED; 0 unlisted. See `.claude/skills/proofs/SKILL.md` for how
+to work with them.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 compared against the C module where relevant. Each entry below gives the repro
@@ -26,6 +30,14 @@ and "Re-check" notes record which bugs main has since fixed.
 | 1 | value_order, expr_semantics, lexer, id_space, effects_codec, id_list, cow_btree, versioned_matrix, endpoint_index, runtime_ds | 745 | 29 |
 | 2 | binder, optimizer_scan, optimizer_rewrites, ops_aggregate, ops_apply, ops_traverse, pending_commit, functions_str_list, functions_temporal, effects_emit_apply, index_layer, aeneas_pilot | ~750 | ~65 |
 | 3 | runtime_core, value_math, graph_persist, redis_layer, graphblas_wrappers, planner_build, algo_udf, search_concurrency, columnar, parser_grammar | ~870 | ~60 |
+
+Coverage after **wave 9** (2026-10-11, honest buckets; Rust read from e8f8a3017): of 3773 non-test fns, **2452 PROVEN + 26 CONDITIONAL + 1295 AXIOMATISED (FFI), 0 unlisted**, i.e. 98.95% of non-FFI functions proven outright (it read 2478/2478 before the CONDITIONAL bucket existed).
+
+**Wave 9 (2026-10-11): why the proofs missed the #2917 hash bug, and what changed.** CodeRabbit found that PR #2917 (`GroupKey::eq` → `Value::sort_cmp`) broke `HashMap<GroupKey,_>`'s contract at 203f2022c: VecF32/Point NaN components with different payloads, and `-0.0`/`0.0` components, were `sort_cmp`-equal but hashed apart (fixed in 14e341cf4). The proofs missed it for three reasons: (1) value_order's float model `F = nan | num Int` had no signed zero and one NaN, and `V` had VecF32/Point only as type tags; (2) ops_aggregate's `gkHash_consistent` took "Value's Hash agrees with Eq" as an undischarged hypothesis `hc` — which value_order itself refutes on main (`hash_not_consistent_with_eq`) — yet coverage counted `GroupKey::hash` as PROVEN; (3) #2917 was never modelled. Changes:
+  - **CONDITIONAL bucket** (`coverage.sh`, `COVERAGE.tsv`): a theorem resting on an undischarged hypothesis about other Rust code is covered but not proven. An audit of the PROVEN rows' theorems (hypothesis structures and `∀`-premises about Rust fns; FFI specs excluded) found 46 such rows. **Discharged (19 rows, stay PROVEN):** graph_queries `IdSpaceContract` (16 graph.rs rows; `IdRust.rustIdOps_contract` models the id_space.rs mutators and proves the contract, `IdRustUse.*_rust` instantiate), pending_commit `CancelSpec` (`delete_pending_node`, `remove_pending_relationships_for_node`; `CancelRust.cancelN_spec`/`cancelR_spec`), functions_str_list `Pool.intern_eq` (`intern`; `rustPool`). **Re-bucketed CONDITIONAL (27 rows, 26 fns):** ops_aggregate `GroupKey::hash` (`hc`, false on main) and sort.rs `cmp_key`/`cmp`/`cmp` (`Lawful compare_value`, false at e8f8a3017; #2912's `sort_cmp` satisfies it); graph_queries `first_node_with_relationships` (`AdjExact`); versioned_matrix `count_in_rows` (`LayerCount`); effects_codec `Payload::records`, `Records::next` (`IdCodec`); expr_semantics `NeighborIter::new`/`new_reversed` (graph `G` laws), `eval_batch`, `try_eval_batch_property` (`BatchLaws`); optimizer_rewrites `is_constant_true`, `eliminate_true_filters` (`hconst`, false for `^`, #2902); runtime_core `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_relationship_attribute`, `materialize_node_property`, `materialize_node_property_values`, `materialize_relationship_property(_values)`, `get_node_attrs`, `get_relationship_attrs` (Graph read-agreement `hc`/`hName`/`hbg`; `hdisj` fails under #2876); ops_apply `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next` (`Separable` sub-plan, false for ValueHashJoin).
+  - **Extended float/value model** (value_order): `F` has NaN sign/payload, `-0.0`, fractions, ±inf; `V` has `vecf32`/`point` contents with `compare_vecf32`/the Point arm and their hash arms. New `SortCmp.lean` models #2912's `sort_cmp` and proves it a total preorder on every well-formed value (`SC.scMain_total`); on main `sort_cmp`-equal ⇒ hash-equal is **false** (`SC.main_hash_not_consistent`: Float `NaN`/`-NaN`, vector/point NaN payloads and signed zeros), and main's `Value::eq` also merges vector/point signed zeros that hash apart (`vec_zero_eq_but_hash_differs`).
+  - **proofs/pr2917_review** (14e341cf4): `scPR_total`, `hashPR_consistent` (sort_cmp-equal ⇒ hash-equal for all values, nested lists/maps/vectors/points), `hc_pr`/`gk_hash_consistent` (ops_aggregate's `hc` discharged for the PR), `float_signed_zero_one_key`, `float_nans_one_key`, `vec_nans_one_key`, `point_nans_one_key`, `signed_zeros_apart`; history `pre14e341_vec_nan_hash_differs`, `pre14e341_vec_zero_eq_but_hash_differs`. Live (C master, main, PR builds): the PR matches C on Float/vector/point grouping.
+  - **W9-hash-1 (new, confirmed live on main):** DISTINCT keeps `NaN` and `-NaN` apart. `UNWIND [0.0/0.0, -(0.0/0.0)] AS x RETURN count(DISTINCT x)` → Rust 2, C 1; same for `RETURN DISTINCT x`, `collect(DISTINCT x)`, and `[NaN]`, `{a:NaN}`, `vecf32([NaN])` keys. Cause: the Float hash arm writes `x.to_bits()` for NaN (`value.rs:836-847`) and DISTINCT dedups by hash only. Lean `SC.main_float_nan_hash_differs`. PR #2917's Float NaN word (203f2022c) fixes it (PR build: 1). Point NaNs are unreachable in Rust: `point()` refuses a NaN coordinate (C accepts it).
 
 Coverage after **wave 5** (2026-10-04; `lean_ci.sh`: 34 projects, 0 failing; Rust read from origin/main @ 3fec7d7c9). Of 3722 non-test fns in `graph/src` + `src`: **2427 PROVEN + 1295 AXIOMATISED (FFI), 0 MODELLED, 0 NOT COVERED, 0 unlisted**, i.e. 100% of non-FFI functions proven. 613 test/bench fns are excluded and counted separately.
 
@@ -290,6 +302,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-11 (nothing merged): honest-coverage pass after the #2917 review miss — CONDITIONAL bucket, extended float/vector/point model, proofs/pr2917_review, new bug W9-hash-1. See Status → "Wave 9". 36 projects green; 2452 PROVEN + 26 CONDITIONAL of 2478 non-FFI fns.
 - 2026-10-08 on main (now e8f8a3017): #2907 (closes #2906), #2908 (closes #2901), #2920 (closes #2919), #3022 (closes #2924, #2978), #3081 (closes #2963 in part, #2100), plus #2829 (CREATE named paths), #3125 (compact date/time strings reject non-digits), #3127, #3132 (startNode/endNode accept null), #2489 (tests), #3179/#3182 (CI/deps). Proofs re-targeted: 35 projects green, 2478/2478 non-FFI, non-test fns PROVEN, 0 unlisted, 0 unmatched.
   - Fixed, with the counterexamples turned into correctness theorems (`pre<PR>_` history kept):
     - #2906 `sign(float)` returns an Integer (`sign_float_is_int`);

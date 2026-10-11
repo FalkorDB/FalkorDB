@@ -1,0 +1,13 @@
+# PR #2917 review project (fix/2913-compare-mismatches @ 14e341cf4). The PR is not merged, so every
+# row is commented out (coverage.sh measures origin/main). On merge: uncomment, re-check the line
+# numbers against main, and move ops_aggregate's aggregate.rs `hash` row from CONDITIONAL to PROVEN.
+#file	function	line	bucket	lean_name_or_reason
+#graph/src/runtime/value.rs	Hash::hash	823	PROVEN	hwordsPR (floatWordPR, f32HashBits): hashPR_consistent, float_nans_one_key, vec_nans_one_key
+#graph/src/runtime/value.rs	Value::sort_cmp	1529	PROVEN	sc scF32: scPR_total, signed_zeros_apart
+#graph/src/runtime/value.rs	Value::sort_cmp_map	1566	PROVEN	sc (map arm): scPR_total, hashPR_consistent
+#graph/src/runtime/value.rs	sort_cmp_f64	1891	PROVEN	scF64: scF64_key, scF64_lw
+#graph/src/runtime/value.rs	sort_cmp_f32	1905	PROVEN	scF32: scF32_key, scF32_lw, signed_zeros_apart
+#graph/src/runtime/value.rs	f32_hash_bits	1919	PROVEN	f32HashBits: f32HashBits_of_eq, vec_nans_one_key
+#graph/src/runtime/value.rs	sort_cmp_int_float	1931	PROVEN	scIntFloat: scIntFloat_key (no rounding)
+#graph/src/runtime/ops/aggregate.rs	eq	94	PROVEN	gkEqR = gkEq veqPR: gkEq_spec
+#graph/src/runtime/ops/aggregate.rs	hash	110	PROVEN	gkHashR: gk_hash_consistent (hc discharged: hc_pr)
