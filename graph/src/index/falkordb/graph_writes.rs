@@ -26,6 +26,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use atomic_refcell::AtomicRefCell;
+
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
@@ -34,6 +36,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
+use super::encode::encode_numeric;
 use super::pending_writes::IndexChanges;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
@@ -394,13 +397,18 @@ pub fn edges_deleted(
 
 // ---- Index DDL ----
 
-/// CREATE INDEX: build each attribute's column from the live graph, so the index serves reads as
-/// soon as CREATE INDEX returns. Only a Range index has native columns; any other type does
-/// nothing.
+/// CREATE INDEX: mark each attribute's column `Building` and return. Only a Range index has
+/// native columns; any other type does nothing.
 ///
-/// Built here on the write thread, with the graph borrowed. It is never built through the
-/// RediSearch populate, which reaches the graph through the `Indexer`'s back-pointer. This index
-/// is part of the graph version, and keeping that reference out is the point.
+/// Nothing is scanned here. The pre-existing entities (BASE) are read from a committed snapshot
+/// off the write thread by the module's build controller, which installs them through
+/// [`install_base`] and flips the column `Ready`. Until then reads on the column fall back to a
+/// scan, and live writes maintain it as usual: the column's own tree is the DELTA, and removes
+/// also land in its TOMB. The RDB-load path ([`populate`]) still builds synchronously.
+///
+/// The build never goes through the RediSearch populate, which reaches the graph through the
+/// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
+/// out is the point.
 pub fn create_index(
     g: &mut Graph,
     index_type: &IndexType,
@@ -410,9 +418,124 @@ pub fn create_index(
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
-            build_column(g, entity, label, attr);
+            g.falkordb_index.create_building(entity, label, attr);
         }
     }
+}
+
+// ---- Background (online) build ----
+//
+// The seam the module's build controller drives. A job reads BASE from a committed snapshot with
+// `base_encoded`, off the write thread, then installs it in one commit with `install_base`.
+
+/// Every column currently `Building`, as `(entity, label, attr, epoch)`: the controller's work
+/// list, read from a committed snapshot.
+#[must_use]
+pub fn building_columns(g: &Graph) -> Vec<(EntityType, Arc<String>, Arc<String>, u64)> {
+    g.falkordb_index.building_columns()
+}
+
+/// BASE for one building column, read from `g` in one pass, encoded, sorted and unique: what
+/// the install needs. For a caller that already keeps `g` from being written while it reads; the
+/// background build reads a published version and uses [`base_encoded_in_chunks`] instead.
+///
+/// `None` if the column no longer exists (dropped mid-build).
+#[must_use]
+pub fn base_encoded(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Option<Vec<(u64, u64)>> {
+    let column = g.falkordb_index.column(entity, label, attr)?;
+    Some(encoded_entries(g, entity, label, attr, |value| {
+        column.encode_value(value)
+    }))
+}
+
+/// Node-id rows a background BASE scan reads per chunk, i.e. per hold of the graph's read lock.
+/// A writer waiting for the lock waits at most one chunk. The size is a guess, not a
+/// measurement.
+pub const BASE_SCAN_CHUNK_ROWS: u64 = 1 << 16;
+
+/// [`base_encoded`] for a **published** version, read off the write thread: everything the
+/// install needs, computed so the install pays neither the scan, the encode nor the sort while
+/// it holds the write lock and the GIL.
+///
+/// `snapshot` is pinned for the whole scan, so every chunk reads the same version. It is read
+/// in chunks of `chunk_rows` node-id rows, and each chunk borrows it only while the guard
+/// `hold()` returns is alive. The caller passes the graph's read lock: a published version is
+/// still borrowed mutably by the write path in one place (`Pending::resync_published_indexes`,
+/// which counts on the write lock to keep readers out), and `AtomicRefCell` reports a borrow
+/// that collides with it by panicking. Taking the lock per chunk keeps the scan from colliding,
+/// without holding writers off for the whole scan.
+///
+/// `None` if the column does not exist in `snapshot` (dropped before the job started).
+#[must_use]
+pub fn base_encoded_in_chunks<G>(
+    snapshot: &AtomicRefCell<Graph>,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    chunk_rows: u64,
+    mut hold: impl FnMut() -> G,
+) -> Option<Vec<(u64, u64)>> {
+    let mut pairs = Vec::new();
+    let mut lo = 0u64;
+    loop {
+        // Declared before the borrow, so the borrow ends before the lock is released.
+        let _guard = hold();
+        let g = snapshot.borrow();
+        let column = g.falkordb_index.column(entity, label, attr)?;
+        // Every node id, and so every edge's source row, is below the id space's bound.
+        let bound = g.node_id_space().bound();
+        if lo >= bound {
+            break;
+        }
+        let hi = lo.saturating_add(chunk_rows).min(bound) - 1;
+        scan_rows(
+            &g,
+            entity,
+            label,
+            attr,
+            (lo, hi),
+            |value| column.encode_value(value),
+            &mut pairs,
+        );
+        lo = hi + 1;
+    }
+    pairs.sort_unstable();
+    pairs.dedup();
+    Some(pairs)
+}
+
+/// Install a background-built BASE and flip the column `Ready`, in one commit. Returns whether
+/// it installed: `false` means the column is gone, already `Ready`, or on a different epoch
+/// (dropped and re-created since the job started), and the caller should not commit.
+///
+/// The free-id filter is a cheap backstop, not the real defence: a freed id is no longer free
+/// once it is reused, so an id recycled during the build passes it. TOMB is what makes the stale
+/// BASE safe; this only drops the easy cases before the tree build.
+pub fn install_base(
+    g: &mut Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    epoch: u64,
+    base: Vec<(u64, u64)>,
+) -> bool {
+    let survivors: Vec<(u64, u64)> = match entity {
+        EntityType::Node => base
+            .into_iter()
+            .filter(|(_, id)| !g.is_node_deleted(NodeId::from(*id)))
+            .collect(),
+        EntityType::Relationship => base
+            .into_iter()
+            .filter(|(_, id)| !g.is_relationship_deleted(RelationshipId::from(*id)))
+            .collect(),
+    };
+    g.falkordb_index
+        .install_base(entity, label, attr, epoch, survivors)
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of
@@ -462,21 +585,18 @@ fn remove_node_under_label(
 
 /// Build the column for `(entity, label, attr)` from the live graph, replacing any existing one.
 ///
-/// One attribute at a time: the `(value, id)` pairs live only until their column is built.
-/// Collecting every attribute first would hold one `Value` per entity per attribute at once,
-/// multiplying the peak for no benefit.
+/// One attribute at a time: a column's tuples live only until it is built. Collecting every
+/// attribute first would hold one tuple per entity per attribute at once, multiplying the peak
+/// for no benefit.
 fn build_column(
     g: &mut Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
 ) {
-    let pairs = match entity {
-        EntityType::Node => collect_node_entries(g, label, attr),
-        EntityType::Relationship => collect_edge_entries(g, label, attr),
-    };
+    let pairs = encoded_entries(g, entity, label, attr, encode_numeric);
     g.falkordb_index
-        .build_numeric(entity, label, attr, pairs.iter().map(|(v, id)| (v, *id)));
+        .build_numeric_sorted(entity, label, attr, pairs);
 }
 
 /// The node's label ids, reusing `out`'s allocation across nodes.
@@ -507,46 +627,69 @@ fn edge_type(
     &g.get_types()[g.get_relationship_type_id(RelationshipId::from(id)).0]
 }
 
-/// The `(value, node_id)` entries of column `(label, attr)`: every live `label` node that has
-/// `attr`.
-fn collect_node_entries(
+/// The tuples of column `(entity, label, attr)` as the live graph holds them, encoded with
+/// `encode`, sorted and unique: one `(key, id)` for every live `label` node (or `label`-typed
+/// edge) whose `attr` value the column indexes.
+///
+/// Each value is encoded as it is read and dropped straight away, so the scan never holds the
+/// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
+/// Range index) costs nothing past the read.
+fn encoded_entries(
     g: &Graph,
+    entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
-) -> Vec<(Value, u64)> {
+    encode: impl Fn(&Value) -> Option<u64>,
+) -> Vec<(u64, u64)> {
     let mut pairs = Vec::new();
-    if let (Some(lm), Some(idx)) = (g.get_label_matrix(label), g.get_node_attribute_id(attr)) {
-        let idx = idx as u16;
-        for (n, _) in lm.iter(0, u64::MAX) {
-            if let Some(value) = g.get_node_attribute_by_idx(NodeId::from(n), idx) {
-                pairs.push((value, n));
-            }
-        }
-    }
+    scan_rows(g, entity, label, attr, (0, u64::MAX), encode, &mut pairs);
+    pairs.sort_unstable();
+    pairs.dedup();
     pairs
 }
 
-/// The `(value, edge_id)` entries of column `(type_name, attr)`: every live edge of that type
-/// that has `attr`.
-fn collect_edge_entries(
+/// Append to `out` the encoded tuples of column `(entity, label, attr)` whose node-id row lies
+/// in `rows` (inclusive): a node's own id, or an edge's source node id. Unsorted.
+fn scan_rows(
     g: &Graph,
-    type_name: &Arc<String>,
+    entity: EntityType,
+    label: &Arc<String>,
     attr: &Arc<String>,
-) -> Vec<(Value, u64)> {
-    let Some(idx) = g.get_relationship_attribute_id(attr) else {
-        return Vec::new();
-    };
-    let idx = idx as u16;
-    let edge_ids: Vec<u64> = g
-        .get_relationship_matrix(type_name)
-        .map_or_else(Vec::new, |t| {
-            t.iter(0, u64::MAX, false).map(|(_, _, eid)| eid).collect()
-        });
-    edge_ids
-        .into_iter()
-        .filter_map(|eid| {
-            g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
-                .map(|value| (value, eid))
-        })
-        .collect()
+    (lo, hi): (u64, u64),
+    encode: impl Fn(&Value) -> Option<u64>,
+    out: &mut Vec<(u64, u64)>,
+) {
+    match entity {
+        EntityType::Node => {
+            if let (Some(lm), Some(idx)) =
+                (g.get_label_matrix(label), g.get_node_attribute_id(attr))
+            {
+                let idx = idx as u16;
+                for (n, _) in lm.iter(lo, hi) {
+                    if let Some(key) = g
+                        .get_node_attribute_by_idx(NodeId::from(n), idx)
+                        .and_then(|value| encode(&value))
+                    {
+                        out.push((key, n));
+                    }
+                }
+            }
+        }
+        EntityType::Relationship => {
+            if let (Some(t), Some(idx)) = (
+                g.get_relationship_matrix(label),
+                g.get_relationship_attribute_id(attr),
+            ) {
+                let idx = idx as u16;
+                for (_, _, eid) in t.iter(lo, hi, false) {
+                    if let Some(key) = g
+                        .get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
+                        .and_then(|value| encode(&value))
+                    {
+                        out.push((key, eid));
+                    }
+                }
+            }
+        }
+    }
 }
