@@ -201,6 +201,93 @@ jobs:
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
       # create_manifest defaults true (release is multi-arch).
 
+  # Trivy scan of the RC images: master's `security-scan` job (build.yml),
+  # ported. Fails on a HIGH or CRITICAL vulnerability that has a fixed version;
+  # unfixed ones go in the JSON report but do not gate, since nothing in this
+  # repo can clear them.
+  #
+  # Image vehicle only, like everything else that needs the RC image. Every
+  # merge still passes through it: a fork pull request skips it, but its
+  # merge-queue entry builds the image and scans it. And it scans what ships:
+  # `:edge` (rust-push.yml) and releases (release-image.yml) retag the queue's
+  # rc-mg-<sha> image rather than rebuilding it.
+  #
+  # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
+  # both repos. The per-arch tags are single-platform manifests, so one amd64
+  # runner fetches the arm64 image from the registry with no emulation.
+  #
+  # What Trivy sees here is the Debian packages and the browser's node_modules.
+  # It cannot see the Rust crates linked into libfalkordb.so or the
+  # redis-server built from source: neither carries package metadata.
+  security-scan:
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64v8]
+    env:
+      IMAGE: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Action and Trivy pins match master's security-scan job.
+      - name: Scan (full report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: json
+          output: trivy-report.json
+          exit-code: '0'
+          version: 'v0.69.2'
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trivy-report-${{ matrix.arch }}
+          path: trivy-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Fail on fixable HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+          version: 'v0.69.2'
+
+      # master posts these as a PR comment. That needs `pull-requests: write`
+      # and has no pull request to land on in the merge queue; the run summary
+      # needs neither.
+      - name: Summarise blocking findings
+        if: ${{ failure() && hashFiles('trivy-report.json') != '' }}
+        run: |
+          {
+            echo "### Trivy: fixable HIGH/CRITICAL in \`$IMAGE\`"
+            echo
+            echo "| Severity | ID | Package | Installed | Fixed | Target |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]?
+                   | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (.FixedVersion // "") != "")
+                   | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
+              trivy-report.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).
   build-rc-asan-image:
