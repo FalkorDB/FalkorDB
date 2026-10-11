@@ -59,10 +59,11 @@ static bool _binarySearchLeftmost
 	if(left == array_len) return false;
 
 	x = Record_Get(array[*idx], join_key_idx);
-	// return false if the value wasn't found or evaluated to NULL
+	// return false if the value wasn't found or isn't equal under '='
+	// a null, NaN or disjoint comparison is never a match
 	int disjointOrNull = 0;
 	return (SIValue_Compare(x, v, &disjointOrNull) == 0 &&
-			disjointOrNull != COMPARED_NULL);
+			disjointOrNull == 0);
 }
 
 // performs binary search, returns the rightmost index of a match

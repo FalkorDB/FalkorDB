@@ -379,19 +379,48 @@ int Map_Compare
 	}
 
 	// element-wise value comparison
+	//
+	// the returned order is the first non-zero value comparison
+	// it must not depend on whether the caller asked for 'disjointOrNull':
+	// sort and binary search pass NULL while equality checks pass a pointer
+	// and both must agree on the order of the same two maps
+	//
+	// 'disjointOrNull' summarizes all value comparisons:
+	// a pair of disjoint types makes the maps disjoint,
+	// otherwise a pair of unequal comparable values makes them unequal,
+	// otherwise a NaN makes them unequal,
+	// otherwise a null makes the comparison null
+	int  first        = 0;      // first non-zero value comparison
+	bool has_unequal  = false;  // a pair of comparable values differ
+	bool has_disjoint = false;  // a pair of values are of disjoint types
+	bool has_nan      = false;  // a pair of values involve NaN
+	bool has_null     = false;  // a pair of values involve null
+
 	for(uint i = 0; i < key_count; i++) {
 		// key lookup succeeded; compare values
-		order = SIValue_Compare(A[i].val, B[i].val, disjointOrNull);
-		if(disjointOrNull && (*disjointOrNull == COMPARED_NULL ||
-							  *disjointOrNull == DISJOINT)) {
-			return 0;
-		}
+		int flag = 0;
+		order = SIValue_Compare(A[i].val, B[i].val, &flag);
+		if(first == 0) first = order;
 
-		if(order != 0) return order;
+		if(flag == DISJOINT)           has_disjoint = true;
+		else if(flag == COMPARED_NULL) has_null     = true;
+		else if(flag == COMPARED_NAN)  has_nan      = true;
+		else if(order != 0)            has_unequal  = true;
+
+		// a disjoint pair is final: its order is non-zero
+		// and no later pair can change the outcome
+		if(has_disjoint) break;
 	}
 
-	// maps are equal
-	return 0;
+	if(disjointOrNull) {
+		*disjointOrNull = 0;
+		if(has_disjoint)      *disjointOrNull = DISJOINT;
+		else if(has_unequal)  *disjointOrNull = 0;
+		else if(has_nan)      *disjointOrNull = COMPARED_NAN;
+		else if(has_null)     *disjointOrNull = COMPARED_NULL;
+	}
+
+	return first;
 }
 
 // merge two maps

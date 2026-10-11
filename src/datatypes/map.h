@@ -155,6 +155,14 @@ void Map_GetIdx
 //
 // {a:1, b:3} > {a:1, b:2} as 3 > 2
 // {a:1, c:1} > {b:1, a:1} as 'c' > 'b'
+//
+// the returned order does not depend on 'disjointOrNull'
+// when requested, 'disjointOrNull' is set to DISJOINT if any pair of values
+// are of disjoint types, otherwise to COMPARED_NAN or COMPARED_NULL if no
+// pair of comparable values differ and a NaN or null was compared
+//
+// {a:1.0} = {a:'x'} is false, {a:null, b:1} = {a:1, b:2} is false
+// {a:null, b:1} = {a:1, b:1} is null
 int Map_Compare
 (
 	SIValue mapA,

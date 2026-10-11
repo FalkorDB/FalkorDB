@@ -271,3 +271,37 @@ class testMap(FlowTestsBase):
         self.env.assertEquals(len(res), 1)
         self.env.assertEquals(res[0][1], {'name': 'John', 'age': 30, 'x': [{'z':1}]})
 
+
+    # Validate map comparison when values are of different types,
+    # null or NaN. The result must not depend on key order.
+    def test11_map_comparison_mixed_value_types(self):
+        cases = [
+            # (expression, expected)
+            ("{x: 1.0} = {x: 'x'}", False),
+            ("{x: 1.0} <> {x: 'x'}", True),
+            ("{x: 1} = {x: 1.0}", True),
+            ("[{x: 1.0}] = [{x: 'x'}]", False),
+            ("[{x: 1.0}] <> [{x: 'x'}]", True),
+            ("{x: {y: 1.0}} = {x: {y: 'x'}}", False),
+            ("{x: 1.0} IN [{x: 'x'}]", False),
+            ("{x: 1.0} IN [{x: 'x'}, {x: 1}]", True),
+            ("CASE {x: 1.0} WHEN {x: 'x'} THEN 1 ELSE 0 END", 0),
+            ("{x: vecf32([0.5])} = {x: 'x'}", False),
+            ("{x: date('2024-01-01')} = {x: 1}", False),
+            # a definite difference makes the maps unequal, despite a null
+            ("{a: null, b: 1} = {a: 1, b: 2}", False),
+            ("{a: 1, b: null} = {a: 2, b: 1}", False),
+            ("{a: 'x', b: null} = {a: 1, b: 1}", False),
+            # otherwise a null makes the comparison null
+            ("{a: null, b: 1} = {a: 1, b: 1}", None),
+            ("{a: 1, b: null} = {a: 1, b: 1}", None),
+            # NaN is never equal, wherever its key sorts
+            ("{a: 0.0/0.0, b: 1} = {a: 0.0/0.0, b: 1}", False),
+            ("{a: 1, b: 0.0/0.0} = {a: 1, b: 0.0/0.0}", False),
+            ("{a: 0.0/0.0, b: 1} <> {a: 0.0/0.0, b: 1}", True),
+            ("{a: 0.0/0.0, b: null} = {a: 0.0/0.0, b: 1}", False),
+        ]
+
+        for exp, expected in cases:
+            res = self.graph.query(f"RETURN {exp}").result_set
+            self.env.assertEquals(res[0][0], expected, message=exp)
