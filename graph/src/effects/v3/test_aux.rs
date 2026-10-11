@@ -85,8 +85,7 @@ pub(crate) fn live_node(
     if !rows.is_empty() {
         let mut docs = IndexDocs::default();
         graph.set_nodes_labels_bulk(&rows, &cols, &mut docs, true);
-        #[cfg(feature = "index-falkordb")]
-        graph.falkordb_index.apply(&mut docs.native);
+        graph.apply_index_writes(&mut docs);
     }
 }
 

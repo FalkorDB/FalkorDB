@@ -6,8 +6,6 @@ use crate::{
     redis_type::GRAPH_TYPE,
     telemetry,
 };
-#[cfg(feature = "index-falkordb")]
-use graph::index::falkordb::graph_writes;
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
@@ -364,10 +362,7 @@ impl BulkIndexDocs {
         &mut self,
         g: &mut Graph,
     ) {
-        #[cfg(feature = "index-falkordb")]
-        graph_writes::apply_pending(g, &mut self.0.native);
-        #[cfg(not(feature = "index-falkordb"))]
-        let _ = g;
+        g.apply_index_writes(&mut self.0);
     }
 }
 

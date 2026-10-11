@@ -85,13 +85,11 @@ pub fn apply_effects(
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
-    // The native index once for the whole buffer, where RediSearch is published. A record may
-    // undo an earlier one's entry — the cancelled pair, or an UPDATE followed by a DELETE of the
-    // same node — and `apply` keeps only each entry's last change.
-    #[cfg(feature = "index-falkordb")]
-    g.falkordb_index.apply(&mut docs.native);
-    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
-    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+    // Both indexes once for the whole buffer: the native index's staged changes, then
+    // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
+    // an UPDATE followed by a DELETE of the same node — and the native apply keeps only each
+    // entry's last change.
+    g.commit_index_docs(&mut docs);
     Ok(())
 }
 

@@ -355,12 +355,13 @@ impl FalkorDbIndex {
     }
 
     /// Apply a unit of work's staged changes and leave `writes` empty. This is the single write
-    /// primitive: the write paths only stage from graph state, into `writes`.
+    /// primitive: the write paths only stage from graph state, into `writes`. Owners reach it
+    /// through [`Graph::apply_index_writes`](crate::graph::graph::Graph::apply_index_writes).
     ///
     /// `self` must be the index of the private version the changes were staged against. The index
     /// is part of the graph version, so a version that is later refused takes these changes down
     /// with it.
-    pub fn apply(
+    pub(crate) fn apply(
         &mut self,
         writes: &mut PendingIndexWrites,
     ) {

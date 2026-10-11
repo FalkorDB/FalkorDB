@@ -3762,6 +3762,32 @@ impl Graph {
         )
     }
 
+    /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
+    /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
+    /// private version the changes were staged against.
+    pub fn apply_index_writes(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_index.apply(&mut docs.native);
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = docs;
+    }
+
+    /// Commit a unit of work's index changes into this version: the native index's staged changes,
+    /// then RediSearch's node and edge documents. For an owner that publishes both at one point,
+    /// like the replica at the end of an effects buffer. A Cypher query applies the native part at
+    /// the end of each `Commit` ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    pub fn commit_index_docs(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        self.apply_index_writes(docs);
+        self.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+        self.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+    }
+
     /// Write node index documents to RediSearch, taking the node indexer lock.
     pub fn commit_index(
         &mut self,

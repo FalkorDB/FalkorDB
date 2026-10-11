@@ -34,7 +34,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::pending_writes::{IndexChanges, PendingIndexWrites};
+use super::pending_writes::IndexChanges;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
 /// Range indexes alone, and the graph skips the redundant RediSearch feed on the write path.
@@ -390,15 +390,6 @@ pub fn edges_deleted(
         }
     }
     changes
-}
-
-/// Apply a unit of work's staged changes to `g`'s index — for an owner outside this crate, which
-/// cannot reach the index field. Owners inside it apply to `g.falkordb_index` directly.
-pub fn apply_pending(
-    g: &mut Graph,
-    writes: &mut PendingIndexWrites,
-) {
-    g.falkordb_index.apply(writes);
 }
 
 // ---- Index DDL ----
