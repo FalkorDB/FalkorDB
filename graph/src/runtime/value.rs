@@ -842,6 +842,9 @@ impl Hash for Value {
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
                     casted.hash(state);
+                } else if x.is_nan() {
+                    // every NaN is one grouping key, whatever its sign/payload
+                    f64::NAN.to_bits().hash(state);
                 } else {
                     x.to_bits().hash(state);
                 }
@@ -873,13 +876,13 @@ impl Hash for Value {
             Self::VecF32(x) => {
                 9.hash(state);
                 for f in x.iter() {
-                    f.to_bits().hash(state);
+                    f32_hash_bits(*f).hash(state);
                 }
             }
             Self::Point(p) => {
                 10.hash(state);
-                p.latitude.to_bits().hash(state);
-                p.longitude.to_bits().hash(state);
+                f32_hash_bits(p.latitude).hash(state);
+                f32_hash_bits(p.longitude).hash(state);
             }
             Self::Datetime(x) => {
                 11.hash(state);
@@ -1895,15 +1898,29 @@ pub fn sort_cmp_f64(
     }
 }
 
-/// [`sort_cmp_f64`] for `f32` (points and vectors).
+/// [`sort_cmp_f64`] for `f32` (points and vectors), except that `-0.0` sorts
+/// before `0.0`: C groups vectors and points by their component bits, so
+/// signed zeros are different keys there, while every NaN is one key.
 #[inline]
 fn sort_cmp_f32(
     a: f32,
     b: f32,
 ) -> Ordering {
     match a.partial_cmp(&b) {
+        Some(Ordering::Equal) => b.is_sign_negative().cmp(&a.is_sign_negative()),
         Some(ordering) => ordering,
         None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// The bits [`Value::hash`] uses for an `f32` component: one value for every
+/// NaN, as [`sort_cmp_f32`] treats them as equal.
+#[inline]
+fn f32_hash_bits(f: f32) -> u32 {
+    if f.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        f.to_bits()
     }
 }
 
@@ -2452,7 +2469,8 @@ mod is_never_equal_tests {
 
 #[cfg(test)]
 mod sort_cmp_tests {
-    use super::{OrderMap, Ordering, Value, sort_cmp_f64};
+    use super::{OrderMap, Ordering, Point, Value, sort_cmp_f64};
+    use std::hash::{Hash, Hasher};
     use std::sync::Arc;
 
     const P53: i64 = 1 << 53;
@@ -2515,8 +2533,57 @@ mod sort_cmp_tests {
             map(vec![("a", Value::Null)]),
             map(vec![("a", Value::Float(f64::NAN))]),
             Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, -f32::NAN].into_iter().collect())),
             Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
+            Value::VecF32(Arc::new([-0.0].into_iter().collect())),
+            Value::VecF32(Arc::new([0.0].into_iter().collect())),
+            list(vec![Value::VecF32(Arc::new([-0.0].into_iter().collect()))]),
+            list(vec![Value::VecF32(Arc::new([0.0].into_iter().collect()))]),
+            point(-0.0, 0.0),
+            point(0.0, 0.0),
+            point(f32::NAN, 1.0),
+            point(-f32::NAN, 1.0),
         ]
+    }
+
+    fn point(
+        latitude: f32,
+        longitude: f32,
+    ) -> Value {
+        Value::Point(Point {
+            latitude,
+            longitude,
+        })
+    }
+
+    fn hash_of(v: &Value) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+
+    /// Grouping and DISTINCT put keys in a hash table whose equality is
+    /// `sort_cmp`, so keys that `sort_cmp` calls equal must hash equally.
+    /// Floats merge `-0.0` with `0.0` and every NaN; vector and point
+    /// components merge every NaN but keep signed zeros apart, as C does.
+    #[test]
+    fn sort_cmp_equal_keys_hash_equally() {
+        let values = corpus();
+        for a in &values {
+            for b in &values {
+                if a.sort_cmp(b) == Ordering::Equal {
+                    assert_eq!(hash_of(a), hash_of(b), "{a:?} vs {b:?}");
+                }
+            }
+        }
+        let vec = |f: f32| Value::VecF32(Arc::new([f].into_iter().collect()));
+        assert_eq!(vec(f32::NAN).sort_cmp(&vec(-f32::NAN)), Ordering::Equal);
+        assert_ne!(vec(-0.0).sort_cmp(&vec(0.0)), Ordering::Equal);
+        assert_ne!(point(-0.0, 0.0).sort_cmp(&point(0.0, 0.0)), Ordering::Equal);
+        assert_eq!(
+            Value::Float(-0.0).sort_cmp(&Value::Float(0.0)),
+            Ordering::Equal
+        );
     }
 
     /// `sort_cmp` is a total order: reflexive, antisymmetric and transitive
