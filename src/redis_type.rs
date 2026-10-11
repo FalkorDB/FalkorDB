@@ -4,9 +4,11 @@
 //! and `GRAPHMETA_TYPE` -- a Redis module type named `"graphmeta"` --
 //! along with RDB and lifecycle callbacks that Redis invokes automatically.
 //!
-//! `GRAPHMETA_TYPE` is needed to load C FalkorDB RDB files, which use
-//! `"graphmeta"` for virtual keys and AUX data. Rust's own virtual keys
-//! use `"graphdata"` so that C FalkorDB can also load them.
+//! `GRAPHMETA_TYPE` is the type of a virtual key -- a key holding one slice
+//! of a graph saved across several RDB keys -- in both engines. It has to be:
+//! C FalkorDB frees a `"graphdata"` key by dropping its graph from the list
+//! `GRAPH.LIST` reads, so a virtual key saved as `"graphdata"` and deleted
+//! once the load ends would take its graph out of that list (#3160).
 //!
 //! ## Callbacks
 //!
@@ -178,30 +180,12 @@ unsafe extern "C" fn graph_rdb_save(
     value: *mut c_void,
 ) {
     unsafe {
-        // Get the key name to determine if this is a main key or virtual key.
         let key_name = io_key_name(rdb);
 
-        let vkey_state = VKEY_STATE.lock();
-
-        // Check if this is a virtual key with assigned payloads (SYNC SAVE).
-        if let Some((graph_name, _key_idx, payloads)) = vkey_state.vkey_map.get(&key_name) {
-            let key_count = 1 + vkey_state
-                .graph_vkeys
-                .get(graph_name)
-                .map_or(0, std::vec::Vec::len) as u64;
-            // Look up the real graph by name from GRAPH_REGISTRY.
-            let registry = GRAPH_REGISTRY.lock();
-            if let Some(real_graph_arc) = registry.get(graph_name) {
-                let tg: &ThreadedGraph = &*real_graph_arc.data_ptr();
-                let g = tg.graph.read();
-                let graph = g.borrow();
-                serializers::encoder::rdb_save_graph_key(
-                    rdb, &graph, graph_name, payloads, key_count,
-                );
-                return;
-            }
+        // The graph's own key of a multi-key save carries key 0's slice.
+        if save_key_slice(rdb, &key_name) {
+            return;
         }
-        drop(vkey_state);
 
         // Direct encoding: use data_ptr() to bypass parking_lot RwLock which
         // deadlocks in the BGSAVE fork child when the write loop holds the write lock.
@@ -210,6 +194,35 @@ unsafe extern "C" fn graph_rdb_save(
         let g = tg.graph.read();
         let graph = g.borrow();
         serializers::encoder::rdb_save_graph(rdb, &graph, &key_name);
+    }
+}
+
+/// Encode the slice of a multi-key graph `create_virtual_keys` assigned to
+/// `key_name` -- the graph's own key or one of its virtual keys. Returns
+/// `false` when this save assigned `key_name` no slice.
+unsafe fn save_key_slice(
+    rdb: *mut RedisModuleIO,
+    key_name: &str,
+) -> bool {
+    unsafe {
+        let vkey_state = VKEY_STATE.lock();
+        let Some((graph_name, _key_idx, payloads)) = vkey_state.vkey_map.get(key_name) else {
+            return false;
+        };
+        let key_count = 1 + vkey_state
+            .graph_vkeys
+            .get(graph_name)
+            .map_or(0, std::vec::Vec::len) as u64;
+        // Look up the real graph by name from GRAPH_REGISTRY.
+        let registry = GRAPH_REGISTRY.lock();
+        let Some(real_graph_arc) = registry.get(graph_name) else {
+            return false;
+        };
+        let tg: &ThreadedGraph = &*real_graph_arc.data_ptr();
+        let g = tg.graph.read();
+        let graph = g.borrow();
+        serializers::encoder::rdb_save_graph_key(rdb, &graph, graph_name, payloads, key_count);
+        true
     }
 }
 
@@ -396,7 +409,7 @@ pub unsafe extern "C" fn on_persistence(
 /// removes the question: bookkeeping keys are never registered as graphs.
 pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
-        // Delete stale graphmeta keys (from C FalkorDB RDB loads).
+        // Delete stale graphmeta keys (virtual keys left by an earlier load or save).
         delete_stale_graphmeta_keys(ctx);
 
         let graphs: Vec<(String, Arc<RwLock<ThreadedGraph>>)> = GRAPH_REGISTRY
@@ -476,14 +489,13 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                 let key =
                     raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
                 // Must pass a non-null value; Redis skips keys with null values during RDB save.
-                // Create a placeholder ThreadedGraph so graph_free can handle it.
-                let tg_placeholder = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__vkey_placeholder__");
-                let boxed: Box<Arc<RwLock<ThreadedGraph>>> =
-                    Box::new(Arc::new(RwLock::new(tg_placeholder)));
-                let value = Box::into_raw(boxed).cast();
+                // The slice is encoded from `vkey_map` by `graphmeta_rdb_save`, so the
+                // value is only the dummy `graphmeta_free` expects. Typed `graphmeta`,
+                // as C types its own virtual keys -- see the module docs (#3160).
+                let value = Box::into_raw(Box::new(0u8)).cast();
                 raw::RedisModule_ModuleTypeSetValue.unwrap()(
                     key,
-                    *GRAPH_TYPE.raw_type.borrow(),
+                    *GRAPHMETA_TYPE.raw_type.borrow(),
                     value,
                 );
                 raw::RedisModule_CloseKey.unwrap()(key);
@@ -568,7 +580,7 @@ unsafe fn key_holds_graph(
     }
 }
 
-/// Delete stale graphmeta keys (from C FalkorDB RDB loads).
+/// Delete every graphmeta key -- virtual keys some earlier load or save left behind.
 unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let scan_cmd = CString::new("SCAN").unwrap();
@@ -601,8 +613,8 @@ unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
 /// working from `GraphDecodeContext`'s meta-key list. Nothing is inferred from
 /// a key's name or contents: the module deletes the keys it knows it made.
 ///
-/// Graphmeta-typed keys are swept separately by type -- those come from a C
-/// FalkorDB RDB, which registers them under a type of their own.
+/// Graphmeta-typed keys are also swept by type, which catches virtual keys
+/// of a graph whose slices never all arrived.
 pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         delete_stale_graphmeta_keys(ctx);
@@ -826,15 +838,15 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
 );
 
 // ---------------------------------------------------------------------------
-// graphmeta -- kept for loading C FalkorDB RDB files.
+// graphmeta -- virtual keys, in the type both engines give them.
 //
-// C FalkorDB uses "graphmeta" for virtual keys and emits graphmeta AUX data.
-// We register this type with rdb_load + aux_load so Rust can consume C's RDB
-// stream. We intentionally omit aux_save so that Rust never emits graphmeta
-// AUX data (which C can't load since it doesn't register "graphmeta" either).
+// C FalkorDB registers "graphmeta" too, and loads a key of this type as a
+// slice of the graph its header names. We register aux_load so Rust can
+// consume the graphmeta AUX data older C versions emit, but omit aux_save:
+// Rust's AUX data travels with "graphdata".
 // ---------------------------------------------------------------------------
 
-/// Load a C FalkorDB graphmeta virtual key.
+/// Load a graphmeta virtual key, written by either engine.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
@@ -853,17 +865,20 @@ unsafe extern "C" fn graphmeta_rdb_load(
     }
 }
 
-/// Save callback for graphmeta keys left over from a C RDB load.
-/// These should be cleaned up before save by `delete_stale_virtual_keys`,
-/// but this is kept as a safety net.
-#[allow(clippy::missing_const_for_fn)]
+/// Save callback for graphmeta keys: encode the slice `create_virtual_keys`
+/// assigned this virtual key.
+///
+/// A graphmeta key this save did not create -- one left over from a load,
+/// which `delete_stale_virtual_keys` should have removed -- writes nothing.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_save(
-    _rdb: *mut RedisModuleIO,
+    rdb: *mut RedisModuleIO,
     _value: *mut c_void,
 ) {
-    // Stale graphmeta keys should have been deleted before save.
-    // If we get here, write nothing — the key will be empty.
+    unsafe {
+        let key_name = io_key_name(rdb);
+        save_key_slice(rdb, &key_name);
+    }
 }
 
 /// Free callback for graphmeta keys. These hold a dummy u8 value.

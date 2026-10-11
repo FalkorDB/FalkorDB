@@ -31,7 +31,7 @@ use crate::planner::IR;
 use crate::runtime::bitset::BitSet;
 use crate::runtime::row::{Row, RowView};
 use crate::runtime::runtime::Runtime;
-use crate::runtime::value::{CompareValue, Value};
+use crate::runtime::value::{Value, sort_cmp_f64};
 use orx_tree::{Dyn, NodeIdx};
 use std::cmp::Ordering;
 use std::marker::PhantomData;
@@ -391,9 +391,8 @@ impl Column {
     /// Compares rows `a` and `b` of this column in ascending value order (the
     /// caller applies any `DESC` reversal). The primitive `Ints`/`Floats` lanes
     /// compare raw scalars, skipping the `Value` enum dispatch; every other lane
-    /// defers to [`CompareValue::compare_value`](crate::runtime::value::CompareValue)
-    /// through [`get`](Self::get), so the order stays byte-for-byte identical to
-    /// comparing the materialised `Value`s. Used by the sort operator to order
+    /// defers to [`Value::sort_cmp`] through [`get`](Self::get), so the order
+    /// stays byte-for-byte identical to comparing the materialised `Value`s. Used by the sort operator to order
     /// its typed key columns.
     #[inline]
     #[must_use]
@@ -404,10 +403,10 @@ impl Column {
     ) -> Ordering {
         match self {
             Self::Ints(v) => v[a].cmp(&v[b]),
-            Self::Floats(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Less),
-            Self::Values(v) => v[a].compare_value(&v[b]).0,
+            Self::Floats(v) => sort_cmp_f64(v[a], v[b]),
+            Self::Values(v) => v[a].sort_cmp(&v[b]),
             Self::NodeIds(_) | Self::RelIds(_) | Self::Unbound => {
-                self.get(a).compare_value(&self.get(b)).0
+                self.get(a).sort_cmp(&self.get(b))
             }
         }
     }
@@ -843,6 +842,24 @@ impl<'a> Batch<'a> {
         }
     }
 
+    /// Creates a batch of `len` rows that binds no variable.
+    ///
+    /// The shape a projection naming nothing produces: row count (and, once
+    /// stamped, `origin_row`) with no bindings. `Batch::new` cannot express it
+    /// because `len` there follows the first column installed, and this batch
+    /// has none.
+    #[must_use]
+    pub fn rows_only(len: usize) -> Self {
+        Self {
+            len,
+            selection: None,
+            columns: Vec::new(),
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Creates a batch from fully materialized columns.
     #[must_use]
     pub fn from_columns(columns: impl IntoIterator<Item = Column>) -> Self {
@@ -1269,8 +1286,8 @@ impl<'a> Batch<'a> {
     ) -> Ordering {
         match self.column(var_id) {
             Column::Unbound => Ordering::Equal,
-            Column::Values(vals) => vals[a].compare_value(&vals[b]).0,
-            col => col.get(a).compare_value(&col.get(b)).0,
+            Column::Values(vals) => vals[a].sort_cmp(&vals[b]),
+            col => col.get(a).sort_cmp(&col.get(b)),
         }
     }
 
@@ -1282,6 +1299,17 @@ impl<'a> Batch<'a> {
         row: usize,
     ) -> u32 {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
+    }
+
+    /// Whether this batch carries per-row correlation tags.
+    ///
+    /// Distinguishes "every origin is 0" from "origins were never stamped",
+    /// which `origin_row` alone cannot: an operator replicating parent state
+    /// per result has to carry the tags across even when the parent binds no
+    /// variable to replicate.
+    #[must_use]
+    pub const fn has_origins(&self) -> bool {
+        self.origin_rows.is_some()
     }
 
     /// Installs the columnar per-row correlation sidecar. The vector is indexed
