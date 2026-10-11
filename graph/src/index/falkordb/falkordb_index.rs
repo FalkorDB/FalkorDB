@@ -18,16 +18,13 @@ use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
 use super::numeric::{DocIter, NumericIndex};
+use super::pending_writes::{IndexWrite, last_write_wins};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
 /// Keyed by name for now; interned numeric ids would be more compact once the write and read
 /// paths both resolve names to ids.
 pub type IndexKey = (Arc<String>, Arc<String>);
-
-/// A staged batch of maintenance for one commit: `(label, attr) → [(value, id)]`,
-/// applied per column by [`FalkorDbIndex::merge`].
-pub type StagedColumns = HashMap<IndexKey, Vec<(Value, u64)>>;
 
 /// One index column, of a specific kind.
 ///
@@ -85,6 +82,38 @@ impl IndexColumn {
     ) {
         match self {
             Self::Numeric(idx) => idx.remove_batch(entries, scratch),
+        }
+    }
+
+    /// The tree key `value` takes in *this* column, or `None` when the kind does not index it
+    /// (numeric: non-numeric and `NaN`).
+    #[must_use]
+    pub fn encode_value(
+        &self,
+        value: &Value,
+    ) -> Option<u64> {
+        match self {
+            Self::Numeric(_) => encode_numeric(value),
+        }
+    }
+
+    /// Add already-encoded tuples (a unit of work's collapsed adds).
+    pub fn add_encoded(
+        &mut self,
+        pairs: &mut [(u64, u64)],
+    ) {
+        match self {
+            Self::Numeric(idx) => idx.add_encoded(pairs),
+        }
+    }
+
+    /// Remove already-encoded tuples (a unit of work's collapsed removes).
+    pub fn remove_encoded(
+        &mut self,
+        pairs: &mut [(u64, u64)],
+    ) {
+        match self {
+            Self::Numeric(idx) => idx.remove_encoded(pairs),
         }
     }
 
@@ -309,36 +338,46 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
-    /// Apply one commit's batched maintenance for `entity`: **remove** the old-value
-    /// tuples, then **add** the new-value tuples, one batched tree op per touched
-    /// column. This is the single merge primitive — the caller only stages
-    /// `(value, id)` from graph state; the per-column batching lives here, and both
-    /// the steady-state write path and the background-build install go through it.
+    /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
+    /// such column or it does not index `value` — the write path's staging gate.
+    #[must_use]
+    pub fn encode_value(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+    ) -> Option<u64> {
+        self.columns(entity)
+            .get(&(label.clone(), attr.clone()))?
+            .column
+            .encode_value(value)
+    }
+
+    /// Apply one unit of work's staged changes for `entity`: per column, collapse each tuple's
+    /// history to its last change ([`last_write_wins`]), then **remove** what ended removed and
+    /// **add** what ended added, one batched tree op each. This is the single write primitive —
+    /// the write paths only stage from graph state, through [`PendingIndexWrites`].
     ///
-    /// Removes precede adds so a `(value, id)` removed and re-added in the same commit
-    /// nets to present. Each side is a batched op, so on disk this is one page-flush
-    /// pass per column — the merge is storage-agnostic (only the medium behind the
-    /// page store changes).
-    pub fn merge(
+    /// After the collapse the two sides are disjoint, so their order no longer matters; removes
+    /// still go first. A column dropped since its changes were staged is skipped.
+    ///
+    /// [`PendingIndexWrites`]: super::pending_writes::PendingIndexWrites
+    pub(crate) fn apply_writes(
         &mut self,
         entity: EntityType,
-        adds: StagedColumns,
-        removes: StagedColumns,
+        writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
     ) {
         let columns = self.columns_mut(entity);
-        // One encode buffer for the whole merge. Each column's staged entries are encoded into it
-        // and consumed before the next column reuses the capacity, so a commit touching many
-        // columns allocates once instead of twice per column.
-        let mut scratch: Vec<(u64, u64)> = Vec::new();
-        for (key, entries) in removes {
-            if let Some(entry) = columns.get_mut(&key) {
-                entry.column.remove_batch(entries, &mut scratch);
-            }
-        }
-        for (key, entries) in adds {
-            if let Some(entry) = columns.get_mut(&key) {
-                entry.column.add_batch(entries, &mut scratch);
-            }
+        // One pair of buffers for the whole unit of work, reused column to column.
+        let (mut removes, mut adds) = (Vec::new(), Vec::new());
+        for (key, mut log) in writes {
+            let Some(entry) = columns.get_mut(&key) else {
+                continue;
+            };
+            last_write_wins(&mut log, &mut removes, &mut adds);
+            entry.column.remove_encoded(&mut removes);
+            entry.column.add_encoded(&mut adds);
         }
     }
 
@@ -377,11 +416,27 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
+    use super::super::pending_writes::PendingIndexWrites;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
 
     fn arc(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
+    }
+
+    /// One unit of work on node column `(label, attr)`: record each `(value, id, add)` in order,
+    /// then apply them together.
+    fn write(
+        idx: &mut FalkorDbIndex,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        changes: &[(i64, u64, bool)],
+    ) {
+        let mut writes = PendingIndexWrites::default();
+        for &(v, id, add) in changes {
+            writes.record(idx, Node, label, attr, &Value::Int(v), id, add);
+        }
+        writes.apply(idx);
     }
 
     #[test]
@@ -423,23 +478,15 @@ mod tests {
         assert!(idx.numeric(Node, &label, &attr).unwrap().is_empty());
     }
 
-    /// `merge` batches adds+removes into the right columns (removes before adds).
+    /// `apply_writes` lands each unit of work's changes in the right column.
     #[test]
-    fn merge_batches_into_columns() {
+    fn writes_apply_into_columns() {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
         idx.create_numeric(Node, &label, &attr);
 
-        let staged = |vals: &[(i64, u64)]| -> StagedColumns {
-            let mut m: StagedColumns = HashMap::new();
-            m.insert(
-                (label.clone(), attr.clone()),
-                vals.iter().map(|&(v, id)| (Value::Int(v), id)).collect(),
-            );
-            m
-        };
-        idx.merge(Node, staged(&[(7, 1), (9, 2)]), StagedColumns::new());
-        idx.merge(Node, StagedColumns::new(), staged(&[(7, 1)]));
+        write(&mut idx, &label, &attr, &[(7, 1, true), (9, 2, true)]);
+        write(&mut idx, &label, &attr, &[(7, 1, false)]);
 
         let ids: Vec<u64> = idx
             .numeric(Node, &label, &attr)

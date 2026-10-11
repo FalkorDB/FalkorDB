@@ -232,33 +232,7 @@ pub struct Pending {
     pub(crate) schema_rel_attr_count: usize,
 }
 
-/// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
-/// -> (src, dst) }`.
-///
-/// The endpoints ride along because they are captured at deletion time — the
-/// edge is gone from the tensor by the time the 24-byte RediSearch key has to
-/// be rebuilt, so they cannot be looked up again.
-pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
-
-/// The index documents a unit of work produced, in both directions and for
-/// both entity kinds.
-///
-/// One type rather than four parallel maps, and used for both the per-commit
-/// set and the deferred one it folds into. They have to stay in
-/// correspondence — a document added to the wrong half is a stale RediSearch
-/// entry that nothing later notices — and four loose fields on `Pending` made
-/// that the caller's job at every site.
-#[derive(Default)]
-pub struct IndexDocs {
-    /// Node documents to add, keyed by label id.
-    pub node_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Node documents to remove, keyed by label id.
-    pub node_removes: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add, keyed by relationship type id.
-    pub edge_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove — see [`EdgeDocRemovals`].
-    pub edge_removes: EdgeDocRemovals,
-}
+pub use crate::index::index_docs::{EdgeDocRemovals, IndexDocs};
 
 impl IndexDocs {
     /// True when nothing was produced, so a caller can skip the work of
@@ -280,6 +254,13 @@ impl IndexDocs {
         &mut self,
         other: &mut Self,
     ) {
+        // The native index's changes are applied to the private version before a commit's
+        // documents are folded for publishing; anything still here would be dropped.
+        #[cfg(feature = "index-falkordb")]
+        debug_assert!(
+            other.native.is_empty(),
+            "native index writes must be applied before the documents are folded"
+        );
         for (slot, ids) in other.node_adds.drain() {
             *self.node_adds.entry(slot).or_default() |= ids;
         }
@@ -1132,18 +1113,14 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut().set_nodes_labels_bulk(
-                &rows,
-                &cols,
-                &mut self.index_docs.node_adds,
-                all_new,
-            );
+            g.borrow_mut()
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_docs.node_removes);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -1151,15 +1128,13 @@ impl Pending {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_docs.node_adds,
+                    &mut self.index_docs,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                let (nremoved, nset) = g.set_nodes_attributes(
-                    &self.existing_nodes_attrs,
-                    &mut self.index_docs.node_adds,
-                )?;
+                let (nremoved, nset) =
+                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_docs)?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -1170,16 +1145,14 @@ impl Pending {
         {
             let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g.import_relationship_attrs(
-                    &self.new_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
-                );
+                let nset = g
+                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
+                    &mut self.index_docs,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -1190,7 +1163,7 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
@@ -1205,7 +1178,7 @@ impl Pending {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
                 &self.deleted_nodes,
                 &explicit_rels,
-                &mut self.index_docs.edge_removes,
+                &mut self.index_docs,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
@@ -1229,7 +1202,7 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)
+                .delete_relationships(&explicit_rels, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
@@ -1238,6 +1211,15 @@ impl Pending {
                 .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
+        // The native index, once for the whole `Commit`. Before the constraint checks, which is
+        // where each write call used to leave it, so nothing that runs after the writes sees the
+        // index in a different state than before. SETs run before DELETEs above, so one batch can
+        // hold an entry's add and then its remove; `apply` keeps only the last.
+        #[cfg(feature = "index-falkordb")]
+        self.index_docs
+            .native
+            .apply(&mut g.borrow_mut().falkordb_index);
+
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has
         // the mutations from this transaction (writes apply immediately to
@@ -1663,6 +1645,8 @@ impl Pending {
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
+        #[cfg(feature = "index-falkordb")]
+        self.index_docs.native.clear();
 
         // Close this segment's batch and open the next at the boundary the
         // commit just left. Closing is where the batch's shape is owed —

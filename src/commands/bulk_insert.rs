@@ -6,9 +6,12 @@ use crate::{
     redis_type::GRAPH_TYPE,
     telemetry,
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::graph_writes;
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
+    index::index_docs::IndexDocs,
     runtime::value::Value,
     threadpool::spawn,
 };
@@ -330,11 +333,11 @@ unsafe fn maybe_yield(raw_ctx: *mut raw::RedisModuleCtx) {
 /// and publish once, on the success path only — otherwise a batch that fails midway
 /// leaves documents behind for entities that were never committed (and whose ids may be
 /// handed to different entities later).
+///
+/// Bulk only ever adds, so of the [`IndexDocs`] it fills only `node_adds` and `edge_adds` (and the
+/// native index's changes, which each token applies to the fork as soon as it is done).
 #[derive(Default)]
-struct BulkIndexDocs {
-    nodes: FxHashMap<u64, RoaringTreemap>,
-    edges: FxHashMap<u64, RoaringTreemap>,
-}
+struct BulkIndexDocs(IndexDocs);
 
 impl BulkIndexDocs {
     /// Publish into the indexes. Call only once every token has succeeded, and while
@@ -344,12 +347,27 @@ impl BulkIndexDocs {
         &mut self,
         g: &mut Graph,
     ) {
-        if !self.nodes.is_empty() {
-            g.commit_index(&mut self.nodes, &mut FxHashMap::default());
+        let docs = &mut self.0;
+        if !docs.node_adds.is_empty() {
+            g.commit_index(&mut docs.node_adds, &mut FxHashMap::default());
         }
-        if !self.edges.is_empty() {
-            g.commit_edge_index(&mut self.edges, &mut FxHashMap::default());
+        if !docs.edge_adds.is_empty() {
+            g.commit_edge_index(&mut docs.edge_adds, &mut FxHashMap::default());
         }
+    }
+
+    /// Apply the native index's changes staged so far to the fork `g` — once per token, rather
+    /// than with the insert-wide RediSearch documents: holding every token's entries until the
+    /// whole insert finished would grow with the insert, for one batched tree op per column
+    /// saved per token.
+    fn apply_native(
+        &mut self,
+        g: &mut Graph,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        graph_writes::apply_pending(g, &mut self.0.native);
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = g;
     }
 }
 
@@ -414,7 +432,7 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.0, true);
     unsafe { maybe_yield(raw_ctx) };
 
     // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
@@ -426,9 +444,10 @@ fn process_node_token(
     // attributes — none do at this point — so it contributes nothing here and the two do
     // not double up.
     if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.nodes);
+        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.0);
         unsafe { maybe_yield(raw_ctx) };
     }
+    docs.apply_native(g);
 
     Ok(())
 }
@@ -502,7 +521,8 @@ fn process_edge_token(
 
     if !resolved_rel_attrs.is_empty() {
         // Same as the node path: collect now, publish once the whole insert has succeeded.
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.edges);
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.0);
+        docs.apply_native(g);
         unsafe { maybe_yield(raw_ctx) };
     }
 

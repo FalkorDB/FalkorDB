@@ -85,6 +85,11 @@ pub fn apply_effects(
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
+    // The native index once for the whole buffer, where RediSearch is published. A record may
+    // undo an earlier one's entry — the cancelled pair, or an UPDATE followed by a DELETE of the
+    // same node — and `apply` keeps only each entry's last change.
+    #[cfg(feature = "index-falkordb")]
+    docs.native.apply(&mut g.falkordb_index);
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
     g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
     Ok(())
@@ -229,7 +234,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, docs, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -239,13 +244,7 @@ fn apply_record(
             // same record shape reaching the two paths differently.
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
-                g.set_nodes_attributes_rows_of_labels(
-                    &ids,
-                    &label_ids,
-                    &attr_ids,
-                    &rows,
-                    &mut docs.node_adds,
-                )?;
+                g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             }
             Ok(())
         }
@@ -292,7 +291,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
+                g.set_relationships_attributes(&map, docs)?;
             }
             Ok(())
         }
@@ -315,13 +314,7 @@ fn apply_record(
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_nodes_attributes_rows_of_labels(
-                &ids,
-                &label_ids,
-                &attr_ids,
-                &rows,
-                &mut docs.node_adds,
-            )?;
+            g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             Ok(())
         }
 
@@ -341,19 +334,14 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, docs)?;
             Ok(())
         }
 
         Record::SetLabels { ids, labels } => {
             require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_node_labels_product(
-                &ids.iter().collect::<Vec<_>>(),
-                &label_ids,
-                &mut docs.node_adds,
-                false,
-            );
+            g.set_node_labels_product(&ids.iter().collect::<Vec<_>>(), &label_ids, docs, false);
             Ok(())
         }
 
@@ -370,7 +358,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, docs);
             Ok(())
         }
 
@@ -395,13 +383,13 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut docs.node_removes)?;
+            g.delete_nodes(&nodes, docs)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut docs.edge_removes)?;
+            g.delete_relationships(&edges, docs)?;
             Ok(())
         }
 
