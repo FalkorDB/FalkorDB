@@ -5,6 +5,7 @@ use super::Graph;
 use crate::entity_type::EntityType;
 use crate::index::falkordb::falkordb_index::NumericAnswer;
 use crate::index::falkordb::graph_writes;
+use crate::index::falkordb::numeric::EncodedTuples;
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
@@ -43,7 +44,7 @@ fn begin_build(
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
-) -> (u64, Vec<(u64, u64)>) {
+) -> (u64, EncodedTuples) {
     let epoch = graph_writes::building_columns(g)
         .into_iter()
         .find(|(e, l, a, _)| *e == entity && l == label && a == attr)
@@ -1181,5 +1182,179 @@ fn chunked_base_scan_borrows_only_under_its_guard() {
     assert!(
         released.get() >= 4,
         "ten rows in chunks of three take four holds"
+    );
+}
+
+// --- List values: the array tree ---
+
+fn ints(xs: &[i64]) -> Value {
+    Value::List(Arc::new(xs.iter().map(|&x| Value::Int(x)).collect()))
+}
+
+/// `v IN n.attr`, answered from the column's array tree.
+fn contains(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    v: i64,
+) -> Vec<u64> {
+    g.falkordb_index
+        .numeric(EntityType::Node, label, attr)
+        .unwrap()
+        .array_contains(&Value::Int(v))
+        .collect()
+}
+
+/// A value changing kind — scalar, list, scalar — through the real SET path, one unit of work
+/// each. Every transition stages a remove from one tree and an add to the other; a remove routed
+/// to the wrong tree would leave a tuple behind that the scalar path never rechecks.
+#[test]
+fn a_value_changing_kind_moves_between_trees() {
+    let (mut g, label, attr, ids) = graph_with_index(1);
+    let n = ids[0];
+
+    set_attr(&mut g, n, &attr, Value::Int(1));
+    assert_eq!(range_scan(&g, &label, &attr, 1, 1), vec![n]);
+    assert!(contains(&g, &label, &attr, 1).is_empty());
+
+    set_attr(&mut g, n, &attr, ints(&[1, 2]));
+    assert!(
+        range_scan(&g, &label, &attr, 1, 1).is_empty(),
+        "the scalar tuple must be gone, not shadowed"
+    );
+    assert_eq!(contains(&g, &label, &attr, 1), vec![n]);
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, ints(&[2]));
+    assert!(
+        contains(&g, &label, &attr, 1).is_empty(),
+        "a dropped element"
+    );
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, Value::Int(2));
+    assert_eq!(range_scan(&g, &label, &attr, 2, 2), vec![n]);
+    assert!(
+        contains(&g, &label, &attr, 2).is_empty(),
+        "the same key crossing back must leave the array tree"
+    );
+}
+
+/// Both transitions inside ONE unit of work, so they meet in one buffer: `SET n.v = [1, 2]`
+/// then `DELETE n`, on a node whose `v` was the scalar `1`. The buffer holds a scalar remove of
+/// `(1, n)` and array adds then removes of `(1, n)` and `(2, n)` — the same `(key, id)` in both
+/// trees. Collapsing without the tree would let one tree's change decide the other's.
+#[test]
+fn a_kind_change_and_a_delete_in_one_batch_leave_nothing() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, ints(&[1]));
+
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, ints(&[1, 2]))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.falkordb_index.apply(&mut writes.native);
+
+    assert!(range_scan(&g, &label, &attr, 0, 10).is_empty());
+    assert_eq!(
+        contains(&g, &label, &attr, 1),
+        vec![ids[1]],
+        "only the untouched list node is left"
+    );
+    assert!(contains(&g, &label, &attr, 2).is_empty());
+}
+
+/// The online build carries the array half end to end: BASE scans list values into the array
+/// tree, a delete during the build reaches TOMB's array half, an update during the build reaches
+/// DELTA's, and the install merges each tree on its own.
+#[test]
+fn online_build_carries_the_array_half() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let label = Arc::new("Person".to_string());
+    let attr = Arc::new("v".to_string());
+    let lid = g.get_label_id_mut("Person");
+    let ids: Vec<u64> = reserve_nodes(&mut g, 4);
+    g.create_nodes(&ids.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &ids,
+        &[lid.0 as u64; 4],
+        &mut w,
+        false
+    ));
+    // Before the index exists, so BASE is their only source.
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
+    set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
+    set_attr(&mut g, ids[3], &attr, ints(&[3]));
+
+    graph_writes::create_index(
+        &mut g,
+        &IndexType::Range,
+        EntityType::Node,
+        &label,
+        std::slice::from_ref(&attr),
+    );
+    let (epoch, base) = begin_build(&g, EntityType::Node, &label, &attr);
+    assert_eq!(base.scalar.len(), 1);
+    assert_eq!(base.array.len(), 5, "one tuple per element");
+
+    // During the build: delete the [1, 2] node, and change [2, 3] to [4].
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[1]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    set_attr(&mut g, ids[2], &attr, ints(&[4]));
+
+    assert!(graph_writes::install_base(
+        &mut g,
+        EntityType::Node,
+        &label,
+        &attr,
+        epoch,
+        base
+    ));
+    assert_eq!(range_scan(&g, &label, &attr, 1, 1), vec![ids[0]]);
+    assert!(
+        contains(&g, &label, &attr, 1).is_empty(),
+        "the deleted node must not resurrect from BASE's array half"
+    );
+    assert_eq!(
+        contains(&g, &label, &attr, 2),
+        Vec::<u64>::new(),
+        "neither the deleted node's nor the updated node's old element"
+    );
+    assert_eq!(contains(&g, &label, &attr, 3), vec![ids[3]]);
+    assert_eq!(contains(&g, &label, &attr, 4), vec![ids[2]]);
+}
+
+/// `query_numeric` serves `v IN n.attr` from the array tree, declines a probe the encoder cannot
+/// represent, and reports a building column as not ready rather than unservable.
+#[test]
+fn array_contains_is_routed_to_the_array_tree() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(5));
+    set_attr(&mut g, ids[1], &attr, ints(&[5, 6]));
+    let probe = |v: Value| IndexQuery::ArrayContains {
+        key: attr.clone(),
+        value: v,
+    };
+    let rows =
+        |q: &IndexQuery<Value>| match g.falkordb_index.query_numeric(EntityType::Node, &label, q) {
+            Some(NumericAnswer::Rows(r)) => Some(r.collect::<Vec<_>>()),
+            Some(NumericAnswer::NotReady) => panic!("the column is Ready"),
+            None => None,
+        };
+    assert_eq!(rows(&probe(Value::Int(5))), Some(vec![ids[1]]));
+    assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
+    assert_eq!(
+        rows(&probe(Value::String(Arc::new("x".to_string())))),
+        None,
+        "a non-numeric probe is not this column's to answer"
     );
 }

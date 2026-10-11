@@ -36,7 +36,7 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::encode::encode_numeric;
+use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 
 // ---- Nodes ----
@@ -420,8 +420,8 @@ pub fn building_columns(g: &Graph) -> Vec<(EntityType, Arc<String>, Arc<String>,
     g.falkordb_index.building_columns()
 }
 
-/// BASE for one building column, read from `g` in one pass, encoded, sorted and unique: what
-/// the install needs. For a caller that already keeps `g` from being written while it reads; the
+/// BASE for one building column, read from `g` in one pass, encoded, each key space sorted and
+/// unique: what the install needs. For a caller that already keeps `g` from being written while it reads; the
 /// background build reads a published version and uses [`base_encoded_in_chunks`] instead.
 ///
 /// `None` if the column no longer exists (dropped mid-build).
@@ -431,10 +431,10 @@ pub fn base_encoded(
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
-) -> Option<Vec<(u64, u64)>> {
+) -> Option<EncodedTuples> {
     let column = g.falkordb_index.column(entity, label, attr)?;
-    Some(encoded_entries(g, entity, label, attr, |value| {
-        column.encode_value(value)
+    Some(encoded_entries(g, entity, label, attr, |value, id, out| {
+        column.push_encoded(value, id, out);
     }))
 }
 
@@ -464,8 +464,8 @@ pub fn base_encoded_in_chunks<G>(
     attr: &Arc<String>,
     chunk_rows: u64,
     mut hold: impl FnMut() -> G,
-) -> Option<Vec<(u64, u64)>> {
-    let mut pairs = Vec::new();
+) -> Option<EncodedTuples> {
+    let mut tuples = EncodedTuples::default();
     let mut lo = 0u64;
     loop {
         // Declared before the borrow, so the borrow ends before the lock is released.
@@ -484,14 +484,13 @@ pub fn base_encoded_in_chunks<G>(
             label,
             attr,
             (lo, hi),
-            |value| column.encode_value(value),
-            &mut pairs,
+            |value, id, out| column.push_encoded(value, id, out),
+            &mut tuples,
         );
         lo = hi + 1;
     }
-    pairs.sort_unstable();
-    pairs.dedup();
-    Some(pairs)
+    tuples.sort_dedup();
+    Some(tuples)
 }
 
 /// Install a background-built BASE and flip the column `Ready`, in one commit. Returns whether
@@ -507,20 +506,17 @@ pub fn install_base(
     label: &Arc<String>,
     attr: &Arc<String>,
     epoch: u64,
-    base: Vec<(u64, u64)>,
+    mut base: EncodedTuples,
 ) -> bool {
-    let survivors: Vec<(u64, u64)> = match entity {
-        EntityType::Node => base
-            .into_iter()
-            .filter(|(_, id)| !g.is_node_deleted(NodeId::from(*id)))
-            .collect(),
-        EntityType::Relationship => base
-            .into_iter()
-            .filter(|(_, id)| !g.is_relationship_deleted(RelationshipId::from(*id)))
-            .collect(),
-    };
+    // Both key spaces, or a node deleted during the build survives in its array half.
+    match entity {
+        EntityType::Node => base.retain_docs(|id| !g.is_node_deleted(NodeId::from(id))),
+        EntityType::Relationship => {
+            base.retain_docs(|id| !g.is_relationship_deleted(RelationshipId::from(id)));
+        }
+    }
     g.falkordb_index
-        .install_base(entity, label, attr, epoch, survivors)
+        .install_base(entity, label, attr, epoch, base)
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of
@@ -579,9 +575,11 @@ fn build_column(
     label: &Arc<String>,
     attr: &Arc<String>,
 ) {
-    let pairs = encoded_entries(g, entity, label, attr, encode_numeric);
+    let tuples = encoded_entries(g, entity, label, attr, |value, id, out| {
+        out.push_numeric(value, id);
+    });
     g.falkordb_index
-        .build_numeric_sorted(entity, label, attr, pairs);
+        .build_numeric_sorted(entity, label, attr, tuples);
 }
 
 /// The node's label ids, reusing `out`'s allocation across nodes.
@@ -613,8 +611,9 @@ fn edge_type(
 }
 
 /// The tuples of column `(entity, label, attr)` as the live graph holds them, encoded with
-/// `encode`, sorted and unique: one `(key, id)` for every live `label` node (or `label`-typed
-/// edge) whose `attr` value the column indexes.
+/// `encode`, each key space sorted and unique: one `(key, id)` for every live `label` node (or
+/// `label`-typed edge) whose `attr` value the column indexes, and one per numeric element of a
+/// list value.
 ///
 /// Each value is encoded as it is read and dropped straight away, so the scan never holds the
 /// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
@@ -624,25 +623,25 @@ fn encoded_entries(
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
-    encode: impl Fn(&Value) -> Option<u64>,
-) -> Vec<(u64, u64)> {
-    let mut pairs = Vec::new();
-    scan_rows(g, entity, label, attr, (0, u64::MAX), encode, &mut pairs);
-    pairs.sort_unstable();
-    pairs.dedup();
-    pairs
+    encode: impl Fn(&Value, u64, &mut EncodedTuples),
+) -> EncodedTuples {
+    let mut tuples = EncodedTuples::default();
+    scan_rows(g, entity, label, attr, (0, u64::MAX), encode, &mut tuples);
+    tuples.sort_dedup();
+    tuples
 }
 
 /// Append to `out` the encoded tuples of column `(entity, label, attr)` whose node-id row lies
-/// in `rows` (inclusive): a node's own id, or an edge's source node id. Unsorted.
+/// in `rows` (inclusive): a node's own id, or an edge's source node id. `encode` appends the
+/// tuples one value contributes. Unsorted.
 fn scan_rows(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     (lo, hi): (u64, u64),
-    encode: impl Fn(&Value) -> Option<u64>,
-    out: &mut Vec<(u64, u64)>,
+    encode: impl Fn(&Value, u64, &mut EncodedTuples),
+    out: &mut EncodedTuples,
 ) {
     match entity {
         EntityType::Node => {
@@ -651,11 +650,8 @@ fn scan_rows(
             {
                 let idx = idx as u16;
                 for (n, _) in lm.iter(lo, hi) {
-                    if let Some(key) = g
-                        .get_node_attribute_by_idx(NodeId::from(n), idx)
-                        .and_then(|value| encode(&value))
-                    {
-                        out.push((key, n));
+                    if let Some(value) = g.get_node_attribute_by_idx(NodeId::from(n), idx) {
+                        encode(&value, n, out);
                     }
                 }
             }
@@ -667,11 +663,10 @@ fn scan_rows(
             ) {
                 let idx = idx as u16;
                 for (_, _, eid) in t.iter(lo, hi, false) {
-                    if let Some(key) = g
-                        .get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
-                        .and_then(|value| encode(&value))
+                    if let Some(value) =
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
                     {
-                        out.push((key, eid));
+                        encode(&value, eid, out);
                     }
                 }
             }

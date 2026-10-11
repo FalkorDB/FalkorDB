@@ -17,8 +17,8 @@ use crate::entity_type::EntityType;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
-use super::encode::encode_numeric;
-use super::numeric::{DocIter, NumericIndex};
+use super::encode::{KeySpace, encode_numeric, for_each_stored_key};
+use super::numeric::{DocIter, EncodedTuples, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 
 /// Identifies one index column: `(label, attribute)`.
@@ -68,7 +68,7 @@ impl IndexColumn {
     pub fn add_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
+        scratch: &mut EncodedTuples,
     ) {
         match self {
             Self::Numeric(idx) => idx.add_batch(entries, scratch),
@@ -79,64 +79,83 @@ impl IndexColumn {
     pub fn remove_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
+        scratch: &mut EncodedTuples,
     ) {
         match self {
             Self::Numeric(idx) => idx.remove_batch(entries, scratch),
         }
     }
 
-    /// The tree key `value` takes in *this* column, or `None` when the kind does not index it
-    /// (numeric: non-numeric and `NaN`).
-    #[must_use]
-    pub fn encode_value(
+    /// Call `emit` with each tree key `value` takes in *this* column, and the key space it goes
+    /// in. Nothing when the kind does not index it (numeric: non-numeric, temporal and `NaN`); one
+    /// key per numeric element, in [`KeySpace::Array`], for a list.
+    pub fn for_each_stored_key(
         &self,
         value: &Value,
-    ) -> Option<u64> {
+        emit: impl FnMut(KeySpace, u64),
+    ) {
         match self {
-            Self::Numeric(_) => encode_numeric(value),
+            Self::Numeric(_) => for_each_stored_key(value, emit),
         }
     }
 
-    /// A new column of *this* column's kind, built from encoded tuples arriving sorted and unique —
-    /// how the install builds the finished column without hard-coding a kind at the call site.
+    /// Append the tuples `(value, id)` takes in *this* column to `out`, each in its key space.
+    /// Unsorted and possibly repeated — see [`EncodedTuples::sort_dedup`].
+    pub fn push_encoded(
+        &self,
+        value: &Value,
+        id: u64,
+        out: &mut EncodedTuples,
+    ) {
+        match self {
+            Self::Numeric(_) => out.push_numeric(value, id),
+        }
+    }
+
+    /// A new column of *this* column's kind, built from encoded tuples arriving sorted and unique,
+    /// one stream per key space — how the install builds the finished column without hard-coding
+    /// a kind at the call site.
     #[must_use]
     pub fn new_like_from_sorted(
         &self,
-        pairs: impl IntoIterator<Item = (u64, u64)>,
+        scalar: impl IntoIterator<Item = (u64, u64)>,
+        array: impl IntoIterator<Item = (u64, u64)>,
     ) -> Self {
         match self {
-            Self::Numeric(_) => Self::Numeric(NumericIndex::from_sorted_tuples(pairs)),
+            Self::Numeric(_) => Self::Numeric(NumericIndex::from_sorted_tuples(scalar, array)),
         }
     }
 
-    /// Every `(key, doc)` tuple this column holds, encoded and in order, read lazily from a
-    /// snapshot — how the install streams TOMB and DELTA. Encoded, not `Value`s: TOMB must use the
-    /// same equivalence relation as the column it is subtracted from, and decoding to re-encode
-    /// would be a second trip through a many-to-one map.
-    pub fn tuples(&self) -> impl Iterator<Item = (u64, u64)> + use<> {
+    /// Every `(key, doc)` tuple this column holds in key space `space`, encoded and in order, read
+    /// lazily from a snapshot — how the install streams TOMB and DELTA. Encoded, not `Value`s:
+    /// TOMB must use the same equivalence relation as the column it is subtracted from, and
+    /// decoding to re-encode would be a second trip through a many-to-one map.
+    pub fn tuples(
+        &self,
+        space: KeySpace,
+    ) -> impl Iterator<Item = (u64, u64)> + use<> {
         match self {
-            Self::Numeric(idx) => idx.tuples(),
+            Self::Numeric(idx) => idx.tuples(space),
         }
     }
 
     /// Add already-encoded tuples (a unit of work's collapsed adds).
     pub fn add_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add_encoded(pairs),
+            Self::Numeric(idx) => idx.add_encoded(tuples),
         }
     }
 
     /// Remove already-encoded tuples (a unit of work's collapsed removes).
     pub fn remove_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove_encoded(pairs),
+            Self::Numeric(idx) => idx.remove_encoded(tuples),
         }
     }
 
@@ -240,7 +259,7 @@ impl ColumnEntry {
     /// BASE left to correct.
     fn note_tomb(
         &mut self,
-        removed: &mut [(u64, u64)],
+        removed: &mut EncodedTuples,
     ) {
         if let ColumnState::Building { tomb, .. } = &mut self.state {
             tomb.add_encoded(removed);
@@ -370,8 +389,8 @@ impl FalkorDbIndex {
     }
 
     /// Build (or rebuild) the numeric column for `(entity, label, attr)` in the `Ready` state from
-    /// numeric-encoded tuples **sorted ascending and unique**, replacing any existing one — the
-    /// RDB-load populate path. Bottom-up-loads the tuples, which is cheaper than looping
+    /// numeric-encoded tuples, each half **sorted ascending and unique**, replacing any existing
+    /// one — the RDB-load populate path. Bottom-up-loads the tuples, which is cheaper than looping
     /// incremental adds. The caller encodes, so a Range attr holding mixed types indexes only its
     /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
     pub fn build_numeric_sorted(
@@ -379,12 +398,13 @@ impl FalkorDbIndex {
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        pairs: Vec<(u64, u64)>,
+        tuples: EncodedTuples,
     ) {
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
             ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::from_sorted_tuples(
-                pairs,
+                tuples.scalar,
+                tuples.array,
             ))),
         );
     }
@@ -496,20 +516,20 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
-    /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
-    /// such column or it does not index `value` — the write path's staging gate.
-    #[must_use]
-    pub fn encode_value(
+    /// Call `emit` with each tree key `value` takes in column `(entity, label, attr)` and the key
+    /// space it goes in — nothing when there is no such column or it does not index `value`. The
+    /// write path's staging gate.
+    pub fn for_each_stored_key(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
         value: &Value,
-    ) -> Option<u64> {
-        self.columns(entity)
-            .get(&(label.clone(), attr.clone()))?
-            .column
-            .encode_value(value)
+        emit: impl FnMut(KeySpace, u64),
+    ) {
+        if let Some(entry) = self.columns(entity).get(&(label.clone(), attr.clone())) {
+            entry.column.for_each_stored_key(value, emit);
+        }
     }
 
     /// Apply a unit of work's staged changes and leave `writes` empty. This is the single write
@@ -546,7 +566,7 @@ impl FalkorDbIndex {
     ) {
         let columns = self.columns_mut(entity);
         // One pair of buffers for the whole unit of work, reused column to column.
-        let (mut removes, mut adds) = (Vec::new(), Vec::new());
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         for (key, mut log) in writes {
             let Some(entry) = columns.get_mut(&key) else {
                 continue;
@@ -577,7 +597,7 @@ impl FalkorDbIndex {
     /// the build (`v0 -> v1 -> v0`, or an id reused with the same value) is in both TOMB and DELTA,
     /// and must survive. By I-W4' no DELTA tuple is invalid at the version being installed into.
     ///
-    /// `base` must be sorted and unique, which
+    /// Each half of `base` must be sorted and unique, which
     /// [`graph_writes::base_encoded`](super::graph_writes::base_encoded) guarantees.
     ///
     /// Chunking this would be wrong as well as slow: a partially-subtracted BASE is not a valid
@@ -590,7 +610,7 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
         epoch: u64,
-        base: Vec<(u64, u64)>,
+        base: EncodedTuples,
     ) -> bool {
         let Some(entry) = self
             .columns_mut(entity)
@@ -604,8 +624,18 @@ impl FalkorDbIndex {
         if *e != epoch {
             return false; // stale job: the column was dropped and re-created since it started
         }
-        let installed = installed_tuples(base, tomb.tuples(), entry.column.tuples());
-        entry.column = entry.column.new_like_from_sorted(installed);
+        // Once per key space: a tuple only ever meets TOMB and DELTA tuples of its own tree.
+        let scalar = installed_tuples(
+            base.scalar,
+            tomb.tuples(KeySpace::Scalar),
+            entry.column.tuples(KeySpace::Scalar),
+        );
+        let array = installed_tuples(
+            base.array,
+            tomb.tuples(KeySpace::Array),
+            entry.column.tuples(KeySpace::Array),
+        );
+        entry.column = entry.column.new_like_from_sorted(scalar, array);
         entry.state = ColumnState::Ready;
         true
     }
@@ -630,7 +660,7 @@ impl FalkorDbIndex {
     }
 
     /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range`/union leaf. Yields docs — node ids for a node column, `edge_id`s for an edge
+    /// `Equal`/`Range`/union/array-contains leaf. Yields docs — node ids for a node column, `edge_id`s for an edge
     /// column.
     ///
     /// Three outcomes, and the caller must keep them apart (see [`NumericAnswer`]):
@@ -683,7 +713,11 @@ impl FalkorDbIndex {
                 let same_key = member_keys.iter().all(|k| *k == first_key);
                 (first_key, same_key)
             }
-            // And / Point (geo) / InList / ArrayContains → not a numeric leaf.
+            // `value IN n.prop`, where the property holds a list. Served from the column's
+            // separate array tree — see `NumericIndex::array_contains`. Servable when the probed
+            // value encodes; the elements themselves were filtered at write time.
+            IndexQuery::ArrayContains { key, value } => (key, encode_numeric(value).is_some()),
+            // And / Point (geo) / InList → not a numeric leaf.
             _ => return None,
         };
         if !servable {
@@ -876,7 +910,13 @@ mod tests {
         // A stale epoch — as if the column had been dropped and re-created — installs nothing and
         // must not flip the column `Ready`.
         assert!(
-            !idx.install_base(Node, &label, &attr, epoch + 1, vec![(key(99), 9)]),
+            !idx.install_base(
+                Node,
+                &label,
+                &attr,
+                epoch + 1,
+                EncodedTuples::scalars(vec![(key(99), 9)])
+            ),
             "stale epoch cannot install"
         );
         assert!(building(&idx, 99), "stale epoch cannot publish");
@@ -887,7 +927,13 @@ mod tests {
         );
 
         // The real install, one commit: BASE holds the snapshot-era rows 10 and 20.
-        assert!(idx.install_base(Node, &label, &attr, epoch, vec![(key(10), 0), (key(20), 1)]));
+        assert!(idx.install_base(
+            Node,
+            &label,
+            &attr,
+            epoch,
+            EncodedTuples::scalars(vec![(key(10), 0), (key(20), 1)])
+        ));
         assert!(idx.building_columns().is_empty(), "no longer building");
         assert_eq!(hits(&idx, 10), vec![0], "untouched base row survives");
         assert!(
