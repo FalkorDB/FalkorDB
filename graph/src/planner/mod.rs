@@ -39,6 +39,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::parser::cypher::TOO_DEEP;
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
@@ -707,6 +708,55 @@ fn has_labels_filter(
     )
 }
 
+/// Tallest plan [`Planner::check_depth`] lets through.
+///
+/// A last resort, not the working limit: [`with_plan_stack`] gives a tall
+/// plan the stack it needs, so this only stops a pathological query from
+/// asking for an unbounded one. C runs 5000 chained `UNWIND`s; this is twice
+/// that.
+pub const MAX_PLAN_DEPTH: usize = 10_000;
+
+/// Plans no taller than this run on the calling thread's own stack.
+///
+/// The costliest plan levels measured (`OPTIONAL MATCH ... WHERE`,
+/// `CALL {}`, `MERGE` per clause) take about 7 KiB of stack each through the
+/// optimizer and the runtime, so 128 of them fit a 2 MiB pool worker with
+/// room to spare. Nearly every query is far below it.
+const SHALLOW_PLAN: usize = 128;
+
+/// Stack [`with_plan_stack`] reserves per plan level: about twice the
+/// costliest level measured.
+const STACK_PER_LEVEL: usize = 16 * 1024;
+
+/// Stack [`with_plan_stack`] reserves on top of the per-level share, for what
+/// runs below and above the plan's own recursion.
+const STACK_BASE: usize = 1024 * 1024;
+
+/// Runs `f`, which walks `plan` recursively, on a stack sized for `plan`.
+///
+/// The optimizer passes, the runtime operator build, every `next()` pull and
+/// the operator tree's drop recurse once per plan level, and every clause
+/// adds a level. A shallow plan runs `f` right here. A taller one runs it on
+/// a fresh stack segment, on this same thread, sized from the plan's height.
+/// Thread-locals, the Redis context and the GIL state all stay valid. The
+/// segment is address space, mapped for the call and unmapped after it, and
+/// only the pages the query touches are ever committed.
+///
+/// The `len()` test is O(1), so a shallow query pays one comparison.
+pub fn with_plan_stack<R>(
+    plan: &DynTree<IR>,
+    f: impl FnOnce() -> R,
+) -> R {
+    if plan.len() <= SHALLOW_PLAN {
+        return f();
+    }
+    let height = plan.root().height();
+    if height <= SHALLOW_PLAN {
+        return f();
+    }
+    stacker::grow(STACK_BASE + height * STACK_PER_LEVEL, f)
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -837,6 +887,20 @@ impl Planner {
             root.root_mut().push_child_tree(nested);
         }
         root
+    }
+
+    /// Rejects a plan taller than [`MAX_PLAN_DEPTH`].
+    ///
+    /// Clauses stack: every `UNWIND`, `WITH`, `OPTIONAL MATCH`, `CALL {}`
+    /// ... puts its operator on top of the previous clause's, so a long
+    /// query is a tall plan, which [`with_plan_stack`] runs on a stack sized
+    /// to match. Parsing, binding and planning are iterative over clauses and
+    /// get here fine; the height walk itself is iterative too.
+    pub fn check_depth(plan: &DynTree<IR>) -> Result<(), String> {
+        if plan.root().height() > MAX_PLAN_DEPTH {
+            return Err(format!("{TOO_DEEP} {MAX_PLAN_DEPTH}"));
+        }
+        Ok(())
     }
 
     /// Mint a fresh variable with an ID unique within the given scope.
