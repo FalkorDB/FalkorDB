@@ -1944,3 +1944,22 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_order_by_aggregate_matches_projection_only_on_equal_constants():
+    """An ORDER BY aggregate binds to a projected aggregate only when their
+    constants are equal values, as in C (#3236): `3` matches `3.0`, but `4.0`
+    does not match `3`, and `null` does not match `7`."""
+    query("UNWIND range(1, 6) AS i CREATE (:N {g: i % 2, v: i})", write=True)
+
+    for order_by in ["max(n.v % 4.0)", "max(coalesce(n.x, null))", "max(n.v % '3')"]:
+        query_exception(
+            f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m, max(coalesce(n.x, 7)) AS c ORDER BY {order_by}",
+            "failed to map aggregation expression",
+        )
+
+    for order_by in ["max(n.v % 3)", "max(n.v % 3.0)"]:
+        res = query(
+            f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY {order_by} DESC, g"
+        )
+        assert res.result_set == [[0, 2], [1, 2]]
