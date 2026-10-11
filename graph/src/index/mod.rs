@@ -45,6 +45,7 @@
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
+pub mod index_docs;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;

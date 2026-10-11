@@ -86,6 +86,7 @@ use crate::index::falkordb::{
     falkordb_index::FalkorDbIndex,
     graph_writes::{self, index_only_writes},
 };
+use crate::index::index_docs::IndexDocs;
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -444,8 +445,8 @@ pub struct Graph {
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
-    /// `pub(crate)` for `index::falkordb::graph_writes`, which reads the graph and then updates
-    /// this field in one call.
+    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes, and
+    /// `FalkorDbIndex::apply` updates it.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
 }
@@ -1726,11 +1727,14 @@ impl Graph {
         label_ids: &[u64],
         attr_ids: &[u16],
         rows: &[Value],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_docs = &mut docs.node_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::node_rows_set(self, ids, label_ids, attr_ids, rows);
+        docs.native.extend(graph_writes::node_rows_set(
+            self, ids, label_ids, attr_ids, rows,
+        ));
         let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
 
         if self.node_indexer.has_indices() {
@@ -1757,11 +1761,13 @@ impl Graph {
     pub fn set_nodes_attributes(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_docs = &mut docs.node_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::node_attrs_set(self, attrs);
+        docs.native
+            .extend(graph_writes::node_attrs_set(self, attrs));
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
@@ -1793,12 +1799,14 @@ impl Graph {
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         new_labels: &FxHashMap<u64, Vec<u64>>,
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_docs = &mut docs.node_adds;
         let nset = self.node_attrs.import_attrs(attrs);
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::new_node_attrs(self, attrs, new_labels);
+        docs.native
+            .extend(graph_writes::new_node_attrs(self, attrs, new_labels));
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1839,10 +1847,12 @@ impl Graph {
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
         label_ids: &[LabelId],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_docs = &mut docs.node_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::bulk_node_attrs(self, data, label_ids);
+        docs.native
+            .extend(graph_writes::bulk_node_attrs(self, data, label_ids));
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in data.iter() {
@@ -1919,10 +1929,12 @@ impl Graph {
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
         type_id: TypeId,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_edge_docs = &mut docs.edge_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::bulk_edge_attrs(self, data, type_id);
+        docs.native
+            .extend(graph_writes::bulk_edge_attrs(self, data, type_id));
 
         self.track_edge_index_updates_of_type(
             type_id,
@@ -1943,12 +1955,14 @@ impl Graph {
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_edge_docs = &mut docs.edge_adds;
         let nset = self.relationship_attrs.import_attrs(attrs);
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::new_edge_attrs(self, attrs);
+        docs.native
+            .extend(graph_writes::new_edge_attrs(self, attrs));
 
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         nset
@@ -2028,11 +2042,13 @@ impl Graph {
         &mut self,
         ids: &[u64],
         label_ids: &[u64],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
         all_new: bool,
     ) {
+        let index_add_docs = &mut docs.node_adds;
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_product_added(self, ids, label_ids);
+        docs.native
+            .extend(graph_writes::labels_product_added(self, ids, label_ids));
 
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
@@ -2105,13 +2121,15 @@ impl Graph {
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
         all_new: bool,
     ) {
+        let index_add_docs = &mut docs.node_adds;
         self.resize();
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_added(self, label_rows, label_cols);
+        docs.native
+            .extend(graph_writes::labels_added(self, label_rows, label_cols));
 
         // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
@@ -2149,12 +2167,14 @@ impl Graph {
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
-        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) {
+        let remove_docs = &mut docs.node_removes;
         self.resize();
 
         #[cfg(feature = "index-falkordb")]
-        graph_writes::labels_removed(self, label_rows, label_cols);
+        docs.native
+            .extend(graph_writes::labels_removed(self, label_rows, label_cols));
 
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
@@ -2180,8 +2200,9 @@ impl Graph {
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedNodeLabel>, NodeOpError> {
+        let remove_docs = &mut docs.node_removes;
         // Judged and freed together: every id asked for is refused or none is,
         // and the ones that survive that leave the live count and enter the bin
         // in one step. Nodes resolve exactly, so the two sets are one.
@@ -2192,7 +2213,8 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the labels and attributes are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::nodes_deleted(self, deleted_nodes);
+        docs.native
+            .extend(graph_writes::nodes_deleted(self, deleted_nodes));
 
         // Every removal below is a per-entity tombstone, and every lookup below
         // is a row seek. Nothing here touches an entry that does not belong to a
@@ -2738,11 +2760,13 @@ impl Graph {
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edge_attrs_set(self, attrs);
+        docs.native
+            .extend(graph_writes::edge_attrs_set(self, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2763,11 +2787,13 @@ impl Graph {
         &mut self,
         type_id: TypeId,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edge_attrs_set_of_type(self, type_id, attrs);
+        docs.native
+            .extend(graph_writes::edge_attrs_set_of_type(self, type_id, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2827,8 +2853,9 @@ impl Graph {
     pub fn delete_relationships(
         &mut self,
         rels: &RoaringTreemap,
-        index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedEdge>, NodeOpError> {
+        let index_remove_edge_docs = &mut docs.edge_removes;
         if rels.is_empty() {
             return Ok(Vec::new());
         }
@@ -2870,7 +2897,8 @@ impl Graph {
         // After the release, so a refused delete leaves the index untouched too, and before
         // the teardown below, while the attributes and types are still readable.
         #[cfg(feature = "index-falkordb")]
-        graph_writes::edges_deleted(self, &resolved);
+        docs.native
+            .extend(graph_writes::edges_deleted(self, &resolved));
 
         self.relationship_attrs.remove_all(&resolved);
 
@@ -2961,8 +2989,9 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         explicit_rels: &RoaringTreemap,
-        index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedEdge>, String> {
+        let index_remove_edge_docs = &mut docs.edge_removes;
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
         }
@@ -3051,7 +3080,8 @@ impl Graph {
             }
             // Before the type matrix and attributes are torn down below.
             #[cfg(feature = "index-falkordb")]
-            graph_writes::edges_deleted(self, del_keys.iter());
+            docs.native
+                .extend(graph_writes::edges_deleted(self, del_keys.iter()));
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
 
@@ -3730,6 +3760,39 @@ impl Graph {
             self.node_indexer.write_lock(),
             self.edge_indexer.write_lock(),
         )
+    }
+
+    /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
+    /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
+    /// private version the changes were staged against.
+    pub fn apply_index_writes(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_index.apply(&mut docs.native);
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = docs;
+    }
+
+    /// Commit a unit of work's index changes into this version: the native index's staged changes,
+    /// then RediSearch's node and edge documents. For an owner that publishes both at one point:
+    /// the replica at the end of an effects buffer, `GRAPH.BULK` once every token has succeeded.
+    /// A Cypher query applies the native part at the end of each `Commit`
+    /// ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    ///
+    /// A kind with no documents is skipped before its indexer lock is taken.
+    pub fn commit_index_docs(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        self.apply_index_writes(docs);
+        if !docs.node_adds.is_empty() || !docs.node_removes.is_empty() {
+            self.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+        }
+        if !docs.edge_adds.is_empty() || !docs.edge_removes.is_empty() {
+            self.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+        }
     }
 
     /// Write node index documents to RediSearch, taking the node indexer lock.
@@ -5196,7 +5259,7 @@ mod reservation_tests {
         ids: &[u64],
     ) {
         let bm: RoaringTreemap = ids.iter().copied().collect();
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         // A batch that created nothing: every id here predates it, which is
         // what makes them deletable.
         g.open_id_batches().expect("a consistent space");
@@ -5357,7 +5420,7 @@ mod reservation_tests {
         g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids)
             .expect("the allocator's own ids must be creatable");
 
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
         g.open_id_batches().expect("a consistent space");
         g.delete_relationships(&doomed, &mut docs).expect("deleted");
@@ -5479,8 +5542,8 @@ mod adjacency_cascade_tests {
         nodes: &[u64],
     ) {
         let deleted: RoaringTreemap = nodes.iter().copied().collect();
-        let mut node_docs = FxHashMap::default();
-        let mut edge_docs = FxHashMap::default();
+        let mut node_docs = IndexDocs::default();
+        let mut edge_docs = IndexDocs::default();
         g.open_id_batches().expect("a consistent space");
         g.delete_nodes(&deleted, &mut node_docs).unwrap();
         g.delete_implicit_edges(&deleted, &RoaringTreemap::new(), &mut edge_docs)
@@ -5568,7 +5631,7 @@ mod adjacency_cascade_tests {
     #[test]
     fn pair_stays_adjacent_while_another_type_remains() {
         let mut g = build("adj_cascade_multi_type", 3, &[(0, 1, "R"), (0, 1, "S")]);
-        let mut edge_docs = FxHashMap::default();
+        let mut edge_docs = IndexDocs::default();
 
         // Drop just the R edge (id 0) explicitly; S (id 1) stays.
         g.open_id_batches().expect("a consistent space");
@@ -5680,7 +5743,7 @@ mod relationship_liveness_tests {
         let mut g = graph();
         edges(&mut g, "R", &[(1, 2)]);
         edges(&mut g, "S", &[(1, 2)]);
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         g.delete_relationships(&std::iter::once(0).collect(), &mut docs)
             .expect("deleted");
         assert_eq!(first(&g, &[1]), Some(1), "the S edge is still there");
@@ -5698,7 +5761,7 @@ mod relationship_liveness_tests {
         edges(&mut g, "R", &[(0, 1), (2, 3)]);
         g.validate().expect("both endpoints live");
 
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         // Freed without the edge: what `NodeHasRelationships` stops the
         // effects path from doing, and Cypher never does.
         g.delete_nodes(&std::iter::once(3).collect(), &mut docs)
@@ -5708,7 +5771,7 @@ mod relationship_liveness_tests {
             Err(NodeOpError::DanglingRelationship { id: 1 })
         );
 
-        let mut edocs = FxHashMap::default();
+        let mut edocs = IndexDocs::default();
         g.delete_relationships(&std::iter::once(1).collect(), &mut edocs)
             .expect("deleted");
         g.validate().expect("the edge went with it");
