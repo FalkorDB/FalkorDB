@@ -1268,7 +1268,12 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::With { exprs: _, orderby: _orderby, .. } | Self::Return { exprs: _, orderby: _orderby, .. } => {
+            Self::With { .. } => {
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter))
+            }
+            Self::Return { .. } => {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
