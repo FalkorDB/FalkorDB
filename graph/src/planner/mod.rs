@@ -1539,7 +1539,18 @@ impl Planner {
             return self.and_expr_to_plan(node, inline_map, input);
         }
 
-        // NOT(complex_expr) → AntiSemiApply(input, inner_plan)
+        // NOT over AND / OR / NOT: push the negation down to the leaves
+        // (De Morgan holds in three-valued logic). `AntiSemiApply` over the
+        // inner plan would pass every row where the inner expression is not
+        // true, including the ones where it is null.
+        if matches!(node.data(), ExprIR::Not)
+            && let Some(child) = node.get_child(0)
+            && let Some(negated) = Self::push_not_down(&child)
+        {
+            return self.expr_to_plan(&negated.root(), inline_map, input);
+        }
+
+        // NOT(other complex_expr) → AntiSemiApply(input, inner_plan)
         // inner_plan passes rows when the inner expression is true,
         // so AntiSemiApply inverts: passes when inner is false.
         if matches!(node.data(), ExprIR::Not)
@@ -1553,6 +1564,24 @@ impl Planner {
         // shouldn't happen in practice; treat as opaque filter.
         let expr_tree = node.clone_as_tree();
         tree!(IR::Filter(Arc::new(expr_tree)), input)
+    }
+
+    /// The negation of `node` with the `NOT` moved onto its operands, when
+    /// `node` (under any parentheses) is an `AND`, `OR` or `NOT`.
+    fn push_not_down(node: &DynNode<ExprIR<Variable>>) -> Option<DynTree<ExprIR<Variable>>> {
+        let negate = |child: DynNode<ExprIR<Variable>>| {
+            Self::push_not_down(&child).unwrap_or_else(|| {
+                let operand: DynTree<ExprIR<Variable>> = child.clone_as_tree();
+                tree!(ExprIR::Not, operand)
+            })
+        };
+        match node.data() {
+            ExprIR::Paren => Self::push_not_down(&node.get_child(0)?),
+            ExprIR::Not => Some(node.get_child(0)?.clone_as_tree()),
+            ExprIR::And => Some(tree!(ExprIR::Or; node.children().map(negate))),
+            ExprIR::Or => Some(tree!(ExprIR::And; node.children().map(negate))),
+            _ => None,
+        }
     }
 
     /// Build an `OrApplyMultiplexer` for an OR expression.
