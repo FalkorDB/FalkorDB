@@ -1266,6 +1266,12 @@ impl Graph {
             self.relationship_types.len() - 1,
             Tensor::new(self.node_cap, self.node_cap),
         );
+        // As in `get_relationship_matrix_mut`: `relationship_type_matrix` is
+        // relationships x types, so registering a type widens it here. A type
+        // registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used
+        // to leave it a column short, and every later edge delete built a
+        // removal mask the matrix refused, keeping the deleted edge's type.
+        self.resize();
         TypeId(self.relationship_types.len() - 1)
     }
 
