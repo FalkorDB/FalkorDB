@@ -462,5 +462,16 @@ class testAggregations():
                       "UNWIND [1.0, 0.0/0.0, 3.0] AS x RETURN 1 AS k, min(x), max(x)"]:
                 row = g.query(q).result_set[0]
                 self.env.assertEqual(row[-2:], [1.0, 3.0])
+
+            # Vector and point keys: C groups every NaN component together but
+            # keeps -0.0 and 0.0 apart (unlike Float keys, where they merge).
+            for q, expected in [
+                ("UNWIND [vecf32([0.0/0.0]), vecf32([-(0.0/0.0)])] AS v RETURN v, count(*)", [2]),
+                ("UNWIND [vecf32([0.0]), vecf32([-0.0])] AS v RETURN v, count(*)", [1, 1]),
+                ("UNWIND [point({latitude: 0.0, longitude: 0.0}), point({latitude: -0.0, longitude: 0.0})] AS p RETURN p, count(*)", [1, 1]),
+                ("UNWIND [0.0, -0.0] AS x RETURN x, count(*)", [2]),
+            ]:
+                res = g.query(q).result_set
+                self.env.assertEqual(sorted(r[1] for r in res), expected, message=q)
         finally:
             g.delete()
