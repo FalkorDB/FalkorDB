@@ -17,6 +17,7 @@ tests/flow/test_concurrent_query.py
 tests/flow/test_config.py
 tests/flow/test_constraint.py
 tests/flow/test_create_clause
+tests/flow/test_diskless_replication.py
 tests/flow/test_distinct
 tests/flow/test_edge_index_scans.py
 tests/flow/test_edge_index_updates.py

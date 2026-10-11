@@ -30,6 +30,11 @@ use redis_module::{Context, ContextFlags};
 ///   it. Blocking that client is fatal rather than merely wrong: Redis asserts
 ///   `(fakeClient->flags & CLIENT_BLOCKED) == 0` (`aof.c`) while loading, so any
 ///   AOF-enabled server crashed on restart (#2421).
+/// * `ASYNC_LOADING` — a `repl-diskless-load swapdb` replica keeps serving clients
+///   while it loads, from inside the decode (`processEventsWhileBlocked`), and Redis
+///   reports that state as `ASYNC_LOADING` *instead of* `LOADING`. It delivers a
+///   blocked client's reply only from the main event loop, so a query handed to the
+///   pool there answered only once the whole load was over. C predates this flag.
 ///
 /// Keep this the single definition. The bug it closes was five call sites having each
 /// grown a narrower copy of C's one predicate, and drifting from it independently.
@@ -39,6 +44,7 @@ pub fn must_run_inline(ctx: &Context) -> bool {
             | ContextFlags::REPLICATED
             | ContextFlags::LUA
             | ContextFlags::DENY_BLOCKING
-            | ContextFlags::LOADING,
+            | ContextFlags::LOADING
+            | ContextFlags::ASYNC_LOADING,
     )
 }

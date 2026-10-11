@@ -77,6 +77,11 @@ static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id: 6, dataver: 1 };
 
+/// Redis event ID for a replica loading into a temporary database
+/// (REDISMODULE_EVENT_REPL_ASYNC_LOAD, `repl-diskless-load swapdb`).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_ReplAsyncLoad: RedisModuleEvent = RedisModuleEvent { id: 14, dataver: 1 };
+
 /// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
 /// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
 /// + module-level RediSearch/LAGraph state is released — otherwise these
@@ -320,6 +325,31 @@ pub fn graph_init(
         );
         if res != REDISMODULE_OK as c_int {
             eprintln!("FalkorDB: failed to subscribe to loading events: code {res}");
+            return Status::Err;
+        }
+    }
+    // A replica configured with `repl-diskless-load` only loads the primary's
+    // RDB straight off the socket when every module declares that its
+    // rdb_load / aux_load survive a short read; otherwise Redis spools the
+    // payload to disk first. Every load goes through redismodule-rs's
+    // `raw::load_*`, which checks `RedisModule_IsIOError` after each read, and
+    // `on_loading` discards a half-decoded load on LOADING_FAILED.
+    //
+    // `swapdb` additionally requires HANDLE_REPL_ASYNC_LOAD: the snapshot is
+    // decoded into a temporary database while the current one stays in service,
+    // and `on_repl_async_load` keeps what it decodes out of the live registry
+    // and UDF table until Redis swaps the two.
+    ctx.set_module_options(
+        raw::ModuleOptions::HANDLE_IO_ERRORS | raw::ModuleOptions::HANDLE_REPL_ASYNC_LOAD,
+    );
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_ReplAsyncLoad,
+            Some(on_repl_async_load),
+        );
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to async load events: code {res}");
             return Status::Err;
         }
     }
@@ -646,17 +676,59 @@ unsafe extern "C" fn on_replica_change(
 /// Loading event callback. After a slave finishes a full RDB resync from
 /// the master, drop any virtual keys that came along in the snapshot —
 /// their content has already been merged into the main graph key.
+///
+/// A load that fails — a diskless replica load whose socket closes mid-stream
+/// is the usual way — leaves multi-key graphs half decoded. Finalizing those
+/// would install a partial graph, and leaving them in `DECODE_STATE` would make
+/// the retry's first key of the same graph merge into the stale remains, so a
+/// failed load discards them; Redis empties the keyspace right after.
 unsafe extern "C" fn on_loading(
     ctx: *mut RedisModuleCtx,
     _eid: RedisModuleEvent,
     subevent: u64,
     _data: *mut c_void,
 ) {
-    if subevent == REDISMODULE_SUBEVENT_LOADING_ENDED
-        || subevent == REDISMODULE_SUBEVENT_LOADING_FAILED
-    {
-        crate::redis_type::finalize_pending_graphs();
-        unsafe { crate::redis_type::delete_stale_virtual_keys(ctx) };
+    match subevent {
+        raw::REDISMODULE_SUBEVENT_LOADING_RDB_START
+        | raw::REDISMODULE_SUBEVENT_LOADING_AOF_START
+        | raw::REDISMODULE_SUBEVENT_LOADING_REPL_START => {
+            // Every load decodes from scratch; nothing an earlier one left
+            // behind belongs to it.
+            crate::serializers::DECODE_STATE.lock().clear();
+        }
+        REDISMODULE_SUBEVENT_LOADING_ENDED => {
+            crate::redis_type::finalize_pending_graphs();
+            unsafe { crate::redis_type::delete_stale_virtual_keys(ctx) };
+        }
+        REDISMODULE_SUBEVENT_LOADING_FAILED => {
+            crate::redis_type::discard_pending_graphs();
+            // After an aborted `swapdb` load the live database still holds the
+            // previous snapshot, virtual keys included if it had any.
+            if !crate::redis_type::take_swap_load_aborted() {
+                unsafe { crate::redis_type::delete_stale_virtual_keys(ctx) };
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `repl-diskless-load swapdb` lifecycle. Redis fires STARTED before loading
+/// into a temporary database, then exactly one of ABORTED (the load failed and
+/// the temporary database is discarded) or COMPLETED (it was swapped in as the
+/// live one) -- each before the matching LOADING_FAILED / LOADING_ENDED.
+unsafe extern "C" fn on_repl_async_load(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    subevent: u64,
+    _data: *mut c_void,
+) {
+    match subevent {
+        raw::REDISMODULE_SUBEVENT_REPL_ASYNC_LOAD_STARTED => crate::redis_type::begin_swap_load(),
+        raw::REDISMODULE_SUBEVENT_REPL_ASYNC_LOAD_COMPLETED => {
+            crate::redis_type::commit_swap_load();
+        }
+        raw::REDISMODULE_SUBEVENT_REPL_ASYNC_LOAD_ABORTED => crate::redis_type::abort_swap_load(),
+        _ => {}
     }
 }
 
