@@ -376,9 +376,9 @@ class testMap(FlowTestsBase):
                     self.env.assertEquals(res[0][0], int(expected is True),
                                           message=f"WHERE {exp}")
 
-                    # a filter treats '<' with NaN as null rather than
-                    # false, for scalars as well, so NOT is only checked
-                    # for equality
+                    # a filter negates '<' by testing '>=' and NaN fails
+                    # both, while NOT (NaN < 1) projects true, for scalars
+                    # as well, so NOT is only checked for equality
                     if i >= 7:
                         continue
                     q = f"WITH 1 AS one WHERE NOT ({exp}) RETURN count(*)"
