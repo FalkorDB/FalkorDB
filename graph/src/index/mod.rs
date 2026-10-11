@@ -1371,6 +1371,20 @@ impl Index {
         i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0
     }
 
+    /// The range field of attribute `key`, which every non-fulltext,
+    /// non-vector query node targets. An attribute can carry several
+    /// fields (a fulltext and a range index on the same property), so the
+    /// first one is not necessarily the range one.
+    fn range_field(
+        &self,
+        key: &Arc<String>,
+    ) -> Option<&Arc<Field>> {
+        self.fields
+            .get(key)?
+            .iter()
+            .find(|f| f.ty == IndexType::Range)
+    }
+
     /// Build a RediSearch numeric range node for numeric values.
     fn build_numeric_range_node(
         &self,
@@ -1394,7 +1408,7 @@ impl Index {
             },
             None => RSRANGE_INF,
         };
-        let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
+        let Some(field) = self.range_field(key) else {
             return std::ptr::null_mut();
         };
         // An absent bound is unbounded, so it must include the infinity
@@ -1423,7 +1437,7 @@ impl Index {
         include_min: bool,
         include_max: bool,
     ) -> *mut redisearch::RSQNode {
-        let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
+        let Some(field) = self.range_field(key) else {
             return std::ptr::null_mut();
         };
 
@@ -1481,7 +1495,7 @@ impl Index {
             // Numeric equality (Int, Float, Bool)
             IndexQuery::Equal { ref key, ref value } if Self::value_to_numeric(value).is_some() => {
                 let d = Self::value_to_numeric(value).unwrap();
-                let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
+                let Some(field) = self.range_field(key) else {
                     return std::ptr::null_mut();
                 };
                 unsafe {
@@ -1493,7 +1507,7 @@ impl Index {
                 key,
                 value: Value::String(value),
             } => {
-                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
+                let Some(field) = self.range_field(&key) else {
                     return std::ptr::null_mut();
                 };
                 let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
@@ -1551,7 +1565,7 @@ impl Index {
                     Value::Int(i) => i as f64,
                     _ => return std::ptr::null_mut(),
                 };
-                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
+                let Some(field) = self.range_field(&key) else {
                     return std::ptr::null_mut();
                 };
                 unsafe {
@@ -1612,7 +1626,7 @@ impl Index {
                 union_node
             }
             IndexQuery::ArrayContains { key, ref value } => {
-                let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
+                let Some(field) = self.range_field(&key) else {
                     return std::ptr::null_mut();
                 };
                 match value {

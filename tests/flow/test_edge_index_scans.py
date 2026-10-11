@@ -952,6 +952,25 @@ class testEdgeByIndexScanRegressionsFlow(FlowTestsBase):
         finally:
             g.delete()
 
+    def test29_range_index_beside_fulltext_index(self):
+        # A range index on an attribute that already has a fulltext index
+        # must be queried through its own (range) field.
+        g = self.db.select_graph("edge_range_beside_fulltext")
+        try:
+            g.query("CREATE ()-[:T {s:'foo', v:1}]->(), ()-[:T {s:'bar', v:2}]->(), ()-[:T {s:'dog', v:3}]->()")
+            create_edge_fulltext_index(g, 'T', 's', 'v', sync=True)
+            create_edge_range_index(g, 'T', 's', 'v', sync=True)
+            for q, expected in [
+                    ("MATCH ()-[r:T]->() WHERE r.s = 'foo' RETURN r.s", [['foo']]),
+                    ("MATCH ()-[r:T]->() WHERE r.s > 'c' RETURN r.s", [['dog'], ['foo']]),
+                    ("MATCH ()-[r:T {s:'bar'}]->() RETURN r.s", [['bar']]),
+                    ("MATCH ()-[r:T]->() WHERE r.s IN ['foo', 'dog'] RETURN r.s", [['dog'], ['foo']]),
+                    ("MATCH ()-[r:T]->() WHERE r.v = 2 RETURN r.s", [['bar']]),
+                    ("MATCH ()-[r:T]->() WHERE r.v >= 2 RETURN r.s", [['bar'], ['dog']])]:
+                self.env.assertContains('Edge By Index Scan', str(g.explain(q)))
+                self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
+        finally:
+            g.delete()
 
 # RDB round-trip regression for edge indexes. Needs DEBUG RELOAD so it
 # lives in its own class with `enableDebugCommand=True`. Matches
