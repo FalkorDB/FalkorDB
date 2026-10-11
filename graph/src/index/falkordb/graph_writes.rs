@@ -398,7 +398,7 @@ pub fn apply_pending(
     g: &mut Graph,
     writes: &mut PendingIndexWrites,
 ) {
-    writes.apply(&mut g.falkordb_index);
+    g.falkordb_index.apply(writes);
 }
 
 // ---- Index DDL ----

@@ -18,7 +18,7 @@ use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
 use super::numeric::{DocIter, NumericIndex};
-use super::pending_writes::{IndexWrite, last_write_wins};
+use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -354,16 +354,33 @@ impl FalkorDbIndex {
             .encode_value(value)
     }
 
-    /// Apply one unit of work's staged changes for `entity`: per column, collapse each tuple's
+    /// Apply a unit of work's staged changes and leave `writes` empty. This is the single write
+    /// primitive: the write paths only stage from graph state, into `writes`.
+    ///
+    /// `self` must be the index of the private version the changes were staged against. The index
+    /// is part of the graph version, so a version that is later refused takes these changes down
+    /// with it.
+    pub fn apply(
+        &mut self,
+        writes: &mut PendingIndexWrites,
+    ) {
+        if writes.is_empty() {
+            return;
+        }
+        self.apply_writes(EntityType::Node, writes.drain(EntityType::Node));
+        self.apply_writes(
+            EntityType::Relationship,
+            writes.drain(EntityType::Relationship),
+        );
+    }
+
+    /// One entity kind's part of [`apply`](Self::apply): per column, collapse each tuple's
     /// history to its last change ([`last_write_wins`]), then **remove** what ended removed and
-    /// **add** what ended added, one batched tree op each. This is the single write primitive —
-    /// the write paths only stage from graph state, through [`PendingIndexWrites`].
+    /// **add** what ended added, one batched tree op each.
     ///
     /// After the collapse the two sides are disjoint, so their order no longer matters; removes
     /// still go first. A column dropped since its changes were staged is skipped.
-    ///
-    /// [`PendingIndexWrites`]: super::pending_writes::PendingIndexWrites
-    pub(crate) fn apply_writes(
+    fn apply_writes(
         &mut self,
         entity: EntityType,
         writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
@@ -416,7 +433,7 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::super::pending_writes::{IndexChanges, PendingIndexWrites};
+    use super::super::pending_writes::IndexChanges;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
 
@@ -442,7 +459,7 @@ mod tests {
         }
         let mut writes = PendingIndexWrites::default();
         writes.extend(staged);
-        writes.apply(idx);
+        idx.apply(&mut writes);
     }
 
     #[test]

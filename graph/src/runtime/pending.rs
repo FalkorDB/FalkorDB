@@ -1216,9 +1216,9 @@ impl Pending {
         // index in a different state than before. SETs run before DELETEs above, so one batch can
         // hold an entry's add and then its remove; `apply` keeps only the last.
         #[cfg(feature = "index-falkordb")]
-        self.index_docs
-            .native
-            .apply(&mut g.borrow_mut().falkordb_index);
+        g.borrow_mut()
+            .falkordb_index
+            .apply(&mut self.index_docs.native);
 
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has

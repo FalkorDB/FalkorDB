@@ -18,7 +18,7 @@ macro_rules! applied {
     ($g:expr, |$w:ident| $call:expr) => {{
         let mut $w = IndexDocs::default();
         let result = $call;
-        $w.native.apply(&mut $g.falkordb_index);
+        $g.falkordb_index.apply(&mut $w.native);
         result
     }};
 }
@@ -187,7 +187,7 @@ fn set_attr(
     attrs.insert(id, vec![(aid, value)]);
     let mut w = IndexDocs::default();
     g.set_nodes_attributes(&attrs, &mut w).unwrap();
-    w.native.apply(&mut g.falkordb_index);
+    g.falkordb_index.apply(&mut w.native);
 }
 
 fn range_scan(
@@ -562,7 +562,7 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
     let mut del = RoaringTreemap::new();
     del.insert(ids[0]);
     g.delete_nodes(&del, &mut writes).unwrap();
-    writes.native.apply(&mut g.falkordb_index);
+    g.falkordb_index.apply(&mut writes.native);
 
     assert!(
         range_scan(&g, &label, &attr, 5, 5).is_empty(),

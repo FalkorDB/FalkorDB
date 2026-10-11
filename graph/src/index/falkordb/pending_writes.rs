@@ -101,8 +101,8 @@ impl IndexChanges {
 /// and later remove it: a write step that sets `n.v` and then deletes `n` stages `add (v, n)` from
 /// the SET and `remove (v, n)` from the DELETE, because `Pending::commit` applies its SETs before
 /// its DELETEs. Applying all removes and then all adds — what each write call could safely do on
-/// its own — would leave the deleted node indexed. [`apply`](Self::apply) therefore collapses each
-/// tuple's history to its final change first.
+/// its own — would leave the deleted node indexed. [`FalkorDbIndex::apply`] therefore collapses
+/// each tuple's history to its final change first.
 #[derive(Default)]
 pub struct PendingIndexWrites {
     nodes: ColumnWrites,
@@ -116,20 +116,16 @@ impl PendingIndexWrites {
         self.nodes.is_empty() && self.edges.is_empty()
     }
 
-    /// Apply every staged change to `index` and leave the buffer empty.
-    ///
-    /// `index` must belong to the private version the changes were staged against: the index is
-    /// part of the graph version, so a version that is later refused takes these changes down
-    /// with it.
-    pub fn apply(
+    /// Take every staged change for `entity`, column by column, leaving none behind but keeping
+    /// the buffer's capacity for the next unit of work. What [`FalkorDbIndex::apply`] consumes.
+    pub(crate) fn drain(
         &mut self,
-        index: &mut FalkorDbIndex,
-    ) {
-        if self.is_empty() {
-            return;
+        entity: EntityType,
+    ) -> impl Iterator<Item = (IndexKey, Vec<IndexWrite>)> + '_ {
+        match entity {
+            EntityType::Node => self.nodes.drain(),
+            EntityType::Relationship => self.edges.drain(),
         }
-        index.apply_writes(EntityType::Node, self.nodes.drain());
-        index.apply_writes(EntityType::Relationship, self.edges.drain());
     }
 
     /// Drop everything staged without applying it — the unit of work failed.

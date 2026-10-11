@@ -89,7 +89,7 @@ pub fn apply_effects(
     // undo an earlier one's entry — the cancelled pair, or an UPDATE followed by a DELETE of the
     // same node — and `apply` keeps only each entry's last change.
     #[cfg(feature = "index-falkordb")]
-    docs.native.apply(&mut g.falkordb_index);
+    g.falkordb_index.apply(&mut docs.native);
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
     g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
     Ok(())
