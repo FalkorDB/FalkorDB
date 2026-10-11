@@ -1915,3 +1915,34 @@ def test_merge_named_path_as_last_clause():
 
     res = query("MATCH p=(:A)-[:T]->(:X) RETURN length(p)")
     assert res.result_set == [[1]]
+
+
+def test_create_named_path_as_last_clause():
+    """`CREATE p=…` is planned as PathBuilder(Create) since #2829; as the last
+    clause it must be fed by the clause before it, like MERGE (#3282)."""
+    query("CREATE (:A), (:A)", write=True)
+
+    res = query("MATCH (a:A) CREATE p=(a)-[:R]->(:B)", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("UNWIND [1, 2] AS x CREATE p=(:N {x: x})", write=True)
+    assert res.nodes_created == 2
+    assert res.properties_set == 2
+
+    res = query(
+        "MATCH (a:A) CALL { WITH a CREATE p=(a)-[:S]->(:B) } RETURN count(*)",
+        write=True,
+    )
+    assert res.result_set == [[2]]
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("MATCH (a:A) FOREACH (i IN [1] | CREATE p=(a)-[:T]->(:B))", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("MATCH (:A)-[r]->(:B) RETURN type(r), count(*) ORDER BY type(r)")
+    assert res.result_set == [["R", 2], ["S", 2], ["T", 2]]
+    res = query("MATCH (n:N) RETURN n.x ORDER BY n.x")
+    assert res.result_set == [[1], [2]]
