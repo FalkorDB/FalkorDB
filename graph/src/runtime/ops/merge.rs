@@ -30,7 +30,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::graph::graph::LabelId;
-use crate::parser::ast::{QueryGraph, SetItem, Variable};
+use crate::parser::ast::{QueryGraph, SetItem, Variable, is_anon};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
@@ -360,7 +360,7 @@ impl<'a> Iterator for MergeOp<'a> {
                     // Check if all pattern variables are already bound.
                     // All nodes must be bound, and every *named* relationship
                     // alias must also be bound. Anonymous relationships
-                    // (_anon_* prefix) are not individually tracked, so when
+                    // (`@anon_*` prefix) are not individually tracked, so when
                     // all nodes are bound the pattern is fully constrained.
                     // Only when a user-named relationship variable is unbound
                     // do we need to iterate all matches.
@@ -372,12 +372,7 @@ impl<'a> Iterator for MergeOp<'a> {
                         && pattern
                             .relationships()
                             .iter()
-                            .filter(|rel| {
-                                rel.alias
-                                    .name
-                                    .as_ref()
-                                    .is_some_and(|n| !n.starts_with("_anon_"))
-                            })
+                            .filter(|rel| rel.alias.name.as_ref().is_some_and(|n| !is_anon(n)))
                             .all(|rel| input_env.is_bound_by_id(rel.alias.id));
 
                     if all_vars_bound {

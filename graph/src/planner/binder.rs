@@ -28,7 +28,7 @@
 use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
-    Variable,
+    Variable, is_anon,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -532,7 +532,7 @@ impl Binder {
                     && !self
                         .current_env()
                         .iter()
-                        .any(|(key, _)| !key.starts_with('_'))
+                        .any(|(key, _)| !key.starts_with('_') && !is_anon(key))
                 {
                     return Err(String::from(
                         "RETURN * is not allowed when there are no variables in scope",
@@ -1093,8 +1093,8 @@ impl Binder {
                 .collect::<Vec<_>>(); // Clone to avoid borrowing issues
             self.push_scope();
             for (name, var) in env_copy {
-                // Skip anonymous variables (names starting with '_')
-                if name.starts_with('_') {
+                // Skip anonymous and internal variables
+                if is_anon(&name) || name.starts_with('_') {
                     continue;
                 }
                 // Skip variables that are explicitly listed after *
@@ -1367,7 +1367,7 @@ impl Binder {
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
             if relationship.min_hops.is_some()
-                && !relationship.alias.starts_with("_anon")
+                && !is_anon(&relationship.alias)
                 && named_path_names.contains(&relationship.alias)
             {
                 return Err(format!(
@@ -1581,7 +1581,7 @@ impl Binder {
 
         // Validate nodes - only check nodes that are NOT purely endpoints of relationships
         for node in pattern.nodes() {
-            if node.alias.starts_with("_anon") {
+            if is_anon(&node.alias) {
                 continue; // Skip anonymous nodes
             }
 
@@ -1628,7 +1628,7 @@ impl Binder {
 
         // Check relationships for redeclaration
         for rel in pattern.relationships() {
-            if rel.alias.starts_with("_anon") {
+            if is_anon(&rel.alias) {
                 continue; // Skip anonymous relationships
             }
 
@@ -1683,7 +1683,7 @@ impl Binder {
         entity_alias: &Arc<String>,
         attrs: &QueryExpr<Arc<String>>,
     ) -> Result<(), String> {
-        if entity_alias.starts_with("_anon") {
+        if is_anon(entity_alias) {
             return Ok(());
         }
         for idx in attrs.root().indices::<Dfs>() {
@@ -1881,7 +1881,7 @@ impl Binder {
                 // `bind_graph` reuses them and the cleanup below keeps them.
                 if self.use_parent_scope {
                     for name in graph.variables() {
-                        if !name.starts_with("_anon")
+                        if !is_anon(&name)
                             && !self.current_env().contains_key(&name)
                             && !locals.iter().any(|scope| scope.contains_key(&name))
                         {
@@ -1916,12 +1916,11 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 // Remove pattern-local aliases so they don't leak into outer scope.
-                // Keep anonymous variables (_anon_*) since they are always created
+                // Keep anonymous variables (`@anon_*`) since they are always created
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
-                self.current_env_mut().retain(|name, _| {
-                    outer_scope_names.contains(name) || name.starts_with("_anon")
-                });
+                self.current_env_mut()
+                    .retain(|name, _| outer_scope_names.contains(name) || is_anon(name));
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2092,11 +2091,10 @@ impl Binder {
                         self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into
-                        // the outer scope.  Keep anonymous variables (_anon_*)
+                        // the outer scope.  Keep anonymous variables (`@anon_*`)
                         // since their IDs must remain visible in scope_vars.
-                        self.current_env_mut().retain(|name, _| {
-                            outer_scope_names.contains(name) || name.starts_with("_anon")
-                        });
+                        self.current_env_mut()
+                            .retain(|name, _| outer_scope_names.contains(name) || is_anon(name));
 
                         ExprIR::Pattern(Box::new(result?))
                     }
@@ -2146,8 +2144,8 @@ impl Binder {
         ty: Type,
         allow_reuse: bool,
     ) -> Result<Variable, String> {
-        // Anonymous variables (_anon_*) should always be fresh, never reused
-        if !name.starts_with("_anon")
+        // Anonymous variables (`@anon_*`) should always be fresh, never reused
+        if !is_anon(&name)
             && let Some(existing) = self.current_env().get(&name)
         {
             if !allow_reuse {
@@ -2189,7 +2187,7 @@ impl Binder {
         }
 
         // Anonymous variables should also create fresh variables
-        if name.starts_with("_anon") {
+        if is_anon(name) {
             let scope_id = self.env_stack.len() as u32 - 1;
             let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
             // Insert with the anon name (unique by construction) to reserve

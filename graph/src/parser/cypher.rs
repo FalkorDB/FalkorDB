@@ -100,8 +100,8 @@ use crate::entity_type::EntityType;
 use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
+    ANON_PREFIX, AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR,
+    QueryNode, QueryPath, QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -2948,7 +2948,7 @@ impl<'a> Parser<'a> {
         let alias = if let Some(id) = self.try_parse_ident() {
             id
         } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
+            let name = Arc::new(format!("{ANON_PREFIX}{}", self.anon_counter));
             self.anon_counter += 1;
             name
         };
@@ -2984,7 +2984,7 @@ impl<'a> Parser<'a> {
             let alias = if let Some(id) = self.try_parse_ident() {
                 id
             } else {
-                let name = Arc::new(format!("_anon_{}", self.anon_counter));
+                let name = Arc::new(format!("{ANON_PREFIX}{}", self.anon_counter));
                 self.anon_counter += 1;
                 name
             };
@@ -3061,7 +3061,7 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RBrace);
             (alias, types.into_iter().collect(), attrs, var_len)
         } else {
-            let name = Arc::new(format!("_anon_{}", self.anon_counter));
+            let name = Arc::new(format!("{ANON_PREFIX}{}", self.anon_counter));
             self.anon_counter += 1;
             (name, vec![], tree!(ExprIR::Map), None)
         };

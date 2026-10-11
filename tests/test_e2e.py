@@ -1944,3 +1944,19 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_variable_named_like_an_anonymous_entity():
+    # Unnamed pattern entities used to be called `_anon_<n>`, a name a query
+    # can write: `(_anon_0:A)` and the unnamed `(:B)` became one node, and any
+    # variable spelled `_anon...` was handled as anonymous. They now use C's
+    # `@anon_<n>`, which an unquoted identifier cannot spell.
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    res = query("MATCH (_anon_0:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anonymous:A) RETURN count(_anonymous)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_x:A) RETURN _anon_x.v, labels(_anon_x)")
+    assert res.result_set == [[None, ["A"]]]
