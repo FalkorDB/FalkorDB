@@ -16,7 +16,6 @@ use graph::{
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
-use rustc_hash::FxHashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -324,55 +323,13 @@ unsafe fn maybe_yield(raw_ctx: *mut raw::RedisModuleCtx) {
     }
 }
 
-/// Index documents collected while processing bulk tokens.
-///
-/// RediSearch is not versioned, so anything published into it cannot be undone by the
-/// MVCC rollback that a later failing token triggers. Accumulate across the whole insert
-/// and publish once, on the success path only — otherwise a batch that fails midway
-/// leaves documents behind for entities that were never committed (and whose ids may be
-/// handed to different entities later).
-///
-/// Bulk only ever adds, so of the [`IndexDocs`] it fills only `node_adds` and `edge_adds` (and the
-/// native index's changes, which each token applies to the fork as soon as it is done).
-#[derive(Default)]
-struct BulkIndexDocs(IndexDocs);
-
-impl BulkIndexDocs {
-    /// Publish into the indexes. Call only once every token has succeeded, and while
-    /// `g` is still the un-published fork — a committed version may be borrowed by
-    /// concurrent readers.
-    fn publish(
-        &mut self,
-        g: &mut Graph,
-    ) {
-        let docs = &mut self.0;
-        if !docs.node_adds.is_empty() {
-            g.commit_index(&mut docs.node_adds, &mut FxHashMap::default());
-        }
-        if !docs.edge_adds.is_empty() {
-            g.commit_edge_index(&mut docs.edge_adds, &mut FxHashMap::default());
-        }
-    }
-
-    /// Apply the native index's changes staged so far to the fork `g` — once per token, rather
-    /// than with the insert-wide RediSearch documents: holding every token's entries until the
-    /// whole insert finished would grow with the insert, for one batched tree op per column
-    /// saved per token.
-    fn apply_native(
-        &mut self,
-        g: &mut Graph,
-    ) {
-        g.apply_index_writes(&mut self.0);
-    }
-}
-
 fn process_node_token(
     g: &mut Graph,
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (labels, prop_names) = parse_header(data, &mut idx, "Label name")?;
@@ -427,22 +384,25 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.0, true);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, docs, true);
     unsafe { maybe_yield(raw_ctx) };
 
     // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
-    // insert-wide accumulator that `BulkIndexDocs::publish` flushes once every token has
-    // succeeded. Nothing else on this path would: GRAPH.BULK does not run the post-load
-    // `populate_indexes_sync` rebuild (that is the RDB / replica path).
+    // insert-wide `docs` that are published once every token has succeeded. Nothing else on
+    // this path would: GRAPH.BULK does not run the post-load `populate_indexes_sync` rebuild
+    // (that is the RDB / replica path).
     //
     // `set_nodes_labels_bulk` above also collects, but only for nodes that already have
     // attributes — none do at this point — so it contributes nothing here and the two do
     // not double up.
     if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.0);
+        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, docs);
         unsafe { maybe_yield(raw_ctx) };
     }
-    docs.apply_native(g);
+    // The native index's changes go into the fork once per token, not with the insert-wide
+    // RediSearch documents: holding every token's entries until the whole insert finished would
+    // grow with the insert, for one batched tree op per column saved per token.
+    g.apply_index_writes(docs);
 
     Ok(())
 }
@@ -453,7 +413,7 @@ fn process_edge_token(
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (type_names, prop_names) = parse_header(data, &mut idx, "Relationship type")?;
@@ -516,8 +476,8 @@ fn process_edge_token(
 
     if !resolved_rel_attrs.is_empty() {
         // Same as the node path: collect now, publish once the whole insert has succeeded.
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.0);
-        docs.apply_native(g);
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, docs);
+        g.apply_index_writes(docs);
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -525,6 +485,14 @@ fn process_edge_token(
 }
 
 /// Process bulk insert on a background thread (no yield needed — main thread handles PING).
+///
+/// `docs` collects the index documents for the whole insert; the caller publishes them once, on
+/// the success path only. RediSearch is not versioned, so anything published into it cannot be
+/// undone by the MVCC rollback that a later failing token triggers — a batch that published as it
+/// went and failed midway would leave documents behind for entities that were never committed
+/// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
+/// only `node_adds` and `edge_adds`, plus the native index's changes, which each token applies to
+/// the fork as soon as it is done.
 fn bulk_insert_sync(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -532,7 +500,7 @@ fn bulk_insert_sync(
     edge_count: usize,
     node_token_count: usize,
     rel_token_count: usize,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     // A bulk command has no `Pending`, so the whole command is one batch: opened
     // with this write version, checked when it is published.
@@ -567,7 +535,8 @@ fn bulk_insert_sync(
     Ok(())
 }
 
-/// Process bulk insert synchronously with periodic yield for PING handling.
+/// Process bulk insert synchronously with periodic yield for PING handling. `docs` as in
+/// [`bulk_insert_sync`].
 fn bulk_insert_sync_yield(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -576,7 +545,7 @@ fn bulk_insert_sync_yield(
     node_token_count: usize,
     rel_token_count: usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     // A bulk command has no `Pending`, so the whole command is one batch: opened
     // with this write version, checked when it is published.
@@ -824,7 +793,7 @@ pub fn graph_bulk_insert(
                 "ERR another write is in progress, retry the query".to_string(),
             ));
         };
-        let mut docs = BulkIndexDocs::default();
+        let mut docs = IndexDocs::default();
         let result = {
             let mut g = g_arc.borrow_mut();
             bulk_insert_sync_yield(
@@ -847,9 +816,9 @@ pub fn graph_bulk_insert(
         // The version is validated *before* the documents are published, and
         // then again by `commit`. The documents go to RediSearch, which is not
         // MVCC and has no version to throw away: once published they survive a
-        // rolled-back fork, and `BulkIndexDocs` cannot take them back — the edge
-        // side of `commit_edge_index` wants src and dst per removed edge, which
-        // this type does not keep. Asking first costs one walk of a roaring
+        // rolled-back fork, and bulk cannot take them back — removing an edge's
+        // document wants its src and dst (`IndexDocs::edge_removes`), which bulk
+        // does not collect. Asking first costs one walk of a roaring
         // bitmap on a path that has just parsed a whole payload, and is the only
         // ordering where a refusal leaves nothing behind.
         //
@@ -858,7 +827,7 @@ pub fn graph_bulk_insert(
         // hold the same graph, where this `borrow_mut` would panic.
         let result = result.and_then(|()| {
             g_arc.borrow().validate().map_err(|e| e.to_string())?;
-            docs.publish(&mut g_arc.borrow_mut());
+            g_arc.borrow_mut().commit_index_docs(&mut docs);
             tg.graph.commit(g_arc).map_err(|e| e.to_string())
         });
         return match result {
@@ -931,7 +900,7 @@ pub fn graph_bulk_insert(
                         "ERR another write is in progress, retry the query".to_string()
                     );
                 };
-                let mut docs = BulkIndexDocs::default();
+                let mut docs = IndexDocs::default();
                 let inserted = {
                     let mut g = g_arc.borrow_mut();
                     let tokens: Vec<&[u8]> =
@@ -980,7 +949,7 @@ pub fn graph_bulk_insert(
                     session.with_graph(|tg| tg.graph.rollback());
                     break 'phase Err(e.to_string());
                 }
-                docs.publish(&mut g_arc.borrow_mut());
+                g_arc.borrow_mut().commit_index_docs(&mut docs);
                 if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write")

@@ -3776,16 +3776,23 @@ impl Graph {
     }
 
     /// Commit a unit of work's index changes into this version: the native index's staged changes,
-    /// then RediSearch's node and edge documents. For an owner that publishes both at one point,
-    /// like the replica at the end of an effects buffer. A Cypher query applies the native part at
-    /// the end of each `Commit` ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    /// then RediSearch's node and edge documents. For an owner that publishes both at one point:
+    /// the replica at the end of an effects buffer, `GRAPH.BULK` once every token has succeeded.
+    /// A Cypher query applies the native part at the end of each `Commit`
+    /// ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    ///
+    /// A kind with no documents is skipped before its indexer lock is taken.
     pub fn commit_index_docs(
         &mut self,
         docs: &mut IndexDocs,
     ) {
         self.apply_index_writes(docs);
-        self.commit_index(&mut docs.node_adds, &mut docs.node_removes);
-        self.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+        if !docs.node_adds.is_empty() || !docs.node_removes.is_empty() {
+            self.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+        }
+        if !docs.edge_adds.is_empty() || !docs.edge_removes.is_empty() {
+            self.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+        }
     }
 
     /// Write node index documents to RediSearch, taking the node indexer lock.
