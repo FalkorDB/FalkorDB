@@ -627,17 +627,28 @@ impl Pending {
         id: NodeId,
         labels: &mut OrderSet<LabelId>,
     ) {
+        let (added, removed) = self.staged_node_labels(id);
+        for &label_id in added {
+            labels.insert(LabelId(label_id as usize));
+        }
+        for &label_id in removed {
+            labels.remove(&LabelId(label_id as usize));
+        }
+    }
+
+    /// The label ids this query staged on `id`: `(added, removed)`, disjoint
+    /// (see [`Self::stage_node_labels`]). For a caller overlaying them on a set
+    /// other than [`Self::update_node_labels`]'s `OrderSet`.
+    #[must_use]
+    pub fn staged_node_labels(
+        &self,
+        id: NodeId,
+    ) -> (&[u64], &[u64]) {
         let raw_id: u64 = id.into();
-        if let Some(set) = self.set_labels.get(&raw_id) {
-            for &label_id in set {
-                labels.insert(LabelId(label_id as usize));
-            }
-        }
-        if let Some(removed) = self.remove_labels.get(&raw_id) {
-            for &label_id in removed {
-                labels.remove(&LabelId(label_id as usize));
-            }
-        }
+        (
+            self.set_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+            self.remove_labels.get(&raw_id).map_or(&[], Vec::as_slice),
+        )
     }
 
     pub fn deleted_node(
