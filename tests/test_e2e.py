@@ -1944,3 +1944,45 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
+    """A filter in an OPTIONAL MATCH inside a CALL {} body must stay on the
+    body's own rows: variable ids are per scope, so the body's `n` must not
+    pass for an outer variable with the same id (#2728)."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id AS nid }"
+        " RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 3], [2, 3], [3, 3]]
+
+    res = query(
+        "MATCH (x:A:B) CALL { WITH x OPTIONAL MATCH (n:A:B) WHERE n.id = x.id + 1"
+        " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 2], [2, 3], [3, None]]
+
+    # The query from #2728.
+    res = query(
+        """
+        UNWIND [1] AS alias0
+        CALL { WITH * RETURN alias0 AS alias1, range(0, 4) AS alias2, range(9, 16, 1) AS alias3 SKIP 0 }
+        CREATE ({id: 135})
+        WITH alias0, alias3, alias2, alias1 AS alias4,
+             toBooleanOrNull(range(23, 9, -3)) AS alias5, localTime('12:00:00') AS alias6
+        WHERE true
+        CALL {
+            WITH alias3, alias2, alias6
+            OPTIONAL MATCH (n0)<-[r0:rt11]-(n1 {k6: '9'}), (n0), p0 = (n0)<-[:rt3]-()
+            WHERE size(r0.k9) >= 0
+            RETURN n1 AS n2, r0 AS r1, p0 AS p1, alias6 AS alias7, alias3 AS alias8,
+                   alias2 AS alias9, list.insertListElements(labels(n1), [0], 0, false) AS alias10
+        }
+        CALL db.relationshipTypes() YIELD relationshipType AS alias11
+        RETURN n2
+        """,
+        write=True,
+    )
+    assert res.result_set == []
