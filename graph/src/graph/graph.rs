@@ -3976,8 +3976,14 @@ impl Graph {
                     .map(|a| a.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
+                // `db.idx.fulltext.drop('L')` names no attribute: `:L`, as C.
+                let attrs = if attr_list.is_empty() {
+                    String::new()
+                } else {
+                    format!("({attr_list})")
+                };
                 Err(format!(
-                    "Unable to drop index on :{label}({attr_list}): no such index."
+                    "Unable to drop index on :{label}{attrs}: no such index."
                 ))
             }
         }
