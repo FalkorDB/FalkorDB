@@ -1055,6 +1055,101 @@ impl<'a> Batch<'a> {
         }
     }
 
+    /// Builds one batch from rows picked across `batches`, in `picks` order:
+    /// `(b, r)` is logical row `r` of `batches[b]`. Equivalent to
+    /// [`concat`](Self::concat) followed by a [`gather`](Self::gather), with one
+    /// copy instead of two; columns follow `concat`'s rules (typed when every
+    /// contributing batch agrees on a primitive type, else `Value`-backed with
+    /// the bound / value-only / unbound state preserved).
+    #[must_use]
+    pub fn interleave(
+        batches: &[Self],
+        picks: &[(usize, usize)],
+    ) -> Self {
+        let total = picks.len();
+        if total == 0 {
+            return Batch::new(0);
+        }
+        let num_cols = batches.iter().map(Batch::num_columns).max().unwrap_or(0);
+        let mut columns: Vec<Column> = Vec::with_capacity(num_cols);
+        let mut value_only = BitSet::default();
+
+        for i in 0..num_cols {
+            let vid = i as u32;
+            let first = batches[picks[0].0].column(vid);
+            let typed = batches.iter().all(|b| {
+                b.active_len() == 0
+                    || (!b.value_only.test(i)
+                        && std::mem::discriminant(b.column(vid)) == std::mem::discriminant(first))
+            });
+            macro_rules! typed_column {
+                ($variant:ident) => {{
+                    let mut out = Vec::with_capacity(total);
+                    for &(b, r) in picks {
+                        if let Column::$variant(v) = batches[b].column(vid) {
+                            out.push(v[r]);
+                        }
+                    }
+                    Column::$variant(out)
+                }};
+            }
+            if typed {
+                match first {
+                    Column::NodeIds(_) => {
+                        columns.push(typed_column!(NodeIds));
+                        continue;
+                    }
+                    Column::RelIds(_) => {
+                        columns.push(typed_column!(RelIds));
+                        continue;
+                    }
+                    Column::Ints(_) => {
+                        columns.push(typed_column!(Ints));
+                        continue;
+                    }
+                    Column::Floats(_) => {
+                        columns.push(typed_column!(Floats));
+                        continue;
+                    }
+                    Column::Values(_) | Column::Unbound => {}
+                }
+            }
+            // Generic path, as in `concat`.
+            let mut values: Vec<Value> = Vec::with_capacity(total);
+            let bound_anywhere = batches.iter().any(|b| {
+                b.active_len() > 0 && !matches!(b.column(vid), Column::Unbound) && !b.value_only.test(i)
+            });
+            let mut nonnull_anywhere = false;
+            for &(b, r) in picks {
+                let v = batches[b].column(vid).get(r);
+                nonnull_anywhere |= !matches!(v, Value::Null);
+                values.push(v);
+            }
+            if bound_anywhere {
+                columns.push(classify_stored_column(values));
+            } else if nonnull_anywhere {
+                columns.push(Column::Values(values));
+                value_only.set(i);
+            } else {
+                columns.push(Column::Unbound);
+            }
+        }
+
+        let origins: Vec<u32> = picks
+            .iter()
+            .map(|&(b, r)| batches[b].origin_row(r))
+            .collect();
+        let any_origin = origins.iter().any(|&o| o != 0);
+        Batch {
+            len: total,
+            selection: None,
+            columns,
+            origin_rows: any_origin.then_some(origins),
+            value_only,
+            _marker: PhantomData,
+        }
+    }
+
     /// Builds column `i` by bulk-extending a single primitive typed
     /// representation shared by every contributing batch. Returns `None` (so the
     /// caller takes the generic `Value` path) when any active batch leaves the

@@ -29,12 +29,15 @@
 use crate::parser::ast::Variable;
 use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+use std::collections::VecDeque;
+
+use super::optional_order::FallbackOrder;
 
 /// Active batched sub-plan for all rows from one input batch.
 struct ActiveSubPlan<'a> {
@@ -44,9 +47,8 @@ struct ActiveSubPlan<'a> {
     input_ref: Batch<'a>,
     /// The single sub-plan iterator producing result batches for all input rows.
     subtree: BatchOp<'a>,
-    /// Dense per-origin match flags (`matched[i]` == origin `i` produced a
-    /// result); the unmatched origins get the NULL fallback.
-    matched: Vec<bool>,
+    /// Which origins matched, and the results held back to keep input order.
+    order: FallbackOrder<'a>,
 }
 
 /// The currently-executing row's sub-plan (per-row mode).
@@ -77,11 +79,10 @@ pub struct OptionalOp<'a> {
     optional_child_idx: NodeIdx<Dyn<IR>>,
     /// Batched mode state.
     active: Option<Box<ActiveSubPlan<'a>>>,
-    /// Batched mode's single buffered output batch (merged sub-plan results or
-    /// the NULL fallback), emitted on the next `next()` without a row-by-row
-    /// rebuild. The drive loop consumes it before producing another, so one
-    /// slot suffices.
-    pending_batch: Option<Batch<'a>>,
+    /// Batched mode's output batches (merged sub-plan results and NULL
+    /// fallbacks, in input order), emitted on the next `next()` calls without a
+    /// row-by-row rebuild.
+    pending_batches: VecDeque<Batch<'a>>,
     /// Per-row mode state.
     per_row: Option<Box<PerRowState<'a>>>,
     can_batch: bool,
@@ -111,7 +112,7 @@ impl<'a> OptionalOp<'a> {
             vars,
             optional_child_idx,
             active: None,
-            pending_batch: None,
+            pending_batches: VecDeque::new(),
             per_row: None,
             can_batch,
             idx,
@@ -125,7 +126,7 @@ impl<'a> OptionalOp<'a> {
     fn next_batched(&mut self) -> Option<Result<Batch<'a>, String>> {
         loop {
             // 1. Emit the buffered columnar output batch first.
-            if let Some(out) = self.pending_batch.take() {
+            if let Some(out) = self.pending_batches.pop_front() {
                 return Some(Ok(out));
             }
 
@@ -143,11 +144,11 @@ impl<'a> OptionalOp<'a> {
                     Err(e) => return Some(Err(e)),
                 };
                 subtree.set_argument_batch(arg_batch);
-                let matched = vec![false; input_ref.len()];
+                let order = FallbackOrder::new(input_ref.len());
                 self.active = Some(Box::new(ActiveSubPlan {
                     input_ref,
                     subtree,
-                    matched,
+                    order,
                 }));
             }
 
@@ -161,27 +162,17 @@ impl<'a> OptionalOp<'a> {
                         .map(|r| sub.origin_row(r) as usize)
                         .collect();
                     if !origins.is_empty() {
-                        for &o in &origins {
-                            plan.matched[o] = true;
-                        }
                         let merged = sub.merge_over_input(&plan.input_ref, &origins);
-                        self.pending_batch = Some(merged);
+                        plan.order.push(merged, &origins, &mut self.pending_batches);
                     }
                 }
                 Some(Err(e)) => return Some(Err(e)),
                 None => {
-                    // Sub-plan exhausted: emit a NULL fallback batch for the
-                    // origins that never matched, then retire the sub-plan.
-                    let unmatched: Vec<usize> = (0..plan.matched.len())
-                        .filter(|&i| !plan.matched[i])
-                        .collect();
-                    if !unmatched.is_empty() {
-                        let mut fb = plan.input_ref.gather(&unmatched);
-                        for v in self.vars {
-                            fb.set_column(v.id, Column::Values(vec![Value::Null; unmatched.len()]));
-                        }
-                        self.pending_batch = Some(fb);
-                    }
+                    // Sub-plan exhausted: emit what was held back and a NULL
+                    // fallback row for each origin that never matched, in input
+                    // order, then retire the sub-plan.
+                    plan.order
+                        .finish(&plan.input_ref, self.vars, &mut self.pending_batches);
                     self.active = None;
                 }
             }

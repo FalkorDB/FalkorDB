@@ -56,6 +56,7 @@ pub mod node_by_label_and_id_scan;
 pub mod node_by_label_scan;
 pub mod node_by_vector_scan;
 pub mod optional;
+pub(crate) mod optional_order;
 pub mod or_apply_multiplexer;
 pub mod path_builder;
 pub mod procedure_call;
