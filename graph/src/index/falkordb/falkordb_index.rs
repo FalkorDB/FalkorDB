@@ -9,7 +9,7 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::entity_type::EntityType;
@@ -17,6 +17,7 @@ use crate::graph::graph::{Graph, NodeId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
+use super::cch::{CchError, CchIndex, CchIndexDef};
 use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
@@ -345,6 +346,22 @@ pub struct FalkorDbIndex {
     /// published, so between a version and a later published one with the same count, no batch
     /// was published. Writers may have been: the data version tells.
     batches_published: u64,
+    /// CCH shortest-path indexes, one [`IndexEntry`] per definition, keyed by the whole
+    /// [`CchIndexDef`](super::cch::CchIndexDef) (the kind's [`VersionedIndex::Name`]). Every
+    /// entry is built synchronously and held `Ready` until the background build, so readers
+    /// still check the state.
+    ///
+    /// A `BTreeMap`, not a `HashMap`: it iterates in definition order, the same in every
+    /// process, so whatever lists the indexes (a save, a listing) is deterministic. Found by
+    /// key, one entry per definition. Empty until one is created, so a graph with no CCH index
+    /// pays one empty map.
+    ///
+    /// Cloned with the rest of the index by `Graph::new_version`, which clones one `Arc<Cch>`
+    /// per index: no hierarchy data is copied, a reader that already holds the old version
+    /// keeps it, and rollback costs nothing. `pub(super)` for the CCH modules that find or
+    /// update an entry in place (`CchIndex`'s [`VersionedIndex`] lookup); everything else goes
+    /// through the CCH methods below.
+    pub(super) cch_indexes: BTreeMap<CchIndexDef, IndexEntry<CchIndex>>,
 }
 
 impl FalkorDbIndex {
@@ -778,6 +795,43 @@ impl FalkorDbIndex {
         attr: &Arc<String>,
     ) -> Option<BuildState<BuildCursor>> {
         self.entry(entity, label, attr).map(|entry| entry.state)
+    }
+}
+
+/// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
+/// hierarchy from the graph first, then hand it here; nothing here reads the graph.
+///
+/// The signatures are fixed here so the DDL, maintenance and procedure changes can be written
+/// against them. Every body is `unimplemented!()`: nothing in the engine calls these, so a
+/// graph with no CCH index behaves exactly as it did before.
+impl FalkorDbIndex {
+    /// The index held over exactly `def`, if it is ready to answer.
+    #[must_use]
+    pub(crate) fn cch_index(
+        &self,
+        _def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        unimplemented!("Graph API, #3212")
+    }
+
+    /// Every held CCH definition, in no guaranteed order.
+    pub(crate) fn cch_defs(&self) -> impl Iterator<Item = &CchIndexDef> {
+        unimplemented!("Graph API, #3212");
+        // Unreachable, but it pins the return type: `impl Iterator` needs a concrete type
+        // and `unimplemented!()` alone leaves the compiler without one.
+        #[allow(unreachable_code)]
+        std::iter::empty()
+    }
+
+    /// Stop holding the index over `def`.
+    ///
+    /// # Errors
+    /// [`CchError::NotFound`] if no entry over `def` is held.
+    pub(crate) fn drop_cch(
+        &mut self,
+        _def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        unimplemented!("Graph API, #3212")
     }
 }
 
