@@ -33,6 +33,8 @@ use super::falkordb_index::FalkorDbIndex;
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 use crate::graph::graph::{Graph, TypeId};
 use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
+use customize::Metric;
+use order::Topology;
 use thiserror::Error;
 
 /// The largest node count (`CchInput::n`, the graph's node capacity) a hierarchy is built
@@ -197,8 +199,16 @@ pub enum CchError {
 
 /// The hierarchy. Cheap to share behind an `Arc`: the six structural arrays never change after
 /// `build`; only the four weight arrays are rewritten by `customize`.
+///
+/// The internal layout — the two id spaces, what an arc id means, and what each of the four
+/// arrays holds — is documented in [`customize`], which scoped recustomization (#3217) and
+/// any later change to how the weight arrays are stored code against.
 pub struct Cch {
-    // filled in by the ordering (#3208) and customization (#3209) changes
+    /// Phase 1's output: the elimination order and the chordal supergraph. Metric
+    /// independent, so every version of this index shares one.
+    topo: Arc<Topology>,
+    /// Phase 2's output: the four per-arc arrays, indexed by arc id.
+    metric: Metric,
 }
 
 impl Cch {
@@ -206,26 +216,24 @@ impl Cch {
     ///
     /// # Errors
     /// [`CchError::GraphTooLarge`] above [`MAX_NODES`] nodes (see [`check_size`]),
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3208 and #3209. Nothing calls it yet.
-    pub fn build(_input: &CchInput) -> Result<Self, CchError> {
-        unimplemented!("hierarchy build, #3208 and #3209")
+    /// [`CchError::InvalidWeight`] for a negative or NaN weight, and
+    /// [`CchError::Internal`] if the ordering backend fails.
+    pub fn build(input: &CchInput) -> Result<Self, CchError> {
+        Self::build_impl(input)
     }
 
     /// Phase 2 only, same structure, new weights.
     ///
     /// # Errors
-    /// [`CchError::InvalidWeight`] for a negative or NaN weight.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
+    /// [`CchError::InvalidWeight`] for a negative or NaN weight, and
+    /// [`CchError::Internal`] if `weights` is not shaped for this hierarchy — a different
+    /// node count, or an edge between two nodes it has no arc for. Both need a rebuild.
+    /// Nothing is written on error.
     pub fn customize(
         &mut self,
-        _weights: &WeightCsr,
+        weights: &WeightCsr,
     ) -> Result<(), CchError> {
-        unimplemented!("customization, #3209")
+        self.customize_impl(weights)
     }
 
     /// Recompute the metric after the edges in `changed` changed weight, touching only the
@@ -274,18 +282,16 @@ impl Cch {
         unimplemented!("query, #3210")
     }
 
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        unimplemented!("customization, #3209")
+        self.node_count_impl()
     }
 
-    /// # Panics
-    /// Always — unimplemented until #3209. Nothing calls it yet.
+    /// Heap bytes held by this hierarchy, structural arrays included — so two versions
+    /// sharing one [`Topology`] each report its bytes.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        unimplemented!("customization, #3209")
+        self.memory_usage_impl()
     }
 }
 
@@ -396,6 +402,7 @@ pub struct CchDirty {
 mod tests {
     use super::{Cch, CchError, CchIndex, CchIndexDef, Csr, MAX_NODES, TypeId, check_size};
     use crate::graph::{graph::Graph, graphblas::test_init};
+    use crate::index::falkordb::cch::testkit::{empty, to_input};
     use crate::index::falkordb::versioned::{BuildState, IndexEntry, VersionedIndex};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -517,7 +524,7 @@ mod tests {
         );
 
         let def = CchIndexDef::new(vec![TypeId(1)], 0);
-        let cch = Arc::new(Cch {});
+        let cch = Arc::new(Cch::build(&to_input(&empty(0))).expect("empty hierarchy"));
         g.falkordb_index.cch_indexes.push(IndexEntry::new(
             CchIndex {
                 def: def.clone(),
