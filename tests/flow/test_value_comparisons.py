@@ -193,3 +193,36 @@ class testValueComparison(FlowTestsBase):
         # 'test' = 'test' should be true
         self.env.assertEquals(actual_result.result_set[0][0], True)
 
+
+    # A point with a NaN coordinate is not equal to any point, itself
+    # included, whether compared directly or inside a list or a map.
+    # Relational operators give false, as they do for a NaN number.
+    def test_point_with_nan_coordinate(self):
+        NaN = "0.0/0.0"
+        P = "point({latitude: 10.0, longitude: 20.0})"
+        nan_lat = f"point({{latitude: {NaN}, longitude: 20.0}})"
+        nan_lon = f"point({{latitude: 10.0, longitude: {NaN}}})"
+        T, F = True, False
+        cases = [
+            # (a, b, =, <>, <, >, <=, >=)
+            (P,       P,       T, F, F, F, T, T),   # no NaN, unchanged
+            (nan_lat, nan_lat, F, T, F, F, F, F),
+            (nan_lon, nan_lon, F, T, F, F, F, F),
+            (nan_lat, nan_lon, F, T, F, F, F, F),
+            (nan_lat, P,       F, T, F, F, F, F),
+            (P,       nan_lon, F, T, F, F, F, F),
+        ]
+
+        for a, b, eq, ne, lt, gt, le, ge in cases:
+            # '=' on its own, wrapped in a list and in a map
+            for form in ["{a} = {b}", "[{a}] = [{b}]", "{{k: {a}}} = {{k: {b}}}",
+                         "{a} IN [{b}]"]:
+                q = "RETURN " + form.format(a=a, b=b)
+                res = self.graph.query(q).result_set[0][0]
+                self.env.assertEquals(res, eq, message=q)
+
+            for op, expected in [("<>", ne), ("<", lt), (">", gt),
+                                 ("<=", le), (">=", ge)]:
+                q = f"RETURN {a} {op} {b}"
+                res = self.graph.query(q).result_set[0][0]
+                self.env.assertEquals(res, expected, message=q)

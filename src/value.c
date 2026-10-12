@@ -902,6 +902,12 @@ int SIValue_Compare
 
 		case T_POINT:
 		{
+			// a NaN coordinate is not equal to anything, like a NaN double
+			if(isnan(Point_lat(a)) || isnan(Point_lon(a)) ||
+			   isnan(Point_lat(b)) || isnan(Point_lon(b))) {
+				if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
+			}
+
 			int lon_diff = SAFE_COMPARISON_RESULT(Point_lon(a) - Point_lon(b));
 			if(lon_diff == 0)
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
