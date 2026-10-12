@@ -8,6 +8,7 @@
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
+//! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
@@ -20,6 +21,7 @@
 pub mod customize;
 pub mod index;
 pub mod input;
+mod nd;
 pub mod order;
 pub mod query;
 #[cfg(test)]
@@ -105,8 +107,8 @@ impl Csr {
 
     /// Whether this is the adjacency of a simple undirected graph: well formed, rows
     /// sorted and duplicate-free, no self-loop, and every entry mirrored (`v` in row `u`
-    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked in
-    /// debug builds and by the tests, not on the release path.
+    /// iff `u` in row `v`). What [`CchInput::skeleton`] holds by construction; checked
+    /// again before the ordering backend reads it.
     #[must_use]
     pub fn is_symmetric_simple(&self) -> bool {
         self.is_well_formed()
