@@ -4,7 +4,7 @@
 //! graph access. It ensures:
 //!
 //! - Multiple readers can access the graph simultaneously (lock-free)
-//! - Only one writer at a time (serialized via the write slot, an `AtomicU8`)
+//! - Only one writer at a time (serialized via the write slot, an atomic [`Slot`])
 //! - Writers work on a Copy-on-Write versioned copy, committing atomically
 //! - Readers always see a consistent, committed snapshot
 //!
@@ -14,7 +14,7 @@
 //!  MvccGraph
 //!  ┌─────────────────────────────────────────────────────┐
 //!  │  graph: Arc<AtomicRefCell<Graph>>  (committed v1)   │
-//!  │  write: AtomicU8 (free / writer / build step)        │
+//!  │  write: AtomicSlot (free / writer / build step)      │
 //!  └─────────────────────────────────────────────────────┘
 //!
 //!  Reader 1 ──read()──▶ clones Arc ──▶ sees Graph v1
@@ -56,22 +56,25 @@
 //! where mutable access to the committed graph is needed (e.g., indexer
 //! graph reference updates on commit).
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
-};
+use std::sync::{Arc, atomic::Ordering};
 
+use atomic_enum::atomic_enum;
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
 
-/// Nobody holds the write slot.
-const SLOT_FREE: u8 = 0;
-/// A writer holds the write slot; only its `commit` or `rollback` frees it.
-const SLOT_WRITER: u8 = 1;
-/// A background index-build step holds the write slot, and gives it up to any writer that asks
-/// (see [`MvccGraph::write_for_build`]).
-const SLOT_BUILD: u8 = 2;
+/// Who holds the write slot.
+#[atomic_enum]
+#[derive(PartialEq, Eq)]
+enum Slot {
+    /// Nobody.
+    Free,
+    /// A writer; only its `commit` or `rollback` frees the slot.
+    Writer,
+    /// A background index-build step, which gives the slot up to any writer that asks (see
+    /// [`MvccGraph::write_for_build`]).
+    Build,
+}
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -80,8 +83,8 @@ const SLOT_BUILD: u8 = 2;
 pub struct MvccGraph {
     /// Current committed graph version
     graph: Arc<AtomicRefCell<Graph>>,
-    /// The write slot: [`SLOT_FREE`], [`SLOT_WRITER`] or [`SLOT_BUILD`].
-    write: AtomicU8,
+    /// The write slot: who holds it.
+    write: AtomicSlot,
 }
 
 unsafe impl Send for MvccGraph {}
@@ -97,7 +100,7 @@ impl MvccGraph {
     ) -> Self {
         Self {
             graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
-            write: AtomicU8::new(SLOT_FREE),
+            write: AtomicSlot::new(Slot::Free),
         }
     }
 
@@ -107,7 +110,7 @@ impl MvccGraph {
     pub fn from_graph(graph: Graph) -> Self {
         Self {
             graph: Arc::new(AtomicRefCell::new(graph)),
-            write: AtomicU8::new(SLOT_FREE),
+            write: AtomicSlot::new(Slot::Free),
         }
     }
 
@@ -123,12 +126,12 @@ impl MvccGraph {
     pub fn write(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
         let mut seen = self.write.load(Ordering::Relaxed);
         loop {
-            if seen == SLOT_WRITER {
+            if seen == Slot::Writer {
                 return None;
             }
             match self.write.compare_exchange_weak(
                 seen,
-                SLOT_WRITER,
+                Slot::Writer,
                 Ordering::Acquire,
                 Ordering::Relaxed,
             ) {
@@ -150,7 +153,12 @@ impl MvccGraph {
     #[must_use]
     pub fn write_for_build(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
         self.write
-            .compare_exchange(SLOT_FREE, SLOT_BUILD, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(
+                Slot::Free,
+                Slot::Build,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            )
             .ok()
             .map(|_| self.new_version())
     }
@@ -163,8 +171,8 @@ impl MvccGraph {
     pub fn claim_build(&self) -> bool {
         self.write
             .compare_exchange(
-                SLOT_BUILD,
-                SLOT_WRITER,
+                Slot::Build,
+                Slot::Writer,
                 Ordering::Acquire,
                 Ordering::Relaxed,
             )
@@ -175,8 +183,8 @@ impl MvccGraph {
     /// the slot over already.
     pub fn abandon_build(&self) {
         let _ = self.write.compare_exchange(
-            SLOT_BUILD,
-            SLOT_FREE,
+            Slot::Build,
+            Slot::Free,
             Ordering::Release,
             Ordering::Relaxed,
         );
@@ -290,7 +298,7 @@ impl MvccGraph {
         };
 
         self.graph = new_graph;
-        self.write.store(SLOT_FREE, Ordering::Release);
+        self.write.store(Slot::Free, Ordering::Release);
         #[cfg(feature = "index-falkordb")]
         if wake_builder {
             crate::index::falkordb::online_build::wake();
@@ -300,7 +308,7 @@ impl MvccGraph {
 
     /// Release the write slot a writer holds, dropping nothing: the caller drops its version.
     pub fn rollback(&self) {
-        self.write.store(SLOT_FREE, Ordering::Release);
+        self.write.store(Slot::Free, Ordering::Release);
     }
 }
 
