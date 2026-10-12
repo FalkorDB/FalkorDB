@@ -20,4 +20,7 @@ pub mod graph_writes;
 pub mod numeric;
 
 #[cfg(feature = "index-falkordb")]
+pub mod online_build;
+
+#[cfg(feature = "index-falkordb")]
 pub mod pending_writes;

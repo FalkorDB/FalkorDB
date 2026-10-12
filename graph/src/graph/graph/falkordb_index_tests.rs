@@ -3,14 +3,17 @@
 
 use super::Graph;
 use crate::entity_type::EntityType;
+use crate::graph::mvcc_graph::MvccGraph;
 use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
 use crate::index::falkordb::graph_writes;
+use crate::index::falkordb::online_build::{self, BuildHost, Turn};
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -36,8 +39,8 @@ fn reserve_nodes(
         .expect("reserved")
 }
 
-/// Run build steps of at most `nodes` nodes or `edges` edges until no column is `Building`, the
-/// way the module's write loop does. Returns how many steps it took.
+/// Run build steps of at most `nodes` nodes or `edges` edges until no column is `Building`, one
+/// after another as the builder does. Returns how many steps it took.
 fn build_to_end(
     g: &mut Graph,
     nodes: usize,
@@ -1132,4 +1135,231 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
         vec![ids[1]],
         "the untouched node is all that is left"
     );
+}
+
+// --- The builder: turns, giving way, starvation ---
+
+/// A host for driving build turns in a test: a plain lock around the coordinator. `takeovers`
+/// makes the next `publish` calls start with a writer that takes the slot over and commits, the
+/// way a write on Redis's main thread would while a turn's step runs. `refuse` makes `publish`
+/// refuse, as for a deleted graph.
+struct TestHost {
+    mvcc: parking_lot::RwLock<MvccGraph>,
+    takeovers: AtomicU32,
+    refuse: AtomicBool,
+}
+
+impl TestHost {
+    /// `:Person` nodes with `attr = values`, and a committed `CREATE INDEX` on them.
+    fn building(
+        attr: &Arc<String>,
+        values: &[i64],
+    ) -> (Arc<Self>, Arc<String>, Vec<u64>) {
+        let (g, label, ids) = people_with(attr, values);
+        let mut mvcc = MvccGraph::from_graph(g);
+        let version = mvcc.write().expect("free");
+        create_index_on(&mut version.borrow_mut(), &label, attr);
+        mvcc.commit(version).expect("commits");
+        let host = Arc::new(Self {
+            mvcc: parking_lot::RwLock::new(mvcc),
+            takeovers: AtomicU32::new(0),
+            refuse: AtomicBool::new(false),
+        });
+        (host, label, ids)
+    }
+
+    /// The column's ids in value order, from the published version.
+    fn indexed(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Vec<u64> {
+        let published = self.mvcc.read().read();
+        range_scan(&published.borrow(), label, attr, i64::MIN, i64::MAX)
+    }
+
+    fn cursor(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<BuildCursor> {
+        let published = self.mvcc.read().read();
+        cursor(&published.borrow(), EntityType::Node, label, attr)
+    }
+}
+
+impl BuildHost for TestHost {
+    fn id(&self) -> usize {
+        std::ptr::from_ref(self) as usize
+    }
+
+    fn read(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        f(&self.mvcc.read());
+        true
+    }
+
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&mut MvccGraph),
+    ) -> bool {
+        if self.refuse.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut mvcc = self.mvcc.write();
+        if self
+            .takeovers
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            let version = mvcc
+                .write()
+                .expect("a writer takes a build step's slot over");
+            mvcc.commit(version).expect("the writer commits");
+        }
+        f(&mut mvcc);
+        true
+    }
+}
+
+/// Turns of at most 10 nodes build a 25-node column in three commits, then find nothing to do.
+#[test]
+fn turns_build_a_column_and_go_idle() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
+    let mut losses = 0;
+    let mut turn = || online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10);
+    let more = |more| Turn::Committed { more, held: false };
+    assert_eq!(turn(), more(true));
+    assert_eq!(turn(), more(true));
+    assert_eq!(turn(), more(false));
+    assert_eq!(turn(), Turn::Idle);
+    assert_eq!(host.indexed(&label, &attr), ids);
+    assert_eq!(host.cursor(&label, &attr), None, "Ready");
+}
+
+/// A writer that takes the slot over while a turn's step runs makes the turn lose: its batch is
+/// not published, the count goes up, and the slot is the writer's, then free once it commits.
+#[test]
+fn a_turn_whose_slot_is_taken_over_loses_its_batch() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
+    host.takeovers.store(1, Ordering::Relaxed);
+    let mut losses = 0;
+    assert_eq!(
+        online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10),
+        Turn::Lost
+    );
+    assert_eq!(losses, 1);
+    assert!(
+        host.indexed(&label, &attr).is_empty(),
+        "the batch was dropped"
+    );
+    assert_eq!(host.cursor(&label, &attr), Some(BuildCursor::default()));
+    // `write_for_build`, not `write`: `write` would also take a slot a build step still held.
+    assert!(
+        host.mvcc.read().write_for_build().is_some(),
+        "the slot is free again"
+    );
+}
+
+/// Writers that keep taking the slot over cannot starve a build: after two lost turns the next one
+/// holds — a writer that comes then commits before it, not during it — and its commit resets the
+/// count, so the turn after gives way again.
+#[test]
+fn after_two_lost_turns_the_next_one_holds() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
+    host.takeovers.store(3, Ordering::Relaxed);
+    let mut losses = 0;
+    let mut turn = || online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10);
+    assert_eq!(turn(), Turn::Lost);
+    assert_eq!(turn(), Turn::Lost);
+    assert_eq!(
+        turn(),
+        Turn::Committed {
+            more: true,
+            held: true
+        }
+    );
+    assert_eq!(
+        turn(),
+        Turn::Committed {
+            more: true,
+            held: false
+        },
+        "a commit resets the count"
+    );
+    assert_eq!(
+        turn(),
+        Turn::Committed {
+            more: false,
+            held: false
+        }
+    );
+    assert_eq!(host.indexed(&label, &attr), ids);
+}
+
+/// A host that refuses to publish (the graph was deleted) ends the turn without committing, and
+/// the turn gives the slot back rather than leaving it taken.
+#[test]
+fn a_refused_publish_releases_the_slot() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
+    host.refuse.store(true, Ordering::Relaxed);
+    let mut losses = 0;
+    assert_eq!(
+        online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10),
+        Turn::Gone
+    );
+    assert!(host.indexed(&label, &attr).is_empty());
+    // `write_for_build`, not `write`: `write` would also take a slot a build step still held.
+    assert!(
+        host.mvcc.read().write_for_build().is_some(),
+        "the turn released the slot"
+    );
+}
+
+/// End to end: with the builder thread running over a host and done with the scan it makes at
+/// start, a commit that brings in a `Building` column wakes it, and it builds the column to `Ready`
+/// with no one calling a turn. The builder is process-wide and left running: stopping it would
+/// make turns in tests running alongside give up.
+#[test]
+fn a_commit_that_brings_in_a_building_column_wakes_the_builder() {
+    let attr = Arc::new("v".to_string());
+    let (g, label, ids) = people_with(&attr, &(1..=30).collect::<Vec<_>>());
+    let host = Arc::new(TestHost {
+        mvcc: parking_lot::RwLock::new(MvccGraph::from_graph(g)),
+        takeovers: AtomicU32::new(0),
+        refuse: AtomicBool::new(false),
+    });
+    let for_builder: Arc<dyn BuildHost> = host.clone();
+    online_build::start(move || vec![for_builder.clone()]);
+    // Let the scan at start find nothing, so only the commit below can bring the builder back.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while online_build::SCANS.load(Ordering::Relaxed) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the builder never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    {
+        let mut mvcc = host.mvcc.write();
+        let version = mvcc.write().expect("free");
+        create_index_on(&mut version.borrow_mut(), &label, &attr);
+        mvcc.commit(version).expect("commits");
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while host.cursor(&label, &attr).is_some() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the builder never finished the column"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(host.indexed(&label, &attr), ids);
 }

@@ -280,8 +280,21 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
+        // Wake the online index builder when this version brings in a `Building` column — a
+        // `CREATE INDEX` however it arrived. Not for a version that only carries on a build:
+        // the builder is already on it, and its own commits would wake it every turn.
+        #[cfg(feature = "index-falkordb")]
+        let wake_builder = {
+            use crate::index::falkordb::graph_writes::has_building_columns;
+            has_building_columns(&new_graph.borrow()) && !has_building_columns(&self.graph.borrow())
+        };
+
         self.graph = new_graph;
         self.write.store(SLOT_FREE, Ordering::Release);
+        #[cfg(feature = "index-falkordb")]
+        if wake_builder {
+            crate::index::falkordb::online_build::wake();
+        }
         Ok(())
     }
 
