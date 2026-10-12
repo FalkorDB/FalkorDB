@@ -136,20 +136,13 @@ impl NumericIndex {
         out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
     }
 
-    /// Build from already-encoded `(key, doc)` tuples arriving **sorted ascending and unique** — how
-    /// the install builds the finished column from BASE, TOMB and DELTA in one pass. Only one page's
-    /// worth of input is buffered.
+    /// Build from already-encoded `(key, doc)` tuples **sorted ascending and unique** — the RDB-load
+    /// populate path, which encodes as it scans.
     #[must_use]
-    pub fn from_sorted_tuples(pairs: impl IntoIterator<Item = (u64, u64)>) -> Self {
+    pub fn from_sorted_tuples(pairs: &[(u64, u64)]) -> Self {
         Self {
-            tree: Tree::from_sorted_iter(pairs),
+            tree: Tree::from_sorted(pairs),
         }
-    }
-
-    /// Every `(key, doc)` tuple, in `(key, doc)` order, read lazily from a snapshot of the tree: the
-    /// install streams TOMB and DELTA through this without collecting them.
-    pub fn tuples(&self) -> impl Iterator<Item = (u64, u64)> + use<> {
-        self.tree.range_tuples(0, u64::MAX)
     }
 
     /// Add already-encoded tuples — the adds a unit of work's staged writes collapsed to. Tuples
