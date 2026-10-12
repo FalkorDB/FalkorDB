@@ -150,6 +150,8 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 # Required at runtime:
 #   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
 #   libssl3                         : redis-server with BUILD_TLS=yes
+#   gosu                            : run.sh drops root to `falkordb`; the
+#                                     browser entrypoint drops to nextjs
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
 # runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
@@ -157,13 +159,12 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 # old layout required.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3; \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 gosu; \
     apt-get upgrade -y; \
-    # Create the redis user/group BEFORE purging `passwd` (which provides
-    # groupadd/useradd). Matches the upstream redis image's uid/gid 999
-    # so downstream consumers' bind-mount permissions and `USER redis`
-    # directives remain compatible after the base switch.
-    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis; \
+    # Create the falkordb user/group, which run.sh runs redis-server as,
+    # BEFORE purging `passwd` (which provides groupadd/useradd). uid/gid 999
+    # is the upstream redis image's, so bind-mount permissions carry over.
+    groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb; \
     # The `full` stage below runs the bundled browser as nextjs:nodejs (1001),
     # the uid/gid baked into the falkordb-browser image. useradd/groupadd only
     # exist until `passwd` is purged a few lines down, so the account has to be
@@ -201,7 +202,14 @@ RUN ln -s redis-server /usr/local/bin/redis-sentinel && \
     ln -s redis-server /usr/local/bin/redis-check-rdb && \
     ln -s redis-server /usr/local/bin/redis-check-aof
 
+# root:falkordb 0775: `falkordb` writes through the group (after run.sh drops
+# to it, or under --user 999), and root still owns them, so a root process
+# with no capabilities (--cap-drop ALL, where run.sh cannot drop) can still
+# write. The official redis image's user:user ownership cannot SAVE in that
+# case.
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    chown root:falkordb ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 WORKDIR ${FALKORDB_HOME}
@@ -251,11 +259,12 @@ ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
 #   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6,
 #     neither of which is in debian:trixie-slim.
 #   * docker-entrypoint.sh drops privileges with su-exec(1), an Alpine tool.
-#     Debian's equivalent is gosu, symlinked under the expected name.
+#     Debian's equivalent is gosu (installed in `server`), symlinked under
+#     the expected name.
 # Without these the browser never starts (see issue #2750).
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends gosu libatomic1 libstdc++6; \
+    apt-get install -y --no-install-recommends libatomic1 libstdc++6; \
     ln -sf "$(command -v gosu)" /usr/local/bin/su-exec; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*

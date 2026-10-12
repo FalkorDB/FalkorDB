@@ -175,7 +175,10 @@ ENV ARCH=${TARGETPLATFORM} \
     ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-23/bin/llvm-symbolizer \
     RS_GLOBAL_DTORS=1 \
     ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1" \
-    LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0"
+    LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0" \
+    # run.sh drops root to `falkordb` in the release image; this image has neither
+    # that user nor gosu, and the sanitizer does not care which uid it runs as.
+    SKIP_DROP_PRIVS=1
 
 EXPOSE 6379/tcp
 # run.sh is self-contained — no CMD because args wouldn't be forwarded.
