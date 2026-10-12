@@ -39,7 +39,12 @@ use crate::{
         constraint::{ConstraintStatus, ConstraintType},
         graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
     },
-    runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
+    runtime::{
+        ordermap::OrderMap,
+        orderset::OrderSet,
+        runtime::QueryStatistics,
+        value::{MAX_VALUE_NESTING, Value},
+    },
 };
 
 /// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
@@ -59,12 +64,20 @@ fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
+/// Checks a property value: primitives, or lists of them nested at most
+/// [`MAX_VALUE_NESTING`] deep. `depth` is how many lists enclose `value`.
+///
+/// The depth bound is what lets every stored value be saved and loaded back:
+/// the RDB decoder refuses anything deeper, and so does every other place a
+/// nested value enters the engine. The walk is recursive, but stops at the
+/// bound, so it cannot itself run too deep.
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
-) -> bool {
+    depth: usize,
+) -> Result<(), String> {
     match value {
-        Value::Null => allow_null,
+        Value::Null if allow_null => Ok(()),
         Value::Bool(_)
         | Value::Int(_)
         | Value::Float(_)
@@ -74,26 +87,25 @@ fn is_valid_property(
         | Value::Datetime(_)
         | Value::Date(_)
         | Value::Time(_)
-        | Value::Duration(_) => true,
-        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
-        _ => false,
+        | Value::Duration(_) => Ok(()),
+        Value::List(_) if depth >= MAX_VALUE_NESTING => Err(format!(
+            "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+        )),
+        Value::List(items) => items
+            .iter()
+            .try_for_each(|v| is_valid_property(v, false, depth + 1)),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    is_valid_property(value, true, 0)
 }
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    is_valid_property(value, true, 0)
 }
 
 /// Binary-search a sorted `(attr_id, Value)` slice.
@@ -1838,5 +1850,65 @@ mod label_effect_tests {
             records(&pending, &g),
             vec![labelled(true, &[m]), labelled(false, &[l])]
         );
+    }
+}
+
+#[cfg(test)]
+mod property_nesting_tests {
+    use super::{INVALID_PROPERTY_MSG, validate_node_property, validate_relationship_property};
+    use crate::runtime::value::{MAX_VALUE_NESTING, Value};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// Validation is recursive, so it runs on the query pool's stack size.
+    fn on_worker_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_property_at_the_cap_is_valid() {
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            assert_eq!(validate_node_property(&v), Ok(()));
+            assert_eq!(validate_relationship_property(&v), Ok(()));
+        });
+    }
+
+    #[test]
+    fn a_property_past_the_cap_is_refused() {
+        // Every stored value has to load back, and the RDB decoder refuses
+        // anything deeper than the cap.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING + 1);
+            let expected = Err(format!(
+                "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+            ));
+            assert_eq!(validate_node_property(&v), expected);
+            assert_eq!(validate_relationship_property(&v), expected);
+        });
+    }
+
+    #[test]
+    fn non_primitive_elements_keep_their_error() {
+        let v = Value::List(Arc::new(thin_vec![Value::Map(Arc::default())]));
+        assert_eq!(validate_node_property(&v), Err(INVALID_PROPERTY_MSG.into()));
+        assert_eq!(
+            validate_node_property(&Value::List(Arc::new(thin_vec![Value::Null]))),
+            Err(INVALID_PROPERTY_MSG.into())
+        );
+        assert_eq!(validate_node_property(&Value::Null), Ok(()));
     }
 }
