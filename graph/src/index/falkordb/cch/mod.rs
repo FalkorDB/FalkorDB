@@ -191,8 +191,9 @@ pub enum CchError {
     /// legal (a closed edge).
     #[error("a weight is negative or NaN")]
     InvalidWeight,
-    /// A bug, not bad input: the ordering backend failed on a well-formed graph, or
-    /// returned something other than a permutation. The message says which.
+    /// A bug, not bad input: the ordering backend failed on a well-formed graph or
+    /// returned something other than a permutation, or `customize` was handed weights for
+    /// a different graph than the hierarchy was built for. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
 }
@@ -271,15 +272,22 @@ impl Cch {
 
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
     ///
+    /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
+    /// hierarchy. `src == dst` is the single-node path of weight `0.0`.
+    ///
+    /// Also `None`, with a warning logged once per process, when unpacking a shortcut on the
+    /// route finds an arc missing: the hierarchy no longer matches the graph it was built from,
+    /// which is a bug, not an unreachable pair.
+    ///
     /// # Panics
-    /// Always — unimplemented until #3210. Nothing calls it yet.
+    /// On that missing arc when `debug_assertions` are on.
     #[must_use]
     pub fn query(
         &self,
-        _src: u64,
-        _dst: u64,
+        src: u64,
+        dst: u64,
     ) -> Option<(f64, Vec<u64>)> {
-        unimplemented!("query, #3210")
+        query::query(self, src, dst)
     }
 
     #[must_use]
@@ -287,8 +295,9 @@ impl Cch {
         self.node_count_impl()
     }
 
-    /// Heap bytes held by this hierarchy, structural arrays included — so two versions
-    /// sharing one [`Topology`] each report its bytes.
+    /// Bytes held by this hierarchy: the struct itself, the shared [`Topology`], and the
+    /// four weight arrays. Two versions sharing one
+    /// `Topology` each report its bytes.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.memory_usage_impl()
