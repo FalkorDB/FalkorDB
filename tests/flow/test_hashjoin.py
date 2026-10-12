@@ -265,3 +265,30 @@ class testHashJoin(FlowTestsBase):
         a_idx = [1, 0, 2, 0, 1, 3, 0, 1, 4, 0, 2]
         b_idx = [1, 0, 2, 0, 1]
         check(values, a_idx, b_idx, 4 * 2)
+
+    def test_join_on_maps_with_several_candidates(self):
+        # map join keys written in a different key order on each side, with
+        # several candidates sharing one position in the sort order: three
+        # equal maps, one with another value and one holding NaN, which sorts
+        # the same as every number and must not be joined
+        self.graph.query("""CREATE (:A {o: 0, x: 1, y: 2}),
+                                   (:A {o: 1, x: 1, y: 3}),
+                                   (:A {o: 2, x: 1, y: 0.0/0.0}),
+                                   (:B {o: 0, x: 1, y: 2}),
+                                   (:B {o: 1, x: 1, y: 2}),
+                                   (:B {o: 2, x: 1, y: 2}),
+                                   (:B {o: 3, x: 1, y: 3}),
+                                   (:B {o: 4, x: 1, y: 0.0/0.0})""")
+
+        expected = [[0, 0], [0, 1], [0, 2], [1, 3]]
+        for match in ["(a:A), (b:B)", "(b:B), (a:A)"]:
+            q = f"""MATCH {match}
+                    WHERE {{y: a.y, x: a.x}} = {{x: b.x, y: b.y}}
+                    RETURN a.o, b.o ORDER BY a.o, b.o"""
+            plan = str(self.graph.explain(q))
+            self.env.assertIn("Value Hash Join", plan)
+
+            # run twice, the result must not change between runs
+            for _ in range(2):
+                res = self.graph.query(q).result_set
+                self.env.assertEquals(res, expected, message=q)

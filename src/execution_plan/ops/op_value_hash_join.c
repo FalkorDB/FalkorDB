@@ -95,6 +95,9 @@ static bool _binarySearchRightmost
 // containing either, can't be equal to any value
 // such values are kept out of the join, they would also break the
 // cache's sort order as NaN compares as 0 to every number
+// testing a value also puts the keys of the maps it holds in order, once,
+// as the cache is built, so the equality test run per candidate finds them
+// sorted and leaves the cached values untouched
 static inline bool _joinable
 (
 	SIValue v
