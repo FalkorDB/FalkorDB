@@ -536,6 +536,10 @@ pub struct ThreadedGraph {
     pub receiver: Rx<Array<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
+    /// Online index-build turns that lost the write slot to a writer in a row — see
+    /// `run_index_build_turn`.
+    #[cfg(feature = "index-falkordb")]
+    pub index_build_losses: std::sync::atomic::AtomicU32,
 }
 
 unsafe impl Send for ThreadedGraph {}
@@ -553,6 +557,8 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            #[cfg(feature = "index-falkordb")]
+            index_build_losses: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -566,6 +572,8 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            #[cfg(feature = "index-falkordb")]
+            index_build_losses: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
@@ -1522,18 +1530,25 @@ fn commit_and_replicate(
 // The sweep below only starts write loops: a graph whose build began outside the queue (MULTI/EXEC,
 // a replica's effects) or whose last turn found the slot taken has no loop running to continue it.
 
-/// One build step as a turn of `graph`'s write loop. Returns whether the step was committed and
-/// the graph still has building columns, i.e. whether the loop should give the build another turn.
+/// Build turns a graph lets writers take the write slot from, in a row, before its next turn holds
+/// the slot instead — see [`run_index_build_turn`].
+#[cfg(feature = "index-falkordb")]
+const BUILD_TURNS_LOST_BEFORE_HOLDING: u32 = 2;
+
+/// One build step as a turn of `graph`'s write loop. Returns whether the build should get another
+/// turn: the step committed with columns still building, or lost the slot and has to be redone.
 ///
-/// Takes the GIL, then the write lock, then the write slot, and holds them for the whole step. The
-/// step reads and writes only its own private version, so it needs the GIL only to publish — but
-/// while it held the slot without the GIL, every write the main thread runs would find the slot
-/// taken, and the main thread cannot wait for it (the step needs the GIL to finish). Those writes
-/// are MULTI/EXEC and script writes, `GRAPH.CONSTRAINT`, and on a replica the master's
-/// `GRAPH.EFFECT` stream, where a refusal loses the master's write. Measured with the slot taken
-/// first on a master: `test_constraint` failed 6 of its 26 tests with "another write is in
-/// progress". Holding the GIL instead pauses the server for one step at a time; the batch sizes in
-/// `graph_writes` bound a step, and [`pace_index_build`] bounds how often one runs.
+/// A turn is a writer that gives way. It takes the write slot as a build step
+/// ([`MvccGraph::write_for_build`]) and does its work on its own version holding no lock at all, so
+/// it neither pauses the server nor blocks a writer. A writer that wants the slot meanwhile takes it
+/// over instead of failing — `GRAPH.CONSTRAINT`, a MULTI/EXEC or script write, a replica's
+/// `GRAPH.EFFECT` stream, `GRAPH.BULK`. Then the turn takes the GIL and the write lock, as any writer
+/// does to publish, and either becomes the writer ([`MvccGraph::claim_build`]) and commits, or finds
+/// it lost the slot and drops its batch for the next turn to redo.
+///
+/// So that a graph with a steady stream of such writers cannot starve its build, after
+/// [`BUILD_TURNS_LOST_BEFORE_HOLDING`] lost turns in a row the next turn holds on
+/// ([`run_held_index_build_turn`]). A committed turn resets the count.
 #[cfg(feature = "index-falkordb")]
 fn run_index_build_turn(graph: &Arc<RwLock<ThreadedGraph>>) -> bool {
     if INDEX_SWEEP_STOP.load(Ordering::Relaxed) {
@@ -1541,12 +1556,63 @@ fn run_index_build_turn(graph: &Arc<RwLock<ThreadedGraph>>) -> bool {
     }
     // Nearly every turn of nearly every write loop has nothing to build: decide that on the
     // published version, without taking the slot.
-    if !graph_writes::has_building_columns(&graph.read().graph.read().borrow()) {
+    let losses = {
+        let tg = graph.read();
+        if !graph_writes::has_building_columns(&tg.graph.read().borrow()) {
+            return false;
+        }
+        tg.index_build_losses.load(Ordering::Relaxed)
+    };
+    if losses >= BUILD_TURNS_LOST_BEFORE_HOLDING {
+        return run_held_index_build_turn(graph);
+    }
+
+    // The read lock only for taking the slot: the step itself needs no lock, since it reads and
+    // writes only its own version.
+    let Some(fork) = graph.read().graph.write_for_build() else {
+        return false; // a writer holds the slot; the next turn, or the sweep, retries
+    };
+    let stepped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        graph_writes::build_step(&mut fork.borrow_mut())
+    }));
+    let Ok(more) = stepped else {
+        graph.read().graph.abandon_build();
+        eprintln!("index build: a build step panicked; rolled back, it will be retried");
+        return false;
+    };
+    // At shutdown the handler holds the GIL while it joins this thread: asking for the GIL now
+    // would wait forever. Giving up the slot needs no lock.
+    if INDEX_SWEEP_STOP.load(Ordering::Relaxed) {
+        graph.read().graph.abandon_build();
         return false;
     }
+
     let session = QuerySession::begin_writer(graph);
-    // A writer holds the slot without the GIL — `GRAPH.BULK` building its version off the main
-    // thread. Give up the turn; the next one, or the sweep, retries.
+    if !graph_is_registered(graph) {
+        session.with_graph(|tg| tg.graph.abandon_build());
+        return false; // the graph was deleted while the step ran
+    }
+    if !session.with_graph(|tg| tg.graph.claim_build()) {
+        // A writer took the slot over. The batch was read from the version that writer is about
+        // to replace, so it is dropped and read again on a later turn.
+        session.with_graph(|tg| tg.index_build_losses.fetch_add(1, Ordering::Relaxed));
+        return true;
+    }
+    commit_index_build_turn(&session, fork, more)
+}
+
+/// A build turn that holds the slot: the GIL, then the write lock, then the slot as an ordinary
+/// writer, which nobody can take over, for the whole step. The server pauses for that step, and
+/// the build advances. What [`run_index_build_turn`] falls back to when writers keep taking the
+/// slot from its turns.
+#[cfg(feature = "index-falkordb")]
+fn run_held_index_build_turn(graph: &Arc<RwLock<ThreadedGraph>>) -> bool {
+    let session = QuerySession::begin_writer(graph);
+    if !graph_is_registered(graph) {
+        return false;
+    }
+    // `GRAPH.BULK` builds its version off the main thread holding the slot as a writer. Give up
+    // the turn; the next one, or the sweep, retries.
     let Some(fork) = session.with_graph(|tg| tg.graph.write()) else {
         return false;
     };
@@ -1560,23 +1626,33 @@ fn run_index_build_turn(graph: &Arc<RwLock<ThreadedGraph>>) -> bool {
         eprintln!("index build: a build step panicked; rolled back, it will be retried");
         return false;
     };
-    // Already a writer, so this only re-checks that the graph was not deleted while the turn
-    // waited for its locks.
-    if session.upgrade_to_write().is_err() {
-        session.with_graph(|tg| tg.graph.rollback());
-        return false;
-    }
+    commit_index_build_turn(&session, fork, more)
+}
+
+/// Commit a build step, holding the GIL, the write lock and the slot as a writer, and reset the
+/// graph's count of lost turns. Returns whether it committed with columns still building.
+#[cfg(feature = "index-falkordb")]
+fn commit_index_build_turn(
+    session: &QuerySession,
+    fork: Arc<AtomicRefCell<Graph>>,
+    more: bool,
+) -> bool {
     // A refused version is rolled back by `commit` itself.
     let committed = session
-        .with_graph_mut(|tg| tg.graph.commit(fork))
-        .expect("writer mode after upgrade_to_write");
+        .with_graph_mut(|tg| {
+            let committed = tg.graph.commit(fork);
+            if committed.is_ok() {
+                tg.index_build_losses.store(0, Ordering::Relaxed);
+            }
+            committed
+        })
+        .expect("a writer session");
     committed.is_ok() && more
 }
 
 /// How long the write loop pauses between back-to-back build turns: as long as the turn took, so a
-/// build holds the GIL and the write slot at most about half the time while the queue is empty.
-/// Without the pause they are free only for the instant between two turns, which starves the main
-/// thread and every write it runs.
+/// build uses at most about half of one core while the queue is empty, and a turn that held the
+/// GIL leaves the main thread at least as long again.
 #[cfg(feature = "index-falkordb")]
 fn pace_index_build(turn: std::time::Duration) {
     std::thread::sleep(turn.max(std::time::Duration::from_millis(1)));
