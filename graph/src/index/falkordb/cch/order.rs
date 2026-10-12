@@ -226,7 +226,6 @@ impl Topology {
     }
 
     /// The node eliminated at `rank`.
-    #[cfg(test)] // the query change (#3210) is its first caller outside the tests
     pub(crate) fn node_of(
         &self,
         rank: Rank,

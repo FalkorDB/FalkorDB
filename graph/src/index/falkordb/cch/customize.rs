@@ -374,13 +374,11 @@ impl Cch {
         size_of::<Self>() + self.topology.memory_usage() + self.metric.memory_usage()
     }
 
-    #[cfg(test)]
     pub(crate) fn topology(&self) -> &Topology {
         &self.topology
     }
 
     /// Cheapest `lower -> higher` weight of arc `slot`, through strictly lower-ranked nodes only.
-    #[cfg(test)]
     pub(crate) fn upward_weight(
         &self,
         slot: usize,
@@ -389,7 +387,6 @@ impl Cch {
     }
 
     /// Cheapest `higher -> lower` weight of arc `slot`.
-    #[cfg(test)]
     pub(crate) fn downward_weight(
         &self,
         slot: usize,
@@ -399,7 +396,6 @@ impl Cch {
 
     /// The apex rank `upward_weight(slot)` routes through, or `None` if the arc is just its
     /// original edge.
-    #[cfg(test)]
     pub(crate) fn upward_middle(
         &self,
         slot: usize,
@@ -408,7 +404,6 @@ impl Cch {
     }
 
     /// The apex rank `downward_weight(slot)` routes through, or `None`.
-    #[cfg(test)]
     pub(crate) fn downward_middle(
         &self,
         slot: usize,
