@@ -3895,6 +3895,33 @@ mod tests {
         }
     }
 
+    // The `|` lookahead counts brackets without matching their kinds, so it
+    // can say yes to a list whose brackets are mismatched. That only decides
+    // which parse is tried first: the parse itself still rejects the input.
+    #[test]
+    fn mismatched_brackets_in_a_list_are_still_rejected() {
+        with_functions();
+        for query in [
+            "RETURN [([)] | 1]",
+            "MATCH (a) RETURN [(a)-->(b) WHERE ([)] | 1]",
+            "RETURN [(1]), 2]",
+            "RETURN [(1) | 2]",
+            "RETURN [(]",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query}");
+        }
+        for query in [
+            "MATCH (a) RETURN [(a)-->(b) WHERE b.v IN [(1), 2] | b.v]",
+            "MATCH (a) RETURN [(a)-->(b) | [b.v, (1)]]",
+            "RETURN [(1), 2]",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
+            );
+        }
+    }
+
     // Malformed literals are parse errors, named by the parameter that failed.
     #[test]
     fn malformed_params_name_the_parameter() {
