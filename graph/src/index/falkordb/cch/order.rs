@@ -21,10 +21,6 @@
 //! ever reads *lower* ranks — already finished and contiguous in the flat buffer by the
 //! time their parent is processed.
 
-// Phase 1 lands on its own, before anything outside this file calls it: `Cch` grows its
-// topology field in the customization change (#3209), and the tests below are the only caller until then.
-#![allow(dead_code)]
-
 use std::ffi::CString;
 
 use super::{CchError, Csr, nd};
@@ -242,7 +238,14 @@ impl Topology {
         self.up.i.len()
     }
 
+    /// `perm[rank] = node id`, the whole array — the elimination order itself.
+    #[allow(dead_code)] // only the tests and the kit's oracle take it
+    pub(crate) fn perm(&self) -> &[u64] {
+        &self.perm
+    }
+
     /// `perm[rank]`.
+    #[allow(dead_code)] // the query change (#3210) maps ranks back to node ids with it
     pub(crate) fn node_of(
         &self,
         rank: u64,
@@ -275,6 +278,7 @@ impl Topology {
     }
 
     /// Every rank below `rank` in the chordal supergraph, ascending.
+    #[allow(dead_code)] // only scoped recustomization needs it (#3217)
     pub(crate) fn down(
         &self,
         rank: u64,
@@ -297,7 +301,8 @@ impl Topology {
         self.up(lo).binary_search(&hi).ok().map(|i| base + i)
     }
 
-    /// Heap bytes held by the six structural arrays.
+    /// Bytes held by the topology: the struct itself (it lives on the heap, behind the
+    /// `Arc` every version of the index shares) and its six arrays.
     #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
         let words = self.perm.len()

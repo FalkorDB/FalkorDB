@@ -65,6 +65,21 @@ fn csr(
     Csr { n, p, i }
 }
 
+/// `g`'s pattern with its `k`-th entry (row by row, as [`entries`] lists them) weighing
+/// `f(k, w)`, `w` its weight in `g`.
+#[must_use]
+pub(crate) fn reweight(
+    g: &Matrix<f64>,
+    mut f: impl FnMut(usize, f64) -> f64,
+) -> Matrix<f64> {
+    let edges: Vec<_> = entries(g)
+        .into_iter()
+        .enumerate()
+        .map(|(k, (u, v, w))| (u, v, f(k, w)))
+        .collect();
+    weights(node_count(g), &edges)
+}
+
 /// C's `test01_create_query_drop` valley, both ways: `0 - 1` direct is 10, `0 - 2 - 1` is 2.
 #[must_use]
 pub(super) fn valley() -> Matrix<f64> {
