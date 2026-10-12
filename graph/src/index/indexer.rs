@@ -497,7 +497,7 @@ impl Indexer {
         if let Some(index) = self.index.load().get(label) {
             return index.fulltext_query(query);
         }
-        Ok(IndexResultsIter::empty_scored())
+        Ok(IndexResultsIter::empty())
     }
 
     /// Like [`fulltext_query`], but for *edge* indexes: yields

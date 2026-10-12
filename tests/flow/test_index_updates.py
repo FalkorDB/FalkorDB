@@ -300,3 +300,22 @@ class testIndexUpdatesFlow(FlowTestsBase):
         result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
+
+    # An index scan under LIMIT, or feeding a CALL subquery, is still open when
+    # the query commits. Writing the scanned property must not abort the server.
+    def test13_write_to_index_scanned_under_limit(self):
+        g = self.db.select_graph('idx_scan_write')
+        g.query("UNWIND range(1, 2000) AS i CREATE (:W1 {v: i}), (:W2 {v: i})")
+        create_node_range_index(g, 'W1', 'v', sync=True)
+        create_node_range_index(g, 'W2', 'v', sync=True)
+
+        result = g.query("MATCH (n:W1) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 10)
+        result = g.query("MATCH (n:W1) WHERE n.v > 100000 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 10)
+
+        result = g.query("MATCH (n:W2) WHERE n.v > 0 CALL { WITH n SET n.v = n.v + 100000 } RETURN count(*)")
+        self.env.assertEqual(result.result_set[0][0], 2000)
+        result = g.query("MATCH (n:W2) WHERE n.v > 100000 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 2000)
+        g.delete()
