@@ -83,6 +83,15 @@ RUN cd /data && \
     cargo run --locked --manifest-path native-deps/Cargo.toml && \
     rm -rf /data/native-deps /data/build
 
+# Link the cdylib with clang, not rustc's default `cc` (the system gcc 11).
+# RHEL9's clang compiles C++ against the gcc-toolset's newer libstdc++ headers,
+# while the runtime stays the system libstdc++.so.6. The toolset bridges that
+# gap with libstdc++_nonshared.a, which only a link through its own driver
+# pulls in; via `cc`, symbols such as basic_string::_M_replace_cold stay
+# undefined and the module fails to load.
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang
+
 # Build the cdylib from the repo source. graph/build.rs calls native_deps::ensure(),
 # which recomputes the same keys and hits the entries published above -- no path
 # probing, no GRAPHBLAS_LIB_DIR, no lagraph_lib.
