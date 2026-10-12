@@ -263,7 +263,8 @@ typedef enum {
 // null compared to any value is unknown
 // NaN is not equal to any value, NaN included
 // values of disjoint types are not equal
-// lists and maps are unequal if any pair of their elements is unequal,
+// lists of different lengths and maps with different keys are not equal
+// otherwise lists and maps are unequal if any pair of their elements is unequal,
 // otherwise unknown if any pair is unknown, otherwise equal
 // SIValue_Compare orders values, use this function to test equality
 SIValueEquality SIValue_Equals(const SIValue a, const SIValue b);
