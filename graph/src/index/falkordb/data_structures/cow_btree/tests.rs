@@ -1629,31 +1629,3 @@ fn insert_batch_handles_the_maximal_tuple() {
     );
     check_invariants(&t, false);
 }
-
-/// `from_sorted_iter` packs the same pages as `from_sorted` over the collected input, at sizes
-/// around a page boundary and across several branch levels: same leaf formats, same bytes.
-#[test]
-fn from_sorted_iter_builds_the_tree_from_sorted_builds() {
-    for n in [0usize, 1, 3, 4, 5, 15, 16, 17, 64, 1_000] {
-        let pairs: Vec<(u64, u64)> = (0..n as u64)
-            .map(|i| (splitmix(i) % 50, i))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let bulk = CowBTree::<4, 4, 8>::from_sorted(&pairs);
-        let streamed = CowBTree::<4, 4, 8>::from_sorted_iter(pairs.iter().copied());
-        assert_eq!(
-            streamed.leaves(),
-            bulk.leaves(),
-            "n = {n}: same pages, same bytes"
-        );
-        assert_eq!(tree_pairs(&streamed), pairs, "n = {n}");
-        check_invariants(&streamed, false);
-    }
-}
-
-#[test]
-#[should_panic(expected = "from_sorted input must be sorted and unique")]
-fn from_sorted_iter_refuses_unsorted_input() {
-    let _ = CowBTree::<4, 4, 8>::from_sorted_iter([(2, 0), (1, 0)]);
-}

@@ -26,8 +26,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use atomic_refcell::AtomicRefCell;
-
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
@@ -37,6 +35,7 @@ use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
+use super::falkordb_index::BuildCursor;
 use super::pending_writes::IndexChanges;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
@@ -400,11 +399,10 @@ pub fn edges_deleted(
 /// CREATE INDEX: mark each attribute's column `Building` and return. Only a Range index has
 /// native columns; any other type does nothing.
 ///
-/// Nothing is scanned here. The pre-existing entities (BASE) are read from a committed snapshot
-/// off the write thread by the module's build controller, which installs them through
-/// [`install_base`] and flips the column `Ready`. Until then reads on the column fall back to a
-/// scan, and live writes maintain it as usual: the column's own tree is the DELTA, and removes
-/// also land in its TOMB. The RDB-load path ([`populate`]) still builds synchronously.
+/// Nothing is scanned here. The entities that already exist are indexed by [`build_step`]s, which
+/// the host runs as units of work of their own until the last one flips the column `Ready`. Until
+/// then reads on the column fall back to a scan, and live writes maintain it as usual. The
+/// RDB-load path ([`populate`]) still builds synchronously.
 ///
 /// The build never goes through the RediSearch populate, which reaches the graph through the
 /// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
@@ -423,119 +421,64 @@ pub fn create_index(
     }
 }
 
-// ---- Background (online) build ----
+// ---- Online build ----
 //
-// The seam the module's build controller drives. A job reads BASE from a committed snapshot with
-// `base_encoded`, off the write thread, then installs it in one commit with `install_base`.
+// A `Building` column is filled by steps. Each reads the next batch of the label's entities from
+// the graph it is given, at their current values, and adds them to the column. The host runs each
+// step as a unit of work of its own, on a fresh version committed when the step returns, so live
+// writes interleave with the steps and every step sees them. See `ColumnState`.
 
-/// Every column currently `Building`, as `(entity, label, attr, epoch)`: the controller's work
-/// list, read from a committed snapshot.
+/// Nodes one build step reads, at most: C's populate batch (`src/index/index_construct.c`).
+pub const BUILD_STEP_NODES: usize = 10_000;
+
+/// Edges one build step reads, at most, plus the rest of the multi-edge pair it stops in: C's
+/// populate batch (`src/index/index_construct.c`).
+pub const BUILD_STEP_EDGES: usize = 1_000;
+
+/// Whether any column of `g` is still `Building`, i.e. whether its host has build steps to run.
 #[must_use]
-pub fn building_columns(g: &Graph) -> Vec<(EntityType, Arc<String>, Arc<String>, u64)> {
-    g.falkordb_index.building_columns()
+pub fn has_building_columns(g: &Graph) -> bool {
+    g.falkordb_index.has_building_columns()
 }
 
-/// BASE for one building column, read from `g` in one pass, encoded, sorted and unique: what
-/// the install needs. For a caller that already keeps `g` from being written while it reads; the
-/// background build reads a published version and uses [`base_encoded_in_chunks`] instead.
+/// One build step: index the next batch of one `Building` column's entities at their current
+/// values, and move its cursor past them, or flip the column `Ready` if the batch reached the end.
+/// Returns whether a column is still `Building` afterwards, i.e. whether to run another step.
 ///
-/// `None` if the column no longer exists (dropped mid-build).
-#[must_use]
-pub fn base_encoded(
-    g: &Graph,
-    entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
-) -> Option<Vec<(u64, u64)>> {
-    let column = g.falkordb_index.column(entity, label, attr)?;
-    Some(encoded_entries(g, entity, label, attr, |value| {
-        column.encode_value(value)
-    }))
+/// `g` must be the private version the step will be committed from, so the step sees every write
+/// committed before it, and every write committed after it sees the step.
+pub fn build_step(g: &mut Graph) -> bool {
+    build_step_within(g, BUILD_STEP_NODES, BUILD_STEP_EDGES)
 }
 
-/// Node-id rows a background BASE scan reads per chunk, i.e. per hold of the graph's read lock.
-/// A writer waiting for the lock waits at most one chunk. The size is a guess, not a
-/// measurement.
-pub const BASE_SCAN_CHUNK_ROWS: u64 = 1 << 16;
-
-/// [`base_encoded`] for a **published** version, read off the write thread: everything the
-/// install needs, computed so the install pays neither the scan, the encode nor the sort while
-/// it holds the write lock and the GIL.
-///
-/// `snapshot` is pinned for the whole scan, so every chunk reads the same version. It is read
-/// in chunks of `chunk_rows` node-id rows, and each chunk borrows it only while the guard
-/// `hold()` returns is alive. The caller passes the graph's read lock: a published version is
-/// still borrowed mutably by the write path in one place (`Pending::resync_published_indexes`,
-/// which counts on the write lock to keep readers out), and `AtomicRefCell` reports a borrow
-/// that collides with it by panicking. Taking the lock per chunk keeps the scan from colliding,
-/// without holding writers off for the whole scan.
-///
-/// `None` if the column does not exist in `snapshot` (dropped before the job started).
-#[must_use]
-pub fn base_encoded_in_chunks<G>(
-    snapshot: &AtomicRefCell<Graph>,
-    entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
-    chunk_rows: u64,
-    mut hold: impl FnMut() -> G,
-) -> Option<Vec<(u64, u64)>> {
-    let mut pairs = Vec::new();
-    let mut lo = 0u64;
-    loop {
-        // Declared before the borrow, so the borrow ends before the lock is released.
-        let _guard = hold();
-        let g = snapshot.borrow();
-        let column = g.falkordb_index.column(entity, label, attr)?;
-        // Every node id, and so every edge's source row, is below the id space's bound.
-        let bound = g.node_id_space().bound();
-        if lo >= bound {
-            break;
-        }
-        let hi = lo.saturating_add(chunk_rows).min(bound) - 1;
-        scan_rows(
-            &g,
-            entity,
-            label,
-            attr,
-            (lo, hi),
-            |value| column.encode_value(value),
-            &mut pairs,
-        );
-        lo = hi + 1;
-    }
-    pairs.sort_unstable();
-    pairs.dedup();
-    Some(pairs)
-}
-
-/// Install a background-built BASE and flip the column `Ready`, in one commit. Returns whether
-/// it installed: `false` means the column is gone, already `Ready`, or on a different epoch
-/// (dropped and re-created since the job started), and the caller should not commit.
-///
-/// The free-id filter is a cheap backstop, not the real defence: a freed id is no longer free
-/// once it is reused, so an id recycled during the build passes it. TOMB is what makes the stale
-/// BASE safe; this only drops the easy cases before the tree build.
-pub fn install_base(
+/// [`build_step`] with explicit batch sizes, so tests can force cursors through every boundary.
+pub(crate) fn build_step_within(
     g: &mut Graph,
-    entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
-    epoch: u64,
-    base: Vec<(u64, u64)>,
+    nodes: usize,
+    edges: usize,
 ) -> bool {
-    let survivors: Vec<(u64, u64)> = match entity {
-        EntityType::Node => base
-            .into_iter()
-            .filter(|(_, id)| !g.is_node_deleted(NodeId::from(*id)))
-            .collect(),
-        EntityType::Relationship => base
-            .into_iter()
-            .filter(|(_, id)| !g.is_relationship_deleted(RelationshipId::from(*id)))
-            .collect(),
+    let Some((entity, key, from)) = g.falkordb_index.next_building() else {
+        return false;
+    };
+    let mut tuples = Vec::new();
+    let next = {
+        let column = g
+            .falkordb_index
+            .column(entity, &key.0, &key.1)
+            .expect("next_building names an existing column");
+        let encode = |value: &Value| column.encode_value(value);
+        let (label, attr) = (&key.0, &key.1);
+        match entity {
+            EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
+                .map(|row| BuildCursor { row, col: 0 }),
+            EntityType::Relationship => {
+                scan_edges(g, label, attr, from, edges, encode, &mut tuples)
+            }
+        }
     };
     g.falkordb_index
-        .install_base(entity, label, attr, epoch, survivors)
+        .advance_build(entity, &key, &mut tuples, next);
+    g.falkordb_index.has_building_columns()
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of
@@ -596,7 +539,7 @@ fn build_column(
 ) {
     let pairs = encoded_entries(g, entity, label, attr, encode_numeric);
     g.falkordb_index
-        .build_numeric_sorted(entity, label, attr, pairs);
+        .build_numeric_sorted(entity, label, attr, &pairs);
 }
 
 /// The node's label ids, reusing `out`'s allocation across nodes.
@@ -642,54 +585,104 @@ fn encoded_entries(
     encode: impl Fn(&Value) -> Option<u64>,
 ) -> Vec<(u64, u64)> {
     let mut pairs = Vec::new();
-    scan_rows(g, entity, label, attr, (0, u64::MAX), encode, &mut pairs);
+    match entity {
+        EntityType::Node => {
+            scan_nodes(g, label, attr, 0, usize::MAX, encode, &mut pairs);
+        }
+        EntityType::Relationship => {
+            scan_edges(
+                g,
+                label,
+                attr,
+                BuildCursor::default(),
+                usize::MAX,
+                encode,
+                &mut pairs,
+            );
+        }
+    }
     pairs.sort_unstable();
     pairs.dedup();
     pairs
 }
 
-/// Append to `out` the encoded tuples of column `(entity, label, attr)` whose node-id row lies
-/// in `rows` (inclusive): a node's own id, or an edge's source node id. Unsorted.
-fn scan_rows(
+/// Append to `out` the tuples of node column `(label, attr)` for up to `budget` `label` nodes from
+/// node id `from` on, in id order: each node's current `attr` value encoded with `encode`, if the
+/// column indexes it. Unsorted. Returns the node id to resume from, or `None` when no `label` node
+/// is left.
+fn scan_nodes(
     g: &Graph,
-    entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
-    (lo, hi): (u64, u64),
+    from: u64,
+    budget: usize,
     encode: impl Fn(&Value) -> Option<u64>,
     out: &mut Vec<(u64, u64)>,
-) {
-    match entity {
-        EntityType::Node => {
-            if let (Some(lm), Some(idx)) =
-                (g.get_label_matrix(label), g.get_node_attribute_id(attr))
-            {
-                let idx = idx as u16;
-                for (n, _) in lm.iter(lo, hi) {
-                    if let Some(key) = g
-                        .get_node_attribute_by_idx(NodeId::from(n), idx)
-                        .and_then(|value| encode(&value))
-                    {
-                        out.push((key, n));
-                    }
-                }
-            }
-        }
-        EntityType::Relationship => {
-            if let (Some(t), Some(idx)) = (
-                g.get_relationship_matrix(label),
-                g.get_relationship_attribute_id(attr),
-            ) {
-                let idx = idx as u16;
-                for (_, _, eid) in t.iter(lo, hi, false) {
-                    if let Some(key) = g
-                        .get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
-                        .and_then(|value| encode(&value))
-                    {
-                        out.push((key, eid));
-                    }
-                }
-            }
+) -> Option<u64> {
+    // No such label, or no entity ever had the attribute: nothing to index. A later write that
+    // gives one the attribute is indexed by the write path.
+    let (Some(lm), Some(idx)) = (g.get_label_matrix(label), g.get_node_attribute_id(attr)) else {
+        return None;
+    };
+    let idx = idx as u16;
+    let mut nodes = lm.iter(from, u64::MAX).map(|(n, _)| n).peekable();
+    for n in nodes.by_ref().take(budget) {
+        if let Some(key) = g
+            .get_node_attribute_by_idx(NodeId::from(n), idx)
+            .and_then(|value| encode(&value))
+        {
+            out.push((key, n));
         }
     }
+    nodes.peek().copied()
+}
+
+/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from `from` on, in
+/// `(src, dst)` order, plus the rest of the multi-edge pair the batch stops in, so no pair is ever
+/// split between steps. Edges in row `from.row` with a destination below `from.col` are skipped: an
+/// earlier step indexed them. Returns where to resume, or `None` when no edge is left.
+///
+/// Resuming partway through a row re-walks that row's earlier destinations, as C's populate does,
+/// so a step that resumes inside a very wide row pays for the part of it already done.
+fn scan_edges(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    from: BuildCursor,
+    budget: usize,
+    encode: impl Fn(&Value) -> Option<u64>,
+    out: &mut Vec<(u64, u64)>,
+) -> Option<BuildCursor> {
+    let (Some(t), Some(idx)) = (
+        g.get_relationship_matrix(label),
+        g.get_relationship_attribute_id(attr),
+    ) else {
+        return None;
+    };
+    let idx = idx as u16;
+    let mut index = |eid: u64| {
+        if let Some(key) = g
+            .get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
+            .and_then(|value| encode(&value))
+        {
+            out.push((key, eid));
+        }
+    };
+    let mut edges = t.iter(from.row, u64::MAX, false).peekable();
+    while edges
+        .next_if(|&(src, dst, _)| src == from.row && dst < from.col)
+        .is_some()
+    {}
+    let mut read = 0usize;
+    while let Some((src, dst, eid)) = edges.next() {
+        index(eid);
+        read += 1;
+        if read >= budget {
+            while let Some((_, _, eid)) = edges.next_if(|&(s, d, _)| s == src && d == dst) {
+                index(eid);
+            }
+            break;
+        }
+    }
+    edges.peek().map(|&(row, col, _)| BuildCursor { row, col })
 }

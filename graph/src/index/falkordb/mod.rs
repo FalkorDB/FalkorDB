@@ -8,9 +8,6 @@
 pub mod data_structures;
 
 #[cfg(feature = "index-falkordb")]
-pub mod build_registry;
-
-#[cfg(feature = "index-falkordb")]
 pub mod encode;
 
 #[cfg(feature = "index-falkordb")]

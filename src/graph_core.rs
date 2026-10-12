@@ -44,10 +44,7 @@ use crossfire::{
     mpsc::{Array, bounded_blocking},
 };
 #[cfg(feature = "index-falkordb")]
-use graph::index::falkordb::{
-    build_registry::{BuildKey, BuildRegistry},
-    graph_writes,
-};
+use graph::index::falkordb::graph_writes;
 use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
@@ -1514,49 +1511,78 @@ fn commit_and_replicate(
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
 }
 
-// ---- Background (online) FalkorDB index build controller (feature: index-falkordb) ----
+// ---- Online FalkorDB index build (feature: index-falkordb) ----
 //
-// `CREATE INDEX` on existing data leaves the native column `Building` and returns immediately; the
-// pre-existing snapshot (BASE) is scanned and encoded off the write thread, then installed in ONE
-// commit through the single audited committer (`commit_index_build`), which subtracts TOMB and
-// replays DELTA before flipping the column `Ready`. Reads on a `Building` column scan-fall-back
-// until that flip.
+// `CREATE INDEX` on existing data leaves the native column `Building` and returns immediately. The
+// entities that already exist are indexed by build steps (`graph_writes::build_step`), each run as
+// a turn of the graph's write loop: one after every queued write, and back to back, paced, while
+// the queue is empty. A step is a unit of work like any queued write, so it never races the queued
+// writes for the write slot, and every step sees every write committed before it.
+//
+// The sweep below only starts write loops: a graph whose build began outside the queue (MULTI/EXEC,
+// a replica's effects) or whose last turn found the slot taken has no loop running to continue it.
 
-/// Columns whose background build is already dispatched — dedups re-dispatch across sweeps —
-/// plus the retry backoff of those that failed to install.
+/// One build step as a turn of `graph`'s write loop. Returns whether the step was committed and
+/// the graph still has building columns, i.e. whether the loop should give the build another turn.
 ///
-/// Maintained by the [`BuildCleanup`] guard the dispatcher hands to the job — on completion, panic,
-/// or the job being dropped undispatched — never under the graph write lock. The bookkeeping itself
-/// lives in `graph` so it can be unit-tested; this crate installs Redis's allocator and its test
-/// binary aborts before `main`.
+/// Takes the GIL, then the write lock, then the write slot, and holds them for the whole step. The
+/// step reads and writes only its own private version, so it needs the GIL only to publish — but
+/// while it held the slot without the GIL, every write the main thread runs would find the slot
+/// taken, and the main thread cannot wait for it (the step needs the GIL to finish). Those writes
+/// are MULTI/EXEC and script writes, `GRAPH.CONSTRAINT`, and on a replica the master's
+/// `GRAPH.EFFECT` stream, where a refusal loses the master's write. Measured with the slot taken
+/// first on a master: `test_constraint` failed 6 of its 26 tests with "another write is in
+/// progress". Holding the GIL instead pauses the server for one step at a time; the batch sizes in
+/// `graph_writes` bound a step, and [`pace_index_build`] bounds how often one runs.
 #[cfg(feature = "index-falkordb")]
-static INDEX_BUILDS_IN_FLIGHT: std::sync::LazyLock<BuildRegistry> =
-    std::sync::LazyLock::new(|| BuildRegistry::new(INDEX_BUILD_SWEEP_INTERVAL));
-
-/// The `Building` columns of one graph, read from its latest committed version: the sweep's work
-/// list for that graph. Holds the graph's read lock while it reads, so it must not be called with
-/// that graph's write lock held (the lock is not re-entrant); its only caller, the sweep, holds no
-/// lock. It does not spawn: dispatch is split out (see [`dispatch_index_builds`]) so the blocking
-/// `spawn` never runs under a graph lock.
-#[cfg(feature = "index-falkordb")]
-fn collect_pending_index_builds(tg: &Arc<RwLock<ThreadedGraph>>) -> Vec<BuildKey> {
-    let bind = tg.read();
-    let arc = bind.graph.read();
-    let g = arc.borrow();
-    let name = g.name().to_string();
-    graph_writes::building_columns(&g)
-        .into_iter()
-        .map(|(entity, label, attr, epoch)| BuildKey {
-            graph: name.clone(),
-            entity,
-            label,
-            attr,
-            epoch,
-        })
-        .collect()
+fn run_index_build_turn(graph: &Arc<RwLock<ThreadedGraph>>) -> bool {
+    if INDEX_SWEEP_STOP.load(Ordering::Relaxed) {
+        return false; // shutting down
+    }
+    // Nearly every turn of nearly every write loop has nothing to build: decide that on the
+    // published version, without taking the slot.
+    if !graph_writes::has_building_columns(&graph.read().graph.read().borrow()) {
+        return false;
+    }
+    let session = QuerySession::begin_writer(graph);
+    // A writer holds the slot without the GIL — `GRAPH.BULK` building its version off the main
+    // thread. Give up the turn; the next one, or the sweep, retries.
+    let Some(fork) = session.with_graph(|tg| tg.graph.write()) else {
+        return false;
+    };
+    // `MvccGraph::write` latches the slot until `commit` or `rollback`, so a panic must not unwind
+    // past here with the slot taken: every later write to the graph would fail.
+    let stepped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        graph_writes::build_step(&mut fork.borrow_mut())
+    }));
+    let Ok(more) = stepped else {
+        session.with_graph(|tg| tg.graph.rollback());
+        eprintln!("index build: a build step panicked; rolled back, it will be retried");
+        return false;
+    };
+    // Already a writer, so this only re-checks that the graph was not deleted while the turn
+    // waited for its locks.
+    if session.upgrade_to_write().is_err() {
+        session.with_graph(|tg| tg.graph.rollback());
+        return false;
+    }
+    // A refused version is rolled back by `commit` itself.
+    let committed = session
+        .with_graph_mut(|tg| tg.graph.commit(fork))
+        .expect("writer mode after upgrade_to_write");
+    committed.is_ok() && more
 }
 
-/// How often the sweep looks for `Building` columns that nobody is building.
+/// How long the write loop pauses between back-to-back build turns: as long as the turn took, so a
+/// build holds the GIL and the write slot at most about half the time while the queue is empty.
+/// Without the pause they are free only for the instant between two turns, which starves the main
+/// thread and every write it runs.
+#[cfg(feature = "index-falkordb")]
+fn pace_index_build(turn: std::time::Duration) {
+    std::thread::sleep(turn.max(std::time::Duration::from_millis(1)));
+}
+
+/// How often the sweep looks for graphs with `Building` columns and no write loop to build them.
 #[cfg(feature = "index-falkordb")]
 const INDEX_BUILD_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -1566,6 +1592,7 @@ const INDEX_BUILD_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::fro
 static INDEX_SWEEP: std::sync::LazyLock<parking_lot::Mutex<Option<std::thread::JoinHandle<()>>>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
 
+/// Set at shutdown. Stops the sweep, and makes build turns give up rather than wait for the GIL.
 #[cfg(feature = "index-falkordb")]
 static INDEX_SWEEP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1574,9 +1601,9 @@ static INDEX_SWEEP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// (and logging each one) while GraphBLAS is being torn down underneath it.
 ///
 /// The **join** is the point, not just the flag. `on_shutdown` tears down the threadpool, GraphBLAS
-/// and RediSearch as soon as this returns, and the sweep can be inside `collect_pending_index_builds`
-/// touching a `Graph` at that moment. Signalling without joining leaves that window open — the same
-/// class of bug `telemetry::shutdown_flusher_thread` joins to prevent.
+/// and RediSearch as soon as this returns, and the sweep can be reading a `Graph` at that moment.
+/// Signalling without joining leaves that window open — the same class of bug
+/// `telemetry::shutdown_flusher_thread` joins to prevent.
 #[cfg(feature = "index-falkordb")]
 pub fn stop_index_build_sweep() {
     INDEX_SWEEP_STOP.store(true, Ordering::Relaxed);
@@ -1584,27 +1611,24 @@ pub fn stop_index_build_sweep() {
     // `spawn_index_build_sweep` wait on a thread that is only exiting because we asked it to.
     let handle = INDEX_SWEEP.lock().take();
     if let Some(handle) = handle {
-        // The sweep polls the stop flag every 50ms, so this waits at most that plus one dispatch
-        // pass. A panicked sweep gives `Err` here, which is nothing to act on during shutdown.
+        // The sweep polls the stop flag every 50ms, so this waits at most that plus one pass. A
+        // panicked sweep gives `Err` here, which is nothing to act on during shutdown.
         drop(handle.join());
     }
 }
 
-/// Start the thread that periodically dispatches every `Building` column across the registry.
+/// Start the thread that periodically starts the write loop of every graph that has `Building`
+/// columns and no loop running.
 ///
-/// A sweep rather than a dispatch hook on the write path: such a hook sits on **one** of the write
-/// paths, so a `CREATE INDEX` arriving through MULTI/EXEC or a replica effect — or simply being the
-/// last write the server sees — would leave the column `Building` with nothing to finish it. A hook
-/// also cannot recover a build that a shutting-down pool dropped, that panicked, or that bailed on
-/// fork contention. One sweep over the registry covers all of those and needs no per-path wiring.
-///
-/// Dispatch is idempotent under the in-flight set, so a sweep that finds nothing new costs one
-/// registry lock plus one snapshot read per graph.
+/// A sweep rather than a hook on each write path: the queued-write path continues a build by itself,
+/// but a `CREATE INDEX` arriving through MULTI/EXEC or a replica's effects never enters the queue,
+/// and a loop that gave up its turn because an inline writer held the slot has exited. One sweep
+/// over the registry covers all of those and needs no per-path wiring.
 #[cfg(feature = "index-falkordb")]
 pub fn spawn_index_build_sweep() {
     let mut slot = INDEX_SWEEP.lock();
     // Idempotent: module init can run more than once in-process (tests, repeated load), and each
-    // extra call would otherwise add another sweep thread duplicating dispatch work.
+    // extra call would otherwise add another sweep thread.
     if slot.is_some() {
         return;
     }
@@ -1633,202 +1657,26 @@ pub fn spawn_index_build_sweep() {
                     if INDEX_SWEEP_STOP.load(Ordering::Relaxed) {
                         return;
                     }
-                    // Clone the Arcs out under the registry lock, then release it before dispatching:
+                    // Clone the Arcs out under the registry lock, then release it before spawning:
                     // `spawn` blocks on a full pool queue, and blocking while holding the registry
                     // would stall every other registry user.
                     let graphs: Vec<Arc<RwLock<ThreadedGraph>>> =
                         GRAPH_REGISTRY.lock().values().map(Arc::clone).collect();
-                    let mut pending = std::collections::HashSet::new();
                     for tg in graphs {
-                        let builds = collect_pending_index_builds(&tg);
-                        pending.extend(builds.iter().cloned());
-                        dispatch_index_builds(&tg, builds);
+                        let idle = {
+                            let bind = tg.read();
+                            !bind.write_loop.load(Ordering::Acquire)
+                                && graph_writes::has_building_columns(&bind.graph.read().borrow())
+                        };
+                        // The loop's own entry check settles a race with a loop starting now.
+                        if idle {
+                            spawn(move || process_write_queued_query(&tg), None);
+                        }
                     }
-                    // The sweep is the only place that sees every graph at once, so it is where
-                    // stale backoff entries are reclaimed.
-                    INDEX_BUILDS_IN_FLIGHT.prune(&pending);
                 }
             })
             .expect("spawn index-build sweep thread"),
     );
-}
-
-/// Clears a column's in-flight marker on drop — including when the job is never run.
-///
-/// This is *moved into the spawned closure* rather than constructed inside the job, because
-/// `threadpool::spawn` drops the job outright when the pool is shutting down. With the guard
-/// living inside the job, a dropped job left the key claimed forever and suppressed every future
-/// re-dispatch of that column. Owning it from the closure means the key is released whether the
-/// job runs to completion, panics (the pool wraps jobs in `catch_unwind`), or is dropped
-/// undispatched.
-#[cfg(feature = "index-falkordb")]
-struct BuildCleanup {
-    key: BuildKey,
-    /// Set by the job only when the base actually landed. Every other exit — bail, stale epoch,
-    /// lost version slot, panic, or the job never running — leaves it `false`, which is what arms
-    /// the retry backoff.
-    installed: bool,
-}
-
-#[cfg(feature = "index-falkordb")]
-impl Drop for BuildCleanup {
-    fn drop(&mut self) {
-        INDEX_BUILDS_IN_FLIGHT.release(&self.key, self.installed, std::time::Instant::now());
-    }
-}
-
-/// Spawn a background build for each column not already being built. **MUST be called with NO graph
-/// write lock held**: `spawn` does a blocking send on the bounded thread-pool queue, and holding the
-/// write lock across a full-queue block deadlocks the server (workers park on the read lock this
-/// writer holds, so the queue never drains). The in-flight lock is likewise released before spawning.
-#[cfg(feature = "index-falkordb")]
-fn dispatch_index_builds(
-    tg: &Arc<RwLock<ThreadedGraph>>,
-    builds: Vec<BuildKey>,
-) {
-    if builds.is_empty() {
-        return;
-    }
-    // Claim the not-yet-building keys, then spawn with the registry lock released — `spawn` blocks
-    // on a full queue. A key still inside its retry backoff is not claimed.
-    let to_spawn = INDEX_BUILDS_IN_FLIGHT.claim(builds, std::time::Instant::now());
-    for key in to_spawn {
-        let BuildKey {
-            entity,
-            label,
-            attr,
-            epoch,
-            ..
-        } = key.clone();
-        // The guard rides *with* the job. If `spawn` drops it (pool shutting down), dropping the
-        // closure drops the guard and releases the key; otherwise it lives until the job ends.
-        let mut cleanup = BuildCleanup {
-            key,
-            installed: false,
-        };
-        let tg = Arc::clone(tg);
-        spawn(
-            move || {
-                cleanup.installed = run_index_build(tg, entity, label, attr, epoch);
-                drop(cleanup);
-            },
-            None,
-        );
-    }
-}
-
-/// Background build job (thread pool): read the base from a committed snapshot off the write thread,
-/// install it in one commit via `commit_index_build` under the matching `epoch`, flipping the column
-/// `Ready`. Holds an `Arc` to the graph, so a graph deleted mid-build stays alive until this returns
-/// (no use-after-free); if a fork can't be taken the job bails and the column stays `Building` (the
-/// next sweep re-dispatches it, once the backoff allows). The in-flight marker is cleared by the [`BuildCleanup`] guard the dispatcher
-/// moves into this job, so it is released on every exit — normal, bail, panic (the pool wraps jobs in
-/// `catch_unwind`), or the job never running at all.
-#[cfg(feature = "index-falkordb")]
-fn run_index_build(
-    tg: Arc<RwLock<ThreadedGraph>>,
-    entity: graph::entity_type::EntityType,
-    label: Arc<String>,
-    attr: Arc<String>,
-    epoch: u64,
-) -> bool {
-    // 1. Scan BASE off-thread from a committed snapshot, already encoded and sorted. The
-    //    snapshot `Arc` is pinned for the whole scan, so every chunk reads the same immutable
-    //    version: writes committing after it are invisible by construction. Each chunk holds the
-    //    graph's read lock while it borrows the snapshot, because the write path still borrows a
-    //    published version mutably in one place, under the write lock
-    //    (`Pending::resync_published_indexes`); an unlocked borrow could collide with it, and
-    //    `AtomicRefCell` panics on that. Per chunk, not for the whole scan, so a writer waits for
-    //    at most one chunk.
-    let snapshot = tg.read().graph.read();
-    let Some(base) = graph_writes::base_encoded_in_chunks(
-        &snapshot,
-        entity,
-        &label,
-        &attr,
-        graph_writes::BASE_SCAN_CHUNK_ROWS,
-        || tg.read(),
-    ) else {
-        return false; // column dropped while we were dispatched — nothing to build
-    };
-    drop(snapshot);
-
-    // 2. Install in ONE commit. Chunking would be wrong as well as slow: a partially-subtracted
-    //    BASE is not a valid index at any version, and `MvccGraph::commit` pays an
-    //    O(attribute-store) `trim_attr_stores()` every time, so N/1024 commits multiply a cost the
-    //    single install pays once. The `epoch` makes the install a no-op if the column was dropped
-    //    and re-created since this job started, so a stale job cannot publish into the fresh one.
-    //
-    //    On fork contention `commit_index_build` returns false without installing; the sweep
-    //    re-dispatches, after the caller's backoff. A background job can retry — a client cannot,
-    //    which is why the slot is try-acquired rather than blocked on.
-    commit_index_build(&tg, |g| {
-        graph_writes::install_base(g, entity, &label, &attr, epoch, base)
-    })
-    // The caller's `BuildCleanup` reads this: installed → release the key, otherwise → back off.
-}
-
-/// The one committer for a background install: take the GIL, then the graph write lock (the order
-/// every writer uses, see below), try to fork the latest committed version so the install sees every
-/// write so far, run `install` on the fork, and publish it under the GIL (BGSAVE fork-safety, #452).
-///
-/// Returns whether a version was published. `false` means the version slot was busy or the graph is
-/// tearing down, `install` panicked or changed nothing, or `MvccGraph::commit` refused the version;
-/// every one of those arms the caller's retry backoff.
-#[cfg(feature = "index-falkordb")]
-fn commit_index_build(
-    tg: &Arc<RwLock<ThreadedGraph>>,
-    install: impl FnOnce(&mut Graph) -> bool,
-) -> bool {
-    // GIL BEFORE the write lock. Every other writer takes them in that order —
-    // `QuerySession::begin_writer` and `escalate` both `Gil::acquire()` then `write_arc`, and an
-    // inline command already holds the GIL when it reaches `graph.write()`. Taking the write lock
-    // first (as this function used to) inverts against them: this thread would hold L1 waiting for
-    // the GIL while the main thread holds the GIL waiting for L1, wedging the server.
-    //
-    // L1-write is unavoidable here despite the native index being MVCC: `MvccGraph::commit` takes
-    // `&mut self`, so publishing a version needs exclusive access to the `ThreadedGraph`.
-    let _gil = crate::query_session::hold_gil();
-    let mut g = tg.write();
-
-    // TRY-acquire the version slot, never block on it. A client can hold the slot while waiting for
-    // the GIL during escalation, so blocking here would deadlock; a background build can simply back
-    // off and be re-dispatched later.
-    let Some(fork) = g.graph.write() else {
-        return false;
-    };
-
-    // `MvccGraph::write` latches a flag that only `commit` or `rollback` clears — an unwind past
-    // this point would leave it latched forever and every subsequent write in the process would
-    // fail with "another write is in progress". The pool's own `catch_unwind` would hide that, so
-    // catch here and roll back explicitly.
-    let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        install(&mut fork.borrow_mut())
-    }));
-    let Ok(changed) = installed else {
-        g.graph.rollback();
-        eprintln!("index build: install panicked; version slot released, build abandoned");
-        return false;
-    };
-
-    // Roll back rather than commit when the install was a no-op — the column was dropped, is
-    // already `Ready`, or carries a different epoch. Committing anyway would publish a version
-    // identical to its parent and still pay `MvccGraph::commit`'s O(attribute-store)
-    // `trim_attr_stores()`, which is exactly the cost the single-commit install exists to avoid.
-    if !changed {
-        g.graph.rollback();
-        return false;
-    }
-
-    // A refused version is already rolled back by `commit` itself, so the slot is free again. Report
-    // it as not installed: the column is still `Building`, and claiming success would release the
-    // key without a backoff and re-run the full BASE scan on the very next sweep.
-    if let Err(e) = g.graph.commit(fork) {
-        eprintln!("index build: commit refused the install ({e}); build will be retried");
-        return false;
-    }
-    true
-    // Drop order is the reverse of acquisition: `g` (L1) then `_gil`.
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
@@ -1844,25 +1692,32 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // Dequeue under a read lock — the channel and `write_loop` are
         // self-synchronized, and holding only L1-read here lets reads and
         // BGSAVE interleave between messages.
-        let msg = {
-            let g = graph.read();
-            match g.receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    g.write_loop.store(false, Ordering::Release);
-                    if g.receiver.is_empty() {
-                        return;
-                    }
-                    if g.write_loop
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return;
-                    }
-                    // A producer raced an enqueue after we saw empty; keep draining.
+        let next = graph.read().receiver.try_recv();
+        let Ok(msg) = next else {
+            // The queue is empty: an online index build, if the graph has one, gets the loop
+            // until it is done, one paced turn at a time, checking the queue between turns. Not
+            // under the read lock above: a turn takes its own locks.
+            #[cfg(feature = "index-falkordb")]
+            {
+                let turn = Instant::now();
+                if run_index_build_turn(graph) {
+                    pace_index_build(turn.elapsed());
                     continue;
                 }
             }
+            let g = graph.read();
+            g.write_loop.store(false, Ordering::Release);
+            if g.receiver.is_empty() {
+                return;
+            }
+            if g.write_loop
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                .is_err()
+            {
+                return;
+            }
+            // A producer raced an enqueue after we saw empty; keep draining.
+            continue;
         };
         let WriteMessage {
             bc,
@@ -1924,12 +1779,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         match res {
             Ok((params_offset, exec_ms)) => {
                 unsafe { ffi::free_thread_safe_context(ctx.ctx) };
-                // If this write left native index columns `Building`, spawn their background builds
-                // now. No write lock is held here (the query session released it before returning),
-                // so the blocking spawn is safe — the C1 deadlock only arises when spawning under the
-                // write guard, which this path no longer does.
-                #[cfg(feature = "index-falkordb")]
-                dispatch_index_builds(graph, collect_pending_index_builds(graph));
                 let query_text = &query[params_offset..];
                 let params_text = &query[..params_offset];
                 let report_ms = (write_wall_ms - exec_ms).max(0.0);
@@ -1960,6 +1809,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 drop(bc);
             }
         }
+
+        // One build turn after every queued write, so an online index build still advances
+        // under a steady stream of writes, which would otherwise never leave the queue empty.
+        #[cfg(feature = "index-falkordb")]
+        run_index_build_turn(graph);
     }
 }
 

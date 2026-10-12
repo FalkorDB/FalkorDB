@@ -200,39 +200,6 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         }
     }
 
-    /// [`from_sorted`](Self::from_sorted) for tuples that arrive one at a time, **sorted ascending
-    /// and unique**: pages are packed as the input fills them, so only one page's worth of input is
-    /// ever buffered. Builds the same tree `from_sorted` builds from the collected input.
-    #[must_use]
-    pub fn from_sorted_iter(pairs: impl IntoIterator<Item = (u64, u64)>) -> Self {
-        let mut leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = Vec::new();
-        let mut page: Vec<(u64, u64)> = Vec::with_capacity(LEAF_MAX);
-        let mut last: Option<(u64, u64)> = None;
-        for pair in pairs {
-            // Enforced in all builds, as in `from_sorted`: the bottom-up build derives separators
-            // assuming this order, so a violation would silently corrupt the tree.
-            assert!(
-                last.is_none_or(|last| last < pair),
-                "from_sorted input must be sorted and unique"
-            );
-            last = Some(pair);
-            page.push(pair);
-            if page.len() == LEAF_MAX {
-                leaves.push(Node::Leaf(Leaf::from_pairs(&page)));
-                page.clear();
-            }
-        }
-        if !page.is_empty() {
-            leaves.push(Node::Leaf(Leaf::from_pairs(&page)));
-        }
-        if leaves.is_empty() {
-            return Self::new();
-        }
-        Self {
-            root: build_root(leaves),
-        }
-    }
-
     /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op. Returns
     /// `true` iff the tuple was newly inserted (so callers can maintain an exact live count).
     #[must_use]
@@ -419,8 +386,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     /// Like [`range`](Self::range) but yields the key too, for a consumer that must recover the
     /// indexed value and not just the entity. Owns a snapshot.
     ///
-    /// The numeric read path reads docs only; the online-build install streams a whole column's
-    /// tuples through this.
+    /// No caller today — the numeric index reads docs only.
     #[must_use]
     pub fn range_tuples(
         &self,
