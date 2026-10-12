@@ -237,6 +237,12 @@ class testHashJoin(FlowTestsBase):
                             RETURN a.o, b.o ORDER BY a.o, b.o"""
                     plan = str(self.graph.explain(q))
                     self.env.assertIn("Value Hash Join", plan)
+
+                    # A holds the runs of equal candidates, it is cached
+                    # when the left operand of the predicate comes from A
+                    if exp.index("a.i") < exp.index("b.i"):
+                        self.env.assertEquals(self._cached_side(plan), "(a:A)",
+                                              message=f"cached side of {q}")
                     joined = self.graph.query(q).result_set
 
                     q = f"""MATCH {match} WITH a, b, {exp} AS same
@@ -266,6 +272,11 @@ class testHashJoin(FlowTestsBase):
         b_idx = [1, 0, 2, 0, 1]
         check(values, a_idx, b_idx, 4 * 2)
 
+    def _cached_side(self, plan):
+        # the join caches its first child, the scan listed first below it
+        join = plan[plan.index("Value Hash Join"):]
+        return min(["(a:A)", "(b:B)"], key=join.index)
+
     def test_join_on_maps_with_several_candidates(self):
         # map join keys written in a different key order on each side, with
         # several candidates sharing one position in the sort order: three
@@ -280,15 +291,24 @@ class testHashJoin(FlowTestsBase):
                                    (:B {o: 3, x: 1, y: 3}),
                                    (:B {o: 4, x: 1, y: 0.0/0.0})""")
 
+        # the join caches the stream that resolves the left operand of the
+        # predicate, so each predicate form decides which side is cached:
+        # A (one candidate per key) or B (the three equal maps)
         expected = [[0, 0], [0, 1], [0, 2], [1, 3]]
+        predicates = [("{y: a.y, x: a.x} = {x: b.x, y: b.y}", "(a:A)"),
+                      ("{x: b.x, y: b.y} = {y: a.y, x: a.x}", "(b:B)")]
         for match in ["(a:A), (b:B)", "(b:B), (a:A)"]:
-            q = f"""MATCH {match}
-                    WHERE {{y: a.y, x: a.x}} = {{x: b.x, y: b.y}}
-                    RETURN a.o, b.o ORDER BY a.o, b.o"""
-            plan = str(self.graph.explain(q))
-            self.env.assertIn("Value Hash Join", plan)
+            for predicate, cached in predicates:
+                q = f"""MATCH {match}
+                        WHERE {predicate}
+                        RETURN a.o, b.o ORDER BY a.o, b.o"""
+                plan = str(self.graph.explain(q))
+                self.env.assertIn("Value Hash Join", plan)
 
-            # run twice, the result must not change between runs
-            for _ in range(2):
-                res = self.graph.query(q).result_set
-                self.env.assertEquals(res, expected, message=q)
+                self.env.assertEquals(self._cached_side(plan), cached,
+                                      message=f"cached side of {q}")
+
+                # run twice, the result must not change between runs
+                for _ in range(2):
+                    res = self.graph.query(q).result_set
+                    self.env.assertEquals(res, expected, message=q)
