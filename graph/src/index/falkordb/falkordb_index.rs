@@ -858,4 +858,88 @@ mod tests {
             "no edge column of this name"
         );
     }
+
+    /// `n.a IN [...]` reaches the facade as an `Or` of `Equal`s. A same-attribute union — nested
+    /// `Or`s included — must be routed to that attribute's column, and any union that cannot be
+    /// answered whole must be declined. A facade that declined every union would still return the
+    /// right rows, because RediSearch answers instead, so only a test at this level notices.
+    #[test]
+    fn query_numeric_serves_a_same_attribute_union() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_numeric(Node, &label, &attr);
+        let column = idx.numeric_mut(Node, &label, &attr).unwrap();
+        column.add(&Value::Int(30), 1);
+        column.add(&Value::Int(40), 2);
+        column.add(&Value::Int(50), 3);
+
+        let eq = |key: &Arc<String>, v: Value| IndexQuery::Equal {
+            key: key.clone(),
+            value: v,
+        };
+        let int = |key: &Arc<String>, v: i64| eq(key, Value::Int(v));
+        // Union order is unspecified, so compare sorted ids.
+        let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
+            idx.query_numeric(entity, &label, q).map(|it| {
+                let mut ids: Vec<u64> = it.collect();
+                ids.sort_unstable();
+                ids
+            })
+        };
+
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![int(&attr, 30), int(&attr, 40)])),
+            Some(vec![1, 2]),
+            "a same-attribute union is served from the column"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![
+                    IndexQuery::Or(vec![int(&attr, 30)]),
+                    IndexQuery::Or(vec![int(&attr, 50)]),
+                ])
+            ),
+            Some(vec![1, 3]),
+            "`a IN [..] OR a IN [..]` arrives as an Or of Ors and must flatten, not decline"
+        );
+
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![int(&attr, 30), int(&arc("height"), 40)])
+            ),
+            None,
+            "a union spanning two attributes cannot be answered from one column"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![
+                    int(&attr, 30),
+                    eq(&attr, Value::String(Arc::new("x".to_string()))),
+                ])
+            ),
+            None,
+            "a non-numeric member declines the whole union"
+        );
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![])),
+            None,
+            "an empty union is not match-all"
+        );
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![int(&arc("height"), 30)])),
+            None,
+            "no column for the union's attribute"
+        );
+        assert_eq!(
+            served(
+                Relationship,
+                &IndexQuery::Or(vec![int(&attr, 30), int(&attr, 40)])
+            ),
+            None,
+            "no edge column of this name"
+        );
+    }
 }
