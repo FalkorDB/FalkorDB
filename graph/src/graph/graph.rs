@@ -82,10 +82,9 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{
-    falkordb_index::FalkorDbIndex,
-    graph_writes::{self, index_only_writes},
-};
+use crate::index::falkordb::falkordb_index::NumericAnswer;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{falkordb_index::FalkorDbIndex, graph_writes};
 use crate::index::index_docs::IndexDocs;
 use crate::{
     entity_type::EntityType,
@@ -111,6 +110,47 @@ use crate::{
     runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
+
+/// The index fields that still need feeding to RediSearch in this build.
+///
+/// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
+///
+/// With it, the native index owns every **Range** column. The scan ops route Range predicates to
+/// it, and `get_indexed_nodes` / `get_indexed_edges` — RediSearch's only Range readers — are
+/// compiled out of that build entirely, so a Range document written to RediSearch is one nothing
+/// can ever read back.
+///
+/// Dropping it is not just about the wasted write. A second copy of the data is what would let a
+/// native-index maintenance bug pass every test: the flag exists so that a gap *surfaces*, and a
+/// silent shadow copy in RediSearch is exactly the thing that stops it surfacing. It also makes
+/// the write path measurable — while both engines were fed, any write benchmark was timing the
+/// double-write rather than the native index.
+///
+/// Fulltext and Vector fields are untouched. They have no native equivalent, and their procedures
+/// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
+/// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+}
+
+#[cfg(feature = "index-falkordb")]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+        .into_iter()
+        .filter_map(|(key, fields)| {
+            let kept: Vec<Arc<Field>> = fields
+                .into_iter()
+                .filter(|f| !matches!(f.ty, IndexType::Range))
+                .collect();
+            (!kept.is_empty()).then_some((key, kept))
+        })
+        .collect()
+}
 
 /// Result of query parsing and planning.
 ///
@@ -3846,7 +3886,12 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                // Every field is served natively. Skipping here also skips the endpoint
+                // resolution below, which is a scan over the type's tensor.
+                continue;
+            }
 
             // Resolve `(src, dst)` only for the edge ids we actually
             // need, instead of materializing the full tensor every
@@ -3918,16 +3963,6 @@ impl Graph {
             return;
         }
 
-        // Measurement gate, not a shipping mode: see `index_only_writes`. The native index
-        // was already maintained by the write hooks, so only the redundant RediSearch feed is
-        // dropped.
-        #[cfg(feature = "index-falkordb")]
-        if matches!(kind, IndexKind::Node) && index_only_writes() {
-            index_add_docs.clear();
-            remove_docs.clear();
-            return;
-        }
-
         let (indexer, names, attr_store) = match kind {
             IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
@@ -3936,7 +3971,10 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                continue; // every field of this label is served natively
+            }
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
@@ -4064,47 +4102,50 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing column). Wraps
-    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
-    /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
-    /// borrow.
+    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
+    /// three-way answer: rows, `NotReady` (column still building — scan), or `None` (cannot be
+    /// served). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its tree
+    /// snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+    ) -> Option<NumericAnswer<impl Iterator<Item = NodeId> + use<>>> {
         self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
-            .map(|iter| iter.map(NodeId))
+            .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
     }
 
     /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
     /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
-    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing column.
+    /// only holds a temporary graph borrow, so the result must not borrow `self`. Three-way answer
+    /// as for nodes: rows, `NotReady` (still building — scan), `None` (not servable). #51.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
-        let iter = self
-            .falkordb_index
-            .query_numeric(EntityType::Relationship, type_name, query)?;
+    ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
+        let answer =
+            self.falkordb_index
+                .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
         // the same lookup `endpoints_for_edge` does. Laziness matters here — a range scan
-        // under a LIMIT should stop at the limit, not materialize every match first.
-        let endpoints = Arc::clone(&self.edge_endpoints);
-        Some(iter.filter_map(move |eid| {
-            endpoints
-                .get(eid)
-                .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        // under a LIMIT should stop at the limit, not materialize every match first. `map_rows`
+        // only runs on `Rows`, so a not-ready column does not even pay the refcount bump.
+        Some(answer.map_rows(|rows| {
+            let endpoints = Arc::clone(&self.edge_endpoints);
+            rows.filter_map(move |eid| {
+                endpoints
+                    .get(eid)
+                    .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+            })
         }))
     }
 
