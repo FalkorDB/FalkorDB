@@ -17,6 +17,7 @@ use crate::graph::graph::{Graph, NodeId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
+use super::cch::CchIndex;
 use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
@@ -338,6 +339,18 @@ impl BuildCursor {
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
     edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
+    /// CCH shortest-path indexes, one [`IndexEntry`] per definition (the whole
+    /// [`CchIndexDef`](super::cch::CchIndexDef) is the key, the kind's
+    /// [`VersionedIndex::Name`]). Every entry is built synchronously and held `Ready` until the
+    /// background build, so readers still check the state.
+    ///
+    /// Empty until one is created, so a graph with no CCH index pays one `Vec` header.
+    /// Cloned with the rest of the index by `Graph::new_version`, which clones one `Arc<Cch>`
+    /// per index: no hierarchy data is copied, a reader that already holds the old version
+    /// keeps it, and rollback costs nothing. `pub(crate)` because the logic behind `Graph`'s
+    /// CCH methods lives in [`super::cch::index`].
+    #[allow(dead_code)]
+    pub(crate) cch_indexes: Vec<IndexEntry<CchIndex>>,
 }
 
 impl FalkorDbIndex {
