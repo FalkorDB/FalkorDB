@@ -8,6 +8,7 @@
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
+//! - `metis.rs`     the C METIS call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
 //! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
@@ -20,6 +21,7 @@
 pub mod customize;
 pub mod index;
 pub mod input;
+mod metis;
 pub mod order;
 pub mod query;
 #[cfg(test)]

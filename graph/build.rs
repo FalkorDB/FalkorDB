@@ -1,9 +1,9 @@
 //! Link FalkorDB against its native dependencies.
 //!
-//! Everything about *producing* GraphBLAS, LAGraph and RediSearch lives in the
-//! `native-deps` crate (a path build-dependency, so this is a plain function
-//! call -- no nested cargo, nothing to inherit `RUSTFLAGS` from). This script's
-//! job is narrower: turn the resolved prefixes into `cargo:rustc-link-*`
+//! Everything about *producing* GraphBLAS, LAGraph, METIS/GKlib and RediSearch
+//! lives in the `native-deps` crate (a path build-dependency, so this is a plain
+//! function call -- no nested cargo, nothing to inherit `RUSTFLAGS` from). This
+//! script's job is narrower: turn the resolved prefixes into `cargo:rustc-link-*`
 //! directives, in the right order, plus two fix-ups that only make sense at
 //! link time.
 
@@ -40,9 +40,15 @@ fn main() {
     let graphblas = deps.get(Dep::GraphBlas).expect("graphblas resolved");
     let lagraph = deps.get(Dep::LaGraph).expect("lagraph resolved");
     let redisearch = deps.get(Dep::RediSearch).expect("redisearch resolved");
+    let gklib = deps.get(Dep::GkLib).expect("gklib resolved");
+    let metis = deps.get(Dep::Metis).expect("metis resolved");
 
     link_openmp_search_paths();
     link_graphblas(graphblas, lagraph);
+    // Only the CCH path index (`index::falkordb::cch`, behind `index-falkordb`) calls METIS.
+    if std::env::var_os("CARGO_FEATURE_INDEX_FALKORDB").is_some() {
+        link_metis(gklib, metis);
+    }
     link_cxx_and_openssl();
     link_redisearch(redisearch);
 }
@@ -168,6 +174,30 @@ fn link_graphblas(
     } else {
         println!("cargo:rustc-link-lib=omp");
     }
+}
+
+fn link_metis(
+    gklib: &Resolved,
+    metis: &Resolved,
+) {
+    println!("cargo:rustc-link-search=native={}", metis.lib().display());
+    println!("cargo:rustc-link-search=native={}", gklib.lib().display());
+    // Dependent first, as for LAGraph: libmetis calls into libGKlib.
+    println!("cargo:rustc-link-lib=static=metis");
+    println!("cargo:rustc-link-lib=static=GKlib");
+
+    // The FFI declarations in `index/falkordb/cch/metis.rs` hard-code `idx_t`; hand them the width
+    // of the METIS actually linked, from its own header, so a mismatch fails to compile
+    // (the C engine's `_Static_assert` in `cch.c`, moved to where the width is known).
+    let header = metis.include().join("metis.h");
+    let text = fs::read_to_string(&header)
+        .unwrap_or_else(|e| panic!("native-deps: cannot read {}: {e}", header.display()));
+    let width = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("#define IDXTYPEWIDTH"))
+        .map(str::trim)
+        .unwrap_or_else(|| panic!("native-deps: {} defines no IDXTYPEWIDTH", header.display()));
+    println!("cargo:rustc-env=FALKORDB_METIS_IDXTYPEWIDTH={width}");
 }
 
 fn link_cxx_and_openssl() {

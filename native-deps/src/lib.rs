@@ -59,7 +59,7 @@ pub struct Request {
 }
 
 impl Request {
-    /// All three deps, with flavor and mode taken from the environment.
+    /// Every dep, with flavor and mode taken from the environment.
     pub fn from_env() -> Result<Self> {
         let cwd = std::env::current_dir()?;
         Ok(Self {
@@ -83,9 +83,11 @@ impl Request {
             "FALKORDB_NATIVE_DEPS_PREBUILT",
             "FALKORDB_PREJIT_HARVEST",
             "FALKORDB_REPO_ROOT",
+            "GKLIB_PREFIX",
             "GRAPHBLAS_PREFIX",
             "LAGRAPH_PREFIX",
             "LIBOMP_PREFIX",
+            "METIS_PREFIX",
             "REDISEARCH_PREFIX",
             "REDISEARCH_SAN",
         ]
@@ -152,11 +154,12 @@ impl Resolution {
 ///
 /// Order of preference, per dep:
 ///
-/// 1. `GRAPHBLAS_PREFIX` / `LAGRAPH_PREFIX` / `REDISEARCH_PREFIX` -- used
-///    verbatim, BYPASSING the key. This is an explicit escape hatch for
-///    supplying a hand-built or distro-packaged artifact; because it skips the
-///    key it cannot detect an ABI mismatch, so taking it logs a warning. It is
-///    opt-in per dep and nothing in this repo sets these.
+/// 1. `GRAPHBLAS_PREFIX` / `LAGRAPH_PREFIX` / `GKLIB_PREFIX` / `METIS_PREFIX` /
+///    `REDISEARCH_PREFIX` -- used verbatim, BYPASSING the key. This is an
+///    explicit escape hatch for supplying a hand-built or distro-packaged
+///    artifact; because it skips the key it cannot detect an ABI mismatch, so
+///    taking it logs a warning. It is opt-in per dep and nothing in this repo
+///    sets these.
 /// 2. A read-only prebuilt root from `FALKORDB_NATIVE_DEPS_PREBUILT` holding an
 ///    entry for this exact key (how the Docker images ship prebuilt deps).
 /// 3. The writable cache.
@@ -174,11 +177,15 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
         prejit_harvest: req.prejit_harvest,
     };
 
-    // LAGraph links the GraphBLAS archive, so it is always resolved alongside
-    // it and after it.
+    // LAGraph links the GraphBLAS archive and METIS is compiled against GKlib,
+    // so each is always resolved alongside its upstream and after it.
     let mut wanted = req.deps.clone();
-    if wanted.contains(&Dep::LaGraph) && !wanted.contains(&Dep::GraphBlas) {
-        wanted.push(Dep::GraphBlas);
+    for dep in req.deps.iter().copied() {
+        if let Some(up) = dep.upstream()
+            && !wanted.contains(&up)
+        {
+            wanted.push(up);
+        }
     }
 
     let mut out = Resolution::default();
@@ -203,12 +210,12 @@ fn resolve_one(
     dep: Dep,
     resolved_so_far: &Resolution,
 ) -> Result<Resolved> {
-    // LAGraph's key includes GraphBLAS's, and the loop in `ensure` always
-    // resolves GraphBLAS first, so read it back rather than threading it
-    // through as a second, redundant parameter.
-    let graphblas_key = resolved_so_far
-        .0
-        .get(&Dep::GraphBlas)
+    // LAGraph's key includes GraphBLAS's (METIS's, GKlib's), and the loop in
+    // `ensure` always resolves the upstream first, so read it back rather than
+    // threading it through as a second, redundant parameter.
+    let upstream_key = dep
+        .upstream()
+        .and_then(|up| resolved_so_far.0.get(&up))
         .map(|r| r.key.as_str());
     if let Some(prefix) = override_prefix(dep) {
         log(&format!(
@@ -224,7 +231,7 @@ fn resolve_one(
         });
     }
 
-    let manifest = ctx.manifest(dep, graphblas_key)?;
+    let manifest = ctx.manifest(dep, upstream_key)?;
     let key = manifest.key();
 
     // The common case takes no lock: a checkout on its pin, already published.
@@ -330,15 +337,22 @@ pub fn current_entries(req: &Request) -> Result<BTreeSet<String>> {
     };
     let mut out = BTreeSet::from([local_entry_name(&req.root)]);
     // LAGraph's key embeds GraphBLAS's as resolved -- a local key when the
-    // GraphBLAS checkout is off its pin -- exactly as in `ensure`.
-    let pinned = ctx.manifest(Dep::GraphBlas, None)?;
-    let graphblas = match ctx.local_changes(Dep::GraphBlas.name())? {
-        Some(local) => local_key(pinned, &local),
-        None => pinned.key(),
+    // GraphBLAS checkout is off its pin -- exactly as in `ensure`; METIS's
+    // embeds GKlib's the same way.
+    let resolved_key = |dep: Dep| -> Result<String> {
+        let pinned = ctx.manifest(dep, None)?;
+        Ok(match ctx.local_changes(dep.name())? {
+            Some(local) => local_key(pinned, &local),
+            None => pinned.key(),
+        })
     };
+    let graphblas = resolved_key(Dep::GraphBlas)?;
+    let gklib = resolved_key(Dep::GkLib)?;
     out.insert(ctx.manifest(Dep::LaGraph, Some(&graphblas))?.key());
+    out.insert(ctx.manifest(Dep::Metis, Some(&gklib))?.key());
     out.insert(ctx.manifest(Dep::RediSearch, None)?.key());
     out.insert(graphblas);
+    out.insert(gklib);
     Ok(out)
 }
 
@@ -399,6 +413,11 @@ fn build_entry(
             let gb = resolved_so_far.get(Dep::GraphBlas)?;
             recipes::lagraph::build(ctx, entry, &gb.prefix)?;
         }
+        Dep::GkLib => recipes::metis::build_gklib(ctx, entry)?,
+        Dep::Metis => {
+            let gklib = resolved_so_far.get(Dep::GkLib)?;
+            recipes::metis::build_metis(ctx, entry, &gklib.prefix)?;
+        }
         Dep::RediSearch => recipes::redisearch::build(ctx, entry)?,
     }
 
@@ -420,6 +439,8 @@ fn override_prefix(dep: Dep) -> Option<PathBuf> {
     let var = match dep {
         Dep::GraphBlas => "GRAPHBLAS_PREFIX",
         Dep::LaGraph => "LAGRAPH_PREFIX",
+        Dep::GkLib => "GKLIB_PREFIX",
+        Dep::Metis => "METIS_PREFIX",
         Dep::RediSearch => "REDISEARCH_PREFIX",
     };
     let prefix = env_opt(var).map(PathBuf::from)?;

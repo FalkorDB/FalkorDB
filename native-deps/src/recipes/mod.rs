@@ -3,6 +3,7 @@
 
 pub mod graphblas;
 pub mod lagraph;
+pub mod metis;
 pub mod redisearch;
 
 use std::collections::BTreeMap;

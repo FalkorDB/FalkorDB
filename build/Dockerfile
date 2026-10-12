@@ -146,6 +146,19 @@ COPY deps/LAGraph          /src/deps/LAGraph
 RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- graphblas lagraph
 
 # ---------------------------------------------------------------------------
+# metis-build: GKlib + METIS (KarypisLab), the CCH index's ordering.
+#
+# Plain C compiled directly by native-deps (no cmake, no OpenMP), so this stage
+# takes seconds. Like the others it COPYs only its own inputs: both submodules
+# live under deps/KarypisLab.
+# ---------------------------------------------------------------------------
+FROM deps-base AS metis-build
+COPY native-deps           /src/native-deps
+COPY deps/native-deps.lock /src/deps/native-deps.lock
+COPY deps/KarypisLab       /src/deps/KarypisLab
+RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- gklib metis
+
+# ---------------------------------------------------------------------------
 # redisearch-build: the RediSearch 8.6 fork as an embeddable static library.
 #
 # The deps/RediSearch submodule is the single source of truth for WHICH commit,
@@ -209,11 +222,12 @@ RUN python3 -m venv venv
 RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest uv
 
 # ---- prebuilt native deps ----
-# Both stages publish into the same root, so the two COPYs compose into one
+# The stages publish into the same root, so the COPYs compose into one
 # tree. FALKORDB_NATIVE_DEPS_PREBUILT marks it READ-ONLY: `cargo build` resolves
 # against it and, because CC/CXX/LIBOMP_PREFIX above match what the dep stages
 # saw, computes the identical key and hits rather than rebuilds.
 COPY --from=graphblas-build  /opt/falkordb-deps /opt/falkordb-deps
+COPY --from=metis-build      /opt/falkordb-deps /opt/falkordb-deps
 COPY --from=redisearch-build /opt/falkordb-deps /opt/falkordb-deps
 ENV FALKORDB_NATIVE_DEPS_PREBUILT=/opt/falkordb-deps
 

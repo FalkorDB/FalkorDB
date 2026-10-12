@@ -71,7 +71,7 @@ RUN LLVMORG_VERSION=$(clang-19 --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | h
     /tmp/libomp.sh "${LLVMORG_VERSION}" && \
     rm -f /tmp/libomp.sh
 
-# GraphBLAS + LAGraph + RediSearch, built by the native-deps crate.
+# GraphBLAS + LAGraph + GKlib/METIS + RediSearch, built by the native-deps crate.
 # It owns the recipes AND a content-addressed cache keyed on the submodule
 # revisions, the GB_control patch, the vendored PreJIT kernels, $CC/$CXX and the
 # OpenMP flavour -- so the key computed by `cargo build` below matches what is
@@ -88,6 +88,7 @@ COPY deps/native-deps.lock /data/deps/native-deps.lock
 COPY build/graphblas       /data/build/graphblas
 COPY deps/GraphBLAS        /data/deps/GraphBLAS
 COPY deps/LAGraph          /data/deps/LAGraph
+COPY deps/KarypisLab       /data/deps/KarypisLab
 COPY deps/RediSearch       /data/deps/RediSearch
 RUN cd /data && \
     cargo run --locked --manifest-path native-deps/Cargo.toml && \

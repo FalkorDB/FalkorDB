@@ -24,8 +24,8 @@ USAGE:
                                and nothing used for N days (default 14); and
                                with --worktree, deps/RediSearch/bin too
 
-DEP is graphblas, lagraph or redisearch. The flavour comes from the same
-environment `cargo build` reads: REDISEARCH_SAN, FALKORDB_PREJIT_HARVEST,
+DEP is graphblas, lagraph, gklib, metis or redisearch. The flavour comes from
+the same environment `cargo build` reads: REDISEARCH_SAN, FALKORDB_PREJIT_HARVEST,
 FALKORDB_NATIVE_DEPS_FORCE, CC/CXX, FALKORDB_DEPS_CACHE, ...
 ";
 

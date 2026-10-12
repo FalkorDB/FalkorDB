@@ -9,6 +9,12 @@
 # path to hash. `rev` is what feeds the per-dep cache key; `pin` is the
 # human-readable tag or branch the rev came from.
 
+[gklib]
+path = deps/KarypisLab/GKlib
+url = https://github.com/KarypisLab/GKlib.git
+rev = 3b7d61b9f885063c89901f3901fb4426f9cfb58f
+pin = 3b7d61b9f885
+
 [graphblas]
 path = deps/GraphBLAS
 url = https://github.com/DrTimothyAldenDavis/GraphBLAS.git
@@ -20,6 +26,12 @@ path = deps/LAGraph
 url = https://github.com/GraphBLAS/LAGraph.git
 rev = d01064de77b606473744b99f63b1487963556194
 pin = v1.3.x
+
+[metis]
+path = deps/KarypisLab/METIS
+url = https://github.com/KarypisLab/METIS.git
+rev = 272d4a91c5f66c92327493339a476c553ebf1f5d
+pin = 272d4a91c5f6
 
 [redisearch]
 path = deps/RediSearch

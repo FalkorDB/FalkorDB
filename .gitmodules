@@ -16,3 +16,12 @@
 	path = deps/LAGraph
 	url = https://github.com/GraphBLAS/LAGraph.git
 	branch = v1.3.x
+[submodule "deps/KarypisLab/GKlib"]
+	path = deps/KarypisLab/GKlib
+	url = https://github.com/KarypisLab/GKlib.git
+	# GKlib and METIS: the CCH index's nested-dissection ordering, at the C
+	# engine's pins. native-deps compiles both out of tree (recipes/metis.rs),
+	# so neither checkout is ever written to.
+[submodule "deps/KarypisLab/METIS"]
+	path = deps/KarypisLab/METIS
+	url = https://github.com/KarypisLab/METIS.git
