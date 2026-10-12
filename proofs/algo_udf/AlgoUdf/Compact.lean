@@ -100,7 +100,7 @@ theorem unfiltered_rows_nodup (bound : Nat) (alive : Nat → Bool) :
   (List.nodup_range).filter _
 
 /-- HarmonicCentrality's unfiltered source vector has length `node_count`, not
-`node_id_bound` (:2777-2779). A live id `≥ node_count` is dropped. -/
+`node_id_bound` (:2780-2782). A live id `≥ node_count` is dropped. -/
 def harmonicRows (nodeCount : Nat) (alive : Nat → Bool) : List Nat :=
   unfilteredRows nodeCount alive
 

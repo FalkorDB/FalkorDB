@@ -12,7 +12,7 @@ coordinates; `VMTensor.edges`: a `Tensor` pair holds a set of edge ids):
 | `Ten` | `Tensor` — `(src, dst, edge_id)` triples |
 | `Mat.get` | `VersionedMatrix::get` (versioned_matrix.rs:1009); `None` out of bounds = GrB_INVALID_INDEX (matrix.rs:1345) |
 | `Mat.row`, `Ten.out`, `Ten.inc` | `iter(i, i)`, `Tensor::iter(i, i, false/true)` (original orientation) |
-| `G` | `struct Graph` (graph.rs:360) |
+| `G` | `struct Graph` (graph.rs:366) |
 
 Machine integers: ids are `Nat`; every u64 count in `G` stays far below 2^64
 (ids are dense, see `Ids.lean`), so wrap never happens; the one narrowing cast
@@ -76,12 +76,12 @@ structure Constraint where
   status : CStatus
 deriving DecidableEq, Repr
 
-/-- `struct Graph` (graph.rs:360). Attribute values are abstract (`V`), the
+/-- `struct Graph` (graph.rs:366). Attribute values are abstract (`V`), the
 attribute store is the map `entity → [(attr id, value)]`. Indexers are not
 part of the state; their behaviour is a parameter of each index theorem.
 
 Since #2846 the graph keeps no counters of its own: `node_ids` /
-`relationship_ids : IdSpace` (graph.rs:371/:358). Their four fields are
+`relationship_ids : IdSpace` (graph.rs:377/:358). Their four fields are
 spelled out here — `nodeCount`/`delNodes` are `node_ids.live`/`.recycled`,
 `nodeEB`/`nodeTaken` its `entry_bound`/`taken` (id_space.rs:164) — and
 reassembled by `nodeIds`/`relIds` (Ids.lean). -/

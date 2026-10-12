@@ -1,25 +1,25 @@
 import PendingCommit.PendingRels
 /-
-# Degrees and label scans over `Pending` (pending.rs:911-1096)
+# Degrees and label scans over `Pending` (pending.rs:892-1077)
 
-* `pendingDeg_spec` — `pending_indegree` / `pending_outdegree` (:1010,
-  :1034): with type names, the sum over the listed types of the matching
+* `pendingDeg_spec` — `pending_indegree` / `pending_outdegree` (:991,
+  :1015): with type names, the sum over the listed types of the matching
   created edges of that type (a name listed twice is counted twice; the
   callers dedupe, `functions/entity.rs` `parse_degree_args`); without, all
   created edges.
 * `deletedDeg_some` / `deletedDeg_none` — `pending_deleted_*degree` (:1059,
   :1081) count the deleted edges with the right endpoint (and type), but call
   `Graph::get_relationship_endpoints`, which panics for an id the committed
-  graph does not have (graph.rs:3258-3267). `deg_panics_on_pending_deleted`:
+  graph does not have (graph.rs:3357-3366). `deg_panics_on_pending_deleted`:
   after `CREATE (a)-[r:R]->(b) DELETE r` the deleted set holds `r`, which was
   never committed, so `indegree(b)` in the same segment panics — #2769,
   reproduced live: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)`
   kills the Rust server (`relationship 0 not found`), C returns `0`.
 * `pendingWithLabels_spec`, `withLabelRemoves_spec` —
-  `get_pending_nodes_with_labels` (:911): every created node when no label is
+  `get_pending_nodes_with_labels` (:892): every created node when no label is
   given, else the nodes whose staged label adds include all of them (note:
   this includes existing nodes with a staged `SET n:L`); and
-  `nodes_with_pending_label_removes` (:931): nodes with a staged removal of
+  `nodes_with_pending_label_removes` (:912): nodes with a staged removal of
   any of them, none for an empty list.
 -/
 namespace PendingCommit.PS

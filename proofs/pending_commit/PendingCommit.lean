@@ -15,9 +15,9 @@ Line numbers are origin/main (`2c874022a`).
 | Lean | Rust |
 | --- | --- |
 | `PS.P` (no `nodeEntry`/`relEntry`) | `struct Pending` (pending.rs:135): the boundary fields and the id-space builders are gone |
-| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:710): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:752-755) |
-| `PS.deletePendingNode` | `delete_pending_node(id, g)` (:659): unwinds and hands the id back via `g.cancel_node_id(id)?` (:696) |
-| `PD.endSegment`, `clear` | `end_segment` (:1613), which replaced `clear` + `open_id_boundaries` |
+| `PS.rmStep` (+ `taken` removal), `removeRelsG` | `remove_pending_relationships_for_node(id, g)` (:691): `taken_relationship_ids.remove` + `g.cancel_relationship_id(rel_id)?` (:733-736) |
+| `PS.deletePendingNode` | `delete_pending_node(id, g)` (:640): unwinds and hands the id back via `g.cancel_node_id(id)?` (:677) |
+| `PD.endSegment`, `clear` | `end_segment` (:1592), which replaced `clear` + `open_id_boundaries` |
 | `CommitOpNext.*` | `CommitOp::next` (ops/commit.rs:69) with `end_segment` (:135-143) |
 
 New theorems: `removeRelsG_spec`, `foldl_rmStep_taken`, `deletePendingNode_spec`,
@@ -39,7 +39,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 * W2-pending-2 — **still present**: `CREATE (a) DELETE a` Rust no counters, C
   `Nodes created: 1, Nodes deleted: 1` (`c_eq_rust_plus_cancelled`).
 * #2769 — **still present**: `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o =
-  outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3266
+  outdegree(a) RETURN b.d, a.o` panics `relationship 0 not found` at graph.rs:3365
   (server killed); C `0|0` (`deg_panics_on_pending_deleted`).
 * W4-fn-1 (labels staged before DELETE) — **still present**: `MATCH (n:A) SET n:C DELETE n
   RETURN labels(n), n:C` Rust `[A]|false` (the snapshot copies the committed labels,
@@ -58,18 +58,18 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Arena.retire/resize/grow`        | `retire_span` (:535), `resize_span_slack` (:548), `grow_slots` (:560) |
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
-| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:529), `remove_node_labels` (:565), `node_has_label` (:590), `update_node_labels` (:618) |
+| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:510), `remove_node_labels` (:546), `node_has_label` (:590), `update_node_labels` (:618) |
 | `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-139) |
-| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1126-1146) |
-| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:440, :791) |
+| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1107-1124) |
+| `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:421, :791) |
 | `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1479) + evaluator's null |
-| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1765, attribute_store.rs:1351) |
-| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1733) |
+| `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1798, attribute_store.rs:1351) |
+| existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1761) |
 | `Props.replaceFromMap/FromNode`   | `SET n = map` / `SET n = m` (ops/set.rs:185-224) |
 | `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1459-1789) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
 | `Snapshot.createDeferred`         | the fix proposed in #2876 |
-| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:621), commit counters (:1105, :1190) |
+| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:602), commit counters (:1086, :1163) |
 
 Hypotheses (the AXIOMATISED rows): GraphBLAS `set_all`/`remove` on the label
 matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
@@ -106,7 +106,7 @@ Wave-4 findings:
   committed graph for the endpoints of every pending-deleted edge, including
   one created in the same batch: `CREATE (a)-[r:R]->(b) DELETE r SET b.d =
   indegree(b)` kills the Rust server (`relationship 0 not found`,
-  graph.rs:3266); C `0`. Already #2769 (re-found; reproduced live on origin/main
+  graph.rs:3365); C `0`. Already #2769 (re-found; reproduced live on origin/main
   code).
 * `setSpan_u16_wrap` — `set_span` stores `n as u16`; with ≥ 65,536 entries for
   one entity the slot reads empty while the arena keeps the entries no counter
@@ -181,7 +181,7 @@ Wave-4 findings:
    Inconsistent within Rust too: a pending edge deleted directly is counted
    created + deleted. Fix: add `cancelled_nodes.len()` /
    `cancelled_relationships.len()` (and their staged props/labels) to both sides
-   (pending.rs:1105/1147/1226). Tests `bug_cancelled_*`.
+   (pending.rs:1086/1147/1226). Tests `bug_cancelled_*`.
 3. **Writes to a deleted relationship are applied and counted.** `REMOVE r.v`
    after `DELETE r` (ops/remove.rs:141 has no deletion check for relationships;
    nodes have one at :121) → Rust `Properties removed: 1`, C none. `SET r.v = 2`
@@ -201,7 +201,7 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)
 
-* `effects_count` (pending.rs:1699) ignores `cancelled_nodes`, so a query that
+* `effects_count` (pending.rs:1680) ignores `cancelled_nodes`, so a query that
   only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
   the master's bin; the replica's boundary is then one lower. By hand this
   self-heals on the next create; not run against a replica.

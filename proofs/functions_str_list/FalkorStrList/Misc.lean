@@ -269,7 +269,7 @@ structure Sorter where
   sortBy : (SV → SV → Ordering) → List SV → List SV
   perm : ∀ c l, (sortBy c l).Perm l
 
-/-- `list.sort` (list.rs:200). -/
+/-- `list.sort` (list.rs:197); `cmp` is `Value::sort_cmp` on main (#2912). -/
 def listSort (S : Sorter) (cmp : SV → SV → Ordering) : List SV → Res
   | .null :: _ => .ok .null
   | .list vs :: rest =>

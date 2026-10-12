@@ -1,12 +1,12 @@
 /-
 # Pattern comprehensions, `[`-dispatch, shortestPath, and the
-# pattern-comprehension guards (cypher.rs:1737-1924, 2752-2913, 3430-3440)
+# pattern-comprehension guards (cypher.rs:1753-1940, 2783-2995, 3512-3522)
 -/
 import FalkorParserGrammar.C.ExprC
 
 namespace FalkorParserGrammar.C
 
-/-! ## The forbidden-pattern-comprehension flag (cypher.rs:2752-2768) -/
+/-! ## The forbidden-pattern-comprehension flag (cypher.rs:2783-2799) -/
 
 /-- `without_pattern_comprehensions(place, parse)`: run `parse` with the flag
 set to `place`; the outer flag comes back whatever `parse` returned. The
@@ -18,7 +18,7 @@ theorem withoutPC_spec {α} (outer : Option Nat) (place : Nat) (parse : Option N
     (withoutPC outer place parse).1 = (parse (some place)).1 ∧ (withoutPC outer place parse).2 = outer :=
   ⟨rfl, rfl⟩
 
-/-- `reject_forbidden_pattern_comprehension` (cypher.rs:2763-2766). -/
+/-- `reject_forbidden_pattern_comprehension` (cypher.rs:2794-2797). -/
 def rejectForbidden (flag : Option Nat) : Except Nat Unit :=
   match flag with
   | some place => .error place
@@ -28,7 +28,7 @@ theorem rejectForbidden_spec (flag : Option Nat) :
     rejectForbidden flag = .ok () ↔ flag = none := by
   cases flag <;> simp [rejectForbidden]
 
-/-- `reject_aggregate` (cypher.rs:3430-3440). -/
+/-- `reject_aggregate` (cypher.rs:3512-3522). -/
 def rejectAggregate (t : ET) : P Unit := if (aggName t).isSome then fail else pure ()
 
 theorem rejectAggregate_spec (t : ET) (s : PS) :
@@ -39,7 +39,7 @@ theorem rejectAggregate_spec (t : ET) (s : PS) :
   · split <;> simp_all
   · split <;> simp
 
-/-- `parse_inline_properties` (cypher.rs:2915-2929): the map's own error is
+/-- `parse_inline_properties` (cypher.rs:2997-3011): the map's own error is
 kept only when it is an unknown-function error. -/
 def inlineErr (isUnknownFn : String → Bool) (msg : String) (r : Except String ET) : Except String ET :=
   match r with
@@ -51,7 +51,7 @@ theorem inlineErr_spec (u : String → Bool) (msg : String) (r : Except String E
     (∀ e, r = .error e → inlineErr u msg r = .error (if u e then e else msg)) := by
   constructor <;> intro x h <;> subst h <;> rfl
 
-/-! ## Pattern comprehension (cypher.rs:2867-2913; Cypher.g4:397-398) -/
+/-! ## Pattern comprehension (cypher.rs:2949-2995; Cypher.g4:397-398) -/
 
 def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat → P (QG Nat)
   | 0, _, _ => fuelP
@@ -76,7 +76,7 @@ def patCompP (o : Oracle) (F : Nat) (pv : Option Nat) : P ET := do
   tok .rbrack
   pure (.node .patComp [cond, res])
 
-/-! ## `parse_list_literal_or_comprehension` (cypher.rs:2778-2822) -/
+/-! ## `parse_list_literal_or_comprehension` (cypher.rs:2809-2876) -/
 
 /-- Run a speculative parse: an error becomes `none` (the caller restores). -/
 def attempt {α} (x : P α) : P (Option α) := fun s =>
@@ -118,7 +118,39 @@ def listLitRest (o : Oracle) (F : Nat) (forb : Bool) (saved : PS) : P (ET × Boo
       let rb ← opt .rbrack
       pure (leaf .list, !rb)
 
-/-- After `[`; `forb` is the forbidden-pattern-comprehension flag. -/
+/-- `list_has_top_level_pipe` (cypher.rs:2883-2903, #3104), on the tokens
+after the `[`: one counter `open` for all three bracket kinds; a `|` at
+`open = 0` is `true`, a `,` there or a closer that would take `open` below 0
+is `false`, end of input (or a lexer error) is `false`. `[]` is
+`EndOfFile`. -/
+def pipeScan : Nat → List CT → Bool
+  | _, [] => false
+  | d, t :: r =>
+    match t with
+    | .pipe => if d = 0 then true else pipeScan d r
+    | .comma => if d = 0 then false else pipeScan d r
+    | .lparen | .lbrack | .lbrace => pipeScan (d + 1) r
+    | .rparen | .rbrack | .rbrace => if d = 0 then false else pipeScan (d - 1) r
+    | .eof => false
+    | _ => pipeScan d r
+
+/-- The gate of #3104 (cypher.rs:2841-2845) on the state after `[`: the
+current token is `(` or an identifier/keyword, and `list_has_top_level_pipe`. -/
+def gateOK (s : PS) : Bool :=
+  (s.cur == .lparen || (identOf s.cur).isSome) && pipeScan 0 s.1
+
+/-- Alternative 4, the list literal (cypher.rs:2871-2875). -/
+def listLitLit (saved : PS) : P (ET × Bool) := do
+  setS saved
+  let rb ← opt .rbrack
+  pure (leaf .list, !rb)
+
+/-- `parse_list_literal_or_comprehension` after `[` (cypher.rs:2809-2876), as
+merged by #3104 (`4a4f2a72f`): alternatives 2 and 3 are only tried when the
+gate is open and the memo (`o.seen`) does not hold the attempt; `forb` is the
+forbidden-pattern-comprehension flag. (`listLitRest` also restores `saved`
+and falls through to alternative 4 when both attempts fail, which is where
+the Rust inserts the key into the memo.) -/
 def listLitP (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
   let saved ← getS
   -- 1) `[var IN ...`
@@ -126,9 +158,21 @@ def listLitP (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
   let isIn ← (match a with | some _ => optK .in_ | none => pure false)
   match a, isIn with
   | some v, true => do let t ← listCompP (o.pe false) v; pure (t, false)
+  | _, _ =>
+    if gateOK saved && !o.seen saved then listLitRest o F forb saved
+    else listLitLit saved
+
+/-- The same before #3104 (at `e8f8a3017`): alternatives 2 and 3 always
+tried. `C.ListGate` compares the two. -/
+def listLitPU (o : Oracle) (F : Nat) (forb : Bool) : P (ET × Bool) := do
+  let saved ← getS
+  let a ← tryIdent
+  let isIn ← (match a with | some _ => optK .in_ | none => pure false)
+  match a, isIn with
+  | some v, true => do let t ← listCompP (o.pe false) v; pure (t, false)
   | _, _ => listLitRest o F forb saved
 
-/-! ## shortestPath (cypher.rs:1737-1924) -/
+/-! ## shortestPath (cypher.rs:1753-1940) -/
 
 def spTypes : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
@@ -138,7 +182,7 @@ def spTypes : Nat → List Nat → P (List Nat)
     let c ← opt .colon
     if p || c then spTypes n (acc ++ [t]) else pure (acc ++ [t])
 
-/-- The edge-filter skipper (cypher.rs:1819-1846): `{` deepens, `}`
+/-- The edge-filter skipper (cypher.rs:1835-1862): `{` deepens, `}`
 shallows and stops at depth ≤ 0, `]` stops before it; at end of input it
 never stops (the model's budget runs out: `fuel`). -/
 def skipP : Nat → Int → P Unit
@@ -151,13 +195,13 @@ def skipP : Nat → Int → P Unit
     | .rbrack => pure ()
     | _ => do next; skipP n d
 
-/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1810-1814). -/
+/-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs:1826-1830). -/
 def isFilter : CT → Bool
   | .param _ => true
   | .lbrace => true
   | _ => false
 
-/-- shortestPath's `*` range (cypher.rs:1784-1807). -/
+/-- shortestPath's `*` range (cypher.rs:1800-1823). -/
 def spRangeP : P (Nat × Option Nat) := do
   let st ← opt .star
   if st then do

@@ -5,7 +5,7 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1688`).
+`Pending::effects_count` at `runtime/pending.rs:1669`).
 -/
 
 namespace FalkorEA
@@ -154,7 +154,7 @@ theorem mergeRow_eq_lookup :
         rw [← key b (Nat.le_of_lt (hlt b hb))]
 
 /-- A width-`n` shape yields `n` cells per id, so `rows.len() == ids.len() * n`
-    — the shape check the decoder and `check_attr_shape` (`apply.rs:721`)
+    — the shape check the decoder and `check_attr_shape` (`apply.rs:707`)
     apply to it. -/
 theorem mergeRow_length : ∀ (as : List Nat) (ps : List (Nat × Val)),
     (mergeRow as ps).length = as.length := by
@@ -230,7 +230,7 @@ structure Pending where
   baseline          : Schema
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1688-1707`), term for term.
+/-- `Pending::effects_count` (`runtime/pending.rs:1669-1688`), term for term.
     Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
     and the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
@@ -380,7 +380,7 @@ theorem gate_drops_schema_only :
 /-! ### Why a dropped payload is a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
-    assigns (`apply_add_schema`, `apply.rs:533`; `verify_id`, `apply.rs:553`).
+    assigns (`apply_add_schema`, `apply.rs:519`; `verify_id`, `apply.rs:539`).
     One dropped registration shifts every later id by one. -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/

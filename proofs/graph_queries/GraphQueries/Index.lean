@@ -8,17 +8,18 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :494 |
-| `dropBg`          | `drop_index_bg` :741 |
-| `createIndex`     | `create_index` :3471 / `create_index_sync` :3509 |
-| `syncDocs`        | `populate_indexes_sync` :3549 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :3761 (via `commit_index` :3650, `commit_index_locked` :3663) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3685 (via `commit_edge_index` :3673) |
-| `dropIndex`       | `drop_index` :3805 |
-| `indexInfo`       | `index_info` :4083 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4534 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :4708 dispatch |
-| `getPlan`         | `get_plan` :1251 cache decision |
+| `populateStart`   | `populate_index` :508 |
+| `dropBg`          | `drop_index_bg` :755 |
+| `createIndex`     | `create_index` :3570 / `create_index_sync` :3617 |
+| `syncDocs`        | `populate_indexes_sync` :3661 (one label/type) |
+| `commitDocs`      | `commit_index_kind` :3910 (via `commit_index` :3799, `commit_index_locked` :3812) |
+| `commitEdgeDocs`  | `commit_edge_index_locked` :3834 (via `commit_edge_index` :3822) |
+| `commitIndexDocs` | `commit_index_docs` :3785 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
+| `dropIndex`       | `drop_index` :3964 |
+| `indexInfo`       | `index_info` :4301 |
+| `memEstimate`, `labelPass` | `memory_usage_report` :4752 sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload` :4926 dispatch |
+| `getPlan`         | `get_plan` :1273 cache decision |
 -/
 namespace GQ
 variable {V : Type}
@@ -150,6 +151,30 @@ theorem commitDocs_every_id (adds rems : List (Nat × List Nat)) (names : List S
   · cases h
   · cases h
     exact ⟨_, _, List.mem_map.2 ⟨_, hs, rfl⟩, _, List.mem_map.2 ⟨id, hi, rfl⟩⟩
+
+/-- `commit_index_docs` (graph.rs:3785): first `apply_index_writes` (the native index's
+staged `docs.native`, a no-op without `index-falkordb`; its semantics belong to
+proofs/index_layer), then the RediSearch node documents iff `node_adds`/`node_removes` is
+non-empty, then the edge documents iff `edge_adds`/`edge_removes` is non-empty. The ops
+are the calls made, in order. -/
+def commitIndexDocs (nodeAddsEmpty nodeRemsEmpty edgeAddsEmpty edgeRemsEmpty : Bool) : List String :=
+  ["apply_index_writes"] ++
+  (if nodeAddsEmpty && nodeRemsEmpty then [] else ["commit_index"]) ++
+  (if edgeAddsEmpty && edgeRemsEmpty then [] else ["commit_edge_index"])
+
+/-- A kind with no documents is skipped before its indexer lock is taken. -/
+theorem commitIndexDocs_skip (a b c d : Bool) :
+    ("commit_index" ∈ commitIndexDocs a b c d ↔ ¬(a && b)) ∧
+    ("commit_edge_index" ∈ commitIndexDocs a b c d ↔ ¬(c && d)) := by
+  cases a <;> cases b <;> cases c <;> cases d <;> decide
+
+/-- The native part is applied first, before either RediSearch publish. -/
+theorem commitIndexDocs_native_first (a b c d : Bool) :
+    (commitIndexDocs a b c d).head? = some "apply_index_writes" := by
+  simp [commitIndexDocs]
+
+/-- Nothing queued: only the (no-op on empty) native apply runs, no indexer is called. -/
+theorem commitIndexDocs_empty : commitIndexDocs true true true true = ["apply_index_writes"] := rfl
 
 /-- `commit_edge_index_locked`: an edge's document key is the `(src, dst, id)`
 found by scanning the type's tensor; ids no longer in the tensor are skipped. -/

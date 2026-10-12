@@ -1,5 +1,5 @@
 import AlgoUdf.Graph
-/-! # `bfs_find_bound` (algo_procedures.rs:2322-2400)
+/-! # `bfs_find_bound` (algo_procedures.rs:2322-2402)
 
 | here | there |
 | --- | --- |
@@ -9,7 +9,7 @@ import AlgoUdf.Graph
 | `scanFrontier`           | `for &node in &frontier` :2343-2366 |
 | `levels h`               | `'levels: for _hop in 1..=config.max_len` :2340-2369, `h + 1 = _hop` (`swap` + `clear` = the new frontier is `next`) |
 | `chain`                  | the parent walk :2383-2390 (outer `none` = a `parents[&cur]` panic) |
-| `bfsFindBound`           | the whole function; `some none` = `Ok(None)`, `some (some es)` = `Ok(Some(..))` where the reported `(weight, cost)` are the forward folds over `es` :2393-2397 |
+| `bfsFindBound`           | the whole function; `some none` = `Ok(None)`, `some (some es)` = `Ok(Some(..))` where the reported `(weight, cost)` are the forward folds over `es` :2395-2400 |
 
 `parents` records the whole stored relationship (the Rust records its id,
 `r.2.2`). Timeout / memory polls are not modelled.

@@ -1,19 +1,19 @@
 import GraphPersist.Persist.Payload
-/-! # Virtual keys on save (redis_type.rs:178-227, :410-541, :584-719, :874-882)
+/-! # Virtual keys on save (redis_type.rs:185-234, :417-548, :591-726, :881-889)
 
 | here | there |
 | --- | --- |
 | `VS`, `lookup`            | `VirtualKeyState { vkey_map, graph_vkeys }` (serializers/mod.rs:30-49); `HashMap::insert` overwrites, so a lookup sees the last insert |
-| `createVKeys`             | `create_virtual_keys` (:410-517); `vname g i` stands for the `i`-th name `{g}g_<uuid>` (see `Uuid`) |
-| `saveKeySlice`            | `save_key_slice` (:203-227, #3161) |
-| `rdbSave`, `SaveOut`      | `graph_rdb_save` (:178-198) |
-| `metaSave`, `vkeyType`    | `graphmeta_rdb_save` (:874-882); virtual keys typed `graphmeta` (:492-500, #3161) |
-| `deleteVKeys`             | `delete_virtual_keys` (:523-539) |
-| `scanKeys`, `Reply`       | `scan_keys_by_type` (:635-719), one `SCAN … TYPE` reply per step |
-| `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:584-610) |
-| `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:618-633) |
+| `createVKeys`             | `create_virtual_keys` (:417-524); `vname g i` stands for the `i`-th name `{g}g_<uuid>` (see `Uuid`) |
+| `saveKeySlice`            | `save_key_slice` (:210-234, #3161) |
+| `rdbSave`, `SaveOut`      | `graph_rdb_save` (:185-205) |
+| `metaSave`, `vkeyType`    | `graphmeta_rdb_save` (:881-889); virtual keys typed `graphmeta` (:492-500, #3161) |
+| `deleteVKeys`             | `delete_virtual_keys` (:530-546) |
+| `scanKeys`, `Reply`       | `scan_keys_by_type` (:642-726), one `SCAN … TYPE` reply per step |
+| `deleteStaleGraphmeta`    | `delete_stale_graphmeta_keys` (:591-617) |
+| `deleteStaleVirtual`      | `delete_stale_virtual_keys` (:625-640) |
 
-`key_holds_graph` (:562) and `delete_key` (:542) are `RedisModule_*` calls (inputs / effects);
+`key_holds_graph` (:569) and `delete_key` (:549) are `RedisModule_*` calls (inputs / effects);
 `build_multi_key_payloads` is the proved `buildMulti`, abstracted here as `layout`.
 
 * `save_main` / `save_vkey` / `save_single` — with distinct names, a graph needing `K ≥ 2`
@@ -68,7 +68,7 @@ inductive SaveOut (Nm Gr : Type) where
   /-- `rdb_save_graph(rdb, graph, key_name)`: the key's own value, whole -/
   | whole (key : Nm)
 
-/-- `save_key_slice` (:203, #3161): the slice `create_virtual_keys` assigned `key`,
+/-- `save_key_slice` (:210, #3161): the slice `create_virtual_keys` assigned `key`,
 if this save assigned it one and its graph is still registered (`false` = `none`). -/
 def saveKeySlice (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : Option (SaveOut Nm Gr) :=
   match lookup vs.map key with
@@ -83,7 +83,7 @@ def saveKeySlice (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : Option (Save
 def rdbSave (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : SaveOut Nm Gr :=
   (saveKeySlice vs reg key).getD (.whole key)
 
-/-- `graphmeta_rdb_save` (:874, #3161): a virtual key — typed `graphmeta` since #3161, as C
+/-- `graphmeta_rdb_save` (:881, #3161): a virtual key — typed `graphmeta` since #3161, as C
 types its own — encodes its slice; a graphmeta key this save did not create writes
 nothing (`none`). -/
 def metaSave (vs : VS Nm) (reg : Nm → Option Gr) (key : Nm) : Option (SaveOut Nm Gr) :=
@@ -294,7 +294,7 @@ theorem save_single (holds : Nm → Gr → Bool) (layout : Gr → List (List Ent
 
 /-! ## End of save: delete what was created -/
 
-/-- `delete_virtual_keys` (:523): `delete_key` each recorded name, then clear the state. -/
+/-- `delete_virtual_keys` (:530): `delete_key` each recorded name, then clear the state. -/
 def deleteVKeys (vs : VS Nm) : List Nm × VS Nm := (vs.gv.flatMap Prod.snd, ⟨[], []⟩)
 
 theorem deleteVKeys_spec (holds : Nm → Gr → Bool) (layout : Gr → List (List Entry)) (vname : Nm → Nat → Nm)
@@ -334,7 +334,7 @@ inductive Reply (Nm : Type) where
   | short                                        -- an array of length < 2
   | page (last : Bool) (keys : List (Option Nm)) -- `last` = the new cursor is "0"; `none` = non-UTF-8 name
 
-/-- `scan_keys_by_type` (:635) over the successive replies. -/
+/-- `scan_keys_by_type` (:642) over the successive replies. -/
 def scanKeys : List (Reply Nm) → List Nm
   | [] => []
   | .null :: _ | .notArray :: _ | .short :: _ => []
@@ -353,10 +353,10 @@ theorem scanKeys_stops (r : Reply Nm) (rest : List (Reply Nm)) (h : r = .null �
     scanKeys (r :: rest) = [] := by
   rcases h with rfl | rfl | rfl <;> rfl
 
-/-- `delete_stale_graphmeta_keys` (:584): delete every key the type scan returns. -/
+/-- `delete_stale_graphmeta_keys` (:591): delete every key the type scan returns. -/
 def deleteStaleGraphmeta (replies : List (Reply Nm)) : List Nm := scanKeys replies
 
-/-- `delete_stale_virtual_keys` (:618): the graphmeta sweep, then `mem::take(meta_keys)`
+/-- `delete_stale_virtual_keys` (:625): the graphmeta sweep, then `mem::take(meta_keys)`
 deleted one by one; `meta_keys` is left empty. -/
 def deleteStaleVirtual (replies : List (Reply Nm)) (metaKeys : List Nm) : List Nm × List Nm :=
   (deleteStaleGraphmeta replies ++ metaKeys, [])

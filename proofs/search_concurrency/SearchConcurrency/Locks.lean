@@ -6,11 +6,11 @@
 | `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
 | `escalateProg`                 | `QuerySession::escalate` (`query_session.rs:242-257`): release R, GIL, W |
 | `inlineWriterProg`             | `QuerySession::begin_writer` (`:144`): GIL, W |
-| `populateProg`                 | `populate_index_batch` (`graph.rs:548`): indexer lock only |
-| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3650`): GIL, W, indexer |
+| `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
+| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
-| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1512-1541`) `write_loop` flag protocol |
-| `Pool`                         | `threadpool.rs:58` `bounded_blocking(1024)` MPMC + `spawn` (`:89`) called from `query_mut` on the Redis main thread (`graph_core.rs:1002`) |
+| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1517-1541`) `write_loop` flag protocol |
+| `Pool`                         | `threadpool.rs:58` `bounded_blocking(1024)` MPMC + `spawn` (`:89`) called from `query_mut` on the Redis main thread (`graph_core.rs:1007`) |
 -/
 
 namespace SC.Locks

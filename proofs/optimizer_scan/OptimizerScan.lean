@@ -24,9 +24,9 @@ comparison (only `true` keeps a row).
 | --- | --- |
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1367` (`id as u64` at 1322) |
-| `IdSeek.maxNodeId`, `seek` | `graph/graph.rs:1602` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
-| `Index.enc`, `arrEnc` | `index/mod.rs:716-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1476-1687`, `Index::query` 1690 |
+| `IdSeek.maxNodeId`, `seek` | `graph/graph.rs:1624` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
+| `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-287` |
 | `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
@@ -80,7 +80,7 @@ Scan selection (`ScanOrder.lean`):
    STILL PRESENT at 8743953a8 (re-checked live on a build of main's planner, b3582e34a: Rust 0,
    expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
 2. **`NodeByIdSeek` returns a node that never existed, and writes to it persist** —
-   `Graph::max_node_id` (`graph.rs:1602`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
+   `Graph::max_node_id` (`graph.rs:1624`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.
    Lean `IdSeek.gEmpty` examples. On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
    → Rust 1 row, C 0. `MATCH (n) WHERE id(n)=0 SET n.x=1, n:Z` then `CREATE (m:Q)` →

@@ -1,5 +1,5 @@
 /-
-# `parse_primary_expr` in full (cypher.rs:1926-2117; Cypher.g4:361-374)
+# `parse_primary_expr` in full (cypher.rs:1942-2133; Cypher.g4:361-374)
 
 `Model.primary` covers the fragment of `Model.lean` (no CASE, quantifiers,
 calls with DISTINCT / `*`, pattern predicates ...). This is the whole
@@ -10,7 +10,7 @@ import FalkorParserGrammar.C.ExprC5
 namespace FalkorParserGrammar.C
 
 /-- A function registry entry (`get_functions().get(name, Function)` or
-`Aggregation`, cypher.rs:1996-2007). -/
+`Aggregation`, cypher.rs:2012-2023). -/
 structure FnI where
   id : Nat
   lo : Nat
@@ -21,7 +21,7 @@ structure FnI where
 def nmReduce : Nat := 4000003
 def nmPlaceholder : Nat := 4000004
 
-/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2732-2747). -/
+/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2763-2778). -/
 def argItemsP (pe : PE) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -30,14 +30,14 @@ def argItemsP (pe : PE) : Nat → List ET → P (List ET)
     if c2 = .comma then do next; argItemsP pe n (acc ++ [e])
     else do tok .rparen; pure (acc ++ [e])
 
-/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs:2723-2750); #3060:
+/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs:2754-2781); #3060:
 only an empty list ends at once, so `f(1,)` is an error. -/
 def argsP (pe : PE) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc
   else argItemsP pe n acc
 
-/-- The call part after `name(` (cypher.rs:2009-2072). -/
+/-- The call part after `name(` (cypher.rs:2025-2088). -/
 def callTail (pe : PE) (F : Nat) (fi : FnI) : P ET := do
   let dis ← optK .distinct
   if fi.agg then do
@@ -81,7 +81,7 @@ def isPatG : Option (QG Nat) → Bool
   | none => false
 
 /-- The `(` arm: a pattern predicate when allowed and the pattern has a
-relationship (cypher.rs:2098-2112), otherwise a parenthesised expression. -/
+relationship (cypher.rs:2114-2128), otherwise a parenthesised expression. -/
 def parenArm (o : Oracle) (F : Nat) (allow : Bool) : P (ET × Bool) := do
   let s0 ← getS
   let pat ← (if allow then attempt (patternP o F .match_) else pure none)
@@ -91,7 +91,7 @@ def parenArm (o : Oracle) (F : Nat) (allow : Bool) : P (ET × Bool) := do
     next
     pure (leaf .paren, true)
 
-/-- The quantifier-keyword arm (cypher.rs:1935-1951). -/
+/-- The quantifier-keyword arm (cypher.rs:1951-1967). -/
 def quantArm (o : Oracle) (allow : Bool) : P (ET × Bool) := do
   let s0 ← getS
   next

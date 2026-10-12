@@ -2,10 +2,10 @@ import PendingCommit.PendingDocs
 /-
 # Unwinding a pending node, paired with the graph's id space (#2846)
 
-Since #2846 `delete_pending_node` (pending.rs:659) and
-`remove_pending_relationships_for_node` (:710) take `g: &mut Graph` and hand
+Since #2846 `delete_pending_node` (pending.rs:640) and
+`remove_pending_relationships_for_node` (:691) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs:1427/:1414) themselves, instead of
+`cancel_relationship_id` (graph.rs:1449/:1414) themselves, instead of
 leaving `ops/delete.rs` to call `return_*_id` afterwards. Each call is `?`:
 the first refusal aborts the unwind.
 
@@ -30,7 +30,7 @@ open PA
 structure CancelSpec {Gr : Type} (free : Gr → List Nat) (cancel : Gr → Nat → Option Gr) : Prop where
   ok : ∀ g id g', cancel g id = some g' → id ∈ free g' ∧ ∀ x ∈ free g, x ∈ free g'
 
-/-- `remove_pending_relationships_for_node` (:710): the second loop (:731-765),
+/-- `remove_pending_relationships_for_node` (:691): the second loop (:731-765),
 each iteration the `Pending` removals (`rmStep`) then
 `g.cancel_relationship_id(rel_id)?` (:755). -/
 def rmStepG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (pg : P × Gr)
@@ -84,7 +84,7 @@ theorem removeRelsG_spec {Gr : Type} (free : Gr → List Nat) (cancelR : Gr → 
   rw [e1]; rw [foldl_rmStep_taken]
   simp [hr]
 
-/-- `delete_pending_node` (:659), its effect on `Pending` and the graph:
+/-- `delete_pending_node` (:640), its effect on `Pending` and the graph:
 `created_nodes.remove(id)` (:676), `set_labels.remove` (:680), the staged
 attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs` (:683-687),
 `remove_pending_relationships_for_node(id, g)?` (:690),

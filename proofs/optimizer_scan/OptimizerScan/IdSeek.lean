@@ -9,7 +9,7 @@
 | `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1322` |
 | `step`                     | one arm of the `match op`, `runtime/runtime.rs:1327-1362` |
 | `evalIdFilter`             | `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1309-1367` |
-| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1602-1604` (since #2846 `node_ids.max_id()`, id_space.rs:320 — same arithmetic) |
+| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1624-1604` (since #2846 `node_ids.max_id()`, id_space.rs:320 — same arithmetic) |
 | `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs:63-73` |
 | `labelIdScan`              | `NodeByLabelAndIdScanOp::next`: `get_nodes(labels, min)` ∩ range, `runtime/ops/node_by_label_and_id_scan.rs:69-82` |
 | `reference`                | `Filter(id(n) op v)` over `AllNodeScan` — Cypher semantics, what the rewrite must preserve |
@@ -155,7 +155,7 @@ structure G where
 def G.bound (g : G) : Nat := g.nodeCount + g.deleted.length
 def G.live (g : G) (x : Nat) : Bool := decide (x < g.bound) && !g.deleted.contains x
 
-/-- `Graph::max_node_id` (`graph.rs:1602-1604` → `IdSpace::max_id`, id_space.rs:320). -/
+/-- `Graph::max_node_id` (`graph.rs:1624-1604` → `IdSpace::max_id`, id_space.rs:320). -/
 def maxNodeId (g : G) : Nat := if g.nodeCount = 0 then 0 else g.bound - 1
 
 /-- `NodeByIdSeekOp`: every id of the range that is not deleted (no liveness check

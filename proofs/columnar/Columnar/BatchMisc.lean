@@ -8,7 +8,7 @@ operator-tree plumbing (`set_argument_batch`, `inspect_context`, `BatchOp::next`
 | here | there |
 | --- | --- |
 | `Column.isEmptyC` | `Column::is_empty` (batch.rs:370) |
-| `Column.compareAt` | `Column::compare_at` (:400) |
+| `Column.compareAt` | `Column::compare_at` (:399; `sort_cmp`, Floats lane `sort_cmp_f64`) |
 | `CB`, `CB.pushBound`, `CB.pushLeftOf` | `ColumnBuilder::push_bound` (:430), `push_left_of` (:443) |
 | `forRights`, `planWidth` | `MergePlan::for_rights` (:499), `width` (:520) |
 | `BB`, `BB.new/len/isEmpty/growCols/finishRow` | `BatchBuilder::new` (:548), `len` (:554), `is_empty` (:560), `grow_cols` (:722) |
@@ -32,32 +32,65 @@ def isEmptyC (c : Column F) : Bool := c.len == 0
 theorem isEmptyC_iff (c : Column F) : c.isEmptyC = true ↔ c.len = 0 := by simp [isEmptyC]
 theorem isEmptyC_unbound : (Column.unbound : Column F).isEmptyC = true := rfl
 
-/-- batch.rs:400-414. `cv` = `Value::compare_value(..).0`; `pcmp` = `f64::partial_cmp`. -/
+/-- `f64::is_nan`: `x != x`, i.e. `partial_cmp(x, x)` is `None`. -/
+def fIsNaN [FloatModel F] (x : F) : Bool := (FloatModel.pcmp x x).isNone
+
+/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
+def sortCmpF64 [FloatModel F] (x y : F) : Ordering :=
+  match FloatModel.pcmp x y with
+  | some o => o
+  | none => compare (fIsNaN x) (fIsNaN y)
+
+/-- batch.rs:399-412 (since #2912 b033aecc6). `cv` = `Value::sort_cmp`; the `Floats`
+lane is `sort_cmp_f64`. -/
 def compareAt [FloatModel F] (cv : V F → V F → Ordering) (c : Column F) (a b : Nat) : Ordering :=
   match c with
   | .ints v => compare (v.getD a 0) (v.getD b 0)
   | .floats v => match v[a]?, v[b]? with
-    | some x, some y => (FloatModel.pcmp x y).getD .lt
+    | some x, some y => sortCmpF64 x y
     | _, _ => .lt
   | .values v => match v[a]?, v[b]? with
     | some x, some y => cv x y
     | _, _ => .eq
   | c => cv ((c.get? a).getD .null) ((c.get? b).getD .null)
 
-/-- The `Values` lane is `compare_value`; an int lane is `Int` order; on the float lane a
-NaN pair compares `Less` BOTH ways (`unwrap_or(Less)`), so the comparator is not
-antisymmetric — the ORDER BY panic of known issue #2891. -/
+theorem compare_bool_swap (x y : Bool) : compare y x = (compare x y).swap := by
+  cases x <;> cases y <;> rfl
+
+/-- `sort_cmp_f64` is antisymmetric for every `partial_cmp` (only `pcmp_swap` is used). -/
+theorem sortCmpF64_swap [FloatModel F] (x y : F) : sortCmpF64 y x = (sortCmpF64 x y).swap := by
+  unfold sortCmpF64
+  rw [FloatModel.pcmp_swap x y]
+  cases FloatModel.pcmp x y with
+  | none => exact compare_bool_swap _ _
+  | some o => rfl
+
+/-- The `Values` lane is `sort_cmp`; an int lane is `Int` order; the float lane is
+antisymmetric for every pair of rows, NaN included (before #2912 a NaN pair compared
+`Less` both ways, `unwrap_or(Less)`, and the ORDER BY sort panicked — known #2891, history
+`pre2912_compareAt_nan_not_antisymmetric`). -/
 theorem compareAt_spec [FloatModel F] (cv : V F → V F → Ordering) (vs : List (V F)) (is : List Int)
-    (fs : List F) (a b : Nat) (ha : a < fs.length) (hb : b < fs.length)
-    (hnan : FloatModel.pcmp fs[a] fs[b] = none) :
+    (fs : List F) (a b : Nat) (ha : a < fs.length) (hb : b < fs.length) :
     ((Column.values vs).compareAt cv a b = match vs[a]?, vs[b]? with
       | some x, some y => cv x y | _, _ => .eq) ∧
     (Column.ints is).compareAt cv a b = compare (is.getD a 0) (is.getD b 0) ∧
-    (Column.floats fs).compareAt cv a b = .lt ∧ (Column.floats fs).compareAt cv b a = .lt := by
+    (Column.floats fs).compareAt cv b a = ((Column.floats fs).compareAt cv a b).swap := by
+  refine ⟨rfl, rfl, ?_⟩
+  simp only [compareAt, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb]
+  exact sortCmpF64_swap _ _
+
+/-- History (e8f8a3017, fixed by #2912 b033aecc6): the float lane was
+`partial_cmp(..).unwrap_or(Less)`, so a NaN pair compared `Less` both ways. -/
+def compareAtFloatsPre2912 [FloatModel F] (fs : List F) (a b : Nat) : Ordering :=
+  match fs[a]?, fs[b]? with
+  | some x, some y => (FloatModel.pcmp x y).getD .lt
+  | _, _ => .lt
+
+theorem pre2912_compareAt_nan_not_antisymmetric [FloatModel F] (fs : List F) (a b : Nat)
+    (ha : a < fs.length) (hb : b < fs.length) (hnan : FloatModel.pcmp fs[a] fs[b] = none) :
+    compareAtFloatsPre2912 fs a b = .lt ∧ compareAtFloatsPre2912 fs b a = .lt := by
   have hnan' : FloatModel.pcmp fs[b] fs[a] = none := by rw [FloatModel.pcmp_swap, hnan]; rfl
-  refine ⟨rfl, rfl, ?_, ?_⟩
-  · simp [compareAt, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb, hnan]
-  · simp [compareAt, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb, hnan']
+  simp [compareAtFloatsPre2912, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb, hnan, hnan']
 
 end Column
 

@@ -7,7 +7,7 @@ import FalkorParserGrammar.C.Oracle0
 namespace FalkorParserGrammar.C
 
 /-- `MATCH (_anon_0:A), (:B)`: the anonymous node is named `_anon_0`
-(cypher.rs:2935), the same as the user's node, so `add_pattern_node` merges
+(cypher.rs:3017), the same as the user's node, so `add_pattern_node` merges
 them into one node with labels A and B. Live: Rust returns 0 rows, C 1
 (on `CREATE (:A), (:B)`). -/
 theorem anon_name_collides :
@@ -17,7 +17,7 @@ theorem anon_name_collides :
       some [[1, 2]] := by decide
 
 /-- `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)`: in a named path the
-repeated relationship variable is only rejected for MATCH (cypher.rs:1514-1522),
+repeated relationship variable is only rejected for MATCH (cypher.rs:1530-1538),
 so CREATE silently drops the second relationship. Live: Rust creates 4
 nodes and 1 relationship; C: "Variable `r` already declared". -/
 theorem create_named_path_drops_dup_rel :
@@ -38,7 +38,7 @@ theorem create_anon_path_dup_rel_rejected :
 
 /-- `MERGE (a)-[r:R]->(b)-[r:R]->(c)`: in an anonymous path the repeated
 relationship variable is an error for MATCH and CREATE only
-(cypher.rs:1535-1548), so MERGE silently drops the second relationship.
+(cypher.rs:1551-1564), so MERGE silently drops the second relationship.
 Live: Rust creates 3 nodes and 1 relationship; C: "The bound variable 'r'
 can't be redeclared in a MERGE clause". -/
 theorem merge_dup_rel_dropped :

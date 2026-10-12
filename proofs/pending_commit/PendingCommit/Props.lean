@@ -3,15 +3,15 @@
 
 `graph/src/runtime/pending.rs` and `graph/src/runtime/runtime.rs`.
 
-* `upsert` — `Pending::set_node_attribute` (pending.rs:440):
+* `upsert` — `Pending::set_node_attribute` (pending.rs:421):
   `binary_search_by_key`, overwrite on `Ok`, `insert` on `Err`.
 * `readQ` — `Runtime::get_node_attribute_no_delete_check` (runtime.rs:1479):
   the pending value first (`Some(Null)` for a staged removal), then the store.
   The evaluator reads `Some(Null)` and `None` both as `null`, so `normQ` folds
   them.
 * `commitExisting` — `Graph::set_nodes_attributes` → `insert_attrs` →
-  `merge_span` (pending.rs:1159, graph.rs:1733).
-* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs:1151,
+  `merge_span` (pending.rs:1137, graph.rs:1761).
+* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs:1128,
   attribute_store.rs:1351): drop nulls, `set_span`.
 
 Theorems: the pending list stays sorted/unique under any sequence of writes

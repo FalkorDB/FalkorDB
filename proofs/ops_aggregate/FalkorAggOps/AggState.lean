@@ -224,9 +224,11 @@ theorem one_child_not_unbound (f : Fn Z) (z : Z) (k : Nat) (env : Env Z) (hf : f
     unbindAcc (.func f [.var k]) env = env ∧ setZero (.func f [.var k]) env = some (upd env k z) := by
   simp [unbindAcc, setZero, hf]
 
-/-! ## `GroupKey` (aggregate.rs:90 `eq`, :101 `hash`) -/
+/-! ## `GroupKey` (aggregate.rs:94 `eq`, :110 `hash`) -/
 
-/-- `self.0 == other.0`: slice equality = same length and pairwise `Value::eq`. -/
+/-- `GroupKey::eq` (aggregate.rs:94): same length and pairwise `veq`; on main (#2917
+7fdf06a0e) `veq a b` is `a.sort_cmp(b) == Equal` (before: `Value::eq`). Instantiated in
+`Discharge.lean`. -/
 def gkEq (veq : Z → Z → Bool) : List Z → List Z → Bool
   | [], [] => true
   | a :: as, b :: bs => veq a b && gkEq veq as bs
@@ -255,9 +257,10 @@ theorem gkEq_iff (veq : Z → Z → Bool) (a b : List Z) :
         exact ⟨hall 0 (by simp) (by simp), hl, fun i h1 h2 => hall (i + 1) (by simpa using h1) (by simpa using h2)⟩
 
 /-- The `HashMap` contract: keys equal under `GroupKey::eq` hash equally, given that
-`Value`'s `Hash` agrees with its `Eq` (hypothesis `hc`). **`hc` is false on main**
-(proofs/value_order `hash_not_consistent_with_eq`), so the COVERAGE row is CONDITIONAL;
-proofs/pr2917_review discharges it for PR #2917 (`hc_pr`, `gk_hash_consistent`). -/
+`Value`'s `Hash` agrees with the element equality (hypothesis `hc`). Generic; on main the
+hypothesis is discharged for `sort_cmp` in `Discharge.lean` (`hc_main`,
+`gk_hash_consistent_main`). It was false for the pre-#2917 `Value::eq` (proofs/value_order
+`hash_not_consistent_with_eq`). -/
 theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → S)
     (hc : ∀ s x y, veq x y = true → hv s x = hv s y) (st : S) (a b : List Z)
     (h : gkEq veq a b = true) : gkHash hv st a = gkHash hv st b := by

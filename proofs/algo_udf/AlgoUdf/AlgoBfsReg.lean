@@ -7,7 +7,7 @@ import AlgoUdf.Config
 | `algoBfs`         | `algo_bfs` :1063-1205; LAGraph's BFS output is the input `Lag` (AXIOMATISED: `LAGr_BreadthFirstSearch_Extended` level/parent vectors, extracted in ascending index order) |
 | `relOf p c`       | `g.get_src_dest_relationships(parent, child, &rel_types).next()` :1144 |
 | `Entry`, `addProc`| `Functions::add_procedure` (functions/mod.rs:943-965: panics on a duplicate lowercase name) |
-| `registerX`       | `register_pagerank` :702 … `register_maxflow` :2844, via `cypher_fn!` (functions/mod.rs:328-352) |
+| `registerX`       | `register_pagerank` :702 … `register_maxflow` :2847, via `cypher_fn!` (functions/mod.rs:328-352) |
 | `register`        | `register` :687 |
 -/
 namespace AlgoUdf.AlgoBfsReg

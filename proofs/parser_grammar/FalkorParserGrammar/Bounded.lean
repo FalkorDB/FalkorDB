@@ -23,7 +23,7 @@ def lists : Nat → List (List Tok)
   | n + 1 => lists n ++ ((lists n).filter (·.length == n)).flatMap (fun l => alpha.map (fun t => l ++ [t]))
 
 /-- Keywords read as identifiers (Rust's `parse_primary_expr` catch-all,
-cypher.rs:1973, accepts any keyword as a variable name). -/
+cypher.rs:1989, accepts any keyword as a variable name). -/
 def asIdents (l : List Tok) : List Tok :=
   l.map fun t => match t with
     | .kw .and_ => .ident 90 | .kw .in_ => .ident 91 | .kw .contains => .ident 92

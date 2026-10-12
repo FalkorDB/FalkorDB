@@ -10,8 +10,8 @@ section
 variable (o : Oracle) (x : CExt)
 
 /-- What `parse_primary_expr` promises about `recurse`: it is set only after
-consuming `(` — with a `Paren` tree — or `[` — with a list tree (cypher.rs:2097-2111,
-2807-2810). The expression model's `primary` satisfies it (`lf .paren` / `lf .list`). -/
+consuming `(` — with a `Paren` tree — or `[` — with a list tree (cypher.rs:2113-2127,
+2871-2875). The expression model's `primary` satisfies it (`lf .paren` / `lf .list`). -/
 def Oracle.PPRec (o : Oracle) : Prop :=
   ∀ s t s', o.pp s = .ok (t, true) s' →
     (s.cur = .lparen ∧ t.root = .paren) ∨ (s.cur = .lbrack ∧ t.root = .list)

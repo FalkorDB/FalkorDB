@@ -13,14 +13,14 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 | Lean | Rust |
 | --- | --- |
 | `Codec.Tok`, `Val.encode/decode`, `decOne` | `BufferedWriter/Reader` tagged words; `impl Encode/Decode<19> for Value` (value.rs:1898,1984) |
-| `Codec.nulTerm/stripNul` | `null_terminated`/`strip_null_terminator` (serializers/mod.rs:244,252), `save_string_nul`/`strip_trailing_nul` (redis_type.rs:241,246) |
+| `Codec.nulTerm/stripNul` | `null_terminated`/`strip_null_terminator` (serializers/mod.rs:244,252), `save_string_nul`/`strip_trailing_nul` (redis_type.rs:248,246) |
 | `Layout.chunkType`, `covered` | `build_multi_key_payloads` entity loop (encoder/mod.rs:95-153) + `encode_with_range` offsets (attribute_store.rs:1409) |
 | `Layout.roaringRT` | `Encode/Decode<19> for RoaringTreemap` (serialization.rs:172-241) |
 | `Layout.decodeSpanFilter` | `AttributeStore::decode_with_count` filter (attribute_store.rs:1460) |
-| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4395), `check_node_constraint`/`check_edge_constraint` (pending.rs:1355,1469) |
+| `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4605), `check_node_constraint`/`check_edge_constraint` (pending.rs:1334,1469) |
 | `Constraint.uniqueCollideC` | C `EnforceUniqueEntity` (observed behaviour) |
-| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` via `create_constraint` (graph.rs:4339,3859) |
-| `Constraint.rustEnforceKeyBuilds` | nested scan in `check_node_constraint` (pending.rs:1393-1418) |
+| `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` via `create_constraint` (graph.rs:4549,3859) |
+| `Constraint.rustEnforceKeyBuilds` | nested scan in `check_node_constraint` (pending.rs:1372-1397) |
 
 ## Proven (headline)
 
@@ -49,7 +49,7 @@ vanish on reload — is identical in C (both write only operational ones).
 
 ## CONFIRMED bugs (Rust vs C on live servers)
 
-1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs:4403
+1. **UNIQUE key is type-tagged, C's is value-equal** (graph.rs:4613
    `format!("{v:?}")`). Under `UNIQUE NODE L (v)`: `CREATE (:L {v:1})` then
    `{v:1.0}` / `{v:true}`, and `{v:0.0}` then `{v:-0.0}` — Rust admits, C rejects
    ("unique constraint violation"). Conversely duplicate lists, points, dates,
@@ -58,11 +58,11 @@ vanish on reload — is identical in C (both write only operational ones).
    `unique_key_int_eq_float_like_c`, `unique_key_neg_zero_eq_zero_like_c`,
    `unique_key_bool_eq_int_like_c` FAIL (keys `Int(1)|` vs `Float(1.0)|`).
 2. **Constraint created over already-violating data comes up OPERATIONAL**
-   (consequence of 1, graph.rs:4339): graph with `(:L {v:1}),(:L {v:1.0})`,
+   (consequence of 1, graph.rs:4549): graph with `(:L {v:1}),(:L {v:1.0})`,
    `(:M {v:0.0}),(:M {v:-0.0})`, `(:K {v:1}),(:K {v:true})` + range indexes +
    `GRAPH.CONSTRAINT CREATE g UNIQUE NODE <X> PROPERTIES 1 v` →
    `db.constraints()` Rust: all OPERATIONAL; C: all FAILED.
-3. **UNIQUE enforcement is Θ(n²) per write query** (pending.rs:1393-1418 rebuilds
+3. **UNIQUE enforcement is Θ(n²) per write query** (pending.rs:1372-1397 rebuilds
    a `seen` map over the whole label for every affected node).
    `UNWIND range(1,n) AS x CREATE (:L {v:x})` under UNIQUE: n=2000 Rust 9.2 s vs
    C 0.047 s; n=8000 Rust 212 s vs C 2.4 s (machine loaded; ratio, not absolute,
@@ -85,7 +85,7 @@ vanish on reload — is identical in C (both write only operational ones).
 | --- | --- |
 | `Persist.Reader` — `Out`, `RT`, `RT_bind`, `RT_rep`, `readU`, `decV` | `BufferedReader` words; `Value::decode` (value.rs:1984) as an `Out` reader |
 | `Persist.Store` — `encRoar`/`decRoar`, `encEnt`/`decEnt`, `applyEnt`, `fold_ents` | `RoaringTreemap` codec (serialization.rs:172-241), `AttributeStore::encode_with_range`/`decode_with_count` (attribute_store.rs:1409-1497) |
-| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4716), `load_graph_from_reader` |
+| `Persist.Payload` — `encDir`/`decDir`, `encIdx`/`decIdx`, `buildPayloads`, `encodeGraph`, `decPayload`, `applyPR`, `loadFromReader` | `encode_graph`, `build_payloads`, `Graph::encode_payload` (graph.rs:4926), `load_graph_from_reader` |
 | `Persist.MultiKey` — `fillKey`, `keysFrom`, `buildMulti` | `build_multi_key_payloads` (encoder/mod.rs:95-189) |
 | `Persist.KeyRT`, `Fold`, `Pending`, `MultiLoad*` — `rdbKey`, `stepKey`, `runKeys`, `fold_char` | `rdb_load_graph` (decoder/mod.rs:44-174), `decode_payloads_into_pending`, `finalize_pending_graph`, `DECODE_STATE` |
 | `Persist.Indexes` — `rebuild` | `rebuild_indexes` (decoder/mod.rs:345-400) |
@@ -120,11 +120,10 @@ Headline theorems:
 
 Confirmed live (Rust release build of origin/main vs C `bin/macos-arm64v8-release/falkordb.so`,
 ports 18910/18911, `CACHE_SIZE 1`):
-4. **RDB-loaded graphs ignore `CACHE_SIZE`** (`redis_type.rs:66` `DEFAULT_CACHE_SIZE = 25`,
-   passed at :97/:856; `cache_size_ignored`). Re-checked at 2c874022a: **still present**
-   (#3161 only removed the vkey placeholder that also used it; after `DEBUG RELOAD`
-   Rust `Cached execution: 1`, C `0`). Repro: `CREATE (:A)`; run q1, q2, q1 →
-   "Cached execution: 0" on both; `DEBUG RELOAD`; q1, q2, q1 → Rust `1`, C `0`.
+4. **FIXED by #3262 (`361f62ac1`)** — formerly RDB-loaded graphs ignored `CACHE_SIZE`
+   (`DEFAULT_CACHE_SIZE = 25`; `pre3262_cache_size_ignored`; after `DEBUG RELOAD` Rust
+   `Cached execution: 1`, C `0`). Now every load passes `io_cache_size(rdb)`
+   (`redis_type.rs:69`, the configured value): `cache_size_on_load`.
 5. **#2537 generalised**: `GRAPH.RESTORE k <payload>` crashes Rust (SIGSEGV in
    `RM_LoadStringBuffer` via `load_string_buffer`) for any payload cut at a record boundary,
    e.g. one complete name record `\x00` + `le64(2)` + `g\0`; a cut *inside* a record returns
@@ -133,9 +132,9 @@ ports 18910/18911, `CACHE_SIZE 1`):
    `BufferedReader::ensure_available`; C also dies).
 
 ## Re-target to 2c874022a (#3161 virtual keys as `graphmeta`, #2846 IdSpace)
-* `save_key_slice` (redis_type.rs:203) is `saveKeySlice`; `graph_rdb_save` (:178) is
+* `save_key_slice` (redis_type.rs:210) is `saveKeySlice`; `graph_rdb_save` (:185) is
   `rdbSave = saveKeySlice.getD whole` (same `save_main`/`save_vkey`/`save_single`);
-  `graphmeta_rdb_save` (:874) is `metaSave = saveKeySlice` — it now writes the slice
+  `graphmeta_rdb_save` (:881) is `metaSave = saveKeySlice` — it now writes the slice
   (`metaSave_of_slice`, `metaSave_rdbSave`) and nothing for a leftover key
   (`metaSave_stale`); `create_virtual_keys` types virtual keys `graphmeta` (`vkeyType`).
   Live (Rust 2c874022a, `VKEY_MAX_ENTITY_COUNT 10`, 100 nodes → 11 keys): Rust

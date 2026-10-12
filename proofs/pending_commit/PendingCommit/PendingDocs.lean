@@ -1,30 +1,35 @@
 import PendingCommit.PendingDeg
 /-
 # `IndexDocs`, the deferred/published document logs, `clear`, `effects_count`,
-# constructors and `end_segment` (pending.rs:248-386, :1455-1696)
+# constructors and `end_segment` (pending.rs:237-385, :1551-1684; the `IndexDocs` struct itself now lives in `index/index_docs.rs`, #3307)
 
-* `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:267-338): per slot,
+* `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:241-319): per slot,
   `absorb` and `merge` make `self` the union (`absorb_spec`, `merge_spec`;
   for edge removals the incoming endpoints win, `HashMap::extend`), `absorb`
   empties `other`; `ids_by_slot` is adds ∪ removes per slot (edge removals by
   key) (`ids_spec`).
-* `IndexDocs::commit` (:344), `commit_deferred_indexes` (:1572),
-  `take_deferred_indexes` (:1499): the graph-side index writes are
+* `IndexDocs::commit` (:325), `commit_deferred_indexes` (:1551),
+  `take_deferred_indexes` (:1478): the graph-side index writes are
   uninterpreted (`ci`, `ce`; RediSearch); proved: what is handed over, that the
   deferred set is drained, and that `published` grows by it.
-* `resync_published_indexes` (:1517): every published `(slot, id)` is re-added
+* `resync_published_indexes` (:1496): every published `(slot, id)` is re-added
   iff the committed version still has it, otherwise removed (edges: removed
   with the private version's endpoints, dropped if neither version has the
   edge); `published` is emptied (`resync_spec`).
-* `end_segment` (:1569, was `clear` before #2846): both branches (background
+* `end_segment` (:1592, was `clear` before #2846): both branches (background
   drop or in place) give the same state — every per-commit field empty,
   `published`, `deferred_docs` and the schema baseline untouched
   (`clear_spec`) — and the graph's id batches are rolled in the same call
   (`endSegment_spec`).
-* `effects_count` (:1680) is the documented sum; it does not count
+* #3307: `IndexDocs` also carries the native index's staged changes (`native`, feature
+  `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
+  it first, `apply_index_writes` :1218) and never touches it; `end_segment` clears it with
+  the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
+  modelled here are unchanged.
+* `effects_count` (:1665) is the documented sum; it does not count
   `cancelled_*` (`effects_ignores_cancelled`, the suspicion noted in the root
   file).
-* `new`/`default` (:353, :346), `set_schema_baseline` (:381): field-level
+* `new`/`default` (:346, :339), `set_schema_baseline` (:376): field-level
   equations. (`node_id_space`, `rel_id_space`, `issued_*`,
   `open_id_boundaries` were removed by #2846.)
 -/
@@ -107,7 +112,7 @@ structure Docs where
 
 def Docs.empty : Docs := ⟨[], [], [], []⟩
 
-/-- `IndexDocs::is_empty` (:267). -/
+/-- `IndexDocs::is_empty` (:241). -/
 def Docs.isEmpty (d : Docs) : Bool := d.nodeAdds.isEmpty && d.nodeRemoves.isEmpty && d.edgeAdds.isEmpty && d.edgeRemoves.isEmpty
 
 theorem isEmpty_spec (d : Docs) : d.isEmpty = true ↔ d = Docs.empty := by
@@ -152,7 +157,7 @@ theorem absorbE_get : ∀ (L m : FMap (FMap (Nat × Nat))), (L.map (·.1)).Nodup
       rw [fextend_get inner _ (hi (a, inner) (by simp)) e]
     · simp only [hs, ite_false, Ne.symm hs]
 
-/-- `IndexDocs::absorb` (:279): `(self ∪ other, empty)`. `merge` (:298) is `.1`. -/
+/-- `IndexDocs::absorb` (:253): `(self ∪ other, empty)`. `merge` (:279) is `.1`. -/
 def absorb (self other : Docs) : Docs × Docs :=
   (⟨foldUni self.nodeAdds other.nodeAdds, foldUni self.nodeRemoves other.nodeRemoves,
     foldUni self.edgeAdds other.edgeAdds, absorbE self.edgeRemoves other.edgeRemoves⟩, Docs.empty)
@@ -180,7 +185,7 @@ theorem absorb_spec (self other : Docs) (ho : DocsWF other) (s x : Nat) :
   · simp only [absorb]; rw [foldUni_mem, memD_of_list _ ho.nr]
   · simp only [absorb]; rw [foldUni_mem, memD_of_list _ ho.ea]
 
-/-- `ids_by_slot` (:318). -/
+/-- `ids_by_slot` (:299). -/
 def idsBySlot (d : Docs) : FMap (List Nat) × FMap (List Nat) :=
   (foldUni (foldUni [] d.nodeAdds) d.nodeRemoves,
    foldUni (foldUni [] d.edgeAdds) (d.edgeRemoves.map (fun p => (p.1, p.2.map (·.1)))))
@@ -215,7 +220,7 @@ theorem ids_spec (d : Docs) (h : DocsWF d) (s x : Nat) :
           exact ⟨inner.map (·.1), List.mem_map.2 ⟨(s, inner), mem_of_fget _ _ _ e1, rfl⟩,
             List.mem_map.2 ⟨(x, v), mem_of_fget _ _ _ e2, rfl⟩⟩
 
-/-- `IndexDocs::commit` (:344): node docs then edge docs, through the graph's
+/-- `IndexDocs::commit` (:325): node docs then edge docs, through the graph's
 (uninterpreted, RediSearch-backed) index writers. -/
 def commitDocs {G : Type} (ci : G → FMap (List Nat) → FMap (List Nat) → G)
     (ce : G → FMap (List Nat) → FMap (FMap (Nat × Nat)) → G) (g : G) (d : Docs) : G :=
@@ -232,10 +237,10 @@ structure Logs where
   deferred : Docs
   published : Docs
 
-/-- `take_deferred_indexes` (:1499). -/
+/-- `take_deferred_indexes` (:1478). -/
 def takeDeferred (l : Logs) : Docs × Logs := (l.deferred, { l with deferred := Docs.empty })
 
-/-- `commit_deferred_indexes` (:1572). -/
+/-- `commit_deferred_indexes` (:1551). -/
 def commitDeferred {G : Type} (ci : G → FMap (List Nat) → FMap (List Nat) → G)
     (ce : G → FMap (List Nat) → FMap (FMap (Nat × Nat)) → G) (l : Logs) (g : G) : Logs × G :=
   let (d, l1) := takeDeferred l
@@ -253,7 +258,7 @@ theorem commitDeferred_spec {G : Type} (ci : G → FMap (List Nat) → FMap (Lis
   obtain ⟨a, b, c, d, -⟩ := absorb_spec l.published l.deferred hw s x
   exact ⟨rfl, rfl, rfl, a, b, c, d⟩
 
-/-- `resync_published_indexes` (:1517), with the committed version's label
+/-- `resync_published_indexes` (:1496), with the committed version's label
 test `lab id slot`, and the committed / private versions' edge endpoints. -/
 def keepSlots (m : FMap (List Nat)) (f : Nat → Nat → Bool) : FMap (List Nat) :=
   m.filterMap (fun p => let l := p.2.filter (f p.1); if l = [] then none else some (p.1, l))
@@ -351,7 +356,7 @@ structure Full where
   nodeLabels : List (Nat × Nat)
   schema : Nat × Nat × Nat × Nat
 
-/-- `Pending::new` / `Default` (:353, :346). -/
+/-- `Pending::new` / `Default` (:346, :339). -/
 def newFull : Full := ⟨PS.P0, ⟨Docs.empty, Docs.empty, Docs.empty⟩, [], [], (0, 0, 0, 0)⟩
 
 theorem new_spec : newFull.st.created = [] ∧ newFull.st.relsByType = [] ∧ newFull.st.deletedN = [] ∧
@@ -366,7 +371,7 @@ theorem accessors_spec (f : Full) (a b c d : Nat) :
     (setSchemaBaseline f a b c d).schema = (a, b, c, d) ∧ (setSchemaBaseline f a b c d).st = f.st :=
   ⟨rfl, rfl⟩
 
-/-- The per-segment reset half of `end_segment` (:1569-1647). `offload` is
+/-- The per-segment reset half of `end_segment` (:1592-1661). `offload` is
 the `big_entries >= OFFLOAD_THRESHOLD` branch (maps moved to a background
 thread instead of cleared in place). -/
 def clearMaps (p : PS.P) : PS.P :=
@@ -400,8 +405,8 @@ theorem clear_spec (f : Full) :
   unfold clear clearBranch; cases decide (bigEntries f ≥ 4096) <;>
     exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- `end_segment` (:1569): the reset above, then `g.roll_id_batches()`
-(graph.rs:1643; `roll` here, `none` = its `Err`). The `Pending` reset happens
+/-- `end_segment` (:1592): the reset above, then `g.roll_id_batches()`
+(graph.rs:1665; `roll` here, `none` = its `Err`). The `Pending` reset happens
 whether or not the roll succeeds; the error is returned to `CommitOp`. -/
 def endSegment {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) : Full × Option Gr :=
   (clear f, roll g)
@@ -414,7 +419,7 @@ stale log over a fresh boundary. -/
 theorem endSegment_spec {Gr : Type} (roll : Gr → Option Gr) (f : Full) (g : Gr) :
     (endSegment roll f g).1 = clear f ∧ (endSegment roll f g).2 = roll g := ⟨rfl, rfl⟩
 
-/-- `effects_count` (:1684). -/
+/-- `effects_count` (:1665). -/
 def effectsCount (p : PS.P) : Nat :=
   p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +

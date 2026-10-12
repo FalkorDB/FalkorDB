@@ -249,8 +249,9 @@ def CmpOp.flip : CmpOp → CmpOp
   | .eq => .eq | .neq => .neq | .lt => .gt | .le => .ge | .gt => .lt | .ge => .le
 
 /-- The per-row evaluator (eval.rs): `=` is `all_equals`, `<>` is
-`all_not_equals` (`partial_cmp`, `None` only for `ComparedNull`), the orderings
-are the `Lt/Gt/Le/Ge` arms. -/
+`all_not_equals` (eval.rs:1688; since #2917 7fdf06a0e: null makes it null, disjoint
+types and NaN are unequal, else `ord != Equal` — before, `partial_cmp`, which read a
+map's disjoint `(Equal, Disjoint)` as equal), the orderings are the `Lt/Gt/Le/Ge` arms. -/
 def evalCmp (op : CmpOp) (a b : V F) : V F :=
   let (o, fl) := compareValue a b
   match op with
@@ -260,7 +261,8 @@ def evalCmp (op : CmpOp) (a b : V F) : V F :=
     | .none => .bool (oEq o)
   | .neq => match fl with
     | .comparedNull => .null
-    | _ => .bool (!oEq o)
+    | .nan | .disjoint => .bool true
+    | .none => .bool (!oEq o)
   | .lt => match fl with
     | .comparedNull | .disjoint => .null | .nan => .bool false | .none => .bool (oLt o)
   | .gt => match fl with
@@ -270,7 +272,7 @@ def evalCmp (op : CmpOp) (a b : V F) : V F :=
   | .ge => match fl with
     | .comparedNull | .disjoint => .null | .nan => .bool false | .none => .bool (!oLt o)
 
-/-- `vectorized::compare_values` (vectorized.rs:239): `none` is null. -/
+/-- `vectorized::compare_values` (vectorized.rs:239; `Neq` arm as #2917): `none` is null. -/
 def compareValues (a b : V F) (op : CmpOp) : Option Bool :=
   let (o, fl) := compareValue a b
   match op with
@@ -280,7 +282,8 @@ def compareValues (a b : V F) (op : CmpOp) : Option Bool :=
     | .none => some (oEq o)
   | .neq => match fl with
     | .comparedNull => none
-    | _ => some (!oEq o)
+    | .nan | .disjoint => some true
+    | .none => some (!oEq o)
   | _ => match fl with
     | .comparedNull | .disjoint => none
     | .nan => some false
@@ -301,6 +304,20 @@ theorem vec_cmp_generic (a b : V F) (op : CmpOp) :
   unfold compareValues evalCmp
   obtain ⟨o, fl⟩ := compareValue a b
   cases op <;> cases fl <;> rfl
+
+/-- Bool negation through a Cypher result (null stays null). -/
+def negB : V F → V F
+  | .bool x => .bool (!x)
+  | v => v
+
+/-- **`<>` is `NOT (=)`** (since #2917 7fdf06a0e; C's `AR_NE`): for every pair of values,
+`<>` is null exactly when `=` is, and otherwise its negation. Before #2917, a map that
+stopped at a disjoint pair (`{a:1}` vs `{a:'x'}`) made both `false` (value_order
+`pre2917_map_neq_both_false`). -/
+theorem neq_eq_not_eq (a b : V F) : evalCmp .neq a b = negB (evalCmp .eq a b) := by
+  unfold evalCmp
+  obtain ⟨o, fl⟩ := compareValue a b
+  cases fl <;> rfl
 
 /-- The `i64` kernel for one row (`compare_i64_column` / `compare_i64_pairs`). -/
 def kI64 (op : CmpOp) (x t : Int) : Bool :=

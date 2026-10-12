@@ -14,7 +14,9 @@ lone leaf then leaves an **empty non-root leaf** (`Branch::rebalance` on `X` is 
 and the parent's `combine` keeps the empty page), and the next `Node::min` over it panics
 (`leaf.key(0)` out of bounds, `mod.rs:83`) — e.g. in `insert_batch`'s `pack_branches`.
 
-Latent: `remove_batch` has no production caller yet. Confirmed on the real Rust (`cow_btree` sources
+Since #3307 (18836a355) `remove_batch` has a production caller (`FalkorDbIndex::apply_writes` →
+`remove_encoded`), so the single-child branch is reachable; the panic chain still needs a single-key
+`remove`, which only tests call. Confirmed on the real Rust (`cow_btree` sources
 copied verbatim into a scratch crate, test appended to `tests.rs`):
 
 ```rust

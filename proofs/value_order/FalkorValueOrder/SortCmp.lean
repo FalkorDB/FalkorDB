@@ -1,16 +1,16 @@
 import FalkorValueOrder.Laws
 /-!
-# `Value::sort_cmp` (#2912, origin/main b033aecc6) and `Hash for Value`
+# `Value::sort_cmp` (#2912 b033aecc6, generic in `sort_cmp_f32`) and its laws
 
 See the report in `FalkorValueOrder.lean` ("Wave 9").
 
-| here | there (origin/main b033aecc6, graph/src/runtime/value.rs) |
+| here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
-| `scF64`      | `sort_cmp_f64` (:1888) |
-| `scF64` (as `c32`) | `sort_cmp_f32` (:1900) — the same body on main |
-| `scIntFloat` | `sort_cmp_int_float` (:1914) |
-| `sc`, `scList`, `scVals` | `Value::sort_cmp` (:1526), `sort_cmp_map` (:1563) |
-| `hwords`     | `Hash for Value` (:822), in Model.lean |
+| `scF64`      | `sort_cmp_f64` (:1891) |
+| `c32` parameter | `sort_cmp_f32` (:1905): main's is `Main.scF32`; at b033aecc6 it had `scF64`'s body (`scPre2917`) |
+| `scIntFloat` | `sort_cmp_int_float` (:1931) |
+| `sc`, `scList`, `scVals` | `Value::sort_cmp` (:1529), `sort_cmp_map` (:1566) |
+| `hwords` / `hwordsPre2917` | `Hash for Value` (:823) on main / before #2917, in Model.lean |
 -/
 namespace ValueOrder.SC
 open ValueOrder ValueOrder.Laws
@@ -31,7 +31,7 @@ def isSignNeg : F → Bool
 /-- The key `sort_cmp_f64` orders by: the numeric position, NaN above all. -/
 def fkey (f : F) : Nat × Int × Nat := f.nkey.getD (3, 0, 0)
 
-/-- `sort_cmp_f64` (value.rs:1888): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
+/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
 def scF64 (a b : F) : Ordering :=
   match fpcmp a b with
   | some o => o
@@ -61,7 +61,7 @@ def fracCmp : Ordering → Ordering
   | .lt => .gt
   | .eq => .eq
 
-/-- `sort_cmp_int_float` (value.rs:1914). -/
+/-- `sort_cmp_int_float` (value.rs:1931). -/
 def scIntFloat (i : Int) (f : F) : Ordering :=
   if isNaN f || fge f (.num P63) then .lt
   else if fltF f (.num (-P63)) then .gt
@@ -214,7 +214,7 @@ theorem scIntFloat_key (i : Int) (lo : I64MIN ≤ i) (hi : i ≤ I64MAX) (f : F)
 /-! ## `Value::sort_cmp` -/
 
 mutual
-/-- `Value::sort_cmp` (value.rs:1526), arm by arm; `c32` is `sort_cmp_f32`. -/
+/-- `Value::sort_cmp` (value.rs:1529), arm by arm; `c32` is `sort_cmp_f32`. -/
 def sc (c32 : F → F → Ordering) : V → V → Ordering
   | .bool a, .bool b => cmpB a b
   | .int a, .int b => cmpI a b
@@ -256,8 +256,9 @@ theorem scVals_eq (c32 : F → F → Ordering) :
   | [], _ => by cases ‹List V› <;> rfl
   | _ :: _, [] => rfl
 
-/-- main's `sort_cmp`: `sort_cmp_f32` has the same body as `sort_cmp_f64`. -/
-def scMain : V → V → Ordering := sc scF64
+/-- `sort_cmp` at #2912 (b033aecc6), before #2917: `sort_cmp_f32` had the same body as
+`sort_cmp_f64`. Main's `sort_cmp` is `Main.scMain = sc scF32` (Main.lean). -/
+def scPre2917 : V → V → Ordering := sc scF64
 
 /-! ## Well-formedness and size -/
 
@@ -602,57 +603,67 @@ theorem scF64_lw : Laws.Lw scF64 := by
 
 theorem scF64_refl (x : F) : scF64 x x = .eq := by rw [scF64_key]; exact Laws.cmp3_refl _
 
-/-- **main's `sort_cmp` is a total preorder** on well-formed values (nested lists and
-maps included): reflexive, antisymmetric, transitive. -/
-theorem scMain_total (a b d : V) (wa : wf a = true) (wb : wf b = true) (wd : wf d = true) :
-    scMain a a = .eq ∧ scMain b a = (scMain a b).swap ∧
-    (scMain a b ≠ .gt → scMain b d ≠ .gt → scMain a d ≠ .gt) := by
+/-- History: `sort_cmp` at #2912 (b033aecc6, `sort_cmp_f32` = `sort_cmp_f64`'s body) was
+already a total preorder; main's (`Main.scMain_total`) differs only in `sort_cmp_f32`. -/
+theorem pre2917_sc_total (a b d : V) (wa : wf a = true) (wb : wf b = true) (wd : wf d = true) :
+    scPre2917 a a = .eq ∧ scPre2917 b a = (scPre2917 a b).swap ∧
+    (scPre2917 a b ≠ .gt → scPre2917 b d ≠ .gt → scPre2917 a d ≠ .gt) := by
   have L := sc_laws scF64 scF64_lw scF64_refl (vsize a + vsize b + vsize d)
   have pa : Pn (vsize a + vsize b + vsize d) a := ⟨by omega, wa⟩
   have pb : Pn (vsize a + vsize b + vsize d) b := ⟨by omega, wb⟩
   have pd : Pn (vsize a + vsize b + vsize d) d := ⟨by omega, wd⟩
   exact ⟨L.refl a pa, L.swap a b pa pb, L.trans a b d pa pb pd⟩
 
-/-! ## Main: `sort_cmp`-equal does not imply `hash`-equal -/
+/-! ## History (b033aecc6, before #2917): `sort_cmp`-equal did not imply `hash`-equal
+
+At #2912 nothing paired `sort_cmp` with `Hash` yet, but hash-only DISTINCT already split
+`NaN`/`-NaN` (FINDINGS W9-hash-1). #2917 (7fdf06a0e) made `GroupKey::eq` `sort_cmp`, gave
+the Float hash one NaN word, hashed f32 components by `f32_hash_bits`, and ordered `-0.0`
+before `0.0` in `sort_cmp_f32`; main is consistent (`Main.main_hash_consistent`). -/
 
 /-- A NaN with another payload/sign (`-(0.0/0.0)` vs `f64::NAN`, say). -/
 def nan2 : F := .nan true (2 ^ 51 - 1)
 
-theorem main_float_nan_hash_differs :
-    scMain (.flt F.qnan) (.flt nan2) = .eq ∧ hwords (.flt F.qnan) ≠ hwords (.flt nan2) := by
+theorem pre2917_float_nan_hash_differs :
+    scPre2917 (.flt F.qnan) (.flt nan2) = .eq ∧
+    hwordsPre2917 (.flt F.qnan) ≠ hwordsPre2917 (.flt nan2) := by
   decide
 
-theorem main_vec_nan_hash_differs :
-    scMain (.vecf32 [F.qnan]) (.vecf32 [nan2]) = .eq ∧
-    hwords (.vecf32 [F.qnan]) ≠ hwords (.vecf32 [nan2]) := by decide
+theorem pre2917_vec_nan_hash_differs :
+    scPre2917 (.vecf32 [F.qnan]) (.vecf32 [nan2]) = .eq ∧
+    hwordsPre2917 (.vecf32 [F.qnan]) ≠ hwordsPre2917 (.vecf32 [nan2]) := by decide
 
-theorem main_vec_zero_hash_differs :
-    scMain (.vecf32 [.negZero]) (.vecf32 [.num 0]) = .eq ∧
-    hwords (.vecf32 [.negZero]) ≠ hwords (.vecf32 [.num 0]) := by decide
+theorem pre2917_vec_zero_hash_differs :
+    scPre2917 (.vecf32 [.negZero]) (.vecf32 [.num 0]) = .eq ∧
+    hwordsPre2917 (.vecf32 [.negZero]) ≠ hwordsPre2917 (.vecf32 [.num 0]) := by decide
 
-theorem main_point_zero_hash_differs :
-    scMain (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = .eq ∧
-    hwords (.point .negZero (.num 0)) ≠ hwords (.point (.num 0) (.num 0)) := by decide
+theorem pre2917_point_zero_hash_differs :
+    scPre2917 (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = .eq ∧
+    hwordsPre2917 (.point .negZero (.num 0)) ≠ hwordsPre2917 (.point (.num 0) (.num 0)) := by
+  decide
 
-theorem main_point_nan_hash_differs :
-    scMain (.point F.qnan (.num 1)) (.point nan2 (.num 1)) = .eq ∧
-    hwords (.point F.qnan (.num 1)) ≠ hwords (.point nan2 (.num 1)) := by decide
+theorem pre2917_point_nan_hash_differs :
+    scPre2917 (.point F.qnan (.num 1)) (.point nan2 (.num 1)) = .eq ∧
+    hwordsPre2917 (.point F.qnan (.num 1)) ≠ hwordsPre2917 (.point nan2 (.num 1)) := by decide
 
-/-- **Refuted on main**: `sort_cmp`-equal keys need not hash alike. -/
-theorem main_hash_not_consistent :
-    ¬ ∀ a b : V, wf a = true → wf b = true → scMain a b = .eq → hwords a = hwords b := fun h =>
-  main_vec_zero_hash_differs.2 (h _ _ rfl rfl main_vec_zero_hash_differs.1)
+/-- **History (b033aecc6)**: `sort_cmp`-equal keys need not have hashed alike. -/
+theorem pre2917_hash_not_consistent :
+    ¬ ∀ a b : V, wf a = true → wf b = true → scPre2917 a b = .eq →
+      hwordsPre2917 a = hwordsPre2917 b := fun h =>
+  pre2917_vec_zero_hash_differs.2 (h _ _ rfl rfl pre2917_vec_zero_hash_differs.1)
 
-/-- main's `GroupKey` equality is `Value::eq` (`compare_value(..).0 == Equal`), and it
-too merges signed zeros in vectors and points while the hash keeps them apart. -/
+/-- `Value::eq` (`compare_value(..).0 == Equal`) merges signed zeros in vectors and points
+while the hash keeps them apart, on main too. Harmless since #2917: `GroupKey::eq` is
+`sort_cmp` (which keeps them apart, `Main.signed_zeros_apart`); before #2917 `GroupKey::eq`
+was `Value::eq`, a `HashMap` contract violation. -/
 theorem vec_zero_eq_but_hash_differs :
     eqV (.vecf32 [.negZero]) (.vecf32 [.num 0]) = true ∧
     hwords (.vecf32 [.negZero]) ≠ hwords (.vecf32 [.num 0]) ∧
     eqV (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = true ∧
     hwords (.point .negZero (.num 0)) ≠ hwords (.point (.num 0) (.num 0)) := by decide
 
-#print axioms scMain_total
-#print axioms main_hash_not_consistent
+#print axioms pre2917_sc_total
+#print axioms pre2917_hash_not_consistent
 #print axioms vec_zero_eq_but_hash_differs
 
 end ValueOrder.SC

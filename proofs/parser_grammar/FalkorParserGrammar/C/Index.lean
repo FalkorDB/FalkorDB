@@ -1,20 +1,20 @@
 /-
 # Index DDL and the entry point: `parse_index_ops`, `match_dot_property_separator`,
-# `parse` (cypher.rs:535-753, 2623-2640)
+# `parse` (cypher.rs:551-769, 2654-2671)
 -/
 import FalkorParserGrammar.C.ClausesG3
 import FalkorParserGrammar.C.ClausesNP
 
 namespace FalkorParserGrammar.C
 
-/-- `current_str().eq_ignore_ascii_case("constraint")` (cypher.rs:556, 657). -/
+/-- `current_str().eq_ignore_ascii_case("constraint")` (cypher.rs:572, 673). -/
 def nmConstraint : Nat := 6000001
 
-/-- `match_dot_property_separator` (cypher.rs:2623-2640): a `.`; anything
+/-- `match_dot_property_separator` (cypher.rs:2654-2671): a `.`; anything
 else (including a float token `.1`) is an error. -/
 def dotSepP : P Unit := tok .dot
 
-/-- The entity of `FOR (...)` after `FOR (` (cypher.rs:584-608 / 683-707):
+/-- The entity of `FOR (...)` after `FOR (` (cypher.rs:600-624 / 683-707):
 `(n:L)` or `()-[e:R]-()` / `()-[e:R]->()`. -/
 def idxEntity : P (Nat × Nat × Bool) := do
   let rp ← opt .rparen
@@ -39,7 +39,7 @@ def idxEntity : P (Nat × Nat × Bool) := do
     tok .rparen
     pure (nkey, label, false)
 
-/-- `, n.p` repeated (cypher.rs:617-624). -/
+/-- `, n.p` repeated (cypher.rs:633-640). -/
 def idxMore (nkey : Nat) : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -52,14 +52,14 @@ def idxMore (nkey : Nat) : Nat → List Nat → P (List Nat)
       idxMore nkey n (acc ++ [a])
     else pure acc
 
-/-- `ident (, ident)*` of the old syntax `ON :L(a, b)` (cypher.rs:568-571). -/
+/-- `ident (, ident)*` of the old syntax `ON :L(a, b)` (cypher.rs:584-587). -/
 def identList : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
     let cm ← opt .comma
     if cm then do let a ← ident; identList n (acc ++ [a]) else pure acc
 
-/-- The body of CREATE/DROP after the keyword (cypher.rs:552-648 / 653-749);
+/-- The body of CREATE/DROP after the keyword (cypher.rs:568-664 / 653-749);
 `create` selects the OPTIONS part. `none` = "not an index command". -/
 def idxBody (o : Oracle) (F : Nat) (create : Bool) : P (Option IR) := do
   let ft ← optK .fulltext
@@ -98,7 +98,7 @@ def idxBody (o : Oracle) (F : Nat) (create : Bool) : P (Option IR) := do
         pure (some (.createIndex ent.2.1 attrs ity ent.2.2 opts))
       else pure (some (.dropIndex ent.2.1 attrs ity ent.2.2))
 
-/-- `parse_index_ops` (cypher.rs:551-753). -/
+/-- `parse_index_ops` (cypher.rs:567-769). -/
 def indexOps (o : Oracle) (F : Nat) : P (Option IR) := do
   let cr ← optK .create
   if cr then idxBody o F true
@@ -106,7 +106,7 @@ def indexOps (o : Oracle) (F : Nat) : P (Option IR) := do
     let dr ← optK .drop
     if dr then idxBody o F false else pure none
 
-/-- `Parser::parse` (cypher.rs:535-547): index DDL, or (after restoring the
+/-- `Parser::parse` (cypher.rs:551-563): index DDL, or (after restoring the
 saved state) a query; then `expect_end_of_input`. -/
 def parseP (o : Oracle) (F n : Nat) : P IR := do
   let s0 ← getS

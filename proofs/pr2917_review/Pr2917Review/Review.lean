@@ -9,7 +9,7 @@ import Pr2917Review.SortCmp
 | `floatWordPR`  | `Hash for Value`, `Float` arm (value.rs:839-850): `else if x.is_nan()` |
 | `hw`, `hwordsPR` | `Hash for Value` (value.rs:822); VecF32/Point via `f32_hash_bits` (:876-886) |
 | `scPR`         | `Value::sort_cmp` (value.rs:1529) with the new `sort_cmp_f32` |
-| `gkEqR`, `gkHashR` | `GroupKey::eq` (ops/aggregate.rs:93), `GroupKey::hash` (:109) |
+| `gkEqR`, `gkHashR` | `GroupKey::eq` (ops/aggregate.rs:94), `GroupKey::hash` (:110) |
 | `gkEq`, `gkHash`, `gkHash_consistent` | copied from proofs/ops_aggregate `AggState.lean` |
 | `hwordsPre`, `scPre` | the PR at 203f2022c (Float NaN canonical; vectors/points still `to_bits`, main's `sort_cmp_f32`) |
 -/
@@ -282,11 +282,11 @@ theorem hashPR_consistent (a b : V) (wa : wf a = true) (wb : wf b = true) (h : s
 
 /-! ## `GroupKey` (ops/aggregate.rs) -/
 
-/-- `GroupKey::eq` at 14e341cf4 (aggregate.rs:93): equal lengths, every pair `sort_cmp`-equal. -/
+/-- `GroupKey::eq` at 14e341cf4 (aggregate.rs:94): equal lengths, every pair `sort_cmp`-equal. -/
 def gkEqR (a b : List V) : Bool :=
   a.length == b.length && (a.zip b).all (fun p => scPR p.1 p.2 == .eq)
 
-/-- `GroupKey::hash` (aggregate.rs:109): `for v in &self.0 { v.hash(state) }`. -/
+/-- `GroupKey::hash` (aggregate.rs:110): `for v in &self.0 { v.hash(state) }`. -/
 def gkHashR (st : List UInt64) (vs : List V) : List UInt64 := vs.foldl (fun s v => s ++ hwordsPR v) st
 
 /-! Copied from proofs/ops_aggregate `FalkorAggOps/AggState.lean` (`gkEq`, `gkHash`,

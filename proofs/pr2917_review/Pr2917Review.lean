@@ -1,8 +1,15 @@
 import Pr2917Review.Review
 /-
-# PR #2917 review (fix/2913-compare-mismatches @ 14e341cf4)
+# PR #2917 review (fix/2913-compare-mismatches @ 14e341cf4) — MERGED as 7fdf06a0e
 
-#2917 makes `GroupKey::eq` (ops/aggregate.rs:93) compare by `Value::sort_cmp`
+**Merged.** #2917 landed on main as 7fdf06a0e. `git diff 14e341cf4 origin/main` (4a4f2a72f) is
+empty for value.rs, ops/aggregate.rs, eval.rs, vectorized.rs, functions/aggregation.rs, batch.rs,
+ops/sort.rs and functions/list.rs, so every theorem below is about main and the COVERAGE rows
+are live. proofs/value_order now models main's hash and `sort_cmp` directly (`Main.lean`:
+`scMain_total`, `main_hash_consistent`), and proofs/ops_aggregate instantiates its `GroupKey`
+and sort hypotheses with them (`Discharge.lean`).
+
+#2917 makes `GroupKey::eq` (ops/aggregate.rs:94) compare by `Value::sort_cmp`
 (#2912's total order) instead of `Value::eq`, so every NaN key lands in one
 group as in C. A `HashMap<GroupKey, _>` then needs: keys `sort_cmp`-equal ⇒
 equal hashes. A CodeRabbit review found the PR at 203f2022c broke that for
@@ -20,15 +27,15 @@ the last two; value_order now has the extended model (copied here verbatim).
 
 | module | contents |
 | --- | --- |
-| Model    | copy of value_order `Model.lean`: `F` (NaN sign/payload, `-0.0`, integral, fractional, ±inf), `V` with `vecf32`/`point`, `compare_value`, main's hash `hwords` |
+| Model    | copy of value_order `Model.lean` (2026-10-11): `F` (NaN sign/payload, `-0.0`, integral, fractional, ±inf), `V` with `vecf32`/`point`, `compare_value`, and as `hwords` the hash *before* #2917 (value_order's current Model has main's hash as `hwords`, the old one as `hwordsPre2917`) |
 | Laws     | copy of value_order `Laws.lean`: comparator laws, `thn`, `lexA`, `cmp3` |
 | SortCmp  | copy of value_order `SortCmp.lean`: `Value::sort_cmp` generic in `sort_cmp_f32` (`sc`), `sc_laws` |
 | Review   | the PR: `scF32`, `f32HashBits`, `floatWordPR`, `hwordsPR`, `GroupKey` |
 
-Line cites: 14e341cf4 — value.rs `Hash for Value` :822 (Float arm :839-850, VecF32/Point
+Line cites: 14e341cf4 = origin/main 4a4f2a72f — value.rs `Hash for Value` :822 (Float arm :839-850, VecF32/Point
 :876-886), `sort_cmp` :1529, `sort_cmp_map` :1566, `sort_cmp_f64` :1891, `sort_cmp_f32`
 :1905, `f32_hash_bits` :1919, `sort_cmp_int_float` :1931; ops/aggregate.rs `GroupKey::eq`
-:93, `GroupKey::hash` :109.
+:94, `GroupKey::hash` :110.
 
 ## Theorems
 
@@ -72,6 +79,6 @@ accepts it), so `point_nans_one_key` is defensive.
   list arm, the others Int's `cmp` and hash shape).
 * The hash is modelled as the word stream fed to the hasher; `ahash`'s mixing is not
   modelled (equal streams ⇒ equal hashes is all the contract needs).
-* COVERAGE.tsv holds commented rows only: #2917 is not on main yet. When it merges,
-  uncomment them and re-bucket ops_aggregate's `GroupKey::hash` row from CONDITIONAL.
+* COVERAGE.tsv rows are live since the merge (7fdf06a0e); ops_aggregate's `GroupKey::hash`
+  row is PROVEN again (`Discharge.gk_hash_consistent_main`).
 -/

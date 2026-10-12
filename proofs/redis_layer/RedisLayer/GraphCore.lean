@@ -5,17 +5,17 @@ import RedisLayer.Resp
 | here | there (`origin/main`) |
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1671` |
+| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1676` |
 | `modified`                  | `WriteQueryOk::new` `:251` |
 | `sanitise`                  | `ffi::sanitise_error` `:313` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:920` |
+| `invalidVersionBytes`       | `reply_invalid_graph_version` `:925` |
 | `profileDepth`, `profileOps`| `reply_profile` `:823` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`  | `execute_query` `:576` / `execute_profile` `:659` write detection |
-| `writeSteps`                | `execute_query_write` `:715`, `finish_write` `:1423`, `abandon_write` `:1453`, `commit_and_replicate` `:1468` |
-| `dispatch`                  | `query_mut` `:932` |
-| `syncOutcome`               | `query_sync` `:1141`, `profile_sync` `:1356`, `profile_mut` `:1262` |
-| `loopExit`                  | `process_write_queued_query` `:1512` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1658` |
+| `writeSteps`                | `execute_query_write` `:715`, `finish_write` `:1428`, `abandon_write` `:1458`, `commit_and_replicate` `:1473` |
+| `dispatch`                  | `query_mut` `:937` |
+| `syncOutcome`               | `query_sync` `:1146`, `profile_sync` `:1361`, `profile_mut` `:1267` |
+| `loopExit`                  | `process_write_queued_query` `:1517` |
+| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1663` |
 | `TG`                        | `ThreadedGraph::new` `:543`, `from_mvcc` `:559` |
 -/
 namespace RedisLayer.GraphCore
@@ -173,8 +173,8 @@ inductive Step | commit | signal | replicate | warnNoEffects | rollback | resync
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1468) since #2846: `MvccGraph::commit` now
-validates, and a refusal here is `unreachable!()` (:1484-1486) — the panic step. The
+/-- `commit_and_replicate` (graph_core.rs:1473) since #2846: `MvccGraph::commit` now
+validates, and a refusal here is `unreachable!()` (:1489-1491) — the panic step. The
 argument it rests on: every write query ends its last segment through
 `Pending::end_segment`, which verifies the batch and rolls it, so the batch reaching
 here is fresh (proofs/graph_queries `rollIdBatches_spec`: `entry_bound = bound`,
@@ -297,7 +297,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `query_mut` dispatch (`:932-1137`) -/
+/-! ## `query_mut` dispatch (`:937-1142`) -/
 
 inductive Disp | invalidVersion (cur : Nat) | inline | maxPending | spawn
   deriving DecidableEq
@@ -343,7 +343,7 @@ theorem profile_write_runs_as_write (w : Bool) :
     profileOutcome true .write w = (if w then .writeTelemetry else .writeErr) := rfl
 theorem profile_read_replied (w : Bool) : profileOutcome true .readReplied w = .profileRead := rfl
 
-/-! ## `process_write_queued_query` exit protocol (`:1512-1556`) -/
+/-! ## `process_write_queued_query` exit protocol (`:1517-1561`) -/
 
 /-- After `try_recv` finds nothing: release the flag, then return only if the queue is
 still empty or another thread won the flag back; otherwise loop again as owner. -/

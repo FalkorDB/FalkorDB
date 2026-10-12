@@ -1,0 +1,5 @@
+name = "falkor-native-index"
+defaultTargets = ["FalkorNativeIndex"]
+
+[[lean_lib]]
+name = "FalkorNativeIndex"

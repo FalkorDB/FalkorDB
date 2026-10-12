@@ -13,7 +13,7 @@ import FalkorCowBTree.Extract
 import FalkorCowBTree.BugsBatch
 
 /-!
-# `cow_btree`: Lean 4 model and proofs (re-targeted to origin/main 8743953a8, after #2278 3597b3a82)
+# `cow_btree`: Lean 4 model and proofs (re-targeted to origin/main 4a4f2a72f; no change to these files since 8743953a8 / #2278 3597b3a82)
 
 Targets `graph/src/index/falkordb/data_structures/cow_btree/{mod,node,cursor}.rs` and the list-level
 behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`, `compact.rs`,
@@ -60,10 +60,15 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
    `pre2278_route_never_routes_TOP`, `pre2278_route_drops_TOP_example` (W1 #13, #2893 / PR #2897).
 2. STILL PRESENT: `BRANCH_MAX = 3` passes the const assert but breaks `remove` (and `remove_batch`):
    `b3_one_remove_not_wf`, `b3_drained_is_empty_lies`, `b3_drained_min_panics` (W1 #13).
-3. NEW (#2278, latent — no production caller): `remove_batch` leaves a single-child non-root branch at
+3. STILL PRESENT (#2278): `remove_batch` leaves a single-child non-root branch at
    any `BRANCH_MAX >= 4`; one later `remove` then leaves an empty non-root leaf and `insert_batch`
    panics in `Node::min`. `rb_remove_batch`, `rb_remove_batch_not_wf`, `rb_then_remove`,
-   `rb_min_panics` (`BugsBatch.lean`, with the Rust repro).
+   `rb_min_panics` (`BugsBatch.lean`, with the Rust repro). Since #3307 (18836a355) `remove_batch` has
+   a production caller (`FalkorDbIndex::apply_writes` → `NumericIndex::remove_encoded`), so the
+   invariant break is reachable; the panic still needs a single-key `remove`, which only tests call
+   (`IndexColumn::remove`). A bounded search of the model over batch-only sequences (`remove_batch` /
+   `insert_batch`, `LEAF_MAX/BRANCH_MAX` = 2/4 and 3/5, 500 seeds) found no content, range or
+   empty-page failure. `proofs/native_index` rests on these content specs (its CONDITIONAL rows).
 
 ## Gaps
 - `TreeWF` preservation by `remove_batch` is false (Bug 3); only contents are proven. `insert_batch`

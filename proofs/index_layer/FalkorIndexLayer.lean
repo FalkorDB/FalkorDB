@@ -26,21 +26,21 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 
 | Lean (`Model.lean`) | Rust |
 | --- | --- |
-| `tagEnc`, `escaped`, `hexDigit` | `mod.rs:565` `tag_encode_lower` |
-| `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:581` `hex_encode_into`, `Document::new` `mod.rs:657` |
-| `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:591` `hex_nibble`, `mod.rs:601` `decode_id` |
-| `edgeKey` | `Document::new_edge` `mod.rs:684`, `decode_triple` `mod.rs:612`, `delete_edge_document` `mod.rs:1945` |
-| `intLosesPrecision` | `mod.rs:1370` `int_loses_f64_precision` |
-| `setRange`, `docOf` | `Document::set` `mod.rs:716` (Range field arm), field names `mod.rs:121` |
+| `tagEnc`, `escaped`, `hexDigit` | `mod.rs:566` `tag_encode_lower` |
+| `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:582` `hex_encode_into`, `Document::new` `mod.rs:658` |
+| `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:592` `hex_nibble`, `mod.rs:602` `decode_id` |
+| `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1946` |
+| `intLosesPrecision` | `mod.rs:1371` `int_loses_f64_precision` |
+| `setRange`, `docOf` | `Document::set` `mod.rs:717` (Range field arm), field names `mod.rs:121` |
 | `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:730-744` (#3087 dimension guard) |
 | `valueToNumeric` | `mod.rs:1356` |
-| `buildNumRange` | `mod.rs:1375` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1418` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1476` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1690` (null node ⇒ empty iterator) |
+| `buildNumRange` | `mod.rs:1376` `build_numeric_range_node` |
+| `buildStrRange` | `mod.rs:1419` `build_string_range_node` |
+| `buildEq`, `buildQ` | `mod.rs:1477` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs:1691` (null node ⇒ empty iterator) |
 | `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1906` (ADD_REPLACE), `delete_document` `mod.rs:1928`, `Indexer::commit` `indexer.rs:714` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:714` |
 | `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:608-701` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
@@ -178,7 +178,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1397,1426,1484,1496,1554,1615`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs:1398,1426,1484,1496,1554,1615`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,

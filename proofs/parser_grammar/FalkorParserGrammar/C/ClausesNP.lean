@@ -1,7 +1,7 @@
 /-
 # No panics at the clause level
 
-The two `unreachable!()` of the clause dispatchers (cypher.rs:963, 1012)
+The two `unreachable!()` of the clause dispatchers (cypher.rs:979, 1028)
 are reached only through `parse_single_query`'s and FOREACH's keyword
 guards, so the whole clause layer never panics whenever the expression
 parser does not (`parseExpr_no_panic`).

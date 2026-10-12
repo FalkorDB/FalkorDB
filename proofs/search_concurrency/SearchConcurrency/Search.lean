@@ -7,20 +7,20 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 
 | here | there |
 | --- | --- |
-| `IndexType`, `Field`            | `graph/src/index/mod.rs:96` `IndexType`, `:107` `Field`, `:137` `Field::new`, `:154` `new_with_vector_options` |
-| `arrNames`                      | `mod.rs:121` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:716-871` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
+| `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:107` `Field`, `:137` `Field::new`, `:154` `new_with_vector_options` |
+| `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
+| `docSet`                        | `mod.rs:717-871` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
 | `docSetPre3076`                 | historical: the range arm before #3076 (`e20300436`) wrote a temporal as a number |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:864-868` |
-| `buildDoc`                      | the per-attribute loop in `graph.rs:3782` `commit_index_kind` / `graph.rs:641` population `build_doc` |
-| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1906` `Index::add_document`) |
+| `buildDoc`                      | the per-attribute loop in `graph.rs:3941` `commit_index_kind` / `graph.rs:655` population `build_doc` |
+| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs:1894-1903` fulltext unknown-key refusal (#3094) |
 | `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:1972-2050` `map_to_index_options`, vector branch |
 | `parsePhonetic`                 | `runtime.rs:1924` phonetic arm |
 | `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
-| `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:4001` / `:4056` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
+| `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:4211` / `:4056` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
 -/
 
 namespace SC.Search
@@ -62,12 +62,12 @@ structure Field where
   name : String
   ty : IndexType
   /-- `field.vector_options.map(|o| o.dimension)`: `none` when the field has no
-  vector options (`Field::new`, mod.rs:137), `some d` from `new_with_vector_options`
+  vector options (`Field::new`, mod.rs:138), `some d` from `new_with_vector_options`
   (mod.rs:154). -/
   vdim : Option Nat := none
 deriving Repr
 
-/-- `Field::make_arr_names` (mod.rs:121): only range fields get array sub-fields. -/
+/-- `Field::make_arr_names` (mod.rs:122): only range fields get array sub-fields. -/
 def arrNames (f : Field) : Option (String × String) :=
   if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr") else none
 
@@ -79,7 +79,7 @@ def isStr : Val → Bool
   | .str _ => true
   | _ => false
 
-/-- `Document::set` (mod.rs:716-871 @ 8743953a8), branch for branch. The vector arm
+/-- `Document::set` (mod.rs:717-871 @ 8743953a8), branch for branch. The vector arm
 (mod.rs:730-744, #3087) adds the blob only when
 `field.vector_options.as_ref().is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`,
 mirrored literally by `Option.any`. -/
@@ -628,7 +628,7 @@ def withCapacity (elem k mem : Nat) : Alloc :=
   else .ok (k * elem)
 
 /-- HISTORICAL — W3-conc-4 / #3085, **fixed by #3088 (89d68334a)**. At 49f698d22
-`vector_query_nodes`/`_edges` did `Vec::with_capacity(k)` (`graph.rs:4001` / `:4056`) and
+`vector_query_nodes`/`_edges` did `Vec::with_capacity(k)` (`graph.rs:4211` / `:4056`) and
 `(NodeId, f64)` is 16 bytes, so the user's `k` reached `with_capacity` verbatim and any
 `k` above `mem / 16` killed the server before RediSearch returned a single candidate.
 `CALL db.idx.vector.queryNodes('L','v',1000000000000000,vecf32([1,2]))` aborted the live

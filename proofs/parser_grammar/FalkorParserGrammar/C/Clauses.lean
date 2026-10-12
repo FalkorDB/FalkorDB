@@ -15,7 +15,7 @@ abbrev optK (k : CK) : P Bool := opt (.kw k)
 /-- `match_token!(lexer => K)`. -/
 abbrev tokK (k : CK) : P Unit := tok (.kw k)
 
-/-- `parse_where` (cypher.rs:1198-1215). -/
+/-- `parse_where` (cypher.rs:1214-1231). -/
 def whereP (o : Oracle) : P (Option ET) := do
   let c ← peek
   if c = .kw .where_ then do
@@ -24,7 +24,7 @@ def whereP (o : Oracle) : P (Option ET) := do
     if (aggName e).isSome then fail else pure (some e)
   else pure none
 
-/-- `parse_orderby` after `ORDER` (cypher.rs:3201-3217). -/
+/-- `parse_orderby` after `ORDER` (cypher.rs:3283-3299). -/
 def orderItems (o : Oracle) : Nat → List (ET × Bool) → P (List (ET × Bool))
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -41,7 +41,7 @@ def orderbyP (o : Oracle) (n : Nat) : P (List (ET × Bool)) := do
   tokK .by
   orderItems o n []
 
-/-- The SKIP / LIMIT value check (cypher.rs:1233-1248, 1254-1269): a
+/-- The SKIP / LIMIT value check (cypher.rs:1249-1264, 1270-1285): a
 non-negative integer literal or a parameter. -/
 def countOk (e : ET) : Bool :=
   match e.root with
@@ -56,7 +56,7 @@ def countP (o : Oracle) (k : CK) : P (Option ET) := do
     if countOk e then pure (some e) else fail
   else pure none
 
-/-- `parse_orderby_skip_limit` (cypher.rs:1217-1275). -/
+/-- `parse_orderby_skip_limit` (cypher.rs:1233-1291). -/
 def oslP (o : Oracle) (n : Nat) : P (List (ET × Bool) × Option ET × Option ET) := do
   let b ← optK .order
   let ob ← (if b then orderbyP o n else pure [])
@@ -64,7 +64,7 @@ def oslP (o : Oracle) (n : Nat) : P (List (ET × Bool) × Option ET × Option ET
   let li ← countP o .limit
   pure (ob, sk, li)
 
-/-- `parse_named_exprs` (cypher.rs:2687-2721). An unaliased non-variable
+/-- `parse_named_exprs` (cypher.rs:2718-2752). An unaliased non-variable
 projection is named by its source text, `o.txt` of the span. -/
 def namedExprs (o : Oracle) (mustAlias : Bool) : Nat → List (Nat × ET) → P (List (Nat × ET))
   | 0, _ => fuelP
@@ -87,8 +87,8 @@ def namedExprs (o : Oracle) (mustAlias : Bool) : Nat → List (Nat × ET) → P 
       namedExprs o mustAlias n (acc ++ [item])
     else pure (acc ++ [item])
 
-/-- The projection body shared by WITH and RETURN (cypher.rs:1281-1291,
-1311-1320). -/
+/-- The projection body shared by WITH and RETURN (cypher.rs:1297-1307,
+1327-1336). -/
 def projP (o : Oracle) (mustAlias : Bool) (n : Nat) : P Proj := do
   let d ← optK .distinct
   let st ← opt .star
@@ -99,36 +99,36 @@ def projP (o : Oracle) (mustAlias : Bool) (n : Nat) : P Proj := do
   let osl ← oslP o n
   pure ⟨d, ae.1, ae.2, osl.1, osl.2.1, osl.2.2⟩
 
-/-- `parse_with_clause` (cypher.rs:1277-1305). -/
+/-- `parse_with_clause` (cypher.rs:1293-1321). -/
 def withP (o : Oracle) (write : Bool) (n : Nat) : P IR := do
   let p ← projP o true n
   let f ← whereP o
   pure (.with_ p f write)
 
-/-- `parse_return_clause` (cypher.rs:1307-1341). -/
+/-- `parse_return_clause` (cypher.rs:1323-1357). -/
 def returnP (o : Oracle) (write : Bool) (n : Nat) : P IR := do
   let p ← projP o false n
   pure (.return_ p write)
 
-/-- `parse_unwind_clause` (cypher.rs:1121-1129). -/
+/-- `parse_unwind_clause` (cypher.rs:1137-1145). -/
 def unwindP (o : Oracle) : P IR := do
   let e ← o.pe false
   tokK .as_
   let v ← ident
   pure (.unwind e v)
 
-/-- `parse_match_clause` (cypher.rs:1110-1119). -/
+/-- `parse_match_clause` (cypher.rs:1126-1135). -/
 def matchP (o : Oracle) (F : Nat) (optional : Bool) : P IR := do
   let p ← patternP o F .match_
   let f ← whereP o
   pure (.match_ p f optional)
 
-/-- `parse_create_clause` (cypher.rs:1131-1133). -/
+/-- `parse_create_clause` (cypher.rs:1147-1149). -/
 def createP (o : Oracle) (F : Nat) : P IR := do
   let p ← patternP o F .create
   pure (.create p)
 
-/-- `parse_expression_list(OneOrMore)` (cypher.rs:2723-2749): at least one
+/-- `parse_expression_list(OneOrMore)` (cypher.rs:2754-2780): at least one
 expression, comma separated, no closing token. -/
 def exprList1 (o : Oracle) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
@@ -137,7 +137,7 @@ def exprList1 (o : Oracle) : Nat → List ET → P (List ET)
     let c ← peek
     if c = .comma then do next; exprList1 o n (acc ++ [e]) else pure (acc ++ [e])
 
-/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2732-2747). -/
+/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2763-2778). -/
 def exprItemsR (o : Oracle) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -146,14 +146,14 @@ def exprItemsR (o : Oracle) : Nat → List ET → P (List ET)
     if c2 = .comma then do next; exprItemsR o n (acc ++ [e])
     else do tok .rparen; pure (acc ++ [e])
 
-/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (cypher.rs:2723-2750). #3060: only an
+/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (cypher.rs:2754-2781). #3060: only an
 empty list ends at once; after `,` an expression must follow (`f(1,)` is an error). -/
 def exprListR (o : Oracle) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc
   else exprItemsR o n acc
 
-/-- `parse_delete_clause` (cypher.rs:1162-1196): consecutive DELETEs are
+/-- `parse_delete_clause` (cypher.rs:1178-1212): consecutive DELETEs are
 folded into one clause, `detach` if any of them is. -/
 def deleteMore (o : Oracle) : Nat → List ET → Bool → P IR
   | 0, _, _ => fuelP
@@ -170,7 +170,7 @@ def deleteP (o : Oracle) (n : Nat) (isDetach : Bool) : P IR := do
   let es ← exprList1 o n []
   deleteMore o n es isDetach
 
-/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs:3242-3246). -/
+/-- The `.prop.prop...` chain of a SET / REMOVE target (cypher.rs:3324-3328). -/
 def dotChain : Nat → ET → P ET
   | 0, _ => fuelP
   | n + 1, e => do
@@ -181,11 +181,11 @@ def dotChain : Nat → ET → P ET
       dotChain n (.node (.prop p) [e])
     else pure e
 
-/-- `reject_unparenthesized_target` (cypher.rs:3289-3298, #3060 / `fe619ac5f`): a target
+/-- `reject_unparenthesized_target` (cypher.rs:3371-3380, #3060 / `fe619ac5f`): a target
 that opened a nested expression must have opened it with `(` — the tree is a `Paren`. -/
 def rejectUnparenP (t : ET) : P Unit := if t.root = .paren then pure () else fail
 
-/-- The target of a SET / REMOVE item (cypher.rs:3236-3241, 3317-3322). -/
+/-- The target of a SET / REMOVE item (cypher.rs:3318-3323, 3399-3404). -/
 def targetP (o : Oracle) : P ET := do
   let r ← o.pp
   if r.2 then do
@@ -195,7 +195,7 @@ def targetP (o : Oracle) : P ET := do
     pure e
   else pure r.1
 
-/-- `parse_set_items` (cypher.rs:3231-3284). -/
+/-- `parse_set_items` (cypher.rs:3313-3366). -/
 def setItems (o : Oracle) (F : Nat) : Nat → List SetItem → P (List SetItem)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -222,7 +222,7 @@ def setItems (o : Oracle) (F : Nat) : Nat → List SetItem → P (List SetItem)
     let more ← opt .comma
     if more then setItems o F n (acc ++ [item]) else pure (acc ++ [item])
 
-/-- `parse_set_clause` (cypher.rs:3219-3229): consecutive SETs fold. -/
+/-- `parse_set_clause` (cypher.rs:3301-3311): consecutive SETs fold. -/
 def setMore (o : Oracle) (F : Nat) : Nat → List SetItem → P IR
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -233,10 +233,10 @@ def setP (o : Oracle) (F : Nat) : P IR := do
   let is ← setItems o F F []
   setMore o F F is
 
-/-- The `hasLabels` function id (cypher.rs:3332). -/
+/-- The `hasLabels` function id (cypher.rs:3414). -/
 def fnHasLabels : Nat := 5000001
 
-/-- `parse_remove_items` (cypher.rs:3312-3346). -/
+/-- `parse_remove_items` (cypher.rs:3394-3428). -/
 def removeItems (o : Oracle) (F : Nat) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -250,7 +250,7 @@ def removeItems (o : Oracle) (F : Nat) : Nat → List ET → P (List ET)
     let more ← opt .comma
     if more then removeItems o F n (acc ++ [item]) else pure (acc ++ [item])
 
-/-- `parse_remove_clause` (cypher.rs:3300-3310). -/
+/-- `parse_remove_clause` (cypher.rs:3382-3392). -/
 def removeMore (o : Oracle) (F : Nat) : Nat → List ET → P IR
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -261,7 +261,7 @@ def removeP (o : Oracle) (F : Nat) : P IR := do
   let is ← removeItems o F F []
   removeMore o F F is
 
-/-- `parse_merge_clause` (cypher.rs:1135-1160). -/
+/-- `parse_merge_clause` (cypher.rs:1151-1176). -/
 def mergeActions (o : Oracle) (F : Nat) : Nat → List SetItem → List SetItem → P (List SetItem × List SetItem)
   | 0, _, _ => fuelP
   | n + 1, oc, om => do
@@ -286,14 +286,14 @@ def mergeP (o : Oracle) (F : Nat) : P IR := do
   let a ← mergeActions o F F [] []
   pure (.merge p a.1 a.2)
 
-/-- `ExprIR::Constant(Value::String(","))` (cypher.rs:953-955). -/
+/-- `ExprIR::Constant(Value::String(","))` (cypher.rs:969-971). -/
 def strComma : Nat := 5000002
 
-/-- The LOAD CSV arm of `parse_reading_clasue` (cypher.rs:935-963), after LOAD. -/
+/-- The LOAD CSV arm of `parse_reading_clasue` (cypher.rs:951-979), after LOAD. -/
 def loadCsvP (o : Oracle) : P IR := do
   tokK .csv
   let w ← optK .with_
-  -- #3060: `WITH` must be followed by `HEADERS` (cypher.rs:939-942)
+  -- #3060: `WITH` must be followed by `HEADERS` (cypher.rs:955-958)
   let hd ← (if w then do tokK .headers; pure true else pure false)
   tokK .from
   let path ← o.pe false
@@ -303,19 +303,19 @@ def loadCsvP (o : Oracle) : P IR := do
   let dl ← (if ft then o.pe false else pure (leaf (.str strComma)))
   pure (.loadCsv path hd dl v)
 
-/-- `parse_reading_clasue` (cypher.rs:913-964). -/
+/-- `parse_reading_clasue` (cypher.rs:929-980). -/
 def readingP (o : Oracle) (F : Nat) : P IR := do
   let op ← optK .optional
   if op then do tokK .match_; matchP o F true
   else do
     let c ← peek
     match c with
-    | .kw .match_ => do next; matchP o F false        -- #3060: no second `MATCH` (920-925)
+    | .kw .match_ => do next; matchP o F false        -- #3060: no second `MATCH` (936-941)
     | .kw .unwind => do next; unwindP o
     | .kw .load => do next; loadCsvP o
-    | _ => oops                                   -- `unreachable!()` (963)
+    | _ => oops                                   -- `unreachable!()` (979)
 
-/-- Reading-clause and updating-clause keywords (cypher.rs:784-795, 809-822). -/
+/-- Reading-clause and updating-clause keywords (cypher.rs:800-811, 825-838). -/
 def isReadKw : CT → Bool
   | .kw .optional | .kw .match_ | .kw .unwind | .kw .call | .kw .load => true
   | _ => false
@@ -324,14 +324,14 @@ def isWriteKw : CT → Bool
   | .kw .foreach => true
   | _ => false
 
-/-- `parse_dotted_ident` (cypher.rs:1099-1108). -/
+/-- `parse_dotted_ident` (cypher.rs:1115-1124). -/
 def dottedP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
     let c ← peek
     if c = .dot then do next; let v ← ident; dottedP n (acc ++ [v]) else pure acc
 
-/-- YIELD items (cypher.rs:1054-1075): `name [AS alias]`, comma separated. -/
+/-- YIELD items (cypher.rs:1070-1091): `name [AS alias]`, comma separated. -/
 def yieldItems : Nat → List Nat → List (Option Nat) → P (List Nat × List (Option Nat))
   | 0, _, _ => fuelP
   | n + 1, outs, als => do
@@ -341,7 +341,7 @@ def yieldItems : Nat → List Nat → List (Option Nat) → P (List Nat × List 
     let more ← opt .comma
     if more then yieldItems n (outs ++ [p.1]) (als ++ [p.2]) else pure (outs ++ [p.1], als ++ [p.2])
 
-/-- `CALL procedure` (cypher.rs:1032-1086), after CALL, not `{`. -/
+/-- `CALL procedure` (cypher.rs:1048-1102), after CALL, not `{`. -/
 def callProcP (o : Oracle) (F : Nat) : P IR := do
   let v ← ident
   let name ← dottedP F [v]
@@ -362,7 +362,7 @@ def callProcP (o : Oracle) (F : Nat) : P IR := do
 -- `body_has_return` is `bodyHasReturn` (IR.lean).
 
 mutual
-/-- `parse_query` (cypher.rs:755-773). -/
+/-- `parse_query` (cypher.rs:771-789). -/
 def queryP (o : Oracle) (F : Nat) : Nat → P IR
   | 0 => fuelP
   | n + 1 => do
@@ -373,7 +373,7 @@ def queryP (o : Oracle) (F : Nat) : Nat → P IR
       let second ← singleP o F n
       unionMore o F n all [first, second]
     else pure first
-/-- The `while UNION` loop (cypher.rs:762-770). -/
+/-- The `while UNION` loop (cypher.rs:778-786). -/
 def unionMore (o : Oracle) (F : Nat) : Nat → Bool → List IR → P IR
   | 0, _, _ => fuelP
   | n + 1, all, bs => do
@@ -384,7 +384,7 @@ def unionMore (o : Oracle) (F : Nat) : Nat → Bool → List IR → P IR
       let b ← singleP o F n
       unionMore o F n all (bs ++ [b])
     else pure (.union bs all)
-/-- `parse_single_query` (cypher.rs:780-911). -/
+/-- `parse_single_query` (cypher.rs:796-927). -/
 def singleP (o : Oracle) (F : Nat) : Nat → P IR
   | 0 => fuelP
   | n + 1 => do
@@ -401,7 +401,7 @@ def singleP (o : Oracle) (F : Nat) : Nat → P IR
     let c ← peek
     if c = .kw .union ∨ c = .semi ∨ c = .rbrace then pure (.query res.1 res.2)
     else do tok .eof; pure (.query res.1 res.2)
-/-- The `loop { reading* updating* (WITH | break) }` (cypher.rs:783-880). -/
+/-- The `loop { reading* updating* (WITH | break) }` (cypher.rs:799-896). -/
 def segments (o : Oracle) (F : Nat) : Nat → List IR → Bool → P (List IR × Bool)
   | 0, _, _ => fuelP
   | n + 1, cl, _ => do
@@ -416,7 +416,7 @@ def segments (o : Oracle) (F : Nat) : Nat → List IR → Bool → P (List IR ×
         let c ← peek
         if isReadKw c then fail else pure w
       else pure w
-/-- `while let MATCH|OPTIONAL|UNWIND|CALL|LOAD` (cypher.rs:784-807). -/
+/-- `while let MATCH|OPTIONAL|UNWIND|CALL|LOAD` (cypher.rs:800-823). -/
 def readings (o : Oracle) (F : Nat) : Nat → List IR → P (List IR)
   | 0, _ => fuelP
   | n + 1, cl => do
@@ -430,7 +430,7 @@ def readings (o : Oracle) (F : Nat) : Nat → List IR → P (List IR)
         let r ← readingP o F
         readings o F n (cl ++ [r])
     else pure cl
-/-- `while let CREATE|MERGE|DELETE|DETACH|SET|REMOVE|FOREACH` (cypher.rs:808-826). -/
+/-- `while let CREATE|MERGE|DELETE|DETACH|SET|REMOVE|FOREACH` (cypher.rs:824-842). -/
 def writings (o : Oracle) (F : Nat) : Nat → List IR → Bool → P (List IR × Bool)
   | 0, _, _ => fuelP
   | n + 1, cl, w => do
@@ -439,7 +439,7 @@ def writings (o : Oracle) (F : Nat) : Nat → List IR → Bool → P (List IR ×
       let r ← writingP o F n
       writings o F n (cl ++ [r]) true
     else pure (cl, w)
-/-- `parse_writing_clause` (cypher.rs:966-1013). -/
+/-- `parse_writing_clause` (cypher.rs:982-1029). -/
 def writingP (o : Oracle) (F : Nat) : Nat → P IR
   | 0 => fuelP
   | n + 1 => do
@@ -454,8 +454,8 @@ def writingP (o : Oracle) (F : Nat) : Nat → P IR
     | .kw .set => do next; setP o F
     | .kw .remove => do next; removeP o F
     | .kw .foreach => do next; foreachP o F n
-    | _ => oops                                   -- `unreachable!()` (1012)
-/-- `parse_call_clause` (cypher.rs:1015-1087), after CALL. -/
+    | _ => oops                                   -- `unreachable!()` (1028)
+/-- `parse_call_clause` (cypher.rs:1031-1103), after CALL. -/
 def callP (o : Oracle) (F : Nat) : Nat → P (List IR)
   | 0 => fuelP
   | n + 1 => do
@@ -468,7 +468,7 @@ def callP (o : Oracle) (F : Nat) : Nat → P (List IR)
     else do
       let r ← callProcP o F
       pure [r]
-/-- `parse_foreach_clause` (cypher.rs:3348-3428), after FOREACH. -/
+/-- `parse_foreach_clause` (cypher.rs:3430-3510), after FOREACH. -/
 def foreachP (o : Oracle) (F : Nat) : Nat → P IR
   | 0 => fuelP
   | n + 1 => do
@@ -481,7 +481,7 @@ def foreachP (o : Oracle) (F : Nat) : Nat → P IR
     let body ← foreachBody o F n []
     tok .rparen
     if body = [] then fail else pure (.forEach l v body)
-/-- The FOREACH body loop (cypher.rs:3362-3413). -/
+/-- The FOREACH body loop (cypher.rs:3444-3495). -/
 def foreachBody (o : Oracle) (F : Nat) : Nat → List IR → P (List IR)
   | 0, _ => fuelP
   | n + 1, body => do
@@ -500,7 +500,7 @@ def foreachBody (o : Oracle) (F : Nat) : Nat → List IR → P (List IR)
     | _ => pure body
 end
 
-/-- `expect_end_of_input` (cypher.rs:516-524). -/
+/-- `expect_end_of_input` (cypher.rs:532-540). -/
 def endP : Nat → P Unit
   | 0 => fuelP
   | n + 1 => do

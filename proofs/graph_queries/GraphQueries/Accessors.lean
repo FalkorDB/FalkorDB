@@ -7,9 +7,9 @@ modelled elsewhere; the theorem states exactly what it returns.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `labelIdToUsize`… | `From` impls :169,:175,:181,:187,:193,:199; `NodeOpError::from` :342; `Plan::new` :206 |
-| `nameOf`… `constraintsOf` | `name` :1035, `node_count` :1040, `relationship_count` :1057, `property_key_count` :1086, `node_cap` :1091, `labels_count` :1096, `get_labels` :1101, `get_label_by_id` :1106, `get_types` :1114, `get_type` :1119, `get_attrs` :1131, `node_attribute_count` :1392, `deleted_*` :2725-2740, `label_matrices` :2745, `adjacency_matrix` :2750, `relationship_tensors` :2755, `relationship_matrices_iter` :2288, `relationship_attrs` :3308, `constraints(_mut)` :4099/:3975 |
-| `getNodeAttribute`… | `get_node_attribute` :2472, `_by_idx` :2484, `get_node_attributes_by_idx` :2495, relationship twins :3281/:3166/:3187, `get_node_attrs` :3409, `get_node_all_attrs` :3417, `_by_id` :3424, `get_node_attr_count` :3433, relationship twins :3440-3464, `get_*_attribute_id` :1384/:1371/:1384, `get_*_attribute_names` :4765/:4643, `build_global_attrs` :4805, `estimate_entity_attr_size` :4699 |
+| `labelIdToUsize`… | `From` impls :175,:181,:187,:193,:199,:205; `NodeOpError::from` :348; `Plan::new` :212 |
+| `nameOf`… `constraintsOf` | `name` :1057, `node_count` :1062, `relationship_count` :1079, `property_key_count` :1108, `node_cap` :1113, `labels_count` :1118, `get_labels` :1123, `get_label_by_id` :1128, `get_types` :1136, `get_type` :1141, `get_attrs` :1153, `node_attribute_count` :1414, `deleted_*` :2811-2826, `label_matrices` :2831, `adjacency_matrix` :2836, `relationship_tensors` :2841, `relationship_matrices_iter` :2364, `relationship_attrs` :3407, `constraints(_mut)` :4099/:3975 |
+| `getNodeAttribute`… | `get_node_attribute` :2548, `_by_idx` :2560, `get_node_attributes_by_idx` :2571, relationship twins :3380/:3166/:3187, `get_node_attrs` :3508, `get_node_all_attrs` :3516, `_by_id` :3523, `get_node_attr_count` :3532, relationship twins :3539-3563, `get_*_attribute_id` :1406/:1371/:1406, `get_*_attribute_names` :4765/:4643, `build_global_attrs` :4805, `estimate_entity_attr_size` :4699 |
 -/
 namespace GQ
 variable {V : Type}
@@ -23,14 +23,14 @@ theorem nodeId_roundtrip' (n : NodeId) : nodeIdOf (nodeIdTo n) = n := rfl
 /-- `RelationshipId`, `LabelId`, `TypeId` are the same shape. -/
 abbrev RelId := NodeId
 
-/-- `NodeOpError` (graph.rs:276): `IdSpace { kind, source }` since #2846;
-`DanglingRelationship { id }` (graph.rs:318) since #3022, raised by
+/-- `NodeOpError` (graph.rs:282): `IdSpace { kind, source }` since #2846;
+`DanglingRelationship { id }` (graph.rs:324) since #3022, raised by
 `verify_created_relationships` (`Ids.verifyCreatedRels`). -/
 inductive NodeOpError | graph (s : String) | idSpace (kind : String) (code : Nat)
   | danglingRelationship (id : Nat) deriving DecidableEq
 def nodeOpErrorOf (s : String) : NodeOpError := .graph s
 theorem nodeOpErrorOf_spec (s : String) : nodeOpErrorOf s = .graph s := rfl
-/-- `NodeOpError::node` (:324) / `::relationship` (:333): the id-space refusal
+/-- `NodeOpError::node` (:330) / `::relationship` (:339): the id-space refusal
 tagged with its entity kind — the `Except String` tag used in Ids.lean. -/
 def nodeOpErrorNode (code : Nat) : NodeOpError := .idSpace "node" code
 def nodeOpErrorRel (code : Nat) : NodeOpError := .idSpace "relationship" code

@@ -1,11 +1,11 @@
 import PendingCommit.Props
 import PendingCommit.ContentCompact
 /-
-# `Pending` property staging, validation and reads (pending.rs:46-514, :787-871)
+# `Pending` property staging, validation and reads (pending.rs:46-495, :768-852)
 
 * `rustUpsert_eq` — the `binary_search_by_key` + `entry[pos].1 = value` /
-  `Vec::insert(pos, …)` in `set_node_attribute` (:444) and
-  `set_relationship_attribute` (:813) is `Props.upsert` on a sorted list, so
+  `Vec::insert(pos, …)` in `set_node_attribute` (:425) and
+  `set_relationship_attribute` (:794) is `Props.upsert` on a sorted list, so
   `Props.stage_sorted_lastWrite` / `read_your_writes_*` apply to the Rust code.
 * `lookupSorted_eq` — `lookup_sorted` (:100) is first-match `get`.
 * `isValid_spec` — `is_valid_property` (:62): scalars, `String`, `Point`,

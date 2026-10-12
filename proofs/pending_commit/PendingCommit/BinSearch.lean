@@ -4,7 +4,7 @@
 Every sorted-span lookup in the two target files goes through it:
 `SpanRef::get` (attribute_store.rs:856), `merge_span` fast path 1 (:648-667),
 `lookup_sorted` (pending.rs:100), `set_node_attribute` /
-`set_relationship_attribute` (pending.rs:444, :813, which use the `Err`
+`set_relationship_attribute` (pending.rs:425, :794, which use the `Err`
 insertion point). `bsearch` is the loop of rustc 1.98.1
 `core/src/slice/mod.rs:2976-3028` line for line (branchless, no early exit),
 over the slice's keys.

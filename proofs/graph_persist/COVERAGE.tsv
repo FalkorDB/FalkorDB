@@ -16,30 +16,31 @@ graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roun
 graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
 graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip
-src/redis_type.rs	io_key_name	77	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
-src/redis_type.rs	graph_rdb_load	90	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_ignored (BUG, live)
-src/redis_type.rs	graph_rdb_save	178	PROVEN	RedisType.rdbSave (= saveKeySlice.getD whole): save_main, save_vkey (slice i, key_count K), save_single
-src/redis_type.rs	save_key_slice	203	PROVEN	RedisType.saveKeySlice: save_main, save_vkey, save_single, metaSave_of_slice (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
-src/redis_type.rs	save_string_nul	241	PROVEN	Codec.stripNul_nulTerm
-src/redis_type.rs	strip_trailing_nul	259	PROVEN	Codec.stripNul_nulTerm
-src/redis_type.rs	graph_aux_save	265	PROVEN	RedisType.auxSave: aux_roundtrip, aux_after
-src/redis_type.rs	graph_aux_load	286	PROVEN	RedisType.auxLoad: aux_roundtrip, aux_after, aux_truncated, strip_keeps_inner_nul (UdfRepo::deserialize/register_udf are inputs)
-src/redis_type.rs	pre_fork_prepare	350	PROVEN	RedisType.preFork: preFork_spec (wait_all = GraphBLAS effect)
-src/redis_type.rs	on_persistence	368	PROVEN	RedisType.onPersistence: onPersistence_spec
-src/redis_type.rs	create_virtual_keys	410	PROVEN	RedisType.createVKeys: save_main, save_vkey, createdKeys_spec; names Uuid.vkeyName_inj/vkeyName_ne (OpenKey/SetValue = effects, key_holds_graph = input); vkeys typed graphmeta (vkeyType, #3161)
-src/redis_type.rs	delete_virtual_keys	523	PROVEN	RedisType.deleteVKeys: deleteVKeys_spec, createdKeys_spec
-src/redis_type.rs	delete_key	542	AXIOMATISED	Redis module API DeleteKey
-src/redis_type.rs	key_holds_graph	562	AXIOMATISED	Redis module API ModuleTypeGetValue ptr compare
-src/redis_type.rs	delete_stale_graphmeta_keys	584	PROVEN	RedisType.deleteStaleGraphmeta: scanKeys_spec
-src/redis_type.rs	delete_stale_virtual_keys	618	PROVEN	RedisType.deleteStaleVirtual: deleteStaleVirtual_spec; Persist.multi_meta (meta keys = exactly the virtual keys)
-src/redis_type.rs	scan_keys_by_type	635	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
-src/redis_type.rs	finalize_pending_graphs	722	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
-src/redis_type.rs	install_graph	757	PROVEN	RedisType.finalizePending (install arm): load_main_first
-src/redis_type.rs	uuid_v4	783	PROVEN	RedisType.uuid: uuid_injective, uuid_same_clock_distinct, uuid_collision_iff, uuid_collision_example (uniqueness rests on the clock)
-src/redis_type.rs	graphmeta_rdb_load	851	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys)
-src/redis_type.rs	graphmeta_rdb_save	874	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
-src/redis_type.rs	graphmeta_free	886	PROVEN	RedisType.metaFree: metaFree_spec
-src/redis_type.rs	graphmeta_aux_load	896	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
+src/redis_type.rs	io_cache_size	69	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
+src/redis_type.rs	io_key_name	84	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
+src/redis_type.rs	graph_rdb_load	97	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1; pre3262_cache_size_ignored kept)
+src/redis_type.rs	graph_rdb_save	185	PROVEN	RedisType.rdbSave (= saveKeySlice.getD whole): save_main, save_vkey (slice i, key_count K), save_single
+src/redis_type.rs	save_key_slice	210	PROVEN	RedisType.saveKeySlice: save_main, save_vkey, save_single, metaSave_of_slice (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
+src/redis_type.rs	save_string_nul	248	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	strip_trailing_nul	266	PROVEN	Codec.stripNul_nulTerm
+src/redis_type.rs	graph_aux_save	272	PROVEN	RedisType.auxSave: aux_roundtrip, aux_after
+src/redis_type.rs	graph_aux_load	293	PROVEN	RedisType.auxLoad: aux_roundtrip, aux_after, aux_truncated, strip_keeps_inner_nul (UdfRepo::deserialize/register_udf are inputs)
+src/redis_type.rs	pre_fork_prepare	357	PROVEN	RedisType.preFork: preFork_spec (wait_all = GraphBLAS effect)
+src/redis_type.rs	on_persistence	375	PROVEN	RedisType.onPersistence: onPersistence_spec
+src/redis_type.rs	create_virtual_keys	417	PROVEN	RedisType.createVKeys: save_main, save_vkey, createdKeys_spec; names Uuid.vkeyName_inj/vkeyName_ne (OpenKey/SetValue = effects, key_holds_graph = input); vkeys typed graphmeta (vkeyType, #3161)
+src/redis_type.rs	delete_virtual_keys	530	PROVEN	RedisType.deleteVKeys: deleteVKeys_spec, createdKeys_spec
+src/redis_type.rs	delete_key	549	AXIOMATISED	Redis module API DeleteKey
+src/redis_type.rs	key_holds_graph	569	AXIOMATISED	Redis module API ModuleTypeGetValue ptr compare
+src/redis_type.rs	delete_stale_graphmeta_keys	591	PROVEN	RedisType.deleteStaleGraphmeta: scanKeys_spec
+src/redis_type.rs	delete_stale_virtual_keys	625	PROVEN	RedisType.deleteStaleVirtual: deleteStaleVirtual_spec; Persist.multi_meta (meta keys = exactly the virtual keys)
+src/redis_type.rs	scan_keys_by_type	642	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
+src/redis_type.rs	finalize_pending_graphs	729	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
+src/redis_type.rs	install_graph	764	PROVEN	RedisType.finalizePending (install arm): load_main_first
+src/redis_type.rs	uuid_v4	790	PROVEN	RedisType.uuid: uuid_injective, uuid_same_clock_distinct, uuid_collision_iff, uuid_collision_example (uniqueness rests on the clock)
+src/redis_type.rs	graphmeta_rdb_load	858	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
+src/redis_type.rs	graphmeta_rdb_save	881	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
+src/redis_type.rs	graphmeta_free	893	PROVEN	RedisType.metaFree: metaFree_spec
+src/redis_type.rs	graphmeta_aux_load	903	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
 graph/src/graph/mvcc_graph.rs	new	80	NOT COVERED	constructor
 graph/src/graph/mvcc_graph.rs	from_graph	95	MODELLED	RDB load path, live
 graph/src/graph/mvcc_graph.rs	read	103	NOT COVERED	Arc clone
@@ -47,11 +48,11 @@ graph/src/graph/mvcc_graph.rs	write	108	NOT COVERED	CAS; concurrency not modelle
 graph/src/graph/mvcc_graph.rs	commit	139	NOT COVERED	schema_version bump/concurrency not modelled
 graph/src/graph/mvcc_graph.rs	rollback	221	NOT COVERED	atomic store
 graph/src/graph/mvcc_graph.rs	drop	227	NOT COVERED	cancel indexing
-graph/src/graph/graph.rs	rebuild_derived_matrices	956	AXIOMATISED	GraphBLAS transpose/set
-graph/src/graph/graph.rs	create_constraint	4124	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4299	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4339	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4395	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	rebuild_derived_matrices	976	AXIOMATISED	GraphBLAS transpose/set
+graph/src/graph/graph.rs	create_constraint	4334	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4509	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4549	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4605	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip

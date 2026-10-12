@@ -9,7 +9,7 @@ Shared primitives for the query-command argument models (`QueryArgs.lean`) and
   since #3010 (`557f18868`).
 * `rustParseI64`  — `core::str::parse::<i64>` (`from_str_radix`, radix 10), used by
   `GRAPH.CONFIG SET` (`Config.lean`).
-* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:883-918`).
+* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:886-921`).
 
 Bytes are `Nat`s; `eq_ignore_ascii_case` is byte-wise (`eqIC`).
 -/
@@ -73,7 +73,7 @@ instance instDecEqExcept {ε α : Type} [DecidableEq ε] [DecidableEq α] :
   | .ok _, .error _ => isFalse (by intro e; cases e)
   | .error _, .ok _ => isFalse (by intro e; cases e)
 
-/-! ## `compute_effective_timeout` (`graph_core.rs:883-918`) -/
+/-! ## `compute_effective_timeout` (`graph_core.rs:886-923`) -/
 
 structure TCfg where
   timeoutMax : Int
@@ -85,7 +85,11 @@ inductive TErr where
   | exceedsMax
   deriving DecidableEq, Repr
 
-/-- The global fallback (`graph_core.rs:904-917`). -/
+/-- C's `timeout_rw` (`graph_core.rs:895`): the new-style configs make timeouts apply
+to writes too. -/
+def timeoutRw (c : TCfg) : Bool := decide (c.timeoutMax > 0 ∨ c.timeoutDefault > 0)
+
+/-- The global fallback (`graph_core.rs:907-920`). -/
 def fallback (c : TCfg) (isWrite : Bool) : Except TErr (Option Nat) :=
   if c.timeoutDefault > 0 then .ok (some c.timeoutDefault.toNat)
   else if c.timeoutMax > 0 then .ok (some c.timeoutMax.toNat)
@@ -93,6 +97,16 @@ def fallback (c : TCfg) (isWrite : Bool) : Except TErr (Option Nat) :=
   else .ok none
 
 def rustTimeout (c : TCfg) (pq : Option Int) (isWrite : Bool) : Except TErr (Option Nat) :=
+  match pq with
+  | some p =>
+    if c.timeoutMax > 0 ∧ p > c.timeoutMax then .error .exceedsMax
+    else if p > 0 ∧ (isWrite = false ∨ timeoutRw c = true) then .ok (some p.toNat)
+    else fallback c isWrite
+  | none => fallback c isWrite
+
+/-- Historical: `compute_effective_timeout` before #3000 (`2e8172d76`) skipped the
+per-query timeout for every write. -/
+def pre3000_rustTimeout (c : TCfg) (pq : Option Int) (isWrite : Bool) : Except TErr (Option Nat) :=
   match pq with
   | some p =>
     if c.timeoutMax > 0 ∧ p > c.timeoutMax then .error .exceedsMax
@@ -191,11 +205,36 @@ theorem string2ll_dec (n : Nat) (h : n ≤ i64Max) :
 
 /-! ## `compute_effective_timeout` -/
 
-/-- Writes never see the per-query timeout: the answer does not depend on it. -/
+/-- Under the deprecated `TIMEOUT` alone (`timeout_rw` unset), writes still ignore the
+per-query timeout, as in C. -/
 theorem rustTimeout_write_ignores_pq (c : TCfg) (p : Int)
-    (h : ¬ (c.timeoutMax > 0 ∧ p > c.timeoutMax)) :
+    (hrw : timeoutRw c = false) (h : ¬ (c.timeoutMax > 0 ∧ p > c.timeoutMax)) :
     rustTimeout c (some p) true = rustTimeout c none true := by
-  simp [rustTimeout, h]
+  simp [rustTimeout, h, hrw]
+
+/-- **#2998 fixed by #3000 (`2e8172d76`)**: once `TIMEOUT_MAX` or `TIMEOUT_DEFAULT` is set,
+a write's positive per-query timeout (within the max) is the one armed. -/
+theorem rustTimeout_write_pq (c : TCfg) (p : Int)
+    (hrw : timeoutRw c = true) (hp : p > 0) (h : ¬ (c.timeoutMax > 0 ∧ p > c.timeoutMax)) :
+    rustTimeout c (some p) true = .ok (some p.toNat) := by
+  simp [rustTimeout, h, hrw, hp]
+
+/-- Reads and writes are now treated alike whenever `timeout_rw` is set. -/
+theorem rustTimeout_rw_uniform (c : TCfg) (pq : Option Int)
+    (hrw : timeoutRw c = true) (hmax : c.timeoutMax ≥ 0) :
+    rustTimeout c pq true = rustTimeout c pq false := by
+  have hd : ¬ c.timeoutDefault ≤ 0 ∨ ¬ c.timeoutMax ≤ 0 := by
+    simp [timeoutRw] at hrw; omega
+  cases pq with
+  | none => simp [rustTimeout, fallback]; split <;> (try split) <;> simp_all <;> omega
+  | some p => simp [rustTimeout, hrw, fallback]; split <;> (try split) <;> (try split) <;> simp_all <;> omega
+
+/-- Historical (#2998): the pre-#3000 code ignored a write's per-query timeout even
+with `timeout_rw` set. -/
+theorem pre3000_write_ignores_pq (c : TCfg) (p : Int)
+    (h : ¬ (c.timeoutMax > 0 ∧ p > c.timeoutMax)) :
+    pre3000_rustTimeout c (some p) true = pre3000_rustTimeout c none true := by
+  simp [pre3000_rustTimeout, h]
 
 /-- A per-query timeout above `TIMEOUT_MAX` is always rejected, for reads and writes. -/
 theorem rustTimeout_exceeds (c : TCfg) (p : Int) (w : Bool)
@@ -232,7 +271,7 @@ theorem rustTimeout_le_max (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
     · rw [if_pos h1] at h; simp at h
     · rw [if_neg h1] at h
-      by_cases h2 : w = false ∧ p > 0
+      by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
       · rw [if_pos h2] at h; simp at h; omega
       · rw [if_neg h2] at h
         have := fallback_spec c w t h
@@ -248,7 +287,7 @@ theorem rustTimeout_pos (c : TCfg) (pq : Option Int) (w : Bool) (t : Nat)
     by_cases h1 : c.timeoutMax > 0 ∧ p > c.timeoutMax
     · rw [if_pos h1] at h; simp at h
     · rw [if_neg h1] at h
-      by_cases h2 : w = false ∧ p > 0
+      by_cases h2 : p > 0 ∧ (w = false ∨ timeoutRw c = true)
       · rw [if_pos h2] at h; simp at h; omega
       · rw [if_neg h2] at h; exact (fallback_spec c w t h).1
 

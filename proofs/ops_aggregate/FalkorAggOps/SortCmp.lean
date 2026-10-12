@@ -8,10 +8,13 @@ Sort comparators and key classification (graph/src/runtime/ops/sort.rs).
 | `rowContent`        | `compare_row_content` (sort.rs:125) |
 | `heapCmp`           | `Ord for HeapEntry` (sort.rs:173); `heEq` / `hePartialCmp` (:156, :165) |
 | `classifySortKey`   | `classify_sort_key` (sort.rs:203), `classify_numeric(_, false, Pure)` (batch.rs:191) |
+| `tiebreak`, `tbCols` | `tiebreak` (sort.rs:237) |
 
-`Value::compare_value(..).0` is the parameter `cv : V → V → Ordering`. Its laws
-(reflexive, antisymmetric) are hypotheses: `compare_value` totality is the known
-issue #2891, so every result here holds exactly where that comparison is lawful.
+The value comparison is the parameter `cv : V → V → Ordering`; on main (#2912 b033aecc6)
+it is `Value::sort_cmp`. Its laws (`Lawful`: reflexive, antisymmetric) are hypotheses
+here and are discharged for `sort_cmp` in `Discharge.lean` (`lawful_main`, from
+proofs/value_order `Main.scMain_total`). Before #2912 `cv` was `compare_value(..).0`,
+for which `Lawful` is false (known #2891; value_order `pre2912_sortCmp_not_antisymmetric`).
 -/
 namespace FalkorAggOps.SortCmp
 
@@ -201,5 +204,74 @@ theorem heEq_partial (cv : V → V → Ordering) (nul : V) (x y : HEntry V) :
     hePartialCmp cv nul x y = some (heapCmp cv nul x y) ∧
     (heEq cv nul x y = true ↔ heapCmp cv nul x y = .eq) := by
   refine ⟨rfl, ?_⟩; unfold heEq; cases heapCmp cv nul x y <;> simp
+
+/-! ## `tiebreak` (sort.rs:237, out of line since 4a4f2a72f) -/
+
+/-- The content loop: `for id in 0..num_columns { combined.compare_rows_at(id, a, b) }`,
+first non-Equal wins, else arrival order `a.cmp(&b)`. -/
+def tbCols (cols : List (Nat → Nat → Ordering)) (a b : Nat) : Ordering :=
+  match cols with
+  | c :: cs => if c a b != .eq then c a b else tbCols cs a b
+  | [] => compare a b
+
+/-- sort.rs:237-258: the remaining keys (`trees.iter().enumerate().skip(1)`, each
+`typed_keys[k].compare_at(a, b)`, reversed when `desc`), then `tbCols`. -/
+def tiebreak (keys : List ((Nat → Nat → Ordering) × Bool)) (cols : List (Nat → Nat → Ordering))
+    (a b : Nat) : Ordering :=
+  match keys with
+  | (c, d) :: ks => if c a b != .eq then (if d then (c a b).swap else c a b) else tiebreak ks cols a b
+  | [] => tbCols cols a b
+
+theorem tbCols_strict (cols : List (Nat → Nat → Ordering)) (a b : Nat) (h : a ≠ b) :
+    tbCols cols a b ≠ .eq := by
+  induction cols with
+  | nil => simp only [tbCols]; intro he; exact h (Nat.compare_eq_eq.mp he)
+  | cons c cs ih =>
+    simp only [tbCols]; split
+    · rename_i hc; simpa using hc
+    · exact ih
+
+/-- Two different rows never tie: the sort order is strict, so the result is
+deterministic (no tie left to `sort_unstable_by`). -/
+theorem tiebreak_strict (keys : List ((Nat → Nat → Ordering) × Bool))
+    (cols : List (Nat → Nat → Ordering)) (a b : Nat) (h : a ≠ b) : tiebreak keys cols a b ≠ .eq := by
+  induction keys with
+  | nil => exact tbCols_strict cols a b h
+  | cons k ks ih =>
+    obtain ⟨c, d⟩ := k
+    simp only [tiebreak]; split
+    · rename_i hc
+      have : c a b ≠ .eq := by simpa using hc
+      cases d <;> simp only [Bool.false_eq_true, ite_false, ite_true] <;>
+        (try exact this) <;> (intro he; apply this; cases hh : c a b <;> simp_all [Ordering.swap])
+    · exact ih
+
+theorem tbCols_swap (cols : List (Nat → Nat → Ordering))
+    (hs : ∀ c ∈ cols, ∀ a b, c b a = (c a b).swap) (a b : Nat) :
+    tbCols cols b a = (tbCols cols a b).swap := by
+  induction cols with
+  | nil => simp only [tbCols]; exact Std.OrientedOrd.eq_swap
+  | cons c cs ih =>
+    have hc := hs c (by simp) a b
+    have ih' := ih (fun c' hm => hs c' (by simp [hm]))
+    simp only [tbCols, hc]
+    cases h : c a b <;> simp [Ordering.swap, ih']
+
+/-- With antisymmetric key and column comparators (`compare_at`/`compare_rows_at` are
+`sort_cmp`, antisymmetric on main: proofs/value_order `Main.compareAt_eq_scMain`,
+`Main.scMain_total`; `Discharge.lawful_main`), `tiebreak` is antisymmetric. -/
+theorem tiebreak_swap (keys : List ((Nat → Nat → Ordering) × Bool))
+    (cols : List (Nat → Nat → Ordering))
+    (hk : ∀ k ∈ keys, ∀ a b, k.1 b a = (k.1 a b).swap)
+    (hs : ∀ c ∈ cols, ∀ a b, c b a = (c a b).swap) (a b : Nat) :
+    tiebreak keys cols b a = (tiebreak keys cols a b).swap := by
+  induction keys with
+  | nil => exact tbCols_swap cols hs a b
+  | cons k ks ih =>
+    obtain ⟨c, d⟩ := k
+    have hc : c b a = (c a b).swap := hk (c, d) (by simp) a b
+    have ih' := ih (fun k' hm => hk k' (by simp [hm]))
+    simp only [tiebreak, hc]
+    cases d <;> cases h : c a b <;> simp [Ordering.swap, ih']
 
 end FalkorAggOps.SortCmp

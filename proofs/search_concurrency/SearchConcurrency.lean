@@ -62,7 +62,7 @@ value, any field options — a vector add always has the field's own non-zero di
 `phonetic_false_no_flag`, `phonetic_true_flag`, historical `pre3088_huge_k_kills_server`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
-`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:3978`,
+`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4188`,
 `:4038`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
 `k` ≤ live entity count, for any user `k`), `no_abort_any_k`, `candidates_topk` (clamped
 query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_one_row`
@@ -71,7 +71,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
 ## CONFIRMED bugs (all reproduced on live servers, Rust vs C)
 
 1. **Server deadlock under >1024 queued queries** (`graph/src/threadpool.rs:59,96`,
-   `src/graph_core.rs:1002`). `spawn` does a *blocking* send into a 1024-slot pool
+   `src/graph_core.rs:1007`). `spawn` does a *blocking* send into a 1024-slot pool
    queue from the Redis main thread, which holds the GIL; running workers escalate
    and wait for the GIL. Permanent hang, 0% CPU, PING times out.
    `repro/flood.py 18470 1400` (one graph) or `repro/flood2.py 18470 3000 16 "UNWIND
@@ -82,7 +82,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
    (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
-2. **Second index on a label is never populated** (`graph/src/graph/graph.rs:563`
+2. **Second index on a label is never populated** (`graph/src/graph/graph.rs:577`
    `ticket_pending_changes > 1` bail + `index/indexer.rs:319-331` no `bump_id` for
    non-vector fields). `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes: Rust
    OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
@@ -100,10 +100,10 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    `docSet_vector_sound`, `doc_always_accepted`, `other_fields_never_dropped`,
    `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`.
 4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
-   killed the server (old `graph.rs:4001,3938` `Vec::with_capacity(k)`). `CALL
+   killed the server (old `graph.rs:4211,3938` `Vec::with_capacity(k)`). `CALL
    db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
    (SIGSEGV in the OOM path); C returns the 1 row. Historical model:
-   `pre3088_huge_k_kills_server`. Now `graph.rs:3998,3939` clamp `k` to
+   `pre3088_huge_k_kills_server`. Now `graph.rs:4208,3939` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4014,3955` size by results:
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
 5. **Inline (MULTI/EXEC) write fails with "another write is in progress"**
@@ -144,7 +144,7 @@ parameter; every invariant theorem holds for any `valid`; new
 `refused_commit_releases_slot` (nothing published or acked, the next writer can
 claim — the property the Rust test `a_refused_commit_releases_the_write_slot`
 checks) and `valid_commit_publishes`. `commit_and_replicate` treats a refusal as
-`unreachable!` (graph_core.rs:1484).
+`unreachable!` (graph_core.rs:1489).
 
 ## Gaps
 

@@ -1,6 +1,6 @@
 /-
 # Soundness and no-panic for pattern comprehensions, `[`-dispatch and
-# shortestPath; the full `parse_primary_expr` dispatch (cypher.rs:1926-2117)
+# shortestPath; the full `parse_primary_expr` dispatch (cypher.rs:1942-2133)
 -/
 import FalkorParserGrammar.C.ExprC2
 
@@ -104,12 +104,29 @@ theorem listLitP_sound (F : Nat) (forb : Bool) (s : PS) r s' (h : listLitP o F f
     · cases he
   by_cases hb : ∃ v, a = some v ∧ isIn = true
   · obtain ⟨v, ha, hi⟩ := hb; exact b1 v ha hi
-  · have hh : listLitRest o F forb s s2 = .ok r s' := by
-      cases a with
-      | none => exact h
-      | some v => cases isIn with
-        | false => exact h
-        | true => exact absurd ⟨v, rfl, rfl⟩ hb
+  · have hh2 : listLitLit s s3 = .ok r s' ∨ listLitRest o F forb s s3 = .ok r s' := by
+      have hg : (if (gateOK s && !o.seen s) = true then listLitRest o F forb s
+          else listLitLit s) s3 = .ok r s' := by
+        cases a with
+        | none => exact h
+        | some v => cases isIn with
+          | false => exact h
+          | true => exact absurd ⟨v, rfl, rfl⟩ hb
+      split at hg
+      · exact .inr hg
+      · exact .inl hg
+    rcases hh2 with hlit | hh
+    · -- the gate is closed (#3104): the list literal
+      clear h; unfold listLitLit at hlit
+      peel hlit => u s12 h12
+      simp only [run_setS, R.ok.injEq] at h12; obtain ⟨-, rfl⟩ := h12
+      peel hlit => rb s13 h13
+      obtain ⟨rfl, rfl⟩ := pure_ok hlit
+      cases rb
+      · have := (opt_eq h13).2 rfl; subst s13
+        exact .elems (by unfold opt at h13; split at h13 <;> simp_all)
+      · obtain ⟨hr, rfl⟩ := (opt_eq h13).1 rfl
+        exact .empty hr
     clear h; have h := hh; unfold listLitRest at h
     peel h => u s4 h4
     simp only [run_setS, R.ok.injEq] at h4; obtain ⟨-, rfl⟩ := h4

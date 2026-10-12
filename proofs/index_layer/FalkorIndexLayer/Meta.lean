@@ -7,7 +7,7 @@ Line numbers are from origin/main (49f698d22).
 | --- | --- |
 | `IType` | `IndexType` `mod.rs:96` |
 | `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:107-168` |
-| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:192`, `Hash::hash` `mod.rs:203` |
+| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:193`, `Hash::hash` `mod.rs:204` |
 | `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:887`) |
 | `Idx` | `Index` `mod.rs:875` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
 | `Idx.*` accessors / mutators | `mod.rs:1039-2239` (each cited below) |
@@ -45,25 +45,25 @@ structure Field where
   strArr : Option String
   deriving DecidableEq, Repr
 
-/-- `Field::make_arr_names` (`mod.rs:121`). The `name` is a `CString` built from
+/-- `Field::make_arr_names` (`mod.rs:122`). The `name` is a `CString` built from
 a Rust `String`, so `to_str()` succeeds and `format!` adds no NUL: both
 `CString::new(..).ok()` are `Some`. -/
 def makeArrNames (name : String) (ty : IType) : Option String × Option String :=
   if ty = .range then (some (name ++ ":numeric:arr"), some (name ++ ":string:arr")) else (none, none)
 
-/-- `Field::new` (`mod.rs:137`). -/
+/-- `Field::new` (`mod.rs:138`). -/
 def Field.new (name : String) (ty : IType) (o : Option TextOpts) : Field :=
   { name, ty, options := o, vopts := none,
     numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
-/-- `Field::new_with_vector_options` (`mod.rs:154`). -/
+/-- `Field::new_with_vector_options` (`mod.rs:155`). -/
 def Field.newVec (name : String) (ty : IType) (v : VecOpts) : Field :=
   { name, ty, options := none, vopts := some v,
     numArr := (makeArrNames name ty).1, strArr := (makeArrNames name ty).2 }
 
 /-- `PartialEq for Field` (`mod.rs:192`): name and type only. -/
 def Field.beqF (a b : Field) : Bool := a.name == b.name && a.ty == b.ty
-/-- `Hash for Field` (`mod.rs:203`): hashes the name only (`H` = any hasher). -/
+/-- `Hash for Field` (`mod.rs:204`): hashes the name only (`H` = any hasher). -/
 def Field.hashF (H : String → Nat) (f : Field) : Nat := H f.name
 
 theorem makeArrNames_range (n : String) :

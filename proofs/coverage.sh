@@ -25,7 +25,8 @@
 # and do not make a row CONDITIONAL.
 #
 # Test code (wave 5 change): a function is TEST if it is
-#   - inside a `#[cfg(test)]` module (inline, or an out-of-line `mod x;` file),
+#   - inside a `#[cfg(test)]` or `#[cfg(all(test, ...))]` module (inline, or an
+#     out-of-line `mod x;` file),
 #   - a single `#[cfg(test)]` fn,
 #   - in a file named *_bench.rs, tests.rs or test_aux.rs, or
 #   - listed by some TSV row whose bucket is TEST-ONLY, or NOT COVERED with a
@@ -96,7 +97,7 @@ def scan(p):
             if depth <= 0:
                 in_test = False
             continue
-        if s.startswith('#[cfg(test)]'):
+        if s.startswith('#[cfg(test)]') or re.match(r'#\[cfg\(all\((?:[^)]*,\s*)?test\s*(?:,|\))', s):
             pending_cfg_test = True
             continue
         if pending_cfg_test:

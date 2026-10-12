@@ -87,7 +87,7 @@ theorem live_eq_accepted (N : Nat) (sp : IdSpace) (h : Inv N sp) :
 
 /-! ### The batch exemption the effects path takes
 
-`apply_record`'s `CreateEdge` checks `(src ∪ dst) − released` (`apply.rs:279`).
+`apply_record`'s `CreateEdge` checks `(src ∪ dst) − released` (`apply.rs:276`).
 In a reachable state that admits exactly the endpoints that are live now, or
 that this batch released — and a released id was live *in this batch*: below
 the entry boundary or taken by it (`Inv.relOk`). Never an id that was never

@@ -103,10 +103,19 @@ proofs/ops_aggregate.
 * `Gather`: the `GatherItem` trait proved ONCE (`gather_spec`: for a lawful lane, finishing the
   pushed items sets column `cols b [i]` to `xs.map (val b i)`), then each of the 7 impls shown
   lawful (`giNode_lawful` … `giValue_lawful`); `RowIter`; emitter constructors.
-* `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: NaN compares Less both
-  ways, known #2891), builder push paths and merge plan, constructors/accessors,
+* `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: since #2912 the float
+  lane is `sort_cmp_f64`, antisymmetric with NaN; `pre2912_compareAt_nan_not_antisymmetric` is the
+  old `unwrap_or(Less)` lane, known #2891), builder push paths and merge plan, constructors/accessors,
   `merge_over_input`, `clone_active_rows_seq_origin`, `size_hint`, `set_argument_batch`
   (every Argument leaf gets the batch, emitter-backed nodes reset), `inspect_context`, `BatchOp::next`.
+
+## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
+* `Column::compare_at` (batch.rs:399): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
+  `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
+  for every pair; the NaN counterexample is `pre2912_compareAt_nan_not_antisymmetric`.
+  `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order
+  `Main.scMain_total`, `Main.compareAt_eq_scMain`.
+* `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true` (#2917).
 
 ## Re-target to a9377c636 (#2845)
 * `BatchMisc.rowsOnly` (`Batch::rows_only`, batch.rs:853): `rowsOnly_spec` (len rows, no

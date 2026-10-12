@@ -32,7 +32,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
-| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:883-918` |
+| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:886-921` |
 | `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021; `validatePre3021` historical) |
 | `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
@@ -42,8 +42,8 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:597-608`; guards `runtime/eval.rs:936,956` |
 | `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:94-169` |
 | `Bulk.cstr`             | `read_cstring`, `:31-45` |
-| `Bulk.records/readN`    | `process_node_token` record loop, `:386-410` |
-| `Bulk.parseCount`       | `parse_count`, `:643-665` |
+| `Bulk.records/readN`    | `process_node_token` record loop, `:352-378` |
+| `Bulk.parseCount`       | `parse_count`, `:591-610` |
 | `Bulk.getOrCreate/slotLen` | `attribute_store.rs:224-238`, `:598-610` |
 
 ## Proven (headline theorems)
@@ -58,9 +58,10 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
   read the same flags; `parse_timeout_nonneg` — accepted timeouts are in `0..=TIMEOUT_MAX`.
 * `string2ll_dec`, `rustParseI64_dec` — every canonical decimal round-trips.
 * `rustTimeout_le_max`, `rustTimeout_pos`, `rustTimeout_exceeds`,
-  `rustTimeout_write_ignores_pq` — the effective timeout never exceeds TIMEOUT_MAX
-  (under the config invariant), is positive when set, and ignores the per-query value
-  for writes.
+  `rustTimeout_write_pq`, `rustTimeout_rw_uniform`, `rustTimeout_write_ignores_pq` — the
+  effective timeout never exceeds TIMEOUT_MAX (under the config invariant), is positive
+  when set, applies to writes exactly as to reads once `timeout_rw` is set (#3000), and
+  ignores the per-query value for writes only under the deprecated TIMEOUT alone.
 * `rustSet_inv` — every successful `GRAPH.CONFIG SET` batch leaves
   `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` true; `rustSet_timeout_deprecated`; `c_breaks_inv`
   — C's sequential dry-run lets one batch break it (Rust is right here).
@@ -84,9 +85,11 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    Now one parser mirrors C: `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`,
    `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped`, and the
    general `rust_c_agree`.
-2. Writes ignore the per-query TIMEOUT (`graph_core.rs:898-901`): with TIMEOUT_MAX
-   = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1` creates 300000 nodes on Rust;
-   C times out and creates none (`write_timeout_divergence`).
+2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
+   TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
+   created 300000 nodes on Rust; C times out and creates none
+   (`pre3000_write_timeout_divergence`). Now `timeout_rw` (`graph_core.rs:895`) applies it:
+   `write_timeout_agrees`, `Args.rustTimeout_write_pq`, `rustTimeout_rw_uniform`.
 3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:
    `VKEY_MAX_ENTITY_COUNT -5` accepted (then read as `as u64`), `CMD_INFO 1/TRUE`
    accepted, `JS_HEAP_SIZE 5` accepted (C: ≥ 1 MB), `GET x extra` accepted, non-ASCII
@@ -148,10 +151,13 @@ Headline theorems:
   `memTotal_sum`; `sync_is_yield_without_yields`.
 
 New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, ports 18820-3):
-8. **Crash**: `src/slow_log.rs:49` (`entry_hash`, also `truncate` `:31`) slices the query at
-   byte 2048; a query > 2048 bytes, slower than 10 ms, with a multi-byte char across byte
-   2048 panics and the server exits (`SlowLog.entry_hash_panics`; repro scratch
-   `slowlog_utf8.py`). C answers normally.
+8. **Crash — FIXED by #3234 (`3660a5fc3`)**: `src/slow_log.rs` (`entry_hash`, `truncate`)
+   sliced the query at byte 2048; a query > 2048 bytes, slower than 10 ms, with a multi-byte
+   char across byte 2048 panicked and the server exited (`SlowLog.pre3234_entry_hash_panics`,
+   `pre3234_truncate_panics`; repro scratch `slowlog_utf8.py`). Now both cut at
+   `prefix` (`:32`, `floor_char_boundary(2048)`): `SlowLog.hashInput_total`,
+   `truncate_total` (no panic for any string), `prefix_le`/`prefix_isPrefix`/
+   `prefix_boundary`/`prefix_longest` (longest char-boundary prefix ≤ 2048 bytes).
 9. Index on an attribute literally named `range:x` (or `vector:x`) is rebuilt on `x` after
    RDB reload (`serializers/mod.rs:642-646`, `SerialSchema.field_prefix_lost`): Rust
    `db.indexes()` → `[x]`, plan loses the index scan; C keeps `[range:x]`.

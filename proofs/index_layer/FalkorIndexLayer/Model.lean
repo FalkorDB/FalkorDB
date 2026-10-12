@@ -127,7 +127,7 @@ def cyLe (a b : Val) : Option Bool :=
   | some l, some e => some (l || e)
   | _, _ => none
 
-/-! ## `IndexQuery<Value>` (`index/mod.rs:228`) and its Cypher meaning -/
+/-! ## `IndexQuery<Value>` (`index/mod.rs:229`) and its Cypher meaning -/
 
 inductive IQ where
   | equal (key : Attr) (v : Val)
@@ -167,7 +167,7 @@ def holds (p : Props) : IQ → Bool
       | .list ys => ys.any (fun y => isTrue (cyEqScalar y v))
       | _ => false
 
-/-! ## `tag_encode_lower` (`index/mod.rs:565`) -/
+/-! ## `tag_encode_lower` (`index/mod.rs:566`) -/
 
 def HEX : List Nat := [48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102]  -- "0123456789abcdef"
 def hexDigit (n : Nat) : Nat := HEX.getD n 0
@@ -181,7 +181,7 @@ def tagEnc : Bytes → Bytes
   | b :: bs => if escaped b then 0x5f :: hexDigit (b / 16) :: hexDigit (b % 16) :: tagEnc bs
                else b :: tagEnc bs
 
-/-- `hex_nibble` (`mod.rs:591`). -/
+/-- `hex_nibble` (`mod.rs:592`). -/
 def hexNibble (c : Nat) : Nat :=
   if 48 ≤ c ∧ c ≤ 57 then c - 48 else if 97 ≤ c ∧ c ≤ 102 then c - 97 + 10 else 0
 
@@ -191,7 +191,7 @@ def tagDec : Bytes → Bytes
   | c :: rest => c :: tagDec rest
   | [] => []
 
-/-! ## Document keys (`hex_encode_into` `mod.rs:581`, `decode_id` `mod.rs:601`) -/
+/-! ## Document keys (`hex_encode_into` `mod.rs:582`, `decode_id` `mod.rs:602`) -/
 
 /-- `u64::to_le_bytes` (little-endian: byte `i` is `id / 256^i % 256`). -/
 def leBytesN : Nat → Nat → List Nat
@@ -217,7 +217,7 @@ def nodeKey (id : Nat) : List Nat := hexEncode (leBytes id)
 def decodeId (key : List Nat) : Nat := fromLe (hexDecode key)
 def edgeKey (src dst eid : Nat) : List Nat := nodeKey src ++ nodeKey dst ++ nodeKey eid
 
-/-! ## `int_loses_f64_precision` (`mod.rs:1370`) -/
+/-! ## `int_loses_f64_precision` (`mod.rs:1371`) -/
 
 def MASK : Nat := 0x7FF0000000000000
 /-- `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`. -/
@@ -280,7 +280,7 @@ def rsMatch (d : Doc) : QN → Bool
   | .union cs => cs.attach.any fun ⟨c, _⟩ => rsMatch d c
   | .empty => false
 
-/-! ## `Document::set` (`mod.rs:716`) for a Range field -/
+/-! ## `Document::set` (`mod.rs:717`) for a Range field -/
 
 /-- **Historical** (before #3076, e20300436): `Document::set` stored a temporal's raw timestamp in the
 numeric field (old `mod.rs:797`). Kept for `pre3076_temporal_in_numeric_range`. -/
@@ -318,16 +318,16 @@ def docOf (fields : Attr → Bool) (p : Props) : Doc := fun k s =>
     | none => []
   else []
 
-/-! ## `build_query_node` (`mod.rs:1476`) -/
+/-! ## `build_query_node` (`mod.rs:1477`) -/
 
-/-- `value_to_numeric` (`mod.rs:1356`). -/
+/-- `value_to_numeric` (`mod.rs:1357`). -/
 def valueToNumeric : Val → Option ENum
   | .int i => some (.fin i)
   | .flt f => some f
   | .bool b => some (.fin (if b then 1 else 0))
   | _ => none
 
-/-- `build_numeric_range_node` (`mod.rs:1375-1410`). Open bounds become
+/-- `build_numeric_range_node` (`mod.rs:1376-1410`). Open bounds become
 `RSRANGE_NEG_INF`/`RSRANGE_INF`, and since #3081 (`ff3d24ba7`) an absent
 bound is inclusive whatever the caller's flag (`include_min || min.is_none()`,
 `mod.rs:1402-1403`), so the infinity standing in for it is itself selected. -/
@@ -354,7 +354,7 @@ def pre3081_buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Va
     | none => some .posInf
   if fields k then some (.numeric k .main lo hi imn imx) else none
 
-/-- `build_string_range_node` (`mod.rs:1418`). -/
+/-- `build_string_range_node` (`mod.rs:1419`). -/
 def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
   if fields k then
@@ -428,7 +428,7 @@ decreasing_by
   all_goals simp_wf
   all_goals (first | omega | (simp only [List.cons.sizeOf_spec] at *; omega))
 
-/-- `Index::query` (`mod.rs:1690`): a null node yields the empty iterator. -/
+/-- `Index::query` (`mod.rs:1691`): a null node yields the empty iterator. -/
 def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
   match buildQ fields q with
   | some n => rsMatch (docOf fields p) n
@@ -474,20 +474,20 @@ structure Slots where
   stale : Int
   deriving DecidableEq, Repr
 
-/-- `increment_pending_for_generation` (`mod.rs:2110`). -/
+/-- `increment_pending_for_generation` (`mod.rs:2111`). -/
 def Slots.inc (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then { s with cur := s.cur + 1 } else { s with stale := s.stale + 1 }
 
-/-- `try_decrement_pending_for_generation` (`mod.rs:2128`). -/
+/-- `try_decrement_pending_for_generation` (`mod.rs:2129`). -/
 def Slots.dec (s : Slots) (g : Nat) : Slots :=
   if g = s.gen then (if s.cur > 0 then { s with cur := s.cur - 1 } else s)
   else (if s.stale > 0 then { s with stale := s.stale - 1 } else s)
 
-/-- `bump_id` (`mod.rs:1048`): new generation, current work becomes stale. -/
+/-- `bump_id` (`mod.rs:1049`): new generation, current work becomes stale. -/
 def Slots.bump (s : Slots) (g' : Nat) : Slots :=
   { gen := g', cur := 0, stale := s.stale + s.cur }
 
-/-- `pending_count_for_generation` (`mod.rs:2150`). -/
+/-- `pending_count_for_generation` (`mod.rs:2151`). -/
 def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s.stale
 
 /-! ## Index maintenance: `Indexer::commit` (`indexer.rs:714`) -/
@@ -495,14 +495,14 @@ def Slots.countFor (s : Slots) (g : Nat) : Int := if g = s.gen then s.cur else s
 /-- RS doc table for one label: entity id ↦ stored document. -/
 abbrev Table := Nat → Option Doc
 
-/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1906`). -/
+/-- `add_document` with `REDISEARCH_ADD_REPLACE` (`mod.rs:1907`). -/
 def Table.add (t : Table) (id : Nat) (d : Doc) : Table := fun j => if j = id then some d else t j
-/-- `delete_document` (`mod.rs:1928`). -/
+/-- `delete_document` (`mod.rs:1929`). -/
 def Table.del (t : Table) (id : Nat) : Table := fun j => if j = id then none else t j
 
 /-- `Indexer::commit`: all adds of the label first, then all removes
 (`indexer.rs:720-735`). Documents are built from the *committed* graph
-(`graph.rs:3531` `commit_index_kind`). -/
+(`graph.rs:3639` `commit_index_kind`). -/
 def commit (t : Table) (build : Nat → Doc) (adds removes : List Nat) : Table :=
   removes.foldl Table.del (adds.foldl (fun t id => t.add id (build id)) t)
 

@@ -7,7 +7,17 @@ sets (the abstraction proofs/versioned_matrix proves sound for
 `VersionedMatrix<bool>`/`Tensor`). Every non-FFI fn of both files has a
 theorem (COVERAGE.tsv); zero sorry/admit/axiom. Rust repros:
 `graph/tests/lean_graph_queries.rs`; live servers Rust (release module) vs C.
-Line numbers: origin/main `e8f8a3017` (re-targeted from `8743953a8`: #3022 adds
+Line numbers: origin/main `4a4f2a72f` (re-targeted from `e8f8a3017`: #2350/#3307 add the
+native FalkorDB index — every write method now takes the whole `IndexDocs` instead of one
+`FxHashMap`; the models' document list is the field the method used to receive
+(`node_adds`/`node_removes`/`edge_adds`/`edge_removes`), and the added
+`docs.native.extend(graph_writes::…)` staging, the `falkordb_index` field (cloned by
+`new_version`, empty in `new`/`restore`), the native hooks in `create_index(_sync)`/
+`populate_indexes_sync`/`drop_index`, `apply_index_writes` and `query_index_numeric_*` are
+native-index plumbing owned by proofs/index_layer: they read the graph before the
+modelled mutation and write only `docs.native`/`falkordb_index`, so every state this
+project models is unchanged. New here: `commit_index_docs` (`Index.commitIndexDocs`).
+Earlier `8743953a8`: #3022 adds
 `verify_created_relationships` to `validate` and `first_node_with_relationships`; earlier
 `fe619ac5f`: #2911 bounds `grow_cap`).
 
@@ -66,17 +76,17 @@ no longer needs a Nodup hypothesis),
 ## CONFIRMED bugs (Rust vs C, live) — all three re-checked live at 2c874022a: still present
 (the code each one cites is unchanged at fe619ac5f; #2911 touched only `grow_cap`)
 1. **Deleted edge keeps its type after a type is registered without resize**
-   (graph.rs:1229 `get_type_id_mut` has no `self.resize()`; :2853/:2834
+   (graph.rs:1251 `get_type_id_mut` has no `self.resize()`; :2947/:2834
    mask `relationship_cap × |types|` vs narrower type matrix → eWiseMult
    `GrB_DIMENSION_MISMATCH`, only `debug_assert`ed). `CREATE (:N{i:1})-[:A]->(:N{i:2})`;
    `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`;
    `MATCH ()-[r:A]->() DELETE r`; `MATCH (a{i:1}),(b{i:2}) CREATE (a)-[:C]->(b)`;
    `MATCH ()-[r]->() RETURN type(r)` → Rust `A`, C `C`. Same via replica
-   schema apply (effects/v3/apply.rs:573). Lean: `stale_type_after_registration`.
+   schema apply (effects/v3/apply.rs:559). Lean: `stale_type_after_registration`.
    Test `deleted_edge_type_survives_type_registration` (debug: panics
    GrB_DIMENSION_MISMATCH). Fix: call `self.resize()` in `get_type_id_mut`.
    (2c874022a: Rust `A`, C `C`.)
-2. **Self-loop reported twice by `get_node_relationships`** (graph.rs:2214),
+2. **Self-loop reported twice by `get_node_relationships`** (graph.rs:2290),
    surfacing in UDF `node.getNeighbors` (udf/js_classes.rs:104): self-loop
    count Rust 2 / C 1 for outgoing, incoming, both (2c874022a: with
    `{returnType:'edges'}` Rust 2, C 1; node results are deduplicated). Lean:

@@ -4,15 +4,15 @@
 | here | there |
 | --- | --- |
 | `relNoDelete`              | `Runtime::get_relationship_attribute_no_delete_check`, `runtime/runtime.rs:1493-1508` |
-| `getRelAttribute`          | `Runtime::get_relationship_attribute`, `runtime.rs:1510-1535` (committed fallback BY NAME: `Graph::get_relationship_attribute`, `graph/graph.rs:3163`) |
+| `getRelAttribute`          | `Runtime::get_relationship_attribute`, `runtime.rs:1510-1535` (committed fallback BY NAME: `Graph::get_relationship_attribute`, `graph/graph.rs:3262`) |
 | `materializeRel`           | `Runtime::materialize_relationship_property_values`, `runtime.rs:1616-1658` |
 | `materializeNodeProp`, `materializeRelProp` | `materialize_{node,relationship}_property`, `runtime.rs:1542-1551`, `:1604-1613` (`classify_column` ∘ values) |
-| `getRelAttrs`              | `Runtime::get_relationship_attrs` (`runtime.rs:1757-1775`) + `Pending::update_relationship_attrs` (`pending.rs:852-873`) |
+| `getRelAttrs`              | `Runtime::get_relationship_attrs` (`runtime.rs:1757-1775`) + `Pending::update_relationship_attrs` (`pending.rs:833-854`) |
 | `relEndpoints`, `relType`  | `Runtime::get_relationship_endpoints` (`:1777-1788`), `get_relationship_type` (`:1790-1802`) |
 | `labelIdOf`                | `Runtime::label_id` (`:1711-1716`) |
 | `setPendingAttr`           | `Runtime::set_pending_node_attr` (`:1371-1388`) / `set_pending_relationship_attr` (`:1390-1405`) |
 
-The relationship stores have exactly the node stores' shape (`pending.rs:480,863-902` vs
+The relationship stores have exactly the node stores' shape (`pending.rs:461,863-902` vs
 `:529,541-581`: same `has_*_attrs`, `new`-then-`existing` `lookup_sorted`, same one-map
 `update_*_attrs`), so a relationship read is `Accessors.W` instantiated with the
 relationship maps (`deleted_relationships`, `{new,existing}_relationships_attrs`,
@@ -250,7 +250,7 @@ def setPendingAttr {Tb P : Type} (maxLen : Nat) (nameOf : Nat → String)
     | .ok p' => .ok (p', r.2.1, r.2.2)
     | .error e => .error e
 
-/-- Contract of `get_or_create_*_attr_id` (`graph.rs:1777-1782`, `attrs_name.get_or_create`):
+/-- Contract of `get_or_create_*_attr_id` (`graph.rs:1815-1820`, `attrs_name.get_or_create`):
 the returned id is the name's id afterwards, and no existing name changes id. -/
 def GocOk {Tb : Type} (lk : Tb → String → Option Nat) (goc : Tb → String → Nat × Tb) : Prop :=
   ∀ t n, lk (goc t n).2 n = some (goc t n).1 ∧ ∀ n' i, lk t n' = some i → lk (goc t n).2 n' = some i

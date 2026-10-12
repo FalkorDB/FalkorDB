@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Basic
 /-!
 # The apply side: which records check liveness, and what a missing check costs
 
-Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:157-531`)
+Models the node-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:160-517`)
 over an abstract replica: a node id space with a recycle bin, per-node labels
 and properties, and edges as endpoint pairs. The question is the one a hostile
 or divergent `GRAPH.EFFECT` asks: does applying a record the checks accept keep
@@ -33,7 +33,7 @@ structure RG.WF (σ : RG) : Prop where
 
 /-! ## The arms as Rust writes them -/
 
-/-- `Graph::create_nodes` for one id (`apply.rs:213-218`, checked by
+/-- `Graph::create_nodes` for one id (`apply.rs:216-221`, checked by
     `IdSpace::create`): a recycled id leaves the bin, a fresh id moves
     the boundary. It sets labels and does **not** reset properties — a recycled
     row keeps whatever the store holds for it (observed: `hostile_update_node_on_dead_id`). -/
@@ -43,17 +43,17 @@ def createOne (σ : RG) (id : Nat) (lbls : List Nat) : RG :=
       free   := fun i => if i = id then false else σ.free i
       labels := fun i => if i = id then lbls else σ.labels i }
 
-/-- `UPDATE_NODE`'s store write (`apply.rs:308-326`). Before #3022 the arm ran
+/-- `UPDATE_NODE`'s store write (`apply.rs:305-317`). Before #3022 the arm ran
     `check_attr_shape` and `checked_label_ids` only — no liveness check — then
     `set_nodes_attributes_rows_of_labels` writes the store for every id. -/
 def updateNode (σ : RG) (ids : List Nat) (row : List (Nat × Val)) : RG :=
   { σ with props := fun i => if ids.contains i then row ++ σ.props i else σ.props i }
 
-/-- `SET_LABELS`'s store write (`apply.rs:348-358`); before #3022 guarded by `checked_label_ids` only. -/
+/-- `SET_LABELS`'s store write (`apply.rs:339-344`); before #3022 guarded by `checked_label_ids` only. -/
 def setLabels (σ : RG) (ids : List Nat) (lbls : List Nat) : RG :=
   { σ with labels := fun i => if ids.contains i then lbls ++ σ.labels i else σ.labels i }
 
-/-- `DELETE_NODE` (`apply.rs:379-400`): `delete_nodes` refuses a recycled or
+/-- `DELETE_NODE` (`apply.rs:365-386`): `delete_nodes` refuses a recycled or
     never-created id (`okDelete`) and clears the node's labels and properties.
     It does not cascade to incident edges — on a real payload the master's
     `DELETE_EDGE` records came first. Before #3022 nothing checked that there are

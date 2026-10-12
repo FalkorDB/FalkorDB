@@ -6,10 +6,10 @@
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
   `data.length - rest.length`.
-* `cstr` — `read_cstring` (`:30-44`), `R8` — `read_u64_ne`/`read_i64_ne`/`read_f64_ne`
-  (`:58-92`): every one bounds-checks before indexing.
-* `records` — the record loop of `process_node_token` (`:384-408`).
-* `parseCount` — `parse_count` (`:607-629`).
+* `cstr` — `read_cstring` (`:30-44`), `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
+  `read_f64_ne` (`:46-92`): every one bounds-checks before indexing (`readNe_ok`).
+* `records` — the record loop of `process_node_token` (`:352-378`).
+* `parseCount` — `parse_count` (`:591-610`).
 
 `i64::from_ne_bytes`/`to_ne_bytes` and `str::from_utf8` are Rust `core` functions; their
 specification is taken as the hypothesis structure `Codec` (bytes ↔ value, 8 bytes wide;
@@ -48,6 +48,41 @@ inductive BErr where
   deriving DecidableEq, Repr
 
 variable (C : Codec)
+
+/-- `read_u32_ne` (`:46`, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`:58`, `:70`,
+`:82`, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
+`data[*idx..*idx + w]` (`dec`: the core decoder, any total function) and `*idx += w`. -/
+def readNe {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
+    Except BErr (α × Nat) :=
+  if idx + w > data.length then .error .eof else .ok (dec ((data.drop idx).take w), idx + w)
+
+/-- Reads succeed exactly when `w` bytes remain. -/
+theorem readNe_ok_iff {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
+    (∃ r, readNe w dec data idx = .ok r) ↔ idx + w ≤ data.length := by
+  unfold readNe; split
+  · simp; omega
+  · simp; omega
+
+/-- On success the slice handed to `from_ne_bytes` has exactly `w` bytes (so
+`try_into().unwrap()` never panics), it is the bytes at `idx`, and the cursor moves by
+`w` and stays within the data. -/
+theorem readNe_ok {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat)
+    (v : α) (idx' : Nat) (h : readNe w dec data idx = .ok (v, idx')) :
+    ((data.drop idx).take w).length = w ∧ v = dec ((data.drop idx).take w) ∧
+      idx' = idx + w ∧ idx' ≤ data.length := by
+  unfold readNe at h; split at h
+  · cases h
+  · cases h; refine ⟨?_, rfl, rfl, by omega⟩
+    simp; omega
+
+/-- Reading an encoded 8-byte value back yields it (`i64`/`u64`/`f64` bit patterns). -/
+theorem readNe_enc8 (pre r : List Nat) (i : Int) :
+    readNe 8 C.dec8 (pre ++ C.enc8 i ++ r) pre.length = .ok (i, pre.length + 8) := by
+  unfold readNe
+  rw [if_neg (by simp [C.len8])]
+  have : (List.drop pre.length (pre ++ C.enc8 i ++ r)) = C.enc8 i ++ r := by
+    rw [List.append_assoc, List.drop_left]
+  rw [this, C.dec_enc8]
 
 /-- `read_cstring`: bytes up to the first NUL, which is consumed. -/
 def cstr : List Nat → Option (List Nat × List Nat)
@@ -298,7 +333,7 @@ theorem encRec_len (vs : List BV) : vs.length ≤ (encRec C vs).length := by
     have e : encRec C (v :: vs) = enc C v ++ encRec C vs := by simp [encRec]
     rw [e, List.length_append, List.length_cons]; omega
 
-/-- The `max_records` ceiling (`bulk_insert.rs:643-654`) never rejects an honest
+/-- The `max_records` ceiling (`bulk_insert.rs:627-638`) never rejects an honest
 payload: `P` properties cost at least `P` bytes per record. -/
 theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.length = P) :
     rs.length * P ≤ (rs.flatMap (encRec C)).length := by
@@ -310,7 +345,7 @@ theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.
     have := encRec_len C vs
     rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]; omega
 
-/-! ## `parse_count` (`bulk_insert.rs:607-629`) -/
+/-! ## `parse_count` (`bulk_insert.rs:591-613`) -/
 
 def parseCount (s : List Nat) : Option Nat :=
   if s = [] then none

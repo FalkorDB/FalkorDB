@@ -1,6 +1,6 @@
 /-
 # Patterns: `parse_labels`, `parse_node_pattern`, `parse_relationship_pattern`,
-# `add_pattern_node`, `parse_pattern` (cypher.rs:1343-1565, 2915-3109)
+# `add_pattern_node`, `parse_pattern` (cypher.rs:1359-1581, 2997-3191)
 -/
 import FalkorParserGrammar.C.Graph
 
@@ -10,7 +10,7 @@ def fuelP {α} : P α := fun _ => .fuel
 @[simp] theorem run_fuelP {α} (s : PS) : (fuelP : P α) s = .fuel := rfl
 
 /-- `format!("_anon_{}", self.anon_counter); self.anon_counter += 1`
-(cypher.rs:2935-2937 and twice in parse_relationship_pattern). The `u32`
+(cypher.rs:3017-3019 and twice in parse_relationship_pattern). The `u32`
 increment cannot overflow on any query Redis accepts (4·10⁹ anonymous
 entities). -/
 def anonFresh : P Nat := fun s => .ok (anonName s.2) (s.1, s.2 + 1)
@@ -21,7 +21,7 @@ def asU32 (i : Int) : Nat := (i % 4294967296).toNat
 /-- `OrderSet::insert` / `HashSet::insert`: append if absent. -/
 def sins (l : Nat) (acc : List Nat) : List Nat := if l ∈ acc then acc else acc ++ [l]
 
-/-- `parse_labels` (cypher.rs:3102-3109). -/
+/-- `parse_labels` (cypher.rs:3184-3191). -/
 def labelsP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -32,8 +32,8 @@ def labelsP : Nat → List Nat → P (List Nat)
       labelsP n (sins l acc)
     else pure acc
 
-/-- The property part of a node / relationship pattern (cypher.rs:2941-2948,
-3047-3054): `$param`, an inline map (`parse_inline_properties`, i.e.
+/-- The property part of a node / relationship pattern (cypher.rs:3023-3030,
+3129-3136): `$param`, an inline map (`parse_inline_properties`, i.e.
 `parse_map` with pattern comprehensions forbidden, which only adds
 errors), or the empty map. -/
 def propsP (o : Oracle) : P ET := do
@@ -48,7 +48,7 @@ def aliasOr : Option Nat → P Nat
   | some v => pure v
   | none => anonFresh
 
-/-- `parse_node_pattern` (cypher.rs:2931-2952). -/
+/-- `parse_node_pattern` (cypher.rs:3013-3034). -/
 def nodeP (o : Oracle) (F : Nat) : P (QNode Nat) := do
   tok .lparen
   let a ← tryIdent
@@ -58,7 +58,7 @@ def nodeP (o : Oracle) (F : Nat) : P (QNode Nat) := do
   tok .rparen
   pure ⟨alias, ls, attrs⟩
 
-/-- The relationship-type loop (cypher.rs:2977-2987): after each type an
+/-- The relationship-type loop (cypher.rs:3059-3069): after each type an
 optional `|` and then an optional `:`; either one continues. -/
 def typesP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
@@ -68,14 +68,14 @@ def typesP : Nat → List Nat → P (List Nat)
     let c ← opt .colon
     if p || c then typesP n (sins t acc) else pure (sins t acc)
 
-/-- An optional integer hop bound (cypher.rs:2989-2994, 2996-3001). -/
+/-- An optional integer hop bound (cypher.rs:3071-3076, 3078-3083). -/
 def hopP : P (Option Int) := do
   let c ← peek
   match c with
   | .int i => do next; pure (some i)
   | _ => pure none
 
-/-- The `*`-range (cypher.rs:2988-3013). -/
+/-- The `*`-range (cypher.rs:3070-3095). -/
 def varLenP : P (Option (Nat × Option Nat)) := do
   let st ← opt .star
   if st then do
@@ -89,7 +89,7 @@ def varLenP : P (Option (Nat × Option Nat)) := do
       | none => pure (some (1, none))
   else pure none
 
-/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs:3021-3025). -/
+/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs:3103-3107). -/
 def normVL (vl : Option (Nat × Option Nat)) : Option (Nat × Option Nat) :=
   if vl = some (1, some 1) then none else vl
 
@@ -97,7 +97,7 @@ def badRange : Option (Nat × Option Nat) → Bool
   | some (mn, some mx) => decide (mn > mx)
   | _ => false
 
-/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs:2968-3056). -/
+/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs:3050-3138). -/
 def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Nat × List Nat × ET × Option (Nat × Option Nat)) := do
   let a ← tryIdent
   let alias ← aliasOr a
@@ -110,7 +110,7 @@ def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Nat × List Nat × ET × O
   tok .rbrack
   pure (alias, types, attrs, normVL vl0)
 
-/-- `parse_relationship_pattern` (cypher.rs:2954-3100). Rust collects the
+/-- `parse_relationship_pattern` (cypher.rs:3036-3182). Rust collects the
 types through a `HashSet`, so their order is unspecified; the model keeps
 first-occurrence order (only membership is observable downstream). -/
 def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Nat) : P (QRel Nat × QNode Nat) := do
@@ -131,12 +131,12 @@ def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Nat) : P (QRel Nat ×
   else if inc then pure (QRel.new d.1 d.2.1 d.2.2.1 dst src false mn mx, dst)
   else pure (QRel.new d.1 d.2.1 d.2.2.1 src dst false mn mx, dst)
 
-/-- `add_pattern_node` (cypher.rs:1343-1354). -/
+/-- `add_pattern_node` (cypher.rs:1359-1370). -/
 def addPatNode (clause : CK) (gs : QG Nat × List Nat) (n : QNode Nat) : QG Nat × List Nat :=
   if n.alias ∈ gs.2 then (if clause = .match_ then gs.1.mergeNode n else gs.1, gs.2)
   else ((gs.1.addNode n).2, gs.2 ++ [n.alias])
 
-/-- The anonymous-path chain (cypher.rs:1529-1549). -/
+/-- The anonymous-path chain (cypher.rs:1545-1565). -/
 def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Nat → QG Nat × List Nat →
     P (QG Nat × List Nat)
   | 0, _, _ => fuelP
@@ -149,7 +149,7 @@ def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Nat → QG Nat �
       else chainA o F clause n rr.2 (addPatNode clause (ag.2, gs.2) rr.2)
     else pure gs
 
-/-- The named-path chain (cypher.rs:1504-1527). A repeated relationship
+/-- The named-path chain (cypher.rs:1520-1543). A repeated relationship
 variable is an error only in MATCH. -/
 def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Nat → List Nat →
     QG Nat × List Nat → P (QG Nat × List Nat)
@@ -166,19 +166,19 @@ def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Nat �
     else pure (((gs.1.addPath ⟨p, vars⟩).2), gs.2)
 
 /-- Identifier ids of `shortestPath` / `allShortestPaths` (compared
-case-insensitively at cypher.rs:1368, 1373; case folding is lexical). -/
+case-insensitively at cypher.rs:1384, 1389; case folding is lexical). -/
 def nmShortest : Nat := 4000001
 def nmAllShortest : Nat := 4000002
 
-/-- The rebuilt allShortestPaths relationship (cypher.rs:1425-1441). -/
+/-- The rebuilt allShortestPaths relationship (cypher.rs:1441-1457). -/
 def aspRel (r : QRel Nat) (la : Nat) : QRel Nat :=
   { QRel.new r.alias r.types r.attrs r.src r.dst r.bidir (some 1) r.maxH with
     asp := if !r.bidir && r.src.alias != la then .rev else .fwd }
 
-/-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs:1417-1424). -/
+/-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs:1433-1440). -/
 def minTooBig (r : QRel Nat) : Bool := match r.minH with | some m => decide (m > 1) | none => false
 
-/-- The allShortestPaths relationship loop (cypher.rs:1391-1476). -/
+/-- The allShortestPaths relationship loop (cypher.rs:1407-1492). -/
 def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Nat) : Nat → QNode Nat → Bool →
     List Nat → QG Nat × List Nat → P (Bool × List Nat × (QG Nat × List Nat))
   | 0, _, _, _, _ => fuelP
@@ -211,7 +211,7 @@ separator check. -/
 inductive PEnd | stop | cont | sep
   deriving DecidableEq
 
-/-- `p = allShortestPaths(...)` (cypher.rs:1373-1497), after `p =`. -/
+/-- `p = allShortestPaths(...)` (cypher.rs:1389-1513), after `p =`. -/
 def aspPart (o : Oracle) (F : Nat) (clause : CK) (p : Nat) (gs : QG Nat × List Nat) :
     P (PEnd × (QG Nat × List Nat)) := do
   next
@@ -227,7 +227,7 @@ def aspPart (o : Oracle) (F : Nat) (clause : CK) (p : Nat) (gs : QG Nat × List 
   let c ← peek
   if c = .comma then do next; pure (.cont, gs) else pure (.stop, gs)
 
-/-- One pattern part (cypher.rs:1363-1549). -/
+/-- One pattern part (cypher.rs:1379-1565). -/
 def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Nat × List Nat) :
     P (PEnd × (QG Nat × List Nat)) := do
   let a ← tryIdent
@@ -246,7 +246,7 @@ def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Nat × List Nat) :
     let gs' ← chainA o F clause F left (addPatNode clause gs left)
     pure (.sep, gs')
 
-/-- The part separator (cypher.rs:1551-1564): MERGE takes one part; `,`
+/-- The part separator (cypher.rs:1567-1580): MERGE takes one part; `,`
 continues; *the clause's own keyword also continues* (folding
 `MATCH a MATCH b` into one pattern). -/
 def sepP (clause : CK) : P Bool := do
@@ -257,7 +257,7 @@ def sepP (clause : CK) : P Bool := do
   | .kw k => if k = clause then do next; pure true else pure false
   | _ => pure false
 
-/-- `parse_pattern` (cypher.rs:1356-1566). -/
+/-- `parse_pattern` (cypher.rs:1372-1582). -/
 def patternLoop (o : Oracle) (F : Nat) (clause : CK) : Nat → QG Nat × List Nat → P (QG Nat)
   | 0, _ => fuelP
   | n + 1, gs => do

@@ -1,6 +1,6 @@
 import FalkorIndexLayer.IndexM
 /-
-# `Document::set`, vector arm (`graph/src/index/mod.rs:730-744`, #3087 @ 49f698d22)
+# `Document::set`, vector arm (`graph/src/index/mod.rs:731-744`, #3087 @ 49f698d22)
 
 ```rust
 if field.ty == IndexType::Vector {

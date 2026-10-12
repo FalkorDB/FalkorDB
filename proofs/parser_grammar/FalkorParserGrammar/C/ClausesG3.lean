@@ -9,7 +9,7 @@ namespace FalkorParserGrammar.C
 section
 variable (o : Oracle) (x : CExt)
 
-/-- What may follow a single query (cypher.rs:886-910). -/
+/-- What may follow a single query (cypher.rs:902-926). -/
 def GEnd (s s' : PS) : Prop :=
   (s.cur = .kw .union ∨ s.cur = .semi ∨ s.cur = .rbrace) ∧ s' = s ∨ s.cur = .eof ∧ s' = s.adv
 
@@ -388,7 +388,7 @@ theorem queryP_sound (hpp : o.PPRec) (F n : Nat) (s : PS) r s' (h : queryP o F n
     GQuery o CExt.rust s r s' := (sound_mut o hpp F n).1 s r s' h
 
 /-- `oC_Cypher`'s tail (Cypher.g4:31): `;`s then end of input
-(`expect_end_of_input`, cypher.rs:516-524; Cypher.g4 allows one `;`). -/
+(`expect_end_of_input`, cypher.rs:532-540; Cypher.g4 allows one `;`). -/
 inductive GSemis : PS → PS → Prop
   | eof {s} : s.cur = .eof → GSemis s s
   | semi {s s'} : s.cur = .semi → GSemis s.adv s' → GSemis s s'

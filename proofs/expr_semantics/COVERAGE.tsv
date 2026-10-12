@@ -30,8 +30,8 @@ graph/src/runtime/vectorized.rs	CmpOp::flip	84	PROVEN	CmpOp.flip: vec_cmp_int_fl
 graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	kI64: vec_cmp_int, vec_cmp_int_flip
 graph/src/runtime/vectorized.rs	compare_f64_column	162	PROVEN	kF64: vec_cmp_float, vec_cmp_float_flip
 graph/src/runtime/vectorized.rs	compare_value_column	229	MODELLED	thin wrapper; per-row compareValues proved (vec_cmp_generic), column loop not modelled
-graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	compareValues: vec_cmp_generic (= per-row evalCmp for every op)
-graph/src/runtime/vectorized.rs	compare_value_column_3vl	279	MODELLED	column loop over compareValues; loop itself not modelled
+graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	compareValues (Neq arm as #2917): vec_cmp_generic (= per-row evalCmp for every op), neq_eq_not_eq
+graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	MODELLED	column loop over compareValues; loop itself not modelled
 graph/src/runtime/eval.rs	classify_join_keys	86	PROVEN	EvalMore.classifyJoinKeys (classify_numeric FloatLane::None): classifyJoinKeys_lossless
 graph/src/runtime/eval.rs	RangeIter::next	111	PROVEN	rangeIterRel/rangeIterDbg: rangeIter_ok_up, rangeIter_wraps, rangeIter_panics, rangeIter_panics_down (bug)
 graph/src/runtime/eval.rs	NeighborIter::new	153	CONDITIONAL	BFS.NI.new (matrix rows abstract, G structure laws): new_directed_typed, new_directed_untyped || CONDITIONAL on G laws adj_union/transpose (adjacency = union of relation matrices, matrix_t = transpose; graph/tensor invariants, not linked)
@@ -57,21 +57,21 @@ graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1400	PROVEN	BFS.search/lev
 graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1529	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup
 graph/src/runtime/eval.rs	eval_quantifier	1616	NOT COVERED	list quantifiers; lists out of scope
 graph/src/runtime/eval.rs	all_equals	1665	PROVEN	evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive
-graph/src/runtime/eval.rs	all_not_equals	1688	PROVEN	evalCmp Neq: vec_cmp_generic
-graph/src/runtime/eval.rs	list_contains	1708	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
-graph/src/runtime/eval.rs	get_elements	1722	NOT COVERED	list slicing; lists out of scope
-graph/src/runtime/eval.rs	logical_xor	1755	PROVEN	scalarXor: xor_kleene
-graph/src/runtime/eval.rs	evaluate_param	1762	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
-graph/src/runtime/value.rs	Add::add	910	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
-graph/src/runtime/value.rs	Value::add_slow	925	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
-graph/src/runtime/value.rs	Sub::sub	1042	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
-graph/src/runtime/value.rs	Mul::mul	1091	PROVEN	vArith .mul: arith_agrees (scalar subset)
-graph/src/runtime/value.rs	Div::div	1120	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
-graph/src/runtime/value.rs	Rem::rem	1148	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
-graph/src/runtime/value.rs	OrderedEnum::order	1178	MODELLED	V.order (scalar subset; value_order proves the full table)
-graph/src/runtime/value.rs	CompareValue::compare_value	1225	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
-graph/src/runtime/value.rs	Contains::contains	1763	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
-graph/src/runtime/value.rs	compare_floats	1801	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
+graph/src/runtime/eval.rs	all_not_equals	1688	PROVEN	evalCmp Neq (#2917: null->null, NaN/disjoint->true): vec_cmp_generic, neq_eq_not_eq (<> = NOT =)
+graph/src/runtime/eval.rs	list_contains	1712	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
+graph/src/runtime/eval.rs	get_elements	1726	NOT COVERED	list slicing; lists out of scope
+graph/src/runtime/eval.rs	logical_xor	1759	PROVEN	scalarXor: xor_kleene
+graph/src/runtime/eval.rs	evaluate_param	1766	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
+graph/src/runtime/value.rs	Add::add	913	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
+graph/src/runtime/value.rs	Value::add_slow	928	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
+graph/src/runtime/value.rs	Sub::sub	1045	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
+graph/src/runtime/value.rs	Mul::mul	1094	PROVEN	vArith .mul: arith_agrees (scalar subset)
+graph/src/runtime/value.rs	Div::div	1123	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
+graph/src/runtime/value.rs	Rem::rem	1151	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
+graph/src/runtime/value.rs	OrderedEnum::order	1181	MODELLED	V.order (scalar subset; value_order proves the full table)
+graph/src/runtime/value.rs	CompareValue::compare_value	1228	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
+graph/src/runtime/value.rs	Contains::contains	1837	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	compare_floats	1875	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
 graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
 graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()
 graph/src/runtime/functions/math.rs	ceil	63	NOT COVERED	not modelled

@@ -1,7 +1,7 @@
 /-
 # Expression constructs outside the fragment of `Model.lean`: CASE,
 # quantifiers, reduce, list / pattern comprehensions, shortestPath
-# (cypher.rs:1568-1924, 2752-2913)
+# (cypher.rs:1584-1940, 2783-2995)
 
 Sub-expressions are the oracle `pe` (the expression parser re-entered).
 -/
@@ -16,7 +16,7 @@ abbrev PE := P ET
 /-- `if let Some(func) = find_aggregate_name(&e) { Err(..) }`. -/
 def noAgg (e : ET) : P ET := if (aggName e).isSome then fail else pure e
 
-/-! ## CASE (cypher.rs:1568-1598; Cypher.g4:378-388) -/
+/-! ## CASE (cypher.rs:1584-1614; Cypher.g4:378-388) -/
 
 def caseAlts (pe : PE) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
@@ -107,7 +107,7 @@ theorem caseP_sound (pe : PE) (F : Nat) (s : PS) t s' (h : caseP pe F s = .ok t 
         simp only [ite_true] at h6; exact .inl ⟨he, h6⟩
     exact .mk gsub (caseAlts_sound pe _ _ _ _ _ h4) hne gel hend
 
-/-! ## Quantifiers (cypher.rs:1600-1657; Cypher.g4:400-414) -/
+/-! ## Quantifiers (cypher.rs:1616-1673; Cypher.g4:400-414) -/
 
 def quantCode : CT → Option Nat
   | .kw .all => some 0 | .kw .any => some 1 | .kw .none => some 2 | .kw .single => some 3
@@ -170,7 +170,7 @@ theorem quantP_np (pe : PE) (hpe : NP pe) (s : PS) (hq : (quantCode s.cur).isSom
   | none => simp [h] at hq
   | some q => dsimp only; refine NP.run ?_ s; np_go
 
-/-! ## reduce (cypher.rs:1659-1735; Neo4j syntax, not in Cypher.g4) -/
+/-! ## reduce (cypher.rs:1675-1751; Neo4j syntax, not in Cypher.g4) -/
 
 /-- `parse_reduce_expr`, after `reduce(`. -/
 def reduceP (pe : PE) : P ET := do
@@ -249,7 +249,7 @@ theorem reduceP_sound (pe : PE) (s : PS) t s' (h : reduceP pe s = .ok t s') : GR
             exact .mk ha he h3 ai hc hit hin h8 al hp h11 ab hr
   · simp at h
 
-/-! ## List comprehension with projection (cypher.rs:2824-2859; Cypher.g4:394-395) -/
+/-! ## List comprehension with projection (cypher.rs:2906-2941; Cypher.g4:394-395) -/
 
 /-- `parse_list_comprehension`, after `[ var IN`. -/
 def listCompP (pe : PE) (v : Nat) : P ET := do

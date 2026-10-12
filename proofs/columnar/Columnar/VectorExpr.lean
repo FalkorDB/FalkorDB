@@ -62,7 +62,8 @@ def compareValue (other : V F → V F → Ordering × Flag) : V F → V F → Or
   | _, .null => (.gt, .comparedNull)
   | a, b => other a b
 
-/-- `compare_values` (`vectorized.rs:239-271`). -/
+/-- `compare_values` (`vectorized.rs:239-272`; `Neq` arm since #2917 7fdf06a0e: NaN and
+disjoint types are unequal). -/
 def compareValues (other : V F → V F → Ordering × Flag) (a b : V F) (op : CmpOp) : Option Bool :=
   let (ord, flag) := compareValue other a b
   match op with
@@ -72,7 +73,8 @@ def compareValues (other : V F → V F → Ordering × Flag) (a b : V F) (op : C
     | .none => some (ord == .eq)
   | .neq => match flag with
     | .comparedNull => none
-    | _ => some (ord != .eq)
+    | .nan | .disjoint => some true
+    | .none => some (ord != .eq)
   | _ => match flag with
     | .comparedNull | .disjoint => none
     | .nan => some false

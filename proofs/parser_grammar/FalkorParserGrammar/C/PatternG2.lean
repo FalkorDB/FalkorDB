@@ -9,7 +9,7 @@ namespace FalkorParserGrammar.C
 structure GExt where
   /-- A repeated relationship variable inside one pattern is silently
   dropped instead of rejected: MERGE, and CREATE in a named path
-  (cypher.rs:1514-1522 checks MATCH only). -/
+  (cypher.rs:1530-1538 checks MATCH only). -/
   dupDrop : Bool
 
 def GExt.g4 : GExt := ⟨false⟩

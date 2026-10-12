@@ -79,13 +79,14 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 
 ## CONFIRMED bugs (Rust repro fails; outputs recorded live vs C on ports 18270/18271)
 
-A. **`list.sort` panics on NaN, crashes server** — `list.rs:213`
-   (`sort_by` with `compare_value`). Same root cause as #2891 but a separate
-   call site not fixed by an ORDER BY fix. Query:
+A. **`list.sort` panics on NaN — FIXED by #2912 (b033aecc6).** Was: `list.rs:213`
+   (`sort_by` with `compare_value`): NaN is `Less` both ways, so std's sort panicked
+   and killed the server. Query:
    `WITH [x IN range(1,40) | CASE WHEN x % 3 = 0 THEN 0.0/0.0 ELSE toFloat(x % 7) END] AS l RETURN size(list.sort(l))`
-   → release redis-server dies ("user-provided comparison function does not correctly
-   implement a total order"); C returns 40. Test `bug_list_sort_nan_panics`.
-   Fix: sort with a total order (`total_cmp`-style NaN placement), as for #2891.
+   (C 40). Main sorts by `Value::sort_cmp` (`list.rs:210`), a total preorder
+   (proofs/value_order `Main.scMain_total`); the float arm is modelled here
+   (`listSort_float_cmp_antisymmetric`). The counterexample is kept as
+   `pre2912_listSort_cmp_not_antisymmetric`.
 B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
    inline `(normalized + count)`: `list.remove([1,2,3], 1, 9223372036854775807)`
    panicked in debug ("attempt to add with overflow"); release returned `[1]`
@@ -1324,20 +1325,35 @@ theorem startsWith_nonString : startsWith (.str ['a']) (.int 1) = .n ∧
 theorem startsWith_empty (s : Str) : startsWith (.str s) (.str []) = .t := by
   simp [startsWith]
 
-/-! ### `list.sort` (`list.rs:212-213`)
+/-! ### `list.sort` (`list.rs:197`, comparator `:210`)
 
-`sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
-(`value.rs:1801`) returns `Less` whenever `partial_cmp` is `None`. -/
+Before #2912: `sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
+returns `Less` whenever `partial_cmp` is `None`. Main (b033aecc6):
+`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1891`) puts NaN
+above every number and equal to itself. -/
 
 def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then .lt else o
 
-/-- **Bug A.** NaN is `Less` than 1.0 *and* 1.0 is `Less` than NaN, so the
-comparator is not antisymmetric; std's sort detects this and panics
-("user-provided comparison function does not correctly implement a total
-order"), which kills the server. Same root cause as #2891 (ORDER BY), separate
-call site. Repro: `bug_list_sort_nan_panics`. -/
-theorem listSort_cmp_not_antisymmetric :
+/-- **Bug A (history, fixed by #2912 b033aecc6).** NaN was `Less` than 1.0 *and* 1.0
+`Less` than NaN, so the comparator was not antisymmetric; std's sort detected this and
+panicked, which killed the server. Repro: `bug_list_sort_nan_panics`. -/
+theorem pre2912_listSort_cmp_not_antisymmetric :
     cmpFloatModel true false .gt = .lt ∧ cmpFloatModel false true .lt = .lt := ⟨rfl, rfl⟩
+
+/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp` (`o`, meaningful when neither is NaN),
+else `a.is_nan().cmp(&b.is_nan())`. -/
+def sortCmpF64Model (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
+  if aNaN || bNaN then compare aNaN bNaN else o
+
+/-- **Bug A fixed.** Main's float comparator is antisymmetric (swapping the operands,
+whose `partial_cmp` swaps too, reverses the answer) and NaN is equal to NaN and above
+every number. The whole of `sort_cmp` is a total preorder: proofs/value_order
+`Main.scMain_total`. -/
+theorem listSort_float_cmp_antisymmetric (aNaN bNaN : Bool) (o : Ordering) :
+    sortCmpF64Model bNaN aNaN o.swap = (sortCmpF64Model aNaN bNaN o).swap ∧
+    sortCmpF64Model true true o = .eq ∧ sortCmpF64Model true false o = .gt ∧
+    sortCmpF64Model false true o = .lt := by
+  cases aNaN <;> cases bNaN <;> simp [sortCmpF64Model] <;> decide
 
 end FalkorStrList

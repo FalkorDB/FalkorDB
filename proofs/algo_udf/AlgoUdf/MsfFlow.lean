@@ -7,7 +7,7 @@
 | `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1486 |
 | `componentKeys`       | MSF grouping :1832-1849 (component key = compact rep; isolated fallback keyed by *original* id) |
 | `flowAlign`           | maxFlow identity-compaction :3021-3075 and flow read-back :3226-3240 |
-| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3023-3025 |
+| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3026-3028 |
 
 GraphBLAS requires a monoid's operator to be associative and commutative with
 an identity (GrB spec §3.5, `GrB_Monoid_new`); `keepMin` is that operator.

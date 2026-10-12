@@ -80,7 +80,7 @@ deleted-id reuse breaks the one-map assumption of `attrs_agree` — #2876
 ## Suspected, unconfirmed
 - `Accessors.reuse_diverges`: with a node id present in both pending attribute maps,
   `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while
-  `properties(n)` reads only `new_nodes_attrs` (`pending.rs:493-500` vs `:509-512`).
+  `properties(n)` reads only `new_nodes_attrs` (`pending.rs:474-481` vs `:490-493`).
   Only reachable via id reuse (#2876), where `deleted_nodes` shadows both anyway.
 - `check_mem_capacity`: `usage_fn() as i64` wraps at 2^63 (`Misc.checkMem_wrap`); latent.
 

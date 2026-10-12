@@ -1,6 +1,6 @@
 /-
 # Query parameters and the parser's small helpers
-# (cypher.rs:155-358, 360-514)
+# (cypher.rs:155-374, 376-530)
 -/
 import FalkorParserGrammar.C.ClausesNP
 import FalkorParserGrammar.C.ExprC4
@@ -8,7 +8,7 @@ import FalkorParserGrammar.C.Oracle0
 
 namespace FalkorParserGrammar.C
 
-/-! ## Error classification (cypher.rs:131-170, 274-279) -/
+/-! ## Error classification (cypher.rs:131-170, 290-295) -/
 
 /-- `PARAM_VALUE_ERRORS` / `is_param_value_error`: membership in the list. -/
 def paramValueErrors : List String :=
@@ -29,7 +29,7 @@ theorem isPrefixOf_append_self (a b : List Char) : a.isPrefixOf (a ++ b) = true 
   | nil => rfl
   | cons x a ih => simp [List.isPrefixOf, ih]
 /-- Every `too_deep` message is recognised by `is_too_deep` (so it survives
-the parameter-error summary, cypher.rs:385-391). `format_error` wraps the
+the parameter-error summary, cypher.rs:401-407). `format_error` wraps the
 message; that wrapper is `proofs/lexer`'s `format_error`, which keeps the
 message as a prefix. -/
 theorem isTooDeep_tooDeep (n : Nat) : isTooDeep (tooDeep n) = true := by
@@ -46,7 +46,7 @@ theorem ELT.isEnd_spec (e : ELT) (c : CT) :
     e.isEnd c = true ↔ ∃ t, e = .closedBy t ∧ c = t := by
   cases e <;> simp [ELT.isEnd]
 
-/-! ## Parser state (cypher.rs:262-358) -/
+/-! ## Parser state (cypher.rs:277-374) -/
 
 /-- `Parser::new`: the counter starts at 0 (and depth / heights at 0, the
 pattern-comprehension flag unset). -/
@@ -78,7 +78,7 @@ def heightL : List ET → Nat
   | c :: cs => max (height c) (heightL cs)
 end
 
-/-- `tree_height` (cypher.rs:314-322): the explicit stack of (node, depth),
+/-- `tree_height` (cypher.rs:330-338): the explicit stack of (node, depth),
 with a budget. -/
 def thLoop : Nat → List (ET × Nat) → Nat → Option Nat
   | 0, _, _ => none
@@ -138,7 +138,7 @@ theorem treeHeight_spec (f : Nat) (t : ET) (r : Nat) (h : treeHeight f t = some 
   have := thLoop_spec f [(t, 1)] 0 r (by simp) h
   simp [pendMax] at this; omega
 
-/-! ## Literal parameters (cypher.rs:360-514) -/
+/-! ## Literal parameters (cypher.rs:376-530) -/
 
 /-- `Value` as far as literals go. -/
 inductive LV
@@ -153,7 +153,7 @@ def omInsert {α} (k : Nat) (v : α) : List (Nat × α) → List (Nat × α)
   | [] => [(k, v)]
   | (k', v') :: rest => if k' = k then (k, v) :: rest else (k', v') :: omInsert k v rest
 
-/-- Negation of a literal (cypher.rs:431-442); `Value::Float(-f)` is kept
+/-- Negation of a literal (cypher.rs:447-458); `Value::Float(-f)` is kept
 abstract. -/
 def negLit : LV → Option LV
   | .int i => if i = minI64 then some (.int minI64) else some (.int (-i))
@@ -161,7 +161,7 @@ def negLit : LV → Option LV
   | _ => some .null
 
 mutual
-/-- `parse_literal` (cypher.rs:429-453). -/
+/-- `parse_literal` (cypher.rs:445-469). -/
 def litP : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -176,7 +176,7 @@ def litP : Nat → P LV
       match v with
       | .int i => if i = minI64 then fail else pure v
       | _ => pure v
-/-- `parse_unsigned_literal` (cypher.rs:455-481). -/
+/-- `parse_unsigned_literal` (cypher.rs:471-497). -/
 def ulitP : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -191,7 +191,7 @@ def ulitP : Nat → P LV
     | .lbrack => listLitV n
     | .lbrace => mapLitV n
     | _ => fail
-/-- `parse_literal_list` (cypher.rs:483-496). -/
+/-- `parse_literal_list` (cypher.rs:499-512). -/
 def listLitV : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -206,7 +206,7 @@ def listItems : Nat → List LV → P LV
     if e then pure (.list (acc ++ [v])) else do
       tok .comma
       listItems n (acc ++ [v])
-/-- `parse_literal_map` (cypher.rs:498-514). -/
+/-- `parse_literal_map` (cypher.rs:514-530). -/
 def mapLitV : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -378,7 +378,7 @@ theorem lit_sound : ∀ n,
         simp only [ite_true] at h
         obtain ⟨rfl, rfl⟩ := pure_ok h; exact ⟨_, rfl, .last hk hcol gl hr⟩
 
-/-! ## `parse_param_value` and `parse_parameters` (cypher.rs:360-427) -/
+/-! ## `parse_param_value` and `parse_parameters` (cypher.rs:376-443) -/
 
 /-- The fast path is taken iff a literal parses and is followed by an
 identifier (the next `name=` or the query) or the end. -/
@@ -403,14 +403,14 @@ where
     | some v => pure v
     | none => fail
 
-/-- The `CYPHER` identifier (cypher.rs:369, not a keyword). -/
+/-- The `CYPHER` identifier (cypher.rs:385, not a keyword). -/
 def nmCypher : Nat := 6000002
 
 /-- `insert` into the parameter `HashMap`: a repeated name keeps the last value. -/
 def hmInsert {α} (k : Nat) (v : α) (m : List (Nat × α)) : List (Nat × α) :=
   (m.filter (fun p => p.1 != k)) ++ [(k, v)]
 
-/-- The inner `while let Some(id) = try_parse_ident()` (cypher.rs:372-394). -/
+/-- The inner `while let Some(id) = try_parse_ident()` (cypher.rs:388-410). -/
 def paramPairs (o : Oracle) (evp : ET → Option LV) (n : Nat) :
     Nat → List (Nat × LV) → P (List (Nat × LV))
   | 0, _ => fuelP
@@ -426,7 +426,7 @@ def paramPairs (o : Oracle) (evp : ET → Option LV) (n : Nat) :
         let v ← paramValueP o evp n
         paramPairs o evp n f (hmInsert id v acc)
 
-/-- `parse_parameters` (cypher.rs:360-399): the parameters and the rest of
+/-- `parse_parameters` (cypher.rs:376-415): the parameters and the rest of
 the query (here: the remaining tokens). -/
 def paramsP (o : Oracle) (evp : ET → Option LV) (n : Nat) :
     Nat → List (Nat × LV) → P (List (Nat × LV))
@@ -476,7 +476,7 @@ end
 /-- `CYPHER a=1 MATCH ...`: the pair loop stops at `MATCH` (no `=` follows)
 and leaves it for the query. -/
 theorem params_stop_at_query :
-    ((paramsP ⟨fun _ => fail, fail, fail, fun _ _ => 0, fun _ => none⟩ (fun _ => none) 5 5 [])
+    ((paramsP ⟨fun _ => fail, fail, fail, fun _ _ => 0, fun _ => none, fun _ => false⟩ (fun _ => none) 5 5 [])
       ([.ident nmCypher, .ident 1, .eq, .int 7, .kw .match_], 0)).isOk = true := by decide
 
 end FalkorParserGrammar.C

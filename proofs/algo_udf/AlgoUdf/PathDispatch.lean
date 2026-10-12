@@ -9,9 +9,9 @@ import AlgoUdf.DfsResult
 | `present`, `parseSp`   | `parse_sp_config` :2015-2049 (then `parse_common_path_config`, `Config`) |
 | `parseSs`              | `parse_ss_config` :2051-2068 |
 | `toNumeric`            | `to_numeric_value` :2070-2076 over `Marshal.F64` |
-| `algoSp`, `algoSs`     | `algo_sp_paths` :2659, `algo_ss_paths` :2671 (`parse_*_config(args)?` then `run_path_algo`) |
-| `Plan`, `plan`         | `run_path_algo` :2603-2651: Dijkstra fast path, BFS pre-pass, bound seeding, enumeration |
-| `bfsWeight`/`bfsCost`  | the forward folds :2393-2397 (`none` weight = a non-finite sum: `next_weight > NaN/inf` never prunes) |
+| `algoSp`, `algoSs`     | `algo_sp_paths` :2662, `algo_ss_paths` :2674 (`parse_*_config(args)?` then `run_path_algo`) |
+| `Plan`, `plan`         | `run_path_algo` :2606-2654: Dijkstra fast path, BFS pre-pass, bound seeding, enumeration |
+| `bfsWeight`/`bfsCost`  | the forward folds :2395-2400 (`none` weight = a non-finite sum: `next_weight > NaN/inf` never prunes) |
 
 Theorems:
 * `parseSp_ok`, `parseSp_missing`, `parseSp_not_node`, `parseSs_ok`, `parseSs_missing`.
@@ -192,7 +192,7 @@ def bfsCost (g : G) (es : List Rel) : Nat := costSum g es
 
 def u32Max : Nat := 4294967295
 
-/-- `run_path_algo` :2603-2651; `bfs` is `bfs_find_bound`'s result. -/
+/-- `run_path_algo` :2606-2654; `bfs` is `bfs_find_bound`'s result. -/
 def plan (g : G) (c : PCfg) (bfs : Option (Option (List Rel))) : Plan :=
   match c.tgt with
   | some t =>

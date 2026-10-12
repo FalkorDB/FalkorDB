@@ -253,13 +253,21 @@ theorem timeout_above_max_rejected :
     cReadFlags { c0 with timeoutMax := 100 } (pre ++ [b "TIMEOUT", b "101"]) = .error .exceedsMax := by
   decide
 
-/-- **Divergence (confirmed live, still open — `graph_core.rs` unchanged).** With
-`TIMEOUT_MAX = 100000`, a *write* sent with `TIMEOUT 1`: C arms a 1 ms timeout
-(`timeout_rw`), Rust parses `1` but `compute_effective_timeout` arms 100000 ms. -/
-theorem write_timeout_divergence :
+/-- **#2998, fixed by #3000 (`2e8172d76`).** With `TIMEOUT_MAX = 100000`, a *write* sent
+with `TIMEOUT 1`: C arms a 1 ms timeout (`timeout_rw`), and so does Rust now. -/
+theorem write_timeout_agrees :
     let c : TCfg := { timeoutMax := 100000, timeoutDefault := 0, legacy := 0 }
     (parseQueryFlags c.timeoutMax (pre ++ [b "TIMEOUT", b "1"])).map (·.timeout) = .ok (some 1) ∧
-    rustTimeout c (some 1) true = .ok (some 100000) ∧
+    rustTimeout c (some 1) true = .ok (some 1) ∧
+    (cReadFlags c (pre ++ [b "TIMEOUT", b "1"])).map (fun f => (f.timeout, f.timeoutRw))
+      = .ok (1, true) := by
+  decide
+
+/-- Historical (confirmed live before #3000): Rust armed 100000 ms instead of C's 1 ms. -/
+theorem pre3000_write_timeout_divergence :
+    let c : TCfg := { timeoutMax := 100000, timeoutDefault := 0, legacy := 0 }
+    (parseQueryFlags c.timeoutMax (pre ++ [b "TIMEOUT", b "1"])).map (·.timeout) = .ok (some 1) ∧
+    pre3000_rustTimeout c (some 1) true = .ok (some 100000) ∧
     (cReadFlags c (pre ++ [b "TIMEOUT", b "1"])).map (fun f => (f.timeout, f.timeoutRw))
       = .ok (1, true) := by
   decide

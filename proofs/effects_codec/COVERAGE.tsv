@@ -89,10 +89,10 @@ graph/src/effects/v3/test_aux.rs	graph_cell	42	NOT COVERED	TEST-ONLY: `#[cfg(tes
 graph/src/effects/v3/test_aux.rs	with_attrs	47	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/test_aux.rs	with_edge	59	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/test_aux.rs	live_node	71	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	digest	101	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	encode_all	112	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	round_trip	121	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
-graph/src/effects/v3/test_aux.rs	read_buffer	141	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	digest	102	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	encode_all	113	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	round_trip	122	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
+graph/src/effects/v3/test_aux.rs	read_buffer	142	NOT COVERED	TEST-ONLY: `#[cfg(test)] mod test_aux;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/mod.rs	compression_min_bytes	106	PROVEN	Format.compressionMinBytes: compressionMinBytes_neg, seal_disabled
 graph/src/effects/v3/mod.rs	seal	120	PROVEN	ModRs.sealBuf: seal_transparent
 graph/src/effects/v3/mod.rs	Opcode::is_batchable	180	PROVEN	RecFull.isBatchable: isBatchable_spec

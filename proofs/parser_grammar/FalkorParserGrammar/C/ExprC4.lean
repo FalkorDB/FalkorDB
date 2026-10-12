@@ -5,7 +5,7 @@ import FalkorParserGrammar.C.ExprC3
 
 namespace FalkorParserGrammar.C
 
-/-- shortestPath's type list: pushed in order (cypher.rs:1772-1780). -/
+/-- shortestPath's type list: pushed in order (cypher.rs:1788-1796). -/
 inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
   | last {s acc t} : identOf s.cur = some t → s.adv.cur ≠ .pipe → s.adv.cur ≠ .colon →
       GSpTypes s acc (acc ++ [t]) s.adv
@@ -14,12 +14,12 @@ inductive GSpTypes : PS → List Nat → List Nat → PS → Prop
        s.adv.cur ≠ .pipe ∧ s.adv.cur = .colon ∧ s1 = s.adv.adv) →
       GSpTypes s1 (acc ++ [t]) out s' → GSpTypes s acc out s'
 
-/-- shortestPath's `*` range (cypher.rs:1784-1807). -/
+/-- shortestPath's `*` range (cypher.rs:1800-1823). -/
 inductive GSpRange : PS → Nat × Option Nat → PS → Prop
   | none {s} : s.cur ≠ .star → GSpRange s (1, some 1) s
   | star {s r s'} : s.cur = .star → GRangeBody s.adv r s' → GSpRange s r s'
 
-/-- shortestPath's `[ ... ]` (cypher.rs:1765-1850), with no edge filter. -/
+/-- shortestPath's `[ ... ]` (cypher.rs:1781-1866), with no edge filter. -/
 inductive GSpDet : PS → List Nat × Nat × Option Nat → PS → Prop
   | bare {s} : s.cur ≠ .lbrack → GSpDet s ([], 1, some 1) s
   | det {s sa ts sb r sc} : s.cur = .lbrack →
@@ -95,7 +95,14 @@ theorem np_listLitP (F : Nat) (forb : Bool) : NP (listLitP o F forb) := by
   have := np_patCompP o ho F; have := np_listCompP (o.pe false) (np_pe o ho false)
   have := np_rejectAggregate; have hs : ∀ s, NP (setS s) := fun _ => ⟨fun _ => by simp⟩
   have ha : ∀ pv, NP (attempt (patCompP o F pv)) := fun pv => np_attempt (np_patCompP o ho F pv)
+  have hl : ∀ s, NP (listLitLit s) := fun s => by unfold listLitLit; np_go
   unfold listLitP listLitRest; np_go
+
+theorem np_listLitPU (F : Nat) (forb : Bool) : NP (listLitPU o F forb) := by
+  have := np_patCompP o ho F; have := np_listCompP (o.pe false) (np_pe o ho false)
+  have := np_rejectAggregate; have hs : ∀ s, NP (setS s) := fun _ => ⟨fun _ => by simp⟩
+  have ha : ∀ pv, NP (attempt (patCompP o F pv)) := fun pv => np_attempt (np_patCompP o ho F pv)
+  unfold listLitPU listLitRest; np_go
 
 end
 

@@ -12,11 +12,11 @@ namespace FalkorParserGrammar.C
 
 /-- Places where the Rust parser accepts more than Cypher.g4. -/
 structure Ext where
-  /-- `[:A:B]`: a type list separated by `:` alone (cypher.rs:2981-2984;
+  /-- `[:A:B]`: a type list separated by `:` alone (cypher.rs:3063-3066;
   Cypher.g4:255 needs `|`). C rejects it. -/
   typeColon : Bool
   /-- `MATCH a MATCH b` / `CREATE a CREATE b`: the next clause's keyword
-  continues the same pattern (cypher.rs:1555-1560, W2-binder-1). -/
+  continues the same pattern (cypher.rs:1571-1576, W2-binder-1). -/
   fold : Bool
   /-- `p = allShortestPaths(...)` in MATCH (Neo4j syntax, not in Cypher.g4). -/
   asp : Bool
@@ -196,7 +196,7 @@ theorem varLenP_sound (s : PS) r s' (h : varLenP s = .ok r s') : GRange s r s' :
       exact .star hs (.dots ga hd (hopP_sound _ _ _ h4))
 
 /-- `oC_RelationshipDetail` (Cypher.g4:246-247) after `[`, with the
-`[*1..1]` → single hop normalisation (cypher.rs:3021-3025). -/
+`[*1..1]` → single hop normalisation (cypher.rs:3103-3107). -/
 inductive GDetail (o : Oracle) (x : Ext) : PS → Nat × List Nat × ET × Option (Nat × Option Nat) → PS → Prop
   | mk {s a s1 ts s2 r s3 m s4} : GOptVar s a s1 →
       (ts = [] ∧ s2 = s1 ∨ s1.cur = .colon ∧ GTypes x s1.adv [] ts s2) →

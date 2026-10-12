@@ -1,4 +1,4 @@
-/-! # `uuid_v4` (redis_type.rs:783-802) and virtual-key names (:463-468)
+/-! # `uuid_v4` (redis_type.rs:790-809) and virtual-key names (:463-468)
 
 `uuid_v4` mixes the wall clock with a process-wide counter: `a = (nanos as u64) ^ seq`,
 `b = a * 6364136223846793005 + 1442695040888963407` (wrapping), and prints five

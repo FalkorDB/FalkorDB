@@ -4,11 +4,11 @@ import GraphQueries.Queries
 
 | here | there (graph.rs) |
 | --- | --- |
-| `resolveRels`  | `delete_relationships` phase 1 (:2777-2800) |
-| `deleteRels`   | `delete_relationships` :2767 (phase 2 :2802-2888; `release(rels, resolved)` :2807) |
-| `collectImplicit` | `delete_implicit_edges` collection loop (:2904-2948) |
-| `deleteImplicit`  | `delete_implicit_edges` :2894 (`release(freed, freed)` :3032-3035) |
-| `createRelsBulk`  | `create_relationships_bulk` :2518 (shape refusals :2538/:2420, `create` :2557) |
+| `resolveRels`  | `delete_relationships` phase 1 (:2864-2887) |
+| `deleteRels`   | `delete_relationships` :2853 (phase 2 :2889-2982; `release(rels, resolved)` :2894) |
+| `collectImplicit` | `delete_implicit_edges` collection loop (:2999-3043) |
+| `deleteImplicit`  | `delete_implicit_edges` :2988 (`release(freed, freed)` :3131-3134) |
+| `createRelsBulk`  | `create_relationships_bulk` :2594 (shape refusals :2614/:2420, `create` :2633) |
 
 Every id-space move goes through `O` (IdContract.lean); theorems that need
 its behaviour take `IdSpaceContract O`.
@@ -85,7 +85,7 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
         obtain ⟨tn0, -, rfl⟩ := htn
         simp [het]
 
-/-- **BUG (graph.rs:1229 + :2853).** When `relationship_type_matrix` is
+/-- **BUG (graph.rs:1251 + :2947).** When `relationship_type_matrix` is
 narrower than the type table — exactly what `get_type_id_mut` leaves behind —
 the bulk type-matrix removal is a no-op: a deleted edge keeps its type. -/
 theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
@@ -167,7 +167,7 @@ theorem collectImplicit_mem (tn : Ten) (dn ex : List Nat) (x : Nat × Nat × Nat
 /-- `RoaringTreemap::from_iter`: the ids as a set (first occurrence kept). -/
 def toSet (l : List Nat) : List Nat := l.foldl ins []
 
-/-- `delete_implicit_edges` (:2894). The tensors, endpoint index and masks
+/-- `delete_implicit_edges` (:2988). The tensors, endpoint index and masks
 move first; the freed ids go through `release(freed, freed)` (:3032) at
 the end, once, as one set. -/
 def deleteImplicit (O : IdSpaceOps) (g : G V) (dn ex : List Nat) :
@@ -263,7 +263,7 @@ theorem deleteImplicit_freed (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V)
 
 /-! ## `create_relationships_bulk` -/
 
-/-- `create_relationships_bulk` (:2518): refuse slices that disagree in
+/-- `create_relationships_bulk` (:2594): refuse slices that disagree in
 length (:2538) or repeat an id (:2548) — both before anything moves — then
 `relationship_ids.create(ids)` (:2557), capacity growth, registration and
 the logical effect: tensor, endpoint index, adjacency and type matrix all

@@ -128,10 +128,12 @@ Known before this wave (counterexamples added):
   `Repo.collision_accepted`, `dotted_collision`, `delete_breaks_other`, `case_folded`.
 * getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
-1. SPpaths/SSpaths charge a missing cost as 0 (algo_procedures.rs:2308, 2397, 2518);
-   C charges 1 per edge, so pathCost = hops without costProp and `maxCost` bounds hops.
-   `Paths.cost_default_diverges`; `bug_sppaths_missing_cost_defaults_to_zero`
-   (C 2, Rust 0), `bug_sppaths_max_cost_ignores_hops` (C no rows, Rust 1 row).
+1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
+   (algo_procedures.rs bound and enumeration); C charges 1 per edge, so pathCost = hops
+   without costProp and `maxCost` bounds hops. Now default 1.0 (:2399, :2521):
+   `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`; historical
+   `pre3113_cost_default_diverges`. The Dijkstra fast path (:2308) still reports 0 and C's
+   fast path does too (live, `Paths.dijkstra_cost_no_prop`).
 2. **FIXED by #3074** — UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
    `{name:'RegExp'}` becomes the string "[object Object]" (type_convert.rs:314-350).
    `Marshal.constructor_key_breaks_roundtrip`, `constructor_regexp_becomes_string`;

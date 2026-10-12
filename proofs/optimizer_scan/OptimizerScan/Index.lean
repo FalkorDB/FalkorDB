@@ -9,12 +9,12 @@ their `sel` agree on every node of the graph.
 | --- | --- |
 | `P`, `V`                   | `runtime::value::Value` restricted to Bool / Int / String / temporal / list-of-scalars (strings as `Nat` codes; Float, Point, Map not modelled) |
 | `eq3`, `ord3`, `Op.holds`  | Cypher three-valued `=`/`<`/… as a WHERE predicate (`runtime/value.rs` compare_value, `eval.rs`) — the reference semantics |
-| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:716-846` (Bool→0/1, Int NUMERIC; temporal not indexed since #3076; String→TAG; list→`:numeric:arr`/`:string:arr`) |
+| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:717-846` (Bool→0/1, Int NUMERIC; temporal not indexed since #3076; String→TAG; list→`:numeric:arr`/`:string:arr`) |
 | `Q`                        | `IndexQuery<Value>` after evaluation, `index/indexer.rs` |
-| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1356-1363` |
-| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1370-1372` |
-| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1476-1687` (`null_mut` ↦ `none`) |
-| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1690`, `graph/graph.rs:3775`) |
+| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1357-1363` |
+| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1371-1372` |
+| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1477-1687` (`null_mut` ↦ `none`) |
+| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1691`, `graph/graph.rs:3934`) |
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:250-287` |
 | `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-244` (InList → `Or` of the scalar items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
@@ -109,8 +109,8 @@ def encP : P → Fld
   | .i x => .num x
   | .s x => .tag x
 
-/-- `Document::set` (`index/mod.rs:758-845`). Since #3076 (e20300436) temporal values are not
-    indexed (`index/mod.rs:803`; before, they went in as NUMERIC timestamps — `IndexCex` C2). -/
+/-- `Document::set` (`index/mod.rs:759-845`). Since #3076 (e20300436) temporal values are not
+    indexed (`index/mod.rs:804`; before, they went in as NUMERIC timestamps — `IndexCex` C2). -/
 def enc : V → Option Fld
   | .b x => some (.num (bI x))
   | .i x => some (.num x)
@@ -162,7 +162,7 @@ def within (x : Int) (lo hi : Option Int) (il ih : Bool) : Bool :=
   (match hi with | none => true | some c => leB x c ih)
 
 mutual
-/-- `Index::build_query_node` (`index/mod.rs:1476-1687`); `none` is a null query node. -/
+/-- `Index::build_query_node` (`index/mod.rs:1477-1687`); `none` is a null query node. -/
 def build (F : List Nat) : Q → Option (Node → Bool)
   | .eq k v =>
     if k ∈ F then
@@ -177,8 +177,8 @@ def build (F : List Nat) : Q → Option (Node → Bool)
         match strB lo, strB hi with
         | some lo', some hi' =>
           -- `build_string_range_node`: equal bounds with an exclusive side select nothing
-          -- (#3072, `index/mod.rs:1433-1438`); both inclusive become an exact token match
-          -- (`index/mod.rs:1443-1455`).
+          -- (#3072, `index/mod.rs:1434-1438`); both inclusive become an exact token match
+          -- (`index/mod.rs:1444-1455`).
           some (fun n =>
             if lo'.isSome ∧ lo' = hi' then (il && ih) && enc (n.prop k) == some (.tag (lo'.getD 0))
             else match enc (n.prop k) with
@@ -204,14 +204,14 @@ def build (F : List Nat) : Q → Option (Node → Bool)
   | .and qs => (buildAll F qs).map (fun fs n => fs.all (· n))
   | .or qs => some (fun n => (buildSome F qs).any (· n))
 
-/-- AND: one null child nulls the whole intersection (`index/mod.rs:1568-1581`). -/
+/-- AND: one null child nulls the whole intersection (`index/mod.rs:1569-1581`). -/
 def buildAll (F : List Nat) : List Q → Option (List (Node → Bool))
   | [] => some []
   | q :: qs => match build F q, buildAll F qs with
     | some f, some fs => some (f :: fs)
     | _, _ => none
 
-/-- OR: null children are silently skipped (`index/mod.rs:1582-1594`). -/
+/-- OR: null children are silently skipped (`index/mod.rs:1583-1594`). -/
 def buildSome (F : List Nat) : List Q → List (Node → Bool)
   | [] => []
   | q :: qs => match build F q with

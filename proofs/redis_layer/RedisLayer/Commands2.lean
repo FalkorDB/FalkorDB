@@ -311,9 +311,16 @@ def heldReplicate (argv : List String) : Option (String × List String) :=
 theorem heldReplicate_verbatim (c : String) (rest : List String) :
     heldReplicate (c :: rest) = some (c, rest) := rfl
 
-/-- `BulkIndexDocs::publish`: commit each non-empty index batch. -/
+/-- The publish step of `graph_bulk_insert` (`g.commit_index_docs(&mut docs)`, :830 / :952;
+`BulkIndexDocs::publish` before #3307): bulk only adds, so `node_removes`/`edge_removes` are
+empty and `commit_index_docs` (graph.rs:3785, `GQ.commitIndexDocs` in proofs/graph_queries)
+applies the native index's remainder, then commits each non-empty RediSearch batch.
+Each token already applied its native changes (`apply_index_writes` in
+`process_node_token` :405 / `process_edge_token` :480). -/
 def publishOps (nodesEmpty edgesEmpty : Bool) : List String :=
-  (if nodesEmpty then [] else ["commit_index"]) ++ (if edgesEmpty then [] else ["commit_edge_index"])
+  ["apply_index_writes"] ++
+  (if nodesEmpty then [] else ["commit_index"]) ++
+  (if edgesEmpty then [] else ["commit_edge_index"])
 
 /-- `process_edge_token`: records = 16-byte endpoints + properties; more records than
 reserved ids is an error, `NULL` properties are dropped. -/
@@ -332,9 +339,15 @@ def discardOps (name : List Char) : List String := ["DEL " ++ String.ofList (Tel
 theorem discardOps_stream_first (n : List Char) :
     (discardOps n).head? = some ("DEL " ++ String.ofList (Telemetry.streamName n)) := rfl
 theorem maybeYield_null : maybeYield true = [] := rfl
-theorem publishOps_empty : publishOps true true = [] := rfl
+theorem publishOps_empty : publishOps true true = ["apply_index_writes"] := rfl
+/-- Nothing collected: no RediSearch indexer is called. -/
+theorem publishOps_no_indexer : "commit_index" ∉ publishOps true true ∧
+    "commit_edge_index" ∉ publishOps true true := by decide
+theorem publishOps_nonempty (a b : Bool) :
+    ("commit_index" ∈ publishOps a b ↔ a = false) ∧ ("commit_edge_index" ∈ publishOps a b ↔ b = false) := by
+  cases a <;> cases b <;> decide
 
-/-- `graph_bulk_insert` outcome (inline path, bulk_insert.rs:844-848; deferred path :964-975): since #2846 the version is
+/-- `graph_bulk_insert` outcome (inline path, bulk_insert.rs:828-832; deferred path :964-975): since #2846 the version is
 validated *before* the index documents are published, then committed; a refusal of
 either joins the token error, so a failed `BEGIN` load removes the graph it created
 and no RediSearch document outlives the discarded fork. -/

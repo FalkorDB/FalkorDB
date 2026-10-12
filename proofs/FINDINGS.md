@@ -1,17 +1,16 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-11): proofs cite `origin/main` @ e8f8a3017 (value_order's
-`SortCmp` module and proofs/pr2917_review also model #2912's `sort_cmp` from b033aecc6).
-There is one Lake project per area under `proofs/<area>/` (36 projects, including
-`pr2845_review` and `pr2917_review`).
+Current state (2026-10-12): proofs cite `origin/main` @ 4a4f2a72f.
+There is one Lake project per area under `proofs/<area>/` (37 projects, including
+`native_index`, `pr2845_review` and `pr2917_review`).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
 Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2478 non-FFI, non-test functions, 2452 are PROVEN and 26 CONDITIONAL (proven only
-under an undischarged hypothesis about other Rust code, named in the row); 1295 FFI
+2572 non-FFI, non-test functions, 2536 are PROVEN and 36 CONDITIONAL (proven only
+under an undischarged hypothesis about other Rust code, named in the row); 1291 FFI
 functions are AXIOMATISED; 0 unlisted. See `.claude/skills/proofs/SKILL.md` for how
 to work with them.
 
@@ -302,6 +301,14 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-12 on main (now 4a4f2a72f): #2350 (native numeric index), #3307 (native-index writes once per unit of work), #2912 (sort_cmp total order; closes #2891), #2917 (map <>, NaN grouping, min/max over NaN, vector/point keys; closes #2913), #2910 (lexer literals; closes #2909), #3104 (pattern-comprehension backtracking; closes #3103), #3000 (closes #2998), #3234 (closes #3233), #3262 (closes #3251), #3113 (closes #3109), plus #3181/#3192 (build/CI). Proofs re-targeted: 37 projects green; 2536 PROVEN + 36 CONDITIONAL of 2572 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
+  - New project `native_index` (#2350/#3307): key encoding preserves and reflects order and is injective except -0.0/+0.0 (`encodeF64_cmp`, `encodeF64_inj`); an index scan returns exactly what a label scan plus filter returns (`range_agrees`, `point_agrees`, `nodeScan_native_agrees`); the batched apply equals applying changes one by one (`applyColumn_eq_sequential`); updates and deletes remove the old entry; reader snapshots are isolated (`snapshot_isolated`). 13 rows are CONDITIONAL on CowBTree's tree invariant, which `remove_batch` still breaks (W7-btree-1, PR #3283). **Since #3307 `remove_batch` has a production caller** (`apply_writes` → `remove_encoded`), so W7-btree-1 is no longer latent; no content/range failure was found over batch-only sequences, and the panic still needs a single-key `remove`, which only tests call.
+  - Discharged: ops_aggregate `GroupKey::hash` and sort.rs `cmp_key`/`cmp`/`cmp` are PROVEN again on main's `sort_cmp` (`Discharge.hc_main`, `lawful_main`, ...); value_order's `cmp_key` row no longer counts a refutation as PROVEN; pr2917_review rows are live (merged code is byte-identical to 14e341cf4).
+  - Fixed, counterexamples kept as `pre<PR>_` history: W9-hash-1, W2-agg-3, W2-strlist-1, map `<>`, min/max over NaN (#2912/#2917); #2909 CRLF, `0e5`, non-canonical -2^63, postfix overflow, `\u+041` (#2910, confirmed live); W3-parser-9 exponential parse (#3104, confirmed live); W4-redis-1 slow-log crash (#3234); #2998 write TIMEOUT (#3000); W5-rdb-1 (#3262); W2-traverse-5 (#3113; the single-path shortcut still charges 0, as C does). Renamed: `sortCmp_not_antisymmetric`/`_not_transitive`, `floatLane_eq_cmpV`, `listSort_cmp_not_antisymmetric`, `partialCmpEq_not_transitive` → `pre2912_*`; `map_neq_both_false`, `min_nan_picks_larger`, `maxScalar_ne_batch_nan`, `SC.main_*_hash_differs` → `pre2917_*`.
+  - #3104's gate is exact on balanced brackets (`pipeScan_exact`) and failed attempts are linear (`failed_attempts_linear`), but "the gate never changes the parse" holds only under two premises (`listLitP_eq_ungated`). One is false today because of the slice-bound bug: `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` (invalid, unclosed `(`) was wrongly accepted before #3104 and is now a syntax error, as in C. The other (`MemoSound`: the memo key omits `anon_counter`) is unproven; no input was found where it matters.
+  - New, confirmed live, shared with C: an indexed `n.v > i64::MIN` drops matching rows because `int_loses_f64_precision` lets i64::MIN through while i64::MIN+1..+512 round to the same f64 (`i64min_hole`); C drops the same rows, and for `=` Rust is right where C returns extra rows. Suggested fix: reject when `unsigned_abs() >= 1<<52`. Bool and number share an index key (`bool_divergence`), pinned as C-compatible.
+  - Still present: W2-effects-4 (PR #3235), #2537 (external PR #3167), the Fx DISTINCT collision (#2780, not planned), `Value::eq` NaN/2^53 quirks (now harmless: grouping and sorting use `sort_cmp`).
+  - coverage.sh: `#[cfg(all(test, ...))]` modules count as test code.
 - 2026-10-11 (nothing merged): honest-coverage pass after the #2917 review miss — CONDITIONAL bucket, extended float/vector/point model, proofs/pr2917_review, new bug W9-hash-1. See Status → "Wave 9". 36 projects green; 2452 PROVEN + 26 CONDITIONAL of 2478 non-FFI fns.
 - 2026-10-08 on main (now e8f8a3017): #2907 (closes #2906), #2908 (closes #2901), #2920 (closes #2919), #3022 (closes #2924, #2978), #3081 (closes #2963 in part, #2100), plus #2829 (CREATE named paths), #3125 (compact date/time strings reject non-digits), #3127, #3132 (startNode/endNode accept null), #2489 (tests), #3179/#3182 (CI/deps). Proofs re-targeted: 35 projects green, 2478/2478 non-FFI, non-test fns PROVEN, 0 unlisted, 0 unmatched.
   - Fixed, with the counterexamples turned into correctness theorems (`pre<PR>_` history kept):

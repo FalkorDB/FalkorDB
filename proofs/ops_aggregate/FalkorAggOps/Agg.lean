@@ -138,53 +138,80 @@ theorem collectBatch_spec (acc xs : List V) :
           = collectBatch (collectStep acc x) xs from rfl, ih]
       simp [List.filter, h, collectStep]
 
-/-- An abstract `compare_value`: ordering + "compared against null" flag. -/
+/-- An abstract `compare_value`: ordering + "compared against null" flag + "NaN
+involved" flag (`DisjointOrNull::NaN`). -/
 structure Cmp (α : Type) where
   ord : α → α → Ordering
   nullFlag : α → α → Bool
+  nanFlag : α → α → Bool
 
-/-- `max_batch` / `min_batch` (aggregation.rs:412, :487): `best = Null` takes
-the first value, then `val` replaces `best` when strictly greater (less) and
-not a null comparison. `want = .gt` for max, `.lt` for min. -/
+/-- `max_batch` / `min_batch` (aggregation.rs:418, :495; since #2917 7fdf06a0e): `best =
+Null` takes the first value, then `val` replaces `best` when strictly greater (less) and
+neither a null nor a NaN comparison. `want = .gt` for max, `.lt` for min. -/
 def mmStep {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (v : α) : Option α :=
   match best with
   | none => some v
-  | some b => if c.ord v b == want && !c.nullFlag v b then some v else some b
+  | some b => if c.ord v b == want && !c.nullFlag v b && !c.nanFlag v b then some v else some b
 
 def mmBatch {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (xs : List (Option α)) :
     Option α :=
   xs.foldl (fun a v => match v with | none => a | some v => mmStep c want a v) best
 
-/-- The scalar `max` function body (aggregation.rs:119-128): keep `a` (the new
-value) when `b.compare_value(a)` is `Less` or a null comparison. -/
+/-- The scalar `max` function body (aggregation.rs:119-133, since #2917): keep `a` (the new
+value) when `b.compare_value(a)` is `Less` and not a NaN comparison, or a null comparison. -/
 def maxScalar {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
   match b with
   | none => some a
-  | some b => if c.ord b a == .lt || c.nullFlag b a then some a else some b
+  | some b => if (c.ord b a == .lt && !c.nanFlag b a) || c.nullFlag b a then some a else some b
 
-/-- For a comparison that is antisymmetric (`ord b a = lt ↔ ord a b = gt`) and
-never flags two non-null values, the scalar `max` and `max_batch` agree. -/
+/-- For a comparison that is antisymmetric where no NaN is involved
+(`ord b a = lt ↔ ord a b = gt`), whose NaN flag is symmetric, and that never flags two
+non-null values as a null comparison, the scalar `max` and `max_batch` agree — NaN
+included (since #2917). -/
 theorem maxScalar_eq_batch {α : Type} (c : Cmp α)
-    (anti : ∀ a b, c.ord b a = .lt ↔ c.ord a b = .gt)
+    (anti : ∀ a b, c.nanFlag a b = false → (c.ord b a = .lt ↔ c.ord a b = .gt))
+    (nanSymm : ∀ a b, c.nanFlag b a = c.nanFlag a b)
     (noflag : ∀ a b, c.nullFlag a b = false) (a : α) (b : Option α) :
     maxScalar c a b = mmStep c .gt b a := by
   cases b with
   | none => rfl
   | some b =>
-    simp only [maxScalar, mmStep, noflag, Bool.or_false, Bool.not_false, Bool.and_true]
-    by_cases h : c.ord b a = .lt
-    · have := (anti a b).mp h; simp [h, this]
-    · have : c.ord a b ≠ .gt := fun h' => h ((anti a b).mpr h')
-      simp [h, this]
+    simp only [maxScalar, mmStep, noflag, Bool.or_false, Bool.not_false, Bool.and_true, nanSymm a b]
+    cases hn : c.nanFlag a b
+    · by_cases h : c.ord b a = .lt
+      · have := (anti a b hn).mp h; simp [h, this]
+      · have : c.ord a b ≠ .gt := fun h' => h ((anti a b hn).mpr h')
+        simp [h, this]
+    · simp
 
-/-- A NaN-like element breaks antisymmetry (`value.rs` compare: NaN is `Less`
-both ways, known #2891/#2913): then scalar `max` and `max_batch` disagree. -/
+/-- A NaN-like element: `0` plays NaN, `Less` against everything in both directions, with
+the NaN flag set (as `compare_floats`). -/
 def nanCmp : Cmp Nat where
-  -- 0 plays NaN: Less against everything, both directions.
   ord a b := if a == 0 || b == 0 then .lt else compare a b
   nullFlag _ _ := false
+  nanFlag a b := a == 0 || b == 0
 
-theorem maxScalar_ne_batch_nan : maxScalar nanCmp 0 (some 5) ≠ mmStep nanCmp .gt (some 5) 0 := by
+/-- **Fixed by #2917**: with NaN comparisons ignored, scalar `max` and `max_batch` agree on
+NaN (`maxScalar_eq_batch` with `nanCmp`); a NaN never replaces nor is replaced. -/
+theorem maxScalar_eq_batch_nan : maxScalar nanCmp 0 (some 5) = mmStep nanCmp .gt (some 5) 0 ∧
+    mmStep nanCmp .gt (some 5) 0 = some 5 ∧ mmStep nanCmp .gt (some 0) 5 = some 0 := by
+  decide
+
+/-- History (e8f8a3017): `mmStep`/`maxScalar` ignored only null comparisons. -/
+def mmStepPre2917 {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (v : α) : Option α :=
+  match best with
+  | none => some v
+  | some b => if c.ord v b == want && !c.nullFlag v b then some v else some b
+
+def maxScalarPre2917 {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
+  match b with
+  | none => some a
+  | some b => if c.ord b a == .lt || c.nullFlag b a then some a else some b
+
+/-- **History, fixed by #2917 (7fdf06a0e)**: NaN broke antisymmetry and the scalar `max`
+and `max_batch` disagreed. -/
+theorem pre2917_maxScalar_ne_batch_nan :
+    maxScalarPre2917 nanCmp 0 (some 5) ≠ mmStepPre2917 nanCmp .gt (some 5) 0 := by
   decide
 
 /-- `avg_batch` (aggregation.rs:440) state `[sum, count, had_overflow]`. -/

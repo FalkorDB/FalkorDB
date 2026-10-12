@@ -99,7 +99,7 @@ theorem fmtIR_return (fe : ET → String) (p : Proj) (w : Bool) :
 
 /-! ## Parser glue -/
 
-/-- `add_pattern_node` (cypher.rs:1343-1354): a new alias is added; a
+/-- `add_pattern_node` (cypher.rs:1359-1370): a new alias is added; a
 repeated one is merged into the existing node in MATCH and ignored in
 CREATE / MERGE. -/
 theorem addPatNode_spec (cl : CK) (g : QG Nat) (seen : List Nat) (n : QNode Nat) :
@@ -108,12 +108,12 @@ theorem addPatNode_spec (cl : CK) (g : QG Nat) (seen : List Nat) (n : QNode Nat)
     (n.alias ∈ seen → cl ≠ .match_ → addPatNode cl (g, seen) n = (g, seen)) := by
   refine ⟨fun h => ?_, fun h hc => ?_, fun h hc => ?_⟩ <;> simp [addPatNode, *]
 
-/-- `match_dot_property_separator` (cypher.rs:2623-2640): consumes a `.`, fails otherwise. -/
+/-- `match_dot_property_separator` (cypher.rs:2654-2671): consumes a `.`, fails otherwise. -/
 theorem dotSep_spec (s : PS) : (s.cur = .dot → tok .dot s = .ok () s.adv) ∧
     (s.cur ≠ .dot → tok .dot s = .err) := by
   constructor <;> intro h <;> simp [tok, h]
 
-/-- `parse_property_name` (cypher.rs:2673-2685) reads exactly like `parse_ident`. -/
+/-- `parse_property_name` (cypher.rs:2704-2716) reads exactly like `parse_ident`. -/
 theorem propName_spec : propName = ident := rfl
 
 end FalkorParserGrammar.C

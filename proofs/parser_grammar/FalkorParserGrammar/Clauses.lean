@@ -6,7 +6,7 @@ import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar
 
-/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1819-1846)
+/-! ## `parse_shortest_path_expr`'s filter skipper (cypher.rs:1835-1862)
 
 ```rust
 let mut depth = 0i32;
@@ -43,7 +43,7 @@ theorem skipFilter_prefix_diverges (n : Nat) (d : Int) :
   | 0 | 1 | 2 | 3 | 4 => rfl
   | k + 5 => simp only [skipFilter, cur, adv]; exact skipFilter_eof_diverges k _
 
-/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3235-3241, 3317-3322)
+/-! ## `parse_set_items` / `parse_remove_items` targets (cypher.rs:3317-3323, 3399-3404)
 
 ```rust
 let (mut expr, recurse) = self.parse_primary_expr(false)?;
@@ -52,11 +52,11 @@ if recurse {
     expr = self.parse_expr(false)?; match_token!(self.lexer, RParen);
 }
 ```
-`recurse` is also `true` for a list literal `[` (2807-2810); since #3060
-(`fe619ac5f`) `reject_unparenthesized_target` (3289-3298) refuses any root but
+`recurse` is also `true` for a list literal `[` (2871-2875); since #3060
+(`fe619ac5f`) `reject_unparenthesized_target` (3371-3380) refuses any root but
 `Paren` before the `)` is demanded. -/
 
-/-- `reject_unparenthesized_target` (3289): `Ok` iff the root is `ExprIR::Paren`. -/
+/-- `reject_unparenthesized_target` (3371): `Ok` iff the root is `ExprIR::Paren`. -/
 def rejectUnparen (e : RT) (ts : List Tok) : Res Unit :=
   if e.root = .paren then .ok () ts else .err ts
 

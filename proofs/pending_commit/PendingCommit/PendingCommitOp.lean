@@ -1,23 +1,23 @@
 import PendingCommit.PendingDocs
 import PendingCommit.Labels
 /-
-# `Pending::commit` and constraint enforcement (pending.rs:1099-1496)
+# `Pending::commit` and constraint enforcement (pending.rs:1080-1475)
 
-* `constraintHas_eq` — `constraint_node_has_label` (:1331) answers from the
+* `constraintHas_eq` — `constraint_node_has_label` (:1310) answers from the
   staged label sets, then "created ⇒ no committed label", then the matrix; when
   created nodes carry no committed labels (fresh ids; reclaimed ids carry
   tombstones) that is exactly `Labels.overlay`, the query's own view.
-* `scan_ok` — the `seen` map scan of a UNIQUE check (:1396-1416, :1466-1486):
+* `scan_ok` — the `seen` map scan of a UNIQUE check (:1375-1395, :1466-1486):
   passes iff no two distinct entities with a full composite key share it.
-* `checkNode_spec`, `checkEdge_spec` — `check_node_constraint` (:1355) /
-  `check_edge_constraint` (:1425): MANDATORY passes iff every affected member
+* `checkNode_spec`, `checkEdge_spec` — `check_node_constraint` (:1334) /
+  `check_edge_constraint` (:1404): MANDATORY passes iff every affected member
   has every property; UNIQUE iff, when some affected member participates, the
   label's (type's) scan passes. Membership of an edge created in this batch
   comes from `created_rel_types`.
-* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1258): affected =
+* `affected_spec`, `enforce_spec` — `enforce_constraints` (:1237): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
   query fails iff some *operational* constraint's check fails.
-* `commit_spec` — `Pending::commit` (:1099), graph operations uninterpreted
+* `commit_spec` — `Pending::commit` (:1080), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
   `|created_rel_types|`, `Σ|remove_labels|`, the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
@@ -138,12 +138,12 @@ def check (ct : CT) (props : List Nat) (affected : List Nat) (member : Nat → B
     | .mandatory => props.all (present e)
     | .unique => key e = [] || scan key [] all
 
-/-- `check_node_constraint` (:1355): no such label ⇒ nothing to check. -/
+/-- `check_node_constraint` (:1334): no such label ⇒ nothing to check. -/
 def checkNode (labelExists : Bool) (ct : CT) (props affected : List Nat) (member : Nat → Bool)
     (present : Nat → Nat → Bool) (key : Nat → List Nat) (all : List Nat) : Bool :=
   !labelExists || check ct props affected member present key all
 
-/-- `check_edge_constraint` (:1425): type from `created_rel_types` for edges
+/-- `check_edge_constraint` (:1404): type from `created_rel_types` for edges
 created in this batch, else the graph. -/
 def edgeMember (p : P) (gHasType : Nat → Bool) (ty : Nat) (e : Nat) : Bool :=
   match fget p.relTypes e with
@@ -221,7 +221,7 @@ structure Constraint where
   isNode : Bool
   ok : Bool   -- the value of `checkNode` / `check_edge_constraint` for it
 
-/-- `enforce_constraints` (:1258): no constraints ⇒ `Ok`; otherwise every
+/-- `enforce_constraints` (:1237): no constraints ⇒ `Ok`; otherwise every
 operational constraint's check, in order, `?` on the first failure. -/
 def enforce (cs : List Constraint) : Bool := cs.all fun c => !c.operational || c.ok
 
@@ -261,6 +261,10 @@ structure GOps (G : Type) where
   deleteNodes : G → List Nat → Option G
   implicitEdges : G → List Nat → List Nat → Option (G × List Nat)
   deleteRels : G → List Nat → Option (G × List Nat)
+  /-- `Graph::apply_index_writes` (graph.rs:3768): applies the staged native-index changes
+  (`index_docs.native`) to this version; a no-op without `index-falkordb`. Its semantics are
+  proofs/index_layer's. -/
+  applyIndexWrites : G → G
   constraintsOk : G → P → Bool
 
 structure CS (G : Type) where
@@ -314,11 +318,13 @@ def stExplicit (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
 def stDelete (o : GOps G) (p : P) (c : CS G) : Option (CS G) :=
   (stDelNodes o p c).bind fun c9 => (stImplicit o p c9).bind (stExplicit o p)
 
-/-- `Pending::commit` (:1099), then `enforce_constraints` (:1224); the
-index-document absorb (:1232) is `PD.absorb_spec`. -/
+/-- `Pending::commit` (:1080): once every write is done, `apply_index_writes` (:1218, once
+for the whole `Commit`, since #3307) and then `enforce_constraints` (:1224, fn :1237) on that graph;
+the index-document absorb (:1231) is `PD.absorb_spec`. -/
 def finish (o : GOps G) (p : P) (c : CS G) : Option (P × G × Stats) :=
   let p' := { p with deletedR := c.imp.foldl sins [] ++ c.act }
-  if o.constraintsOk c.g p' then some (p', c.g, c.s) else none
+  let g' := o.applyIndexWrites c.g
+  if o.constraintsOk g' p' then some (p', g', c.s) else none
 
 def commit (o : GOps G) (p : P) (g0 : G) (s0 : Stats) : Option (P × G × Stats) :=
   (stCreate o p ⟨g0, s0, [], []⟩).bind fun c1 => (stRels o p c1).bind fun c2 => (stLabels o p c2).bind fun c3 =>

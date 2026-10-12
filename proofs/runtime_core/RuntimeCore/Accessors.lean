@@ -5,13 +5,13 @@
 | --- | --- |
 | `W`                       | the state a read sees: `Runtime.deleted_nodes`, `Pending.{new,existing}_nodes_attrs`, `Pending.{set,remove}_labels`, the committed `Graph` |
 | `OM.insert/remove/lookup` | `OrderMap::{insert,remove,get}` (assoc list, unique keys) |
-| `pendingGet`              | `Pending::get_node_attribute`, `runtime/pending.rs:485-501` |
+| `pendingGet`              | `Pending::get_node_attribute`, `runtime/pending.rs:466-482` |
 | `memoLookup`, `memoInsert`, `attrIdM` | `Runtime::{memo_lookup,memo_insert,node_attr_id}`, `runtime/runtime.rs:1407-1443` |
 | `getNodeAttribute`        | `Runtime::get_node_attribute` + `_no_delete_check`, `runtime.rs:1459-1490` |
 | `materialize`             | `Runtime::materialize_node_property_values`, `runtime.rs:1556-1598` |
-| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs:503-525`), `Runtime::get_node_attrs` (`runtime.rs:1739-1755`) |
-| `labelIds`, `hasLabelId`, `hasLabel` | `Runtime::get_node_labels` (`:1660-1672`), `node_has_label_id` (`:1725-1737`), `node_has_label` (`:1690-1703`); `Pending::{node_has_label,update_node_labels}` (`pending.rs:596-641`) |
-| `stage`, `unstage`        | `Pending::stage_node_labels` / `remove_node_labels` (`pending.rs:533-584`) |
+| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs:484-506`), `Runtime::get_node_attrs` (`runtime.rs:1739-1755`) |
+| `labelIds`, `hasLabelId`, `hasLabel` | `Runtime::get_node_labels` (`:1660-1672`), `node_has_label_id` (`:1725-1737`), `node_has_label` (`:1690-1703`); `Pending::{node_has_label,update_node_labels}` (`pending.rs:577-622`) |
+| `stage`, `unstage`        | `Pending::stage_node_labels` / `remove_node_labels` (`pending.rs:514-565`) |
 | `degree`                  | `Runtime::get_node_{in,out}degree{,_by_type}` (`runtime.rs:1804-1872`) |
 | `relEndpoints`, `relType` | `Runtime::get_relationship_{endpoints,type}` (`runtime.rs:1777-1802`) |
 
@@ -99,7 +99,7 @@ def lookupA (a : Nat) : List (Nat × Val) → Option Val
   | [] => none
   | p :: m => if p.1 = a then some p.2 else lookupA a m
 
-/-- `Pending::get_node_attribute` (`pending.rs:485-501`). -/
+/-- `Pending::get_node_attribute` (`pending.rs:466-482`). -/
 def pendingGet (w : W) (id a : Nat) : Option Val :=
   if !w.hasAttrs then none
   else
@@ -188,7 +188,7 @@ theorem materialize_eq (w : W) (bg : List Nat → Nat → List Val)
 
 /-! ### `get_node_attrs` agrees with `get_node_attribute` -/
 
-/-- One step of `update_node_attrs`'s loop (`pending.rs:513-523`). -/
+/-- One step of `update_node_attrs`'s loop (`pending.rs:494-504`). -/
 def attrStep (w : W) (m : OM) (p : Nat × Val) : OM :=
   match w.attrName p.1 with
   | none => m
@@ -442,7 +442,7 @@ def osRemove (s : List Nat) (x : Nat) : List Nat := s.filter (· ≠ x)
 def labelIds (w : W) (id : Nat) : List Nat :=
   (w.remL id).foldl osRemove ((w.setL id).foldl osInsert (w.committedLabels id))
 
-/-- `Pending::node_has_label` (`pending.rs:596-617`). -/
+/-- `Pending::node_has_label` (`pending.rs:577-598`). -/
 def pendingHas (w : W) (id l : Nat) : Option Bool :=
   if l ∈ w.remL id then some false else if l ∈ w.setL id then some true else none
 
@@ -539,7 +539,7 @@ theorem hasLabel_iff (w : W) (id : Nat) (name : String)
     · rintro ⟨l', hm, he⟩
       have := hreg l' hm; rw [he, hl] at this; simp at this; subst this; exact hm
 
-/-- `stage_node_labels` (`pending.rs:533-549`) and `remove_node_labels` (`:569-584`)
+/-- `stage_node_labels` (`pending.rs:514-530`) and `remove_node_labels` (`:550-565`)
 on one node's `(set, remove)` lists. -/
 def stage (set rem : List Nat) (ls : List Nat) : List Nat × List Nat :=
   (set ++ ls, rem.filter (· ∉ ls))

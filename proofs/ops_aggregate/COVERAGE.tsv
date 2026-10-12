@@ -1,38 +1,38 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/ops/aggregate.rs	eq	90	PROVEN	gkEq: gkEq_iff
-graph/src/runtime/ops/aggregate.rs	hash	101	CONDITIONAL	gkHash: gkHash_consistent (Hash agrees with Eq given Value Hash/Eq agree) || CONDITIONAL on hc (Value Hash agrees with Value::eq) is FALSE on main: value_order hash_not_consistent_with_eq, vec_zero_eq_but_hash_differs; PR #2917 discharges it for sort_cmp (pr2917_review gk_hash_consistent)
-graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	167	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
-graph/src/runtime/ops/aggregate.rs	args_for	208	PROVEN	argsFor: argsFor_spec
-graph/src/runtime/ops/aggregate.rs	fold	229	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
-graph/src/runtime/ops/aggregate.rs	new	280	PROVEN	AggSt.new: aggNew_spec, foldlM_setZero
-graph/src/runtime/ops/aggregate.rs	analyze	313	PROVEN	analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec
-graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	382	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	509	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; DISTINCT: hashed_dedup_merges_groups (BUG)
-graph/src/runtime/ops/aggregate.rs	extract_key_columns	781	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
-graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	830	PROVEN	extractAggs/aggCol: extractAggs_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_per_row	871	PROVEN	groupAll_spec, keyless_one_row
-graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	912	PROVEN	groupAll_spec, rowDriver_eq_batch
-graph/src/runtime/ops/aggregate.rs	run_agg_expr	981	PROVEN	rowDriver_eq_batch; DISTINCT branch: hashed_dedup_merges_groups, distinct_fold_clear_overcounts (BUGs)
-graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1082	PROVEN	setZero: setZero_eq, setZero_spec
-graph/src/runtime/ops/aggregate.rs	next	1111	PROVEN	aggNext/finishGroup: aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err; keyed_empty, keyless_one_row
-graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1230	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound
-graph/src/runtime/ops/aggregate.rs	hash_u64	1254	PROVEN	hashU64: hashU64_spec (trait decl; collision: hashed_dedup_merges_groups)
-graph/src/runtime/ops/aggregate.rs	hash_u64	1258	PROVEN	hashU64: hashU64_spec (collision bug: hashed_dedup_merges_groups)
+graph/src/runtime/ops/aggregate.rs	eq	94	PROVEN	gkEq (veq = sort_cmp == Equal since #2917): gkEq_iff, Discharge.veqMain_equiv (an equivalence on main)
+graph/src/runtime/ops/aggregate.rs	hash	110	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent = pr2917_review hashPR_consistent, copied under VO/)
+graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	176	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
+graph/src/runtime/ops/aggregate.rs	args_for	217	PROVEN	argsFor: argsFor_spec
+graph/src/runtime/ops/aggregate.rs	fold	238	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
+graph/src/runtime/ops/aggregate.rs	new	289	PROVEN	AggSt.new: aggNew_spec, foldlM_setZero
+graph/src/runtime/ops/aggregate.rs	analyze	322	PROVEN	analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec
+graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	391	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	518	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; DISTINCT: hashed_dedup_merges_groups (BUG)
+graph/src/runtime/ops/aggregate.rs	extract_key_columns	790	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
+graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	839	PROVEN	extractAggs/aggCol: extractAggs_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_per_row	880	PROVEN	groupAll_spec, keyless_one_row
+graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	921	PROVEN	groupAll_spec, rowDriver_eq_batch
+graph/src/runtime/ops/aggregate.rs	run_agg_expr	990	PROVEN	rowDriver_eq_batch; DISTINCT branch: hashed_dedup_merges_groups, distinct_fold_clear_overcounts (BUGs)
+graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1091	PROVEN	setZero: setZero_eq, setZero_spec
+graph/src/runtime/ops/aggregate.rs	next	1120	PROVEN	aggNext/finishGroup: aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err; keyed_empty, keyless_one_row
+graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1239	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound
+graph/src/runtime/ops/aggregate.rs	hash_u64	1263	PROVEN	hashU64: hashU64_spec (trait decl; collision: hashed_dedup_merges_groups)
+graph/src/runtime/ops/aggregate.rs	hash_u64	1267	PROVEN	hashU64: hashU64_spec (collision bug: hashed_dedup_merges_groups)
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
 graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
-graph/src/runtime/ops/sort.rs	cmp_key	76	CONDITIONAL	SortCmp.cmpKey: cmpKey_spec, cmpKey_lawful (compare_value laws as hypothesis, #2891) || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
+graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey (cv = Value::sort_cmp, #2912): cmpKey_spec, cmpKey_lawful with Lawful discharged: Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (from proofs/value_order Main.scMain_total, copied under VO/)
 graph/src/runtime/ops/sort.rs	eq	90	PROVEN	SortCmp.okEq: cmpKey_spec
 graph/src/runtime/ops/sort.rs	partial_cmp	99	PROVEN	SortCmp.okPartialCmp: cmpKey_spec
-graph/src/runtime/ops/sort.rs	cmp	107	CONDITIONAL	SortCmp.okCmp: cmpKey_spec, cmpKey_lawful || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
+graph/src/runtime/ops/sort.rs	cmp	107	PROVEN	SortCmp.okCmp: cmpKey_spec, Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (Lawful sort_cmp discharged: Discharge.lawful_main)
 graph/src/runtime/ops/sort.rs	compare_row_content	125	PROVEN	SortCmp.rowContent: rcLoop_eq_fold, rowContent_swap, rowContent_refl
 graph/src/runtime/ops/sort.rs	eq	156	PROVEN	SortCmp.heEq: heEq_partial, heapCmp_seq_strict
 graph/src/runtime/ops/sort.rs	partial_cmp	165	PROVEN	SortCmp.hePartialCmp: heEq_partial
-graph/src/runtime/ops/sort.rs	cmp	173	CONDITIONAL	SortCmp.heapCmp: heapCmp_swap, heapCmp_refl, heapCmp_seq_strict, lexCmp_swap || CONDITIONAL on Lawful compare_value is FALSE at e8f8a3017 (value_order sortCmp_not_antisymmetric); #2912's sort_cmp satisfies it (value_order sc_lawful) - discharge on re-target
+graph/src/runtime/ops/sort.rs	cmp	173	PROVEN	SortCmp.heapCmp: heapCmp_seq_strict, lexCmp_swap, Discharge.heapCmp_main (heapCmp_swap/heapCmp_refl with Lawful sort_cmp discharged: Discharge.lawful_main)
 graph/src/runtime/ops/sort.rs	classify_sort_key	203	PROVEN	SortKey.classifySortKey: classifySortKey_get, classifyPure_lossless
-graph/src/runtime/ops/sort.rs	new	249	PROVEN	SortSt.new: sort_new_spec
-graph/src/runtime/ops/sort.rs	build_full_sort	274	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
-graph/src/runtime/ops/sort.rs	build_top_k	387	PROVEN	rustStep_eq_sem, topk_eq_take_sort
-graph/src/runtime/ops/sort.rs	next	488	PROVEN	sort_skip_limit (cap = k + s, saturating)
+graph/src/runtime/ops/sort.rs	new	277	PROVEN	SortSt.new: sort_new_spec
+graph/src/runtime/ops/sort.rs	build_full_sort	302	PROVEN	isort, sorted_isort (+ truncate: sort_skip_limit)
+graph/src/runtime/ops/sort.rs	build_top_k	403	PROVEN	rustStep_eq_sem, topk_eq_take_sort
+graph/src/runtime/ops/sort.rs	next	504	PROVEN	sort_skip_limit (cap = k + s, saturating)
 graph/src/runtime/ops/limit.rs	new	32	PROVEN	LimitSt.new: limit_new_spec
 graph/src/runtime/ops/limit.rs	next	52	PROVEN	limitOp_spec, limit_zero
 graph/src/runtime/ops/skip.rs	new	32	PROVEN	SkipSt.new: skip_new_spec
@@ -46,26 +46,26 @@ graph/src/runtime/functions/aggregation.rs	register	49	NOT COVERED	registration 
 graph/src/runtime/functions/aggregation.rs	collect	55	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	count	77	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	sum	95	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	max	119	PROVEN	maxScalar_eq_batch (+ maxScalar_ne_batch_nan); also scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	min	140	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	avg	162	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	percentile	226	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer (same last-wins overwrite as percentile_batch)
-graph/src/runtime/functions/aggregation.rs	stdev	286	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	about_to_overflow	331	MODELLED	aboutToOverflow; #eval checks vs C (avg of [MAX,MAX,-MAX])
-graph/src/runtime/functions/aggregation.rs	count_batch	343	PROVEN	countBatch_spec, countStar_hom, countStar_rowwise, count_hom
-graph/src/runtime/functions/aggregation.rs	collect_batch	364	PROVEN	collectBatch_spec, collect_hom
-graph/src/runtime/functions/aggregation.rs	sum_batch	387	PROVEN	sum_hom (f64 accumulator: #eval of i64::MAX+1)
-graph/src/runtime/functions/aggregation.rs	max_batch	412	PROVEN	minmax_hom, maxScalar_eq_batch
-graph/src/runtime/functions/aggregation.rs	avg_batch	440	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
-graph/src/runtime/functions/aggregation.rs	min_batch	487	PROVEN	minmax_hom
-graph/src/runtime/functions/aggregation.rs	percentile_batch	518	PROVEN	pct_last_wins (BUG: C keeps first row's percentile)
-graph/src/runtime/functions/aggregation.rs	stdev_batch	549	PROVEN	stdev_hom
-graph/src/runtime/functions/aggregation.rs	finalize_avg	583	PROVEN	avg_empty
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	601	PROVEN	disc_index_in_bounds; partialCmpEq_not_transitive (BUG: NaN panics sort)
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	631	PROVEN	cont_index_in_bounds; partialCmpEq_not_transitive (BUG)
-graph/src/runtime/functions/aggregation.rs	modf	669	NOT COVERED	f64 libm split; no float reasoning
-graph/src/runtime/functions/aggregation.rs	finalize_stdev	675	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
-graph/src/runtime/functions/aggregation.rs	finalize_stdevp	697	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
+graph/src/runtime/functions/aggregation.rs	max	119	PROVEN	maxScalar (NaN comparisons ignored, #2917): maxScalar_eq_batch (= max_batch, NaN included), maxScalar_eq_batch_nan; history pre2917_maxScalar_ne_batch_nan; also scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs always prefers
+graph/src/runtime/functions/aggregation.rs	min	142	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
+graph/src/runtime/functions/aggregation.rs	avg	166	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
+graph/src/runtime/functions/aggregation.rs	percentile	230	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer (same last-wins overwrite as percentile_batch)
+graph/src/runtime/functions/aggregation.rs	stdev	290	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
+graph/src/runtime/functions/aggregation.rs	about_to_overflow	335	MODELLED	aboutToOverflow; #eval checks vs C (avg of [MAX,MAX,-MAX])
+graph/src/runtime/functions/aggregation.rs	count_batch	347	PROVEN	countBatch_spec, countStar_hom, countStar_rowwise, count_hom
+graph/src/runtime/functions/aggregation.rs	collect_batch	368	PROVEN	collectBatch_spec, collect_hom
+graph/src/runtime/functions/aggregation.rs	sum_batch	391	PROVEN	sum_hom (f64 accumulator: #eval of i64::MAX+1)
+graph/src/runtime/functions/aggregation.rs	max_batch	418	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom, maxScalar_eq_batch, maxScalar_eq_batch_nan
+graph/src/runtime/functions/aggregation.rs	avg_batch	448	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
+graph/src/runtime/functions/aggregation.rs	min_batch	495	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom; proofs/value_order min_nan_ignored
+graph/src/runtime/functions/aggregation.rs	percentile_batch	528	PROVEN	pct_last_wins (BUG: C keeps first row's percentile)
+graph/src/runtime/functions/aggregation.rs	stdev_batch	559	PROVEN	stdev_hom
+graph/src/runtime/functions/aggregation.rs	finalize_avg	593	PROVEN	avg_empty
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	611	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed); history pre2912_partialCmpEq_not_transitive
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	637	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed); history pre2912_partialCmpEq_not_transitive
+graph/src/runtime/functions/aggregation.rs	modf	671	NOT COVERED	f64 libm split; no float reasoning
+graph/src/runtime/functions/aggregation.rs	finalize_stdev	677	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
+graph/src/runtime/functions/aggregation.rs	finalize_stdevp	699	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
 graph/src/runtime/batch.rs	none	98	PROVEN	none_isNull
 graph/src/runtime/batch.rs	all	108	PROVEN	all_isNull
 graph/src/runtime/batch.rs	from_values	118	PROVEN	fromNulls_isNull
@@ -82,54 +82,54 @@ graph/src/runtime/batch.rs	get	340	NOT COVERED	columnar representation (typed la
 graph/src/runtime/batch.rs	len	357	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
 graph/src/runtime/batch.rs	is_empty	370	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
 graph/src/runtime/batch.rs	gather	377	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	compare_at	400	NOT COVERED	delegates to compare_value (proofs/value_order)
-graph/src/runtime/batch.rs	push_bound	430	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_left_of	443	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	for_rights	499	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	width	520	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	548	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	len	554	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	is_empty	560	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_row	566	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_row_with	577	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_merged	660	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	push_planned	694	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	grow_cols	722	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	finish_row	737	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	finish	750	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	831	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	from_columns	866	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	into_compacted	884	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	gather	897	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	merge_over_input	943	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	concat	979	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	concat_typed_column	1064	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1163	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	len	1172	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	active_len	1178	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	is_empty	1184	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	selection	1190	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	set_selection	1195	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	active_indices	1204	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	column	1213	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	set_column	1226	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	value_at	1264	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	compare_rows_at	1282	NOT COVERED	delegates to compare_value (proofs/value_order)
-graph/src/runtime/batch.rs	origin_row	1298	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	set_origin_rows	1319	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	num_columns	1328	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	is_bound_at	1336	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	write_column	1347	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	extract_node_ids	1372	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	extract_rel_ids	1385	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	new	1407	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	value_at	1417	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	to_owned_row	1432	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1458	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	size_hint	1481	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
-graph/src/runtime/batch.rs	set_argument_batch	1590	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	inspect_context	1722	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
-graph/src/runtime/batch.rs	next	1771	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	compare_at	399	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareAt_eq_scMain and proofs/columnar compareAt_spec
+graph/src/runtime/batch.rs	push_bound	429	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_left_of	442	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	for_rights	498	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	width	519	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	547	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	len	553	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	is_empty	559	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_row	565	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_row_with	576	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_merged	659	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	push_planned	693	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	grow_cols	721	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	finish_row	736	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	finish	749	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	830	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	from_columns	865	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	into_compacted	883	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	gather	896	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	merge_over_input	942	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	concat	978	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	concat_typed_column	1063	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1162	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	len	1171	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	active_len	1177	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	is_empty	1183	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	selection	1189	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	set_selection	1194	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	active_indices	1203	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	column	1212	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	set_column	1225	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	value_at	1263	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	compare_rows_at	1281	NOT COVERED	delegates to sort_cmp (#2912): proven in proofs/value_order Main.compareRowsAt_eq_scMain and proofs/columnar compareRowsAt_spec
+graph/src/runtime/batch.rs	origin_row	1297	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	set_origin_rows	1318	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	num_columns	1327	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	is_bound_at	1335	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	write_column	1346	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	extract_node_ids	1371	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	extract_rel_ids	1384	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	new	1406	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	value_at	1416	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	to_owned_row	1431	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1457	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	size_hint	1480	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
+graph/src/runtime/batch.rs	set_argument_batch	1589	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	inspect_context	1721	NOT COVERED	columnar representation (typed lanes, builders, concat/gather) abstracted: batch = list of active rows
+graph/src/runtime/batch.rs	next	1770	MODELLED	Batch modelled as its list of active rows (Ops.lean header); row-sequence semantics exercised by agrees_* tests
 graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitSt.new: commit_new_ro, commit_new_write
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error
@@ -155,3 +155,4 @@ graph/src/runtime/ops/load_csv.rs	next	253	PROVEN	LoadCsv.csvNext/headerPlan: cs
 graph/src/runtime/ops/load_csv.rs	new	321	PROVEN	LoadCsv.LcSt.new: lcNew_spec
 graph/src/runtime/ops/load_csv.rs	open_csv_records	350	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example
 graph/src/runtime/ops/load_csv.rs	next	438	PROVEN	LoadCsv.resolvePath/lcRowArgs: resolvePath_spec, lcRowArgs_spec
+graph/src/runtime/ops/sort.rs	tiebreak	237	PROVEN	SortCmp.tiebreak/tbCols: tiebreak_strict (distinct rows never tie), tiebreak_swap (antisymmetric given antisymmetric compare_at/compare_rows_at = sort_cmp: Discharge.lawful_main)

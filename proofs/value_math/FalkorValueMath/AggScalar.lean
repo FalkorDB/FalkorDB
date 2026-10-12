@@ -113,20 +113,28 @@ theorem sum_fold (vs : List (AV F)) (h : vs.all numOrNull) :
     simp only [List.all_cons, Bool.and_eq_true] at h
     cases v <;> simp_all [foldAgg, sum, isNull, numOrNull]
 
-/-! ## min (aggregation.rs:140) -/
+/-! ## min (aggregation.rs:142) -/
 
-/-- `b.compare_value(&a)` abstracted: ordering + `ComparedNull` flag. -/
-def min (cmp : AV F → AV F → Ordering × Bool) : AV F → AV F → Res (AV F)
-  | a, b => let (o, cn) := cmp b a; if o = .gt || cn then .ok a else .ok b
+/-- `b.compare_value(&a)` abstracted: ordering + `ComparedNull` flag + `NaN` flag. -/
+def min (cmp : AV F → AV F → Ordering × Bool × Bool) : AV F → AV F → Res (AV F)
+  | a, b => let (o, cn, nan) := cmp b a; if (o = .gt && !nan) || cn then .ok a else .ok b
 
 /-- With the accumulator starting at `Null` (compared-null with everything), the first
-non-null value is taken; afterwards `min` keeps the smaller under `compare_value`. -/
-theorem min_step (cmp : AV F → AV F → Ordering × Bool) (a b : AV F) :
-    min cmp a b = if (cmp b a).1 = .gt || (cmp b a).2 then .ok a else .ok b := rfl
+non-null value is taken; afterwards `min` keeps the smaller under `compare_value`, and a
+comparison against NaN decides nothing (#2917 7fdf06a0e, as C). -/
+theorem min_step (cmp : AV F → AV F → Ordering × Bool × Bool) (a b : AV F) :
+    min cmp a b = if ((cmp b a).1 = .gt && !(cmp b a).2.2) || (cmp b a).2.1 then .ok a else .ok b :=
+  rfl
 
-theorem min_from_null (cmp : AV F → AV F → Ordering × Bool) (a : AV F)
-    (hn : (cmp .null a).2 = true) : min cmp a .null = .ok a := by
+theorem min_from_null (cmp : AV F → AV F → Ordering × Bool × Bool) (a : AV F)
+    (hn : (cmp .null a).2.1 = true) : min cmp a .null = .ok a := by
   simp [min, hn]
+
+/-- A NaN comparison keeps the accumulator (since #2917; before, NaN's `Less`-both-ways
+order made the result depend on the input order). -/
+theorem min_nan_keeps (cmp : AV F → AV F → Ordering × Bool × Bool) (a b : AV F)
+    (hnan : (cmp b a).2.2 = true) (hcn : (cmp b a).2.1 = false) : min cmp a b = .ok b := by
+  simp [min, hnan, hcn]
 
 /-! ## avg (aggregation.rs:162) and `about_to_overflow` (:331) -/
 

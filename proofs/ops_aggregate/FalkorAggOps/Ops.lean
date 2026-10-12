@@ -568,17 +568,33 @@ theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
   have : (n - 1) * a / b < n - 1 := by rw [Nat.div_lt_iff_lt_mul hb]; exact this
   omega
 
-/-- The percentile sort comparator `partial_cmp(..).unwrap_or(Equal)`
-(aggregation.rs:615, :645) with NaN (modelled as `none`) is not transitive:
-1 ~ NaN ~ 3 but 1 < 3. std's sort panics on such comparators — confirmed:
-`lean_ops_aggregate::bug_percentile_with_nan_panics` (and it kills a live
-server). -/
+/-- History (e8f8a3017, fixed by #2912 b033aecc6): the percentile sort comparator
+`partial_cmp(..).unwrap_or(Equal)` (then aggregation.rs:615, :645) with NaN (modelled as
+`none`) was not transitive: 1 ~ NaN ~ 3 but 1 < 3. std's sort panicked on it (and killed a
+live server; `lean_ops_aggregate::bug_percentile_with_nan_panics`). -/
 def pcmpEq : Option Nat → Option Nat → Ordering
   | some a, some b => compare a b
   | _, _ => .eq
 
-theorem partialCmpEq_not_transitive :
+theorem pre2912_partialCmpEq_not_transitive :
     pcmpEq (some 1) none = .eq ∧ pcmpEq none (some 3) = .eq ∧ pcmpEq (some 1) (some 3) = .lt := by
   decide
+
+/-- Main (aggregation.rs:625, :651): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
+b.get_numeric()))` — `partial_cmp`, else NaN (`none`) above every number and equal to itself.
+Numbers are `Nat`s here (any total order on the non-NaN values gives the same laws; the
+f64 version is proofs/value_order `SC.scF64_key`/`SC.scF64_lw`). -/
+def pctCmp : Option Nat → Option Nat → Ordering
+  | some a, some b => compare a b
+  | some _, none => .lt
+  | none, some _ => .gt
+  | none, none => .eq
+
+/-- **Fixed by #2912**: the percentile comparator is a total preorder — reflexive,
+antisymmetric, transitive — so the sort cannot panic on NaN. -/
+theorem pctCmp_total (x y z : Option Nat) :
+    pctCmp x x = .eq ∧ pctCmp y x = (pctCmp x y).swap ∧
+    (pctCmp x y ≠ .gt → pctCmp y z ≠ .gt → pctCmp x z ≠ .gt) := by
+  cases x <;> cases y <;> cases z <;> simp [pctCmp, Nat.compare_eq_gt, Nat.compare_swap] <;> omega
 
 end FalkorAggOps

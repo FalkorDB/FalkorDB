@@ -5,15 +5,15 @@ import SearchConcurrency.Search
 | here | there |
 | --- | --- |
 | `vectorQuery` (generic over the id type) | the shared body of both fns below |
-| `vectorQueryNodes`  | `graph/src/graph/graph.rs:3978-4032` `vector_query_nodes`, `count = node_count()` (`:1040`) |
-| `vectorQueryEdges`  | `graph.rs:4038-4088` `vector_query_edges`, `count = relationship_count()` (`:1057`) |
-| `clampK`            | `graph.rs:3998` / `:4057` `k.min(count.max(1) as usize)` |
+| `vectorQueryNodes`  | `graph/src/graph/graph.rs:4188-4032` `vector_query_nodes`, `count = node_count()` (`:1040`) |
+| `vectorQueryEdges`  | `graph.rs:4248-4088` `vector_query_edges`, `count = relationship_count()` (`:1057`) |
+| `clampK`            | `graph.rs:4208` / `:4057` `k.min(count.max(1) as usize)` |
 | `KnnIndex.query`    | `node_indexer.vector_query` / `edge_indexer.vector_query_edges` (RediSearch FFI) |
-| `dimCheck`          | `graph.rs:3986-3993` / `:4046-4053` dimension-mismatch `Err` |
-| `attrKnown = false` | `graph.rs:4004-4006` / `:4063-4065` `return Ok(Vec::new().into_iter())` |
-| `outCap`            | `graph.rs:4014-4015` / `:4073-4074` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
-| `filterMap step`    | `graph.rs:4016-4025` / `:4075-4083` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
-| `mergeSort`         | `graph.rs:4030` / `:4086` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
+| `dimCheck`          | `graph.rs:4196-3993` / `:4046-4053` dimension-mismatch `Err` |
+| `attrKnown = false` | `graph.rs:4214-4006` / `:4063-4065` `return Ok(Vec::new().into_iter())` |
+| `outCap`            | `graph.rs:4224-4015` / `:4073-4074` `Vec::with_capacity(node_ids.len())` / `(triples.len())` |
+| `filterMap step`    | `graph.rs:4226-4025` / `:4075-4083` `let Value::VecF32 .. else continue` + `vec_distance::distance` |
+| `mergeSort`         | `graph.rs:4240` / `:4086` stable `sort_by(partial_cmp .. unwrap_or(Equal))` |
 
 RediSearch is a hypothesis structure (`KnnIndex`), not an axiom: it holds `ranked`, the
 index's documents in its own (approximate-distance) order, at most `count` of them
@@ -40,7 +40,7 @@ structure KnnIndex (α : Type) (count : Nat) where
   query : Nat → List α
   query_spec : ∀ k, query k = ranked.take k
 
-/-- `k.min(count.max(1) as usize)` (graph.rs:3998 / :4057). -/
+/-- `k.min(count.max(1) as usize)` (graph.rs:4208 / :4057). -/
 def clampK (k count : Nat) : Nat := min k (max count 1)
 
 /-- One loop iteration: `let Value::VecF32(v) = entity else continue;` then

@@ -238,7 +238,7 @@ theorem match_last_after_call_accepted (p : QG Nat) :
     validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .ok := by
   simp [validate, vClause, vCall, procCNI, procFTDrop, V.andThen]
 
-/-- `body_has_return` (cypher.rs:1089-1097). -/
+/-- `body_has_return` (cypher.rs:1105-1113). -/
 def bodyHasReturn : IR → Bool
   | .query cs _ => match cs.getLast? with
     | some (.return_ _ _) => true
@@ -279,7 +279,7 @@ theorem returnCols_last_return (cs : List IR) (p : Proj) (w b : Bool) :
 parser builds properties only through `parse_property_lookup`, which
 always attaches one) and createNodeIndex has an argument (its registry
 entry requires one: `args: [Type::Map]`, procedures.rs:328-330, checked by
-`func.validate` at cypher.rs:1048). -/
+`func.validate` at cypher.rs:1064). -/
 def ET.propOk : ET → Bool
   | .node (.prop _) [] => false
   | _ => true

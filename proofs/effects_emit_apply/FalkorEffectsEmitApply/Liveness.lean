@@ -4,13 +4,13 @@ import FalkorEffectsEmitApply.Apply
 # The apply side after #3022: every record that acts on an entity checks it is live
 
 Fixed by #3022 (`18fc277b9`; issues #2924, #2978; FINDINGS W2-effects-2/3). The
-node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:157`)
+node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:160`)
 now refuse a record naming an entity this replica does not hold live:
 
 | here | there (`apply.rs`) |
 | --- | --- |
-| `needLive` | `require_live` (`:648`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
-| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2245`; its Rust is proved against this spec in `proofs/graph_queries`) |
+| `needLive` | `require_live` (`:634`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
+| `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2321`; its Rust is proved against this spec in `proofs/graph_queries`) |
 | `applyRec .createNode` | `CreateNode` arm (`:203`) — `create_nodes` refuses a live id |
 | `applyRec .createEdge` | `CreateEdge` arm (`:254`) — `require_live((src ∪ dst) − released)` (`:279-280`), then `create_relationships_bulk` refuses a live or repeated id |
 | `applyRec .updateNode` | `UpdateNode` arm (`:308`) — `require_live` (`:314`) |
@@ -18,7 +18,7 @@ now refuse a record naming an entity this replica does not hold live:
 | `applyRec .setLabels/.removeLabels` | `:348` / `:360` — `require_live` (`:349`, `:361`) |
 | `applyRec .deleteNode` | `DeleteNode` arm (`:380`) — `require_live` (`:386`), `NodeHasRelationships` (`:390-392`), then `delete_nodes` (records `released`) |
 | `applyRec .deleteEdge` | `DeleteEdge` arm (`:403`) — `delete_relationships` refuses a non-live id |
-| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs:1524`), run by `apply_effects` (`:86`) |
+| `danglingRel` | `Graph::validate`'s `verify_created_relationships` (`graph.rs:1546`), run by `apply_effects` (`:92`) |
 
 The replica is abstract (as in `Apply.lean`): node liveness, labels, properties,
 live relationships `(id, src, dst)` with properties, and the batch's `released`

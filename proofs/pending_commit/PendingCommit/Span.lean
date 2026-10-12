@@ -43,7 +43,7 @@ def get : List Entry → Nat → Option Val
 def mem (l : List Entry) (k : Nat) : Bool := (get l k).isSome
 
 /-- Strictly ascending by attribute id: `debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0))`
-(pending.rs:431, `insert_attrs_rows` :1231). -/
+(pending.rs:412, `insert_attrs_rows` :1231). -/
 def Sorted (l : List Entry) : Prop := List.Pairwise (fun a b => a.1 < b.1) l
 
 /-- No stored nulls. -/

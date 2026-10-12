@@ -41,25 +41,25 @@ graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	PROVEN	PathD
 graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
 graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2070	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
 graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2092	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
-graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2104	PROVEN	Paths.cost_default_diverges, cost_agree_when_present
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2104	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop (W2-traverse-5 fixed by #3113 8a66c01e5; pre3113_cost_default_diverges kept)
 graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2121	PROVEN	Paths.far_outgoing, far_incoming, far_both
 graph/src/runtime/functions/algo_procedures.rs	node_successors	2153	PROVEN	Graph.mem_succs, succs_map_fst_sublist
 graph/src/runtime/functions/algo_procedures.rs	cmp	2188	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
 graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2203	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
 graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2219	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates
 graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2322	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
-graph/src/runtime/functions/algo_procedures.rs	record_found_path	2405	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
-graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2469	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
-graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2572	PROVEN	Paths.nextNode_far
-graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2603	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
-graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2654	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2659	PROVEN	PathDispatch.algoSp_spec
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2666	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2671	PROVEN	PathDispatch.algoSs_spec
-graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2680	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2685	PROVEN	Compact.harmonic_correct_iff, unfiltered_drops_high_ids
-graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2844	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2849	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2407	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2471	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2575	PROVEN	Paths.nextNode_far
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2606	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2657	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2662	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2669	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2674	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2683	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2688	PROVEN	Compact.harmonic_correct_iff, unfiltered_drops_high_ids
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2847	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2852	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
 graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
 graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
 graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear

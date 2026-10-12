@@ -99,7 +99,7 @@ theorem boolean_levels (a b c : Nat) :
 
 Each is reproduced against the Rust in `graph/tests/lean_parser_grammar.rs`. -/
 
-/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs:2193-2203), as the
+/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs:2209-2219), as the
 grammar does — `NOT` type-checks its operand, so `RETURN NOT NOT 1` is a type error (C
 too). Historical (2c874022a, `not_not_dropped`): the parity fold returned `x`. -/
 theorem not_not_kept :
@@ -117,7 +117,7 @@ theorem not_run_folds :
   decide
 
 /-- **A predicate after `IS NULL` is accepted** with the grammar's tree (#3060,
-cypher.rs:2410-2413 comes back to level 5). Historical (2c874022a,
+cypher.rs:2426-2429 comes back to level 5). Historical (2c874022a,
 `is_null_then_predicate_rejected`): it returned to the parent level and was rejected. -/
 theorem is_null_then_predicate :
     parseAll 400 [.int 1, .kw .is_, .kw .null, .kw .in_, .ident 3] =
@@ -127,7 +127,7 @@ theorem is_null_then_predicate :
   decide
 
 /-- A failed slice bound is silently replaced by `0` / `i64::MAX`
-(cypher.rs:2124-2132): `x[1 + ..2]`, `x[abs()..2]`, `x[(..2]` are all
+(cypher.rs:2140-2148): `x[1 + ..2]`, `x[abs()..2]`, `x[(..2]` are all
 accepted as `x[0..2]`, where the grammar (and C) reject them. -/
 theorem slice_bound_error_swallowed :
     parseAll 400 [.ident 3, .lbrack, .int 1, .plus, .dotdot, .int 2, .rbrack] =
@@ -140,7 +140,7 @@ theorem slice_bound_error_swallowed :
     (∃ e, G.all 200 [.ident 3, .lbrack, .ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) := by
   refine ⟨rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
 
-/-- **A trailing comma in a call is refused** (#3060, cypher.rs:2729-2739), as in the
+/-- **A trailing comma in a call is refused** (#3060, cypher.rs:2760-2770), as in the
 grammar and C; `f()` and `f(1)` still parse. Historical (2c874022a, `call_trailing_comma`):
 `abs(1,)` was accepted as `abs(1)`. -/
 theorem call_trailing_comma_refused :
@@ -156,7 +156,7 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
     exprList pe (n + 1) [] (.comma :: r) = .err (.comma :: r) := by
   simp [exprList, cur, exprItems, h]
 
-/-- `+-x` is accepted (cypher.rs:2207-2208 reads an optional `+` then an
+/-- `+-x` is accepted (cypher.rs:2223-2224 reads an optional `+` then an
 optional `-`), while `- -x` and `-+x` are rejected (#2309). The grammar
 allows exactly one sign. -/
 theorem sign_sequences :
@@ -169,7 +169,7 @@ theorem sign_sequences :
 /-- The parse is deterministic: `parse_expr` is a function of its input
 (no hidden state survives a `restore_state`; the model has none to begin
 with, `anon_counter` is saved and restored by `save_state`/`restore_state`,
-cypher.rs:341-354). -/
+cypher.rs:357-370). -/
 theorem parse_deterministic (n : Nat) (ts : List Tok) (r r' : Out)
     (h : parseAll n ts = r) (h' : parseAll n ts = r') : r = r' := h ▸ h'
 

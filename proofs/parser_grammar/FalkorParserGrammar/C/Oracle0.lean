@@ -33,7 +33,8 @@ def pp0 : P (ET × Bool) := fun s =>
 def pmap0 : P ET := fun s =>
   if s.cur = .lbrace ∧ s.adv.cur = .rbrace then .ok (leaf .map) s.adv.adv else .err
 
-def o0 : Oracle := ⟨pe0, pp0, pmap0, fun _ _ => 0, fun f => if f = [77] then some ⟨0, 1, [5], true⟩ else none⟩
+def o0 : Oracle := ⟨pe0, pp0, pmap0, fun _ _ => 0, fun f => if f = [77] then some ⟨0, 1, [5], true⟩ else none,
+  fun _ => false⟩
 
 def run {α} (x : P α) (ts : List CT) : R α := x (ts, 0)
 

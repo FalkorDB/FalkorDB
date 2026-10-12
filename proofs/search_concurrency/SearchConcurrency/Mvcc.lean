@@ -11,11 +11,11 @@ the interleaving is arbitrary (`Step` is a relation, any enabled event may fire)
 | `Ev.read`                  | `MvccGraph::read` (`:103`) — clone of the committed Arc |
 | `Ev.claim`                 | `MvccGraph::write` (`:108`) — CAS false→true, `new_version()` of the committed graph |
 | `Ev.mutate`                | any mutation on the private version (runtime `Commit` op) — requires writer mode, `query_session.rs:221` |
-| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` (`src/graph_core.rs:1497`, `mvcc_graph.rs:139`): since #2846 `Graph::validate` first (`valid`, :148); refused ⇒ `rollback` + `Err` (:148-151), else Arc swap + `store(false)` (:216-217), in writer mode |
-| `Ev.rollback`              | `MvccGraph::rollback` (`:221`) via `abandon_write`/`finish_write` (`graph_core.rs:1423,1453`) |
+| `Ev.commit`                | `commit_and_replicate` → `MvccGraph::commit` (`src/graph_core.rs:1502`, `mvcc_graph.rs:139`): since #2846 `Graph::validate` first (`valid`, :148); refused ⇒ `rollback` + `Err` (:148-151), else Arc swap + `store(false)` (:216-217), in writer mode |
+| `Ev.rollback`              | `MvccGraph::rollback` (`:221`) via `abandon_write`/`finish_write` (`graph_core.rs:1428,1453`) |
 | `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:242`): drop read lock, `Gil::acquire`, `write_arc` |
 | `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:136`, `graph_is_registered` `:188`) |
-| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1671`), main thread, GIL held |
+| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1676`), main thread, GIL held |
 | `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs:350` `pre_fork_prepare`, `module_init.rs:120` `on_fork_child`) |
 
 Transactions are lists of abstract writes; a version is the list of all writes it
@@ -56,7 +56,7 @@ inductive Ev where
 deriving Repr
 
 /-- One atomic step. `none` = not enabled. `valid` is `Graph::validate`
-(graph.rs:1507) on the private version. -/
+(graph.rs:1529) on the private version. -/
 def step (valid : List W → Bool) (s : S) : Ev → Option S
   | .read _ => some { s with seen := s.pub :: s.seen }
   | .claim t => match s.slot with

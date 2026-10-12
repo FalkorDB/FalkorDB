@@ -1,14 +1,14 @@
-/-! # Loading keys into the keyspace (redis_type.rs:77-176, :722-780, :851-870)
+/-! # Loading keys into the keyspace (redis_type.rs:84-183, :729-787, :858-877)
 
 | here | there |
 | --- | --- |
-| `ioKeyName`           | `io_key_name` (:77-88): NULL name → `""`, else the lossy UTF-8 rendering |
+| `ioKeyName`           | `io_key_name` (:84-95): NULL name → `""`, else the lossy UTF-8 rendering |
 | `MS`, `alloc`         | `GRAPH_REGISTRY`, `DECODE_STATE.placeholders`, and the `Arc<RwLock<ThreadedGraph>>` values (`some none` = a placeholder `ThreadedGraph`, `some (some v)` = a loaded graph) |
-| `loadWhole`           | `graph_rdb_load`, `LoadedKey::Graph` arm (:98-108) |
-| `loadPartial`         | `graph_rdb_load`, `LoadedKey::Partial` arm (:109-162) |
-| `finalizePending`     | `finalize_pending_graphs` (:722-754) + `install_graph` (:757-780) |
-| `metaLoad`            | `graphmeta_rdb_load` (:851-867) |
-| `cacheOnLoad`         | the `DEFAULT_CACHE_SIZE` (:66) every RDB load passes to `rdb_load_graph` |
+| `loadWhole`           | `graph_rdb_load`, `LoadedKey::Graph` arm (:105-115) |
+| `loadPartial`         | `graph_rdb_load`, `LoadedKey::Partial` arm (:116-169) |
+| `finalizePending`     | `finalize_pending_graphs` (:729-761) + `install_graph` (:764-787) |
+| `metaLoad`            | `graphmeta_rdb_load` (:858-874) |
+| `ioCacheSize`, `cacheOnLoad` | `io_cache_size` (:69), which every RDB load passes to `rdb_load_graph` (since #3262) |
 
 `fin` is `DECODE_STATE.finalized[graph_name]` as the decoder (`Persist.Pending`) leaves it:
 `none` after every key but the last of a multi-key graph, the finished graph after the last.
@@ -17,7 +17,8 @@
   the load order, after `finalize_pending_graphs` the registry entry for the graph and the
   value Redis holds under its key are the **same** `Arc`, holding the finished graph; no
   virtual key is registered; all placeholders are dropped.
-* `cache_size_ignored` — a loaded graph's query cache is 25 whatever `CACHE_SIZE` says.
+* `cache_size_on_load` — a loaded graph's query cache has the configured `CACHE_SIZE`
+  (#3262; `pre3262_cache_size_ignored` records the old constant 25).
 -/
 namespace GraphPersist.RedisType
 
@@ -191,7 +192,7 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
     rw [a1]; exact hf.reg k (List.mem_cons_of_mem _ hk)
   · intro n; simp [ms3, finalizePending]
 
-/-- `graphmeta_rdb_load` (:851): decode like a graph key, keep a dummy byte on success,
+/-- `graphmeta_rdb_load` (:858): decode like a graph key, keep a dummy byte on success,
 NULL (load failure) on error. -/
 def metaLoad {E : Type} (res : Except E Unit) : Option Unit :=
   match res with
@@ -203,21 +204,35 @@ theorem metaLoad_spec {E : Type} (e : E) : metaLoad (.ok () : Except E Unit) = s
 
 /-! ## Cache size on load -/
 
-/-- `DEFAULT_CACHE_SIZE` (:66), passed by `graph_rdb_load` (:97) and `graphmeta_rdb_load`
-(:856); unchanged by #3161, which only dropped the placeholder graph `create_virtual_keys` built with it. -/
-def DEFAULT_CACHE_SIZE : Nat := 25
+/-- `io_cache_size` (:69-73): `RedisModule_GetContextFromIO` (FFI) gives the context the
+load callback runs under (main thread, GIL held), and `CONFIGURATION_CACHE_SIZE.lock(&ctx)`
+reads the configured `CACHE_SIZE`; `configured` is that config value. -/
+def ioCacheSize (configured : Nat) : Nat := configured
 
-/-- The plan-cache size an RDB-loaded graph gets: the constant, not `CACHE_SIZE`. Graphs
-created by `GRAPH.QUERY` / `GRAPH.COPY` / effects get `CONFIGURATION_CACHE_SIZE`
+/-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load` :104 and its placeholder
+:148, `graphmeta_rdb_load` :863 all pass `io_cache_size(rdb)`). Graphs created by
+`GRAPH.QUERY` / `GRAPH.COPY` / effects get `CONFIGURATION_CACHE_SIZE`
 (`commands/query.rs:129`, `copy.rs`, `effect.rs:47`). -/
-def cacheOnLoad (_configured : Nat) : Nat := DEFAULT_CACHE_SIZE
+def cacheOnLoad (configured : Nat) : Nat := ioCacheSize configured
 def cacheOnCreate (configured : Nat) : Nat := configured
 
-/-- **After a restart (or `DEBUG RELOAD`, or a replica's full sync) every graph's plan cache
-holds 25 entries whatever `CACHE_SIZE` was set to** — C reads the config for loaded graphs
-too. Same graph, two cache sizes, depending on whether it was loaded or created. -/
-theorem cache_size_ignored (configured : Nat) (h : configured ≠ 25) :
-    cacheOnLoad configured ≠ cacheOnCreate configured := by
-  simp [cacheOnLoad, cacheOnCreate, DEFAULT_CACHE_SIZE]; omega
+theorem ioCacheSize_spec (configured : Nat) : ioCacheSize configured = configured := rfl
+
+/-- **W5-rdb-1 fixed by #3262 (`361f62ac1`)**: a graph loaded from an RDB (restart,
+`DEBUG RELOAD`, a replica's full sync) gets the same plan-cache size as one created by a
+query — the configured `CACHE_SIZE`, as in C. -/
+theorem cache_size_on_load (configured : Nat) :
+    cacheOnLoad configured = cacheOnCreate configured := rfl
+
+/-! ### Historical: before #3262
+
+`redis_type.rs` passed the constant `DEFAULT_CACHE_SIZE = 25` to every RDB load. -/
+
+def pre3262_DEFAULT_CACHE_SIZE : Nat := 25
+def pre3262_cacheOnLoad (_configured : Nat) : Nat := pre3262_DEFAULT_CACHE_SIZE
+
+theorem pre3262_cache_size_ignored (configured : Nat) (h : configured ≠ 25) :
+    pre3262_cacheOnLoad configured ≠ cacheOnCreate configured := by
+  simp [pre3262_cacheOnLoad, cacheOnCreate, pre3262_DEFAULT_CACHE_SIZE]; omega
 
 end GraphPersist.RedisType

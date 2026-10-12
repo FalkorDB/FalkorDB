@@ -3,16 +3,16 @@
 
 `Lexer::pos`, `current`, `current_str`, `set_pos`, `lex_numeric`, `err_ctx`,
 `format_error`, the `Token` `Display` impl, and `cypher_escape`. Line numbers
-are from origin/main (3fec7d7c9; the
-parser files are unchanged since 55204c94b).
+are from origin/main (4a4f2a72f).
 
 * **`posF_boundary`** — `pos(false)` is always a char boundary.
 * **`next_pos_ge`** — after `next()`, `pos(true)` is at or past the old
   `pos(false)`: the `&str[pos..pos(true)]` slice `parse_named_exprs` takes
-  (cypher.rs:2710) is well-ordered.
+  (cypher.rs:2741) is well-ordered.
 * **`currentStr_ok`** — `current_str` never slices off a boundary.
+* **`lexNum_zero_exp`** — `0e5` is one float literal (#2910; `pre2910_zero_exp_bug`).
 * **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes
-  (lexer.rs:549, 566, 587, 637) sits after an all-ASCII prefix, hence on a
+  (lexer.rs:541, 558, 579, 606, 639) sits after an all-ASCII prefix, hence on a
   char boundary (`ascii_boundary`): `lex_numeric` never panics.
 * **`errCtx_ok`** — `err_ctx`'s window ends are boundaries, in order, so the
   slice never panics; a short query is quoted whole.
@@ -27,7 +27,7 @@ namespace FalkorLexer
 
 set_option linter.deprecated false
 
-/-! ## `pos`, `next`, `set_pos`, `current`, `current_str` (lexer.rs:287-357, 779-786) -/
+/-! ## `pos`, `next`, `set_pos`, `current`, `current_str` (lexer.rs:279-349, 777-784) -/
 
 theorem bytes_take_drop (cs : List Char) (k : Nat) :
     bytes cs = bytes (cs.take k) + bytes (cs.drop k) := by
@@ -45,7 +45,7 @@ structure LexSt where
   cs : List Char
   k : Nat
 
-/-- `pos(true)` (lexer.rs:303-312). -/
+/-- `pos(true)` (lexer.rs:295-304). -/
 def LexSt.posT (l : LexSt) : Nat := bytes (l.cs.take l.k)
 /-- `pos(false)`: past the whitespace/comments. -/
 def LexSt.posF (l : LexSt) : Nat := l.posT + rs (l.cs.drop l.k)
@@ -56,7 +56,7 @@ theorem posF_boundary (l : LexSt) : Boundary l.cs l.posF := by
 
 theorem posT_le_posF (l : LexSt) : l.posT ≤ l.posF := by simp [LexSt.posF]
 
-/-- `next()` (lexer.rs:295-300): skip the whitespace, then the current token
+/-- `next()` (lexer.rs:287-292): skip the whitespace, then the current token
 of byte length `n` (from `get_token`). The new state is "`k'` chars
 consumed" with `bytes (take k') = pos(false) + n`. -/
 def NextSt (l : LexSt) (n : Nat) (l' : LexSt) : Prop :=
@@ -84,8 +84,8 @@ theorem next_boundary (num : List Char → Nat) (esc : List Char → Bool) (l : 
     rw [← hk1, ← hk2, List.take_add, bytes_append]
 
 /-- The token cached at a position: `get_token(str, p + read_spaces(str, p))`,
-the expression both `next()` (lexer.rs:298-299) and `set_pos(p)`
-(lexer.rs:783-785) assign to `cached_current`. -/
+the expression both `next()` (lexer.rs:290-291) and `set_pos(p)`
+(lexer.rs:781-783) assign to `cached_current`. -/
 def cacheOf (num : List Char → Nat) (esc : List Char → Bool) (l : LexSt) : Option (Except Unit Nat) :=
   match splitBytes (l.cs.drop l.k) (rs (l.cs.drop l.k)) with
   | some (_, rest) => getTok num esc rest
@@ -102,13 +102,13 @@ theorem setPos_next (num : List Char → Nat) (esc : List Char → Bool) (l : Le
   obtain ⟨e, he, -⟩ := getTok_ok num esc ((l.cs.drop l.k).drop k1)
   exact ⟨e, he⟩
 
-/-- `current()` (lexer.rs:344-349): the cached token, or the cached error. -/
+/-- `current()` (lexer.rs:336-341): the cached token, or the cached error. -/
 def current (c : Except String (Nat × Nat)) : Except String Nat := c.map (·.1)
 theorem current_spec (c : Except String (Nat × Nat)) :
     (∀ t n, c = .ok (t, n) → current c = .ok t) ∧ (∀ e, c = .error e → current c = .error e) := by
   constructor <;> intros <;> subst_vars <;> rfl
 
-/-- `current_str()` (lexer.rs:352-356): `&str[pos(false) .. pos(false) + len]`. -/
+/-- `current_str()` (lexer.rs:344-348): `&str[pos(false) .. pos(false) + len]`. -/
 def currentStr (l : LexSt) (len : Nat) : Option (List Char) := slice l.cs l.posF (l.posF + len)
 
 /-- **`current_str` never panics** when `len` is the length `get_token`
@@ -122,7 +122,7 @@ theorem currentStr_ok (l : LexSt) (k1 : Nat) (hk1 : bytes (l.cs.take k1) = l.pos
   · refine slice_ok' l.cs hk1 (kj := k1 + k2) ?_ (by omega)
     rw [List.take_add, bytes_append, hk1, hk2]
 
-/-! ## `lex_numeric` (lexer.rs:532-696) -/
+/-! ## `lex_numeric` (lexer.rs:524-698) -/
 
 /-- `char::is_digit(radix)` for the radixes used. -/
 def isDigitR (radix : Nat) (c : Char) : Bool :=
@@ -155,7 +155,7 @@ structure NS where
   isE : Bool
   sl : List Nat
 
-/-- The `while let Some(c) = chars.next()` loop of the integer part (lexer.rs:600-657);
+/-- The `while let Some(c) = chars.next()` loop of the integer part (lexer.rs:592-659);
 `alnum` is `char::is_alphanumeric`. `none` = an `Err` return. -/
 def intLoop (alnum : Char → Bool) (cs : List Char) : Nat → NS → Option NS
   | 0, st => some st
@@ -181,7 +181,7 @@ def intLoop (alnum : Char → Bool) (cs : List Char) : Nat → NS → Option NS
       else if alnum c then none
       else some st
 
-/-- The fraction / exponent loop (lexer.rs:659-689); no byte slices. -/
+/-- The fraction / exponent loop (lexer.rs:661-691); no byte slices. -/
 def floatLoop (cs : List Char) : Nat → NS → Option NS
   | 0, st => some st
   | f + 1, st =>
@@ -194,14 +194,14 @@ def floatLoop (cs : List Char) : Nat → NS → Option NS
         if st.isE then none else some { st with len := st.len + 1 }
       else some st
 
-/-- The radix prefix check `str[pos + len..].chars().next()` (lexer.rs:549, 566, 587). -/
+/-- The radix prefix check `str[pos + len..].chars().next()` (lexer.rs:541, 558, 579). -/
 def prefixCheck (cs : List Char) (st : NS) (ok : Char → Bool) : Option NS :=
   let st := { st with sl := st.sl ++ [st.len] }
   match cs[st.len]? with
   | some c => if ok c then some st else none
   | none => none
 
-/-- The radix-prefix part of `lex_numeric` (lexer.rs:543-607). `none` =
+/-- The radix-prefix part of `lex_numeric` (lexer.rs:535-599). `none` =
 `return Ok((Token::Integer(0), len))`; `some none` = an `Err`. -/
 def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) :=
   let st0 : NS := ⟨it, len, 10, false, false, []⟩
@@ -217,11 +217,24 @@ def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) 
         match cs[it + 1]? with
         | some d => if isDigitR 10 d then some (some { st0 with it := it + 2, isFloat := true, len := len + 2 }) else none
         | none => none
+      else if c = 'e' ∨ c = 'E' then
+        -- #2910 (`dba677942`, lexer.rs:601-610): `0e5`; the sign test slices `str[pos + len..]`
+        let st := { st0 with it := it + 1, isFloat := true, isE := true, len := len + 1, sl := [len + 1] }
+        match cs[len + 1]? with
+        | some s => if s = '-' ∨ s = '+' then some (some { st with it := st.it + 1, len := st.len + 1 })
+                    else some (some st)
+        | none => some (some st)
       else none
   else if cur = '.' then some (some { st0 with isFloat := true })
   else some (some st0)
 
-/-- `lex_numeric` up to the final `take(len)` (lexer.rs:532-691). `cs` is
+/-- (Historical) the radix-prefix part before #2910 (`dba677942`): `0e…`
+fell into `Some(_) | None => return Ok((Token::Integer(0), len))`. -/
+def pre2910NumPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) :=
+  if cur = '0' ∧ (cs[it]? = some 'e' ∨ cs[it]? = some 'E') then none
+  else numPrefix cs cur it len
+
+/-- `lex_numeric` up to the final `take(len)` (lexer.rs:524-693). `cs` is
 `str[pos..]`, starting with the current char; entered on a digit with
 `(it, len) = (1, 1)` or on `.` + digit with `(2, 2)`. -/
 def lexNum (alnum : Char → Bool) (cs : List Char) (cur : Char) (it len : Nat) : Option NS :=
@@ -365,6 +378,23 @@ theorem numPrefix_inv (cs : List Char) (cur : Char) (it : Nat) (hpre : AsciiPre 
             exact e0 _ (by simp) (asciiPre_succ h1 hd (isDigitR_ascii hdd)) rfl
           · simp at h
         · simp at h
+      split at h
+      · -- `0e…` (#2910): the slice `str[pos + len..]` sits after `0e`
+        rename_i he
+        have h1 : AsciiPre cs (it + 1) :=
+          asciiPre_succ hpre hc (by rcases he with rfl | rfl <;> decide)
+        have hsl : ∀ k ∈ [it + 1], AsciiPre cs k := by
+          intro k hk; simp at hk; subst hk; exact h1
+        split at h
+        · rename_i s hs
+          split at h
+          · rename_i hsgn
+            simp at h; subst h
+            exact ⟨by simp, asciiPre_succ h1 hs (by rcases hsgn with rfl | rfl <;> decide), hsl⟩
+          · simp at h; subst h
+            exact ⟨rfl, h1, hsl⟩
+        · simp at h; subst h
+          exact ⟨rfl, h1, hsl⟩
       · simp at h
   · split at h
     · simp at h; subst h; exact e0 _ rfl hpre rfl
@@ -423,7 +453,23 @@ theorem lexNum_slices_ascii (alnum : Char → Bool) (cs : List Char) (cur : Char
   · rename_i st1 hst1
     exact finish st1 (numPrefix_inv cs cur it hpre st1 hst1) h
 
-/-! ## `err_ctx` / `format_error` (lexer.rs:743-777) -/
+/-- **`0e5` is a float** (#2909, fixed by #2910 `dba677942`;
+`zero_with_exponent_is_float`): after `0e` (and an optional sign) the float
+loop reads the exponent, so `0e5`, `0E1`, `0e+1`, `0e-2` each scan whole as one
+float literal (`str::parse::<f64>` then gives `0.0`). -/
+theorem lexNum_zero_exp :
+    (lexNum Char.isAlphanum "0e5".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (3, true) ∧
+    (lexNum Char.isAlphanum "0E1".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (3, true) ∧
+    (lexNum Char.isAlphanum "0e+1".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (4, true) ∧
+    (lexNum Char.isAlphanum "0e-2".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (4, true) := by
+  decide
+
+/-- (Historical) before #2910 `0e5` stopped after the `0`: `Integer(0)` of
+length 1, and `e5` was lexed as an identifier. -/
+theorem pre2910_zero_exp_bug : pre2910NumPrefix "0e5".toList '0' 1 1 = none ∧
+    numPrefix "0e5".toList '0' 1 1 ≠ none := by decide
+
+/-! ## `err_ctx` / `format_error` (lexer.rs:741-775) -/
 
 /-- `floor_char_boundary(i)`: the number of chars whose bytes fit in `i`. -/
 def floorK : List Char → Nat → Nat

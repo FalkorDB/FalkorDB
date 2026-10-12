@@ -7,7 +7,7 @@ import AlgoUdf.Paths
 | --- | --- |
 | `G.rels u`  | `Graph::get_node_relationships_by_type(u, relTypes, relDirection)` as `(src, dst, eid)` (AXIOMATISED: any finite list) |
 | `G.wt e`    | `edge_numeric_attr(g, e, weightProp, 1.0)` :2104, `none` when the sum is non-finite (the edge is skipped, :2264-2269, :2531) |
-| `G.cost e`  | `edge_numeric_attr(g, e, costProp, 0.0)` :2104 |
+| `G.cost e`  | `edge_numeric_attr(g, e, costProp, 1.0)` :2104 (default 1 since #3113; the model takes any cost function) |
 | `Edge`      | one relaxation candidate: `far_endpoint` :2121 accepts it and the weight is finite |
 | `Walk`      | an edge sequence in traversal order, edges kept in their stored direction (`FoundPath.0`) |
 | `succs`     | `node_successors` :2153 |

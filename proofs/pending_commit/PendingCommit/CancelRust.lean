@@ -7,8 +7,8 @@ Here the graph's two id spaces are modelled (copied from proofs/graph_queries
 `IdRust.lean`, which copies proofs/id_space `Model.lean`) and the hypothesis is
 proved for the Rust bodies:
 
-* `cancel_node_id` (graph.rs:1427) = `self.node_ids.cancel(id)?`,
-* `cancel_relationship_id` (graph.rs:1440) = `self.relationship_ids.cancel(id)?`,
+* `cancel_node_id` (graph.rs:1449) = `self.node_ids.cancel(id)?`,
+* `cancel_relationship_id` (graph.rs:1462) = `self.relationship_ids.cancel(id)?`,
 * `IdSpace::cancel` (id_space.rs:529) = `if !taken.insert(id) {Err}; recycled.insert(id); checked()`.
 
 `free g` is "free in either space" (the theorems in PendingCancel use one
@@ -46,9 +46,9 @@ abbrev Gr := IdS × IdS
 
 def free (g : Gr) : List Nat := g.1.recycled ++ g.2.recycled
 
-/-- `cancel_node_id` (graph.rs:1427). -/
+/-- `cancel_node_id` (graph.rs:1449). -/
 def cancelN (g : Gr) (id : Nat) : Option Gr := (rCancel g.1 id).map (·, g.2)
-/-- `cancel_relationship_id` (graph.rs:1440). -/
+/-- `cancel_relationship_id` (graph.rs:1462). -/
 def cancelR (g : Gr) (id : Nat) : Option Gr := (rCancel g.2 id).map (g.1, ·)
 
 theorem rCancel_ok (s s' : IdS) (id : Nat) (h : rCancel s id = some s') :

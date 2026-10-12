@@ -19,10 +19,10 @@ def internF (d : List String) (n : String) : Nat × List String :=
   | some i => (i, d)
   | none => (d.length, d ++ [n])
 
-/-- `verify_id` (`apply.rs:580`), success only. -/
+/-- `verify_id` (`apply.rs:566`), success only. -/
 def verifyIdF (expected assigned : Nat) : Bool := assigned == expected
 
-/-- `apply_add_schema` (`apply.rs:560`): intern, then `verify_id`. -/
+/-- `apply_add_schema` (`apply.rs:546`): intern, then `verify_id`. -/
 def applyAddSchemaF (d : List String) (id : Nat) (n : String) : Option (List String) :=
   let (assigned, d') := internF d n
   if verifyIdF id assigned then some d' else none
@@ -41,17 +41,17 @@ structure Ids where
   live : Nat
   bin  : List Nat
 
-/-- `IdSpace::bound` (`:343`) = `Graph::node_id_bound` (`graph.rs:1585`). -/
+/-- `IdSpace::bound` (`:343`) = `Graph::node_id_bound` (`graph.rs:1607`). -/
 def Ids.bound (s : Ids) : Nat := s.live + s.bin.length
 
 /-- The state `IdSpace::create` (`:582`) moves to on `{id}` once its refusals
 pass: `recycled -= nodes; live += nodes.len()` — what `Graph::create_nodes`
-(`graph.rs:1624`) does to the id space. -/
+(`graph.rs:1646`) does to the id space. -/
 def Ids.create1 (s : Ids) (id : Nat) : Ids := ⟨s.live + 1, s.bin.erase id⟩
 
 /-- The state `IdSpace::release` (`:703`) moves to on `requested = freed = {id}`
 once its refusals pass (`id` not free): `recycled |= freed; live -= freed.len()`
-— `Graph::delete_nodes` (`graph.rs:2131`). -/
+— `Graph::delete_nodes` (`graph.rs:2200`). -/
 def Ids.release1 (s : Ids) (id : Nat) : Ids := ⟨s.live - 1, id :: s.bin⟩
 
 end FalkorFaithful

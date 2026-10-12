@@ -4,11 +4,12 @@
 | --- | --- |
 | `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2121 |
 | `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2092 (weights modelled as `Int`: finite weights only) |
-| `record`              | `record_found_path` :2405 |
-| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 0.0)` :2308, :2397, :2518 |
+| `record`              | `record_found_path` :2407 |
+| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2399 and `enumerate_paths` :2521 (since #3113) |
+| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, 0.0)` :2308 |
 | `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:587) |
-| `nextNode`            | `build_path_batch` :2572 node reconstruction |
-| `useDijkstra`         | `run_path_algo` fast-path guard :2616-2626 |
+| `nextNode`            | `build_path_batch` :2575 node reconstruction |
+| `useDijkstra`         | `run_path_algo` fast-path guard :2619-2629 |
 -/
 namespace AlgoUdf.Paths
 
@@ -119,23 +120,54 @@ theorem record0_ties (res : List Found) (f : Found)
         · rw [hfb]; exact h best (by simp) b hb
         · rfl
 
-/-! ## Missing cost: 0 in Rust, 1 in C -/
+/-! ## Missing cost: 1 per relationship, as in C (#3113) -/
 
-/-- Per-edge cost as Rust reads it: the attribute if numeric, else 0. -/
-def pathCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)).foldl (· + ·) 0
+/-- Per-edge cost as the bound and the enumeration read it (`edge_numeric_attr(g, e,
+cost_prop, 1.0)`): the attribute if numeric, else 1. -/
+def pathCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 1)).foldl (· + ·) 0
 /-- As C's enumeration reads it: the attribute if numeric, else 1. -/
 def pathCostC (attrs : List (Option Int)) : Int := (attrs.map (·.getD 1)).foldl (· + ·) 0
 
-theorem cost_agree_when_present (xs : List Int) :
-    pathCostRust (xs.map some) = pathCostC (xs.map some) := by
-  simp [pathCostRust, pathCostC, List.map_map, Function.comp_def]
+/-- **W2-traverse-5 fixed by #3113 (`8a66c01e5`)**: the enumeration's path cost equals
+C's for every edge-attribute list. -/
+theorem cost_agree (attrs : List (Option Int)) : pathCostRust attrs = pathCostC attrs := rfl
 
-/-- BUG (confirmed live and by `bug_sppaths_missing_cost_defaults_to_zero`): a
-2-hop path whose edges carry no cost attribute (or no costProp at all) costs 2 in
-C and 0 in Rust; with `maxCost: 1` C prunes it and Rust keeps it
-(`bug_sppaths_max_cost_ignores_hops`). -/
-theorem cost_default_diverges :
-    pathCostRust [none, none] = 0 ∧ pathCostC [none, none] = 2 := by decide
+theorem cost_agree_when_present (xs : List Int) :
+    pathCostRust (xs.map some) = pathCostC (xs.map some) := cost_agree _
+
+theorem foldl_add_start (l : List Int) (a : Int) : l.foldl (· + ·) a = a + l.foldl (· + ·) 0 := by
+  induction l generalizing a with
+  | nil => simp
+  | cons x xs ih => simp only [List.foldl_cons]; rw [ih, ih (0 + x)]; omega
+
+/-- Without `costProp` the cost of a path is its hop count, so `maxCost` bounds hops. -/
+theorem cost_no_prop_hops (n : Nat) : pathCostRust (List.replicate n none) = n := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    simp only [pathCostRust, List.replicate_succ, List.map_cons, List.foldl_cons] at ih ⊢
+    rw [foldl_add_start, ih]; simp; omega
+
+/-- `dijkstra_single_path` (the `pathCount 1`, no `maxCost`, no `maxLen` fast path) still
+reports a missing cost as 0 (:2308). C's single-path fast path does the same: live, a
+2-hop `algo.SPpaths({sourceNode:a, targetNode:c, relTypes:['R']})` yields `pathCost 0`
+on both (rt8 re-check, C `bin/macos-arm64v8-release/falkordb.so`); with `maxLen:5` or
+`pathCount:2` C yields 2, which is what `pathCostRust` gives. -/
+def dijkstraCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)).foldl (· + ·) 0
+
+theorem dijkstra_cost_no_prop : dijkstraCostRust [none, none] = 0 := by decide
+
+/-- Historical: before #3113 the bound and the enumeration also used default 0. -/
+def pre3113_pathCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)).foldl (· + ·) 0
+
+/-- Historical BUG (confirmed live before #3113, `bug_sppaths_missing_cost_defaults_to_zero`):
+a 2-hop path whose edges carry no cost attribute (or no costProp at all) cost 2 in C and 0
+in Rust; with `maxCost: 1` C pruned it and Rust kept it (`bug_sppaths_max_cost_ignores_hops`). -/
+theorem pre3113_cost_default_diverges :
+    pre3113_pathCostRust [none, none] = 0 ∧ pathCostC [none, none] = 2 := by decide
+
+theorem cost_default_agrees :
+    pathCostRust [none, none] = 2 ∧ pathCostC [none, none] = 2 := by decide
 
 /-! ## Path reconstruction -/
 

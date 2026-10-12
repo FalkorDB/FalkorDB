@@ -35,12 +35,12 @@ no clock and no plan choice for the two sides to disagree about.
 | here | there |
 | --- | --- |
 | `intern`                 | `Graph::get_label_id_mut`, `get_attribute_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
-| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1585`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:343`, #2846) — `absIds`, `createOne_refines` |
+| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1607`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:343`, #2846) — `absIds`, `createOne_refines` |
 | `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
 | `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:483`) — recycled first, then fresh |
 | `Pending`                | `runtime::pending::Pending` |
-| `commit`                 | `Pending::commit` (`runtime/pending.rs:1099`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
+| `commit`                 | `Pending::commit` (`runtime/pending.rs:1080`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
 | `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
 | `groupBy NodeSpec.shape` | `digest_created_nodes`' `slots`/`index`/`last` memo |
 | `groupBy Prod.snd`       | `digest_deleted_nodes`, grouped by label set |

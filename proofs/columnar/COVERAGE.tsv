@@ -15,63 +15,63 @@ graph/src/runtime/batch.rs	get	340	PROVEN	Column Column.get?; get?_isSome (no OO
 graph/src/runtime/batch.rs	len	357	PROVEN	Column Column.len; len_eq_toValues
 graph/src/runtime/batch.rs	is_empty	370	PROVEN	Column.isEmptyC: isEmptyC_iff, isEmptyC_unbound
 graph/src/runtime/batch.rs	gather	377	PROVEN	Column Column.gather_get?, gather_isSome, gatherL_gatherL
-graph/src/runtime/batch.rs	compare_at	400	PROVEN	Column.compareAt: compareAt_spec (NaN non-antisymmetry = known #2891)
-graph/src/runtime/batch.rs	push_bound	430	PROVEN	CB.pushBound: pushBound_spec
-graph/src/runtime/batch.rs	push_left_of	443	PROVEN	CB.pushLeftOf: pushLeftOf_spec
-graph/src/runtime/batch.rs	for_rights	499	PROVEN	forRights/lastBinder/bindsAt: forRights_spec, lastBinder_right, lastBinder_left
-graph/src/runtime/batch.rs	width	520	PROVEN	planWidth: forRights_spec
-graph/src/runtime/batch.rs	new	548	PROVEN	BB.new: bbNew_spec
-graph/src/runtime/batch.rs	len	554	PROVEN	BB.len: bbNew_spec, bbIsEmpty_iff
-graph/src/runtime/batch.rs	is_empty	560	PROVEN	BB.isEmpty: bbIsEmpty_iff
-graph/src/runtime/batch.rs	push_row	566	PROVEN	Concat builderCol/perRowRows (concat_obs_eq)
-graph/src/runtime/batch.rs	push_row_with	577	PROVEN	Concat builderCol (extra=[] case); extras not modelled
-graph/src/runtime/batch.rs	push_merged	660	PROVEN	BB.pushMerged: pushMerged_spec
-graph/src/runtime/batch.rs	push_planned	694	PROVEN	BB.pushPlanned: pushPlanned_spec
-graph/src/runtime/batch.rs	grow_cols	722	PROVEN	BB.growCols: growCols_spec
-graph/src/runtime/batch.rs	finish_row	737	PROVEN	Concat concat_origins
-graph/src/runtime/batch.rs	finish	750	PROVEN	Concat builderCol (present/anyBound -> classifyStored / value-only / Unbound)
-graph/src/runtime/batch.rs	new	831	PROVEN	Batch.new0: new0_spec
-graph/src/runtime/batch.rs	rows_only	853	PROVEN	BatchMisc.rowsOnly: rowsOnly_spec (#2845)
-graph/src/runtime/batch.rs	from_columns	866	PROVEN	Batch.fromColumns: fromColumns_column, foldl_setColumn_column
-graph/src/runtime/batch.rs	into_compacted	884	PROVEN	Batch compact_spec
-graph/src/runtime/batch.rs	gather	897	PROVEN	Batch.gather: gather_obs, gather_fields, gather_wf, gather_originRow
-graph/src/runtime/batch.rs	merge_over_input	943	PROVEN	Batch.mergeOverInput: mergeOverInput_bound
-graph/src/runtime/batch.rs	concat	979	PROVEN	Concat concat_obs_eq (no empty batch), empty_batch_binds (LATENT bug), concat_origins, concat_len
-graph/src/runtime/batch.rs	concat_typed_column	1064	PROVEN	Concat concatCol_obs_generic, typedScan_spec, laneOf_eq
-graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1163	PROVEN	Batch.seqOrigin: seqOrigin_spec
-graph/src/runtime/batch.rs	len	1172	PROVEN	Batch.lenB: accessors_spec
-graph/src/runtime/batch.rs	active_len	1178	PROVEN	Batch.activeLen: accessors_spec
-graph/src/runtime/batch.rs	is_empty	1184	PROVEN	Batch.isEmptyB: accessors_spec
-graph/src/runtime/batch.rs	selection	1190	PROVEN	Batch.selection: accessors_spec
-graph/src/runtime/batch.rs	set_selection	1195	PROVEN	Batch setSel_wf, filterSel_spec, takeSel_spec, dropSel_spec, skip_u16_wraps
-graph/src/runtime/batch.rs	active_indices	1204	PROVEN	Batch active_lt, active_sorted
-graph/src/runtime/batch.rs	column	1213	PROVEN	Batch.column: accessors_spec, column_setColumn
-graph/src/runtime/batch.rs	set_column	1226	PROVEN	Batch column_setColumn, setColumn_obs
-graph/src/runtime/batch.rs	value_at	1264	PROVEN	Batch valueAt_isSome
-graph/src/runtime/batch.rs	compare_rows_at	1282	PROVEN	Batch.compareRowsAt: compareRowsAt_spec
-graph/src/runtime/batch.rs	origin_row	1298	PROVEN	Batch.originRow: originRow_spec, accessors_spec
-graph/src/runtime/batch.rs	has_origins	1312	PROVEN	BatchMisc.hasOrigins: hasOrigins_spec, hasOrigins_zero_not_unset (#2845)
-graph/src/runtime/batch.rs	set_origin_rows	1319	PROVEN	Batch.setOriginRows: accessors_spec
-graph/src/runtime/batch.rs	num_columns	1328	PROVEN	Batch.numColumns: accessors_spec
-graph/src/runtime/batch.rs	is_bound_at	1336	PROVEN	Batch.isBound: accessors_spec
-graph/src/runtime/batch.rs	write_column	1347	PROVEN	Batch writeColumn_spec (gather∘scatter)
-graph/src/runtime/batch.rs	extract_node_ids	1372	PROVEN	Batch.extractNodeIds: accessors_spec
-graph/src/runtime/batch.rs	extract_rel_ids	1385	PROVEN	Batch.extractRelIds: accessors_spec
-graph/src/runtime/batch.rs	new	1407	PROVEN	BatchRow.new: batchRowNew_spec
-graph/src/runtime/batch.rs	value_at	1417	PROVEN	Row viewAt; toOwned_trailing_unbound (LATENT divergence)
-graph/src/runtime/batch.rs	to_owned_row	1432	PROVEN	Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_trailing_unbound
-graph/src/runtime/batch.rs	next	1458	PROVEN	Batch.active (active_lt)
-graph/src/runtime/batch.rs	size_hint	1481	PROVEN	sizeHint: sizeHint_spec
-graph/src/runtime/batch.rs	set_argument_batch	1590	PROVEN	OpTree.setArg: setArg_args, setArg_resets
-graph/src/runtime/batch.rs	inspect_context	1722	PROVEN	inspectCtx: inspectCtx_spec
-graph/src/runtime/batch.rs	next	1771	PROVEN	opNext/leafNext: opNext_spec
+graph/src/runtime/batch.rs	compare_at	399	PROVEN	Column.compareAt (sort_cmp; Floats lane sort_cmp_f64, #2912): compareAt_spec (float lane antisymmetric, NaN included), sortCmpF64_swap; history pre2912_compareAt_nan_not_antisymmetric
+graph/src/runtime/batch.rs	push_bound	429	PROVEN	CB.pushBound: pushBound_spec
+graph/src/runtime/batch.rs	push_left_of	442	PROVEN	CB.pushLeftOf: pushLeftOf_spec
+graph/src/runtime/batch.rs	for_rights	498	PROVEN	forRights/lastBinder/bindsAt: forRights_spec, lastBinder_right, lastBinder_left
+graph/src/runtime/batch.rs	width	519	PROVEN	planWidth: forRights_spec
+graph/src/runtime/batch.rs	new	547	PROVEN	BB.new: bbNew_spec
+graph/src/runtime/batch.rs	len	553	PROVEN	BB.len: bbNew_spec, bbIsEmpty_iff
+graph/src/runtime/batch.rs	is_empty	559	PROVEN	BB.isEmpty: bbIsEmpty_iff
+graph/src/runtime/batch.rs	push_row	565	PROVEN	Concat builderCol/perRowRows (concat_obs_eq)
+graph/src/runtime/batch.rs	push_row_with	576	PROVEN	Concat builderCol (extra=[] case); extras not modelled
+graph/src/runtime/batch.rs	push_merged	659	PROVEN	BB.pushMerged: pushMerged_spec
+graph/src/runtime/batch.rs	push_planned	693	PROVEN	BB.pushPlanned: pushPlanned_spec
+graph/src/runtime/batch.rs	grow_cols	721	PROVEN	BB.growCols: growCols_spec
+graph/src/runtime/batch.rs	finish_row	736	PROVEN	Concat concat_origins
+graph/src/runtime/batch.rs	finish	749	PROVEN	Concat builderCol (present/anyBound -> classifyStored / value-only / Unbound)
+graph/src/runtime/batch.rs	new	830	PROVEN	Batch.new0: new0_spec
+graph/src/runtime/batch.rs	rows_only	852	PROVEN	BatchMisc.rowsOnly: rowsOnly_spec (#2845)
+graph/src/runtime/batch.rs	from_columns	865	PROVEN	Batch.fromColumns: fromColumns_column, foldl_setColumn_column
+graph/src/runtime/batch.rs	into_compacted	883	PROVEN	Batch compact_spec
+graph/src/runtime/batch.rs	gather	896	PROVEN	Batch.gather: gather_obs, gather_fields, gather_wf, gather_originRow
+graph/src/runtime/batch.rs	merge_over_input	942	PROVEN	Batch.mergeOverInput: mergeOverInput_bound
+graph/src/runtime/batch.rs	concat	978	PROVEN	Concat concat_obs_eq (no empty batch), empty_batch_binds (LATENT bug), concat_origins, concat_len
+graph/src/runtime/batch.rs	concat_typed_column	1063	PROVEN	Concat concatCol_obs_generic, typedScan_spec, laneOf_eq
+graph/src/runtime/batch.rs	clone_active_rows_seq_origin	1162	PROVEN	Batch.seqOrigin: seqOrigin_spec
+graph/src/runtime/batch.rs	len	1171	PROVEN	Batch.lenB: accessors_spec
+graph/src/runtime/batch.rs	active_len	1177	PROVEN	Batch.activeLen: accessors_spec
+graph/src/runtime/batch.rs	is_empty	1183	PROVEN	Batch.isEmptyB: accessors_spec
+graph/src/runtime/batch.rs	selection	1189	PROVEN	Batch.selection: accessors_spec
+graph/src/runtime/batch.rs	set_selection	1194	PROVEN	Batch setSel_wf, filterSel_spec, takeSel_spec, dropSel_spec, skip_u16_wraps
+graph/src/runtime/batch.rs	active_indices	1203	PROVEN	Batch active_lt, active_sorted
+graph/src/runtime/batch.rs	column	1212	PROVEN	Batch.column: accessors_spec, column_setColumn
+graph/src/runtime/batch.rs	set_column	1225	PROVEN	Batch column_setColumn, setColumn_obs
+graph/src/runtime/batch.rs	value_at	1263	PROVEN	Batch valueAt_isSome
+graph/src/runtime/batch.rs	compare_rows_at	1281	PROVEN	Batch.compareRowsAt (cv = Value::sort_cmp): compareRowsAt_spec
+graph/src/runtime/batch.rs	origin_row	1297	PROVEN	Batch.originRow: originRow_spec, accessors_spec
+graph/src/runtime/batch.rs	has_origins	1311	PROVEN	BatchMisc.hasOrigins: hasOrigins_spec, hasOrigins_zero_not_unset (#2845)
+graph/src/runtime/batch.rs	set_origin_rows	1318	PROVEN	Batch.setOriginRows: accessors_spec
+graph/src/runtime/batch.rs	num_columns	1327	PROVEN	Batch.numColumns: accessors_spec
+graph/src/runtime/batch.rs	is_bound_at	1335	PROVEN	Batch.isBound: accessors_spec
+graph/src/runtime/batch.rs	write_column	1346	PROVEN	Batch writeColumn_spec (gather∘scatter)
+graph/src/runtime/batch.rs	extract_node_ids	1371	PROVEN	Batch.extractNodeIds: accessors_spec
+graph/src/runtime/batch.rs	extract_rel_ids	1384	PROVEN	Batch.extractRelIds: accessors_spec
+graph/src/runtime/batch.rs	new	1406	PROVEN	BatchRow.new: batchRowNew_spec
+graph/src/runtime/batch.rs	value_at	1416	PROVEN	Row viewAt; toOwned_trailing_unbound (LATENT divergence)
+graph/src/runtime/batch.rs	to_owned_row	1431	PROVEN	Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_trailing_unbound
+graph/src/runtime/batch.rs	next	1457	PROVEN	Batch.active (active_lt)
+graph/src/runtime/batch.rs	size_hint	1480	PROVEN	sizeHint: sizeHint_spec
+graph/src/runtime/batch.rs	set_argument_batch	1589	PROVEN	OpTree.setArg: setArg_args, setArg_resets
+graph/src/runtime/batch.rs	inspect_context	1721	PROVEN	inspectCtx: inspectCtx_spec
+graph/src/runtime/batch.rs	next	1770	PROVEN	opNext/leafNext: opNext_spec
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	PROVEN	Dispatch fromExprIR: fromExprIR_isSome, fromExprIR_sem, flip_sem, eval_cmp
 graph/src/runtime/vectorized.rs	flip	84	PROVEN	VExpr icmp_flip, fcmp_flip
 graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	VExpr kernelI_get, icmp_agree
 graph/src/runtime/vectorized.rs	compare_f64_column	162	PROVEN	VExpr kernelF_get, fcmp_agree_ff/if/fi, fcmp_nan
 graph/src/runtime/vectorized.rs	compare_value_column	229	PROVEN	VExpr kernelV_get
-graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	VExpr compareValues (= per-row rowCmp by definition); caseMatch_eq_compare_value
-graph/src/runtime/vectorized.rs	compare_value_column_3vl	279	PROVEN	VExpr kernelV_get
+graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	VExpr compareValues (= per-row rowCmp by definition; Neq arm as #2917); caseMatch_eq_compare_value
+graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	PROVEN	VExpr kernelV_get
 graph/src/runtime/vector_expr.rs	get	80	PROVEN	VExpr EC.get; bools_get, ints_get, floats_get
 graph/src/runtime/vector_expr.rs	into_values	114	PROVEN	VExpr EC.intoValues_get, intoValues_length
 graph/src/runtime/vector_expr.rs	nulls_or_none	127	PROVEN	VExpr nullsOrNone_spec
