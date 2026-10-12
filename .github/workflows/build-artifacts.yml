@@ -12,8 +12,7 @@
 #     `verify-artifacts` label: the build runs at the PR head and re-runs on each
 #     push while the label is present. Remove + re-add the label to force a re-run.
 #
-# Additional Linux platforms (alpine/musl, rhel8, rhel9, amazonlinux2023) land in
-# the cell list below as their per-OS toolchain images are added — see issue #608.
+# The platform list lives in _build-artifacts.yml.
 
 name: Build artifacts (verify)
 
@@ -43,51 +42,28 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'verify-artifacts')
     runs-on: ubuntu-latest
     outputs:
-      cells: ${{ steps.derive.outputs.cells }}
       commit_sha: ${{ steps.derive.outputs.commit_sha }}
     steps:
-      - name: Derive cells + commit SHA
+      - name: Derive commit SHA
         id: derive
         env:
           EVENT: ${{ github.event_name }}
-          ARCHS: ${{ github.event.inputs.archs }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
           GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Master list of cells. Keep in sync with release-artifacts.yml.
-          ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
-          ]'
-          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "${ARCHS:-}" ] && [ "$ARCHS" != "all" ]; then
-            FILTER=$(printf '%s' "$ARCHS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s -c .)
-            CELLS=$(printf '%s' "$ALL" | jq -c --argjson f "$FILTER" '[ .[] | select(.suffix as $s | $f | index($s)) ]')
-          else
-            CELLS=$(printf '%s' "$ALL" | jq -c .)
-          fi
-          if [ "$(printf '%s' "$CELLS" | jq 'length')" = "0" ]; then
-            echo "::error::no platforms selected for archs='${ARCHS:-}'"; exit 1
-          fi
           if [ "$EVENT" = "pull_request" ]; then SHA="$PR_SHA"; else SHA="$GH_SHA"; fi
-          {
-            echo "cells=$CELLS"
-            echo "commit_sha=$SHA"
-          } >> "$GITHUB_OUTPUT"
-          echo "Selected cells: $CELLS"
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Commit SHA: $SHA"
 
   build:
     needs: prepare
-    if: ${{ needs.prepare.outputs.cells != '[]' }}
     uses: ./.github/workflows/_build-artifacts.yml
     permissions:
       contents: read
       packages: read
     with:
-      cells: ${{ needs.prepare.outputs.cells }}
+      platforms: ${{ github.event.inputs.archs || 'all' }}
       revision: ${{ needs.prepare.outputs.commit_sha }}
       # On a `pull_request` run the revision is the PR head — untrusted code, so
       # the build may not write any cache. Only a maintainer dispatch (which can
