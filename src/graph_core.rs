@@ -955,8 +955,7 @@ pub(crate) fn reply_invalid_graph_version(
 /// queued — in the thread pool or in any graph's write queue. Runs on the Redis
 /// main thread and never waits: rejecting is how a full queue is reported.
 fn admit(ctx: &Context) -> Option<QueueSlot> {
-    let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed);
-    let slot = QueueSlot::try_acquire(usize::try_from(max).unwrap_or(usize::MAX));
+    let slot = QueueSlot::try_acquire(MAX_QUEUED_QUERIES.load(Ordering::Relaxed));
     if slot.is_none() {
         let cerr = ffi::sanitise_error("Max pending queries exceeded");
         raw::reply_with_error(ctx.ctx, cerr.as_ptr());

@@ -30,7 +30,7 @@
 //! via [`init_thread_pool`] before any calls to [`spawn`].
 
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, Ordering},
     thread::{self, JoinHandle},
 };
 
@@ -162,7 +162,7 @@ pub fn shutdown() {
 
 /// Queries admitted but not yet picked up for execution — waiting in the pool
 /// queue, or (for a write) anywhere until the graph's write drainer dequeues it.
-static QUEUED_QUERIES: AtomicUsize = AtomicUsize::new(0);
+static QUEUED_QUERIES: AtomicU64 = AtomicU64::new(0);
 
 /// One admitted, still-queued query's share of [`QUEUED_QUERIES`].
 ///
@@ -174,18 +174,21 @@ static QUEUED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 /// gives its slot back exactly once.
 #[must_use]
 pub struct QueueSlot {
-    counter: &'static AtomicUsize,
+    counter: &'static AtomicU64,
 }
 
 impl QueueSlot {
     /// Admit one more query unless `max` are already queued. Never waits.
-    pub fn try_acquire(max: usize) -> Option<Self> {
+    ///
+    /// `max` is `MAX_QUEUED_QUERIES` as configured, so the count is a `u64` too
+    /// and the two compare without a conversion.
+    pub fn try_acquire(max: u64) -> Option<Self> {
         Self::try_acquire_in(&QUEUED_QUERIES, max)
     }
 
     fn try_acquire_in(
-        counter: &'static AtomicUsize,
-        max: usize,
+        counter: &'static AtomicU64,
+        max: u64,
     ) -> Option<Self> {
         let mut n = counter.load(Ordering::Acquire);
         while n < max {
@@ -211,7 +214,7 @@ mod tests {
 
     #[test]
     fn queue_slot_bounds_and_releases() {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let slots: Vec<_> = (0..3)
             .map(|_| QueueSlot::try_acquire_in(&COUNTER, 3).expect("under the limit"))
             .collect();
