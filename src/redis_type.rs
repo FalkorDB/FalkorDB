@@ -123,7 +123,7 @@ unsafe extern "C" fn graph_rdb_load(
                     // that would displace the placeholder and leak any
                     // WriteMessages already routed through it.
                     let arc = if let Some(ph) = decode_state.placeholders.remove(&key_name) {
-                        ph.write().graph = mvcc;
+                        ph.write().replace_graph(mvcc);
                         ph
                     } else {
                         let tg = ThreadedGraph::from_mvcc(mvcc);
@@ -771,7 +771,7 @@ fn install_graph(
         // were already enqueued against the placeholder reachable by the
         // write loop — otherwise blocked clients in `waiting` state would
         // never be replied to.
-        placeholder_tg.graph = mvcc;
+        placeholder_tg.replace_graph(mvcc);
     } else {
         eprintln!(
             "FalkorDB: WARNING - no placeholder pointer for graph '{graph_name}', graph data will be lost"

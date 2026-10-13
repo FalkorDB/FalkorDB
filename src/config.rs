@@ -53,6 +53,11 @@ lazy_static! {
     /// buffer (KNN still correct), no async migration.
     pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
         RedisGILGuard::new(0.into());
+    /// Workers in the native index's online-build pool (feature `index-falkordb`), which builds the
+    /// columns `CREATE INDEX` leaves `Building`. Load-time only. Not listed by `GRAPH.CONFIG`,
+    /// whose list mirrors the C engine's.
+    pub static ref CONFIGURATION_INDEX_BUILD_THREAD_COUNT: RedisGILGuard<i64> =
+        RedisGILGuard::new(1.into());
     pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
         RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =

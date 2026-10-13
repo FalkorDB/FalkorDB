@@ -1154,11 +1154,13 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
 /// A host for driving build turns in a test: a plain lock around the coordinator. `takeovers`
 /// makes the next `publish` calls start with a writer that takes the slot over and commits, the
 /// way a write on Redis's main thread would while a turn's step runs. `refuse` makes `publish`
-/// refuse, as for a deleted graph.
+/// refuse, as for a deleted graph. `stale_claim` makes the next `publish` start with a writer that
+/// takes the slot over and commits, and then a second build step that takes the slot again.
 struct TestHost {
     mvcc: RwLock<MvccGraph>,
     takeovers: AtomicU32,
     refuse: AtomicBool,
+    stale_claim: AtomicBool,
 }
 
 impl TestHost {
@@ -1176,6 +1178,7 @@ impl TestHost {
             mvcc: RwLock::new(mvcc),
             takeovers: AtomicU32::new(0),
             refuse: AtomicBool::new(false),
+            stale_claim: AtomicBool::new(false),
         });
         (host, label, ids)
     }
@@ -1201,10 +1204,6 @@ impl TestHost {
 }
 
 impl BuildHost for TestHost {
-    fn id(&self) -> usize {
-        std::ptr::from_ref(self) as usize
-    }
-
     fn read(
         &self,
         f: &mut dyn FnMut(&MvccGraph),
@@ -1230,6 +1229,16 @@ impl BuildHost for TestHost {
                 .write()
                 .expect("a writer takes a build step's slot over");
             mvcc.commit(version).expect("the writer commits");
+        }
+        if self.stale_claim.swap(false, Ordering::Relaxed) {
+            let version = mvcc
+                .write()
+                .expect("a writer takes a build step's slot over");
+            mvcc.commit(version).expect("the writer commits");
+            drop(
+                mvcc.write_for_build()
+                    .expect("a second build step takes the slot"),
+            );
         }
         f(&mut mvcc);
         true
@@ -1312,6 +1321,59 @@ fn after_two_lost_turns_the_next_one_holds() {
         }
     );
     assert_eq!(host.indexed(&label, &attr), ids);
+}
+
+/// A writer takes the slot over and commits, then a second build step takes it again, all while a
+/// turn's step runs. The turn's claim then succeeds — on the second step's hold — but its version
+/// is no longer the next one: it must be dropped, not committed over the writer's, and the slot
+/// released.
+#[test]
+fn a_turn_whose_version_went_stale_is_dropped_even_if_its_claim_succeeds() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
+    host.stale_claim.store(true, Ordering::Relaxed);
+    let mut losses = 0;
+    assert_eq!(
+        online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10),
+        Turn::Lost
+    );
+    assert!(
+        host.indexed(&label, &attr).is_empty(),
+        "the batch was dropped"
+    );
+    // `write_for_build`, not `write`: `write` would also take a slot a build step still held.
+    assert!(
+        host.mvcc.read().write_for_build().is_some(),
+        "the slot was released"
+    );
+}
+
+/// When a worker finds a graph's build done, the graph leaves the queue — unless a commit made while
+/// it was still queued brought in another `Building` column, which no commit could queue (the graph
+/// was queued already): then it stays queued, or that column would never be built.
+#[test]
+fn a_graph_stays_queued_while_it_still_has_a_building_column() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
+    // Registered after its CREATE INDEX, so queue it the way a commit would: with a write.
+    host.mvcc.read().set_build_host(host.clone());
+    {
+        let mut mvcc = host.mvcc.write();
+        let version = mvcc.write().expect("free");
+        create_index_on(
+            &mut version.borrow_mut(),
+            &label,
+            &Arc::new("w".to_string()),
+        );
+        mvcc.commit(version).expect("commits, and queues the graph");
+    }
+    assert!(
+        host.mvcc.read().build_done(),
+        "columns are still Building, so the graph stays queued"
+    );
+    let mut losses = 0;
+    while online_build::run_turn_within(host.as_ref(), &mut losses, 10, 10) != Turn::Idle {}
+    assert!(!host.mvcc.read().build_done(), "nothing left to build");
 }
 
 /// A host that refuses to publish (the graph was deleted) ends the turn without committing, and

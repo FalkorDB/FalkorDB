@@ -23,6 +23,8 @@
 //! can reject loading an incomplete module.
 
 use crate::commands::constraint::{Settling, settle_constraint};
+#[cfg(feature = "index-falkordb")]
+use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
@@ -489,10 +491,10 @@ pub fn graph_init(
         }
     }
 
-    // The online index builder: builds the `Building` columns `CREATE INDEX` leaves, however the
-    // `CREATE INDEX` arrived. Woken by the commit that brings a column in.
+    // The online index build pool: builds the `Building` columns `CREATE INDEX` leaves, however
+    // the `CREATE INDEX` arrived. Its own workers, so builds never take a query thread.
     #[cfg(feature = "index-falkordb")]
-    start_index_builder();
+    start_index_builder((*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx)).max(1) as usize);
 
     Status::Ok
 }

@@ -63,7 +63,12 @@ use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{graph_writes::has_building_columns, online_build};
+use crate::index::falkordb::{
+    graph_writes::has_building_columns,
+    online_build::{self, BuildHost},
+};
+#[cfg(feature = "index-falkordb")]
+use std::sync::{OnceLock, atomic::AtomicBool};
 
 /// Who holds the write slot.
 #[atomic_enum]
@@ -87,6 +92,12 @@ pub struct MvccGraph {
     graph: Arc<AtomicRefCell<Graph>>,
     /// The write slot: who holds it.
     write: AtomicSlot,
+    /// How the online index builder reaches this graph; set by its host.
+    #[cfg(feature = "index-falkordb")]
+    build_host: OnceLock<Arc<dyn BuildHost>>,
+    /// Whether the online index builder has this graph queued or on a worker.
+    #[cfg(feature = "index-falkordb")]
+    build_queued: AtomicBool,
 }
 
 unsafe impl Send for MvccGraph {}
@@ -103,6 +114,10 @@ impl MvccGraph {
         Self {
             graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
             write: AtomicSlot::new(Slot::Free),
+            #[cfg(feature = "index-falkordb")]
+            build_host: OnceLock::new(),
+            #[cfg(feature = "index-falkordb")]
+            build_queued: AtomicBool::new(false),
         }
     }
 
@@ -113,12 +128,52 @@ impl MvccGraph {
         Self {
             graph: Arc::new(AtomicRefCell::new(graph)),
             write: AtomicSlot::new(Slot::Free),
+            #[cfg(feature = "index-falkordb")]
+            build_host: OnceLock::new(),
+            #[cfg(feature = "index-falkordb")]
+            build_queued: AtomicBool::new(false),
         }
     }
 
     #[must_use]
     pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
         self.graph.clone()
+    }
+
+    /// Register how the online index builder reaches this graph. Until a host is set, a commit
+    /// that brings in a `Building` column queues nothing. The first host set is kept.
+    #[cfg(feature = "index-falkordb")]
+    pub fn set_build_host(
+        &self,
+        host: Arc<dyn BuildHost>,
+    ) {
+        let _ = self.build_host.set(host);
+    }
+
+    /// Take over `old`'s online-build registration — its host, and whether the builder has it
+    /// queued — for a coordinator that replaces `old` in place. Without it, a `CREATE INDEX` on the
+    /// replacement would never be built.
+    #[cfg(feature = "index-falkordb")]
+    pub fn inherit_build(
+        &self,
+        old: &Self,
+    ) {
+        if let Some(host) = old.build_host.get() {
+            let _ = self.build_host.set(Arc::clone(host));
+        }
+        self.build_queued
+            .store(old.build_queued.load(Ordering::Acquire), Ordering::Release);
+    }
+
+    /// The builder has finished this graph: it is no longer queued — unless the published version
+    /// has a `Building` column again, from a commit made while it was still queued, in which case
+    /// it stays queued and this returns `true`. The caller holds the host's read access, which no
+    /// commit can overlap.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn build_done(&self) -> bool {
+        self.build_queued.store(false, Ordering::Release);
+        has_building_columns(&self.graph.borrow())
+            && !self.build_queued.swap(true, Ordering::AcqRel)
     }
 
     /// Take the write slot and a private new version to write into. `None` if another writer holds
@@ -290,18 +345,21 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
-        // Wake the online index builder when this version brings in a `Building` column — a
-        // `CREATE INDEX` however it arrived. Not for a version that only carries on a build:
-        // the builder is already on it, and its own commits would wake it every turn.
+        // A version with a `Building` column queues this graph for the online index builder, unless
+        // it is queued already — which it is while the builder works on it, so the builder's own
+        // commits queue nothing.
         #[cfg(feature = "index-falkordb")]
-        let wake_builder = has_building_columns(&new_graph.borrow())
-            && !has_building_columns(&self.graph.borrow());
+        let building = has_building_columns(&new_graph.borrow());
 
         self.graph = new_graph;
         self.write.store(Slot::Free, Ordering::Release);
         #[cfg(feature = "index-falkordb")]
-        if wake_builder {
-            online_build::wake();
+        if building && !self.build_queued.swap(true, Ordering::AcqRel) {
+            match self.build_host.get() {
+                Some(host) => online_build::enqueue(Arc::clone(host)),
+                // No host to build it: nothing is queued.
+                None => self.build_queued.store(false, Ordering::Release),
+            }
         }
         Ok(())
     }

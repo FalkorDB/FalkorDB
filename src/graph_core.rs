@@ -151,6 +151,11 @@ pub fn register_graph(
     // mutates the placeholder Arc in place rather than rebinding the name.
     // If this assert fires, a caller is leaking the previously-registered
     // Arc and likely racing index/teardown shutdown.
+    // How the online index builder reaches this graph. No caller holds the graph's lock here.
+    #[cfg(feature = "index-falkordb")]
+    arc.read()
+        .graph
+        .set_build_host(Arc::new(RedisBuildHost(Arc::downgrade(&arc))));
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
     debug_assert!(
         displaced.is_none(),
@@ -556,6 +561,18 @@ impl ThreadedGraph {
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
         }
+    }
+
+    /// Replace the graph's coordinator in place, keeping everything else — the write queue, the
+    /// slow log — and the coordinator's online-build registration, which a `CREATE INDEX` on the
+    /// replacement needs to be built.
+    pub fn replace_graph(
+        &mut self,
+        graph: MvccGraph,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        graph.inherit_build(&self.graph);
+        self.graph = graph;
     }
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
@@ -1515,8 +1532,10 @@ fn commit_and_replicate(
 
 // ---- Online FalkorDB index build: the Redis host (feature: index-falkordb) ----
 //
-// The build itself — when steps run and how they share the write slot — is the graph crate's
-// (`graph::index::falkordb::online_build`). This is only how a build reaches a Redis graph.
+// The build itself — when steps run, on which threads, and how they share the write slot — is the
+// graph crate's (`graph::index::falkordb::online_build`). This is only how a build reaches a Redis
+// graph: `register_graph` registers a `RedisBuildHost` with each graph, and module init starts the
+// build pool.
 
 /// A registered graph, as the online index builder reaches it. Holds the graph weakly: a deleted
 /// graph is not kept alive by a build.
@@ -1525,10 +1544,6 @@ struct RedisBuildHost(Weak<RwLock<ThreadedGraph>>);
 
 #[cfg(feature = "index-falkordb")]
 impl BuildHost for RedisBuildHost {
-    fn id(&self) -> usize {
-        self.0.as_ptr() as usize
-    }
-
     /// The graph's read lock.
     fn read(
         &self,
@@ -1558,20 +1573,15 @@ impl BuildHost for RedisBuildHost {
     }
 }
 
-/// Start the online index builder over every registered graph. Called at module init.
+/// Start the online index build pool with `threads` workers (`INDEX_BUILD_THREAD_COUNT`). Called
+/// at module init.
 #[cfg(feature = "index-falkordb")]
-pub fn start_index_builder() {
-    online_build::start(|| {
-        GRAPH_REGISTRY
-            .lock()
-            .values()
-            .map(|tg| Arc::new(RedisBuildHost(Arc::downgrade(tg))) as Arc<dyn BuildHost>)
-            .collect()
-    });
+pub fn start_index_builder(threads: usize) {
+    online_build::start(threads);
 }
 
-/// Stop the online index builder and wait for its thread. Called from the shutdown handler before
-/// the thread pool and GraphBLAS are torn down, since a build step reads a graph.
+/// Stop the online index build pool and wait for its workers. Called from the shutdown handler
+/// before the thread pool and GraphBLAS are torn down, since a build step reads a graph.
 #[cfg(feature = "index-falkordb")]
 pub fn stop_index_builder() {
     online_build::stop();
