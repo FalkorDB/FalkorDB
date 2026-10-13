@@ -729,6 +729,10 @@ pub fn execute_profile(
 /// short-lived `session.with_graph` borrow instead.
 ///
 /// Returns `(params_offset, execution_time_ms)` for telemetry.
+///
+/// A write that started as a reader and lost its version to a writer that
+/// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
+/// replied nothing, so it is run again from the start on a fresh session.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -740,6 +744,52 @@ pub fn execute_query_write(
     per_query_timeout: Option<i64>,
     profile: bool,
 ) -> Result<(usize, f64), String> {
+    let graph = session.graph_arc();
+    let facts = session.facts();
+    let mut session = session;
+    loop {
+        match try_query_write(
+            session,
+            ctx,
+            key_name,
+            query,
+            compact,
+            first_cached,
+            per_query_timeout,
+            profile,
+        ) {
+            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            Err(WriteAttempt::Failed(err)) => return Err(err),
+            Ok(done) => return Ok(done),
+        }
+    }
+}
+
+/// Why one run of [`try_query_write`] did not succeed.
+enum WriteAttempt {
+    /// Another writer committed while this one matched; run it again.
+    Stale,
+    Failed(String),
+}
+
+impl From<String> for WriteAttempt {
+    fn from(err: String) -> Self {
+        Self::Failed(err)
+    }
+}
+
+/// One run of [`execute_query_write`].
+#[allow(clippy::too_many_arguments)]
+fn try_query_write(
+    session: QuerySession,
+    ctx: &Context,
+    key_name: &Arc<str>,
+    query: &str,
+    compact: bool,
+    first_cached: bool,
+    per_query_timeout: Option<i64>,
+    profile: bool,
+) -> Result<(usize, f64), WriteAttempt> {
     let wall_start = Instant::now();
     let Plan {
         plan,
@@ -757,15 +807,12 @@ pub fn execute_query_write(
     // here cannot leak the slot.
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
 
-    // Claim the MVCC write slot: `MvccGraph::write` CASes the single-writer flag and
-    // hands back a fresh COW version to build into — it is not a lock, so a writer
-    // that already owns the slot makes this fail rather than block. We are still a
-    // reader here, so an inline writer can be holding it; return a retryable error.
-    // On this branch we did NOT claim it, so callers must not roll back — the slot and
-    // its version belong to the other writer.
-    let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
-        return Err("another write is in progress, retry the query".to_string());
-    };
+    // The private COW version to build into. As a reader this does not take the
+    // MVCC write slot yet — the session claims it on escalation, under the write
+    // lock — so an inline writer is never refused because we are still matching.
+    let g = session
+        .write_version()
+        .map_err(|_| "another write is in progress, retry the query".to_string())?;
     let runtime = Runtime::new(
         g.clone(),
         parameters,
@@ -795,7 +842,10 @@ pub fn execute_query_write(
             // version with all its writes. Slot ownership lives here — callers
             // must NOT roll back.
             abandon_write(&session, &runtime);
-            return Err(err);
+            if session.is_stale() {
+                return Err(WriteAttempt::Stale);
+            }
+            return Err(err.into());
         }
     };
 
@@ -1479,13 +1529,16 @@ pub(crate) fn finish_write(
     // `with_graph_mut` yields it for a session still in reader mode.
     if session
         .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq))
-        .is_none()
+        .is_some()
     {
+        session.committed();
+    } else {
         // Never escalated, so the plan's `Commit` never ran and nothing was
         // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There
-        // is nothing to publish or replicate; just release the MVCC write slot,
-        // which only commit or rollback clears.
-        session.with_graph(|tg| tg.graph.rollback());
+        // is nothing to publish or replicate; just drop the private version
+        // (and release the MVCC write slot, if this session started as a
+        // writer and so claimed it up front).
+        session.release_slot();
     }
 }
 
@@ -1495,15 +1548,18 @@ pub(crate) fn finish_write(
 /// existed) or rewritten from committed values before the private version goes,
 /// and this runs in writer mode, so no reader observes the interim state.
 ///
-/// Slot ownership lives with whoever claimed it: this releases it, so a caller
-/// that did *not* claim the slot must not call this.
+/// Releases the MVCC write slot if the session claimed it. A session that
+/// never claimed it (still matching, or its fork went stale) published no
+/// document, so there is nothing to resync.
 pub(crate) fn abandon_write(
     session: &QuerySession,
     runtime: &Runtime,
 ) {
-    let committed = session.with_graph(|tg| tg.graph.read());
-    runtime.resync_published_indexes(&committed);
-    session.with_graph(|tg| tg.graph.rollback());
+    if session.holds_slot() {
+        let committed = session.with_graph(|tg| tg.graph.read());
+        runtime.resync_published_indexes(&committed);
+    }
+    session.release_slot();
 }
 
 /// Commit a successfully-executed write and replicate it.
