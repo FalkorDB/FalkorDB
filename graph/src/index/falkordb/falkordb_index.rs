@@ -543,18 +543,48 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<DocIter> {
-        let (key, numeric) = match query {
+        let (key, servable) = match query {
             IndexQuery::Equal { key, value } => (key, encode_numeric(value).is_some()),
             IndexQuery::Range { key, min, max, .. } => (
                 key,
                 min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
                     && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()),
             ),
-            // And / Or / Point (geo) / InList / ArrayContains → not a numeric leaf.
+            // A union of `Equal`s — what `n.a IN [...]` becomes before it reaches the index.
+            // Every member must target this same attribute and encode numerically; a mixed or
+            // empty list is declined whole, because answering with only the numeric members
+            // would drop rows another kind still holds. `NumericIndex::union` re-checks the
+            // encodability, so this only has to agree on the key.
+            IndexQuery::Or(children) if !children.is_empty() => {
+                // Flatten nested unions: `a IN [..] OR a IN [..]` arrives as an `Or` of `Or`s.
+                fn keys_of<'a>(
+                    children: &'a [IndexQuery<Value>],
+                    out: &mut Vec<&'a Arc<String>>,
+                ) -> bool {
+                    children.iter().all(|c| match c {
+                        IndexQuery::Equal { key, .. } => {
+                            out.push(key);
+                            true
+                        }
+                        IndexQuery::Or(nested) => !nested.is_empty() && keys_of(nested, out),
+                        _ => false,
+                    })
+                }
+                let mut member_keys = Vec::new();
+                if !keys_of(children, &mut member_keys) || member_keys.is_empty() {
+                    return None;
+                }
+                let first_key = member_keys[0];
+                let same_key = member_keys.iter().all(|k| *k == first_key);
+                (first_key, same_key)
+            }
+            // And / Point (geo) / InList / ArrayContains → not a numeric leaf.
             _ => return None,
         };
-        if !numeric {
-            return None; // string / geo on a Range index — RediSearch owns those entries
+        if !servable {
+            // A string/geo leaf on a Range index (RediSearch owns those entries), or a union
+            // whose members do not all target this attribute.
+            return None;
         }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
         if entry.state != ColumnState::Ready {
@@ -825,6 +855,90 @@ mod tests {
         assert!(idx.query_numeric(Node, &label, &other).is_none());
         assert!(
             idx.query_numeric(Relationship, &label, &eq).is_none(),
+            "no edge column of this name"
+        );
+    }
+
+    /// `n.a IN [...]` reaches the facade as an `Or` of `Equal`s. A same-attribute union — nested
+    /// `Or`s included — must be routed to that attribute's column, and any union that cannot be
+    /// answered whole must be declined. A facade that declined every union would still return the
+    /// right rows, because RediSearch answers instead, so only a test at this level notices.
+    #[test]
+    fn query_numeric_serves_a_same_attribute_union() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_numeric(Node, &label, &attr);
+        let column = idx.numeric_mut(Node, &label, &attr).unwrap();
+        column.add(&Value::Int(30), 1);
+        column.add(&Value::Int(40), 2);
+        column.add(&Value::Int(50), 3);
+
+        let eq = |key: &Arc<String>, v: Value| IndexQuery::Equal {
+            key: key.clone(),
+            value: v,
+        };
+        let int = |key: &Arc<String>, v: i64| eq(key, Value::Int(v));
+        // Union order is unspecified, so compare sorted ids.
+        let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
+            idx.query_numeric(entity, &label, q).map(|it| {
+                let mut ids: Vec<u64> = it.collect();
+                ids.sort_unstable();
+                ids
+            })
+        };
+
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![int(&attr, 30), int(&attr, 40)])),
+            Some(vec![1, 2]),
+            "a same-attribute union is served from the column"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![
+                    IndexQuery::Or(vec![int(&attr, 30)]),
+                    IndexQuery::Or(vec![int(&attr, 50)]),
+                ])
+            ),
+            Some(vec![1, 3]),
+            "`a IN [..] OR a IN [..]` arrives as an Or of Ors and must flatten, not decline"
+        );
+
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![int(&attr, 30), int(&arc("height"), 40)])
+            ),
+            None,
+            "a union spanning two attributes cannot be answered from one column"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![
+                    int(&attr, 30),
+                    eq(&attr, Value::String(Arc::new("x".to_string()))),
+                ])
+            ),
+            None,
+            "a non-numeric member declines the whole union"
+        );
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![])),
+            None,
+            "an empty union is not match-all"
+        );
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![int(&arc("height"), 30)])),
+            None,
+            "no column for the union's attribute"
+        );
+        assert_eq!(
+            served(
+                Relationship,
+                &IndexQuery::Or(vec![int(&attr, 30), int(&attr, 40)])
+            ),
+            None,
             "no edge column of this name"
         );
     }
