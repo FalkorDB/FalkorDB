@@ -437,7 +437,8 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
     constraints: Vec<Constraint>,
-    /// Version counter (incremented on each write transaction)
+    /// Version counter: one more than the version this one was made from. A fork that claims the
+    /// write slot over index-build steps is renumbered to follow the version it replaces.
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
@@ -445,8 +446,9 @@ pub struct Graph {
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
-    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes, and
-    /// `FalkorDbIndex::apply` and the online build's steps update it.
+    /// `pub(crate)` for `index::falkordb` and `MvccGraph`: `graph_writes` reads it to stage
+    /// changes, `FalkorDbIndex::apply` and the online build's steps update it, and `MvccGraph`
+    /// merges build progress into a writer's fork and drops its change logs on commit.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
 }
@@ -4081,7 +4083,7 @@ impl Graph {
     }
 
     /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing column). Wraps
+    /// (non-numeric / composite / missing or `Building` column). Wraps
     /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
     /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
     /// borrow.
@@ -4101,7 +4103,7 @@ impl Graph {
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
     /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing column.
+    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,

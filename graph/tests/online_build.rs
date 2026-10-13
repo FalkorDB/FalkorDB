@@ -227,7 +227,9 @@ fn commits_queue_graphs_and_the_pool_builds_them() {
 
     // Two workers build both graphs.
     online_build::start(2);
-    wait_until("both graphs to be built", || online_build::pending() == 0);
+    wait_until("both graphs to be built", || {
+        a.indexed_from("v", 0).is_some() && b.indexed_from("v", 0).is_some()
+    });
     assert_eq!(a.indexed_from("v", 0), Some(NODES));
     assert_eq!(
         a.indexed_from("v", 1_000_000),
@@ -241,7 +243,9 @@ fn commits_queue_graphs_and_the_pool_builds_them() {
     wait_until("the second index to be built", || {
         a.indexed_from("w", 0) == Some(NODES)
     });
-    wait_until("the queue to drain", || online_build::pending() == 0);
+    wait_until("graph a to leave the queue", || {
+        online_build::pending() == 0
+    });
 
     online_build::stop();
 }

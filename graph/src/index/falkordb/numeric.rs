@@ -47,12 +47,12 @@ impl NumericIndex {
         Self::default()
     }
 
-    /// Test-only since the RDB-load path encodes as it scans ([`Self::from_sorted_tuples`]).
-    ///
     /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
     /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
     /// initial population — one sort + bottom-up page build, no per-item
     /// traversal.
+    ///
+    /// Test-only since the RDB-load path encodes as it scans ([`Self::from_sorted_tuples`]).
     #[cfg(test)]
     #[must_use]
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {

@@ -1,5 +1,6 @@
 //! The native index as the graph maintains it: each test drives a real `Graph` write path
-//! and checks the index column it should have changed.
+//! and checks the index column it should have changed. The online build's tests drive build
+//! steps between writes, and its turns through `MvccGraph` against writers that fork and claim.
 
 use super::Graph;
 use crate::entity_type::EntityType;
@@ -15,7 +16,7 @@ use parking_lot::RwLock;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -41,15 +42,15 @@ fn reserve_nodes(
         .expect("reserved")
 }
 
-/// Run build steps of at most `nodes` nodes or `edges` edges until no column is `Building`, one
-/// after another as the builder does. Returns how many steps it took.
+/// Run build steps of at most `nodes` nodes or `edges` edges on `g` itself until no column is
+/// `Building`. Returns how many steps it took.
 fn build_to_end(
     g: &mut Graph,
     nodes: usize,
     edges: usize,
 ) -> usize {
     let mut steps = 0;
-    while graph_writes::has_building_columns(g) {
+    while g.falkordb_index.has_building_columns() {
         graph_writes::build_step(g, nodes, edges);
         steps += 1;
         assert!(steps < 100_000, "the build never finishes");
@@ -168,7 +169,7 @@ fn create_index_builds_the_column_from_live_nodes() {
         &label,
         std::slice::from_ref(&attr),
     );
-    assert!(graph_writes::has_building_columns(&g));
+    assert!(g.falkordb_index.has_building_columns());
     assert!(
         g.falkordb_index
             .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
@@ -182,7 +183,7 @@ fn create_index_builds_the_column_from_live_nodes() {
         graph_writes::BUILD_STEP_NODES,
         graph_writes::BUILD_STEP_EDGES
     ));
-    assert!(!graph_writes::has_building_columns(&g));
+    assert!(!g.falkordb_index.has_building_columns());
     assert!(
         g.falkordb_index
             .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
@@ -594,6 +595,45 @@ fn replica_edge_update_of_type_maintains_the_index() {
     assert_eq!(scan(20, 20), ids);
 }
 
+// --- One buffer per unit of work ---
+
+/// SET then DELETE of one node inside one unit of work. `Pending::commit` runs its SETs before
+/// its DELETEs and stages both into one buffer, so the batch holds `add (5, n)` from the SET and
+/// then `remove (5, n)` from the DELETE. Applying all removes and then all adds would leave the
+/// deleted node in the column, and it would come back as a wrong row once the id is reused. The
+/// buffer keeps each entry's last change, so the remove wins.
+#[test]
+fn set_then_delete_in_one_batch_leaves_no_entry() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, Value::Int(2));
+
+    // One unit of work, in `Pending::commit`'s order: SET n.v = 5, then DELETE n.
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, Value::Int(5))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.apply_index_writes(&mut writes);
+
+    assert!(
+        range_scan(&g, &label, &attr, 5, 5).is_empty(),
+        "the deleted node's new value must not be indexed"
+    );
+    assert!(
+        range_scan(&g, &label, &attr, 1, 1).is_empty(),
+        "nor its old one"
+    );
+    assert_eq!(
+        range_scan(&g, &label, &attr, 0, 10),
+        vec![ids[1]],
+        "the untouched node is all that is left"
+    );
+}
+
 // --- Online (background) build ---
 
 /// `:Person` nodes carrying `attr` with `values`, set before any index exists, so build steps are
@@ -734,8 +774,9 @@ fn one_pass(
 
 /// A build in small steps, with writes landing between the steps both on nodes the steps already
 /// indexed and on nodes they have not reached, ends with exactly the column a one-pass build of the
-/// final graph has: nothing deleted or re-valued survives, and nothing is missed. No write is
-/// remembered for later; the write path and the steps between them cover every case.
+/// final graph has: nothing deleted or re-valued survives, and nothing is missed. Writes between
+/// steps need only the write path: a step reads current values, and skips the entities written
+/// since the last step, whose tuples the writes already set.
 #[test]
 fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     let attr = Arc::new("v".to_string());
@@ -823,13 +864,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
         cursor(&g, EntityType::Relationship, &ty, &attr),
         Some(BuildCursor { row: a, col: c })
     );
-    let held = |g: &Graph| -> Vec<u64> {
-        g.falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
-            .unwrap()
-            .range(None, None, true, true)
-            .collect()
-    };
+    let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
     assert_eq!(held(&g), eids[..3].to_vec());
 
     // Writes between steps: behind the cursor, delete the second a->b edge and add a fourth a->b
@@ -853,45 +888,55 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
 
     build_to_end(&mut g, 2, 2);
     let values = [1, 2, 3, 4, 5, 6, 7, 8, 55];
-    let column = |g: &Graph| {
-        let idx = g
-            .falkordb_index
-            .numeric(EntityType::Relationship, &ty, &attr)
-            .unwrap();
-        let per_value: Vec<(i64, Vec<u64>)> = values
-            .iter()
-            .map(|&v| {
-                let v_ref = Value::Int(v);
-                (
-                    v,
-                    idx.range(Some(&v_ref), Some(&v_ref), true, true).collect(),
-                )
-            })
-            .collect();
-        per_value
-    };
-    let mut reference = g.new_version();
-    reference.falkordb_index.drop_index(
-        &IndexType::Range,
-        EntityType::Relationship,
-        &ty,
-        std::slice::from_ref(&attr),
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &values),
+        one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
     );
-    graph_writes::create_index(
-        &mut reference,
-        &IndexType::Range,
-        EntityType::Relationship,
-        &ty,
-        std::slice::from_ref(&attr),
-    );
-    build_to_end(&mut reference, usize::MAX, usize::MAX);
-    assert_eq!(column(&g), column(&reference));
-    assert_eq!(held(&g), held(&reference));
     assert_eq!(
         held(&g),
         vec![eids[0], eids[2], eids[3], eids[6], added, eids[4]],
         "w = 1, 3, 4, 7, 8, 55"
     );
+}
+
+/// `Person` nodes 0..10 with `v = 10 * id`, node 4 deleted (a gap in the rows), and `R` edges with
+/// several per source node and one multi-edge pair, so steps stop inside and between rows and
+/// inside the pair. Both columns are created, and `Building`.
+fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>) {
+    let v = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&v, &(0..10).map(|i| i * 10).collect::<Vec<_>>());
+    let ty = Arc::new("R".to_string());
+    let w = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&w);
+    // Five edges out of node 1 (three of them 1->2), two out of node 7, one out of node 8.
+    let (srcs, dsts) = ([1u64, 1, 1, 1, 1, 7, 7, 8], [2u64, 2, 2, 3, 9, 8, 9, 9]);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+    for (i, &eid) in eids.iter().enumerate() {
+        attrs.insert(eid, vec![(aid, Value::Int(i as i64))]);
+    }
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[4]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    for (entity, l, a) in [
+        (EntityType::Node, &label, &v),
+        (EntityType::Relationship, &ty, &w),
+    ] {
+        graph_writes::create_index(
+            &mut g,
+            &IndexType::Range,
+            entity,
+            l,
+            std::slice::from_ref(a),
+        );
+    }
+    (g, label, v, ty, w)
 }
 
 /// Stepping with any batch size ends with the column a one-pass build has: nothing dropped or
@@ -980,7 +1025,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     set_attr(&mut g, ids[0], &attr, Value::Int(30));
 
     drop_index_on(&mut g, &label, &attr);
-    assert!(!graph_writes::has_building_columns(&g));
+    assert!(!g.falkordb_index.has_building_columns());
     assert!(
         g.falkordb_index
             .numeric(EntityType::Node, &label, &attr)
@@ -1071,85 +1116,6 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
     assert_eq!(range_scan(&g, &label, &w, 2, 2), vec![ids[1]]);
 }
 
-/// `Person` nodes 0..10 with `v = 10 * id`, node 4 deleted (a gap in the rows), and `R` edges with
-/// several per source node and one multi-edge pair, so steps stop inside and between rows and
-/// inside the pair. Both columns are created, and `Building`.
-fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>) {
-    let v = Arc::new("v".to_string());
-    let (mut g, label, ids) = people_with(&v, &(0..10).map(|i| i * 10).collect::<Vec<_>>());
-    let ty = Arc::new("R".to_string());
-    let w = Arc::new("w".to_string());
-    let aid = g.get_or_create_rel_attr_id(&w);
-    // Five edges out of node 1 (three of them 1->2), two out of node 7, one out of node 8.
-    let (srcs, dsts) = ([1u64, 1, 1, 1, 1, 7, 7, 8], [2u64, 2, 2, 3, 9, 8, 9, 9]);
-    let eids: Vec<u64> = g
-        .relationship_id_space()
-        .reserve(srcs.len(), &RoaringTreemap::new())
-        .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
-        .expect("freshly reserved ids are creatable");
-    let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
-    for (i, &eid) in eids.iter().enumerate() {
-        attrs.insert(eid, vec![(aid, Value::Int(i as i64))]);
-    }
-    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
-    let mut del = RoaringTreemap::new();
-    del.insert(ids[4]);
-    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
-    for (entity, l, a) in [
-        (EntityType::Node, &label, &v),
-        (EntityType::Relationship, &ty, &w),
-    ] {
-        graph_writes::create_index(
-            &mut g,
-            &IndexType::Range,
-            entity,
-            l,
-            std::slice::from_ref(a),
-        );
-    }
-    (g, label, v, ty, w)
-}
-
-// --- One buffer per unit of work ---
-
-/// SET then DELETE of one node inside one unit of work. `Pending::commit` runs its SETs before
-/// its DELETEs and stages both into one buffer, so the batch holds `add (5, n)` from the SET and
-/// then `remove (5, n)` from the DELETE. Applying all removes and then all adds would leave the
-/// deleted node in the column, and it would come back as a wrong row once the id is reused. The
-/// buffer keeps each entry's last change, so the remove wins.
-#[test]
-fn set_then_delete_in_one_batch_leaves_no_entry() {
-    let (mut g, label, attr, ids) = graph_with_index(2);
-    set_attr(&mut g, ids[0], &attr, Value::Int(1));
-    set_attr(&mut g, ids[1], &attr, Value::Int(2));
-
-    // One unit of work, in `Pending::commit`'s order: SET n.v = 5, then DELETE n.
-    let aid = g.get_or_create_node_attr_id(&attr);
-    let mut attrs = FxHashMap::default();
-    attrs.insert(ids[0], vec![(aid, Value::Int(5))]);
-    let mut writes = IndexDocs::default();
-    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
-    let mut del = RoaringTreemap::new();
-    del.insert(ids[0]);
-    g.delete_nodes(&del, &mut writes).unwrap();
-    g.apply_index_writes(&mut writes);
-
-    assert!(
-        range_scan(&g, &label, &attr, 5, 5).is_empty(),
-        "the deleted node's new value must not be indexed"
-    );
-    assert!(
-        range_scan(&g, &label, &attr, 1, 1).is_empty(),
-        "nor its old one"
-    );
-    assert_eq!(
-        range_scan(&g, &label, &attr, 0, 10),
-        vec![ids[1]],
-        "the untouched node is all that is left"
-    );
-}
-
 // --- The builder: turns, and merging with writers ---
 
 /// A host for driving build turns in a test: a plain lock around the coordinator. `during_step`
@@ -1194,14 +1160,14 @@ impl TestHost {
         for _ in 0..10_000 {
             match self.turn() {
                 Turn::Idle => return,
-                Turn::Committed { .. } | Turn::Lost => {}
+                Turn::Committed { .. } | Turn::Dropped => {}
                 other => panic!("unexpected turn {other:?}"),
             }
         }
         panic!("the build never finishes");
     }
 
-    /// A write committed as a write on Redis's main thread commits: slot taken, then commit.
+    /// A write as Redis's main thread makes one: take the slot, then commit.
     fn write(
         &self,
         f: impl FnOnce(&mut Graph),
@@ -1317,6 +1283,25 @@ impl BuildHost for TestHost {
     }
 }
 
+/// A [`TestHost`] held weakly, as the Redis host holds its graph.
+struct WeakHost(Weak<TestHost>);
+
+impl BuildHost for WeakHost {
+    fn read(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        self.0.upgrade().is_some_and(|host| host.read(f))
+    }
+
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&mut MvccGraph),
+    ) -> bool {
+        self.0.upgrade().is_some_and(|host| host.publish(f))
+    }
+}
+
 /// Delete node `id` through the write path.
 fn delete_node(
     g: &mut Graph,
@@ -1362,7 +1347,7 @@ fn turns_build_a_column_and_go_idle() {
     assert_eq!(host.cursor(&label, &attr), None, "Ready");
 }
 
-/// Case a: a queued write forked before a build step committed, and claims after it. Its version
+/// A queued write forked before a build step committed, and claims after it. Its version
 /// is stale only because of the step, so the claim succeeds instead of running the write again,
 /// and the published column keeps the step's progress and every change the write made — including
 /// removing what the step indexed of the entities the write re-valued and deleted.
@@ -1406,7 +1391,7 @@ fn a_write_claims_over_build_steps_and_keeps_their_progress() {
     assert_eq!(got, want);
 }
 
-/// Case b: a write commits while a build step reads its batch. The step is not dropped: its batch
+/// A write commits while a build step reads its batch. The step is not dropped: its batch
 /// goes into what the write published, except for the entities the write touched, whose tuples
 /// the write already set right.
 #[test]
@@ -1444,16 +1429,12 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
 }
 
 /// A write that committed graph data between a queued write's fork and its claim still makes the
-/// fork stale, with or without build steps around it: the queued write matched on data that
+/// fork stale, with build steps committed around it: the queued write matched on data that
 /// changed, and runs again.
 #[test]
 fn a_write_between_fork_and_claim_still_makes_it_stale() {
     let attr = Arc::new("v".to_string());
     let (host, _, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
-
-    let fork = host.fork();
-    host.write(|g| set_attr(g, ids[1], &attr, Value::Int(50)));
-    assert_eq!(host.finish(fork), Err(Claim::Stale));
 
     let fork = host.fork();
     assert_eq!(host.turn(), Turn::Committed { more: true });
@@ -1479,7 +1460,7 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
         }
     };
     *host.during_step.lock().unwrap() = Some(Box::new(recreate));
-    assert_eq!(host.turn(), Turn::Lost);
+    assert_eq!(host.turn(), Turn::Dropped);
     assert_eq!(host.cursor(&label, &attr), Some(BuildCursor::default()));
     assert!(host.indexed(&label, &attr).is_empty());
 
@@ -1495,7 +1476,7 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
         move |g: &mut Graph| drop_index_on(g, &label, &attr)
     };
     *host.during_step.lock().unwrap() = Some(Box::new(drop_it));
-    assert_eq!(host.turn(), Turn::Lost);
+    assert_eq!(host.turn(), Turn::Dropped);
     assert_eq!(host.turn(), Turn::Idle);
     assert!(
         host.published()
@@ -1554,7 +1535,12 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
         });
         // A queued write in flight, and whether graph data was committed since it forked.
         let mut queued: Option<(Arc<AtomicRefCell<Graph>>, bool)> = None;
-        let building = || graph_writes::has_building_columns(&host.published().borrow());
+        let building = || {
+            host.published()
+                .borrow()
+                .falkordb_index
+                .has_building_columns()
+        };
 
         // A random write: re-value, delete or create a `:Person` node, move one between `:Person`
         // and `:Other`; rarely, re-create one of the indexes.
@@ -1649,7 +1635,7 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                         Some(Box::new(move |g: &mut Graph| write(g, &mut write_rng)));
                     let turn = online_build::run_turn_within(host.as_ref(), 5, 5);
                     assert!(
-                        matches!(turn, Turn::Committed { .. } | Turn::Idle | Turn::Lost),
+                        matches!(turn, Turn::Committed { .. } | Turn::Idle | Turn::Dropped),
                         "seed {seed}: {turn:?}"
                     );
                     // An unused write never ran; one that ran is a data commit.
@@ -1835,19 +1821,24 @@ fn only_an_unclaimed_fork_keeps_a_change_log() {
 fn a_graph_stays_queued_while_it_still_has_a_building_column() {
     let attr = Arc::new("v".to_string());
     let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
-    // Registered after its CREATE INDEX, so queue it the way a commit would: with a write.
-    host.mvcc.read().set_build_host(host.clone());
+    // Registered after its CREATE INDEX, so queue it the way a commit would: with a write. Weakly,
+    // as the Redis host is, so the host does not keep itself alive through its graph or the queue.
+    host.mvcc
+        .read()
+        .set_build_host(Arc::new(WeakHost(Arc::downgrade(&host))));
     host.write(|g| create_index_on(g, &label, &Arc::new("w".to_string())));
     assert!(
-        host.mvcc.read().build_done(),
+        host.mvcc.read().requeue_if_building(),
         "columns are still Building, so the graph stays queued"
     );
     host.build_to_end();
-    assert!(!host.mvcc.read().build_done(), "nothing left to build");
+    assert!(
+        !host.mvcc.read().requeue_if_building(),
+        "nothing left to build"
+    );
 }
 
-/// A host that refuses to publish (the graph was deleted) ends the turn without committing, and
-/// leaves the slot free.
+/// A host that refuses to publish (the graph was deleted) ends the turn without committing.
 #[test]
 fn a_refused_publish_commits_nothing() {
     let attr = Arc::new("v".to_string());
@@ -1855,7 +1846,6 @@ fn a_refused_publish_commits_nothing() {
     host.refuse.store(true, Ordering::Relaxed);
     assert_eq!(host.turn(), Turn::Gone);
     assert!(host.indexed(&label, &attr).is_empty());
-    assert!(host.slot_free());
 }
 
 /// Two turns at once on one graph — which the pool never runs — must not let the second merge a

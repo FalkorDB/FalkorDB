@@ -145,17 +145,17 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
+    // How the online index builder reaches this graph. No caller holds the graph's lock here.
+    #[cfg(feature = "index-falkordb")]
+    arc.read()
+        .graph
+        .set_build_host(Arc::new(RedisBuildHost(Arc::downgrade(&arc))));
     // Invariant: every registered name must have been removed from the
     // registry before being re-inserted. `graph_free` removes entries on
     // Redis key delete/overwrite/expire, and the RDB multi-key load path
     // mutates the placeholder Arc in place rather than rebinding the name.
     // If this assert fires, a caller is leaking the previously-registered
     // Arc and likely racing index/teardown shutdown.
-    // How the online index builder reaches this graph. No caller holds the graph's lock here.
-    #[cfg(feature = "index-falkordb")]
-    arc.read()
-        .graph
-        .set_build_host(Arc::new(RedisBuildHost(Arc::downgrade(&arc))));
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
     debug_assert!(
         displaced.is_none(),
@@ -1660,7 +1660,9 @@ impl BuildHost for RedisBuildHost {
     }
 
     /// What every Redis writer holds to publish: the GIL, then the graph's write lock, in that
-    /// order. Refused once the graph is no longer the one registered under its key.
+    /// order. Refused once the graph is no longer the one registered under its key, and once the
+    /// builder is stopping: the shutdown handler stops it holding the GIL, so a turn that was
+    /// waiting for the GIL gets it only after the builder stopped.
     fn publish(
         &self,
         f: &mut dyn FnMut(&mut MvccGraph),
@@ -1669,25 +1671,11 @@ impl BuildHost for RedisBuildHost {
             return false;
         };
         let session = QuerySession::begin_writer(&tg);
-        if !graph_is_registered(&tg) {
+        if online_build::stopping() || !graph_is_registered(&tg) {
             return false;
         }
         session.with_graph_mut(|g| f(&mut g.graph)).is_some()
     }
-}
-
-/// Start the online index build pool with `threads` workers (`INDEX_BUILD_THREAD_COUNT`). Called
-/// at module init.
-#[cfg(feature = "index-falkordb")]
-pub fn start_index_builder(threads: usize) {
-    online_build::start(threads);
-}
-
-/// Stop the online index build pool and wait for its workers. Called from the shutdown handler
-/// before the thread pool and GraphBLAS are torn down, since a build step reads a graph.
-#[cfg(feature = "index-falkordb")]
-pub fn stop_index_builder() {
-    online_build::stop();
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {

@@ -399,11 +399,11 @@ pub fn edges_deleted(
 /// CREATE INDEX: mark each attribute's column `Building` and return. Only a Range index has
 /// native columns; any other type does nothing.
 ///
-/// Nothing is scanned here. The entities that already exist are indexed by `build_step`s, which
-/// the online builder (`online_build`) runs as units of work of their own until the last one flips
-/// the column `Ready`. Until
-/// then reads on the column fall back to a scan, and live writes maintain it as usual. The
-/// RDB-load path ([`populate`]) still builds synchronously.
+/// Nothing is scanned here. The entities that already exist are indexed by build steps
+/// ([`read_build_batch`]), which the online builder (`online_build`) commits as units of work of
+/// their own until the last one flips the column `Ready`. Until then reads on the column fall
+/// through to RediSearch, and live writes maintain it as usual. The RDB-load path ([`populate`])
+/// still builds synchronously.
 ///
 /// The build never goes through the RediSearch populate, which reaches the graph through the
 /// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
@@ -437,12 +437,6 @@ pub(crate) const BUILD_STEP_NODES: usize = 10_000;
 /// populate batch (`src/index/index_construct.c`).
 pub(crate) const BUILD_STEP_EDGES: usize = 1_000;
 
-/// Whether any column of `g` is still `Building`, i.e. whether its host has build steps to run.
-#[must_use]
-pub(crate) fn has_building_columns(g: &Graph) -> bool {
-    g.falkordb_index.has_building_columns()
-}
-
 /// One build step: index the next batch of one `Building` column's entities, at most `nodes` nodes
 /// or `edges` edges, at their current values, and move its cursor past them, or flip the column
 /// `Ready` if the batch reached the end. Returns whether a column is still `Building` afterwards,
@@ -463,34 +457,21 @@ pub(crate) fn build_step(
 /// Read the next build step's batch from `g` without applying it: the first `Building` column's
 /// next `nodes` nodes or `edges` edges, at their values in `g`, encoded and sorted. `None` if no
 /// column is `Building`. The online builder ([`BUILD_STEP_NODES`], [`BUILD_STEP_EDGES`]) reads it
-/// on a snapshot and applies it
-/// ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)) to whatever
-/// version is current
-/// when it publishes.
+/// on a snapshot and applies it to whatever version is current when it publishes
+/// ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)).
 pub(crate) fn read_build_batch(
     g: &Graph,
     nodes: usize,
     edges: usize,
 ) -> Option<BuildBatch> {
-    let (entity, key, from) = g.falkordb_index.next_building()?;
+    let (entity, key, from, generation) = g.falkordb_index.next_building()?;
     let column = g
         .falkordb_index
         .column(entity, &key.0, &key.1)
         .expect("next_building names an existing column");
-    let generation = g
-        .falkordb_index
-        .generation(entity, &key)
-        .expect("next_building names an existing column");
-    let encode = |value: &Value| column.encode_value(value);
-    let (label, attr) = (&key.0, &key.1);
-    let mut tuples = Vec::new();
-    let next = match entity {
-        EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
-            .map(|row| BuildCursor { row, col: 0 }),
-        EntityType::Relationship => scan_edges(g, label, attr, from, edges, encode, &mut tuples),
-    };
-    tuples.sort_unstable();
-    tuples.dedup();
+    let (tuples, next) = scan(g, entity, &key.0, &key.1, from, nodes, edges, |value| {
+        column.encode_value(value)
+    });
     Some(BuildBatch {
         entity,
         key,
@@ -557,7 +538,16 @@ fn build_column(
     label: &Arc<String>,
     attr: &Arc<String>,
 ) {
-    let pairs = encoded_entries(g, entity, label, attr, encode_numeric);
+    let (pairs, _) = scan(
+        g,
+        entity,
+        label,
+        attr,
+        BuildCursor::default(),
+        usize::MAX,
+        usize::MAX,
+        encode_numeric,
+    );
     g.falkordb_index
         .build_numeric_sorted(entity, label, attr, &pairs);
 }
@@ -590,40 +580,34 @@ fn edge_type(
     &g.get_types()[g.get_relationship_type_id(RelationshipId::from(id)).0]
 }
 
-/// The tuples of column `(entity, label, attr)` as the live graph holds them, encoded with
-/// `encode`, sorted and unique: one `(key, id)` for every live `label` node (or `label`-typed
-/// edge) whose `attr` value the column indexes.
+/// The tuples of column `(entity, label, attr)` for up to `nodes` `label` nodes, or `edges`
+/// `label`-typed edges, from `from` on, as `g` holds them: encoded with `encode`, sorted and
+/// unique, one `(key, id)` for each whose `attr` value the column indexes. Also returns where the
+/// next batch resumes, or `None` when the scan reached the end.
 ///
 /// Each value is encoded as it is read and dropped straight away, so the scan never holds the
 /// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
 /// Range index) costs nothing past the read.
-fn encoded_entries(
+#[allow(clippy::too_many_arguments)]
+fn scan(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
+    from: BuildCursor,
+    nodes: usize,
+    edges: usize,
     encode: impl Fn(&Value) -> Option<u64>,
-) -> Vec<(u64, u64)> {
-    let mut pairs = Vec::new();
-    match entity {
-        EntityType::Node => {
-            scan_nodes(g, label, attr, 0, usize::MAX, encode, &mut pairs);
-        }
-        EntityType::Relationship => {
-            scan_edges(
-                g,
-                label,
-                attr,
-                BuildCursor::default(),
-                usize::MAX,
-                encode,
-                &mut pairs,
-            );
-        }
-    }
-    pairs.sort_unstable();
-    pairs.dedup();
-    pairs
+) -> (Vec<(u64, u64)>, Option<BuildCursor>) {
+    let mut tuples = Vec::new();
+    let next = match entity {
+        EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
+            .map(|row| BuildCursor { row, col: 0 }),
+        EntityType::Relationship => scan_edges(g, label, attr, from, edges, encode, &mut tuples),
+    };
+    tuples.sort_unstable();
+    tuples.dedup();
+    (tuples, next)
 }
 
 /// Append to `out` the tuples of node column `(label, attr)` for up to `budget` `label` nodes from

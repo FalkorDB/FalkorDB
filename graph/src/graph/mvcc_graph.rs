@@ -30,9 +30,10 @@
 //!  Failed writer ──write()──▶ CAS fails ──▶ returns None
 //! ```
 //!
-//! A background index-build step commits too ([`MvccGraph::commit_index_build`]), and changes only
-//! the index. A writer whose fork is stale only because build steps committed since it was made
-//! does not run again: [`MvccGraph::claim`] gives its fork their progress, and it commits.
+//! With the `index-falkordb` feature, a background index-build step commits too
+//! (`MvccGraph::commit_index_build`), and changes only the index. A writer whose fork is stale only
+//! because build steps committed since it was made does not run again: [`MvccGraph::claim`] gives
+//! its fork their progress, and it commits.
 //!
 //! ## Version Lifecycle
 //!
@@ -56,6 +57,8 @@
 //! where mutable access to the committed graph is needed (e.g., indexer
 //! graph reference updates on commit).
 
+#[cfg(feature = "index-falkordb")]
+use std::sync::OnceLock;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -65,12 +68,7 @@ use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{
-    graph_writes::has_building_columns,
-    online_build::{self, BuildHost},
-};
-#[cfg(feature = "index-falkordb")]
-use std::sync::OnceLock;
+use crate::index::falkordb::online_build::{self, BuildHost};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -97,7 +95,7 @@ pub struct MvccGraph {
 pub enum Claim {
     /// Another writer holds the write slot.
     Busy,
-    /// Another writer committed after the fork was made.
+    /// A commit that changed graph data was made after the fork was.
     Stale,
 }
 
@@ -161,14 +159,14 @@ impl MvccGraph {
             .store(old.build_queued.load(Ordering::Acquire), Ordering::Release);
     }
 
-    /// The builder has finished this graph: it is no longer queued — unless the published version
-    /// has a `Building` column again, from a commit made while it was still queued, in which case
-    /// it stays queued and this returns `true`. The caller holds the host's read access, which no
-    /// commit can overlap.
+    /// The builder found nothing left to build on this graph: take it off the build queue — unless
+    /// the published version has a `Building` column again, from a commit made while it was still
+    /// queued, in which case it stays queued and this returns `true`. The caller holds the host's
+    /// read access, which no commit can overlap.
     #[cfg(feature = "index-falkordb")]
-    pub(crate) fn build_done(&self) -> bool {
+    pub(crate) fn requeue_if_building(&self) -> bool {
         self.build_queued.store(false, Ordering::Release);
-        has_building_columns(&self.graph.borrow())
+        self.graph.borrow().falkordb_index.has_building_columns()
             && !self.build_queued.swap(true, Ordering::AcqRel)
     }
 
@@ -210,16 +208,15 @@ impl MvccGraph {
 
     /// Claim the write slot for a version made by [`Self::fork`].
     ///
-    /// A fork that is stale only because index-build steps committed since it was made is not
-    /// refused: the steps changed no graph data, so its writes still hold, and it takes the
-    /// steps' progress ([`FalkorDbIndex::adopt_build_progress`]) and becomes the next version.
-    ///
-    /// [`FalkorDbIndex::adopt_build_progress`]: crate::index::falkordb::falkordb_index::FalkorDbIndex::adopt_build_progress
+    /// With the `index-falkordb` feature, a fork that is stale only because index-build steps
+    /// committed since it was made is not refused: the steps changed no graph data, so its writes
+    /// still hold, and it takes the steps' progress (`FalkorDbIndex::adopt_build_progress`) and
+    /// becomes the next version.
     ///
     /// # Errors
     ///
     /// [`Claim::Busy`] if another writer holds the slot. [`Claim::Stale`] if
-    /// another writer committed since the fork was made, so it no longer
+    /// a commit that changed graph data was made since the fork, so it no longer
     /// extends the committed version and must be discarded; the slot is left
     /// free.
     pub fn claim(
@@ -295,7 +292,7 @@ impl MvccGraph {
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) -> Result<(), NodeOpError> {
-        self.publish(new_graph, true)
+        self.commit_version(new_graph, true)
     }
 
     /// [`Self::commit`] for an index-build step, which changes no graph data: a writer whose fork
@@ -309,11 +306,11 @@ impl MvccGraph {
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) -> Result<(), NodeOpError> {
-        self.publish(new_graph, false)
+        self.commit_version(new_graph, false)
     }
 
     /// [`Self::commit`]; `data` if the version changes graph data, not only the index.
-    fn publish(
+    fn commit_version(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
         #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))] data: bool,
@@ -398,7 +395,7 @@ impl MvccGraph {
         // it is queued already — which it is while the builder works on it, so the builder's own
         // commits queue nothing.
         #[cfg(feature = "index-falkordb")]
-        let building = has_building_columns(&new_graph.borrow());
+        let building = new_graph.borrow().falkordb_index.has_building_columns();
 
         #[cfg(feature = "index-falkordb")]
         if data {
