@@ -126,17 +126,56 @@ impl IndexColumn {
     }
 }
 
-/// One column's index.
+/// Build state of a column, for online (background) index build.
+///
+/// `CREATE INDEX` on existing data returns immediately with the column
+/// [`Building`](Self::Building). The column is then filled in steps
+/// ([`graph_writes::build_step`](super::graph_writes::build_step)), each its own unit of work: it
+/// indexes the next batch of the label's entities at the values they hold *then*, and moves the
+/// cursor past them. The step that reaches the end flips the column [`Ready`](Self::Ready). While
+/// `Building`, the read path returns `None` and falls back.
+///
+/// Nothing written during the build has to be remembered for later. Live writes maintain the
+/// column as usual, including for entities no step has reached yet: a step that reaches one later
+/// reads its current value, and adding a tuple the column already holds is a no-op. A removed
+/// tuple the column never held is a no-op too. This is how C populates an index
+/// (`src/index/index_construct.c`), in batches interleaved with writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColumnState {
+    /// Some of the label's entities are not indexed yet — reads fall back. `next` is where the next
+    /// step resumes.
+    Building { next: BuildCursor },
+    /// Every entity is indexed — the column serves reads.
+    Ready,
+}
+
+/// Where a building column's next step resumes: the first entity no step has indexed yet.
+///
+/// For a node column, `row` is a node id and `col` is unused. For an edge column, `row` is a source
+/// node id and `col` a destination within that row, so a row with more edges than one step reads
+/// can be resumed partway, as C does. A step always finishes the multi-edge pair it stops in, so
+/// every edge before `(row, col)` is indexed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BuildCursor {
+    pub(crate) row: u64,
+    pub(crate) col: u64,
+}
+
+/// One column's index plus its build state.
 #[derive(Clone)]
 struct ColumnEntry {
     column: IndexColumn,
+    state: ColumnState,
 }
 
 impl ColumnEntry {
     /// A column that already holds all its data and serves reads immediately —
     /// the synchronous populate path.
     fn ready(column: IndexColumn) -> Self {
-        Self { column }
+        Self {
+            column,
+            state: ColumnState::Ready,
+        }
     }
 }
 
@@ -211,7 +250,7 @@ impl FalkorDbIndex {
 
     /// Create an empty numeric column for `(entity, label, attr)` in the `Ready`
     /// state, replacing any existing one. Used by the synchronous paths (RDB load /
-    /// replica), where the caller fills it via [`build_numeric`](Self::build_numeric)
+    /// replica), where the caller fills it via [`build_numeric_sorted`](Self::build_numeric_sorted)
     /// before any read is served. An edge column's docs are `edge_id`s.
     pub fn create_numeric(
         &mut self,
@@ -225,22 +264,44 @@ impl FalkorDbIndex {
         );
     }
 
-    /// Build (or rebuild) the numeric column for `(entity, label, attr)` from
-    /// `entries` (any order) in the `Ready` state, replacing any existing one — the
-    /// bulk populate path. `NumericIndex::from_entries` bottom-up-loads the sorted
-    /// pairs (cheaper than looping incremental adds). Non-numeric / `NaN` values are
-    /// skipped by the encoder, so a Range attr holding mixed types indexes only its
-    /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
-    pub fn build_numeric<'a>(
+    /// Create an empty numeric column in the `Building` state, its cursor at the start — the
+    /// online-build path. Returns immediately: live writes maintain the column from now on, build
+    /// steps fill in the entities that already exist, and reads fall back until the last step
+    /// flips it `Ready`. Replaces any existing column.
+    pub fn create_building(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        entries: impl IntoIterator<Item = (&'a Value, u64)>,
     ) {
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::from_entries(entries))),
+            ColumnEntry {
+                column: IndexColumn::Numeric(NumericIndex::new()),
+                state: ColumnState::Building {
+                    next: BuildCursor::default(),
+                },
+            },
+        );
+    }
+
+    /// Build (or rebuild) the numeric column for `(entity, label, attr)` in the `Ready` state from
+    /// numeric-encoded tuples **sorted ascending and unique**, replacing any existing one — the
+    /// RDB-load populate path. Bottom-up-loads the tuples, which is cheaper than looping
+    /// incremental adds. The caller encodes, so a Range attr holding mixed types indexes only its
+    /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
+    pub fn build_numeric_sorted(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        pairs: &[(u64, u64)],
+    ) {
+        self.columns_mut(entity).insert(
+            (label.clone(), attr.clone()),
+            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::from_sorted_tuples(
+                pairs,
+            ))),
         );
     }
 
@@ -289,7 +350,7 @@ impl FalkorDbIndex {
     }
 
     /// The numeric column for `(entity, label, attr)`, if one exists and is numeric.
-    /// Used by the
+    /// State-agnostic (inspects a `Building` or `Ready` column alike) — used by the
     /// populate path and tests, not the read path (which gates on state).
     #[must_use]
     pub fn numeric(
@@ -324,6 +385,19 @@ impl FalkorDbIndex {
             }) => Some(idx),
             None => None,
         }
+    }
+
+    /// The column for `(entity, label, attr)`, whatever its state.
+    #[must_use]
+    pub(crate) fn column(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<&IndexColumn> {
+        self.columns(entity)
+            .get(&(label.clone(), attr.clone()))
+            .map(|entry| &entry.column)
     }
 
     /// Whether a column exists for `(entity, label, attr)` — the write path's staging gate.
@@ -399,10 +473,67 @@ impl FalkorDbIndex {
         }
     }
 
+    /// The first column still `Building`, with its cursor — what the next build step advances.
+    /// Node columns first; `None` once every column is `Ready`.
+    #[must_use]
+    pub(crate) fn next_building(&self) -> Option<(EntityType, IndexKey, BuildCursor)> {
+        [
+            (EntityType::Node, &self.node_columns),
+            (EntityType::Relationship, &self.edge_columns),
+        ]
+        .into_iter()
+        .find_map(|(entity, columns)| {
+            columns.iter().find_map(|(key, entry)| match entry.state {
+                ColumnState::Building { next } => Some((entity, key.clone(), next)),
+                ColumnState::Ready => None,
+            })
+        })
+    }
+
+    /// Whether any column is still `Building`.
+    #[must_use]
+    pub(crate) fn has_building_columns(&self) -> bool {
+        self.next_building().is_some()
+    }
+
+    /// The build state of column `(entity, label, attr)`, if it exists.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn column_state(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<ColumnState> {
+        self.columns(entity)
+            .get(&(label.clone(), attr.clone()))
+            .map(|entry| entry.state)
+    }
+
+    /// Record one build step on column `key`: add the tuples it read, then move the cursor to
+    /// `next`, or flip the column `Ready` when `next` is `None` (the step reached the end). A
+    /// no-op for a column that is gone or no longer `Building`.
+    pub(crate) fn advance_build(
+        &mut self,
+        entity: EntityType,
+        key: &IndexKey,
+        tuples: &mut [(u64, u64)],
+        next: Option<BuildCursor>,
+    ) {
+        let Some(entry) = self.columns_mut(entity).get_mut(key) else {
+            return;
+        };
+        if entry.state == ColumnState::Ready {
+            return;
+        }
+        entry.column.add_encoded(tuples);
+        entry.state = next.map_or(ColumnState::Ready, |next| ColumnState::Building { next });
+    }
+
     /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range` leaf. A Range index also holds strings and geo (served by
-    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through, as does a
-    /// missing column (the read
+    /// `Equal`/`Range` leaf on a `Ready` column. A Range index also holds strings and geo (served by
+    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through; so does a
+    /// missing column, and so does a `Building` column (not every entity is indexed yet, so the read
     /// falls back to a scan — today's `UNDER CONSTRUCTION` behavior). Yields docs — node ids for a node
     /// column, `edge_id`s for an edge column. The read path routes here and falls back on `None`.
     #[must_use]
@@ -426,6 +557,9 @@ impl FalkorDbIndex {
             return None; // string / geo on a Range index — RediSearch owns those entries
         }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
+        if entry.state != ColumnState::Ready {
+            return None; // Building — not every entity is indexed yet, fall back to a scan
+        }
         match &entry.column {
             IndexColumn::Numeric(idx) => idx.query(query),
         }
@@ -434,6 +568,7 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
+    use super::super::encode::encode_numeric;
     use super::super::pending_writes::IndexChanges;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
@@ -463,6 +598,91 @@ mod tests {
         idx.apply(&mut writes);
     }
 
+    /// The online-build state machine at the column level. A `Building` column gates reads (returns
+    /// `None`, so the caller falls back) while live writes and build steps both fill it; the step
+    /// that reaches the end flips it `Ready`, and from then on a step changes nothing.
+    #[test]
+    fn building_column_gates_reads_until_finished() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let column: IndexKey = (label.clone(), attr.clone());
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let key = |v: i64| encode_numeric(&Value::Int(v)).unwrap();
+        let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
+            idx.query_numeric(Node, &label, &eq(v))
+                .map_or_else(Vec::new, Iterator::collect)
+        };
+        let all = |idx: &FalkorDbIndex| -> Vec<u64> {
+            idx.numeric(Node, &label, &attr)
+                .unwrap()
+                .range(None, None, true, true)
+                .collect()
+        };
+
+        let mut idx = FalkorDbIndex::new();
+        idx.create_building(Node, &label, &attr);
+        assert_eq!(
+            idx.next_building(),
+            Some((Node, column.clone(), BuildCursor::default()))
+        );
+        assert!(hits(&idx, 10).is_empty(), "empty Building → None");
+
+        // Live writes during the build: node 2 is created with 30, and node 1 goes 20 -> 25
+        // before any step reached it — removing the 20 the column never held is a no-op.
+        write(&mut idx, &label, &attr, &[(30, 2, true)]);
+        write(&mut idx, &label, &attr, &[(20, 1, false), (25, 1, true)]);
+        assert!(
+            hits(&idx, 30).is_empty(),
+            "still Building → None even with live writes in the column"
+        );
+
+        // A step indexes nodes 0..=2 at their current values — including node 1's 25 and node 2's
+        // 30, which the writes already added — and stops before node 3.
+        let mut batch = vec![(key(30), 2), (key(10), 0), (key(25), 1)];
+        let next = BuildCursor { row: 3, col: 0 };
+        idx.advance_build(Node, &column, &mut batch, Some(next));
+        assert_eq!(idx.next_building(), Some((Node, column.clone(), next)));
+        assert!(
+            hits(&idx, 10).is_empty(),
+            "still Building after a partial step"
+        );
+
+        // The last step reaches the end.
+        idx.advance_build(Node, &column, &mut [(key(40), 3)], None);
+        assert!(!idx.has_building_columns());
+        assert_eq!(
+            idx.column_state(Node, &label, &attr),
+            Some(ColumnState::Ready)
+        );
+        assert_eq!(hits(&idx, 10), vec![0]);
+        assert_eq!(hits(&idx, 25), vec![1]);
+        assert!(
+            hits(&idx, 20).is_empty(),
+            "the removed value was never indexed"
+        );
+        assert_eq!(
+            hits(&idx, 30),
+            vec![2],
+            "added by the write and the step, held once"
+        );
+        assert_eq!(all(&idx), vec![0, 1, 2, 3]);
+
+        // A step on a `Ready` column, or on a column that is gone, changes nothing.
+        idx.advance_build(Node, &column, &mut [(key(99), 9)], None);
+        idx.advance_build(
+            Node,
+            &(label.clone(), arc("gone")),
+            &mut [(key(99), 9)],
+            None,
+        );
+        assert!(hits(&idx, 99).is_empty());
+        assert_eq!(all(&idx), vec![0, 1, 2, 3]);
+    }
+
+    /// Forking a new version (what `Graph::new_version` does) and mutating it
+    /// leaves the prior version — the snapshot a reader may still hold — untouched.
     #[test]
     fn new_version_is_copy_on_write() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -488,7 +708,6 @@ mod tests {
         assert_eq!(all(&v2), vec![1, 2]); // new version sees the write
     }
 
-    /// `create_numeric` installs a column; before it, the key is absent.
     #[test]
     fn create_then_lookup() {
         let (label, attr) = (arc("Person"), arc("age"));

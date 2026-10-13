@@ -446,7 +446,7 @@ pub struct Graph {
     /// index atomically.
     ///
     /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes, and
-    /// `FalkorDbIndex::apply` updates it.
+    /// `FalkorDbIndex::apply` and the online build's steps update it.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
 }

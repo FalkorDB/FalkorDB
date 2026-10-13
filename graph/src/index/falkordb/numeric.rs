@@ -47,10 +47,13 @@ impl NumericIndex {
         Self::default()
     }
 
+    /// Test-only since the RDB-load path encodes as it scans ([`Self::from_sorted_tuples`]).
+    ///
     /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
     /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
     /// initial population — one sort + bottom-up page build, no per-item
     /// traversal.
+    #[cfg(test)]
     #[must_use]
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
         let mut pairs: Vec<(u64, u64)> = entries
@@ -134,6 +137,15 @@ impl NumericIndex {
         let entries = entries.into_iter();
         out.reserve(entries.size_hint().0);
         out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
+    }
+
+    /// Build from already-encoded `(key, doc)` tuples **sorted ascending and unique** — the RDB-load
+    /// populate path, which encodes as it scans.
+    #[must_use]
+    pub fn from_sorted_tuples(pairs: &[(u64, u64)]) -> Self {
+        Self {
+            tree: Tree::from_sorted(pairs),
+        }
     }
 
     /// Add already-encoded tuples — the adds a unit of work's staged writes collapsed to. Tuples
