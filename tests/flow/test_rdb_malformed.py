@@ -7,6 +7,7 @@ from rdb_payload import (GraphValue, reframe, crc64, rdb_module_values,
                          T_VECTOR_F32)
 
 import os
+import time
 import shutil
 import tempfile
 import subprocess
@@ -55,6 +56,20 @@ def _log_size(env):
         return os.path.getsize(_log_path(env))
     except FileNotFoundError:
         return 0
+
+
+# wait for the decoder's "Failed loading graph key" line to be flushed to the
+# server log (RedisModule_Log can lag the RESTORE reply), then return the log
+# from 'offset' on. returns as soon as the line appears; on timeout returns the
+# last read so the caller's assertion fails loudly. None only when there is no
+# log file at all (RLTest run without output capture)
+def _await_failed_line(env, offset, attempts=50, delay=0.02):
+    for _ in range(attempts):
+        log = _read_log(env, offset)
+        if log is not None and FAILED in log:
+            return log
+        time.sleep(delay)
+    return _read_log(env, offset)
 
 
 # the schema prefix ("node_schema[k]") of the label named 'label'
@@ -135,9 +150,11 @@ class testRdbMalformed():
         self.env.assertTrue(self.conn.ping())
         self.env.assertEqual(self.conn.keys("*"), [])
 
-        log = _read_log(self.env, log_start)
+        log = _await_failed_line(self.env, log_start)
         if log is None:
-            return
+            # no server log to read (RLTest without output capture): the reason
+            # can't be verified here, so skip visibly instead of passing silently
+            self.env.skip()
         lines = [l for l in log.splitlines() if FAILED in l]
         self.env.assertEqual(len(lines), 1)
         if lines:
@@ -191,6 +208,16 @@ class testRdbMalformed():
         gv.set_uint(f"{e}.type", 1 << 24)
         gv.remove_value(f"{e}.value")
         self._assert_rejected(gv, f"unknown value type {1 << 24}")
+
+    def test_array_too_long(self):
+        # an array length past GRAPH_MAX_SIARRAY_LEN is rejected before it drives
+        # the element-decode loop (graph_limits.h)
+        gv = self._value()
+        p = _property_of_type(gv, T_ARRAY)
+        self.env.assertGreater(gv.fields[f"{p}.length"].value, 0)
+        n = (1 << 28) + 1
+        gv.set_uint(f"{p}.length", n)
+        self._assert_rejected(gv, f"array length {n} exceeds limit")
 
     def test_unterminated_string_property(self):
         gv = self._value()
@@ -367,17 +394,37 @@ class testRdbMalformed():
     # matrices
     #---------------------------------------------------------------------------
 
+    def test_too_many_labels(self):
+        # a label count past GRAPH_MAX_LABELS is rejected in the header, before
+        # it sizes any allocation (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["label_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("label_count", n)
+        self._assert_rejected(gv, f"label count {n} exceeds limit")
+
+    def test_too_many_relations(self):
+        # a relation count past GRAPH_MAX_RELATIONS is rejected in the header,
+        # before the multi-edge loop reads it (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["relation_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("relation_count", n)
+        self._assert_rejected(gv, f"relation count {n} exceeds limit")
+
     def test_label_matrix_unknown_label(self):
+        # label matrices are encoded one per label in id order; a label id that
+        # isn't the expected position (here out of range) breaks that order
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 99)
-        self._assert_rejected(gv, "label matrix for an unknown label: 99")
+        self._assert_rejected(gv, "label matrix out of order: 99")
 
     def test_label_matrix_negative_label(self):
         # read into a signed 32-bit LabelID, 0xFFFFFFFF passed for -1
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 0xFFFFFFFF)
         self._assert_rejected(gv,
-            f"label matrix for an unknown label: {0xFFFFFFFF}")
+            f"label matrix out of order: {0xFFFFFFFF}")
 
     def test_label_matrix_missing(self):
         # the last label matrix dropped, count adjusted: well formed, one short
@@ -390,10 +437,12 @@ class testRdbMalformed():
         self._assert_rejected(gv, f"{n - 1} label matrices for {n} labels")
 
     def test_label_matrix_twice(self):
+        # a second matrix claiming label 0 lands at index 1, where the strict
+        # id-order check (l must equal i) rejects it
         gv = self._value()
         self.env.assertEqual(gv.fields["label_matrix[0].label"].value, 0)
         gv.set_uint("label_matrix[1].label", 0)
-        self._assert_rejected(gv, "label matrix decoded twice")
+        self._assert_rejected(gv, "label matrix out of order: 0")
 
     def test_relation_matrix_out_of_order(self):
         gv = self._value()
@@ -466,6 +515,15 @@ class testRdbMalformed():
         gv.set_uint("payload[0].type", 99)
         self._assert_rejected(gv, "unknown payload type")
 
+    def test_too_many_payloads(self):
+        # a payload count past GRAPH_MAX_KEY_PAYLOADS is rejected before it sizes
+        # the payload array (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["payload_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("payload_count", n)
+        self._assert_rejected(gv, f"payload count {n} exceeds limit")
+
 
 #-------------------------------------------------------------------------------
 # a damaged dump.rdb: loading it at startup must end in Redis' own exit, with
@@ -532,9 +590,9 @@ def _assert_short_read_exit(env, rdb):
     exit_code, log = _start_on_rdb(env, rdb)
     tail = f"exit code {exit_code}: " + log[-2000:]
     env.assertEqual(exit_code, 1, message=tail)
-    env.assertContains("Internal error in RDB reading", log, message=tail)
-    env.assertContains("Unexpected EOF reading RDB file", log, message=tail)
-    env.assertNotContains(FAILED, log, message=tail)
+    env.assertContains("Internal error in RDB reading", log)
+    env.assertContains("Unexpected EOF reading RDB file", log)
+    env.assertNotContains(FAILED, log)
 
 
 # cut the saved file halfway through the first value of 'module_type'
@@ -635,13 +693,10 @@ class testRdbLoadMalformedGraphKey():
         # well-framed graph data the module rejected it exits 0. what matters:
         # the server exited by itself (no signal, no hang)
         exit_code, log = _start_on_rdb(self.env, bad)
-        tail = f"exit code {exit_code}: " + log[-2000:]
-        self.env.assertIsNotNone(exit_code, message=tail)
-        self.env.assertGreaterEqual(-1 if exit_code is None else exit_code, 0,
-                                    message=tail)
+        self.env.assertIsNotNone(exit_code)
+        self.env.assertGreaterEqual(-1 if exit_code is None else exit_code, 0)
         ours = log.find(f"{FAILED} '{GRAPH_ID}': unsupported index language")
         redis_line = log.find("Internal error in RDB reading")
-        self.env.assertGreater(ours, -1, message=tail)
-        self.env.assertGreater(redis_line, ours, message=tail)
-        self.env.assertContains("not able to load", log[redis_line:],
-                                message=tail)
+        self.env.assertGreater(ours, -1)
+        self.env.assertGreater(redis_line, ours)
+        self.env.assertContains("not able to load", log[redis_line:])

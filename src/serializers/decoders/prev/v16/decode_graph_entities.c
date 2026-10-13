@@ -17,18 +17,18 @@ static SIValue _RdbLoadSIValue
 	// Format:
 	// SIType
 	// Value
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t = SerializerIO_TryReadUnsigned(rdb);
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		return SI_LongVal(SerializerIO_TryReadSigned(rdb));
 	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_TryReadDouble(rdb));
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_TryReadBuffer(rdb, NULL));
 	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		return SI_BoolVal(SerializerIO_TryReadSigned(rdb));
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
@@ -45,8 +45,8 @@ static SIValue _RdbLoadPoint
 (
 	SerializerIO rdb
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
+	double lat = SerializerIO_TryReadDouble(rdb);
+	double lon = SerializerIO_TryReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
@@ -62,7 +62,7 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
+	uint arrayLen = SerializerIO_TryReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
@@ -89,13 +89,13 @@ static SIValue _RdbLoadVector
 
 	SIValue vector;
 
-	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
+	uint32_t dim = SerializerIO_TryReadUnsigned(rdb);
 
 	vector = SI_Vectorf32(dim);
 	float *values = SIVector_Elements(vector);
 
 	for(uint32_t i = 0; i < dim; i++) {
-		values[i] = SerializerIO_ReadFloat(rdb);
+		values[i] = SerializerIO_TryReadFloat(rdb);
 	}
 
 	return vector;
@@ -112,7 +112,7 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
+	uint64_t n = SerializerIO_TryReadUnsigned (rdb) ;
 
 	if (n == 0) {
 		return ;
@@ -126,7 +126,7 @@ static void _RdbLoadEntity
 		AttributeID ids  [n] ;
 
 		for (uint64_t i = 0 ; i < n ; i++) {
-			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+			ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 			vals [i] = _RdbLoadSIValue (rdb) ;
 		}
 
@@ -142,7 +142,7 @@ static void _RdbLoadEntity
 	// remove this comment if that assumption ever changes
 
 	for (uint64_t i = 0 ; i < n ; i++) {
-		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+		ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 		vals [i] = _RdbLoadSIValue (rdb) ;
 	}
 
@@ -176,15 +176,15 @@ void RdbLoadNodes_v16
 
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		// #labels M
-		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
+		uint64_t nodeLabelCount = SerializerIO_TryReadUnsigned(rdb);
 
 		// (labels) x M
 		LabelID labels[nodeLabelCount];
 		for(uint64_t j = 0; j < nodeLabelCount; j ++){
-			labels[j] = SerializerIO_ReadUnsigned(rdb);
+			labels[j] = SerializerIO_TryReadUnsigned(rdb);
 		}
 
 		Serializer_Graph_SetNode (g, id, labels, nodeLabelCount, &n) ;
@@ -222,7 +222,7 @@ void RdbLoadDeletedNodes_v16
 	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount (g) ;
 
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 		Serializer_Graph_MarkNodeDeleted (g, id) ;
 	}
 
@@ -248,10 +248,10 @@ static void _DecodeRelationHeader
 	ASSERT(r      != NULL);
 	ASSERT(tensor != NULL);
 
-	*r = SerializerIO_ReadUnsigned(rdb);
+	*r = SerializerIO_TryReadUnsigned(rdb);
 	ASSERT(*r != GRAPH_NO_RELATION);
 
-	*tensor = SerializerIO_ReadUnsigned(rdb);
+	*tensor = SerializerIO_TryReadUnsigned(rdb);
 }
 
 // decode tensors
@@ -303,7 +303,7 @@ static uint64_t _DecodeTensors
 	// as long as we didn't hit our END MARKER
 	while(true) {
 		// decode edge ID
-		e.id = SerializerIO_ReadUnsigned(rdb);
+		e.id = SerializerIO_TryReadUnsigned(rdb);
 
 		// break on END MARKER
 		if(e.id == INVALID_ENTITY_ID) {
@@ -311,14 +311,14 @@ static uint64_t _DecodeTensors
 		}
 
 		// decode edge source node id
-		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		e.src_id     = SerializerIO_TryReadUnsigned(rdb);
 		// decode edge destination node id
-		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_TryReadUnsigned(rdb);
 		// set edge relation id
 		e.relationID = r;
 
 		// decode tensor marker
-		bool tensor = SerializerIO_ReadUnsigned(rdb);
+		bool tensor = SerializerIO_TryReadUnsigned(rdb);
 
 		// load edge attributes
 		Serializer_Graph_AllocEdgeAttributes (g, e.id, &e) ;
@@ -434,7 +434,7 @@ static uint64_t _DecodeEdges
 	// as long as we didn't hit our END MARKER
 	while(true) {
 		// decode edge ID
-		e.id = SerializerIO_ReadUnsigned(rdb);
+		e.id = SerializerIO_TryReadUnsigned(rdb);
 
 		// break on END MARKER
 		if(e.id == INVALID_ENTITY_ID) {
@@ -442,9 +442,9 @@ static uint64_t _DecodeEdges
 		}
 
 		// decode edge source node id
-		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		e.src_id     = SerializerIO_TryReadUnsigned(rdb);
 		// decode edge destination node id
-		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_TryReadUnsigned(rdb);
 		// set edge relation id
 		e.relationID = r;
 
@@ -540,7 +540,7 @@ void RdbLoadDeletedEdges_v16
 	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount (g) ;
 
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+		EdgeID id = SerializerIO_TryReadUnsigned(rdb);
 		Serializer_Graph_MarkEdgeDeleted (g, id) ;
 	}
 

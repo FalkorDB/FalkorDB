@@ -21,29 +21,29 @@ static SIValue _RdbLoadSIValue
 
 	SIValue v;
 	char *str;
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t = SerializerIO_TryReadUnsigned(rdb);
 
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		return SI_LongVal(SerializerIO_TryReadSigned(rdb));
 
 	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_TryReadDouble(rdb));
 
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadCString(rdb));
+		return SI_TransferStringVal(SerializerIO_TryReadBuffer(rdb, NULL));
 
 	case T_INTERN_STRING:
 		// create intern string and free loaded buffer
-		str = SerializerIO_ReadCString(rdb);
+		str = SerializerIO_TryReadBuffer(rdb, NULL);
 		v = SI_InternStringVal(str);
 		rm_free(str);
 		return v;
 
 	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		return SI_BoolVal(SerializerIO_TryReadSigned(rdb));
 
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
@@ -55,23 +55,19 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadVector(rdb, t);
 
 	case T_TIME:
-		return SI_Time(SerializerIO_ReadSigned(rdb));
+		return SI_Time(SerializerIO_TryReadSigned(rdb));
 
 	case T_DATE:
-		return SI_Date(SerializerIO_ReadSigned(rdb));
+		return SI_Date(SerializerIO_TryReadSigned(rdb));
 
 	case T_DATETIME:
-		return SI_DateTime(SerializerIO_ReadSigned(rdb));
+		return SI_DateTime(SerializerIO_TryReadSigned(rdb));
 
 	case T_DURATION:
-		return SI_Duration(SerializerIO_ReadSigned(rdb));
+		return SI_Duration(SerializerIO_TryReadSigned(rdb));
 
 	case T_NULL:
-		return SI_NullVal();
-
-	default:
-		SerializerIO_SetError(rdb, "unknown value type %llu",
-				(unsigned long long) t);
+	default: // currently impossible
 		return SI_NullVal();
 	}
 }
@@ -80,8 +76,8 @@ static SIValue _RdbLoadPoint
 (
 	SerializerIO rdb
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
+	double lat = SerializerIO_TryReadDouble(rdb);
+	double lon = SerializerIO_TryReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
@@ -97,14 +93,9 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
+	uint arrayLen = SerializerIO_TryReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
-		// stop appending on a short read; a partial array is a valid SIValue and
-		// the whole graph is torn down once the abort propagates
-		if(SerializerIO_Error(rdb)) {
-			break;
-		}
 		SIValue elem = _RdbLoadSIValue(rdb);
 		SIArray_AppendAsOwner (&list, &elem) ;
 	}
@@ -127,14 +118,10 @@ static SIValue _RdbLoadVector
 	// vector[vector length -1]
 
 	size_t buffer_size;
-	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
+	void *buffer = SerializerIO_TryReadBuffer(rdb, &buffer_size);
 
 	// validate buffer size is divisible by float
-	if (unlikely (buffer_size % sizeof(float) != 0)) {
-		rm_free (buffer) ;
-		SerializerIO_SetError (rdb, "vector size is not a multiple of float") ;
-		return SI_NullVal () ;
-	}
+	ASSERT (buffer_size % sizeof(float) == 0) ;
 
 	SIValue vector = { .type       = T_VECTOR_F32,
 					   .ptrval     = buffer,
@@ -143,34 +130,6 @@ static SIValue _RdbLoadVector
 }
 
 #define ENTITY_PROP_STACK_THRESHOLD 256
-
-// every decoded property value must be of a storable type (an unknown type
-// tag decodes as NULL); fails the decode otherwise
-static bool _ValidValues
-(
-	SerializerIO rdb,     // RDB
-	const SIValue *vals,  // decoded values
-	uint64_t n            // number of values
-) {
-	for (uint64_t i = 0 ; i < n ; i++) {
-		if (unlikely (!(SI_TYPE (vals [i]) & SI_VALID_PROPERTY_VALUE))) {
-			SerializerIO_SetError (rdb, "invalid property value type") ;
-			return false ;
-		}
-	}
-	return true ;
-}
-
-// free decoded property values that will not be attached to an entity
-static void _FreeValues
-(
-	SIValue *vals,  // values to free
-	uint64_t n      // number of values
-) {
-	for (uint64_t i = 0 ; i < n ; i++) {
-		SIValue_Free (vals [i]) ;
-	}
-}
 
 static void _RdbLoadEntity
 (
@@ -181,16 +140,13 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
+	uint64_t n = SerializerIO_TryReadUnsigned (rdb) ;
 
 	if (n == 0) {
 		return ;
 	}
 
-	if (unlikely (n > UINT16_MAX)) {
-		SerializerIO_SetError (rdb, "entity has too many properties") ;
-		return ;
-	}
+	ASSERT (n <= UINT16_MAX) ;
 
 	// small path: all storage lives on the stack, no allocation needed
 	if (likely (n <= ENTITY_PROP_STACK_THRESHOLD)) {
@@ -198,15 +154,8 @@ static void _RdbLoadEntity
 		AttributeID ids  [n] ;
 
 		for (uint64_t i = 0 ; i < n ; i++) {
-			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+			ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 			vals [i] = _RdbLoadSIValue (rdb) ;
-		}
-
-		// short read mid-entity: the remaining slots hold zeroed ids and
-		// NULL values, which AttributeSet_Add rejects; drop the entity
-		if (unlikely (SerializerIO_Error (rdb) || !_ValidValues (rdb, vals, n))) {
-			_FreeValues (vals, n) ;
-			return ;
 		}
 
 		AttributeSet_Add (e->attributes, ids, vals, n, false) ;
@@ -221,16 +170,8 @@ static void _RdbLoadEntity
 	// remove this comment if that assumption ever changes
 
 	for (uint64_t i = 0 ; i < n ; i++) {
-		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+		ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 		vals [i] = _RdbLoadSIValue (rdb) ;
-	}
-
-	// short read mid-entity, see above
-	if (unlikely (SerializerIO_Error (rdb) || !_ValidValues (rdb, vals, n))) {
-		_FreeValues (vals, n) ;
-		rm_free (ids) ;
-		rm_free (vals) ;
-		return ;
 	}
 
 	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
@@ -242,10 +183,9 @@ static void _RdbLoadEntity
 // decode nodes
 void RdbLoadNodes_v19
 (
-	SerializerIO rdb,         // RDB
-	Graph *g,                 // graph context
-	const uint64_t n,         // number of nodes to decode
-	const uint64_t id_limit   // node ids are below this (header counts)
+	SerializerIO rdb, // RDB
+	Graph *g,         // graph context
+	const uint64_t n  // number of nodes to decode
 ) {
 	// format:
 	//  ID
@@ -256,19 +196,7 @@ void RdbLoadNodes_v19
 
 	for(uint64_t i = 0; i < n; i++) {
 		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
-
-		// abort on a short read before mutating the datablock with a bogus id
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
-
-		// ids run below the header's live + deleted node count
-		if(id >= id_limit) {
-			SerializerIO_SetError(rdb, "node id %llu out of range",
-					(unsigned long long) id);
-			return;
-		}
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 		*set = NULL;
@@ -279,20 +207,16 @@ void RdbLoadNodes_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&n);
 	}
 
-	// validate node count (meaningless after a short read)
-	if(!SerializerIO_Error(rdb) &&
-	   n + prev_graph_node_count != Graph_NodeCount(g)) {
-		SerializerIO_SetError(rdb, "decoded node count mismatch");
-	}
+	// read encoded node count and validate
+	ASSERT(n + prev_graph_node_count == Graph_NodeCount(g));
 }
 
 // decode deleted nodes
 void RdbLoadDeletedNodes_v19
 (
-	SerializerIO rdb,                   // RDB
-	Graph *g,                           // graph context
-	const uint64_t deleted_node_count,  // number of deleted nodes
-	const uint64_t id_limit             // node ids are below this
+	SerializerIO rdb,                  // RDB
+	Graph *g,                          // graph context
+	const uint64_t deleted_node_count  // number of deleted nodes
 ) {
 	// Format:
 	// node ids
@@ -301,14 +225,7 @@ void RdbLoadDeletedNodes_v19
 
 	// read node deleted IDs list from the RDB
 	size_t n;
-	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
-
-	// abort on a short read before validating the (empty) buffer against the
-	// expected count, which would otherwise trip the assert below
-	if (SerializerIO_Error(rdb)) {
-		rm_free(deleted_nodes_list);
-		return;
-	}
+	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_TryReadBuffer(rdb, &n);
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(NodeID) != 0 ||
@@ -318,37 +235,27 @@ void RdbLoadDeletedNodes_v19
 			"Malformed RDB: deleted nodes buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_node_count);
-		SerializerIO_SetError(rdb, "deleted nodes buffer size mismatch");
-		return;
+		RedisModule_Assert(false);
 	}
 
 	// mark each node id as deleted
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = deleted_nodes_list[i];
-		if(id >= id_limit) {
-			rm_free(deleted_nodes_list);
-			SerializerIO_SetError(rdb, "deleted node id %llu out of range",
-					(unsigned long long) id);
-			return;
-		}
 		Serializer_Graph_MarkNodeDeleted(g, id);
 	}
 	rm_free(deleted_nodes_list);
 
 	// validate deleted node count is as expected
-	if(deleted_node_count + prev_deleted_node_count !=
-	   Graph_DeletedNodeCount(g)) {
-		SerializerIO_SetError(rdb, "deleted node count mismatch");
-	}
+	ASSERT(deleted_node_count + prev_deleted_node_count ==
+			Graph_DeletedNodeCount(g));
 }
 
 // decode edges
 void RdbLoadEdges_v19
 (
-	SerializerIO rdb,         // RDB
-	Graph *g,                 // graph context
-	const uint64_t n,         // number of edges to decode
-	const uint64_t id_limit   // edge ids are below this (header counts)
+	SerializerIO rdb,  // RDB
+	Graph *g,          // graph context
+	const uint64_t n   // number of edges to decode
 ) {
 	// format:
 	//  ID
@@ -360,19 +267,7 @@ void RdbLoadEdges_v19
 	for(uint64_t i = 0; i < n; i++) {
 		Edge e;
 
-		EdgeID id = SerializerIO_ReadUnsigned(rdb);
-
-		// abort on a short read before mutating the datablock with a bogus id
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
-
-		// ids run below the header's live + deleted edge count
-		if(id >= id_limit) {
-			SerializerIO_SetError(rdb, "edge id %llu out of range",
-					(unsigned long long) id);
-			return;
-		}
+		EdgeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
 		*set = NULL;
@@ -383,20 +278,16 @@ void RdbLoadEdges_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&e);
 	}
 
-	// validate edge count (meaningless after a short read)
-	if(!SerializerIO_Error(rdb) &&
-	   n + prev_edge_count != Graph_EdgeCount(g)) {
-		SerializerIO_SetError(rdb, "decoded edge count mismatch");
-	}
+	// read encoded edge count and validate
+	ASSERT(n + prev_edge_count == Graph_EdgeCount(g));
 }
 
 // decode deleted edges
 void RdbLoadDeletedEdges_v19
 (
-	SerializerIO rdb,                   // RDB
-	Graph *g,                           // graph context
-	const uint64_t deleted_edge_count,  // number of deleted edges
-	const uint64_t id_limit             // edge ids are below this
+	SerializerIO rdb,                  // RDB
+	Graph *g,                          // graph context
+	const uint64_t deleted_edge_count  // number of deleted edges
 ) {
 	// Format:
 	// edge ids
@@ -405,14 +296,7 @@ void RdbLoadDeletedEdges_v19
 
 	// read edge deleted IDs list from the RDB
 	size_t n;
-	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
-
-	// abort on a short read before validating the (empty) buffer against the
-	// expected count, which would otherwise trip the assert below
-	if (SerializerIO_Error(rdb)) {
-		rm_free(deleted_edges_list);
-		return;
-	}
+	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_TryReadBuffer(rdb, &n);
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(EdgeID) != 0 ||
@@ -422,27 +306,18 @@ void RdbLoadDeletedEdges_v19
 			"Malformed RDB: deleted edges buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_edge_count);
-		SerializerIO_SetError(rdb, "deleted edges buffer size mismatch");
-		return;
+		RedisModule_Assert(false);
 	}
 
 	// mark each edge id as deleted
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = deleted_edges_list[i];
-		if(id >= id_limit) {
-			rm_free(deleted_edges_list);
-			SerializerIO_SetError(rdb, "deleted edge id %llu out of range",
-					(unsigned long long) id);
-			return;
-		}
 		Serializer_Graph_MarkEdgeDeleted(g, id);
 	}
 	rm_free(deleted_edges_list);
 
 	// validate deleted edge count is as expected
-	if(deleted_edge_count + prev_deleted_edge_count !=
-	   Graph_DeletedEdgeCount(g)) {
-		SerializerIO_SetError(rdb, "deleted edge count mismatch");
-	}
+	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
+			Graph_DeletedEdgeCount(g));
 }
 

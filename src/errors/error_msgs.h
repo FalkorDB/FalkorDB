@@ -144,4 +144,7 @@
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
 #define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use the GRAPH.CONSTRAINT command instead"
 #define EMSG_WRITE_QUEUE_FULL "Write queue is full: cannot accept additional write queries at this time. Please retry later."
-
+#define EMSG_CCH_INDEX_NO_REL_TYPES "CCH index without relationship types"
+#define EMSG_DECODER_UNKNOWN_PAYLOAD "unknown payload type"
+#define EMSG_VALUE_UNKNOWN_TYPE "unknown value type %llu"
+#define EMSG_UNSUPPORTED_INDEX_LANG "unsupported index language"

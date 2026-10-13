@@ -4,7 +4,6 @@
  */
 
 #include "decode_v19.h"
-#include "../../../../errors/errors.h"
 #include "../../../../schema/schema.h"
 
 static void _RdbDecodeIndexField
@@ -31,35 +30,35 @@ static void _RdbDecodeIndexField
 	//   dimension
 
 	// decode field name
-	*name = SerializerIO_ReadCString(rdb);
+	*name = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	// docode field type
-	*type = SerializerIO_ReadUnsigned(rdb);
+	*type = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode field options
 	//--------------------------------------------------------------------------
 
 	// decode field weight
-	*weight = SerializerIO_ReadDouble(rdb);
+	*weight = SerializerIO_TryReadDouble(rdb);
 
 	// decode field nostem
-	*nostem = SerializerIO_ReadUnsigned(rdb);
+	*nostem = SerializerIO_TryReadUnsigned(rdb);
 
 	// decode field phonetic
-	*phonetic = SerializerIO_ReadCString(rdb);
+	*phonetic = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	// decode field dimension
 	if(*type & INDEX_FLD_VECTOR) {
-		*dimension = SerializerIO_ReadUnsigned(rdb);
+		*dimension = SerializerIO_TryReadUnsigned(rdb);
 
-		*M = SerializerIO_ReadUnsigned(rdb);
+		*M = SerializerIO_TryReadUnsigned(rdb);
 
-		*efConstruction = SerializerIO_ReadUnsigned(rdb);
+		*efConstruction = SerializerIO_TryReadUnsigned(rdb);
 
-		*efRuntime = SerializerIO_ReadUnsigned(rdb);
+		*efRuntime = SerializerIO_TryReadUnsigned(rdb);
 
-		*simFunc = SerializerIO_ReadUnsigned(rdb);
+		*simFunc = SerializerIO_TryReadUnsigned(rdb);
 	}
 }
 
@@ -78,33 +77,20 @@ static void _RdbLoadIndex
 	 * M * property: {options} */
 
 	Index idx        = NULL ;
-	char *language   = SerializerIO_ReadCString (rdb) ;
+	char *language   = SerializerIO_TryReadBuffer (rdb, NULL) ;
 	char **stopwords = NULL ;
 	
-	uint stopwords_count = SerializerIO_ReadUnsigned (rdb) ;
-	if (stopwords_count > 0 && !SerializerIO_Error (rdb)) {
-		stopwords = arr_new (char *, 0) ;
+	uint stopwords_count = SerializerIO_TryReadUnsigned (rdb) ;
+	if (stopwords_count > 0) {
+		stopwords = arr_new (char *, stopwords_count) ;
 		for (uint i = 0; i < stopwords_count; i++) {
-			char *stopword = SerializerIO_ReadCString (rdb) ;
-			if (SerializerIO_Error (rdb)) {
-				rm_free (stopword) ;
-				break ;
-			}
+			char *stopword = SerializerIO_TryReadBuffer (rdb, NULL) ;
 			arr_append (stopwords, stopword) ;
 		}
 	}
 
-	// the language selects RediSearch's stemmer; an unknown one crashes it
-	if (!SerializerIO_Error (rdb) && RediSearch_ValidateLanguage (language)) {
-		SerializerIO_SetError (rdb, "unsupported index language") ;
-	}
-
-	uint fields_count = SerializerIO_ReadUnsigned(rdb);
+	uint fields_count = SerializerIO_TryReadUnsigned(rdb);
 	for(uint i = 0; i < fields_count; i++) {
-		if (SerializerIO_Error (rdb)) {
-			break ;
-		}
-
 		IndexFieldType type;
 		double         weight;
 		bool           nostem;
@@ -121,24 +107,6 @@ static void _RdbLoadIndex
 		_RdbDecodeIndexField (rdb, &field_name, &type, &weight, &nostem,
 				&phonetic, &dimension, &M, &efConstruction, &efRuntime,
 				&simFunc) ;
-
-		// short read: the field is zeroed, don't add it to the index
-		if (SerializerIO_Error (rdb)) {
-			RedisModule_Free (phonetic) ;
-			RedisModule_Free (field_name) ;
-			break ;
-		}
-
-		// field type and similarity function are handed to RediSearch
-		// unchecked; an unknown metric crashes vector indexing
-		if (type == INDEX_FLD_UNKNOWN || (type & ~INDEX_FLD_ANY) ||
-			((type & INDEX_FLD_VECTOR) &&
-			 (unsigned) simFunc > VecSimMetric_Cosine)) {
-			RedisModule_Free (phonetic) ;
-			RedisModule_Free (field_name) ;
-			SerializerIO_SetError (rdb, "invalid index field") ;
-			break ;
-		}
 
 		if (!already_loaded) {
 			IndexField field ;
@@ -166,16 +134,13 @@ static void _RdbLoadIndex
 		RedisModule_Free (field_name) ;
 	}
 
-	// idx is NULL when no fields were decoded; a partial index (short read)
-	// is left unfinalized, the whole graph is torn down
-	if (!already_loaded && idx != NULL && !SerializerIO_Error (rdb)) {
+	if (!already_loaded) {
+		ASSERT (idx != NULL) ;
+
 		Index_SetLanguage (idx, language) ;
 		if (stopwords != NULL) {
-			if (!Index_SetStopwords (idx, &stopwords)) {
-				// not a query: don't leave the error on this thread's context
-				ErrorCtx_Clear () ;
-				SerializerIO_SetError (rdb, "index stopwords set twice") ;
-			}
+			bool stopwords_set = Index_SetStopwords (idx, &stopwords) ;
+			ASSERT (stopwords_set == true) ;
 		}
 
 		// disable and create index structure
@@ -188,7 +153,7 @@ static void _RdbLoadIndex
 	//--------------------------------------------------------------------------
 
 	if (stopwords != NULL) {
-		for (uint i = 0; i < arr_len (stopwords); i++) {
+		for (uint i = 0; i < stopwords_count; i++) {
 			rm_free (stopwords [i]) ;
 		}
 		arr_free (stopwords) ;
@@ -215,22 +180,13 @@ static void _RdbLoadConstraint
 	// decode constraint type
 	//--------------------------------------------------------------------------
 
-	ConstraintType t = SerializerIO_ReadUnsigned(rdb);
+	ConstraintType t = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields count
 	//--------------------------------------------------------------------------
 	
-	uint64_t n_fields = SerializerIO_ReadUnsigned(rdb);
-	if (SerializerIO_Error (rdb)) {
-		return ;
-	}
-	if (n_fields == 0 || n_fields > UINT8_MAX) {
-		SerializerIO_SetError (rdb, "constraint with %llu attributes",
-				(unsigned long long) n_fields) ;
-		return ;
-	}
-	uint8_t n = n_fields;
+	uint8_t n = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields
@@ -240,51 +196,25 @@ static void _RdbLoadConstraint
 	const char *attr_strs[n];
 
 	// read fields
-	uint attr_count = GraphContext_AttributeCount (gc) ;
 	for (uint8_t i = 0; i < n; i++) {
-		uint64_t attr = SerializerIO_ReadUnsigned (rdb) ;
-
-		// abort on a short read before building a constraint from partial
-		// fields, and on an attribute the graph doesn't have
-		if (SerializerIO_Error (rdb)) {
-			return ;
-		}
-		if (attr >= attr_count) {
-			SerializerIO_SetError (rdb, "constraint on an unknown attribute") ;
-			return ;
-		}
-
+		AttributeID attr = SerializerIO_TryReadUnsigned (rdb) ;
 		attr_ids  [i] = attr ;
 		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
 
-	if (t != CT_UNIQUE && t != CT_MANDATORY) {
-		SerializerIO_SetError (rdb, "unknown constraint type") ;
-		return ;
-	}
-
 	if(!already_loaded) {
-		// a schema holds each constraint once
-		if(Schema_ContainsConstraint(s, t, attr_ids, n)) {
-			SerializerIO_SetError(rdb, "duplicate constraint");
-			return;
-		}
-
 		GraphEntityType et = (Schema_GetType(s) == SCHEMA_NODE) ?
 			GETYPE_NODE : GETYPE_EDGE;
 
-		const char *err = NULL;
 		c = Constraint_New((struct GraphContext*)gc, t, Schema_GetID(s),
-				attr_ids, attr_strs, n, et, &err);
-		if(c == NULL) {
-			SerializerIO_SetError(rdb, "constraint can't be created: %s",
-					err != NULL ? err : "unknown reason");
-			return;
-		}
+				attr_ids, attr_strs, n, et, NULL);
 
 		// set constraint status to active
 		// only active constraints are encoded
 		Constraint_SetStatus(c, CT_ACTIVE);
+
+		// check if constraint already contained in schema
+		ASSERT(!Schema_ContainsConstraint(s, t, attr_ids, n));
 
 		// add constraint to schema
 		Schema_AddConstraint(s, c);
@@ -300,12 +230,9 @@ static void _RdbLoadConstraints
 	bool already_loaded  // constraints already loaded
 ) {
 	// read number of constraints
-	uint constraint_count = SerializerIO_ReadUnsigned(rdb);
+	uint constraint_count = SerializerIO_TryReadUnsigned(rdb);
 
 	for (uint i = 0; i < constraint_count; i++) {
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
 		_RdbLoadConstraint(rdb, gc, s, already_loaded);
 	}
 }
@@ -327,25 +254,15 @@ static void _RdbLoadSchema
 	 */
 
 	Schema *s    = NULL;
-	int     id   = SerializerIO_ReadUnsigned (rdb) ;
-	char   *name = SerializerIO_ReadCString (rdb) ;
-
-	// abort on a short read before building schema objects from empty data
-	if (SerializerIO_Error (rdb)) {
-		RedisModule_Free (name) ;
-		return ;
-	}
+	int     id   = SerializerIO_TryReadUnsigned (rdb) ;
+	char   *name = SerializerIO_TryReadBuffer (rdb, NULL) ;
 
 	if (!already_loaded) {
 		bool created = false ;
 		s = GraphContext_FindOrAddSchema (gc, name, type, &created) ;
-
-		// schemas are encoded once each, in id order
-		if (!created || Schema_GetID (s) != id) {
-			RedisModule_Free (name) ;
-			SerializerIO_SetError (rdb, "duplicate or out of order schema") ;
-			return ;
-		}
+		ASSERT (s != NULL) ;
+		ASSERT (created == true) ;
+		ASSERT (Schema_GetID (s) == id) ;
 	}
 
 	RedisModule_Free (name) ;
@@ -354,11 +271,8 @@ static void _RdbLoadSchema
 	// load indices
 	//--------------------------------------------------------------------------
 
-	uint index_count = SerializerIO_ReadUnsigned (rdb) ;
+	uint index_count = SerializerIO_TryReadUnsigned (rdb) ;
 	for (uint index = 0; index < index_count; index++) {
-		if (SerializerIO_Error (rdb)) {
-			return ;
-		}
 		_RdbLoadIndex (rdb, gc, s, already_loaded) ;
 	}
 
@@ -379,22 +293,11 @@ static void _RdbLoadAttributeKeys
 	 * attribute keys
 	 */
 
-	uint count = SerializerIO_ReadUnsigned(rdb);
+	uint count = SerializerIO_TryReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
-		// stop on a short read
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
-		char *attr = SerializerIO_ReadCString(rdb);
-		AttributeID id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
+		char *attr = SerializerIO_TryReadBuffer(rdb, NULL);
+		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
-
-		// attribute keys are encoded once each, in id order; a repeated name
-		// would map two encoded ids onto one attribute
-		if(!SerializerIO_Error(rdb) && id != i) {
-			SerializerIO_SetError(rdb, "duplicate attribute name");
-			return;
-		}
 	}
 }
 
@@ -417,24 +320,18 @@ void RdbLoadGraphSchema_v19
 	_RdbLoadAttributeKeys (rdb, gc) ;
 
 	// #Node schemas
-	uint schema_count = SerializerIO_ReadUnsigned (rdb) ;
+	uint schema_count = SerializerIO_TryReadUnsigned (rdb) ;
 
 	// Load each node schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
 		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
 	}
 
 	// #Edge schemas
-	schema_count = SerializerIO_ReadUnsigned (rdb) ;
+	schema_count = SerializerIO_TryReadUnsigned (rdb) ;
 
 	// Load each edge schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		if(SerializerIO_Error(rdb)) {
-			return;
-		}
 		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
 	}
 }

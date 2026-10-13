@@ -18,18 +18,18 @@ static SIValue _RdbLoadSIValue
 	// Format:
 	// SIType
 	// Value
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t = SerializerIO_TryReadUnsigned(rdb);
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		return SI_LongVal(SerializerIO_TryReadSigned(rdb));
 	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_TryReadDouble(rdb));
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_TryReadBuffer(rdb, NULL));
 	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		return SI_BoolVal(SerializerIO_TryReadSigned(rdb));
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
@@ -46,8 +46,8 @@ static SIValue _RdbLoadPoint
 (
 	SerializerIO rdb
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
+	double lat = SerializerIO_TryReadDouble(rdb);
+	double lon = SerializerIO_TryReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
@@ -63,7 +63,7 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
+	uint arrayLen = SerializerIO_TryReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
@@ -90,13 +90,13 @@ static SIValue _RdbLoadVector
 
 	SIValue vector;
 
-	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
+	uint32_t dim = SerializerIO_TryReadUnsigned(rdb);
 
 	vector = SI_Vectorf32(dim);
 	float *values = SIVector_Elements(vector);
 
 	for(uint32_t i = 0; i < dim; i++) {
-		values[i] = SerializerIO_ReadFloat(rdb);
+		values[i] = SerializerIO_TryReadFloat(rdb);
 	}
 
 	return vector;
@@ -114,7 +114,7 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
+	uint64_t n = SerializerIO_TryReadUnsigned (rdb) ;
 
 	if (n == 0) {
 		return ;
@@ -128,7 +128,7 @@ static void _RdbLoadEntity
 		AttributeID ids  [n] ;
 
 		for (uint64_t i = 0 ; i < n ; i++) {
-			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+			ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 			vals [i] = _RdbLoadSIValue (rdb) ;
 		}
 
@@ -144,7 +144,7 @@ static void _RdbLoadEntity
 	// remove this comment if that assumption ever changes
 
 	for (uint64_t i = 0 ; i < n ; i++) {
-		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+		ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 		vals [i] = _RdbLoadSIValue (rdb) ;
 	}
 
@@ -175,15 +175,15 @@ void RdbLoadNodes_v14
 
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		// #labels M
-		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
+		uint64_t nodeLabelCount = SerializerIO_TryReadUnsigned(rdb);
 
 		// * (labels) x M
 		LabelID labels[nodeLabelCount];
 		for(uint64_t i = 0; i < nodeLabelCount; i ++){
-			labels[i] = SerializerIO_ReadUnsigned(rdb);
+			labels[i] = SerializerIO_TryReadUnsigned(rdb);
 		}
 
 		Serializer_Graph_SetNode (g, id, labels, nodeLabelCount, &n) ;
@@ -217,7 +217,7 @@ void RdbLoadDeletedNodes_v14
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 		Serializer_Graph_MarkNodeDeleted (g, id) ;
 	}
 }
@@ -270,10 +270,10 @@ void RdbLoadEdges_v14
 
 		Edge e;
 
-		e.id         = SerializerIO_ReadUnsigned(rdb);
-		e.src_id     = SerializerIO_ReadUnsigned(rdb);
-		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
-		e.relationID = SerializerIO_ReadUnsigned(rdb);
+		e.id         = SerializerIO_TryReadUnsigned(rdb);
+		e.src_id     = SerializerIO_TryReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_TryReadUnsigned(rdb);
+		e.relationID = SerializerIO_TryReadUnsigned(rdb);
 
 		// determine if relation contains tensors
 		bool tensor = decode_context->multi_edge [e.relationID] ;
@@ -391,7 +391,7 @@ void RdbLoadDeletedEdges_v14
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	for (uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = SerializerIO_ReadUnsigned (rdb) ;
+		EdgeID id = SerializerIO_TryReadUnsigned (rdb) ;
 		Serializer_Graph_MarkEdgeDeleted (g, id) ;
 	}
 }

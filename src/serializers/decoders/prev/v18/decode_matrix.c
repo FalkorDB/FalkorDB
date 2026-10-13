@@ -42,7 +42,7 @@ static void _DecodeTensors
 	*n_tensors = 0;
 
 	// read number of tensors
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
 
 	// no tensors, simply return
 	if(n == 0) {
@@ -57,17 +57,17 @@ static void _DecodeTensors
 	for (int l = 0; l < 2; l++) {
 		GrB_Matrix A = matrices[l] ;
 
-		uint64_t _n_tensors = SerializerIO_ReadUnsigned (rdb) ;
+		uint64_t _n_tensors = SerializerIO_TryReadUnsigned (rdb) ;
 
 		// decode and set tensors
 		for (uint64_t k = 0; k < _n_tensors; k++) {
 			// read tensor i,j indicies
-			GrB_Index i = SerializerIO_ReadUnsigned (rdb) ;
-			GrB_Index j = SerializerIO_ReadUnsigned (rdb) ;
+			GrB_Index i = SerializerIO_TryReadUnsigned (rdb) ;
+			GrB_Index j = SerializerIO_TryReadUnsigned (rdb) ;
 
 			// read tensor blob
 			GrB_Index blob_size;
-			void *blob = SerializerIO_ReadBuffer (rdb, (size_t*)&blob_size) ;
+			void *blob = SerializerIO_TryReadBuffer (rdb, (size_t*)&blob_size) ;
 			ASSERT (blob != NULL) ;
 
 			GrB_Vector u;
@@ -120,11 +120,11 @@ static void _decode_and_load_vector
 	GrB_Info info;
 
 	// load vector from stream
-	arr       = SerializerIO_ReadBuffer   (rdb, &n) ;
-	t_name    = SerializerIO_ReadBuffer   (rdb, &t_name_len) ;
-	n_entries = SerializerIO_ReadUnsigned (rdb) ;
-	n_bytes   = SerializerIO_ReadUnsigned (rdb) ;
-	handling  = SerializerIO_ReadSigned   (rdb) ;
+	arr       = SerializerIO_TryReadBuffer   (rdb, &n) ;
+	t_name    = SerializerIO_TryReadBuffer   (rdb, &t_name_len) ;
+	n_entries = SerializerIO_TryReadUnsigned (rdb) ;
+	n_bytes   = SerializerIO_TryReadUnsigned (rdb) ;
+	handling  = SerializerIO_TryReadSigned   (rdb) ;
 
 	// get GrB_Type
 	GrB_Type t;  // data type
@@ -153,7 +153,7 @@ static GrB_Matrix _Decode_GrB_Matrix
 	size_t n;
 	GxB_Container container;
 
-	container = SerializerIO_ReadBuffer (rdb, &n) ;
+	container = SerializerIO_TryReadBuffer (rdb, &n) ;
 	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
 
 	// nullify container's vectors
@@ -228,12 +228,12 @@ void RdbLoadLabelMatrices_v18
 	GrB_Info info;
 
 	// read number of label matricies
-	int n = SerializerIO_ReadUnsigned (rdb) ;
+	int n = SerializerIO_TryReadUnsigned (rdb) ;
 	
 	// decode each label matrix
 	for (int i = 0; i < n; i++) {
 		// read label ID
-		LabelID l = SerializerIO_ReadUnsigned (rdb) ;
+		LabelID l = SerializerIO_TryReadUnsigned (rdb) ;
 		Delta_Matrix lbl = Graph_GetLabelMatrix (g, l) ;
 		_Decode_Delta_Matrix (rdb, lbl) ;
 	}
@@ -262,7 +262,7 @@ void RdbLoadRelationMatrices_v18
 	// decode relationship matrices
 	for (int i = 0; i < n; i++) {
 		// read relation ID
-		RelationID r = SerializerIO_ReadUnsigned (rdb) ;
+		RelationID r = SerializerIO_TryReadUnsigned (rdb) ;
 		ASSERT (r == i) ;
 
 		// plant M matrix

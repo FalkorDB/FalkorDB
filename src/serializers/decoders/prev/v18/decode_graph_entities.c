@@ -21,29 +21,29 @@ static SIValue _RdbLoadSIValue
 
 	SIValue v;
 	char *str;
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t = SerializerIO_TryReadUnsigned(rdb);
 
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		return SI_LongVal(SerializerIO_TryReadSigned(rdb));
 
 	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_TryReadDouble(rdb));
 
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_TryReadBuffer(rdb, NULL));
 
 	case T_INTERN_STRING:
 		// create intern string and free loaded buffer
-		str = SerializerIO_ReadBuffer(rdb, NULL);
+		str = SerializerIO_TryReadBuffer(rdb, NULL);
 		v = SI_InternStringVal(str);
 		rm_free(str);
 		return v;
 
 	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		return SI_BoolVal(SerializerIO_TryReadSigned(rdb));
 
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
@@ -55,16 +55,16 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadVector(rdb, t);
 
 	case T_TIME:
-		return SI_Time(SerializerIO_ReadSigned(rdb));
+		return SI_Time(SerializerIO_TryReadSigned(rdb));
 
 	case T_DATE:
-		return SI_Date(SerializerIO_ReadSigned(rdb));
+		return SI_Date(SerializerIO_TryReadSigned(rdb));
 
 	case T_DATETIME:
-		return SI_DateTime(SerializerIO_ReadSigned(rdb));
+		return SI_DateTime(SerializerIO_TryReadSigned(rdb));
 
 	case T_DURATION:
-		return SI_Duration(SerializerIO_ReadSigned(rdb));
+		return SI_Duration(SerializerIO_TryReadSigned(rdb));
 
 	case T_NULL:
 	default: // currently impossible
@@ -76,8 +76,8 @@ static SIValue _RdbLoadPoint
 (
 	SerializerIO rdb
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
+	double lat = SerializerIO_TryReadDouble(rdb);
+	double lon = SerializerIO_TryReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
@@ -93,7 +93,7 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
+	uint arrayLen = SerializerIO_TryReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
@@ -118,7 +118,7 @@ static SIValue _RdbLoadVector
 	// vector[vector length -1]
 
 	size_t buffer_size;
-	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
+	void *buffer = SerializerIO_TryReadBuffer(rdb, &buffer_size);
 
 	// validate buffer size is divisible by float
 	ASSERT (buffer_size % sizeof(float) == 0) ;
@@ -140,7 +140,7 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
+	uint64_t n = SerializerIO_TryReadUnsigned (rdb) ;
 
 	if (n == 0) {
 		return ;
@@ -154,7 +154,7 @@ static void _RdbLoadEntity
 		AttributeID ids  [n] ;
 
 		for (uint64_t i = 0 ; i < n ; i++) {
-			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+			ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 			vals [i] = _RdbLoadSIValue (rdb) ;
 		}
 
@@ -170,7 +170,7 @@ static void _RdbLoadEntity
 	// remove this comment if that assumption ever changes
 
 	for (uint64_t i = 0 ; i < n ; i++) {
-		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+		ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
 		vals [i] = _RdbLoadSIValue (rdb) ;
 	}
 
@@ -196,7 +196,7 @@ void RdbLoadNodes_v18
 
 	for(uint64_t i = 0; i < n; i++) {
 		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 		*set = NULL;
@@ -225,7 +225,7 @@ void RdbLoadDeletedNodes_v18
 
 	// read node deleted IDs list from the RDB
 	size_t n;
-	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
+	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_TryReadBuffer(rdb, &n);
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(NodeID) != 0 ||
@@ -267,7 +267,7 @@ void RdbLoadEdges_v18
 	for(uint64_t i = 0; i < n; i++) {
 		Edge e;
 
-		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+		EdgeID id = SerializerIO_TryReadUnsigned(rdb);
 
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
 		*set = NULL;
@@ -296,7 +296,7 @@ void RdbLoadDeletedEdges_v18
 
 	// read edge deleted IDs list from the RDB
 	size_t n;
-	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
+	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_TryReadBuffer(rdb, &n);
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(EdgeID) != 0 ||

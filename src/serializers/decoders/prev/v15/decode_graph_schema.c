@@ -31,35 +31,35 @@ static void _RdbDecodeIndexField
 	//   dimension
 
 	// decode field name
-	*name = SerializerIO_ReadBuffer(rdb, NULL);
+	*name = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	// docode field type
-	*type = SerializerIO_ReadUnsigned(rdb);
+	*type = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode field options
 	//--------------------------------------------------------------------------
 
 	// decode field weight
-	*weight = SerializerIO_ReadDouble(rdb);
+	*weight = SerializerIO_TryReadDouble(rdb);
 
 	// decode field nostem
-	*nostem = SerializerIO_ReadUnsigned(rdb);
+	*nostem = SerializerIO_TryReadUnsigned(rdb);
 
 	// decode field phonetic
-	*phonetic = SerializerIO_ReadBuffer(rdb, NULL);
+	*phonetic = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	// decode field dimension
 	if(*type & INDEX_FLD_VECTOR) {
-		*dimension = SerializerIO_ReadUnsigned(rdb);
+		*dimension = SerializerIO_TryReadUnsigned(rdb);
 
-		*M = SerializerIO_ReadUnsigned(rdb);
+		*M = SerializerIO_TryReadUnsigned(rdb);
 
-		*efConstruction = SerializerIO_ReadUnsigned(rdb);
+		*efConstruction = SerializerIO_TryReadUnsigned(rdb);
 
-		*efRuntime = SerializerIO_ReadUnsigned(rdb);
+		*efRuntime = SerializerIO_TryReadUnsigned(rdb);
 
-		*simFunc = SerializerIO_ReadUnsigned(rdb);
+		*simFunc = SerializerIO_TryReadUnsigned(rdb);
 	}
 }
 
@@ -78,19 +78,19 @@ static void _RdbLoadIndex
 	 * M * property: {options} */
 
 	Index idx        = NULL;
-	char *language   = SerializerIO_ReadBuffer(rdb, NULL);
+	char *language   = SerializerIO_TryReadBuffer(rdb, NULL);
 	char **stopwords = NULL;
 	
-	uint stopwords_count = SerializerIO_ReadUnsigned(rdb);
+	uint stopwords_count = SerializerIO_TryReadUnsigned(rdb);
 	if(stopwords_count > 0) {
 		stopwords = arr_new(char *, stopwords_count);
 		for (uint i = 0; i < stopwords_count; i++) {
-			char *stopword = SerializerIO_ReadBuffer(rdb, NULL);
+			char *stopword = SerializerIO_TryReadBuffer(rdb, NULL);
 			arr_append(stopwords, stopword);
 		}
 	}
 
-	uint fields_count = SerializerIO_ReadUnsigned(rdb);
+	uint fields_count = SerializerIO_TryReadUnsigned(rdb);
 	for(uint i = 0; i < fields_count; i++) {
 		IndexFieldType type;
 		double         weight;
@@ -162,13 +162,13 @@ static void _RdbLoadConstaint
 	// decode constraint type
 	//--------------------------------------------------------------------------
 
-	ConstraintType t = SerializerIO_ReadUnsigned(rdb);
+	ConstraintType t = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields count
 	//--------------------------------------------------------------------------
 	
-	uint8_t n = SerializerIO_ReadUnsigned(rdb);
+	uint8_t n = SerializerIO_TryReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields
@@ -179,7 +179,7 @@ static void _RdbLoadConstaint
 
 	// read fields
 	for(uint8_t i = 0; i < n; i++) {
-		AttributeID attr = SerializerIO_ReadUnsigned(rdb);
+		AttributeID attr = SerializerIO_TryReadUnsigned(rdb);
 		attr_ids  [i] = attr ;
 		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
@@ -212,7 +212,7 @@ static void _RdbLoadConstaints
 	bool already_loaded  // constraints already loaded
 ) {
 	// read number of constraints
-	uint constraint_count = SerializerIO_ReadUnsigned(rdb);
+	uint constraint_count = SerializerIO_TryReadUnsigned(rdb);
 
 	for (uint i = 0; i < constraint_count; i++) {
 		_RdbLoadConstaint(rdb, gc, s, already_loaded);
@@ -236,8 +236,8 @@ static void _RdbLoadSchema
 	 */
 
 	Schema *s    = NULL;
-	int     id   = SerializerIO_ReadUnsigned(rdb);
-	char   *name = SerializerIO_ReadBuffer(rdb, NULL);
+	int     id   = SerializerIO_TryReadUnsigned(rdb);
+	char   *name = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	if(!already_loaded) {
 		bool created = false ;
@@ -253,7 +253,7 @@ static void _RdbLoadSchema
 	// load indices
 	//--------------------------------------------------------------------------
 
-	uint index_count = SerializerIO_ReadUnsigned(rdb);
+	uint index_count = SerializerIO_TryReadUnsigned(rdb);
 	for(uint index = 0; index < index_count; index++) {
 		_RdbLoadIndex(rdb, gc, s, already_loaded);
 	}
@@ -275,9 +275,9 @@ static void _RdbLoadAttributeKeys
 	 * attribute keys
 	 */
 
-	uint count = SerializerIO_ReadUnsigned(rdb);
+	uint count = SerializerIO_TryReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
-		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
+		char *attr = SerializerIO_TryReadBuffer(rdb, NULL);
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
 	}
@@ -302,7 +302,7 @@ void RdbLoadGraphSchema_v15
 	_RdbLoadAttributeKeys(rdb, gc);
 
 	// #Node schemas
-	uint schema_count = SerializerIO_ReadUnsigned(rdb);
+	uint schema_count = SerializerIO_TryReadUnsigned(rdb);
 
 	// Load each node schema
 	for(uint i = 0; i < schema_count; i ++) {
@@ -310,7 +310,7 @@ void RdbLoadGraphSchema_v15
 	}
 
 	// #Edge schemas
-	schema_count = SerializerIO_ReadUnsigned(rdb);
+	schema_count = SerializerIO_TryReadUnsigned(rdb);
 
 	// Load each edge schema
 	for(uint i = 0; i < schema_count; i ++) {

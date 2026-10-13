@@ -61,26 +61,30 @@ static GraphContext *_DecodeHeader
 	// Schema
 
 	// graph name
-	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
+	char *graph_name = SerializerIO_TryReadBuffer(rdb, NULL);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
-	uint64_t node_count         = SerializerIO_ReadUnsigned(rdb);
-	uint64_t edge_count         = SerializerIO_ReadUnsigned(rdb);
-	uint64_t deleted_node_count = SerializerIO_ReadUnsigned(rdb);
-	uint64_t deleted_edge_count = SerializerIO_ReadUnsigned(rdb);
-	uint64_t label_count        = SerializerIO_ReadUnsigned(rdb);
-	uint64_t relation_count     = SerializerIO_ReadUnsigned(rdb);
+	uint64_t node_count         = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t edge_count         = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t deleted_node_count = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t deleted_edge_count = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t label_count        = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t relation_count     = SerializerIO_TryReadUnsigned(rdb);
 	uint64_t multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
-		multi_edge[i] = SerializerIO_ReadUnsigned(rdb);
+		multi_edge[i] = SerializerIO_TryReadUnsigned(rdb);
 	}
 
 	// total keys representing the graph
-	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
+	uint64_t key_number = SerializerIO_TryReadUnsigned(rdb);
 
 	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+
+	// stash the in-flight graph so the dispatcher's landing pad can tear it
+	// down after a short read unwinds this decoder's locals
+	SerializerIO_SetContext(rdb, gc);
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -127,7 +131,7 @@ static PayloadInfo *_RdbLoadKeySchema
 	//     Encode state
 	//     Number of entities encoded in this state.
 
-	uint64_t payloads_count = SerializerIO_ReadUnsigned(rdb);
+	uint64_t payloads_count = SerializerIO_TryReadUnsigned(rdb);
 	PayloadInfo *payloads = arr_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
@@ -135,8 +139,8 @@ static PayloadInfo *_RdbLoadKeySchema
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
 
-		payload_info.state          = SerializerIO_ReadUnsigned(rdb);
-		payload_info.entities_count = SerializerIO_ReadUnsigned(rdb);
+		payload_info.state          = SerializerIO_TryReadUnsigned(rdb);
+		payload_info.entities_count = SerializerIO_TryReadUnsigned(rdb);
 
 		arr_append(payloads, payload_info);
 	}
