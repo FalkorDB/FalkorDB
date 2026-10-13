@@ -68,7 +68,11 @@ lazy_static! {
 
 // ── Runtime-configurable atomics ──
 
-pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(u32::MAX as u64);
+/// Queries that may wait at once — in the thread pool plus every graph's write
+/// queue — before new ones get "Max pending queries exceeded". Deliberately
+/// finite, unlike C's unlimited default, so a stalled graph cannot queue
+/// without bound.
+pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(10_000);
 pub static TIMEOUT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_DEFAULT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
