@@ -23,10 +23,11 @@
 #
 # WHAT IT DOES
 #   1. guard             — validate tag shape, major >= 6, Cargo.toml version match
-#   2. create-release    — create the GitHub Release (idempotent); decide :latest
+#   2. create-release    — create the GitHub Release (idempotent)
 #   3. build-artifacts   — build the per-platform .so files (_build-artifacts.yml)
 #   4. publish-artifacts — require the full set, checksum, upload to the release
-#   5. image             — retag the validated rc-mg-<sha> manifest to semver
+#   5. image             — retag the validated rc-mg-<sha> manifest to semver,
+#                          and to :latest if this is the highest release
 #   6. browser-tests     — exercise the published image
 #
 # workflow_dispatch re-runs all of it for an existing tag; every step is
@@ -120,15 +121,13 @@ jobs:
 
 
   # Create the Release up front: publish-artifacts uploads assets to it, and the
-  # :latest decision below reads the published-release list, which must include
-  # this one.
+  # image job's :latest decision reads the published-release list, which must
+  # include this one.
   create-release:
     needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      is_latest: ${{ steps.latest.outputs.is_latest }}
     steps:
       - name: Create GitHub Release (if absent)
         env:
@@ -146,26 +145,6 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
           gh release create "$TAG" "${FLAGS[@]}"
           echo "Created release $TAG"
-
-      # :latest moves only when this release is the highest semver across all
-      # non-draft, non-prerelease releases, so a backport patch on an old version
-      # branch does not clobber it.
-      - name: Decide whether :latest moves
-        id: latest
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          SEMVER: ${{ needs.guard.outputs.semver }}
-        run: |
-          set -euo pipefail
-          HIGHEST=$(gh api "/repos/${GH_REPO}/releases" --paginate \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
-            | sed 's/^v//' \
-            | sort -V \
-            | tail -1)
-          if [ "$HIGHEST" = "$SEMVER" ]; then IS_LATEST=true; else IS_LATEST=false; fi
-          echo "is_latest=$IS_LATEST" >> "$GITHUB_OUTPUT"
-          echo "highest published release: $HIGHEST; this release: $SEMVER; is_latest=$IS_LATEST"
 
   # Per-platform .so assets. BUILD (fan-out) and PUBLISH (fan-in) are separate so
   # a partial matrix failure never leaves a half-populated release: the build
@@ -261,15 +240,26 @@ jobs:
 
       - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }} → ${{ needs.guard.outputs.semver }} (${{ matrix.repo }})
         env:
+          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:    ${{ github.repository }}
           TAG:        ${{ needs.guard.outputs.semver }}
-          IS_LATEST:  ${{ needs.create-release.outputs.is_latest }}
           COMMIT_SHA: ${{ needs.guard.outputs.commit_sha }}
           REPO:       ${{ matrix.repo }}
         run: |
           set -euo pipefail
           SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}"
           TAGS=(-t "ghcr.io/falkordb/${REPO}:${TAG}" -t "falkordb/${REPO}:${TAG}")
-          if [ "$IS_LATEST" = "true" ]; then
+          # :latest moves only when this release is the highest semver across all
+          # non-draft, non-prerelease releases, so a backport patch on an old
+          # version branch does not clobber it. Decided here, right before the
+          # push, so a newer release published meanwhile is already in the list.
+          HIGHEST=$(gh api "/repos/${GH_REPO}/releases" --paginate \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -1)
+          echo "highest published release: $HIGHEST; this release: $TAG"
+          if [ "$HIGHEST" = "$TAG" ]; then
             # From 6.0 GA the Rust engine is the default, so :latest moves on
             # BOTH registries — same as the rebuild path in _build-flavour.yml.
             TAGS+=(-t "ghcr.io/falkordb/${REPO}:latest" -t "falkordb/${REPO}:latest")
