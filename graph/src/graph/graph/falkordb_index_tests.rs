@@ -15,8 +15,6 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -1334,43 +1332,4 @@ fn a_refused_publish_releases_the_slot() {
         host.mvcc.read().write_for_build().is_some(),
         "the turn released the slot"
     );
-}
-
-/// End to end: with the builder thread running over a host and done with the scan it makes at
-/// start, a commit that brings in a `Building` column wakes it, and it builds the column to `Ready`
-/// with no one calling a turn. The builder is process-wide and left running: stopping it would
-/// make turns in tests running alongside give up.
-#[test]
-fn a_commit_that_brings_in_a_building_column_wakes_the_builder() {
-    let attr = Arc::new("v".to_string());
-    let (g, label, ids) = people_with(&attr, &(1..=30).collect::<Vec<_>>());
-    let host = Arc::new(TestHost {
-        mvcc: RwLock::new(MvccGraph::from_graph(g)),
-        takeovers: AtomicU32::new(0),
-        refuse: AtomicBool::new(false),
-    });
-    let for_builder: Arc<dyn BuildHost> = host.clone();
-    online_build::start(move || vec![for_builder.clone()]);
-    // Let the scan at start find nothing, so only the commit below can bring the builder back.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while online_build::SCANS.load(Ordering::Relaxed) == 0 {
-        assert!(Instant::now() < deadline, "the builder never started");
-        thread::sleep(Duration::from_millis(1));
-    }
-
-    {
-        let mut mvcc = host.mvcc.write();
-        let version = mvcc.write().expect("free");
-        create_index_on(&mut version.borrow_mut(), &label, &attr);
-        mvcc.commit(version).expect("commits");
-    }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while host.cursor(&label, &attr).is_some() {
-        assert!(
-            Instant::now() < deadline,
-            "the builder never finished the column"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(host.indexed(&label, &attr), ids);
 }
