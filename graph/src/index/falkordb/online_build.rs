@@ -239,11 +239,6 @@ static SHARED: Shared = Shared {
     wakeup: Condvar::new(),
 };
 
-/// How many times the builder has asked the host for its graphs — so a test can tell the scan at
-/// start from one a commit woke.
-#[cfg(test)]
-pub(crate) static SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Set while the builder is stopping: turns give up rather than publish.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
@@ -332,10 +327,7 @@ fn run_builder() {
             }
         };
         if let Some(hosts) = hosts {
-            let hosts = hosts();
-            #[cfg(test)]
-            SCANS.fetch_add(1, Ordering::Relaxed);
-            for host in hosts {
+            for host in hosts() {
                 if building.iter().any(|b| b.host.id() == host.id()) {
                     continue;
                 }
