@@ -1629,3 +1629,22 @@ fn insert_batch_handles_the_maximal_tuple() {
     );
     check_invariants(&t, false);
 }
+
+/// https://github.com/FalkorDB/FalkorDB/issues/3237: `remove_batch` can leave a non-root branch with a
+/// single child (the merge in the batch path concatenates child lists and never re-checks them). The
+/// contents stay right, but the next single `remove` that drains that branch's lone leaf leaves an empty
+/// non-root leaf, and the following `insert_batch` panics in `Node::min`. After a batch removal the tree
+/// must keep the same shape invariants `remove` keeps, and later writes must not panic.
+#[test]
+#[ignore = "open bug: https://github.com/FalkorDB/FalkorDB/issues/3237"]
+fn remove_batch_keeps_non_root_branches_at_least_half_full() {
+    let pairs: Vec<(u64, u64)> = (0..96u64).map(|d| (d, 0)).collect();
+    // Root -> 3 subtrees of 32 entries each.
+    let mut t = CowBTree::<2, 4>::from_sorted(&pairs);
+    // Drain all but one leaf of the middle subtree in one batch.
+    t.remove_batch(&(33..64u64).map(|d| (d, 0)).collect::<Vec<_>>());
+    check_invariants(&t, false);
+    assert!(t.remove(32, 0));
+    t.insert_batch(&[(0, 1), (95, 1)]);
+    check_invariants(&t, false);
+}
