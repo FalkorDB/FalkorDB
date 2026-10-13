@@ -1632,9 +1632,11 @@ fn insert_batch_handles_the_maximal_tuple() {
 
 /// https://github.com/FalkorDB/FalkorDB/issues/3237: `remove_batch` can leave a non-root branch with a
 /// single child (the merge in the batch path concatenates child lists and never re-checks them). The
-/// contents stay right, but the next single `remove` that drains that branch's lone leaf leaves an empty
-/// non-root leaf, and the following `insert_batch` panics in `Node::min`. After a batch removal the tree
-/// must keep the same shape invariants `remove` keeps, and later writes must not panic.
+/// contents stay right, but the shape is broken. Today this test fails at the first `check_invariants`
+/// ("branch must have >= 2 children"). Past that, the issue's crash follows: the next single `remove`
+/// that drains the branch's lone leaf leaves an empty non-root leaf, and `insert_batch` then panics in
+/// `Node::min`. After a fix, the tree must keep both its contents and the shape invariants `remove`
+/// keeps, and the later writes must not panic.
 #[test]
 #[ignore = "open bug: https://github.com/FalkorDB/FalkorDB/issues/3237"]
 fn remove_batch_keeps_non_root_branches_at_least_half_full() {
@@ -1643,8 +1645,19 @@ fn remove_batch_keeps_non_root_branches_at_least_half_full() {
     let mut t = CowBTree::<2, 4>::from_sorted(&pairs);
     // Drain all but one leaf of the middle subtree in one batch.
     t.remove_batch(&(33..64u64).map(|d| (d, 0)).collect::<Vec<_>>());
+    let mut expected: Vec<(u64, u64)> = pairs
+        .iter()
+        .copied()
+        .filter(|&(k, _)| !(33..64).contains(&k))
+        .collect();
+    assert_eq!(tree_pairs(&t), expected);
     check_invariants(&t, false);
+
     assert!(t.remove(32, 0));
     t.insert_batch(&[(0, 1), (95, 1)]);
+    expected.retain(|&(k, _)| k != 32);
+    expected.extend([(0, 1), (95, 1)]);
+    expected.sort_unstable();
+    assert_eq!(tree_pairs(&t), expected);
     check_invariants(&t, false);
 }

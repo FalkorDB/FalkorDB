@@ -10,10 +10,10 @@ it. When an issue is fixed, move its class into the suite that covers the
 feature (and into CI), and delete it from here.
 """
 
-from common import *
+from common import Env, Environment, NO_RETRY, SANITIZER
 
 import base64
-import os
+import resource
 import socket
 import struct
 import time
@@ -208,6 +208,7 @@ class testIssue2930():
         try:
             self.graph.query("RETURN localdatetime({year:2020, week:-9223372036854775807})")
         except ResponseError:
+            # An error is an acceptable answer too; only a crash fails this test.
             pass
         self.env.assertTrue(self.env.getConnection().ping())
 
@@ -730,8 +731,8 @@ class testIssue2782():
             self.c0.execute_command("GRAPH.QUERY", name, "CREATE (:After)")
         except redis.exceptions.ResponseError as e:
             err = str(e)
-        self.env.assertTrue(
-            err is None,
+        self.env.assertIsNone(
+            err,
             message=f"db0 graph became write-locked after a same-named db1 "
                     f"graph was created: {err!r}")
 
@@ -778,9 +779,19 @@ class testIssue3013():
         # without reading replies, so >1024 queries are in flight at once.
         query = "UNWIND range(1,5000) AS x CREATE (:N)"
 
+        # The flood holds one socket per query open at once. Many shells and CI
+        # runners default to a soft limit of 1024 descriptors, which would make
+        # the client fail with EMFILE before the flood is ever sent.
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        need = n_queries + 256
+        if soft != resource.RLIM_INFINITY and soft < need:
+            if hard != resource.RLIM_INFINITY and hard < need:
+                self.env.skip()
+            resource.setrlimit(resource.RLIMIT_NOFILE, (need, hard))
+
         socks = []
         try:
-            for i in range(n_queries):
+            for _ in range(n_queries):
                 s = socket.socket()
                 s.settimeout(30)
                 s.connect((host, port))
@@ -804,6 +815,8 @@ class testIssue3013():
                         pong = True
                         break
                 except OSError:
+                    # Refused or timed out: the server is not answering yet, so
+                    # poll again until the deadline.
                     pass
                 finally:
                     p.close()
@@ -818,6 +831,8 @@ class testIssue3013():
                 try:
                     s.close()
                 except OSError:
+                    # Best-effort cleanup; the socket may already be reset by a
+                    # crashed or killed server.
                     pass
 
 
@@ -853,13 +868,13 @@ class testIssue2974():
         self.conn.delete("issue_2974")
 
     def test01_forged_node_is_rejected_by_create(self):
-        # node 7 does not exist; a forged reference must not become a CREATE endpoint
-        try:
-            self.graph.query("WITH forge.fn(7) AS n MATCH (a {id: 0}) "
-                             "CREATE (a)-[r:R]->(n) RETURN id(r)")
-            self.env.assertTrue(False, message="CREATE accepted a forged node reference")
-        except ResponseError:
-            pass
+        # node 7 does not exist; a forged reference must not become a CREATE
+        # endpoint. C rejects it with "encountered unexpected type in Record;
+        # expected Node".
+        _expect_error(self.env, self.graph,
+                      "WITH forge.fn(7) AS n MATCH (a {id: 0}) "
+                      "CREATE (a)-[r:R]->(n) RETURN id(r)",
+                      "expected Node")
 
         # no dangling edge was created
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set
@@ -868,12 +883,11 @@ class testIssue2974():
         self.env.assertEqual(res[0][0], 2)
 
     def test02_forged_edge_is_rejected_by_startNode(self):
-        # edge 1000 does not exist; a forged edge must be a Map -> type error
-        try:
-            self.graph.query("RETURN startNode(forge.fe(1000))")
-            self.env.assertTrue(False, message="startNode accepted a forged edge reference")
-        except ResponseError:
-            pass
+        # edge 1000 does not exist; a forged edge is just a Map, so this is a
+        # type error. C: "Type mismatch: expected Edge or Null but was Map".
+        _expect_error(self.env, self.graph,
+                      "RETURN startNode(forge.fe(1000))",
+                      "expected Edge")
 
         # the server must survive
         self.env.assertTrue(self.conn.ping())
