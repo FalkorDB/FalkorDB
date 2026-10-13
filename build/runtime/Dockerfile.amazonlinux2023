@@ -102,8 +102,8 @@ RUN cargo build --release && \
     fi && \
     undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
     if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
-    unresolved="$(ldd -r /out/falkordb.so 2>&1 | grep 'undefined symbol' || true)" && \
-    if [ -n "$unresolved" ]; then echo "FAIL: symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
+    unresolved="$(ldd -r /out/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
 # ---------------------------------------------------------------------------
