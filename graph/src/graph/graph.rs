@@ -1063,7 +1063,7 @@ impl Graph {
             version: self.version + 1,
             schema_version: self.schema_version,
             #[cfg(feature = "index-falkordb")]
-            falkordb_index: self.falkordb_index.clone(),
+            falkordb_index: self.falkordb_index.new_version(),
         }
     }
 

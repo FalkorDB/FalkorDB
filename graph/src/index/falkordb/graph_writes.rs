@@ -35,7 +35,7 @@ use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
-use super::falkordb_index::BuildCursor;
+use super::falkordb_index::{BuildBatch, BuildCursor};
 use super::pending_writes::IndexChanges;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
@@ -424,11 +424,11 @@ pub fn create_index(
 
 // ---- Online build ----
 //
-// A `Building` column is filled by steps. Each reads the next batch of the label's entities from
-// the graph it is given, at their current values, and adds them to the column. The online builder
-// (`online_build`) runs each step as a unit of work of its own, on a fresh version committed when
-// the step returns, so live writes interleave with the steps and every step sees them. See
-// `ColumnState`.
+// A `Building` column is filled by steps. Each reads the next batch of the label's entities, at
+// their values in the version it reads, and adds them to the column. The online builder
+// (`online_build`) reads each step's batch on a snapshot and commits it as a unit of work of its
+// own, merged into whatever version is current by then, so live writes interleave with the steps.
+// See `ColumnState`.
 
 /// Nodes one build step reads, at most: C's populate batch (`src/index/index_construct.c`).
 pub(crate) const BUILD_STEP_NODES: usize = 10_000;
@@ -446,38 +446,59 @@ pub(crate) fn has_building_columns(g: &Graph) -> bool {
 /// One build step: index the next batch of one `Building` column's entities, at most `nodes` nodes
 /// or `edges` edges, at their current values, and move its cursor past them, or flip the column
 /// `Ready` if the batch reached the end. Returns whether a column is still `Building` afterwards,
-/// i.e. whether to run another step. The online builder passes [`BUILD_STEP_NODES`] and
-/// [`BUILD_STEP_EDGES`]; tests pass small batches to force cursors through every boundary.
-///
-/// `g` must be the private version the step will be committed from, so the step sees every write
-/// committed before it, and every write committed after it sees the step.
+/// i.e. whether to run another step. Tests pass small batches to force cursors through every
+/// boundary.
+#[cfg(test)]
 pub(crate) fn build_step(
     g: &mut Graph,
     nodes: usize,
     edges: usize,
 ) -> bool {
-    let Some((entity, key, from)) = g.falkordb_index.next_building() else {
-        return false;
-    };
-    let mut tuples = Vec::new();
-    let next = {
-        let column = g
-            .falkordb_index
-            .column(entity, &key.0, &key.1)
-            .expect("next_building names an existing column");
-        let encode = |value: &Value| column.encode_value(value);
-        let (label, attr) = (&key.0, &key.1);
-        match entity {
-            EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
-                .map(|row| BuildCursor { row, col: 0 }),
-            EntityType::Relationship => {
-                scan_edges(g, label, attr, from, edges, encode, &mut tuples)
-            }
-        }
-    };
-    g.falkordb_index
-        .advance_build(entity, &key, &mut tuples, next);
+    if let Some(batch) = read_build_batch(g, nodes, edges) {
+        g.falkordb_index.apply_build(&batch);
+    }
     g.falkordb_index.has_building_columns()
+}
+
+/// Read the next build step's batch from `g` without applying it: the first `Building` column's
+/// next `nodes` nodes or `edges` edges, at their values in `g`, encoded and sorted. `None` if no
+/// column is `Building`. The online builder ([`BUILD_STEP_NODES`], [`BUILD_STEP_EDGES`]) reads it
+/// on a snapshot and applies it
+/// ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)) to whatever
+/// version is current
+/// when it publishes.
+pub(crate) fn read_build_batch(
+    g: &Graph,
+    nodes: usize,
+    edges: usize,
+) -> Option<BuildBatch> {
+    let (entity, key, from) = g.falkordb_index.next_building()?;
+    let column = g
+        .falkordb_index
+        .column(entity, &key.0, &key.1)
+        .expect("next_building names an existing column");
+    let generation = g
+        .falkordb_index
+        .generation(entity, &key)
+        .expect("next_building names an existing column");
+    let encode = |value: &Value| column.encode_value(value);
+    let (label, attr) = (&key.0, &key.1);
+    let mut tuples = Vec::new();
+    let next = match entity {
+        EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
+            .map(|row| BuildCursor { row, col: 0 }),
+        EntityType::Relationship => scan_edges(g, label, attr, from, edges, encode, &mut tuples),
+    };
+    tuples.sort_unstable();
+    tuples.dedup();
+    Some(BuildBatch {
+        entity,
+        key,
+        generation,
+        read_at: g.falkordb_index.build_commits(),
+        tuples,
+        next,
+    })
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of

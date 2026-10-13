@@ -4,7 +4,7 @@
 //! graph access. It ensures:
 //!
 //! - Multiple readers can access the graph simultaneously (lock-free)
-//! - Only one writer at a time (serialized via the write slot, an atomic `Slot`)
+//! - Only one writer at a time (serialized via `AtomicBool`)
 //! - Writers work on a Copy-on-Write versioned copy, committing atomically
 //! - Readers always see a consistent, committed snapshot
 //!
@@ -14,25 +14,25 @@
 //!  MvccGraph
 //!  ┌─────────────────────────────────────────────────────┐
 //!  │  graph: Arc<AtomicRefCell<Graph>>  (committed v1)   │
-//!  │  write: AtomicSlot (free / writer / build step)      │
+//!  │  write: AtomicBool (false = no write in progress)   │
 //!  └─────────────────────────────────────────────────────┘
 //!
 //!  Reader 1 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!  Reader 2 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!
-//!  Writer ──write()──▶ CAS(free→writer) ──▶ Graph::new_version() ──▶ Graph v2
+//!  Writer ──write()──▶ CAS(false→true) ──▶ Graph::new_version() ──▶ Graph v2
 //!    │                                       (COW matrices, COW AttributeStore)
 //!    │── mutations on v2 ──▶ ...
-//!    │── commit(v2) ──▶ swap graph pointer, store(free)
+//!    │── commit(v2) ──▶ swap graph pointer, store(false)
 //!    │
 //!    │  Readers now see v2; v1 is dropped when last Arc goes away
 //!
-//!  Failed writer ──write()──▶ slot held by a writer ──▶ returns None
+//!  Failed writer ──write()──▶ CAS fails ──▶ returns None
 //! ```
 //!
-//! A background index-build step takes the slot with `write_for_build()` and gives it up to the
-//! first writer that asks: `write()` takes a slot held by a build step over instead of failing,
-//! and the step, finding it lost the slot (`claim_build()` returns `false`), drops its version.
+//! A background index-build step commits too ([`MvccGraph::commit_index_build`]), and changes only
+//! the index. A writer whose fork is stale only because build steps committed since it was made
+//! does not run again: [`MvccGraph::claim`] gives its fork their progress, and it commits.
 //!
 //! ## Version Lifecycle
 //!
@@ -51,14 +51,16 @@
 //! ## Thread Safety
 //!
 //! Readers never block -- they simply clone the `Arc` to the current graph.
-//! The write slot only serializes write acquisition, not read access.
+//! The `AtomicBool` only serializes write acquisition, not read access.
 //! `AtomicRefCell` provides runtime borrow checking for the rare cases
 //! where mutable access to the committed graph is needed (e.g., indexer
 //! graph reference updates on commit).
 
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
-use atomic_enum::atomic_enum;
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
@@ -68,20 +70,7 @@ use crate::index::falkordb::{
     online_build::{self, BuildHost},
 };
 #[cfg(feature = "index-falkordb")]
-use std::sync::{OnceLock, atomic::AtomicBool};
-
-/// Who holds the write slot.
-#[atomic_enum]
-#[derive(PartialEq, Eq)]
-enum Slot {
-    /// Nobody.
-    Free,
-    /// A writer; only its `commit` or `rollback` frees the slot.
-    Writer,
-    /// A background index-build step, which gives the slot up to any writer that asks (see
-    /// [`MvccGraph::write_for_build`]).
-    Build,
-}
+use std::sync::OnceLock;
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -90,8 +79,11 @@ enum Slot {
 pub struct MvccGraph {
     /// Current committed graph version
     graph: Arc<AtomicRefCell<Graph>>,
-    /// The write slot: who holds it.
-    write: AtomicSlot,
+    /// Write lock (true = write in progress)
+    write: AtomicBool,
+    /// The version of the last commit that changed graph data, as opposed to an index-build step.
+    #[cfg(feature = "index-falkordb")]
+    data_version: u64,
     /// How the online index builder reaches this graph; set by its host.
     #[cfg(feature = "index-falkordb")]
     build_host: OnceLock<Arc<dyn BuildHost>>,
@@ -120,14 +112,7 @@ impl MvccGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        Self {
-            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
-            write: AtomicSlot::new(Slot::Free),
-            #[cfg(feature = "index-falkordb")]
-            build_host: OnceLock::new(),
-            #[cfg(feature = "index-falkordb")]
-            build_queued: AtomicBool::new(false),
-        }
+        Self::from_graph(Graph::new(n, e, cache_size, 0, name))
     }
 
     /// Create an `MvccGraph` from an already-constructed `Graph`.
@@ -135,8 +120,10 @@ impl MvccGraph {
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
         Self {
+            #[cfg(feature = "index-falkordb")]
+            data_version: graph.version,
             graph: Arc::new(AtomicRefCell::new(graph)),
-            write: AtomicSlot::new(Slot::Free),
+            write: AtomicBool::new(false),
             #[cfg(feature = "index-falkordb")]
             build_host: OnceLock::new(),
             #[cfg(feature = "index-falkordb")]
@@ -185,13 +172,21 @@ impl MvccGraph {
             && !self.build_queued.swap(true, Ordering::AcqRel)
     }
 
-    /// Take the write slot and a private new version to write into, in one step. For writers that
-    /// already hold the per-graph write lock. `None` if another writer holds the slot. A slot a
-    /// build step holds is taken over: the step gives way to every writer (see
-    /// [`Self::write_for_build`]).
+    /// Claim the write slot and fork a private version to build into, in one
+    /// step. For writers that already hold the per-graph write lock.
     #[must_use]
     pub fn write(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        self.take_slot().then(|| self.fork())
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(Arc::new(AtomicRefCell::new(
+                self.graph.borrow().new_version(),
+            )))
+        } else {
+            None
+        }
     }
 
     /// A private version of the committed graph, *without* claiming the write
@@ -201,13 +196,25 @@ impl MvccGraph {
     /// it builds into the fork and claims the slot only when it escalates
     /// ([`Self::claim`]), so the slot is only ever held by a thread holding the
     /// per-graph write lock and an inline writer never finds it taken.
+    ///
+    /// The fork records its changes to index columns still being built, until it is claimed, in
+    /// case it has to replay them onto build steps committed meanwhile.
     #[must_use]
     pub fn fork(&self) -> Arc<AtomicRefCell<Graph>> {
-        Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
+        #[cfg_attr(not(feature = "index-falkordb"), allow(unused_mut))]
+        let mut version = self.graph.borrow().new_version();
+        #[cfg(feature = "index-falkordb")]
+        version.falkordb_index.start_logging();
+        Arc::new(AtomicRefCell::new(version))
     }
 
-    /// Claim the write slot for a version made by [`Self::fork`]. A build step's hold is taken
-    /// over, as in [`Self::write`].
+    /// Claim the write slot for a version made by [`Self::fork`].
+    ///
+    /// A fork that is stale only because index-build steps committed since it was made is not
+    /// refused: the steps changed no graph data, so its writes still hold, and it takes the
+    /// steps' progress ([`FalkorDbIndex::adopt_build_progress`]) and becomes the next version.
+    ///
+    /// [`FalkorDbIndex::adopt_build_progress`]: crate::index::falkordb::falkordb_index::FalkorDbIndex::adopt_build_progress
     ///
     /// # Errors
     ///
@@ -219,83 +226,52 @@ impl MvccGraph {
         &self,
         fork: &AtomicRefCell<Graph>,
     ) -> Result<(), Claim> {
-        if !self.take_slot() {
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             return Err(Claim::Busy);
         }
-        if self.graph.borrow().version + 1 != fork.borrow().version {
-            self.write.store(Slot::Free, Ordering::Release);
+        let published = self.graph.borrow();
+        if published.version + 1 != fork.borrow().version {
+            #[cfg(feature = "index-falkordb")]
+            if self.adopt_build_progress(&published, fork) {
+                return Ok(());
+            }
+            self.write.store(false, Ordering::Release);
             return Err(Claim::Stale);
+        }
+        // Claimed: nothing will replay its changes now.
+        #[cfg(feature = "index-falkordb")]
+        if let Ok(mut fork) = fork.try_borrow_mut() {
+            fork.falkordb_index.stop_logging();
         }
         Ok(())
     }
 
-    /// Take the write slot for a writer: `false` if another writer holds it, and a build step's
-    /// hold is taken over.
-    fn take_slot(&self) -> bool {
-        let mut seen = self.write.load(Ordering::Relaxed);
-        loop {
-            if seen == Slot::Writer {
-                return false;
-            }
-            match self.write.compare_exchange_weak(
-                seen,
-                Slot::Writer,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return true,
-                Err(now) => seen = now,
-            }
+    /// Make a stale `fork` the next version if only index-build steps committed since it was
+    /// made. `false` if a writer committed meanwhile — or if the fork is borrowed, which no
+    /// claimant does, but which this refuses rather than panics on.
+    #[cfg(feature = "index-falkordb")]
+    fn adopt_build_progress(
+        &self,
+        published: &Graph,
+        fork: &AtomicRefCell<Graph>,
+    ) -> bool {
+        let Ok(mut fork) = fork.try_borrow_mut() else {
+            return false;
+        };
+        // The fork was made from version `fork.version - 1`, so a fork of this coordinator is
+        // never ahead of what it published; one that is was made on a coordinator replaced since.
+        if self.data_version >= fork.version || fork.version > published.version {
+            return false;
         }
-    }
-
-    /// Take the write slot for a background index-build step. `None` if anyone holds it.
-    ///
-    /// The step writes into the version this returns without holding any lock, and gives the slot
-    /// up to the first writer that asks: [`Self::write`] takes it over instead of failing. Before
-    /// committing, the step calls [`Self::claim_build`] to become an ordinary writer; if a writer
-    /// took the slot meanwhile, that returns `false` and the step drops its version, which was
-    /// forked from a version the writer is about to replace.
-    ///
-    /// Assumes one build step per graph at a time — the host's, which runs them one after another.
-    #[must_use]
-    pub fn write_for_build(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        self.write
-            .compare_exchange(
-                Slot::Free,
-                Slot::Build,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            )
-            .ok()
-            .map(|_| self.fork())
-    }
-
-    /// Turn a build step's hold on the write slot into an ordinary writer's, so it can
-    /// [`commit`](Self::commit). `false` if a writer took the slot over: nothing was published
-    /// in between, but the step's version is no longer the next one, so the step must drop it, and
-    /// the slot is no longer the step's to release.
-    #[must_use]
-    pub fn claim_build(&self) -> bool {
-        self.write
-            .compare_exchange(
-                Slot::Build,
-                Slot::Writer,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-    }
-
-    /// Give up a build step's hold on the write slot without committing. A no-op if a writer took
-    /// the slot over already.
-    pub fn abandon_build(&self) {
-        let _ = self.write.compare_exchange(
-            Slot::Build,
-            Slot::Free,
-            Ordering::Release,
-            Ordering::Relaxed,
-        );
+        fork.falkordb_index
+            .adopt_build_progress(&published.falkordb_index);
+        fork.falkordb_index.stop_logging();
+        fork.version = published.version + 1;
+        true
     }
 
     /// Publish `new_graph` as the current version.
@@ -307,9 +283,9 @@ impl MvccGraph {
     ///
     /// A refusal *is* a [`Self::rollback`], performed here rather than left to
     /// the caller. That is not a convenience: the write slot is a single
-    /// atomic for the whole graph, so returning without clearing it makes
-    /// every later `write()` fail until the process restarts. Every caller would
-    /// otherwise have had to remember.
+    /// `AtomicBool` for the whole graph, so returning without clearing it makes
+    /// every later `write()` fail until the process restarts. Five of the six
+    /// callers would have had to remember, and the sixth is `unreachable!()`.
     ///
     /// # Errors
     ///
@@ -318,6 +294,29 @@ impl MvccGraph {
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
+    ) -> Result<(), NodeOpError> {
+        self.publish(new_graph, true)
+    }
+
+    /// [`Self::commit`] for an index-build step, which changes no graph data: a writer whose fork
+    /// it makes stale may still [`claim`](Self::claim) it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::commit`].
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn commit_index_build(
+        &mut self,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+    ) -> Result<(), NodeOpError> {
+        self.publish(new_graph, false)
+    }
+
+    /// [`Self::commit`]; `data` if the version changes graph data, not only the index.
+    fn publish(
+        &mut self,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+        #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))] data: bool,
     ) -> Result<(), NodeOpError> {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
 
@@ -365,6 +364,9 @@ impl MvccGraph {
         }
 
         new_graph.borrow_mut().trim_attr_stores();
+        // Nobody replays a published version's index changes.
+        #[cfg(feature = "index-falkordb")]
+        new_graph.borrow_mut().falkordb_index.stop_logging();
 
         // Fold away any delta that has grown comparable to its base, then
         // materialize every committed base before publishing. The transaction
@@ -398,8 +400,12 @@ impl MvccGraph {
         #[cfg(feature = "index-falkordb")]
         let building = has_building_columns(&new_graph.borrow());
 
+        #[cfg(feature = "index-falkordb")]
+        if data {
+            self.data_version = new_graph.borrow().version;
+        }
         self.graph = new_graph;
-        self.write.store(Slot::Free, Ordering::Release);
+        self.write.store(false, Ordering::Release);
         #[cfg(feature = "index-falkordb")]
         if building && !self.build_queued.swap(true, Ordering::AcqRel) {
             match self.build_host.get() {
@@ -411,9 +417,8 @@ impl MvccGraph {
         Ok(())
     }
 
-    /// Release the write slot a writer holds, dropping nothing: the caller drops its version.
     pub fn rollback(&self) {
-        self.write.store(Slot::Free, Ordering::Release);
+        self.write.store(false, Ordering::Release);
     }
 }
 
@@ -431,7 +436,7 @@ mod tests {
 
     /// A refused version must leave the write slot free.
     ///
-    /// The slot is one atomic for the whole graph, so a `commit` that
+    /// The slot is one `AtomicBool` for the whole graph, so a `commit` that
     /// returns without clearing it does not fail one write — it fails every
     /// write for the life of the process. Found in review, by two reviewers
     /// independently, after the validation was added here.
@@ -484,66 +489,5 @@ mod tests {
         assert!(mvcc.write().is_none(), "the claim holds the slot");
         mvcc.commit(fresh).expect("the claimed fork commits");
         assert!(mvcc.write().is_some());
-    }
-
-    /// A writer takes the slot over from a build step instead of failing, and the step then finds
-    /// it lost the slot: it cannot claim it, and giving it up does not release the writer's hold.
-    #[test]
-    fn a_writer_takes_the_slot_over_from_a_build_step() {
-        ensure_init();
-        let mut mvcc = MvccGraph::new(64, 64, 0, "t");
-        let step = mvcc.write_for_build().expect("the slot starts free");
-
-        let writer = mvcc
-            .write()
-            .expect("a writer never fails on a build step's hold");
-        assert!(!mvcc.claim_build(), "the step lost the slot");
-        mvcc.abandon_build();
-        assert!(
-            mvcc.write().is_none(),
-            "the step giving up must not release the writer's hold"
-        );
-        assert!(mvcc.write_for_build().is_none());
-
-        drop(step);
-        let version = writer.borrow().version;
-        mvcc.commit(writer).expect("the writer commits as usual");
-        assert_eq!(mvcc.read().borrow().version, version);
-        assert!(mvcc.write_for_build().is_some(), "and frees the slot");
-    }
-
-    /// A build step nobody interrupted claims the slot and commits like a writer; once it has
-    /// claimed it, writers fail as they do against any writer.
-    #[test]
-    fn a_build_step_that_keeps_the_slot_commits() {
-        ensure_init();
-        let mut mvcc = MvccGraph::new(64, 64, 0, "t");
-        let step = mvcc.write_for_build().expect("the slot starts free");
-        assert!(mvcc.claim_build());
-        assert!(
-            mvcc.write().is_none(),
-            "a claimed slot is a writer's, not a build step's"
-        );
-        let version = step.borrow().version;
-        mvcc.commit(step).expect("commits");
-        assert_eq!(mvcc.read().borrow().version, version);
-        assert!(mvcc.write().is_some(), "commit frees the slot");
-    }
-
-    /// A build step never takes a slot anyone holds, and giving up a slot it still holds frees it.
-    #[test]
-    fn a_build_step_takes_only_a_free_slot() {
-        ensure_init();
-        let mvcc = MvccGraph::new(64, 64, 0, "t");
-        let writer = mvcc.write().expect("the slot starts free");
-        assert!(mvcc.write_for_build().is_none(), "a writer holds it");
-        drop(writer);
-        mvcc.rollback();
-
-        let step = mvcc.write_for_build().expect("free again");
-        assert!(mvcc.write_for_build().is_none(), "a build step holds it");
-        drop(step);
-        mvcc.abandon_build();
-        assert!(mvcc.write().is_some(), "giving up frees the slot");
     }
 }

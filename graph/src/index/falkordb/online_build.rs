@@ -1,29 +1,28 @@
-//! The online index build's driver: when build steps run, and how each one takes the write slot.
+//! The online index build's driver: when build steps run, and how each one commits.
 //!
-//! `graph_writes::build_step` indexes one batch on a private version. This module runs those
-//! steps on a pool of its own — [`start`]'s workers, which serve no queries — one turn at a time,
-//! for every graph that has `Building` columns. Nothing here knows about Redis: a host registers a
-//! [`BuildHost`] for each graph ([`MvccGraph::set_build_host`]), which is how the builder reads the
-//! graph and how it publishes as a writer. The Redis module's host takes the GIL and the graph's
-//! write lock to publish; an embedded host would take its own lock.
+//! A build step reads one batch of a `Building` column (`graph_writes::read_build_batch`). This
+//! module runs those steps on a pool of its own — [`start`]'s workers, which serve no queries — one
+//! turn at a time, for every graph that has `Building` columns. Nothing here knows about Redis: a
+//! host registers a [`BuildHost`] for each graph ([`MvccGraph::set_build_host`]), which is how the
+//! builder reads the graph and how it publishes as a writer. The Redis module's host takes the GIL
+//! and the graph's write lock to publish; an embedded host would take its own lock.
 //!
-//! **A turn is a writer that gives way.** It takes the write slot as a build step
-//! ([`MvccGraph::write_for_build`]) and indexes its batch holding no lock. A writer that wants the
-//! slot meanwhile takes it over instead of failing ([`MvccGraph::write`]). Then the turn publishes
-//! through the host: it claims the slot as a writer and commits ([`MvccGraph::claim_build`]), or
-//! finds it lost the slot and drops its batch for a later turn.
-//!
-//! **Starvation.** After two lost turns in a row (`TURNS_LOST_BEFORE_HOLDING`), the next turn holds:
-//! it publishes through the host first, takes the slot as an ordinary writer, and keeps both for
-//! the whole step, so nothing can take the slot from it. A committed turn resets the count.
+//! **A turn neither makes a writer run again nor loses its batch to one.** It reads its batch on a
+//! private version of the published graph and applies it there, holding no lock. Then it publishes
+//! through the host: it claims the write slot ([`MvccGraph::claim`]) and commits the version as an
+//! index-build step ([`MvccGraph::commit_index_build`]). If a writer committed while the batch was
+//! read, the claim is stale, and the turn applies the batch to a fork of what that writer published
+//! instead, skipping the entities written since
+//! ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)). A queued
+//! write whose fork the turn makes stale merges the other way when it claims. Only a column dropped
+//! or re-created meanwhile drops a batch.
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
 //! has a `Building` column and the graph is not queued yet, which covers every way a
 //! `CREATE INDEX` can arrive. A worker takes the graph with the earliest start time, runs one turn,
-//! and queues it again — not before as long as the turn took, so the graph's writers get the slot
-//! and the GIL between its turns — until it has no `Building` column left. A graph is either queued
-//! or on one worker, never both, so it never has two turns at once. The work per `CREATE INDEX` is
-//! the same however many graphs there are.
+//! and queues it again — not before as long as the turn took — until it has no `Building` column
+//! left. A graph is either queued or on one worker, never both, so it never has two turns at once.
+//! The work per `CREATE INDEX` is the same however many graphs there are.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -35,9 +34,10 @@ use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
 
+use super::falkordb_index::BuildBatch;
 use super::graph_writes::{self, BUILD_STEP_EDGES, BUILD_STEP_NODES};
 use crate::graph::graph::Graph;
-use crate::graph::mvcc_graph::MvccGraph;
+use crate::graph::mvcc_graph::{Claim, MvccGraph};
 
 /// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
 /// with it through [`MvccGraph::set_build_host`].
@@ -60,168 +60,110 @@ pub trait BuildHost: Send + Sync {
     ) -> bool;
 }
 
-/// Lost turns in a row after which a graph's next build turn holds the slot instead of giving way.
-pub(crate) const TURNS_LOST_BEFORE_HOLDING: u32 = 2;
-
 /// What one build turn did.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Turn {
     /// The graph has no `Building` column.
     Idle,
-    /// The step was committed; `more` if a column is still `Building`. `held` if the turn held
-    /// the slot rather than giving way.
-    Committed { more: bool, held: bool },
-    /// A writer took the slot over; the batch was dropped.
+    /// The step was committed; `more` if a column is still `Building`.
+    Committed { more: bool },
+    /// The column the batch was read from was dropped or re-created meanwhile; the batch was
+    /// dropped.
     Lost,
-    /// A writer held the slot, so the turn did not start.
-    Busy,
     /// The host refused: the graph is gone, or the builder is stopping.
     Gone,
-    /// The step panicked. The slot was released.
+    /// The step panicked, or its version was refused.
     Failed,
 }
 
-/// One build turn on the graph `host` names, with the default batch sizes. `losses` is the
-/// graph's count of turns lost in a row, kept by the caller across turns.
+/// One build turn on the graph `host` names, with the default batch sizes.
 ///
 /// The builder runs at most one turn per graph at a time. Two at once would still publish nothing
-/// stale — a turn checks its version is the next one before committing — but would waste work.
-pub(crate) fn run_turn(
-    host: &dyn BuildHost,
-    losses: &mut u32,
-) -> Turn {
-    run_turn_within(host, losses, BUILD_STEP_NODES, BUILD_STEP_EDGES)
+/// wrong — each merges into what the other committed — but would read the same batch twice.
+pub(crate) fn run_turn(host: &dyn BuildHost) -> Turn {
+    run_turn_within(host, BUILD_STEP_NODES, BUILD_STEP_EDGES)
 }
 
 /// [`run_turn`] with explicit batch sizes, for tests.
 pub(crate) fn run_turn_within(
     host: &dyn BuildHost,
-    losses: &mut u32,
     nodes: usize,
     edges: usize,
 ) -> Turn {
-    // One read to see whether there is anything to build and, for a turn that gives way, to take
-    // the slot. The step itself needs no lock: it reads and writes only its own version.
-    let holding = *losses >= TURNS_LOST_BEFORE_HOLDING;
-    let mut building = false;
-    let mut fork = None;
+    // One read to see whether there is anything to build and to fork the version to read the
+    // batch on. The step itself needs no lock: it reads and writes only its own version.
+    let mut version = None;
     if !host.read(&mut |mvcc| {
-        building = graph_writes::has_building_columns(&mvcc.read().borrow());
-        if building && !holding {
-            fork = mvcc.write_for_build();
+        if graph_writes::has_building_columns(&mvcc.read().borrow()) {
+            version = Some(mvcc.fork());
         }
     }) {
         return Turn::Gone;
     }
-    if !building {
+    let Some(version) = version else {
         return Turn::Idle;
-    }
-    if holding {
-        let turn = held_turn(host, nodes, edges);
-        if matches!(turn, Turn::Committed { .. }) {
-            *losses = 0;
-        }
-        return turn;
-    }
-    let Some(fork) = fork else {
-        return Turn::Busy;
     };
-    let Some(more) = step(&fork, nodes, edges) else {
-        host.read(&mut |mvcc| mvcc.abandon_build());
-        return Turn::Failed;
+    let batch = match step(&version, nodes, edges) {
+        Some(Some(batch)) => batch,
+        Some(None) => return Turn::Idle,
+        None => return Turn::Failed,
     };
     // At shutdown the host may hold what publishing needs (the Redis host's GIL) while it waits
-    // for this thread. Giving up the slot needs only read access.
+    // for this thread.
     if stopping() {
-        host.read(&mut |mvcc| mvcc.abandon_build());
         return Turn::Gone;
     }
 
     let mut turn = Turn::Gone;
-    let mut fork = Some(fork);
+    let mut version = Some(version);
     let published = host.publish(&mut |mvcc| {
-        if !mvcc.claim_build() {
-            // A writer took the slot over. The batch was read from the version that writer
-            // replaces, so it is dropped and read again on a later turn.
-            turn = Turn::Lost;
-            return;
-        }
-        let fork = fork.take().expect("published once");
-        // The claim succeeding is not proof enough on its own: had a writer taken the slot, then
-        // committed, and another build step taken it again, the claim would succeed on that
-        // step's hold with this step's stale version. Only the version right after the published
-        // one may be committed.
-        if fork.borrow().version != mvcc.read().borrow().version + 1 {
-            mvcc.rollback();
-            turn = Turn::Lost;
-            return;
-        }
-        turn = commit(mvcc, fork, more, false);
-    });
-    if !published {
-        host.read(&mut |mvcc| mvcc.abandon_build());
-        return Turn::Gone;
-    }
-    match turn {
-        Turn::Lost => *losses += 1,
-        Turn::Committed { .. } => *losses = 0,
-        _ => {}
-    }
-    turn
-}
-
-/// A turn that holds: publish access first, then the slot as an ordinary writer, which nobody can
-/// take over, for the whole step.
-fn held_turn(
-    host: &dyn BuildHost,
-    nodes: usize,
-    edges: usize,
-) -> Turn {
-    if stopping() {
-        return Turn::Gone;
-    }
-    let mut turn = Turn::Gone;
-    let published = host.publish(&mut |mvcc| {
-        // Another writer holds the slot without the host's locks: a client write between taking
-        // it and publishing, or `GRAPH.BULK` building its version.
-        let Some(fork) = mvcc.write() else {
-            turn = Turn::Busy;
-            return;
-        };
-        turn = match step(&fork, nodes, edges) {
-            Some(more) => commit(mvcc, fork, more, true),
-            None => {
-                mvcc.rollback();
-                Turn::Failed
+        let version = version.take().expect("published once");
+        turn = match mvcc.claim(&version) {
+            Ok(()) => commit(mvcc, version),
+            // A writer committed while the batch was read: apply the batch to what it published.
+            Err(Claim::Stale) => {
+                let merged = mvcc.fork();
+                if merged.borrow_mut().falkordb_index.apply_build(&batch)
+                    && mvcc.claim(&merged).is_ok()
+                {
+                    commit(mvcc, merged)
+                } else {
+                    Turn::Lost
+                }
             }
+            // Writers claim the slot only with publish access, so it is free; handled all the same.
+            Err(Claim::Busy) => Turn::Lost,
         };
     });
     if published { turn } else { Turn::Gone }
 }
 
-/// Run one build step on `fork`. `None` if it panicked.
+/// Read one build step's batch on `version` and apply it there. `None` if it panicked;
+/// `Some(None)` if no column is `Building`.
 fn step(
-    fork: &AtomicRefCell<Graph>,
+    version: &AtomicRefCell<Graph>,
     nodes: usize,
     edges: usize,
-) -> Option<bool> {
+) -> Option<Option<BuildBatch>> {
     catch_unwind(AssertUnwindSafe(|| {
-        graph_writes::build_step(&mut fork.borrow_mut(), nodes, edges)
+        let mut g = version.borrow_mut();
+        let batch = graph_writes::read_build_batch(&g, nodes, edges)?;
+        g.falkordb_index.apply_build(&batch);
+        Some(batch)
     }))
     .ok()
 }
 
-/// Commit a build step, holding the slot as a writer.
+/// Commit a build step, holding the slot.
 fn commit(
     mvcc: &mut MvccGraph,
-    fork: Arc<AtomicRefCell<Graph>>,
-    more: bool,
-    held: bool,
+    version: Arc<AtomicRefCell<Graph>>,
 ) -> Turn {
-    // A refused version is rolled back by `commit` itself; the column stays `Building` and a
+    let more = graph_writes::has_building_columns(&version.borrow());
+    // A refused version is rolled back by the commit itself; the column stays `Building` and a
     // later turn retries.
-    match mvcc.commit(fork) {
-        Ok(()) => Turn::Committed { more, held },
+    match mvcc.commit_index_build(version) {
+        Ok(()) => Turn::Committed { more },
         Err(_) => Turn::Failed,
     }
 }
@@ -235,8 +177,6 @@ struct Queued {
     /// Breaks ties in queue order.
     seq: u64,
     host: Arc<dyn BuildHost>,
-    /// Turns lost in a row.
-    losses: u32,
 }
 
 impl PartialEq for Queued {
@@ -317,7 +257,7 @@ pub fn start(threads: usize) {
 }
 
 /// Stop the pool's workers and wait for them to exit. A turn in progress finishes its step and
-/// gives up the slot instead of publishing. Graphs still queued stay queued.
+/// drops it instead of publishing. Graphs still queued stay queued.
 pub fn stop() {
     STOPPING.store(true, Ordering::Relaxed);
     let workers = std::mem::take(&mut pool().workers);
@@ -342,7 +282,6 @@ pub(crate) fn enqueue(host: Arc<dyn BuildHost>) {
             not_before: Instant::now(),
             seq: 0,
             host,
-            losses: 0,
         },
         &mut pool(),
     );
@@ -359,13 +298,11 @@ fn requeue(
 }
 
 /// How long a graph waits for its next turn after one that committed or lost: as long as the turn
-/// took, so the graph's writers get the slot, and on a held turn the GIL, at least as long again.
+/// took, so a build takes at most half of one worker's time per graph, and the graph's write lock
+/// at most once per that long.
 fn pace(turn: Duration) -> Duration {
     turn.max(Duration::from_millis(1))
 }
-
-/// How long a graph waits before retrying when a writer held its slot.
-const BUSY_RETRY: Duration = Duration::from_millis(10);
 
 /// How long a graph waits before retrying after its step panicked.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
@@ -405,19 +342,16 @@ fn work() {
         };
 
         let started = Instant::now();
-        let turn = catch_unwind(AssertUnwindSafe(|| {
-            run_turn(graph.host.as_ref(), &mut graph.losses)
-        }))
-        .unwrap_or(Turn::Failed);
+        let turn = catch_unwind(AssertUnwindSafe(|| run_turn(graph.host.as_ref())))
+            .unwrap_or(Turn::Failed);
         let again = match turn {
-            Turn::Committed { more: true, .. } | Turn::Lost => Some(pace(started.elapsed())),
-            Turn::Busy => Some(BUSY_RETRY),
+            Turn::Committed { more: true } | Turn::Lost => Some(pace(started.elapsed())),
             Turn::Failed => {
                 eprintln!("index build: a build step failed; it will be retried");
                 Some(FAILED_RETRY)
             }
             // Done — unless a `Building` column came in while the graph was still queued.
-            Turn::Committed { more: false, .. } | Turn::Idle => {
+            Turn::Committed { more: false } | Turn::Idle => {
                 let mut more = false;
                 graph.host.read(&mut |mvcc| more = mvcc.build_done());
                 more.then_some(Duration::ZERO)

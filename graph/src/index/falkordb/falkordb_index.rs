@@ -11,6 +11,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
 use crate::index::{IndexQuery, IndexType};
@@ -135,11 +138,17 @@ impl IndexColumn {
 /// cursor past them. The step that reaches the end flips the column [`Ready`](Self::Ready). While
 /// `Building`, the read path returns `None` and falls back.
 ///
-/// Nothing written during the build has to be remembered for later. Live writes maintain the
-/// column as usual, including for entities no step has reached yet: a step that reaches one later
-/// reads its current value, and adding a tuple the column already holds is a no-op. A removed
-/// tuple the column never held is a no-op too. This is how C populates an index
-/// (`src/index/index_construct.c`), in batches interleaved with writes.
+/// Live writes maintain the column as usual, including for entities no step has reached yet: a
+/// step that reaches one later reads its current value, and adding a tuple the column already
+/// holds is a no-op. A removed tuple the column never held is a no-op too. This is how C populates
+/// an index (`src/index/index_construct.c`), in batches interleaved with writes.
+///
+/// A step reads its batch on a snapshot and a write may commit before the step does, and the
+/// other way round. Neither throws its work away; each merges the other's
+/// ([`apply_build`](FalkorDbIndex::apply_build),
+/// [`adopt_build_progress`](FalkorDbIndex::adopt_build_progress)). For that a `Building` column
+/// remembers the entities written since the last step committed (`touched`), and a version a
+/// writer forked remembers its own changes to the column until it claims the write slot (`log`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnState {
     /// Some of the label's entities are not indexed yet — reads fall back. `next` is where the next
@@ -162,21 +171,72 @@ pub(crate) struct BuildCursor {
 }
 
 /// One column's index plus its build state.
-#[derive(Clone)]
 struct ColumnEntry {
     column: IndexColumn,
     state: ColumnState,
+    /// Which column this is: a new number each time one is created, so a build batch read from
+    /// one column never lands in another created under the same name since.
+    generation: u64,
+    /// While `Building`: the entities written since a build step last committed, to any column.
+    /// Their tuples in the column are already right, so a step that read them before those writes
+    /// leaves them alone. Empty once `Ready`.
+    touched: Arc<RoaringTreemap>,
+    /// While `Building`, and while this version's writer has not claimed the write slot: its own
+    /// changes to the column, in the order made — what it replays onto build steps committed after
+    /// it forked. A new version starts it empty.
+    log: Vec<IndexWrite>,
 }
 
+/// Source of [`ColumnEntry::generation`].
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 impl ColumnEntry {
+    fn new(
+        column: IndexColumn,
+        state: ColumnState,
+    ) -> Self {
+        Self {
+            column,
+            state,
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            touched: Arc::default(),
+            log: Vec::new(),
+        }
+    }
+
     /// A column that already holds all its data and serves reads immediately —
     /// the synchronous populate path.
     fn ready(column: IndexColumn) -> Self {
+        Self::new(column, ColumnState::Ready)
+    }
+
+    /// This entry in a new version: the column shared copy-on-write, without this version's log.
+    fn new_version(&self) -> Self {
         Self {
-            column,
-            state: ColumnState::Ready,
+            column: self.column.clone(),
+            state: self.state,
+            generation: self.generation,
+            touched: Arc::clone(&self.touched),
+            log: Vec::new(),
         }
     }
+
+    fn building(&self) -> bool {
+        self.state != ColumnState::Ready
+    }
+}
+
+/// One build step's batch, kept so it can be merged into a version other than the one it was
+/// read on: the encoded tuples of column `key` it read, sorted, and where the column's next step
+/// resumes (`None`: the batch reached the end). `read_at` is the index's count of build steps
+/// committed when the batch was read.
+pub(crate) struct BuildBatch {
+    pub(crate) entity: EntityType,
+    pub(crate) key: IndexKey,
+    pub(crate) generation: u64,
+    pub(crate) read_at: u64,
+    pub(crate) tuples: Vec<(u64, u64)>,
+    pub(crate) next: Option<BuildCursor>,
 }
 
 /// The graph's FalkorDB indexes: one CoW column per indexed `(label, attr)`.
@@ -188,13 +248,20 @@ impl ColumnEntry {
 /// are `edge_id`s; the read path recovers `(src, dst)` from the graph's own
 /// `edge_id → (src, dst)` reverse index, so no endpoints are stored here.
 ///
-/// Cloning is `O(1)` per column (each index is a root-`Arc` bump), so it rides
-/// `Graph::new_version()` cheaply and shares pages with the prior version until a
-/// writer mutates that particular column.
-#[derive(Clone, Default)]
+/// [`new_version`](Self::new_version) is `O(1)` per column (each index is a root-`Arc` bump), so it
+/// rides `Graph::new_version()` cheaply and shares pages with the prior version until a writer
+/// mutates that particular column.
+#[derive(Default)]
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, ColumnEntry>,
     edge_columns: HashMap<IndexKey, ColumnEntry>,
+    /// Build steps committed into this index's history. A batch is merged only into the index it
+    /// was read on or one with the same count, so `touched` — kept since the last step — covers
+    /// every write since the batch was read.
+    build_commits: u64,
+    /// Whether this version records its changes to `Building` columns in their logs: a writer's
+    /// fork, until the writer claims the write slot.
+    logging: bool,
 }
 
 impl FalkorDbIndex {
@@ -202,6 +269,58 @@ impl FalkorDbIndex {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The index of a new version: every column shared copy-on-write, and no change log carried
+    /// over — a log is the version's own.
+    #[must_use]
+    pub fn new_version(&self) -> Self {
+        let fork = |columns: &HashMap<IndexKey, ColumnEntry>| {
+            columns
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.new_version()))
+                .collect()
+        };
+        Self {
+            node_columns: fork(&self.node_columns),
+            edge_columns: fork(&self.edge_columns),
+            build_commits: self.build_commits,
+            logging: false,
+        }
+    }
+
+    /// Start recording this version's changes to `Building` columns: it is a writer's fork, which
+    /// may have to replay them onto build steps committed before it claims the write slot.
+    pub(crate) fn start_logging(&mut self) {
+        self.logging = true;
+    }
+
+    /// Stop recording, and drop what was recorded: the writer claimed the write slot, or this
+    /// version is being published. Nobody replays a claimed version's changes.
+    pub(crate) fn stop_logging(&mut self) {
+        self.logging = false;
+        for entry in self
+            .node_columns
+            .values_mut()
+            .chain(self.edge_columns.values_mut())
+        {
+            entry.log = Vec::new();
+        }
+    }
+
+    /// How many changes this version's logs hold.
+    #[cfg(test)]
+    pub(crate) fn logged(&self) -> usize {
+        self.node_columns
+            .values()
+            .chain(self.edge_columns.values())
+            .map(|entry| entry.log.len())
+            .sum()
+    }
+
+    /// Build steps committed into this index's history; see [`BuildBatch::read_at`].
+    pub(crate) const fn build_commits(&self) -> u64 {
+        self.build_commits
     }
 
     /// Whether no index column (node or edge) has been created.
@@ -276,12 +395,12 @@ impl FalkorDbIndex {
     ) {
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            ColumnEntry {
-                column: IndexColumn::Numeric(NumericIndex::new()),
-                state: ColumnState::Building {
+            ColumnEntry::new(
+                IndexColumn::Numeric(NumericIndex::new()),
+                ColumnState::Building {
                     next: BuildCursor::default(),
                 },
-            },
+            ),
         );
     }
 
@@ -454,12 +573,15 @@ impl FalkorDbIndex {
     /// **add** what ended added, one batched tree op each.
     ///
     /// After the collapse the two sides are disjoint, so their order no longer matters; removes
-    /// still go first. A column dropped since its changes were staged is skipped.
+    /// still go first. A column dropped since its changes were staged is skipped. A `Building`
+    /// column also records the entities in `touched` and, while this version logs, the changes in
+    /// its log, removes first.
     fn apply_writes(
         &mut self,
         entity: EntityType,
         writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
     ) {
+        let logging = self.logging;
         let columns = self.columns_mut(entity);
         // One pair of buffers for the whole unit of work, reused column to column.
         let (mut removes, mut adds) = (Vec::new(), Vec::new());
@@ -468,6 +590,9 @@ impl FalkorDbIndex {
                 continue;
             };
             last_write_wins(&mut log, &mut removes, &mut adds);
+            if entry.building() {
+                record(entry, &removes, &adds, logging);
+            }
             entry.column.remove_encoded(&mut removes);
             entry.column.add_encoded(&mut adds);
         }
@@ -510,24 +635,108 @@ impl FalkorDbIndex {
             .map(|entry| entry.state)
     }
 
-    /// Record one build step on column `key`: add the tuples it read, then move the cursor to
-    /// `next`, or flip the column `Ready` when `next` is `None` (the step reached the end). A
-    /// no-op for a column that is gone or no longer `Building`.
-    pub(crate) fn advance_build(
-        &mut self,
+    /// The generation of column `key`, if it exists.
+    pub(crate) fn generation(
+        &self,
         entity: EntityType,
         key: &IndexKey,
-        tuples: &mut [(u64, u64)],
-        next: Option<BuildCursor>,
-    ) {
-        let Some(entry) = self.columns_mut(entity).get_mut(key) else {
-            return;
-        };
-        if entry.state == ColumnState::Ready {
-            return;
+    ) -> Option<u64> {
+        self.columns(entity).get(key).map(|entry| entry.generation)
+    }
+
+    /// Commit one build step into this version: add the batch's tuples, except those of entities
+    /// written since a step last committed, then move the cursor to `batch.next`, or flip the
+    /// column `Ready` when it is `None`, and start every column's `touched` afresh.
+    ///
+    /// The batch may have been read on an older version, though never one before the last step
+    /// committed. Its tuple for an entity nobody has written since is still right. An entity
+    /// written since is in `touched`, and its tuples in this column are already right: writes
+    /// maintain the column ahead of the cursor too. So is one written before the batch was read;
+    /// skipping it is merely unnecessary.
+    ///
+    /// `false`, changing nothing, if another step committed since the batch was read (its
+    /// `touched` would no longer cover every write since), or if the column is gone, was
+    /// re-created since (its generation differs), or is no longer `Building`.
+    pub(crate) fn apply_build(
+        &mut self,
+        batch: &BuildBatch,
+    ) -> bool {
+        if batch.read_at != self.build_commits {
+            return false;
         }
-        entry.column.add_encoded(tuples);
-        entry.state = next.map_or(ColumnState::Ready, |next| ColumnState::Building { next });
+        let Some(entry) = self.columns_mut(batch.entity).get_mut(&batch.key) else {
+            return false;
+        };
+        if entry.generation != batch.generation || !entry.building() {
+            return false;
+        }
+        let mut tuples: Vec<(u64, u64)> = batch
+            .tuples
+            .iter()
+            .copied()
+            .filter(|&(_, id)| !entry.touched.contains(id))
+            .collect();
+        entry.column.add_encoded(&mut tuples);
+        entry.state = batch
+            .next
+            .map_or(ColumnState::Ready, |next| ColumnState::Building { next });
+        self.build_commits += 1;
+        for entry in self
+            .node_columns
+            .values_mut()
+            .chain(self.edge_columns.values_mut())
+        {
+            if !entry.touched.is_empty() {
+                entry.touched = Arc::default();
+            }
+        }
+        true
+    }
+
+    /// Take the build steps committed in `published` since this version forked from an older
+    /// one: for each column `Building` here, take `published`'s copy of it — its tuples, cursor
+    /// and state — and replay this version's own changes to it (its log) on top. For a writer
+    /// whose version is stale only because build steps committed meanwhile: they changed no
+    /// graph data, so its writes still hold, and only the index needs the steps.
+    ///
+    /// Replaying the changes rather than comparing columns is what keeps a removal: a writer that
+    /// re-valued or deleted an entity a step had not reached removed nothing from its own copy,
+    /// but must remove the tuple a step committed since.
+    ///
+    /// A column `Ready` here was `Ready` when the version forked, and no step touches it. A column
+    /// this version created, or re-created, is its own (another generation) and stays as it is.
+    /// The count of build steps is `published`'s.
+    pub(crate) fn adopt_build_progress(
+        &mut self,
+        published: &Self,
+    ) {
+        self.build_commits = published.build_commits;
+        for entity in [EntityType::Node, EntityType::Relationship] {
+            let theirs = published.columns(entity);
+            let (mut removes, mut adds) = (Vec::new(), Vec::new());
+            for (key, mine) in self.columns_mut(entity) {
+                if !mine.building() {
+                    continue;
+                }
+                let Some(theirs) = theirs.get(key) else {
+                    continue;
+                };
+                if theirs.generation != mine.generation {
+                    continue;
+                }
+                let mut log = std::mem::take(&mut mine.log);
+                *mine = theirs.new_version();
+                if log.is_empty() {
+                    continue;
+                }
+                last_write_wins(&mut log, &mut removes, &mut adds);
+                if mine.building() {
+                    record(mine, &removes, &adds, false);
+                }
+                mine.column.remove_encoded(&mut removes);
+                mine.column.add_encoded(&mut adds);
+            }
+        }
     }
 
     /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
@@ -563,6 +772,27 @@ impl FalkorDbIndex {
         match &entry.column {
             IndexColumn::Numeric(idx) => idx.query(query),
         }
+    }
+}
+
+/// Note a unit of work's collapsed changes to a `Building` column: their entities in `touched`
+/// and, if `logging`, the changes in its log, removes first as they are applied.
+fn record(
+    entry: &mut ColumnEntry,
+    removes: &[(u64, u64)],
+    adds: &[(u64, u64)],
+    logging: bool,
+) {
+    let touched = Arc::make_mut(&mut entry.touched);
+    for (&(key, id), add) in removes
+        .iter()
+        .map(|r| (r, false))
+        .chain(adds.iter().map(|a| (a, true)))
+    {
+        if logging {
+            entry.log.push(IndexWrite { key, id, add });
+        }
+        touched.insert(id);
     }
 }
 
@@ -640,9 +870,24 @@ mod tests {
 
         // A step indexes nodes 0..=2 at their current values — including node 1's 25 and node 2's
         // 30, which the writes already added — and stops before node 3.
-        let mut batch = vec![(key(30), 2), (key(10), 0), (key(25), 1)];
+        let generation = idx.generation(Node, &column).unwrap();
+        let batch = |mut tuples: Vec<(u64, u64)>, next, read_at| {
+            tuples.sort_unstable();
+            BuildBatch {
+                entity: Node,
+                key: column.clone(),
+                generation,
+                read_at,
+                tuples,
+                next,
+            }
+        };
         let next = BuildCursor { row: 3, col: 0 };
-        idx.advance_build(Node, &column, &mut batch, Some(next));
+        assert!(idx.apply_build(&batch(
+            vec![(key(30), 2), (key(10), 0), (key(25), 1)],
+            Some(next),
+            0
+        )));
         assert_eq!(idx.next_building(), Some((Node, column.clone(), next)));
         assert!(
             hits(&idx, 10).is_empty(),
@@ -650,7 +895,11 @@ mod tests {
         );
 
         // The last step reaches the end.
-        idx.advance_build(Node, &column, &mut [(key(40), 3)], None);
+        assert!(
+            !idx.apply_build(&batch(vec![(key(40), 3)], None, 0)),
+            "a batch read before the last step committed"
+        );
+        assert!(idx.apply_build(&batch(vec![(key(40), 3)], None, 1)));
         assert!(!idx.has_building_columns());
         assert_eq!(
             idx.column_state(Node, &label, &attr),
@@ -670,13 +919,11 @@ mod tests {
         assert_eq!(all(&idx), vec![0, 1, 2, 3]);
 
         // A step on a `Ready` column, or on a column that is gone, changes nothing.
-        idx.advance_build(Node, &column, &mut [(key(99), 9)], None);
-        idx.advance_build(
-            Node,
-            &(label.clone(), arc("gone")),
-            &mut [(key(99), 9)],
-            None,
-        );
+        assert!(!idx.apply_build(&batch(vec![(key(99), 9)], None, 2)));
+        assert!(!idx.apply_build(&BuildBatch {
+            key: (label.clone(), arc("gone")),
+            ..batch(vec![(key(99), 9)], None, 2)
+        }));
         assert!(hits(&idx, 99).is_empty());
         assert_eq!(all(&idx), vec![0, 1, 2, 3]);
     }
@@ -693,7 +940,7 @@ mod tests {
             .unwrap()
             .add(&Value::Int(30), 1);
 
-        let mut v2 = v1.clone(); // the O(1) fork
+        let mut v2 = v1.new_version(); // the O(1) fork
         v2.numeric_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(40), 2);
