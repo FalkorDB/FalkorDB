@@ -399,8 +399,9 @@ pub fn edges_deleted(
 /// CREATE INDEX: mark each attribute's column `Building` and return. Only a Range index has
 /// native columns; any other type does nothing.
 ///
-/// Nothing is scanned here. The entities that already exist are indexed by [`build_step`]s, which
-/// the host runs as units of work of their own until the last one flips the column `Ready`. Until
+/// Nothing is scanned here. The entities that already exist are indexed by `build_step`s, which
+/// the online builder (`online_build`) runs as units of work of their own until the last one flips
+/// the column `Ready`. Until
 /// then reads on the column fall back to a scan, and live writes maintain it as usual. The
 /// RDB-load path ([`populate`]) still builds synchronously.
 ///
@@ -424,35 +425,33 @@ pub fn create_index(
 // ---- Online build ----
 //
 // A `Building` column is filled by steps. Each reads the next batch of the label's entities from
-// the graph it is given, at their current values, and adds them to the column. The host runs each
-// step as a unit of work of its own, on a fresh version committed when the step returns, so live
-// writes interleave with the steps and every step sees them. See `ColumnState`.
+// the graph it is given, at their current values, and adds them to the column. The online builder
+// (`online_build`) runs each step as a unit of work of its own, on a fresh version committed when
+// the step returns, so live writes interleave with the steps and every step sees them. See
+// `ColumnState`.
 
 /// Nodes one build step reads, at most: C's populate batch (`src/index/index_construct.c`).
-pub const BUILD_STEP_NODES: usize = 10_000;
+pub(crate) const BUILD_STEP_NODES: usize = 10_000;
 
 /// Edges one build step reads, at most, plus the rest of the multi-edge pair it stops in: C's
 /// populate batch (`src/index/index_construct.c`).
-pub const BUILD_STEP_EDGES: usize = 1_000;
+pub(crate) const BUILD_STEP_EDGES: usize = 1_000;
 
 /// Whether any column of `g` is still `Building`, i.e. whether its host has build steps to run.
 #[must_use]
-pub fn has_building_columns(g: &Graph) -> bool {
+pub(crate) fn has_building_columns(g: &Graph) -> bool {
     g.falkordb_index.has_building_columns()
 }
 
-/// One build step: index the next batch of one `Building` column's entities at their current
-/// values, and move its cursor past them, or flip the column `Ready` if the batch reached the end.
-/// Returns whether a column is still `Building` afterwards, i.e. whether to run another step.
+/// One build step: index the next batch of one `Building` column's entities, at most `nodes` nodes
+/// or `edges` edges, at their current values, and move its cursor past them, or flip the column
+/// `Ready` if the batch reached the end. Returns whether a column is still `Building` afterwards,
+/// i.e. whether to run another step. The online builder passes [`BUILD_STEP_NODES`] and
+/// [`BUILD_STEP_EDGES`]; tests pass small batches to force cursors through every boundary.
 ///
 /// `g` must be the private version the step will be committed from, so the step sees every write
 /// committed before it, and every write committed after it sees the step.
-pub fn build_step(g: &mut Graph) -> bool {
-    build_step_within(g, BUILD_STEP_NODES, BUILD_STEP_EDGES)
-}
-
-/// [`build_step`] with explicit batch sizes, so tests can force cursors through every boundary.
-pub(crate) fn build_step_within(
+pub(crate) fn build_step(
     g: &mut Graph,
     nodes: usize,
     edges: usize,

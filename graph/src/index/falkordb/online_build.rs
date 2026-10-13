@@ -1,6 +1,6 @@
 //! The online index build's driver: when build steps run, and how each one takes the write slot.
 //!
-//! [`graph_writes::build_step`] indexes one batch on a private version. This module runs those
+//! `graph_writes::build_step` indexes one batch on a private version. This module runs those
 //! steps on a background thread, one turn at a time, for every graph that has `Building` columns.
 //! Nothing here knows about Redis: a host gives the builder its graphs through [`BuildHost`],
 //! which is how the builder reads a graph and how it publishes as a writer. The Redis module's
@@ -13,7 +13,7 @@
 //! through the host: it claims the slot as a writer and commits ([`MvccGraph::claim_build`]), or
 //! finds it lost the slot and drops its batch for a later turn.
 //!
-//! **Starvation.** After [`TURNS_LOST_BEFORE_HOLDING`] lost turns in a row, the next turn holds:
+//! **Starvation.** After two lost turns in a row (`TURNS_LOST_BEFORE_HOLDING`), the next turn holds:
 //! it publishes through the host first, takes the slot as an ordinary writer, and keeps both for
 //! the whole step, so nothing can take the slot from it. A committed turn resets the count.
 //!
@@ -21,9 +21,10 @@
 //! `Building` column its predecessor did not have; the builder then asks the host for its graphs
 //! and builds every one with `Building` columns, a turn each in rotation, until none has any left.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
@@ -57,11 +58,11 @@ pub trait BuildHost: Send + Sync {
 }
 
 /// Lost turns in a row after which a graph's next build turn holds the slot instead of giving way.
-pub const TURNS_LOST_BEFORE_HOLDING: u32 = 2;
+pub(crate) const TURNS_LOST_BEFORE_HOLDING: u32 = 2;
 
 /// What one build turn did.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Turn {
+pub(crate) enum Turn {
     /// The graph has no `Building` column.
     Idle,
     /// The step was committed; `more` if a column is still `Building`. `held` if the turn held
@@ -82,7 +83,7 @@ pub enum Turn {
 ///
 /// Runs at most one build turn per graph at a time: [`MvccGraph::write_for_build`] relies on it.
 /// The builder thread does; a host that calls this itself must too.
-pub fn run_turn(
+pub(crate) fn run_turn(
     host: &dyn BuildHost,
     losses: &mut u32,
 ) -> Turn {
@@ -96,28 +97,28 @@ pub(crate) fn run_turn_within(
     nodes: usize,
     edges: usize,
 ) -> Turn {
-    let mut building = None;
+    // One read to see whether there is anything to build and, for a turn that gives way, to take
+    // the slot. The step itself needs no lock: it reads and writes only its own version.
+    let holding = *losses >= TURNS_LOST_BEFORE_HOLDING;
+    let mut building = false;
+    let mut fork = None;
     if !host.read(&mut |mvcc| {
-        building = Some(graph_writes::has_building_columns(&mvcc.read().borrow()));
+        building = graph_writes::has_building_columns(&mvcc.read().borrow());
+        if building && !holding {
+            fork = mvcc.write_for_build();
+        }
     }) {
         return Turn::Gone;
     }
-    if building != Some(true) {
+    if !building {
         return Turn::Idle;
     }
-    if *losses >= TURNS_LOST_BEFORE_HOLDING {
+    if holding {
         let turn = held_turn(host, nodes, edges);
         if matches!(turn, Turn::Committed { .. }) {
             *losses = 0;
         }
         return turn;
-    }
-
-    // The read access only for taking the slot; the step itself needs no lock, since it reads
-    // and writes only its own version.
-    let mut fork = None;
-    if !host.read(&mut |mvcc| fork = mvcc.write_for_build()) {
-        return Turn::Gone;
     }
     let Some(fork) = fork else {
         return Turn::Busy;
@@ -168,7 +169,8 @@ fn held_turn(
     }
     let mut turn = Turn::Gone;
     let published = host.publish(&mut |mvcc| {
-        // `GRAPH.BULK` builds its version holding the slot as a writer, off the host's locks.
+        // Another writer holds the slot without the host's locks: a client write between taking
+        // it and publishing, or `GRAPH.BULK` building its version.
         let Some(fork) = mvcc.write() else {
             turn = Turn::Busy;
             return;
@@ -190,8 +192,8 @@ fn step(
     nodes: usize,
     edges: usize,
 ) -> Option<bool> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        graph_writes::build_step_within(&mut fork.borrow_mut(), nodes, edges)
+    catch_unwind(AssertUnwindSafe(|| {
+        graph_writes::build_step(&mut fork.borrow_mut(), nodes, edges)
     }))
     .ok()
 }
@@ -261,7 +263,7 @@ pub fn start(hosts: impl Fn() -> Vec<Arc<dyn BuildHost>> + Send + Sync + 'static
     // Look once at start: a graph may already have `Building` columns.
     state.woken = true;
     state.thread = Some(
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name("falkordb-index-build".into())
             .spawn(run_builder)
             .expect("spawn the index builder thread"),
@@ -285,7 +287,7 @@ pub fn stop() {
 
 /// Tell the builder a version brought in a `Building` column. Never blocks for long: it is called
 /// from [`MvccGraph::commit`], which holds the host's locks.
-pub fn wake() {
+pub(crate) fn wake() {
     SHARED.state.lock().unwrap_or_else(|e| e.into_inner()).woken = true;
     SHARED.wakeup.notify_all();
 }
@@ -294,7 +296,7 @@ pub fn wake() {
 /// about half of one core, and a turn that held the host's locks leaves them free at least as
 /// long again.
 fn pace(turn: Duration) {
-    std::thread::sleep(turn.max(Duration::from_millis(1)));
+    thread::sleep(turn.max(Duration::from_millis(1)));
 }
 
 /// How long the builder waits before retrying a graph whose slot a writer held.
@@ -354,7 +356,7 @@ fn run_builder() {
         next %= building.len();
         let started = Instant::now();
         let entry = &mut building[next];
-        let turn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let turn = catch_unwind(AssertUnwindSafe(|| {
             run_turn(entry.host.as_ref(), &mut entry.losses)
         }))
         .unwrap_or(Turn::Failed);
@@ -368,12 +370,12 @@ fn run_builder() {
             }
             Turn::Busy => {
                 next += 1;
-                std::thread::sleep(BUSY_RETRY);
+                thread::sleep(BUSY_RETRY);
             }
             Turn::Failed => {
                 eprintln!("index build: a build step failed; it will be retried");
                 next += 1;
-                std::thread::sleep(FAILED_RETRY);
+                thread::sleep(FAILED_RETRY);
             }
         }
     }
