@@ -288,9 +288,10 @@ impl NumericIndex {
         DocIter::One(self.tree.range(lo, hi))
     }
 
-    /// Dispatch the numeric *leaf* predicates. `Equal` → [`point`](Self::point),
-    /// `Range` → [`range`](Self::range). Composite (`And`/`Or`) and non-numeric
-    /// variants return `None` — the query router composes or rejects those (P5).
+    /// Dispatch the numeric predicates. `Equal` → [`point`](Self::point), `Range` →
+    /// [`range`](Self::range), an `IN` list → [`in_list`](Self::in_list), and an `OR` of
+    /// equalities and `IN` lists → [`union`](Self::union). `And` and non-numeric variants return
+    /// `None` — the query router composes or rejects those.
     #[must_use]
     pub fn query(
         &self,
@@ -305,68 +306,91 @@ impl NumericIndex {
                 include_max,
                 ..
             } => Some(self.range(min.as_ref(), max.as_ref(), *include_min, *include_max)),
+            IndexQuery::InList {
+                list: Value::List(items),
+                ..
+            } => self.in_list(items),
             IndexQuery::Or(children) => self.union(children),
             _ => None,
         }
     }
 
-    /// A union of `Equal` leaves — what `n.a IN [...]` desugars to before it reaches the index.
+    /// `n.a IN [...]`. The list names one attribute by construction, so only its values are
+    /// checked.
     ///
-    /// Returns `None` unless **every** member encodes to a numeric key. Serving only the numeric
-    /// subset would silently drop rows: a member the numeric column cannot represent (a string,
+    /// Returns `None` unless **every** value encodes to a numeric key. Serving only the numeric
+    /// subset would silently drop rows: a value the numeric column cannot represent (a string,
     /// say) may still match entities held by another kind, and answering without them is a wrong
     /// answer rather than a slower one. Declining hands the whole query back to the caller intact.
     ///
-    /// Also returns `None` unless every member targets the **same attribute**. This index is one
-    /// column: answering `a = 1 OR b = 2` from it would look up both `1` and `2` in `a` and return
-    /// `{a=1} ∪ {a=2}` — wrong rows, not missing ones. The facade checks this too before routing
-    /// here, but the check belongs on this side of the boundary as well: it is a precondition of
-    /// the operation, not of one caller, and it was previously possible to reach `union` directly
-    /// and bypass it.
+    /// An empty list is declined too, rather than answered as "no rows": the scan op drops the
+    /// members it cannot index before the list gets here, so `IN [date(..)]` arrives empty, and
+    /// "no rows" would miss every entity holding that date.
+    fn in_list(
+        &self,
+        items: &[Value],
+    ) -> Option<DocIter> {
+        if items.is_empty() {
+            return None;
+        }
+        let keys = items
+            .iter()
+            .map(encode_numeric)
+            .collect::<Option<Vec<u64>>>()?;
+        Some(self.union_of(keys))
+    }
+
+    /// An `OR` of `Equal`s and `IN` lists — `a = 1 OR a IN [2, 3]`.
     ///
-    /// Members are deduplicated by encoded key, so `IN [1,1,2]` yields each entity once. That is
-    /// sufficient for uniqueness overall: a doc appears under one key per column (the encoder
-    /// rejects lists, so an array-valued property is not in this column at all), so distinct keys
-    /// cannot both hold the same doc.
+    /// Unlike an `IN` list, an `OR` can name several attributes, and this index is one column:
+    /// answering `a = 1 OR b = 2` from it would look up both `1` and `2` in `a` and return
+    /// `{a=1} ∪ {a=2}` — wrong rows, not missing ones. So every member must target the same
+    /// attribute, and every value must encode, as in [`in_list`](Self::in_list); otherwise `None`.
     fn union(
         &self,
         children: &[IndexQuery<Value>],
     ) -> Option<DocIter> {
-        // Flatten nested unions. `a IN [..] OR a IN [..]` arrives as an `Or` of `Or`s, and each
-        // level is still a union of the same column, so the nesting carries no meaning here.
-        fn collect<'a>(
-            children: &'a [IndexQuery<Value>],
-            keys: &mut Vec<u64>,
-            attr: &mut Option<&'a Arc<String>>,
-        ) -> Option<()> {
-            for child in children {
-                match child {
-                    IndexQuery::Equal { key, value } => {
-                        match attr {
-                            Some(first) if *first != key => return None,
-                            Some(_) => {}
-                            None => *attr = Some(key),
-                        }
-                        keys.push(encode_numeric(value)?);
-                    }
-                    IndexQuery::Or(nested) => collect(nested, keys, attr)?,
-                    // A range or other combinator inside the union — not this shape.
-                    _ => return None,
-                }
-            }
-            Some(())
-        }
+        let mut attr: Option<&Arc<String>> = None;
         let mut keys = Vec::with_capacity(children.len());
-        collect(children, &mut keys, &mut None)?;
+        for child in children {
+            let (key, values) = match child {
+                IndexQuery::Equal { key, value } => (key, std::slice::from_ref(value)),
+                IndexQuery::InList {
+                    key,
+                    list: Value::List(items),
+                } if !items.is_empty() => (key, items.as_slice()),
+                // A range, an empty list, a nested combinator — not this shape.
+                _ => return None,
+            };
+            if *attr.get_or_insert(key) != key {
+                return None;
+            }
+            for value in values {
+                keys.push(encode_numeric(value)?);
+            }
+        }
+        (!keys.is_empty()).then(|| self.union_of(keys))
+    }
+
+    /// A lazy chain of point cursors over `keys` — see [`UnionIter`].
+    ///
+    /// Keys are deduplicated, so `IN [1,1,2]` yields each entity once. That is sufficient for
+    /// uniqueness overall: a doc appears under one key per column (the encoder rejects lists, so
+    /// an array-valued property is not in this column at all), so distinct keys cannot both hold
+    /// the same doc.
+    fn union_of(
+        &self,
+        mut keys: Vec<u64>,
+    ) -> DocIter {
         keys.sort_unstable();
         keys.dedup();
         // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so every
         // member is answered from the same version however late its cursor is created.
-        Some(DocIter::Many(UnionIter {
+        DocIter::Many(UnionIter {
             tree: self.tree.clone(),
             keys: keys.into_iter(),
             current: None,
-        }))
+        })
     }
 
     /// An iterator over no entries (`lo > hi` yields nothing).
@@ -595,80 +619,130 @@ mod tests {
         assert_eq!(all(&batched), all(&singly));
     }
 
-    /// `IN [...]` reaches the index as a union of `Equal`s. It is served natively only when every
-    /// member is numeric — a mixed list must be declined whole, not answered from the numeric
-    /// members alone, or rows another kind holds would silently vanish.
-    #[test]
-    fn union_serves_all_numeric_and_declines_mixed() {
-        let attr = Arc::new("v".to_string());
-        let eq = |v: Value| IndexQuery::Equal {
+    /// `n.a IN [...]` as the scan op hands it over: one attribute and a list of values.
+    fn in_list(
+        attr: &Arc<String>,
+        values: impl IntoIterator<Item = Value>,
+    ) -> IndexQuery<Value> {
+        IndexQuery::InList {
             key: attr.clone(),
-            value: v,
-        };
-        let idx = NumericIndex::from_entries(
+            list: Value::List(Arc::new(values.into_iter().collect())),
+        }
+    }
+
+    /// A union's ids, sorted: its order is unspecified.
+    fn sorted(it: DocIter) -> Vec<u64> {
+        let mut got = ids(it);
+        got.sort_unstable();
+        got
+    }
+
+    fn ten_twenty_thirty() -> NumericIndex {
+        NumericIndex::from_entries(
             [
                 (&Value::Int(10), 0u64),
                 (&Value::Int(20), 1),
                 (&Value::Int(30), 2),
             ]
             .into_iter(),
+        )
+    }
+
+    /// An `IN` list is served natively only when every value is numeric — a mixed list must be
+    /// declined whole, not answered from the numeric values alone, or rows another kind holds would
+    /// silently vanish. An empty list is declined too: the scan op empties a list by dropping the
+    /// members it cannot index (`IN [date(..)]`), so "no rows" would be a wrong answer.
+    #[test]
+    fn in_list_serves_all_numeric_and_declines_mixed_or_empty() {
+        let attr = Arc::new("v".to_string());
+        let idx = ten_twenty_thirty();
+
+        assert_eq!(
+            sorted(
+                idx.query(&in_list(&attr, [Value::Int(10), Value::Int(30)]))
+                    .expect("an all-numeric list is servable")
+            ),
+            vec![0, 2]
+        );
+        // Duplicate values — including an Int and a Float that share a key — yield an id once.
+        assert_eq!(
+            sorted(
+                idx.query(&in_list(
+                    &attr,
+                    [Value::Int(20), Value::Int(20), Value::Float(20.0)]
+                ))
+                .expect("servable")
+            ),
+            vec![1],
+            "duplicate values must dedup"
+        );
+        assert!(
+            idx.query(&in_list(
+                &attr,
+                [Value::Int(10), Value::String(Arc::new("a".to_string()))]
+            ))
+            .is_none(),
+            "a mixed list must fall back rather than drop the non-numeric value"
+        );
+        assert!(
+            idx.query(&in_list(&attr, Vec::new())).is_none(),
+            "an empty list must fall back, not answer \"no rows\""
+        );
+    }
+
+    /// An `OR` of equalities and `IN` lists on one attribute — `a = 10 OR a IN [20, 30]`, or
+    /// `a IN [..] OR a IN [..]` — is one union. Any member that is not that shape declines the
+    /// whole `OR`: a range, an empty list, a list holding a non-numeric value.
+    #[test]
+    fn or_serves_equalities_and_lists_on_one_attribute() {
+        let attr = Arc::new("v".to_string());
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let idx = ten_twenty_thirty();
+
+        assert_eq!(
+            sorted(
+                idx.query(&IndexQuery::Or(vec![
+                    eq(10),
+                    in_list(&attr, [Value::Int(20), Value::Int(30)]),
+                ]))
+                .expect("an equality and a list on one attribute are servable")
+            ),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            sorted(
+                idx.query(&IndexQuery::Or(vec![
+                    in_list(&attr, [Value::Int(10)]),
+                    in_list(&attr, [Value::Int(10), Value::Int(30)]),
+                ]))
+                .expect("two lists on one attribute are servable")
+            ),
+            vec![0, 2],
+            "a value in both lists yields its id once"
         );
 
-        // all-numeric union -> every matching id, once each
-        let mut got = ids(idx
-            .query(&IndexQuery::Or(vec![
-                eq(Value::Int(10)),
-                eq(Value::Int(30)),
-            ]))
-            .expect("all-numeric union is servable"));
-        got.sort_unstable();
-        assert_eq!(got, vec![0, 2]);
-
-        // duplicate members must not yield an id twice
-        let mut dup = ids(idx
-            .query(&IndexQuery::Or(vec![
-                eq(Value::Int(20)),
-                eq(Value::Int(20)),
-            ]))
-            .expect("servable"));
-        dup.sort_unstable();
-        assert_eq!(dup, vec![1], "duplicate members must dedup");
-
-        // a non-numeric member declines the WHOLE union — not "just the numeric part"
         assert!(
             idx.query(&IndexQuery::Or(vec![
-                eq(Value::Int(10)),
-                eq(Value::String(Arc::new("a".to_string()))),
+                eq(10),
+                in_list(
+                    &attr,
+                    [Value::Int(20), Value::String(Arc::new("a".to_string()))]
+                ),
             ]))
             .is_none(),
-            "a mixed list must fall back rather than drop the non-numeric member"
+            "a non-numeric value in any member declines the whole OR"
         );
-
-        // `a IN [..] OR a IN [..]` reaches the index as an Or of Ors — the nesting carries no
-        // meaning for a single column, so it must flatten rather than decline.
-        let mut nested = ids(idx
-            .query(&IndexQuery::Or(vec![
-                IndexQuery::Or(vec![eq(Value::Int(10)), eq(Value::Int(20))]),
-                IndexQuery::Or(vec![eq(Value::Int(30))]),
-            ]))
-            .expect("nested unions flatten"));
-        nested.sort_unstable();
-        assert_eq!(nested, vec![0, 1, 2]);
-
-        // a non-numeric member nested one level down still declines the whole union
+        assert!(
+            idx.query(&IndexQuery::Or(vec![eq(10), in_list(&attr, Vec::new())]))
+                .is_none(),
+            "an empty list member declines, as an empty list does on its own"
+        );
         assert!(
             idx.query(&IndexQuery::Or(vec![
-                eq(Value::Int(10)),
-                IndexQuery::Or(vec![eq(Value::String(Arc::new("a".to_string())))]),
-            ]))
-            .is_none(),
-            "a nested non-numeric member must decline the whole union"
-        );
-
-        // a member that is not a plain Equal (a nested range) is likewise declined
-        assert!(
-            idx.query(&IndexQuery::Or(vec![
-                eq(Value::Int(10)),
+                eq(10),
                 IndexQuery::Range {
                     key: attr.clone(),
                     min: Some(Value::Int(0)),
@@ -677,43 +751,49 @@ mod tests {
                     include_max: true,
                 },
             ]))
-            .is_none()
+            .is_none(),
+            "a range member is not this shape"
+        );
+        assert!(
+            idx.query(&IndexQuery::Or(vec![])).is_none(),
+            "an empty OR is not match-all"
         );
     }
 
-    /// One `NumericIndex` is one column, so a union spanning two attributes cannot be answered
+    /// One `NumericIndex` is one column, so an `OR` spanning two attributes cannot be answered
     /// here: looking both values up in this column returns `{a=1} ∪ {a=2}` — wrong rows, not
-    /// missing ones. The facade declines this before routing, but the guard has to hold on this
-    /// side too, and this test reaches `query` directly the way a future caller would.
+    /// missing ones. An `IN` list cannot span attributes, but an `OR` can, so the check lives in
+    /// `union` itself and this test reaches `query` directly.
     #[test]
-    fn union_declines_members_targeting_different_attributes() {
+    fn or_declines_members_targeting_different_attributes() {
         let idx =
             NumericIndex::from_entries([(&Value::Int(1), 10u64), (&Value::Int(2), 20)].into_iter());
-        let eq = |attr: &str, v: i64| IndexQuery::Equal {
-            key: Arc::new(attr.to_string()),
+        let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
+        let eq = |attr: &Arc<String>, v: i64| IndexQuery::Equal {
+            key: attr.clone(),
             value: Value::Int(v),
         };
 
         assert!(
-            idx.query(&IndexQuery::Or(vec![eq("a", 1), eq("b", 2)]))
+            idx.query(&IndexQuery::Or(vec![eq(&a, 1), eq(&b, 2)]))
                 .is_none(),
-            "a cross-attribute union must be declined, not answered from one column"
+            "a cross-attribute OR must be declined, not answered from one column"
         );
-        // Nested the same way `a IN [..] OR b IN [..]` arrives.
         assert!(
             idx.query(&IndexQuery::Or(vec![
-                IndexQuery::Or(vec![eq("a", 1)]),
-                IndexQuery::Or(vec![eq("b", 2)]),
+                in_list(&a, [Value::Int(1)]),
+                in_list(&b, [Value::Int(2)]),
             ]))
             .is_none(),
-            "nesting must not smuggle a second attribute past the check"
+            "`a IN [..] OR b IN [..]` must be declined the same way"
         );
-        // The same-attribute case still works.
-        let mut same = ids(idx
-            .query(&IndexQuery::Or(vec![eq("a", 1), eq("a", 2)]))
-            .expect("one attribute is servable"));
-        same.sort_unstable();
-        assert_eq!(same, vec![10, 20]);
+        assert_eq!(
+            sorted(
+                idx.query(&IndexQuery::Or(vec![eq(&a, 1), eq(&a, 2)]))
+                    .expect("one attribute is servable")
+            ),
+            vec![10, 20]
+        );
     }
 
     /// A union must not descend for a member until it is reached. Building every cursor up front
@@ -722,16 +802,12 @@ mod tests {
     #[test]
     fn union_builds_no_cursor_before_the_first_row() {
         let attr = Arc::new("v".to_string());
-        let eq = |v: i64| IndexQuery::Equal {
-            key: attr.clone(),
-            value: Value::Int(v),
-        };
         let values: Vec<(Value, u64)> = (0..100u64).map(|i| (Value::Int(i as i64), i)).collect();
         let idx = NumericIndex::from_entries(values.iter().map(|(v, id)| (v, *id)));
 
-        let q = IndexQuery::Or((0..100).map(eq).collect());
-        let DocIter::Many(mut u) = idx.query(&q).expect("all-numeric union is servable") else {
-            panic!("a union must produce DocIter::Many");
+        let q = in_list(&attr, (0..100).map(Value::Int));
+        let DocIter::Many(mut u) = idx.query(&q).expect("an all-numeric list is servable") else {
+            panic!("an IN list must produce DocIter::Many");
         };
         assert!(
             u.current.is_none(),
@@ -750,16 +826,12 @@ mod tests {
     #[test]
     fn union_pins_one_snapshot_across_lazily_built_cursors() {
         let attr = Arc::new("v".to_string());
-        let eq = |v: i64| IndexQuery::Equal {
-            key: attr.clone(),
-            value: Value::Int(v),
-        };
         let mut idx = NumericIndex::new();
         idx.add(&Value::Int(1), 1);
         idx.add(&Value::Int(2), 2);
 
         let mut it = idx
-            .query(&IndexQuery::Or(vec![eq(1), eq(2)]))
+            .query(&in_list(&attr, [Value::Int(1), Value::Int(2)]))
             .expect("servable");
         assert_eq!(it.next(), Some(1), "first member started");
 
