@@ -141,7 +141,7 @@ impl IndexColumn {
 /// tuple the column never held is a no-op too. This is how C populates an index
 /// (`src/index/index_construct.c`), in batches interleaved with writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ColumnState {
+pub(crate) enum ColumnState {
     /// Some of the label's entities are not indexed yet — reads fall back. `next` is where the next
     /// step resumes.
     Building { next: BuildCursor },
@@ -156,9 +156,9 @@ pub enum ColumnState {
 /// can be resumed partway, as C does. A step always finishes the multi-edge pair it stops in, so
 /// every edge before `(row, col)` is indexed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BuildCursor {
-    pub row: u64,
-    pub col: u64,
+pub(crate) struct BuildCursor {
+    pub(crate) row: u64,
+    pub(crate) col: u64,
 }
 
 /// One column's index plus its build state.
@@ -250,7 +250,7 @@ impl FalkorDbIndex {
 
     /// Create an empty numeric column for `(entity, label, attr)` in the `Ready`
     /// state, replacing any existing one. Used by the synchronous paths (RDB load /
-    /// replica), where the caller fills it via [`build_numeric`](Self::build_numeric)
+    /// replica), where the caller fills it via [`build_numeric_sorted`](Self::build_numeric_sorted)
     /// before any read is served. An edge column's docs are `edge_id`s.
     pub fn create_numeric(
         &mut self,
@@ -492,13 +492,14 @@ impl FalkorDbIndex {
 
     /// Whether any column is still `Building`.
     #[must_use]
-    pub fn has_building_columns(&self) -> bool {
+    pub(crate) fn has_building_columns(&self) -> bool {
         self.next_building().is_some()
     }
 
     /// The build state of column `(entity, label, attr)`, if it exists.
+    #[cfg(test)]
     #[must_use]
-    pub fn column_state(
+    pub(crate) fn column_state(
         &self,
         entity: EntityType,
         label: &Arc<String>,

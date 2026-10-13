@@ -59,6 +59,8 @@ use graph::{
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
+#[cfg(feature = "index-falkordb")]
+use std::sync::Weak;
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -1519,7 +1521,7 @@ fn commit_and_replicate(
 /// A registered graph, as the online index builder reaches it. Holds the graph weakly: a deleted
 /// graph is not kept alive by a build.
 #[cfg(feature = "index-falkordb")]
-struct RedisBuildHost(std::sync::Weak<RwLock<ThreadedGraph>>);
+struct RedisBuildHost(Weak<RwLock<ThreadedGraph>>);
 
 #[cfg(feature = "index-falkordb")]
 impl BuildHost for RedisBuildHost {

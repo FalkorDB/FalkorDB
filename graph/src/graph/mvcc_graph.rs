@@ -4,7 +4,7 @@
 //! graph access. It ensures:
 //!
 //! - Multiple readers can access the graph simultaneously (lock-free)
-//! - Only one writer at a time (serialized via the write slot, an atomic [`Slot`])
+//! - Only one writer at a time (serialized via the write slot, an atomic `Slot`)
 //! - Writers work on a Copy-on-Write versioned copy, committing atomically
 //! - Readers always see a consistent, committed snapshot
 //!
@@ -62,6 +62,8 @@ use atomic_enum::atomic_enum;
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{graph_writes::has_building_columns, online_build};
 
 /// Who holds the write slot.
 #[atomic_enum]
@@ -204,8 +206,8 @@ impl MvccGraph {
     /// A refusal *is* a [`Self::rollback`], performed here rather than left to
     /// the caller. That is not a convenience: the write slot is a single
     /// atomic for the whole graph, so returning without clearing it makes
-    /// every later `write()` fail until the process restarts. Five of the six
-    /// callers would have had to remember, and the sixth is `unreachable!()`.
+    /// every later `write()` fail until the process restarts. Every caller would
+    /// otherwise have had to remember.
     ///
     /// # Errors
     ///
@@ -292,16 +294,14 @@ impl MvccGraph {
         // `CREATE INDEX` however it arrived. Not for a version that only carries on a build:
         // the builder is already on it, and its own commits would wake it every turn.
         #[cfg(feature = "index-falkordb")]
-        let wake_builder = {
-            use crate::index::falkordb::graph_writes::has_building_columns;
-            has_building_columns(&new_graph.borrow()) && !has_building_columns(&self.graph.borrow())
-        };
+        let wake_builder = has_building_columns(&new_graph.borrow())
+            && !has_building_columns(&self.graph.borrow());
 
         self.graph = new_graph;
         self.write.store(Slot::Free, Ordering::Release);
         #[cfg(feature = "index-falkordb")]
         if wake_builder {
-            crate::index::falkordb::online_build::wake();
+            online_build::wake();
         }
         Ok(())
     }

@@ -31,6 +31,8 @@ use crate::config::{
     TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
+#[cfg(feature = "index-falkordb")]
+use crate::graph_core::{start_index_builder, stop_index_builder};
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
@@ -490,7 +492,7 @@ pub fn graph_init(
     // The online index builder: builds the `Building` columns `CREATE INDEX` leaves, however the
     // `CREATE INDEX` arrived. Woken by the commit that brings a column in.
     #[cfg(feature = "index-falkordb")]
-    crate::graph_core::start_index_builder();
+    start_index_builder();
 
     Status::Ok
 }
@@ -539,7 +541,7 @@ unsafe extern "C" fn on_shutdown(
     // Stop the index builder before the pool and GraphBLAS: a build step reads a graph, and must
     // not be doing so while GraphBLAS is torn down under it.
     #[cfg(feature = "index-falkordb")]
-    crate::graph_core::stop_index_builder();
+    stop_index_builder();
     threadpool::shutdown();
     graph::graph::graphblas::matrix::shutdown();
     unsafe { RediSearch_CleanupModule() };

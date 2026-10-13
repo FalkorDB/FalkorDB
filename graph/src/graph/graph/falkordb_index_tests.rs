@@ -10,10 +10,13 @@ use crate::index::falkordb::online_build::{self, BuildHost, Turn};
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
+use parking_lot::RwLock;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -48,7 +51,7 @@ fn build_to_end(
 ) -> usize {
     let mut steps = 0;
     while graph_writes::has_building_columns(g) {
-        graph_writes::build_step_within(g, nodes, edges);
+        graph_writes::build_step(g, nodes, edges);
         steps += 1;
         assert!(steps < 100_000, "the build never finishes");
     }
@@ -175,7 +178,11 @@ fn create_index_builds_the_column_from_live_nodes() {
     );
 
     // Three nodes fit one step, which indexes them and flips the column `Ready`.
-    assert!(!graph_writes::build_step(&mut g));
+    assert!(!graph_writes::build_step(
+        &mut g,
+        graph_writes::BUILD_STEP_NODES,
+        graph_writes::BUILD_STEP_EDGES
+    ));
     assert!(!graph_writes::has_building_columns(&g));
     assert!(
         g.falkordb_index
@@ -737,7 +744,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     create_index_on(&mut g, &label, &attr);
 
     // The first step indexes ids[0] and ids[1], and stops at ids[2].
-    assert!(graph_writes::build_step_within(&mut g, 2, 2));
+    assert!(graph_writes::build_step(&mut g, 2, 2));
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &attr),
         Some(BuildCursor {
@@ -812,7 +819,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
 
     // A two-edge step stops inside the a->b pair, so it finishes the pair: three edges, and the
     // next step resumes at a->c.
-    assert!(graph_writes::build_step_within(&mut g, 2, 2));
+    assert!(graph_writes::build_step(&mut g, 2, 2));
     assert_eq!(
         cursor(&g, EntityType::Relationship, &ty, &attr),
         Some(BuildCursor { row: a, col: c })
@@ -936,7 +943,7 @@ fn set_then_delete_in_one_batch_during_a_build() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[1, 2, 3]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step_within(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1, 1));
     assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[0]]);
 
     // SET ids[0].v = 5, ids[2].v = 5, then DELETE both, as `Pending::commit` orders them.
@@ -970,7 +977,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step_within(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1, 1));
     set_attr(&mut g, ids[0], &attr, Value::Int(30));
 
     drop_index_on(&mut g, &label, &attr);
@@ -980,7 +987,14 @@ fn dropping_a_building_column_leaves_nothing_behind() {
             .numeric(EntityType::Node, &label, &attr)
             .is_none()
     );
-    assert!(!graph_writes::build_step(&mut g), "nothing left to build");
+    assert!(
+        !graph_writes::build_step(
+            &mut g,
+            graph_writes::BUILD_STEP_NODES,
+            graph_writes::BUILD_STEP_EDGES
+        ),
+        "nothing left to build"
+    );
     assert!(
         g.falkordb_index
             .numeric(EntityType::Node, &label, &attr)
@@ -1003,7 +1017,7 @@ fn recreating_a_building_column_restarts_its_build() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step_within(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1, 1));
 
     drop_index_on(&mut g, &label, &attr);
     set_attr(&mut g, ids[0], &attr, Value::Int(15)); // while no index exists
@@ -1032,7 +1046,7 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
         set_attr(&mut g, id, &w, Value::Int(value));
     }
     create_index_on(&mut g, &label, &v);
-    assert!(graph_writes::build_step_within(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1, 1));
     let v_cursor = cursor(&g, EntityType::Node, &label, &v);
     assert_eq!(
         v_cursor,
@@ -1144,7 +1158,7 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
 /// way a write on Redis's main thread would while a turn's step runs. `refuse` makes `publish`
 /// refuse, as for a deleted graph.
 struct TestHost {
-    mvcc: parking_lot::RwLock<MvccGraph>,
+    mvcc: RwLock<MvccGraph>,
     takeovers: AtomicU32,
     refuse: AtomicBool,
 }
@@ -1161,7 +1175,7 @@ impl TestHost {
         create_index_on(&mut version.borrow_mut(), &label, attr);
         mvcc.commit(version).expect("commits");
         let host = Arc::new(Self {
-            mvcc: parking_lot::RwLock::new(mvcc),
+            mvcc: RwLock::new(mvcc),
             takeovers: AtomicU32::new(0),
             refuse: AtomicBool::new(false),
         });
@@ -1331,20 +1345,17 @@ fn a_commit_that_brings_in_a_building_column_wakes_the_builder() {
     let attr = Arc::new("v".to_string());
     let (g, label, ids) = people_with(&attr, &(1..=30).collect::<Vec<_>>());
     let host = Arc::new(TestHost {
-        mvcc: parking_lot::RwLock::new(MvccGraph::from_graph(g)),
+        mvcc: RwLock::new(MvccGraph::from_graph(g)),
         takeovers: AtomicU32::new(0),
         refuse: AtomicBool::new(false),
     });
     let for_builder: Arc<dyn BuildHost> = host.clone();
     online_build::start(move || vec![for_builder.clone()]);
     // Let the scan at start find nothing, so only the commit below can bring the builder back.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while online_build::SCANS.load(Ordering::Relaxed) == 0 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the builder never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        assert!(Instant::now() < deadline, "the builder never started");
+        thread::sleep(Duration::from_millis(1));
     }
 
     {
@@ -1353,13 +1364,13 @@ fn a_commit_that_brings_in_a_building_column_wakes_the_builder() {
         create_index_on(&mut version.borrow_mut(), &label, &attr);
         mvcc.commit(version).expect("commits");
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while host.cursor(&label, &attr).is_some() {
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the builder never finished the column"
         );
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(host.indexed(&label, &attr), ids);
 }
