@@ -1,11 +1,11 @@
 //! The online index build's driver: when build steps run, and how each one takes the write slot.
 //!
 //! `graph_writes::build_step` indexes one batch on a private version. This module runs those
-//! steps on a background thread, one turn at a time, for every graph that has `Building` columns.
-//! Nothing here knows about Redis: a host gives the builder its graphs through [`BuildHost`],
-//! which is how the builder reads a graph and how it publishes as a writer. The Redis module's
-//! host takes the GIL and the graph's write lock to publish; an embedded host would take its own
-//! lock.
+//! steps on a pool of its own — [`start`]'s workers, which serve no queries — one turn at a time,
+//! for every graph that has `Building` columns. Nothing here knows about Redis: a host registers a
+//! [`BuildHost`] for each graph ([`MvccGraph::set_build_host`]), which is how the builder reads the
+//! graph and how it publishes as a writer. The Redis module's host takes the GIL and the graph's
+//! write lock to publish; an embedded host would take its own lock.
 //!
 //! **A turn is a writer that gives way.** It takes the write slot as a build step
 //! ([`MvccGraph::write_for_build`]) and indexes its batch holding no lock. A writer that wants the
@@ -17,13 +17,19 @@
 //! it publishes through the host first, takes the slot as an ordinary writer, and keeps both for
 //! the whole step, so nothing can take the slot from it. A committed turn resets the count.
 //!
-//! **When the builder runs.** [`MvccGraph::commit`] wakes it whenever a version brings in a
-//! `Building` column its predecessor did not have; the builder then asks the host for its graphs
-//! and builds every one with `Building` columns, a turn each in rotation, until none has any left.
+//! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
+//! has a `Building` column and the graph is not queued yet, which covers every way a
+//! `CREATE INDEX` can arrive. A worker takes the graph with the earliest start time, runs one turn,
+//! and queues it again — not before as long as the turn took, so the graph's writers get the slot
+//! and the GIL between its turns — until it has no `Building` column left. A graph is either queued
+//! or on one worker, never both, so it never has two turns at once. The work per `CREATE INDEX` is
+//! the same however many graphs there are.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -33,12 +39,9 @@ use super::graph_writes::{self, BUILD_STEP_EDGES, BUILD_STEP_NODES};
 use crate::graph::graph::Graph;
 use crate::graph::mvcc_graph::MvccGraph;
 
-/// How the builder reaches one graph. Implemented by the host that owns the graph.
+/// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
+/// with it through [`MvccGraph::set_build_host`].
 pub trait BuildHost: Send + Sync {
-    /// Identifies the graph while it lives, so the builder can tell graphs apart when it asks the
-    /// host for them again.
-    fn id(&self) -> usize;
-
     /// Run `f` on the graph's coordinator with the host's read access. `false` if the graph is
     /// gone.
     fn read(
@@ -81,8 +84,8 @@ pub(crate) enum Turn {
 /// One build turn on the graph `host` names, with the default batch sizes. `losses` is the
 /// graph's count of turns lost in a row, kept by the caller across turns.
 ///
-/// Runs at most one build turn per graph at a time: [`MvccGraph::write_for_build`] relies on it.
-/// The builder thread does; a host that calls this itself must too.
+/// The builder runs at most one turn per graph at a time. Two at once would still publish nothing
+/// stale — a turn checks its version is the next one before committing — but would waste work.
 pub(crate) fn run_turn(
     host: &dyn BuildHost,
     losses: &mut u32,
@@ -143,7 +146,17 @@ pub(crate) fn run_turn_within(
             turn = Turn::Lost;
             return;
         }
-        turn = commit(mvcc, fork.take().expect("published once"), more, false);
+        let fork = fork.take().expect("published once");
+        // The claim succeeding is not proof enough on its own: had a writer taken the slot, then
+        // committed, and another build step taken it again, the claim would succeed on that
+        // step's hold with this step's stale version. Only the version right after the published
+        // one may be committed.
+        if fork.borrow().version != mvcc.read().borrow().version + 1 {
+            mvcc.rollback();
+            turn = Turn::Lost;
+            return;
+        }
+        turn = commit(mvcc, fork, more, false);
     });
     if !published {
         host.read(&mut |mvcc| mvcc.abandon_build());
@@ -213,162 +226,210 @@ fn commit(
     }
 }
 
-// ---- The builder thread ----
+// ---- The worker pool ----
 
-/// The graphs a host has, each as a [`BuildHost`].
-type Hosts = Arc<dyn Fn() -> Vec<Arc<dyn BuildHost>> + Send + Sync>;
-
-struct Shared {
-    state: Mutex<State>,
-    wakeup: Condvar,
+/// One graph waiting for its next turn.
+struct Queued {
+    /// When its next turn may start.
+    not_before: Instant,
+    /// Breaks ties in queue order.
+    seq: u64,
+    host: Arc<dyn BuildHost>,
+    /// Turns lost in a row.
+    losses: u32,
 }
 
-struct State {
-    /// A version brought in a `Building` column since the builder last asked for the graphs.
-    woken: bool,
-    hosts: Option<Hosts>,
-    thread: Option<JoinHandle<()>>,
+impl PartialEq for Queued {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        (self.not_before, self.seq) == (other.not_before, other.seq)
+    }
 }
 
-static SHARED: Shared = Shared {
-    state: Mutex::new(State {
-        woken: false,
-        hosts: None,
-        thread: None,
-    }),
-    wakeup: Condvar::new(),
-};
+impl Eq for Queued {}
 
-/// Set while the builder is stopping: turns give up rather than publish.
+impl PartialOrd for Queued {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Queued {
+    fn cmp(
+        &self,
+        other: &Self,
+    ) -> std::cmp::Ordering {
+        (self.not_before, self.seq).cmp(&(other.not_before, other.seq))
+    }
+}
+
+struct Pool {
+    /// Graphs waiting for a turn, earliest start first.
+    queue: BinaryHeap<Reverse<Queued>>,
+    /// Graphs a worker is running a turn for.
+    running: usize,
+    next_seq: u64,
+    workers: Vec<JoinHandle<()>>,
+}
+
+static POOL: Mutex<Pool> = Mutex::new(Pool {
+    queue: BinaryHeap::new(),
+    running: 0,
+    next_seq: 0,
+    workers: Vec::new(),
+});
+
+/// Signalled when a graph is queued, and at stop.
+static WORK: Condvar = Condvar::new();
+
+/// Set while the pool is stopping: workers exit, and a turn gives up rather than publish.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
 fn stopping() -> bool {
     STOPPING.load(Ordering::Relaxed)
 }
 
-/// Start the builder thread, which builds the `Building` columns of the graphs `hosts` returns.
-/// Idempotent while it runs; can start again after [`stop`].
-pub fn start(hosts: impl Fn() -> Vec<Arc<dyn BuildHost>> + Send + Sync + 'static) {
-    let mut state = SHARED.state.lock().unwrap_or_else(|e| e.into_inner());
-    if state.thread.is_some() {
+fn pool() -> MutexGuard<'static, Pool> {
+    POOL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Start the pool's `threads` workers (at least one). Idempotent while they run; can start again
+/// after [`stop`].
+pub fn start(threads: usize) {
+    let mut pool = pool();
+    if !pool.workers.is_empty() {
         return;
     }
     STOPPING.store(false, Ordering::Relaxed);
-    state.hosts = Some(Arc::new(hosts));
-    // Look once at start: a graph may already have `Building` columns.
-    state.woken = true;
-    state.thread = Some(
-        thread::Builder::new()
-            .name("falkordb-index-build".into())
-            .spawn(run_builder)
-            .expect("spawn the index builder thread"),
-    );
-}
-
-/// Stop the builder thread and wait for it to exit. A turn in progress finishes its step and gives
-/// up the slot instead of publishing.
-pub fn stop() {
-    STOPPING.store(true, Ordering::Relaxed);
-    let thread = {
-        let mut state = SHARED.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.hosts = None;
-        state.thread.take()
-    };
-    SHARED.wakeup.notify_all();
-    if let Some(thread) = thread {
-        drop(thread.join());
+    for i in 0..threads.max(1) {
+        pool.workers.push(
+            thread::Builder::new()
+                .name(format!("falkordb-index-build-{i}"))
+                .spawn(work)
+                .expect("spawn an index build worker"),
+        );
     }
 }
 
-/// Tell the builder a version brought in a `Building` column. Never blocks for long: it is called
-/// from [`MvccGraph::commit`], which holds the host's locks.
-pub(crate) fn wake() {
-    SHARED.state.lock().unwrap_or_else(|e| e.into_inner()).woken = true;
-    SHARED.wakeup.notify_all();
+/// Stop the pool's workers and wait for them to exit. A turn in progress finishes its step and
+/// gives up the slot instead of publishing. Graphs still queued stay queued.
+pub fn stop() {
+    STOPPING.store(true, Ordering::Relaxed);
+    let workers = std::mem::take(&mut pool().workers);
+    WORK.notify_all();
+    for worker in workers {
+        drop(worker.join());
+    }
 }
 
-/// How long the builder waits after a turn: as long as the turn took, so a build uses at most
-/// about half of one core, and a turn that held the host's locks leaves them free at least as
-/// long again.
-fn pace(turn: Duration) {
-    thread::sleep(turn.max(Duration::from_millis(1)));
+/// Graphs queued for a turn or in the middle of one — what is left to build.
+#[must_use]
+pub fn pending() -> usize {
+    let pool = pool();
+    pool.queue.len() + pool.running
 }
 
-/// How long the builder waits before retrying a graph whose slot a writer held.
+/// Queue `host`'s graph for its first turn. Never blocks for long: it is called from
+/// [`MvccGraph::commit`], which holds the host's locks.
+pub(crate) fn enqueue(host: Arc<dyn BuildHost>) {
+    requeue(
+        Queued {
+            not_before: Instant::now(),
+            seq: 0,
+            host,
+            losses: 0,
+        },
+        &mut pool(),
+    );
+}
+
+fn requeue(
+    mut graph: Queued,
+    pool: &mut Pool,
+) {
+    graph.seq = pool.next_seq;
+    pool.next_seq += 1;
+    pool.queue.push(Reverse(graph));
+    WORK.notify_one();
+}
+
+/// How long a graph waits for its next turn after one that committed or lost: as long as the turn
+/// took, so the graph's writers get the slot, and on a held turn the GIL, at least as long again.
+fn pace(turn: Duration) -> Duration {
+    turn.max(Duration::from_millis(1))
+}
+
+/// How long a graph waits before retrying when a writer held its slot.
 const BUSY_RETRY: Duration = Duration::from_millis(10);
 
-/// How long the builder waits before retrying a graph whose step panicked.
+/// How long a graph waits before retrying after its step panicked.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
-struct Building {
-    host: Arc<dyn BuildHost>,
-    losses: u32,
-}
-
-fn run_builder() {
-    let mut building: Vec<Building> = Vec::new();
-    let mut next = 0usize;
+/// A worker: take the graph whose turn is due first, run it, queue it again if it has more.
+fn work() {
     loop {
-        // Wait until a version brings in a `Building` column, unless a build is under way.
-        let hosts = {
-            let mut state = SHARED.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut graph = {
+            let mut pool = pool();
             loop {
                 if stopping() {
                     return;
                 }
-                if state.woken {
-                    state.woken = false;
-                    break state.hosts.clone();
+                let now = Instant::now();
+                let due = match pool.queue.peek() {
+                    Some(Reverse(next)) if next.not_before <= now => None,
+                    Some(Reverse(next)) => Some(next.not_before - now),
+                    None => {
+                        pool = WORK.wait(pool).unwrap_or_else(|e| e.into_inner());
+                        continue;
+                    }
+                };
+                match due {
+                    None => {
+                        let Reverse(graph) = pool.queue.pop().expect("peeked");
+                        pool.running += 1;
+                        break graph;
+                    }
+                    Some(wait) => {
+                        pool = WORK
+                            .wait_timeout(pool, wait)
+                            .unwrap_or_else(|e| e.into_inner())
+                            .0;
+                    }
                 }
-                if !building.is_empty() {
-                    break None;
-                }
-                state = SHARED.wakeup.wait(state).unwrap_or_else(|e| e.into_inner());
             }
         };
-        if let Some(hosts) = hosts {
-            for host in hosts() {
-                if building.iter().any(|b| b.host.id() == host.id()) {
-                    continue;
-                }
-                let mut has = false;
-                host.read(&mut |mvcc| {
-                    has = graph_writes::has_building_columns(&mvcc.read().borrow());
-                });
-                if has {
-                    building.push(Building { host, losses: 0 });
-                }
-            }
-        }
-        if building.is_empty() {
-            continue;
-        }
 
-        // One turn for the next graph in rotation.
-        next %= building.len();
         let started = Instant::now();
-        let entry = &mut building[next];
         let turn = catch_unwind(AssertUnwindSafe(|| {
-            run_turn(entry.host.as_ref(), &mut entry.losses)
+            run_turn(graph.host.as_ref(), &mut graph.losses)
         }))
         .unwrap_or(Turn::Failed);
-        match turn {
-            Turn::Committed { more: true, .. } | Turn::Lost => {
-                next += 1;
-                pace(started.elapsed());
-            }
-            Turn::Committed { more: false, .. } | Turn::Idle | Turn::Gone => {
-                building.swap_remove(next);
-            }
-            Turn::Busy => {
-                next += 1;
-                thread::sleep(BUSY_RETRY);
-            }
+        let again = match turn {
+            Turn::Committed { more: true, .. } | Turn::Lost => Some(pace(started.elapsed())),
+            Turn::Busy => Some(BUSY_RETRY),
             Turn::Failed => {
                 eprintln!("index build: a build step failed; it will be retried");
-                next += 1;
-                thread::sleep(FAILED_RETRY);
+                Some(FAILED_RETRY)
             }
+            // Done — unless a `Building` column came in while the graph was still queued.
+            Turn::Committed { more: false, .. } | Turn::Idle => {
+                let mut more = false;
+                graph.host.read(&mut |mvcc| more = mvcc.build_done());
+                more.then_some(Duration::ZERO)
+            }
+            Turn::Gone => None,
+        };
+
+        let mut pool = pool();
+        pool.running -= 1;
+        if let Some(wait) = again {
+            graph.not_before = Instant::now() + wait;
+            requeue(graph, &mut pool);
         }
     }
 }
