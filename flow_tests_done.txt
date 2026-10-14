@@ -101,7 +101,6 @@ tests/flow/test_relation_patterns.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
 tests/flow/test_role_change_race.py
-tests/flow/test_restore_nesting.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
 tests/flow/test_ro_query.py

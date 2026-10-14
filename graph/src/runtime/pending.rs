@@ -64,20 +64,14 @@ fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
-/// Checks a property value: primitives, or lists of them nested at most
-/// [`MAX_VALUE_NESTING`] deep. `depth` is how many lists enclose `value`.
-///
-/// The depth bound is what lets every stored value be saved and loaded back:
-/// the RDB decoder refuses anything deeper, and so does every other place a
-/// nested value enters the engine. The walk is recursive, but stops at the
-/// bound, so it cannot itself run too deep.
+/// Whether a non-list value is a valid property: a primitive, or NULL when
+/// `allow_null`. Lists are checked by [`validate_list_property`].
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
-    depth: usize,
-) -> Result<(), String> {
+) -> bool {
     match value {
-        Value::Null if allow_null => Ok(()),
+        Value::Null => allow_null,
         Value::Bool(_)
         | Value::Int(_)
         | Value::Float(_)
@@ -87,25 +81,53 @@ fn is_valid_property(
         | Value::Datetime(_)
         | Value::Date(_)
         | Value::Time(_)
-        | Value::Duration(_) => Ok(()),
-        Value::List(_) if depth >= MAX_VALUE_NESTING => Err(format!(
+        | Value::Duration(_) => true,
+        _ => false,
+    }
+}
+
+/// Checks a list property: elements are primitives or lists, nested at most
+/// [`MAX_VALUE_NESTING`] deep. `depth` is the nesting of `items` itself (a
+/// top-level list is depth 1).
+///
+/// Lists can be built arbitrarily deep at runtime (e.g. `reduce(a = 1, i IN
+/// range(1, n) | [a])`), so this cannot be caught when the query is parsed.
+/// The bound is what lets every stored value be saved and loaded back: the
+/// RDB decoder refuses anything deeper. The walk is recursive, but stops at
+/// the bound, so it cannot itself run too deep.
+fn validate_list_property(
+    items: &[Value],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(format!(
             "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
-        )),
-        Value::List(items) => items
-            .iter()
-            .try_for_each(|v| is_valid_property(v, false, depth + 1)),
+        ));
+    }
+    items.iter().try_for_each(|v| match v {
+        Value::List(inner) => validate_list_property(inner, depth + 1),
+        v if is_valid_property(v, false) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
+    })
+}
+
+/// Checks a property value: a primitive, NULL, or a list of primitives.
+fn validate_property(value: &Value) -> Result<(), String> {
+    match value {
+        Value::List(items) => validate_list_property(items, 1),
+        v if is_valid_property(v, true) => Ok(()),
         _ => Err(INVALID_PROPERTY_MSG.into()),
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    is_valid_property(value, true, 0)
+    validate_property(value)
 }
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    is_valid_property(value, true, 0)
+    validate_property(value)
 }
 
 /// Binary-search a sorted `(attr_id, Value)` slice.

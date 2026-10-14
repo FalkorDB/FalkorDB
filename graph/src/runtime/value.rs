@@ -2158,15 +2158,18 @@ impl Decode<19> for Value {
 
 /// [`Value::decode`] for a value inside `depth` enclosing arrays.
 ///
-/// Recursive, so the depth is counted and an array past
-/// [`MAX_VALUE_NESTING`] is a decode error: `GRAPH.RESTORE` hands this a
-/// client's bytes, and a few hundred KB of nested `T_ARRAY` headers would
+/// Recursive, so the depth is counted and a value inside more than
+/// [`MAX_VALUE_NESTING`] arrays is a decode error: `GRAPH.RESTORE` hands this
+/// a client's bytes, and a few hundred KB of nested `T_ARRAY` headers would
 /// otherwise be tens of thousands of frames. Every value the engine accepts is
 /// within the same bound, so nothing it saved is refused here.
 fn decode_value(
     r: &mut dyn Reader,
     depth: usize,
 ) -> Result<Value, String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(value_nesting_error());
+    }
     let tag = r.read_unsigned()?;
     match tag {
         si_type::T_NULL => Ok(Value::Null),
@@ -2190,9 +2193,6 @@ fn decode_value(
             }
         }
         si_type::T_ARRAY => {
-            if depth >= MAX_VALUE_NESTING {
-                return Err(value_nesting_error());
-            }
             let len = r.read_unsigned()?;
             let mut items = ThinVec::with_capacity(len as usize);
             for _ in 0..len {
