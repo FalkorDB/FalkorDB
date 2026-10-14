@@ -391,6 +391,26 @@ class testConstraintNodes():
             self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
 
         #-----------------------------------------------------------------------
+        # property count is read as C's string2ll: no sign, no leading zeros
+        #-----------------------------------------------------------------------
+        for count in ["+1", "01", " 1", "1x"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "label", "PROPERTIES", count, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
+
+        #-----------------------------------------------------------------------
+        # the entity type is NODE or RELATIONSHIP, as in C
+        #-----------------------------------------------------------------------
+        for entity in ["LABEL", "EDGE"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", entity, "New_Label", "PROPERTIES", 1, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Invalid constraint entity type", str(e))
+
+        #-----------------------------------------------------------------------
         # del constraint on non exsisting label
         #-----------------------------------------------------------------------
         try:
