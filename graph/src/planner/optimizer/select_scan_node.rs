@@ -587,18 +587,20 @@ fn select_var_len_scan_node(
         //    an optimization, and losing a predicate is not a trade worth making.
         let scan_idx = planner_scan_idx(optimized_plan, child_idx)
             .expect("planner_scan_alias matched, so a scan is there");
-        let wrapper_ok = {
+        let (has_filter, has_include_pending) = {
             let mut node = optimized_plan.node(child_idx);
-            let mut ok = true;
+            let (mut filter, mut include_pending) = (false, false);
             while node.idx() != scan_idx {
-                if matches!(node.data(), IR::IncludePending { .. } | IR::Filter(_)) {
-                    ok = false;
-                    break;
+                match node.data() {
+                    IR::Filter(_) => filter = true,
+                    IR::IncludePending { .. } => include_pending = true,
+                    _ => {}
                 }
                 node = node.child(0);
             }
-            ok
+            (filter, include_pending)
         };
+        let wrapper_ok = !has_filter && !has_include_pending;
         if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
             let kept: Vec<DynTree<IR>> = optimized_plan
                 .node(scan_idx)
@@ -616,6 +618,26 @@ fn select_var_len_scan_node(
                 }
                 continue;
             }
+        }
+
+        // The leaf rewrite below replaces the whole subtree with a fresh scan
+        // of `to`, carrying over only an `Argument` leaf (and re-adding
+        // `IncludePending` inside MERGE). Anything else there is an earlier
+        // clause that `plan_query` stitched under the traverse: a `Filter`
+        // (`MATCH (a) WHERE a.v = 1 MATCH (a)-[*]->(b)`) or an operator below
+        // the scan (`UNWIND … MATCH (a)-[*]->(b)`). Dropping it would lose a
+        // predicate or rows, so keep the planner's direction instead.
+        let scan_node = optimized_plan.node(scan_idx);
+        let only_argument_below = match scan_node.num_children() {
+            0 => true,
+            1 => {
+                let below = scan_node.child(0);
+                matches!(below.data(), IR::Argument(_)) && below.num_children() == 0
+            }
+            _ => false,
+        };
+        if has_filter || !only_argument_below {
+            continue;
         }
 
         // A correlated sub-plan may already bind `to` from its outer context;
