@@ -76,7 +76,7 @@ static void _DecodeTensors
 			rm_free (blob) ;
 			if (info != GrB_SUCCESS) {
 				SerializerIO_SetError (rdb,
-						"GraphBLAS error %d deserializing tensor (%llu, %llu)",
+						EMSG_DECODE_GRB, "deserializing tensor",
 						(int) info, (unsigned long long) i,
 						(unsigned long long) j) ;
 				return ;
@@ -91,7 +91,7 @@ static void _DecodeTensors
 			if (nvals < 2) {
 				GrB_Vector_free (&u) ;
 				SerializerIO_SetError (rdb,
-						"tensor (%llu, %llu) holds %llu edges, expected at least 2",
+						EMSG_DECODE_MATRIX_MALFORMED, "tensor with too few edges",
 						(unsigned long long) i, (unsigned long long) j,
 						(unsigned long long) nvals) ;
 				return ;
@@ -104,7 +104,7 @@ static void _DecodeTensors
 			if (info != GrB_SUCCESS) {
 				GrB_Vector_free (&u) ;
 				SerializerIO_SetError (rdb,
-						"GraphBLAS error %d setting tensor (%llu, %llu)",
+						EMSG_DECODE_GRB, "setting tensor",
 						(int) info, (unsigned long long) i,
 						(unsigned long long) j) ;
 				return ;
@@ -152,7 +152,7 @@ static void _decode_and_load_vector
 		rm_free (t_name) ;
 		*v = NULL ;
 		SerializerIO_SetError (rdb,
-				"matrix vector holds %zu bytes but declares %llu", n,
+				EMSG_DECODE_MATRIX_MALFORMED, "vector byte count", n,
 				(unsigned long long) n_bytes) ;
 		return ;
 	}
@@ -164,10 +164,10 @@ static void _decode_and_load_vector
 	if (info != GrB_SUCCESS || t == NULL) {
 		if (info != GrB_SUCCESS) {
 			SerializerIO_SetError (rdb,
-					"GraphBLAS error %d resolving matrix value type '%.64s'",
+					EMSG_DECODE_GRB, "resolving a matrix value type",
 					(int) info, t_name) ;
 		} else {
-			SerializerIO_SetError (rdb, "unknown matrix value type '%.64s'",
+			SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_MALFORMED, "unknown value type",
 					t_name) ;
 		}
 		rm_free (t_name) ;
@@ -185,7 +185,7 @@ static void _decode_and_load_vector
 		rm_free (arr) ;
 		*v = NULL ;
 		SerializerIO_SetError (rdb,
-				"matrix vector declares %llu entries in %llu bytes",
+				EMSG_DECODE_MATRIX_MALFORMED, "vector entry count",
 				(unsigned long long) n_entries, (unsigned long long) n_bytes) ;
 		return ;
 	}
@@ -196,7 +196,7 @@ static void _decode_and_load_vector
 		rm_free (arr) ;
 		*v = NULL ;
 		SerializerIO_SetError (rdb,
-				"GraphBLAS error %d creating a matrix vector", (int) info) ;
+				EMSG_DECODE_GRB, "creating a matrix vector", (int) info) ;
 		return ;
 	}
 
@@ -207,7 +207,7 @@ static void _decode_and_load_vector
 		GrB_Vector_free (v) ;
 		*v = NULL ;
 		SerializerIO_SetError (rdb,
-				"GraphBLAS error %d loading a matrix vector", (int) info) ;
+				EMSG_DECODE_GRB, "loading a matrix vector", (int) info) ;
 	}
 }
 
@@ -231,7 +231,7 @@ static GrB_Matrix _Decode_GrB_Matrix
 	if (n != sizeof(struct GxB_Container_struct)) {
 		rm_free (container) ;
 		SerializerIO_SetError (rdb,
-				"matrix container holds %zu bytes, expected %zu", n,
+				EMSG_DECODE_MATRIX_MALFORMED, "container size", n,
 				sizeof (struct GxB_Container_struct)) ;
 		return NULL ;
 	}
@@ -262,7 +262,7 @@ static GrB_Matrix _Decode_GrB_Matrix
 		GrB_Matrix_free (&A) ;
 		GxB_Container_free (&container) ;
 		SerializerIO_SetError (rdb,
-				"GraphBLAS error %d loading a matrix", (int) info) ;
+				EMSG_DECODE_GRB, "loading a matrix", (int) info) ;
 		return NULL ;
 	}
 
@@ -308,7 +308,7 @@ static void _Decode_Delta_Matrix
 		if (DP != NULL) GrB_Matrix_free (&DP) ;
 		if (DM != NULL) GrB_Matrix_free (&DM) ;
 		SerializerIO_SetError (rdb,
-				"GraphBLAS error %d setting delta matrix", (int) info) ;
+				EMSG_DECODE_GRB, "setting a delta matrix", (int) info) ;
 	}
 }
 
@@ -330,7 +330,7 @@ void RdbLoadLabelMatrices_v20
 	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
 	uint64_t label_count = Graph_LabelTypeCount(g);
 	if(n != label_count) {
-		SerializerIO_SetError(rdb, "%llu label matrices for %llu labels",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LABEL_MATRIX_COUNT,
 				(unsigned long long) n, (unsigned long long) label_count);
 		return;
 	}
@@ -345,7 +345,7 @@ void RdbLoadLabelMatrices_v20
 		// this rejects a duplicate or out-of-order id, which would otherwise
 		// decode two matrices onto one label and leave another label empty
 		if(l != i) {
-			SerializerIO_SetError(rdb, "label matrix out of order: %llu",
+			SerializerIO_SetError(rdb, EMSG_DECODE_MATRIX_ORDER, "label",
 					(unsigned long long) l);
 			return;
 		}
@@ -355,7 +355,7 @@ void RdbLoadLabelMatrices_v20
 		GrB_Index nvals;
 		Delta_Matrix_nvals(&nvals, lbl);
 		if(nvals != 0) {
-			SerializerIO_SetError(rdb, "label matrix decoded twice");
+			SerializerIO_SetError(rdb, EMSG_DECODE_MATRIX_TWICE, "label");
 			return;
 		}
 
@@ -391,7 +391,7 @@ void RdbLoadRelationMatrices_v20
 
 		// relation matrices are encoded in id order
 		if (r != (uint64_t) i) {
-			SerializerIO_SetError (rdb, "relation matrix out of order") ;
+			SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_ORDER, "relation") ;
 			return ;
 		}
 
@@ -401,7 +401,7 @@ void RdbLoadRelationMatrices_v20
 		GrB_Index nvals;
 		Delta_Matrix_nvals (&nvals, DR) ;
 		if (nvals != 0) {
-			SerializerIO_SetError (rdb, "relation matrix decoded twice") ;
+			SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_TWICE, "relation") ;
 			return ;
 		}
 

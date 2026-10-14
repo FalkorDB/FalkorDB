@@ -92,7 +92,7 @@ static void _RdbLoadIndex
 
 	// a persisted index always has at least one field; 0 is a malformed RDB
 	if (fields_count == 0) {
-		SerializerIO_SetError (rdb, "index with no fields") ;
+		SerializerIO_SetError (rdb, EMSG_DECODE_INDEX, "no fields") ;
 	}
 
 	for(uint i = 0; i < fields_count; i++) {
@@ -106,12 +106,15 @@ static void _RdbLoadIndex
 		_RdbDecodeIndexField (rdb, &field_name, &type, &weight, &nostem,
 				&phonetic, &dimension) ;
 
-		// field type is handed to RediSearch unchecked; reject a garbage type
-		// (v14 predates vector indexes, so there is no similarity function)
-		if (type == INDEX_FLD_UNKNOWN || (type & ~INDEX_FLD_ANY)) {
+		// field type is handed to RediSearch unchecked; reject a garbage type.
+		// v14 predates vector indexes (no dimension/similarity wire format), so a
+		// vector bit here is malformed - reject it rather than build a half-
+		// configured vector index
+		if (type == INDEX_FLD_UNKNOWN || (type & ~INDEX_FLD_ANY) ||
+			(type & INDEX_FLD_VECTOR)) {
 			RedisModule_Free (phonetic) ;
 			RedisModule_Free (field_name) ;
-			SerializerIO_SetError (rdb, "invalid index field") ;
+			SerializerIO_SetError (rdb, EMSG_DECODE_INDEX, "invalid field") ;
 			break ;
 		}
 
@@ -141,7 +144,7 @@ static void _RdbLoadIndex
 			if (!Index_SetStopwords (idx, &stopwords)) {
 				// not a query: don't leave the error on this thread's context
 				ErrorCtx_Clear () ;
-				SerializerIO_SetError (rdb, "index stopwords set twice") ;
+				SerializerIO_SetError (rdb, EMSG_DECODE_INDEX, "stopwords set twice") ;
 			}
 		}
 
@@ -190,7 +193,7 @@ static void _RdbLoadConstraint
 
 	uint64_t n_fields = SerializerIO_TryReadUnsigned(rdb);
 	if (n_fields == 0 || n_fields > GRAPH_MAX_CONSTRAINT_FIELDS) {
-		SerializerIO_SetError (rdb, "constraint with %llu attributes",
+		SerializerIO_SetError (rdb, EMSG_DECODE_CONSTRAINT, "bad attribute count",
 				(unsigned long long) n_fields) ;
 		return ;
 	}
@@ -210,7 +213,7 @@ static void _RdbLoadConstraint
 
 		// reject an attribute the graph doesn't have
 		if (attr >= attr_count) {
-			SerializerIO_SetError (rdb, "constraint on an unknown attribute") ;
+			SerializerIO_SetError (rdb, EMSG_DECODE_CONSTRAINT, "unknown attribute") ;
 			return ;
 		}
 
@@ -219,14 +222,14 @@ static void _RdbLoadConstraint
 	}
 
 	if (t != CT_UNIQUE && t != CT_MANDATORY) {
-		SerializerIO_SetError (rdb, "unknown constraint type") ;
+		SerializerIO_SetError (rdb, EMSG_DECODE_CONSTRAINT, "unknown type") ;
 		return ;
 	}
 
 	if(!already_loaded) {
 		// a schema holds each constraint once
 		if(Schema_ContainsConstraint(s, t, attr_ids, n)) {
-			SerializerIO_SetError(rdb, "duplicate constraint");
+			SerializerIO_SetError(rdb, EMSG_DECODE_CONSTRAINT, "duplicate");
 			return;
 		}
 
@@ -237,7 +240,7 @@ static void _RdbLoadConstraint
 		c = Constraint_New((struct GraphContext*)gc, t, Schema_GetID(s),
 				attr_ids, attr_strs, n, et, &err);
 		if(c == NULL) {
-			SerializerIO_SetError(rdb, "constraint can't be created: %s",
+			SerializerIO_SetError(rdb, EMSG_DECODE_CONSTRAINT,
 					err != NULL ? err : "unknown reason");
 			return;
 		}
@@ -294,7 +297,7 @@ static void _RdbLoadSchema
 		// schemas are encoded once each, in id order
 		if (!created || Schema_GetID (s) != id) {
 			RedisModule_Free (name) ;
-			SerializerIO_SetError (rdb, "duplicate or out of order schema") ;
+			SerializerIO_SetError (rdb, EMSG_DECODE_SCHEMA, "schema") ;
 			return ;
 		}
 	}
@@ -337,7 +340,7 @@ static void _RdbLoadAttributeKeys
 		// attribute keys are encoded once each, in id order; a repeated name
 		// would map two encoded ids onto one attribute
 		if(id != i) {
-			SerializerIO_SetError(rdb, "duplicate attribute name");
+			SerializerIO_SetError(rdb, EMSG_DECODE_SCHEMA, "attribute name");
 			return;
 		}
 	}

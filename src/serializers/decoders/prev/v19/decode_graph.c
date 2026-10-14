@@ -82,12 +82,12 @@ static GraphContext *_DecodeHeader
 	// loops. graph_name is already freed and gc is stashed, so a SetError jump
 	// tears the partial graph down via the dispatcher's landing pad
 	if(label_count > GRAPH_MAX_LABELS) {
-		SerializerIO_SetError(rdb, "label count %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "label count",
 				(unsigned long long) label_count);
 		return NULL;  // SetError longjmps (when armed) to the landing pad
 	}
 	if(relation_count > GRAPH_MAX_RELATIONS) {
-		SerializerIO_SetError(rdb, "relation count %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "relation count",
 				(unsigned long long) relation_count);
 		return NULL;  // SetError longjmps (when armed) to the landing pad
 	}
@@ -152,7 +152,7 @@ static PayloadInfo *_RdbLoadKeySchema
 
 	// guard the payload count before it sizes the array below
 	if(payloads_count > GRAPH_MAX_KEY_PAYLOADS) {
-		SerializerIO_SetError(rdb, "payload count %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "payload count",
 				(unsigned long long) payloads_count);
 		return NULL;  // SetError longjmps to the landing pad
 	}
@@ -198,8 +198,15 @@ GraphContext *RdbLoadGraphContext_v19
 
 	// armed: _DecodeHeader either returns a graph or jumps, so gc is non-NULL
 	// here. unarmed (offload): a malformed header latches the error and returns
-	// NULL instead of jumping - bail before dereferencing it
-	if (gc == NULL) return NULL ;
+	// NULL instead of jumping - the dispatcher's landing pad won't run, so free
+	// the partial graph it stashed (only when this virtual key created it)
+	if (gc == NULL) {
+		gc = (GraphContext *) SerializerIO_GetContext (rdb) ;
+		if (gc != NULL && GraphContext_RefCount (gc) == 0) {
+			GraphContext_Free (gc) ;
+		}
+		return NULL ;
+	}
 
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;

@@ -33,7 +33,7 @@ static SIValue _RdbLoadSIValue
 	// distinguished from a tag no SIType has
 	if(unlikely (!(t & allowed))) {
 		if(t & SI_ALL) {
-			SerializerIO_SetError(rdb, "invalid property value type");
+			SerializerIO_SetError(rdb, EMSG_DECODE_INVALID_PROPERTY_VALUE);
 		} else {
 			SerializerIO_SetError(rdb, EMSG_VALUE_UNKNOWN_TYPE,
 					(unsigned long long) t);
@@ -127,7 +127,7 @@ static SIValue _RdbLoadSIArray
 	// truncated payload would short-read before this many elements. SetError
 	// longjmps to the landing pad, so the returned placeholder is unreachable
 	if(unlikely(arrayLen > GRAPH_MAX_SIARRAY_LEN)) {
-		SerializerIO_SetError(rdb, "array length %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "array length",
 				(unsigned long long) arrayLen);
 		return SI_NullVal();
 	}
@@ -164,7 +164,7 @@ static SIValue _RdbLoadVector
 	// validate buffer size is divisible by float
 	if (unlikely (buffer_size % sizeof(float) != 0)) {
 		rm_free (buffer) ;
-		SerializerIO_SetError (rdb, "vector size is not a multiple of float") ;
+		SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_MALFORMED, "vector size is not a multiple of float") ;
 		return SI_NullVal () ;
 	}
 
@@ -193,7 +193,7 @@ static void _RdbLoadEntity
 
 	// an entity can't hold more distinct properties than the graph has attributes
 	if (unlikely (n > GRAPH_MAX_ATTRIBUTES)) {
-		SerializerIO_SetError (rdb, "entity has too many properties") ;
+		SerializerIO_SetError (rdb, EMSG_DECODE_ENTITY_PROPS) ;
 		return ;  // unreachable: SetError longjmps
 	}
 
@@ -257,7 +257,7 @@ void RdbLoadNodes_v18
 		// ids run below the header's live + deleted node count; a short read
 		// would have already jumped to the landing pad
 		if (unlikely (id >= id_limit)) {
-			SerializerIO_SetError(rdb, "node id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "node id",
 					(unsigned long long) id);
 			return;  // unreachable: SetError longjmps
 		}
@@ -274,7 +274,7 @@ void RdbLoadNodes_v18
 	// every node decoded (a short read would have jumped); the count must match
 	// the header
 	if(n + prev_graph_node_count != Graph_NodeCount(g)) {
-		SerializerIO_SetError(rdb, "decoded node count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded node");
 	}
 }
 
@@ -306,7 +306,7 @@ void RdbLoadDeletedNodes_v18
 			"Malformed RDB: deleted nodes buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_node_count);
-		SerializerIO_SetError(rdb, "deleted nodes buffer size mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_BUFFER, "nodes");
 		return;
 	}
 
@@ -315,7 +315,7 @@ void RdbLoadDeletedNodes_v18
 		NodeID id = deleted_nodes_list[i];
 		if(unlikely(id >= id_limit)) {
 			rm_free(deleted_nodes_list);
-			SerializerIO_SetError(rdb, "deleted node id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted node id",
 					(unsigned long long) id);
 			return;
 		}
@@ -326,7 +326,7 @@ void RdbLoadDeletedNodes_v18
 	// validate deleted node count is as expected
 	if(deleted_node_count + prev_deleted_node_count !=
 	   Graph_DeletedNodeCount(g)) {
-		SerializerIO_SetError(rdb, "deleted node count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted node");
 	}
 }
 
@@ -353,7 +353,7 @@ void RdbLoadEdges_v18
 		// ids run below the header's live + deleted edge count; a short read
 		// would have already jumped to the landing pad
 		if(unlikely (id >= id_limit)) {
-			SerializerIO_SetError(rdb, "edge id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "edge id",
 					(unsigned long long) id);
 			return;  // unreachable: SetError longjmps
 		}
@@ -370,7 +370,7 @@ void RdbLoadEdges_v18
 	// every edge decoded (a short read would have jumped); the count must match
 	// the header
 	if(n + prev_edge_count != Graph_EdgeCount(g)) {
-		SerializerIO_SetError(rdb, "decoded edge count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded edge");
 	}
 }
 
@@ -402,7 +402,7 @@ void RdbLoadDeletedEdges_v18
 			"Malformed RDB: deleted edges buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_edge_count);
-		SerializerIO_SetError(rdb, "deleted edges buffer size mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_BUFFER, "edges");
 		return;
 	}
 
@@ -411,7 +411,7 @@ void RdbLoadDeletedEdges_v18
 		EdgeID id = deleted_edges_list[i];
 		if(unlikely(id >= id_limit)) {
 			rm_free(deleted_edges_list);
-			SerializerIO_SetError(rdb, "deleted edge id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted edge id",
 					(unsigned long long) id);
 			return;
 		}
@@ -422,6 +422,6 @@ void RdbLoadDeletedEdges_v18
 	// validate deleted edge count is as expected
 	if(deleted_edge_count + prev_deleted_edge_count !=
 	   Graph_DeletedEdgeCount(g)) {
-		SerializerIO_SetError(rdb, "deleted edge count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted edge");
 	}
 }

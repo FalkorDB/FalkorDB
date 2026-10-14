@@ -283,7 +283,7 @@ class testRdbMalformed():
         self.env.assertEqual(a0.size, a1.size)
         self.env.assertNotEqual(a0.value, a1.value)
         gv.set_bytes(a1.off, a0.value)
-        self._assert_rejected(gv, "duplicate attribute name")
+        self._assert_rejected(gv, "duplicate or out of order attribute")
 
     def test_unterminated_attribute_name(self):
         gv = self._value()
@@ -309,13 +309,13 @@ class testRdbMalformed():
         gv = self._value()
         s = _schema(gv, "N")
         gv.set_uint(f"{s}.constraint[0].type", 9)
-        self._assert_rejected(gv, "unknown constraint type")
+        self._assert_rejected(gv, "invalid constraint: unknown type")
 
     def test_constraint_unknown_attribute(self):
         gv = self._value()
         s = _schema(gv, "N")
         gv.set_uint(f"{s}.constraint[0].attribute[0]", 99)
-        self._assert_rejected(gv, "constraint on an unknown attribute")
+        self._assert_rejected(gv, "invalid constraint: unknown attribute")
 
     def test_constraint_without_attributes(self):
         gv = self._value()
@@ -323,7 +323,7 @@ class testRdbMalformed():
         self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
         gv.set_uint(f"{c}.attribute_count", 0)
         gv.remove_value(f"{c}.attribute[0]")
-        self._assert_rejected(gv, "constraint with 0 attributes")
+        self._assert_rejected(gv, "invalid constraint: bad attribute count")
 
     # counts and ids are read as 64 bits and checked before they are narrowed:
     # each corruption below wraps to the healthy value once narrowed
@@ -334,14 +334,14 @@ class testRdbMalformed():
         c = f"{_schema(gv, 'N')}.constraint[0]"
         self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
         gv.set_uint(f"{c}.attribute_count", 257)
-        self._assert_rejected(gv, "constraint with 257 attributes")
+        self._assert_rejected(gv, "invalid constraint: bad attribute count")
 
     def test_constraint_attribute_wraps(self):
         # narrows to the same attribute (AttributeID is 16 bits)
         gv = self._value()
         name = f"{_schema(gv, 'N')}.constraint[0].attribute[0]"
         gv.set_uint(name, (1 << 16) + gv.fields[name].value)
-        self._assert_rejected(gv, "constraint on an unknown attribute")
+        self._assert_rejected(gv, "invalid constraint: unknown attribute")
 
     def test_unique_constraint_without_index(self):
         # the unique constraint moved to an attribute no index covers
@@ -351,7 +351,7 @@ class testRdbMalformed():
                   if n.startswith(f"{s}.constraint[")]
         self.env.assertEqual(len(unique), 1)
         gv.set_uint(f"{unique[0]}.attribute[0]", _attribute(gv, "s"))
-        self._assert_rejected(gv, "constraint can't be created",
+        self._assert_rejected(gv, "invalid constraint",
                               "missing supporting exact-match index")
 
     def test_cch_without_relationship_types(self):
@@ -369,7 +369,7 @@ class testRdbMalformed():
         t1 = gv.fields[f"{s}.constraint[1].type"].value
         self.env.assertNotEqual(t0, t1)
         gv.set_uint(f"{s}.constraint[1].type", t0)
-        self._assert_rejected(gv, "duplicate constraint")
+        self._assert_rejected(gv, "invalid constraint: duplicate")
 
     def test_unsupported_index_language(self):
         gv = self._value()
@@ -381,14 +381,14 @@ class testRdbMalformed():
     def test_invalid_index_field_type(self):
         gv = self._value()
         gv.set_uint(f"{_schema(gv, 'N')}.index.field[0].type", 0x80)
-        self._assert_rejected(gv, "invalid index field")
+        self._assert_rejected(gv, "invalid index: invalid field")
 
     def test_invalid_vector_metric(self):
         gv = self._value()
         name = f"{_schema(gv, 'V')}.index.field[0].similarity"
         self.env.assertEqual(gv.fields[name].value, 0)   # euclidean
         gv.set_uint(name, 9)
-        self._assert_rejected(gv, "invalid index field")
+        self._assert_rejected(gv, "invalid index: invalid field")
 
     #---------------------------------------------------------------------------
     # matrices
@@ -417,14 +417,13 @@ class testRdbMalformed():
         # isn't the expected position (here out of range) breaks that order
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 99)
-        self._assert_rejected(gv, "label matrix out of order: 99")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_label_matrix_negative_label(self):
         # read into a signed 32-bit LabelID, 0xFFFFFFFF passed for -1
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 0xFFFFFFFF)
-        self._assert_rejected(gv,
-            f"label matrix out of order: {0xFFFFFFFF}")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_label_matrix_missing(self):
         # the last label matrix dropped, count adjusted: well formed, one short
@@ -442,7 +441,7 @@ class testRdbMalformed():
         gv = self._value()
         self.env.assertEqual(gv.fields["label_matrix[0].label"].value, 0)
         gv.set_uint("label_matrix[1].label", 0)
-        self._assert_rejected(gv, "label matrix out of order: 0")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_relation_matrix_out_of_order(self):
         gv = self._value()
@@ -471,13 +470,13 @@ class testRdbMalformed():
         gv = self._value()
         name = "label_matrix[0].M.x.bytes"
         gv.set_uint(name, gv.fields[name].value + 8)
-        self._assert_rejected(gv, "matrix vector holds")
+        self._assert_rejected(gv, "malformed matrix: vector byte count")
 
     def test_matrix_container_size(self):
         gv = self._value()
         name = "label_matrix[0].M.container"
         gv.set_length(name, gv.fields[name].size - 8)
-        self._assert_rejected(gv, "matrix container holds")
+        self._assert_rejected(gv, "malformed matrix: container size")
 
     def test_matrix_vector_entries_overflow(self):
         # entries * type size wraps to 0, which GraphBLAS' own size check
@@ -486,7 +485,7 @@ class testRdbMalformed():
         v, size = _int_vector(gv, "i")
         entries = (1 << 64) // size
         gv.set_uint(f"{v}.entries", entries)
-        self._assert_rejected(gv, f"matrix vector declares {entries} entries")
+        self._assert_rejected(gv, "malformed matrix: vector entry count")
 
     def test_unknown_matrix_type(self):
         # GxB_Type_from_name reports an unknown name as success, NULL type
@@ -494,7 +493,7 @@ class testRdbMalformed():
         v, _ = _int_vector(gv, "p")
         f = gv.fields[f"{v}.type"]
         gv.set_bytes(f.off + 4, b"X")
-        self._assert_rejected(gv, "unknown matrix value type 'GrB_X")
+        self._assert_rejected(gv, "malformed matrix: unknown value type")
 
     #---------------------------------------------------------------------------
     # framing

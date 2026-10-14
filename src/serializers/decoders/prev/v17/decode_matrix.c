@@ -57,7 +57,7 @@ static void _DecodeTensors
 		rm_free(blob);
 		if (info != GrB_SUCCESS) {
 			SerializerIO_SetError(rdb,
-					"GraphBLAS error %d deserializing tensor (%llu, %llu)",
+					EMSG_DECODE_GRB, "deserializing tensor",
 					(int) info, (unsigned long long) i, (unsigned long long) j);
 			return;
 		}
@@ -74,7 +74,7 @@ static void _DecodeTensors
 		if (info != GrB_SUCCESS) {
 			GrB_Vector_free(&u);
 			SerializerIO_SetError(rdb,
-					"GraphBLAS error %d setting tensor (%llu, %llu)",
+					EMSG_DECODE_GRB, "setting tensor",
 					(int) info, (unsigned long long) i, (unsigned long long) j);
 			return;
 		}
@@ -110,7 +110,7 @@ static GrB_Matrix _DecodeMatrix
 	GrB_Info info = GxB_Matrix_deserialize(&A, NULL, blob, blob_size, NULL);
 	rm_free(blob);
 	if (info != GrB_SUCCESS) {
-		SerializerIO_SetError(rdb, "GraphBLAS error %d deserializing a matrix",
+		SerializerIO_SetError(rdb, EMSG_DECODE_GRB, "deserializing a matrix",
 				(int) info);
 		return NULL;
 	}
@@ -138,7 +138,7 @@ void RdbLoadLabelMatrices_v17
 	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
 	uint64_t label_count = Graph_LabelTypeCount(g);
 	if(n != label_count) {
-		SerializerIO_SetError(rdb, "%llu label matrices for %llu labels",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LABEL_MATRIX_COUNT,
 				(unsigned long long) n, (unsigned long long) label_count);
 		return;
 	}
@@ -148,7 +148,7 @@ void RdbLoadLabelMatrices_v17
 		// read label ID, validated before it indexes the label array
 		uint64_t l = SerializerIO_TryReadUnsigned(rdb);
 		if(l >= label_count) {
-			SerializerIO_SetError(rdb, "label matrix id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "label matrix id",
 					(unsigned long long) l);
 			return;
 		}
@@ -193,7 +193,7 @@ void RdbLoadRelationMatrices_v17
 		// read relation ID, validated before it indexes the relation array
 		uint64_t r = SerializerIO_TryReadUnsigned(rdb);
 		if(r >= (uint64_t) n) {
-			SerializerIO_SetError(rdb, "relation matrix id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "relation matrix id",
 					(unsigned long long) r);
 			return;
 		}

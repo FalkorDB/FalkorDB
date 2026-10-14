@@ -29,7 +29,7 @@ static SIValue _RdbLoadSIValue
 	// read would leave behind)
 	if(unlikely (!(t & allowed))) {
 		if(t & SI_ALL) {
-			SerializerIO_SetError(rdb, "invalid property value type");
+			SerializerIO_SetError(rdb, EMSG_DECODE_INVALID_PROPERTY_VALUE);
 		} else {
 			SerializerIO_SetError(rdb, EMSG_VALUE_UNKNOWN_TYPE,
 					(unsigned long long) t);
@@ -92,7 +92,7 @@ static SIValue _RdbLoadSIArray
 
 	// guard an absurd element count before it drives the loop below
 	if(unlikely(arrayLen > GRAPH_MAX_SIARRAY_LEN)) {
-		SerializerIO_SetError(rdb, "array length %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "array length",
 				(unsigned long long) arrayLen);
 		return SI_NullVal();
 	}
@@ -128,7 +128,7 @@ static SIValue _RdbLoadVector
 
 	// guard an absurd dimension before it sizes the allocation / drives the loop
 	if(unlikely(dim > GRAPH_MAX_SIARRAY_LEN)) {
-		SerializerIO_SetError(rdb, "vector dimension %llu exceeds limit",
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "vector dimension",
 				(unsigned long long) dim);
 		return SI_NullVal();
 	}
@@ -163,7 +163,7 @@ static void _RdbLoadEntity
 
 	// an entity can't hold more distinct properties than the graph has attributes
 	if (unlikely (n > GRAPH_MAX_ATTRIBUTES)) {
-		SerializerIO_SetError (rdb, "entity has too many properties") ;
+		SerializerIO_SetError (rdb, EMSG_DECODE_ENTITY_PROPS) ;
 		return ;  // unreachable: SetError longjmps
 	}
 
@@ -227,7 +227,7 @@ void RdbLoadNodes_v14
 
 		// ids run below the header's live + deleted node count
 		if(unlikely(id >= id_limit)) {
-			SerializerIO_SetError(rdb, "node id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "node id",
 					(unsigned long long) id);
 			return;
 		}
@@ -237,7 +237,7 @@ void RdbLoadNodes_v14
 
 		// guard the per-node label count before it sizes the VLA below
 		if(unlikely(nodeLabelCount > label_count)) {
-			SerializerIO_SetError(rdb, "node has %llu labels, graph has %llu",
+			SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "node label count",
 					(unsigned long long) nodeLabelCount,
 					(unsigned long long) label_count);
 			return;
@@ -249,7 +249,7 @@ void RdbLoadNodes_v14
 			uint64_t l = SerializerIO_TryReadUnsigned(rdb);
 			// labels index the schema array; reject an out-of-range id
 			if(unlikely(l >= label_count)) {
-				SerializerIO_SetError(rdb, "node label %llu out of range",
+				SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "node label",
 						(unsigned long long) l);
 				return;
 			}
@@ -274,7 +274,7 @@ void RdbLoadNodes_v14
 	}
 
 	if(prev_graph_node_count + node_count != Graph_NodeCount (g)) {
-		SerializerIO_SetError(rdb, "decoded node count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded node");
 	}
 }
 
@@ -294,7 +294,7 @@ void RdbLoadDeletedNodes_v14
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = SerializerIO_TryReadUnsigned(rdb);
 		if(unlikely(id >= id_limit)) {
-			SerializerIO_SetError(rdb, "deleted node id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted node id",
 					(unsigned long long) id);
 			return;
 		}
@@ -303,7 +303,7 @@ void RdbLoadDeletedNodes_v14
 
 	if(deleted_node_count + prev_deleted_node_count !=
 	   Graph_DeletedNodeCount (g)) {
-		SerializerIO_SetError(rdb, "deleted node count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted node");
 	}
 }
 
@@ -368,18 +368,18 @@ void RdbLoadEdges_v14
 		// relation id indexes the multi_edge array and the schema. reject bad
 		// ids before any of them is used
 		if(unlikely(e.id >= edge_id_limit)) {
-			SerializerIO_SetError(rdb, "edge id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "edge id",
 					(unsigned long long) e.id);
 			return;
 		}
 		if(unlikely(e.src_id >= node_id_limit || e.dest_id >= node_id_limit)) {
 			SerializerIO_SetError(rdb,
-					"edge endpoint out of range (src %llu, dest %llu)",
+					EMSG_DECODE_ID_RANGE, "edge endpoint",
 					(unsigned long long) e.src_id, (unsigned long long) e.dest_id);
 			return;
 		}
 		if(unlikely((uint64_t) e.relationID >= rel_count)) {
-			SerializerIO_SetError(rdb, "edge relation id %d out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_RELATION_ID_RANGE, "edge relation id",
 					e.relationID);
 			return;
 		}
@@ -488,7 +488,7 @@ void RdbLoadEdges_v14
 	}
 
 	if(edge_count + prev_edge_count != Graph_EdgeCount (g)) {
-		SerializerIO_SetError(rdb, "decoded edge count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded edge");
 	}
 }
 
@@ -508,7 +508,7 @@ void RdbLoadDeletedEdges_v14
 	for (uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = SerializerIO_TryReadUnsigned (rdb) ;
 		if(unlikely(id >= id_limit)) {
-			SerializerIO_SetError(rdb, "deleted edge id %llu out of range",
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted edge id",
 					(unsigned long long) id);
 			return;
 		}
@@ -517,6 +517,6 @@ void RdbLoadDeletedEdges_v14
 
 	if(deleted_edge_count + prev_deleted_edge_count !=
 	   Graph_DeletedEdgeCount (g)) {
-		SerializerIO_SetError(rdb, "deleted edge count mismatch");
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted edge");
 	}
 }
