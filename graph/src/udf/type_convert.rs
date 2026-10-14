@@ -57,10 +57,29 @@ use crate::runtime::value::{Point, Value};
 /// it does anywhere else in the engine. A UDF can build an arbitrarily deep
 /// array or object in a loop (or one that contains itself), so without a bound
 /// the conversion exhausts the stack of the query thread and aborts the
-/// server. 1,024 is far beyond any nesting real data uses, and the tests
-/// convert values at exactly this depth in both directions on a thread with
-/// half the query pool's 2 MiB stack.
+/// server. 1,024 is far beyond any nesting real data uses.
+///
+/// The bound alone does not fit every build in a 2 MiB worker stack: a level
+/// costs about 0.9 KB on a release build but about 6 KB under ASAN, where
+/// 1,024 levels overflow. So each level also runs through [`with_stack`],
+/// which moves onto a fresh heap-allocated stack segment when the current one
+/// runs low.
 pub const MAX_UDF_VALUE_NESTING: usize = 1024;
+
+/// Stack that must remain before a conversion level runs on the current
+/// stack, with room for several sanitizer-sized levels.
+const STACK_RED_ZONE: usize = 128 * 1024;
+
+/// Size of each stack segment [`with_stack`] allocates when the current one
+/// runs low.
+const STACK_SEGMENT: usize = 1024 * 1024;
+
+/// Runs one conversion level, first switching to a new stack segment if less
+/// than [`STACK_RED_ZONE`] of the current one is left. The check is a
+/// stack-pointer comparison; a segment is only allocated by a deep value.
+fn with_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
 
 /// The error a conversion returns for a value nested past
 /// [`MAX_UDF_VALUE_NESTING`].
@@ -98,6 +117,17 @@ fn value_to_js_at<'js>(
     if matches!(value, Value::List(_) | Value::Map(_)) && depth >= MAX_UDF_VALUE_NESTING {
         return Err(udf_nesting_error());
     }
+    with_stack(|| value_to_js_level(ctx, value, graph, runtime, depth))
+}
+
+/// The body of [`value_to_js_at`], run on a stack with room for it.
+fn value_to_js_level<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value,
+    graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
+    depth: usize,
+) -> Result<JsValue<'js>, String> {
     match value {
         Value::Null => Ok(JsValue::new_null(ctx.clone())),
         Value::Bool(b) => b
@@ -230,6 +260,14 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
 /// or object past [`MAX_UDF_VALUE_NESTING`] is an error rather than a stack
 /// overflow; that is also the bound every other way into the engine holds.
 fn js_to_value_at(
+    val: JsValue<'_>,
+    depth: usize,
+) -> Result<Value, String> {
+    with_stack(|| js_to_value_level(val, depth))
+}
+
+/// The body of [`js_to_value_at`], run on a stack with room for it.
+fn js_to_value_level(
     val: JsValue<'_>,
     depth: usize,
 ) -> Result<Value, String> {
@@ -441,7 +479,8 @@ mod nesting_tests {
     use thin_vec::thin_vec;
 
     /// Run `f` in a fresh JS context on a thread with half the query pool's
-    /// 2 MiB stack, so a pass at the cap leaves a 2x margin on a real worker.
+    /// 2 MiB stack. The conversions grow their stack as they go, so a pass
+    /// here does not depend on the build's frame sizes (ASAN's are ~6x).
     fn in_js_on_worker_stack(f: impl FnOnce(&rquickjs::Ctx<'_>) + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(1 << 20)
@@ -547,7 +586,9 @@ mod nesting_tests {
             // At the cap: converts, and converts back to the same value.
             let v = nested(MAX_UDF_VALUE_NESTING);
             let js = value_to_js(ctx, &v, &g, None).unwrap();
-            assert_eq!(js_to_value(js).unwrap(), v);
+            // Compared by depth: `Value`'s `==` recurses too, and is not what
+            // is under test.
+            assert_eq!(list_depth(&js_to_value(js).unwrap()), MAX_UDF_VALUE_NESTING);
             // Past it: an error, not a stack overflow.
             assert_eq!(
                 value_to_js(ctx, &nested(MAX_UDF_VALUE_NESTING + 1), &g, None).map(|_| ()),
