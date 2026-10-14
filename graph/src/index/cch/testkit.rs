@@ -239,11 +239,11 @@ pub fn to_input(edges: &EdgeList) -> CchInput {
 fn unweighted_csr_from_pairs(
     n: usize,
     mut pairs: Vec<(u32, u32)>,
-) -> Csr {
+) -> Csr<u32> {
     pairs.sort_unstable();
     pairs.dedup();
 
-    let mut p = vec![0u64; n + 1];
+    let mut p = vec![0u32; n + 1];
     for &(u, _) in &pairs {
         p[u as usize + 1] += 1;
     }
@@ -261,7 +261,7 @@ fn weight_csr_from_pairs(
     let mut rows: Vec<(u32, u32, f64)> = pairs.collect();
     rows.sort_unstable_by_key(|&(u, v, _)| (u, v));
 
-    let mut p = vec![0u64; n + 1];
+    let mut p = vec![0u32; n + 1];
     for &(u, _, _) in &rows {
         p[u as usize + 1] += 1;
     }
@@ -588,7 +588,7 @@ pub fn assert_input_invariants(input: &CchInput) {
 /// `csr.p` has `n + 1` non-decreasing offsets ending at `csr.i.len()`, and
 /// every row of `csr.i` is sorted, duplicate-free and in range `0..n`.
 fn assert_csr_shape(
-    csr: &Csr,
+    csr: &Csr<u32>,
     n: usize,
     label: &str,
 ) {
@@ -618,7 +618,7 @@ fn assert_csr_shape(
 }
 
 /// `(row, col)` for every entry of `csr`, row by row.
-fn csr_pairs(csr: &Csr) -> Vec<(u32, u32)> {
+fn csr_pairs(csr: &Csr<u32>) -> Vec<(u32, u32)> {
     let mut pairs = Vec::with_capacity(csr.i.len());
     for row in 0..csr.n {
         for &col in csr.row(row) {
