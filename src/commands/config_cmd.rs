@@ -47,6 +47,12 @@ use crate::config::{
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
 
+/// C's reply for a name it does not know, in GET and SET alike.
+const UNKNOWN_FIELD: &str = "Unknown configuration field";
+
+/// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
+const JS_MIN_SIZE: i64 = 1_048_576;
+
 /// Get a single config value by name.
 fn config_get_one(
     ctx: &Context,
@@ -96,7 +102,7 @@ fn config_get_one(
         "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
         "JS_STACK_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
-        _ => return Err(format!("Unknown configuration field '{name}'")),
+        _ => return Err(UNKNOWN_FIELD.to_string()),
     };
     Ok(RedisValue::Array(vec![
         RedisValue::BulkString(name.to_string()),
@@ -127,12 +133,15 @@ fn validate_config_set(
             Ok(ConfigValue::Int(v))
         }
 
-        // Runtime-settable boolean configs
+        // Runtime-settable boolean configs: `yes` / `no` only, as C's
+        // `_Config_ParseYesNo`
         "ASYNC_DELETE" | "CMD_INFO" | "DELAY_INDEXING" => {
-            let v = match value.to_lowercase().as_str() {
-                "yes" | "1" | "true" => 1i64,
-                "no" | "0" | "false" => 0i64,
-                _ => return Err(format!("Failed to set config value {name} to {value}")),
+            let v = if value.eq_ignore_ascii_case("yes") {
+                1i64
+            } else if value.eq_ignore_ascii_case("no") {
+                0i64
+            } else {
+                return Err(format!("Failed to set config value {name} to {value}"));
             };
             Ok(ConfigValue::Int(v))
         }
@@ -156,6 +165,9 @@ fn validate_config_set(
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
+            if v < 0 {
+                return Err(format!("Failed to set config value {name} to {value}"));
+            }
             Ok(ConfigValue::Int(v))
         }
         "MAX_INFO_QUERIES" => {
@@ -169,17 +181,11 @@ fn validate_config_set(
             // accepted and reported back as the cap
             Ok(ConfigValue::Int(v.min(MAX_INFO_QUERIES_CAP)))
         }
-        "JS_HEAP_SIZE" | "JS_STACK_SIZE" => {
-            let v: i64 = value
-                .parse()
-                .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
-            if v < 0 {
-                return Err(format!(
-                    "Failed to set config value {name} to {value} - value must be non-negative"
-                ));
-            }
-            Ok(ConfigValue::Int(v))
-        }
+        // C: a positive integer of at least 1MB, same message for any bad value
+        "JS_HEAP_SIZE" | "JS_STACK_SIZE" => match value.parse::<i64>() {
+            Ok(v) if v >= JS_MIN_SIZE => Ok(ConfigValue::Int(v)),
+            _ => Err(format!("{name} must be at least 1MB ({JS_MIN_SIZE})")),
+        },
         // Read-only configs
         "THREAD_COUNT"
         | "INDEX_WORKER_THREADS"
@@ -191,7 +197,7 @@ fn validate_config_set(
         | "TEMP_FOLDER" => {
             Err("This configuration parameter cannot be set at run-time".to_string())
         }
-        _ => Err(format!("Unknown configuration field '{name}'")),
+        _ => Err(UNKNOWN_FIELD.to_string()),
     }
 }
 
@@ -303,11 +309,21 @@ pub fn graph_config(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    // Arity as C's `Graph_Config`: `GET <name>` exactly, `SET` with name/value pairs.
+    if args.len() < 3 {
+        return Err(redis_module::RedisError::WrongArity);
+    }
+    let argc = args.len();
     let mut args = args.into_iter().skip(1);
     let sub_command = args.next_str()?;
 
-    match sub_command.to_uppercase().as_str() {
+    // Names are ASCII case-insensitive (C's `strcasecmp`); full Unicode case
+    // folding would map e.g. a dotless `ı` onto `I`.
+    match sub_command.to_ascii_uppercase().as_str() {
         "GET" => {
+            if argc != 3 {
+                return Err(redis_module::RedisError::WrongArity);
+            }
             let name = args.next_str()?;
             if name == "*" {
                 // Return all configs in order.
@@ -319,15 +335,18 @@ pub fn graph_config(
                 }
                 Ok(RedisValue::Array(result))
             } else {
-                let upper = name.to_uppercase();
+                let upper = name.to_ascii_uppercase();
                 config_get_one(ctx, &upper).map_err(redis_module::RedisError::String)
             }
         }
         "SET" => {
+            if argc < 4 || argc % 2 == 1 {
+                return Err(redis_module::RedisError::WrongArity);
+            }
             // Collect all name-value pairs.
             let mut pairs = Vec::new();
             while let Ok(n) = args.next_str() {
-                let name = n.to_uppercase();
+                let name = n.to_ascii_uppercase();
                 let value = args.next_str().map_err(|_| {
                     redis_module::RedisError::Str("Missing value for configuration parameter")
                 })?;
