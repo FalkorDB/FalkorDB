@@ -1031,3 +1031,36 @@ class testAllShortestPaths():
 
         self._verify_dijkstra_all_pairs("dijkstra_dense", n, edges)
 
+
+    def test23_default_cost_is_one_per_relationship(self):
+        # without costProp (or when an edge lacks it) every relationship costs
+        # 1, as in C, so maxCost alone bounds the number of hops. Rust used to
+        # charge 0, which made maxCost a no-op and reported pathCost 0.
+        g = self.db.select_graph("default_cost")
+        g.query("""CREATE (s:N {id:0})-[:R {w:1}]->(a:N {id:1})-[:R {w:2}]->(b:N {id:2})-[:R {w:3}]->(s),
+                          (b)-[:R {w:4}]->(c:N {id:3}), (s)-[:R {w:10}]->(c),
+                          (a)-[:R {w:1}]->(c), (c)-[:R {w:1}]->(c)""")
+
+        def sp(extra):
+            return g.query(f"""
+                MATCH (a:N {{id: 0}}), (b:N {{id: 3}})
+                CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['R'],
+                                    weightProp: 'w' {extra}}})
+                YIELD path, pathWeight, pathCost
+                RETURN [n IN nodes(path) | n.id], pathWeight, pathCost
+                ORDER BY pathWeight""").result_set
+
+        # the only path within one hop is the direct (heavier) edge
+        self.env.assertEqual(sp(", maxCost: 1, pathCount: 0"), [[[0, 3], 10, 1]])
+        self.env.assertEqual(sp(", maxCost: 2, pathCount: 1"), [[[0, 1, 3], 2, 2]])
+        self.env.assertEqual(sp(", pathCount: 0"), [[[0, 1, 3], 2, 2]])
+        # a costProp missing from the edges also defaults to 1
+        self.env.assertEqual(sp(", maxCost: 1, costProp: 'nope', pathCount: 0"), [[[0, 3], 10, 1]])
+
+        result = g.query("""
+            MATCH (a:N {id: 0})
+            CALL algo.SSpaths({sourceNode: a, relTypes: ['R'], weightProp: 'w',
+                               maxCost: 1, pathCount: 0})
+            YIELD path, pathCost
+            RETURN [n IN nodes(path) | n.id], pathCost""").result_set
+        self.env.assertEqual(result, [[[0, 1], 1]])
