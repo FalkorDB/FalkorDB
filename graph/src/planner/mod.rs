@@ -30,6 +30,7 @@
 //! - **Sort/Skip/Limit**: Order and paginate results
 
 pub mod binder;
+mod hop_order;
 pub mod optimizer;
 pub mod tree;
 
@@ -39,6 +40,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
@@ -1912,31 +1914,16 @@ impl Planner {
             // the hops before it (the var-length hop that reaches it was
             // sorted later). Move it to just after the first later hop that
             // binds the node, so it becomes an ExpandInto on the bound node.
-            let mut i = 1;
-            while i < sorted_rels.len() {
-                let r = &sorted_rels[i];
-                let node = (r.from.alias.id, r.from.alias.scope_id);
-                let touches = |x: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>| {
-                    [&x.from, &x.to]
-                        .iter()
-                        .any(|n| (n.alias.id, n.alias.scope_id) == node)
-                };
-                let unbound_fixed_loop = r.from.alias.id == r.to.alias.id
-                    && r.min_hops.is_none()
-                    && r.all_shortest_paths == AllShortestPaths::No
-                    && !self.visited.contains(&node)
-                    && !sorted_rels[..i].iter().any(touches);
-                if unbound_fixed_loop
-                    && let Some(j) = sorted_rels[i + 1..]
-                        .iter()
-                        .position(|x| x.from.alias.id != x.to.alias.id && touches(x))
-                {
-                    let r = sorted_rels.remove(i);
-                    sorted_rels.insert(i + j + 1, r);
-                    continue;
-                }
-                i += 1;
-            }
+            let sorted_rels = self_loops_after_binders(
+                sorted_rels,
+                |r| HopShape {
+                    from: (r.from.alias.id, r.from.alias.scope_id),
+                    to: (r.to.alias.id, r.to.alias.scope_id),
+                    self_loop: r.from.alias.id == r.to.alias.id,
+                    fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
+                },
+                |node| self.visited.contains(node),
+            );
             let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
