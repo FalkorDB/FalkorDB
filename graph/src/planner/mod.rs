@@ -1034,6 +1034,19 @@ impl Planner {
         chain
     }
 
+    /// The variables an `Argument` tapping the current row binds: everything
+    /// visited so far. Read it *before* planning the correlated sub-plan,
+    /// which marks the pattern's own variables visited too.
+    ///
+    /// Passing this to [`Self::add_argument_to_leaves`] instead of `None`
+    /// lets `select_scan_node` see that an endpoint is already bound by the
+    /// outer row and start the traversal there. An opaque `Argument(None)`
+    /// hides that, so a labelled far endpoint would outscore the bound one
+    /// and the sub-plan would walk every relationship into that label.
+    fn argument_vars(&self) -> Option<Vec<(u32, u32)>> {
+        Some(self.visited.iter().copied().collect())
+    }
+
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
     fn build_pattern_sub_plan(
         &mut self,
@@ -1044,7 +1057,7 @@ impl Planner {
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
         self.verified_labels = saved_verified;
-        Self::add_argument_to_leaves(&mut sub_plan, None);
+        Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
         sub_plan
     }
 
@@ -1444,7 +1457,7 @@ impl Planner {
             sub_plan = tree!(IR::Filter(filter.clone()), sub_plan);
         }
 
-        Self::add_argument_to_leaves(&mut sub_plan, None);
+        Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
 
         // Build collect(result_expr) aggregation expression
         let collect_fn = get_functions()
@@ -2625,7 +2638,7 @@ impl Planner {
             let mut sub_plan = self.plan_match(&graph, None);
             self.visited = saved;
             self.verified_labels = saved_verified;
-            Self::add_argument_to_leaves(&mut sub_plan, None);
+            Self::add_argument_to_leaves(&mut sub_plan, self.argument_vars());
             if is_anti {
                 res = tree!(IR::AntiSemiApply, res, sub_plan);
             } else {
@@ -3050,10 +3063,10 @@ impl Planner {
                     // within its subplan (unmatched rows flow past them), so
                     // they are discarded once the clause is planned.
                     let saved_verified = self.verified_labels.clone();
+                    let argument_vars = self.argument_vars();
                     let mut match_plan = self.plan_match(&pattern, filter);
                     self.verified_labels = saved_verified;
-                    // If any pattern variable is already bound from a prior clause,
-                    Self::add_argument_to_leaves(&mut match_plan, None);
+                    Self::add_argument_to_leaves(&mut match_plan, argument_vars);
                     // If all pattern variables are already bound from a prior clause,
                     // we need an Apply (correlated join) so the inner plan re-evaluates
                     // the pattern for each incoming row.  Otherwise, the Optional node
