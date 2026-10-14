@@ -9,7 +9,6 @@
 #include "encoding_version.h"
 #include "encoder/encode_graph.h"
 #include "decoders/decode_graph.h"
-#include "decoders/decode_previous.h"
 
 /* Declaration of the type for redis registration. */
 RedisModuleType *GraphMetaRedisModuleType;
@@ -29,12 +28,13 @@ static void *_GraphMetaType_RdbLoad(RedisModuleIO *rdb, int encver) {
 		return NULL;
 	}
 
-	if(encver < GRAPH_ENCODING_LATEST_V) {
-		// previous version
-		gc = Decode_Previous(rdb, encver);
-	} else {
-		// current version
-		gc = RdbLoadGraph(rdb);
+	// single decode dispatcher for every supported version
+	gc = RdbLoadGraph(rdb, encver);
+
+	// decode failed (e.g. a short read inside this virtual key); the decoder
+	// already tore down any partial graph - abort the load without registering
+	if(gc == NULL) {
+		return NULL;
 	}
 
 	// add GraphContext to global array of graphs

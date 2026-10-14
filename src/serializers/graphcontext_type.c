@@ -13,7 +13,6 @@
 #include "encoder/encode_graph.h"
 #include "decoders/decode_graph.h"
 #include "../util/redis_version.h"
-#include "decoders/decode_previous.h"
 
 // forward declerations of the module event handler functions
 void ModuleEventHandler_AUXBeforeKeyspaceEvent(void);
@@ -52,11 +51,14 @@ static void *_GraphContextType_RdbLoad
 		// previous version
 	}
 
-	if(encver < GRAPH_ENCODING_LATEST_V) {
-		gc = Decode_Previous(rdb, encver);
-	} else {
-		// current version
-		gc = RdbLoadGraph(rdb);
+	// single decode dispatcher for every supported version
+	gc = RdbLoadGraph(rdb, encver);
+
+	// decode failed (e.g. a short read on a truncated payload or replication
+	// stream); the decoder already tore down any partial graph - abort the load
+	// without registering, Redis treats a NULL return as a clean load failure
+	if(gc == NULL) {
+		return NULL;
 	}
 
 	// add GraphContext to global array of graphs
@@ -92,10 +94,17 @@ static int _GraphContextType_AuxLoad
 	int when
 ) {
 	if (when == REDISMODULE_AUX_BEFORE_RDB) {
-		AUXLoad (rdb) ;
+		// abort on a short read or malformed UDF data so Redis fails the load
+		// cleanly instead of proceeding with half-decoded auxiliary state
+		if (!AUXLoad (rdb) || RedisModule_IsIOError (rdb)) {
+			return REDISMODULE_ERR;
+		}
 		ModuleEventHandler_AUXBeforeKeyspaceEvent();
 	} else {
 		RedisModule_LoadUnsigned (rdb) ;
+		if (RedisModule_IsIOError (rdb)) {
+			return REDISMODULE_ERR;
+		}
 		ModuleEventHandler_AUXAfterKeyspaceEvent();
 	}
 

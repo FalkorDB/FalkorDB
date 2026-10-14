@@ -7,4 +7,7 @@
 #pragma once
 
 #define GRAPH_ENCODING_LATEST_V  20  // latest RDB encoding version
-#define GRAPH_DECODE_MIN_V       10  // min backward compatible version
+#define GRAPH_DECODE_MIN_V       14  // min backward compatible version
+                                     // (14 = FalkorDB v4.0; versions 10-13 are
+                                     // RedisGraph 2.8-2.12 and are no longer
+                                     // decodable)

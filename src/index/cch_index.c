@@ -8,6 +8,7 @@
 #include "../value.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
+#include "../errors/error_msgs.h"
 #include "../graph/tensor/tensor.h"
 #include "../serializers/serializer_io.h"
 
@@ -175,12 +176,21 @@ CCHIndex *CCHIndex_RdbLoad
 	// definition only: relationship types + weight attribute. the hierarchy is
 	// left unbuilt (cch == NULL) and rebuilt from the graph at decode
 	// finalization, once the whole graph has been materialized
-	uint n = SerializerIO_ReadUnsigned (io) ;
+
+	uint n = SerializerIO_TryReadUnsigned (io) ;
 	RelationID *rels = arr_new (RelationID, n) ;
 	for (uint i = 0 ; i < n ; i++) {
-		arr_append (rels, (RelationID) SerializerIO_ReadUnsigned (io)) ;
+		arr_append (rels, (RelationID) SerializerIO_TryReadUnsigned (io)) ;
 	}
-	AttributeID weight_attr = (AttributeID) SerializerIO_ReadUnsigned (io) ;
+	AttributeID weight_attr = (AttributeID) SerializerIO_TryReadUnsigned (io) ;
+
+	// an index covers at least one relationship type (a zero count would also
+	// trip CCHIndex_New's n > 0 assertion)
+	if (n == 0) {
+		SerializerIO_SetError (io, EMSG_CCH_INDEX_NO_REL_TYPES) ;
+		arr_free (rels) ;
+		return NULL ;
+	}
 
 	CCHIndex *idx = CCHIndex_New (rels, arr_len (rels), weight_attr) ;
 

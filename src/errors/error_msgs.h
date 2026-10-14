@@ -144,4 +144,26 @@
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
 #define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use the GRAPH.CONSTRAINT command instead"
 #define EMSG_WRITE_QUEUE_FULL "Write queue is full: cannot accept additional write queries at this time. Please retry later."
+#define EMSG_CCH_INDEX_NO_REL_TYPES "CCH index without relationship types"
+#define EMSG_DECODER_UNKNOWN_PAYLOAD "unknown payload type"
+#define EMSG_VALUE_UNKNOWN_TYPE "unknown value type %llu"
+#define EMSG_UNSUPPORTED_INDEX_LANG "unsupported index language"
 
+// RDB decoder: malformed-payload / short-read diagnostics shared by all
+// decoder versions (v14..v20). the varying entity kind is passed as a short
+// descriptor argument rather than baked into a distinct message
+#define EMSG_DECODE_LIMIT               "%s %llu exceeds limit"
+#define EMSG_DECODE_ID_RANGE            "%s %llu out of range"
+#define EMSG_DECODE_RELATION_ID_RANGE   "%s %d out of range"
+#define EMSG_DECODE_COUNT_MISMATCH      "%s count mismatch"
+#define EMSG_DECODE_BUFFER              "deleted %s buffer size mismatch"
+#define EMSG_DECODE_MATRIX_ORDER        "%s matrix out of order"
+#define EMSG_DECODE_MATRIX_TWICE        "%s matrix decoded twice"
+#define EMSG_DECODE_MATRIX_MALFORMED    "malformed matrix: %s"
+#define EMSG_DECODE_GRB                 "%s: GraphBLAS error %d"
+#define EMSG_DECODE_LABEL_MATRIX_COUNT  "%llu label matrices for %llu labels"
+#define EMSG_DECODE_CONSTRAINT          "invalid constraint: %s"
+#define EMSG_DECODE_INDEX               "invalid index: %s"
+#define EMSG_DECODE_SCHEMA              "duplicate or out of order %s"
+#define EMSG_DECODE_INVALID_PROPERTY_VALUE "invalid property value type"
+#define EMSG_DECODE_ENTITY_PROPS        "entity has too many properties"

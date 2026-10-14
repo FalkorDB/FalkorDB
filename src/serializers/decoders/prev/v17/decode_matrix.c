@@ -34,7 +34,7 @@ static void _DecodeTensors
 	*n_tensors = 0;
 
 	// read number of tensors
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
 
 	// no tensors, simply return
 	if(n == 0) {
@@ -44,17 +44,23 @@ static void _DecodeTensors
 	// decode and set tensors
 	for(uint64_t i = 0; i < n; i++) {
 		// read tensor i,j indicies
-		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
-		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index i = SerializerIO_TryReadUnsigned(rdb);
+		GrB_Index j = SerializerIO_TryReadUnsigned(rdb);
 
-		// read tensor blob
+		// read tensor blob (a short read jumps to the landing pad)
 		GrB_Index blob_size;
-		void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
+		void *blob = SerializerIO_TryReadBuffer(rdb, (size_t*)&blob_size);
 		ASSERT(blob != NULL);
 
 		GrB_Vector u;
 		GrB_Info info = GxB_Vector_deserialize(&u, NULL, blob, blob_size, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		rm_free(blob);
+		if (info != GrB_SUCCESS) {
+			SerializerIO_SetError(rdb,
+					EMSG_DECODE_GRB, "deserializing tensor",
+					(int) info, (unsigned long long) i, (unsigned long long) j);
+			return;
+		}
 
 		// update number of elements loaded
 		GrB_Index nvals;
@@ -65,9 +71,13 @@ static void _DecodeTensors
 		// set tensor
 		uint64_t v = SET_MSB((uint64_t)(uintptr_t) u);
 		info = GrB_Matrix_setElement_UINT64(A, v, i, j);
-		ASSERT(info == GrB_SUCCESS);
-
-		rm_free(blob);
+		if (info != GrB_SUCCESS) {
+			GrB_Vector_free(&u);
+			SerializerIO_SetError(rdb,
+					EMSG_DECODE_GRB, "setting tensor",
+					(int) info, (unsigned long long) i, (unsigned long long) j);
+			return;
+		}
 	}
 
 	// set number of loaded tensors
@@ -87,9 +97,9 @@ static GrB_Matrix _DecodeMatrix
 	// read blob
 	//--------------------------------------------------------------------------
 
-	// read matrix blob
+	// read matrix blob (a short read jumps to the landing pad)
 	GrB_Index blob_size;
-	void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
+	void *blob = SerializerIO_TryReadBuffer(rdb, (size_t*)&blob_size);
 	ASSERT(blob != NULL);
 
 	//--------------------------------------------------------------------------
@@ -98,9 +108,12 @@ static GrB_Matrix _DecodeMatrix
 
 	GrB_Matrix A;
 	GrB_Info info = GxB_Matrix_deserialize(&A, NULL, blob, blob_size, NULL);
-	ASSERT(info == GrB_SUCCESS);
-
 	rm_free(blob);
+	if (info != GrB_SUCCESS) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_GRB, "deserializing a matrix",
+				(int) info);
+		return NULL;
+	}
 
 	return A;
 }
@@ -121,16 +134,28 @@ void RdbLoadLabelMatrices_v17
 
 	GrB_Info info;
 
-	// read number of label matricies
-	int n = SerializerIO_ReadUnsigned(rdb);
-	
+	// read number of label matricies: one per label
+	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t label_count = Graph_LabelTypeCount(g);
+	if(n != label_count) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_LABEL_MATRIX_COUNT,
+				(unsigned long long) n, (unsigned long long) label_count);
+		return;
+	}
+
 	// decode each label matrix
-	for(int i = 0; i < n; i++) {
-		// read label ID
-		LabelID l = SerializerIO_ReadUnsigned(rdb);
+	for(uint64_t i = 0; i < n; i++) {
+		// read label ID, validated before it indexes the label array
+		uint64_t l = SerializerIO_TryReadUnsigned(rdb);
+		if(l >= label_count) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "label matrix id",
+					(unsigned long long) l);
+			return;
+		}
 
 		// decode matrix
 		GrB_Matrix L = _DecodeMatrix(rdb);
+		if(L == NULL) return;  // SetError already latched (unarmed safety)
 
 		//----------------------------------------------------------------------
 		// update graph's label matrix with L
@@ -149,7 +174,7 @@ void RdbLoadLabelMatrices_v17
 void RdbLoadRelationMatrices_v17
 (
 	SerializerIO rdb,  // RDB
-	Graph *g           // graph 
+	Graph *g           // graph
 ) {
 	// format:
 	//   relation id X N
@@ -165,11 +190,17 @@ void RdbLoadRelationMatrices_v17
 
 	// decode relationship matrices
 	for(int i = 0; i < n; i++) {
-		// read relation ID
-		RelationID r = SerializerIO_ReadUnsigned(rdb);
+		// read relation ID, validated before it indexes the relation array
+		uint64_t r = SerializerIO_TryReadUnsigned(rdb);
+		if(r >= (uint64_t) n) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "relation matrix id",
+					(unsigned long long) r);
+			return;
+		}
 
 		// decode matrix
 		GrB_Matrix R = _DecodeMatrix(rdb);
+		if(R == NULL) return;  // SetError already latched (unarmed safety)
 
 		// decode tensors
 		uint64_t n_elem    = 0;  // number of tensor edges
@@ -207,6 +238,7 @@ void RdbLoadAdjMatrix_v17
 	ASSERT (rdb != NULL) ;
 
 	GrB_Matrix A = _DecodeMatrix (rdb) ;
+	if(A == NULL) return;  // SetError already latched (unarmed safety)
 
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
 	ASSERT (adj != NULL) ;
@@ -229,6 +261,7 @@ void RdbLoadLblsMatrix_v17
 	ASSERT(rdb != NULL);
 
 	GrB_Matrix A = _DecodeMatrix(rdb);
+	if(A == NULL) return;  // SetError already latched (unarmed safety)
 
 	Delta_Matrix lbl = Graph_GetNodeLabelMatrix (g) ;
 	ASSERT (lbl != NULL) ;
@@ -237,4 +270,3 @@ void RdbLoadLblsMatrix_v17
 	GrB_Info info = Delta_Matrix_setM (lbl, &A) ;
 	ASSERT (info == GrB_SUCCESS) ;
 }
-
