@@ -465,3 +465,87 @@ fn rebuild_with_cp_split(
         remaining_conjuncts,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, Dfs, DynTree, NodeRef};
+
+    use super::push_filters_down;
+    use crate::parser::ast::{ExprIR, Variable};
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+
+    /// One conjunct, written out node by node in pre-order: `a.p = 1` is
+    /// `= property(p) a 1`.
+    fn render(expr: &DynTree<ExprIR<Variable>>) -> String {
+        expr.root()
+            .indices::<Dfs>()
+            .map(|idx| expr.node(idx).data().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Plans `query` and merges its stacked filters, returning the conjuncts
+    /// of each surviving `Filter`, rendered and sorted.
+    ///
+    /// Only the Graph-free part of the pipeline runs. `push_filters_down` is
+    /// the pass that flattens stacked filters into one `And`, which is where a
+    /// duplicated predicate would become visible.
+    fn filters_after_merge(query: &str) -> Vec<Vec<String>> {
+        // Binding a call resolves it against the process-global registry.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+        push_filters_down(&mut plan);
+
+        plan.root()
+            .indices::<Bfs>()
+            .filter_map(|idx| match plan.node(idx).data() {
+                IR::Filter(f) => {
+                    let mut conjuncts: Vec<String> = if matches!(f.root().data(), ExprIR::And) {
+                        f.root()
+                            .children()
+                            .map(|c| render(&c.clone_as_tree()))
+                            .collect()
+                    } else {
+                        vec![render(f)]
+                    };
+                    conjuncts.sort();
+                    Some(conjuncts)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Both endpoints carrying attrs is two distinct predicates, not a
+    /// duplicate. The planner stacks one `Filter` per endpoint and the pass
+    /// merges them, so the merge must keep each one — not two copies of one.
+    #[test]
+    fn distinct_endpoint_attrs_both_survive() {
+        assert_eq!(
+            filters_after_merge("MATCH (a:L {p: 1})-[:R]->(b:L {q: 2}) RETURN b"),
+            vec![vec!["= property(p) a 1", "= property(q) b 2"]],
+        );
+    }
+
+    /// A user-written duplicate is legal Cypher and must be left alone: it is
+    /// the planner's duplicates this file cares about, and the merge point
+    /// cannot tell the two apart — another reason the check lives in a test.
+    /// The inline `{p: 0}` gives the planner a `Filter` of its own under the
+    /// WHERE, so the duplicate goes through the merge rather than around it.
+    #[test]
+    fn user_written_duplicate_is_not_touched() {
+        assert_eq!(
+            filters_after_merge("MATCH (a:L {p: 0}) WHERE a.p = 1 AND a.p = 1 RETURN a"),
+            vec![vec![
+                "= property(p) a 0",
+                "= property(p) a 1",
+                "= property(p) a 1",
+            ]],
+        );
+    }
+}
