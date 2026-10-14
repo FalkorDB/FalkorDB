@@ -10,6 +10,12 @@
 # x64/arm64v8, the exact .so the runtime image ships) and uploads it as
 # `falkordb-<suffix>.so` together with its `.sha256`. Cells are independent
 # (fail-fast: false) and run on native runners (no QEMU) for maximum parallelism.
+#
+# Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
+# `server` target, the falkordb-server image for that OS, and start it to check
+# that the module loads and answers a query. With `export_images` the image is
+# uploaded too, as `image-falkordb-server-<suffix>`, for the release to push.
+# x64/arm64v8 have no such step: the merge queue builds the Debian images.
 
 name: Build artifacts (reusable)
 
@@ -37,12 +43,24 @@ on:
         required: false
         type: boolean
         default: false
+      export_images:
+        description: >-
+          Upload the per-OS server images as workflow artifacts (the release
+          pushes them). Without it they are built and tested, then dropped.
+        required: false
+        type: boolean
+        default: false
     outputs:
       suffixes:
         description: >-
           JSON array of the suffixes this run built. The release's publish step
           requires an artifact for every one of them.
         value: ${{ jobs.cells.outputs.suffixes }}
+      image_suffixes:
+        description: >-
+          JSON array of the suffixes this run built a server image for. The
+          release's image push requires every one of them.
+        value: ${{ jobs.cells.outputs.image_suffixes }}
 
 jobs:
   cells:
@@ -51,6 +69,7 @@ jobs:
     outputs:
       cells: ${{ steps.select.outputs.cells }}
       suffixes: ${{ steps.select.outputs.suffixes }}
+      image_suffixes: ${{ steps.select.outputs.image_suffixes }}
     steps:
       - name: Select platforms
         id: select
@@ -58,15 +77,16 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, arch, platform, runner, dockerfile, build_image, cxx}.
+          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
-          # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder.
+          # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
+          # `image` says the Dockerfile's `server` target is built here too.
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true}
           ]'
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
@@ -80,11 +100,13 @@ jobs:
             CELLS=$(printf '%s' "$ALL" | jq -c --argjson want "$WANT" '[ .[] | select(.suffix as $s | $want | index($s)) ]')
           fi
           SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]')
+          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image) | .suffix ]')
           {
             echo "cells=$CELLS"
             echo "suffixes=$SUFFIXES"
+            echo "image_suffixes=$IMAGE_SUFFIXES"
           } >> "$GITHUB_OUTPUT"
-          echo "Building: $SUFFIXES"
+          echo "Building: $SUFFIXES (server images: $IMAGE_SUFFIXES)"
 
   build:
     needs: cells
@@ -169,4 +191,63 @@ jobs:
           name: falkordb-${{ matrix.suffix }}.so
           path: dist/falkordb-${{ matrix.suffix }}.so*
           retention-days: 7
+          compression-level: 0
+
+      # The `server` target reuses the `builder` stage the step above just
+      # built, from this runner's build cache, so the module is not compiled
+      # twice and the image ships the same .so as the release asset.
+      - name: Build falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: server
+          platforms: ${{ matrix.platform }}
+          tags: falkordb-server:${{ matrix.suffix }}
+          outputs: type=docker,dest=${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ matrix.build_image }}
+            CXX=${{ matrix.cxx }}
+          cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
+
+      # Start the image as a user would: the module loads, answers a query, and
+      # run.sh has dropped redis-server to the falkordb user (uid 999).
+      - name: Smoke-test falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          TAR: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+        run: |
+          set -euo pipefail
+          docker load --input "$TAR"
+          docker run -d --name smoke "falkordb-server:${SUFFIX}"
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; fi; docker rm -f smoke >/dev/null' EXIT
+          # Outputs are captured before matching: `docker exec ... | grep -q`
+          # under pipefail reports 141 when grep exits early.
+          for i in $(seq 1 30); do
+            if [ "$(docker exec smoke redis-cli ping 2>/dev/null || true)" = "PONG" ]; then break; fi
+            if [ "$i" -eq 30 ]; then echo "::error::redis-server did not start"; exit 1; fi
+            sleep 1
+          done
+          MODULES=$(docker exec smoke redis-cli MODULE LIST)
+          if ! grep -qx graph <<<"$MODULES"; then echo "::error::the graph module is not loaded"; exit 1; fi
+          GOT=$(docker exec smoke redis-cli GRAPH.QUERY smoke "UNWIND range(1, 10) AS x RETURN sum(x)" | sed -n 2p)
+          if [ "$GOT" != "55" ]; then echo "::error::expected 55, got '$GOT'"; exit 1; fi
+          # PID 1 is redis-server: run.sh and gosu both exec into it.
+          UIDS=$(docker exec smoke sh -c 'while read -r k v _; do if [ "$k" = Uid: ]; then echo "$v"; fi; done < /proc/1/status')
+          if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
+          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
+
+      - name: Upload falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image && inputs.export_images
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-falkordb-server-${{ matrix.suffix }}
+          path: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          retention-days: 1
+          # The tarball's layers are already gzip-compressed.
           compression-level: 0

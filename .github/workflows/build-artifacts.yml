@@ -1,6 +1,8 @@
-# Build the shared-library (.so) artifacts for every release platform WITHOUT
-# releasing anything, so a broken platform shows up on the pull request that
-# broke it instead of at release time. Uploads workflow artifacts only.
+# Build the shared-library (.so) artifacts for every release platform, and the
+# rhel9/amazonlinux2023 server images, WITHOUT releasing anything, so a broken
+# platform shows up on the pull request that broke it instead of at release
+# time. The images are started and queried, never pushed; only the .so files
+# are uploaded, as workflow artifacts.
 #
 # Triggers:
 #   - pull_request → runs when the PR changes something the artifact builds
@@ -69,11 +71,12 @@ jobs:
           # What the artifact Dockerfiles consume beyond ordinary Rust source:
           # the Cargo manifests, lockfile, build scripts and cargo config (how
           # new native code and link flags arrive), their own files, the libomp
-          # and native-deps builds, and the submodules those build. Plain .rs
-          # changes are left out. build/Dockerfile (the Debian toolchain) is
-          # not here: the x64/arm64v8 cells build on the PUBLISHED toolchain,
-          # and rust-pr.yml already rebuilds it when it changes.
-          PATTERN='^(Cargo\.(toml|lock)|graph/Cargo\.toml|(graph/)?build\.rs|\.cargo/config\.toml|build/libomp\.sh|build/runtime/Dockerfile(\.rhel9|\.amazonlinux2023)?|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/(_build-artifacts|build-artifacts)\.yml)$'
+          # and native-deps builds, the submodules those build, and the scripts
+          # the per-OS server images run. Plain .rs changes are left out.
+          # build/Dockerfile (the Debian toolchain) is not here: the x64/arm64v8
+          # cells build on the PUBLISHED toolchain, and rust-pr.yml already
+          # rebuilds it when it changes.
+          PATTERN='^(Cargo\.(toml|lock)|graph/Cargo\.toml|(graph/)?build\.rs|\.cargo/config\.toml|build/libomp\.sh|build/runtime/Dockerfile(\.rhel9|\.amazonlinux2023)?|build/runtime/(run|gen-certs|gosu-setpriv)\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/(_build-artifacts|build-artifacts)\.yml)$'
           # Materialise the list first: `gh ... | grep -q` under pipefail
           # reports 141 on an early match (see rust-pr.yml).
           gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' > /tmp/changed-files.txt
