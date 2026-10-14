@@ -24,14 +24,13 @@ use std::sync::Arc;
 use crate::graph::graph::{Graph, RelationshipId};
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     pending::Pending,
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
@@ -124,7 +123,6 @@ impl<'a> ExpandIntoOp<'a> {
     /// `from` carries all the required labels.
     #[allow(clippy::too_many_arguments)]
     fn expand_row(
-        runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         synthetic_label: bool,
         emit_relationship: bool,
@@ -168,13 +166,9 @@ impl<'a> ExpandIntoOp<'a> {
         }
 
         let env = BatchRow::new(batch, row_idx);
-        let filter_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.attrs,
-            rp.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let has_edge_filter = matches!(filter_attrs, Value::Map(ref m) if !m.is_empty());
+        // An edge predicate is applied by the Filter above. The planner sets
+        // `emit_relationship` for such an edge, so every candidate edge is
+        // emitted for it to test rather than one representative per pair.
 
         // Edge directions to probe: forward, plus reverse when the pattern is
         // bidirectional and not a self-loop. NodeId is Copy, so this fixed array
@@ -200,7 +194,7 @@ impl<'a> ExpandIntoOp<'a> {
         for &(edge_src, edge_dst) in &pairs[..npairs] {
             let mat_src = u64::from(edge_src);
             let mat_dst = u64::from(edge_dst);
-            if !emit_relationship && !has_edge_filter {
+            if !emit_relationship {
                 // One row per pattern pair, as in C: an edge found in the
                 // forward direction already covers the reverse one.
                 if !row_edges.is_empty() {
@@ -233,25 +227,6 @@ impl<'a> ExpandIntoOp<'a> {
                     }
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                         continue;
-                    }
-                    if let Value::Map(ref filter_map) = filter_attrs
-                        && !filter_map.is_empty()
-                    {
-                        let mut matches = true;
-                        for (attr, avalue) in filter_map.iter() {
-                            if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
-                                if *avalue == pvalue {
-                                    continue;
-                                }
-                                matches = false;
-                                break;
-                            }
-                            matches = false;
-                            break;
-                        }
-                        if !matches {
-                            continue;
-                        }
                     }
                     row_edges.push(id);
                 }
@@ -298,7 +273,6 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
                     Self::expand_row(
-                        runtime,
                         rp,
                         synthetic_label,
                         emit_relationship,
