@@ -55,6 +55,31 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 >Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
 
+## Recent changes
+
+Fix for an aggregating `WITH` dropping a grouped node before the next `MATCH` ([FalkorDB#3333](https://github.com/FalkorDB/FalkorDB/issues/3333)). The change is on the fork branch [`fix/issue-3332-3337-3333-3331`](https://github.com/sonawanelalit574/FalkorDB/tree/fix/issue-3332-3337-3333-3331).
+
+On a path `(:V {id:1})-[:R]->(:V {id:2})-[:R]->(:V {id:3})-[:R]->(:V {id:4})`, this query returned no rows. Neo4j and Memgraph return `3, 1, 4`.
+
+```cypher
+MATCH (a:V {id: 1})-[:R]->(x:V)-[:R]->(m:V)
+WITH m, count(*) AS c1
+MATCH (m)-[r:R]->(b:V {id: 4})
+RETURN m.id, c1, b.id
+```
+
+The same pattern written as one `MATCH` was already correct. The split form lost `m`.
+
+**Cause.** A row slot is addressed by variable id only. `WITH` starts a new scope, so ids start again at 0 and the next clause reuses numbers from the previous scope. `Aggregate` copied the pre-projection grouping key onto the output row, leaving the old node `m` bound in a slot the next `MATCH` assigned to `b`. `CondTraverse` treated `b` as already bound to that node and rejected the real neighbor, so the query returned no rows.
+
+**Code.**
+
+* `graph/src/runtime/ops/aggregate.rs` — the output row keeps only post-projection bindings (grouped names, aggregate results, and variables copied forward). The previous scope's node is still visible while the aggregate expression is evaluated, and it is not published downstream. Grouping keys are restored after accumulator slots are cleared, because those ids can collide too.
+* `graph/src/runtime/ops/cond_traverse.rs` — an endpoint counts as bound only when its bound bit is set. A leftover value in a reused slot is not treated as the destination node.
+* `tests/flow/test_aggregation.py` — `test_groupby_node_survives_into_next_match` expects `[[3, 1, 4]]`.
+
+The flow test was not run in this workspace. A FalkorDB build needs GraphBLAS, LAGraph, and RediSearch, and those submodules are not checked out here.
+
 ## GET STARTED
 
 ### Step 1
