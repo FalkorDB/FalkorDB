@@ -144,7 +144,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build the `artifact` stage and export just the .so to ./artifact-out.
+      # Build the `artifact` stage and export just the .so to artifact-out/.
       # The Dockerfile's `builder` stage enforces the single-.so self-containment
       # contract (no dynamic libomp/graphblas/redisearch deps; OpenMP static), so
       # a successful build is also the authoritative dependency check — run in the
@@ -160,7 +160,10 @@ jobs:
           file: ${{ matrix.dockerfile }}
           target: artifact
           platforms: ${{ matrix.platform }}
-          outputs: type=local,dest=artifact-out
+          # Outside the checkout, as is dist/ below: the checkout is the build
+          # context, and anything written into it changes what `COPY . .`
+          # copies, so the server image build would compile the module again.
+          outputs: type=local,dest=${{ runner.temp }}/artifact-out
           provenance: false
           build-args: |
             BUILD_IMAGE=${{ matrix.build_image }}
@@ -178,18 +181,20 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
         run: |
           set -euo pipefail
-          test -f "artifact-out/falkordb.so" || { echo "::error::artifact-out/falkordb.so missing"; exit 1; }
-          mkdir -p dist
-          cp "artifact-out/falkordb.so" "dist/falkordb-${SUFFIX}.so"
-          ( cd dist && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
-          echo "Built falkordb-${SUFFIX}.so ($(du -h "dist/falkordb-${SUFFIX}.so" | cut -f1))"
-          cat "dist/falkordb-${SUFFIX}.so.sha256"
+          OUT="$RUNNER_TEMP/artifact-out"
+          DIST="$RUNNER_TEMP/dist"
+          test -f "$OUT/falkordb.so" || { echo "::error::artifact-out/falkordb.so missing"; exit 1; }
+          mkdir -p "$DIST"
+          cp "$OUT/falkordb.so" "$DIST/falkordb-${SUFFIX}.so"
+          ( cd "$DIST" && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "$DIST/falkordb-${SUFFIX}.so" | cut -f1))"
+          cat "$DIST/falkordb-${SUFFIX}.so.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: falkordb-${{ matrix.suffix }}.so
-          path: dist/falkordb-${{ matrix.suffix }}.so*
+          path: ${{ runner.temp }}/dist/falkordb-${{ matrix.suffix }}.so*
           retention-days: 7
           compression-level: 0
 
