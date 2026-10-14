@@ -12,6 +12,7 @@ import FalkorValueMath.Trig
 import FalkorValueMath.Procedures
 import FalkorValueMath.ConvReg
 import FalkorValueMath.IndexDdl
+import FalkorValueMath.Nesting
 /-!
 # Value arithmetic, math/conversion functions and function type checking (FalkorDB-rs)
 
@@ -37,7 +38,8 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow`, `cAbs` (MathFns) | math.rs:46-342; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
-| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode/decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :1899/:1985, :1887, :1591 |
+| `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :2068 (decode before #3339), :1887, :1591 |
+| `MAX_VALUE_NESTING`, `valueNestingError`, `decodeValue`, `decode`, `validateProperty`/`validateListProperty`/`isValidProperty` (Nesting) | value.rs:62, :67, :2166, :2154; pending.rs:69-131 |
 
 ## Main theorems
 
@@ -58,8 +60,23 @@ arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
 `toFloatList_eq`, `isEmpty_no_panic`. SelfCompare: **`mayFail_sound`** (the
 `may_fail_self_match` pre-filter is sound), `isNeverEqual_iff`,
 **`chunked_eq_firstDiff`** (16-lane block scan = first-difference scan). Misc:
-**`decode_encode`** (v19 codec roundtrip for every storable value), `readVec_vecBytes`,
+`pre3339_decode_encode` (v19 codec roundtrip, old decoder), `readVec_vecBytes`,
 **`heap_le_amortized`**, `shares_le`, `fmtDuration_fields`.
+
+## #3339 value nesting (Nesting.lean; b080a44c1, GHSA-mwvh-8fq5-x2j8, issue #2722)
+
+`decodeValue_refuses_past_cap` (a call past `MAX_VALUE_NESTING` reads nothing and returns the
+nesting error), **`decode_reach`** (whatever the input, no `decode_value` call is made deeper
+than `MAX + 1`), **`decodeValue_agrees`** (otherwise exactly the pre-#3339 decoder: `Ok` iff
+the old decoder succeeds with a value `within` the cap), `decode_encode` /
+`decodeValue_encode_deep` (on encoded storable values: round-trip iff `within`, else the
+nesting error), `within_of_depth` / `not_within_of_depth` (depth ≤ MAX always loads, ≥ MAX+2
+never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX), **`stored_roundtrip`**
+(every accepted property — vectors < 2³² — saves and loads back), `validateProperty_nest`.
+History: `pre3339_isValid_any_depth`, `pre3339_decode_any_depth`, `decode_nest_deep`.
+Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
+`MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
+`GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
 
 ## Confirmed bugs (Rust repro + live Rust vs C)
 

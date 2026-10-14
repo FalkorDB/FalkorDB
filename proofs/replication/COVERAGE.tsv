@@ -42,7 +42,7 @@ graph/src/effects/v3/format.rs	EffectsPayload::build_index	144	PROVEN	faithful: 
 graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	154	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
 graph/src/runtime/ops/commit.rs	CommitOp::new	45	NOT COVERED	operator constructor; not in this abstract model (PROVEN in proofs/pending_commit)
 graph/src/runtime/ops/commit.rs	CommitOp::next	69	MODELLED	drives commit (abstract); end_segment -> roll_id_batches since #2846 (assumption 4 in header); faithful: proofs/pending_commit; effects gate proofs/effects_emit_apply commitShips_eq_iff
-graph/src/runtime/pending.rs	Pending::commit	1080	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
+graph/src/runtime/pending.rs	Pending::commit	1114	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
 graph/src/graph/graph.rs	Graph::get_label_id_mut	1173	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
 graph/src/graph/graph.rs	Graph::node_id_bound	1607	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
 graph/src/graph/graph.rs	Graph::create_nodes	1646	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state

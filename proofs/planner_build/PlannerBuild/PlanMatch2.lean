@@ -1,4 +1,5 @@
 import PlannerBuild.PlanMatch
+import PlannerBuild.HopOrder
 /-
 # `plan_match`: components, bound-label filters, path elision, joining
 
@@ -14,8 +15,21 @@ are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
 -/
 namespace PlannerBuild.E
 
-/-- The operator of a later hop (mod.rs:2213-2293), stacked on `res`. -/
+/-- The operator of a later hop (mod.rs:2230-2310), stacked on `res`. An unbound self-loop
+scans its node on top of `res` (#3102). -/
 def chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
+  match r.kind with
+  | .shortest => .shortest (opRel r) [res]
+  | .varLen => .cvlt (opRel r) (r.frm.alias.id != r.to.alias.id && st.bound r.frm.alias && st.bound r.to.alias)
+      none [res]
+  | .fixed =>
+    if r.frm.alias.id = r.to.alias.id then .expandInto (opRel r) (opEmit c lw r)
+      (if st.bound r.frm.alias then [res] else [scanOn (opRel r).frm res])
+    else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) [res]
+    else .condTr (opRel r) (opEmit c lw r) [res]
+
+/-- Historical (4a4f2a72f mod.rs:2245-2262): the unbound self-loop's `ExpandInto(scan, res)`. -/
+def pre3102_chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
   match r.kind with
   | .shortest => .shortest (opRel r) [res]
   | .varLen => .cvlt (opRel r) (r.frm.alias.id != r.to.alias.id && st.bound r.frm.alias && st.bound r.to.alias)
@@ -54,13 +68,21 @@ theorem chainRel_core (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) :
     (chainRel st c lw res r).1.core = chainOp st c lw res r := by
   rw [chainRel, topFilters_core, chainOp_core]
 
-/-- Bug 4's shape: an unbound self-loop hop after other hops is
-`ExpandInto(scan, res)`, and the runtime only builds child 0 (Match.lean
-`selfloop_ignores_chain`). PR #3102 plans it after the hop that binds the node. -/
+/-- **#2999 fixed by #3102 (61284ea4f)**: an unbound self-loop hop after other hops is
+`ExpandInto(Scan(res))` — one child, the chain under the scan — so every earlier hop runs
+(Match.lean `selfloop_scan_keeps_chain`). (`orderRels` also moves such a hop behind the hop that
+binds its node whenever one comes later, so this shape is now only the no-binder case.) -/
 theorem chainRel_selfloop_unbound (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
     (hk : r.kind = .fixed) (hs : r.frm.alias.id = r.to.alias.id) (hb : st.bound r.frm.alias = false) :
-    (chainRel st c lw res r).1.core = .expandInto (opRel r) (opEmit c lw r) [scanOf (opRel r).frm, res] := by
+    (chainRel st c lw res r).1.core = .expandInto (opRel r) (opEmit c lw r) [scanOn (opRel r).frm res] := by
   rw [chainRel_core]; simp [chainOp, hk, hs, hb]
+
+/-- Historical bug 4 / #2999 shape: before #3102 it was `ExpandInto(scan, res)`, and the
+runtime only builds child 0 (Match.lean `selfloop_ignores_chain`): the chain was dropped. -/
+theorem pre3102_chainOp_selfloop_unbound (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
+    (hk : r.kind = .fixed) (hs : r.frm.alias.id = r.to.alias.id) (hb : st.bound r.frm.alias = false) :
+    pre3102_chainOp st c lw res r = .expandInto (opRel r) (opEmit c lw r) [scanOf (opRel r).frm, res] := by
+  simp [pre3102_chainOp, hk, hs, hb]
 
 /-- **#2390**: a later hop lowers its `from` endpoint too (it used to be left on the
 CondTraverse's pattern, invisible to the optimizer), and its `to` endpoint even when bound. -/
@@ -97,8 +119,7 @@ theorem chainRel_stripped (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
     (hres : res.stripped = true) : (chainRel st c lw res r).1.stripped = true := by
   unfold chainRel; rw [topFilters_stripped]
   obtain ⟨h1, h2, h3⟩ := opRel_stripped r
-  have hs : (scanOf (opRel r).frm).stripped = true := by
-    unfold scanOf; split <;> simp [MP.stripped, h1]
+  have hs : (scanOn (opRel r).frm res).stripped = true := scanOn_stripped _ _ (by simp [h1]) hres
   have h3' : r.kind = .fixed → (opRel r).attrs = [] := fun hk => h3 (by simp [isWalk, hk])
   unfold chainOp
   cases hk : r.kind <;> by_cases hb1 : st.bound r.frm.alias <;> by_cases hb2 : st.bound r.to.alias <;>
@@ -273,6 +294,8 @@ def bindPath (rid : Nat) (pv : V) : MP → Option MP
   | .expandInto r e cs => (bindPathL rid pv cs).map (.expandInto r e)
   | .condTr r e cs => (bindPathL rid pv cs).map (.condTr r e)
   | .cp cs => (bindPathL rid pv cs).map .cp
+  | .allScan n cs => (bindPathL rid pv cs).map (.allScan n)
+  | .labelScan n cs => (bindPathL rid pv cs).map (.labelScan n)
   | _ => none
 where
   bindPathL (rid : Nat) (pv : V) : List MP → Option (List MP)
@@ -321,9 +344,34 @@ def planRels (c : Comp) : List QR → MP → MSt → LW → MP × MSt × LW
     let x := chainRel st c lw res r
     planRels c rs x.1 (visit st r) x.2
 
+/-- The `HopShape` closure (mod.rs:1919-1924): nodes are `(id, scope_id)`; `self_loop`
+compares ids only; `fixed` = neither var-length nor shortest. -/
+def hopShape (r : QR) : HopOrder.HopShape V :=
+  { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias.id == r.to.alias.id,
+    fixed := r.kind == .fixed }
+
+/-- `sort_by_key` then `self_loops_after_binders(…, |node| self.visited.contains(node))`
+(mod.rs:1880-1926, #3102). -/
+def orderRels (st : MSt) (fv : List Nat) (rs : List QR) : List QR :=
+  HopOrder.selfLoopsAfterBinders (sortRels st fv rs) hopShape st.bound
+
+theorem orderRels_perm (st : MSt) (fv : List Nat) (rs : List QR) : (orderRels st fv rs).Perm rs :=
+  (HopOrder.selfLoops_perm _ _ _).trans (sortRels_spec st fv rs).1
+
+/-- The planner discharges `HopOrder.WF` when each alias id names one variable (`(id, scope)`
+pairs with equal ids are equal) — so on such patterns `orderRels` is the pre-#3102 loop. -/
+theorem orderRels_eq_reference (st : MSt) (fv : List Nat) (rs : List QR)
+    (hid : ∀ r ∈ rs, r.frm.alias.id = r.to.alias.id → r.frm.alias = r.to.alias) :
+    orderRels st fv rs = HopOrder.pre3102_reference hopShape st.bound (sortRels st fv rs) := by
+  apply HopOrder.eq_reference
+  intro x hx hl
+  have := hid x ((sortRels_spec st fv rs).1.mem_iff.1 hx)
+  simp [hopShape] at hl ⊢
+  exact this hl
+
 def planComp (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) : MP × MSt × List Ex × LW :=
   let lb := boundLabelFilters st c.rels
-  match sortRels lb.1 fv c.rels with
+  match orderRels lb.1 fv c.rels with
   | [] => match c.nodes with
     | n :: _ => let x := nodeOnly lb.1 lw n c.paths; (x.1, x.2.1, lb.2 ++ x.2.2.1, x.2.2.2)
     | [] => (.arg, lb.1, lb.2, lw)
@@ -363,8 +411,8 @@ theorem planRels_binds (c : Comp) (rs : List QR) (res : MP) (st : MSt) (lw : LW)
 is bound for the clauses that follow (mod.rs:2189-2196, 2317-2324). -/
 theorem planComp_binds (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) (r : QR) (hr : r ∈ c.rels) (v : V)
     (hv : v = r.frm.alias ∨ v = r.to.alias ∨ v = r.alias) : (planComp st fv lw c).2.1.bound v = true := by
-  have hp := (sortRels_spec (boundLabelFilters st c.rels).1 fv c.rels).1
-  cases hs : sortRels (boundLabelFilters st c.rels).1 fv c.rels with
+  have hp := orderRels_perm (boundLabelFilters st c.rels).1 fv c.rels
+  cases hs : orderRels (boundLabelFilters st c.rels).1 fv c.rels with
   | nil => rw [hs] at hp; have := hp.mem_iff.2 hr; simp at this
   | cons r0 rs =>
     have e : (planComp st fv lw c).2.1 =
@@ -417,8 +465,14 @@ theorem bindPath_stripped (rid : Nat) (pv : V) : (m m' : MP) → bindPath rid pv
     obtain ⟨cs', hcs, rfl⟩ := Option.map_eq_some_iff.1 h
     simp [MP.stripped, bindPathL_stripped rid pv cs cs' hcs]
   | .arg, m', h => by simp [bindPath] at h
-  | .allScan _, m', h => by simp [bindPath] at h
-  | .labelScan _, m', h => by simp [bindPath] at h
+  | .allScan n cs, m', h => by
+    simp only [bindPath] at h
+    obtain ⟨cs', hcs, rfl⟩ := Option.map_eq_some_iff.1 h
+    simp [MP.stripped, bindPathL_stripped rid pv cs cs' hcs]
+  | .labelScan n cs, m', h => by
+    simp only [bindPath] at h
+    obtain ⟨cs', hcs, rfl⟩ := Option.map_eq_some_iff.1 h
+    simp [MP.stripped, bindPathL_stripped rid pv cs cs' hcs]
 
 theorem bindPathL_stripped (rid : Nat) (pv : V) : (cs cs' : List MP) →
     bindPath.bindPathL rid pv cs = some cs' → MP.stripped.strippedL cs' = MP.stripped.strippedL cs
@@ -468,7 +522,7 @@ theorem planComp_stripped (st : MSt) (fv : List Nat) (lw : LW) (c : Comp) :
     (planComp st fv lw c).1.stripped = true := by
   unfold planComp
   dsimp only
-  cases sortRels (boundLabelFilters st c.rels).1 fv c.rels with
+  cases orderRels (boundLabelFilters st c.rels).1 fv c.rels with
   | nil =>
     cases c.nodes with
     | nil => rfl

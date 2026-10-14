@@ -7,10 +7,11 @@ import RedisLayer.Args
   VKEY_MAX_ENTITY_COUNT, MAX_INFO_QUERIES, JS sizes, CMD_INFO), as of #3021
   (30b4fb7dc). `validatePre3021` keeps the earlier arms as a historical model.
 * `dispatch` — the arity / sub-command / name-folding head of `graph_config`
-  (`config_cmd.rs:308-343`, #3021).
-* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:210-242`).
-* `apply1` — `apply_config_set` (`config_cmd.rs:251-291`).
-* `rustSet` — the `SET` arm of `graph_config` (`config_cmd.rs:336-379`): validate all,
+  (`config_cmd.rs:318-353`, #3021).
+* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:206`), which since #3328 loads the
+  stored values and calls `check_timeout_constraints` (`:220`); `LoadArgs.cross_eq` proves the two agree.
+* `apply1` — `apply_config_set` (`config_cmd.rs:261-301`).
+* `rustSet` — the `SET` arm of `graph_config` (`config_cmd.rs:318-390`): validate all,
   cross-check once against the *final* values, then apply all.
 * `cSet` — C's `_Config_set` (`cmd_config.c`): dry-run each pair against the *current*
   configuration, then apply each in order. C's per-field validators are only modelled
@@ -30,7 +31,7 @@ structure Cfg where
   timeoutDefault : Int := 0
   timeoutMax : Int := 0
   resultsetSize : Int := -1
-  maxQueued : Nat := 2 ^ 32 - 1
+  maxQueued : Nat := 10000   -- `MAX_QUEUED_QUERIES` default since #3014 (`config.rs:80`; was `u32::MAX`)
   vkeyMax : Int := 100000
   maxInfo : Int := 1000
   jsHeap : Int := 268435456
@@ -309,7 +310,7 @@ theorem cmdinfo_ok_iff (v : List Nat) (x : Int) :
       simp only [h2', Bool.false_eq_true, if_false, false_and, iff_false]
       intro h; cases h
 
-/-! ## `graph_config` head (`config_cmd.rs:308-343`, #3021)
+/-! ## `graph_config` head (`config_cmd.rs:318-353`, #3021)
 
 `argc` counts `GRAPH.CONFIG` itself. Sub-command and names fold with
 `to_ascii_uppercase` (`upA`); before #3021 they used Unicode `to_uppercase`, which

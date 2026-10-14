@@ -1,7 +1,7 @@
 /-!
 # `GRAPH.BULK` binary format (`src/commands/bulk_insert.rs`)
 
-* `go` / `attach` — `read_property` (`bulk_insert.rs:94-169`): the explicit-stack reader.
+* `go` / `attach` — `read_property` (`bulk_insert.rs:94-175`, depth cap since #3339 b080a44c1): the explicit-stack reader.
   `go` is the outer `loop` decoding one type byte, `attach` the inner loop that pushes
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
@@ -45,7 +45,11 @@ inductive BV where
 
 inductive BErr where
   | eof | unterminated | badUtf8 | negLen | unknownType
+  | tooDeep   -- `value_nesting_error()` (#3339, `bulk_insert.rs:132-134`)
   deriving DecidableEq, Repr
+
+/-- `MAX_VALUE_NESTING` (`graph/src/runtime/value.rs:62`). -/
+def MAX_VALUE_NESTING : Nat := 4096
 
 variable (C : Codec)
 
@@ -124,7 +128,9 @@ def go : List Nat → List Frame → Except BErr (BV × List Nat)
         have := cstr_len r s r' h
         if C.utf8ok s then attach (.str s) r' st else .error .badUtf8
     else if t = 5 then
-      if r.length < 8 then .error .eof
+      -- `stack.len() >= MAX_VALUE_NESTING` (#3339, `:132`), before the length is read
+      if st.length ≥ MAX_VALUE_NESTING then .error .tooDeep
+      else if r.length < 8 then .error .eof
       else
         let len := C.dec8 (r.take 8)
         if len < 0 then .error .negLen
@@ -190,24 +196,35 @@ theorem de8 (i : Int) : C.dec8 (C.enc8 i) = i := by
   rwa [List.append_nil, List.take_of_length_le (by simp [C.len8])] at this
 
 mutual
+/-- Array nesting depth: how many `BI_ARRAY` frames are open at the deepest point. -/
+def depth : BV → Nat
+  | .arr xs => depths xs + 1
+  | _ => 0
+def depths : List BV → Nat
+  | [] => 0
+  | x :: xs => max (depth x) (depths xs)
+end
+
+mutual
 /-- **The reader reads back exactly what the loader wrote**, from any open-array
-context. -/
+context, for any value whose arrays fit under `MAX_VALUE_NESTING` open frames (#3339). -/
 theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
+    depth v + st.length ≤ MAX_VALUE_NESTING →
     go C (enc C v ++ r) st = attach C v r st
-  | .null, r, st, _ => by rw [enc, List.singleton_append, go.eq_def]; simp
-  | .bool x, r, st, _ => by
+  | .null, r, st, _, _ => by rw [enc, List.singleton_append, go.eq_def]; simp
+  | .bool x, r, st, _, _ => by
     cases x <;> (simp only [enc, List.cons_append, List.nil_append]; rw [go.eq_def]; simp)
-  | .dbl i, r, st, _ => by
+  | .dbl i, r, st, _, _ => by
     have := C.dec_enc8 i r
     simp only [enc, List.cons_append]; rw [go.eq_def]
     simp [C.len8, de8]
     all_goals (intro h; omega)
-  | .long i, r, st, _ => by
+  | .long i, r, st, _, _ => by
     have := C.dec_enc8 i r
     simp only [enc, List.cons_append]; rw [go.eq_def]
     simp [C.len8, de8]
     all_goals (intro h; omega)
-  | .str s, r, st, h => by
+  | .str s, r, st, h, _ => by
     obtain ⟨h1, h2⟩ := h
     simp only [enc, List.cons_append, List.append_assoc, List.singleton_append]
     rw [go.eq_def]
@@ -218,42 +235,64 @@ theorem go_enc : ∀ (v : BV) (r : List Nat) (st : List Frame), wf C v →
     · rename_i s' r' hc
       simp only [List.nil_append] at hc; rw [cstr_enc s r h1] at hc; simp at hc; obtain ⟨rfl, rfl⟩ := hc
       simp [h2]
-  | .arr xs, r, st, h => by
+  | .arr xs, r, st, h, hd0 => by
     have hd := C.dec_enc8 xs.length (encs C xs ++ r)
+    have hdep : depths xs + 1 + st.length ≤ MAX_VALUE_NESTING := by
+      simp only [depth] at hd0; exact hd0
     simp only [enc, List.cons_append, List.append_assoc]
     rw [go.eq_def]
     simp only [show (5:Nat) ≠ 0 by omega, show (5:Nat) ≠ 1 by omega, show (5:Nat) ≠ 2 by omega,
-      show (5:Nat) ≠ 4 by omega, show (5:Nat) ≠ 3 by omega, ite_false, ite_true,
-      List.length_append, C.len8, take8, drop8, hd, de8]
+      show (5:Nat) ≠ 4 by omega, show (5:Nat) ≠ 3 by omega, ite_false, ite_true]
+    rw [if_neg (by omega)]
+    simp only [List.length_append, C.len8, take8, drop8, hd, de8]
     rw [if_neg (by omega)]
     cases xs with
     | nil => simp [encs, attach]
     | cons x xs =>
       rw [if_neg (by simp; omega), if_neg (by simp; omega)]
       simp only [Int.toNat_natCast]
-      exact go_encs (x :: xs) r st [] (by simp) h
+      exact go_encs (x :: xs) r st [] (by simp) h (by omega)
 theorem go_encs : ∀ (xs : List BV) (r : List Nat) (st : List Frame) (acc : List BV),
-    xs ≠ [] → wfs C xs →
+    xs ≠ [] → wfs C xs → depths xs + st.length + 1 ≤ MAX_VALUE_NESTING →
     go C (encs C xs ++ r) ((acc, xs.length) :: st) = attach C (.arr (acc ++ xs)) r st
-  | [], _, _, _, h, _ => absurd rfl h
-  | [x], r, st, acc, _, h => by
+  | [], _, _, _, h, _, _ => absurd rfl h
+  | [x], r, st, acc, _, h, hd => by
     simp only [encs, List.append_nil]
-    rw [go_enc x r _ h.1, attach]; simp
-  | x :: y :: ys, r, st, acc, _, h => by
+    have : depth x + ((acc, [x].length) :: st).length ≤ MAX_VALUE_NESTING := by
+      simp only [depths] at hd; simp; omega
+    rw [go_enc x r _ h.1 this, attach]; simp
+  | x :: y :: ys, r, st, acc, _, h, hd => by
     simp only [encs, List.append_assoc]
-    rw [go_enc x _ _ h.1, attach]
+    have hx : depth x + ((acc, (x :: y :: ys).length) :: st).length ≤ MAX_VALUE_NESTING := by
+      simp only [depths] at hd; simp; omega
+    rw [go_enc x _ _ h.1 hx, attach]
     simp only [List.length_cons]
     rw [if_neg (by omega)]
-    have := go_encs (y :: ys) r st (acc ++ [x]) (by simp) h.2
+    have hys : depths (y :: ys) + st.length + 1 ≤ MAX_VALUE_NESTING := by
+      simp only [depths] at hd ⊢; omega
+    have := go_encs (y :: ys) r st (acc ++ [x]) (by simp) h.2 hys
     simp only [List.length_cons, encs, List.append_assoc] at this
     rw [show ys.length + 1 + 1 - 1 = ys.length + 1 by omega, this]
     simp
 end
 
 /-- Top level: `read_property` returns the value and leaves exactly the bytes after it. -/
-theorem readProperty_enc (v : BV) (r : List Nat) (h : wf C v) :
+theorem readProperty_enc (v : BV) (r : List Nat) (h : wf C v) (hd : depth v ≤ MAX_VALUE_NESTING) :
     readProperty C (enc C v ++ r) = .ok (v, r) := by
-  rw [readProperty, go_enc C v r [] h, attach]
+  rw [readProperty, go_enc C v r [] h (by simpa using hd), attach]
+
+/-- **Depth cap** (#3339): an array opened with `MAX_VALUE_NESTING` frames already open is
+refused before its length is read, so no value deeper than the cap is ever built. -/
+theorem deep_refused (r : List Nat) (st : List Frame) (h : MAX_VALUE_NESTING ≤ st.length) :
+    go C (5 :: r) st = .error .tooDeep := by
+  rw [go.eq_def]; simp [h]
+
+/-- Historical (before #3339, 4a4f2a72f): no cap — any depth was accepted, which the
+recursive drop/save/reply paths then walked. Witness: the deep-array prefix is no longer
+read as an open frame once the stack is full. -/
+theorem pre3339_uncapped_depth_now_refused :
+    go C (5 :: C.enc8 1) (List.replicate MAX_VALUE_NESTING ([], 1)) = .error .tooDeep :=
+  deep_refused C _ _ (by simp)
 
 /-- Every encoded value costs at least one byte (the bound `max_records` relies on). -/
 theorem enc_len_pos (v : BV) : 1 ≤ (enc C v).length := by
@@ -284,15 +323,17 @@ def records (P : Nat) (r : List Nat) (fuel : Nat) : Except BErr (List (List BV))
 
 def encRec (vs : List BV) : List Nat := vs.flatMap (enc C)
 
-theorem readN_enc (vs : List BV) (r : List Nat) (h : ∀ v ∈ vs, wf C v) :
+theorem readN_enc (vs : List BV) (r : List Nat) (h : ∀ v ∈ vs, wf C v)
+    (hd : ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) :
     readN C vs.length (encRec C vs ++ r) = .ok (vs, r) := by
   induction vs with
   | nil => rfl
   | cons v vs ih =>
     simp only [encRec, List.flatMap_cons, List.append_assoc, List.length_cons, readN]
-    rw [readProperty_enc C v _ (h v (List.mem_cons_self ..))]
+    rw [readProperty_enc C v _ (h v (List.mem_cons_self ..)) (hd v (List.mem_cons_self ..))]
     simp only
-    rw [show vs.flatMap (enc C) = encRec C vs from rfl, ih (fun x hx => h x (List.mem_cons_of_mem _ hx))]
+    rw [show vs.flatMap (enc C) = encRec C vs from rfl, ih (fun x hx => h x (List.mem_cons_of_mem _ hx))
+      (fun x hx => hd x (List.mem_cons_of_mem _ hx))]
 
 theorem encRec_ne_nil (vs : List BV) (hP : vs ≠ []) : encRec C vs ≠ [] := by
   cases vs with
@@ -306,7 +347,8 @@ properties and a body that is the concatenation of `rs` (each with `P` values), 
 record loop returns `rs`, in order — so with `node_count = rs.length` every record gets
 exactly one reserved id and none is left over (the `node_id_cursor` check at `:385`). -/
 theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
-    (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v) (fuel : Nat)
+    (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v)
+    (hdep : ∀ vs ∈ rs, ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) (fuel : Nat)
     (hfuel : rs.length ≤ fuel) :
     records C P (rs.flatMap (encRec C)) fuel = .ok rs := by
   induction rs generalizing fuel with
@@ -318,11 +360,13 @@ theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     simp only [records, List.flatMap_cons]
     rw [if_neg (by simp [encRec_ne_nil C vs hne])]
     have hr := readN_enc C vs (rs.flatMap (encRec C)) (hwf vs (List.mem_cons_self ..))
+      (hdep vs (List.mem_cons_self ..))
     rw [hv] at hr
     rw [hr]
     simp only
     rw [ih (fun x hx => hlen x (List.mem_cons_of_mem _ hx))
-      (fun x hx => hwf x (List.mem_cons_of_mem _ hx)) f (by simp at hfuel; omega)]
+      (fun x hx => hwf x (List.mem_cons_of_mem _ hx)) (fun x hx => hdep x (List.mem_cons_of_mem _ hx))
+      f (by simp at hfuel; omega)]
     rfl
 
 theorem encRec_len (vs : List BV) : vs.length ≤ (encRec C vs).length := by

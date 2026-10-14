@@ -8,11 +8,13 @@ import PendingCommit.ContentCompact
   `set_relationship_attribute` (:794) is `Props.upsert` on a sorted list, so
   `Props.stage_sorted_lastWrite` / `read_your_writes_*` apply to the Rust code.
 * `lookupSorted_eq` — `lookup_sorted` (:100) is first-match `get`.
-* `isValid_spec` — `is_valid_property` (:62): scalars, `String`, `Point`,
-  `VecF32`, temporal values, and lists whose elements are (recursively) valid
-  and non-null; `Null` only at top level when allowed. `validate_*` (:84, :92)
-  succeed iff `is_valid(v, true)`. (Same as C on live servers: `[[1]]` accepted,
-  `[1, null]`, maps and lists of maps rejected.)
+* `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:69),
+  `validate_list_property` (:98), `validate_property` (:115), `validate_*` (:124, :129):
+  scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
+  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
+  b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
+  pre-#3339 check) and has depth ≤ 4096; history `pre3339_isValid_any_depth`. (Same as C on
+  live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
 * `flatten_spec` — `flatten_label_map` (:46) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.
 * `setAttr_spec`, `setAttrs_spec`, `clearAttrs_spec`, `getAttr_spec`,
@@ -134,7 +136,47 @@ inductive PV where
   | list (xs : List PV)
   | map | node | rel | path | other
 
-/-- `is_valid_property` (:62). -/
+def MAX_VALUE_NESTING : Nat := 4096
+
+/-- `is_valid_property` (:69): a non-list primitive, or NULL when allowed (#3339 moved the
+list arm into `validate_list_property`). -/
+def isValidP : PV → Bool → Bool
+  | .null, allowNull => allowNull
+  | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _
+  | .datetime, _ | .date, _ | .time, _ | .duration, _ => true
+  | _, _ => false
+
+/-- The nesting message (:103) / `INVALID_PROPERTY_MSG` (:64). -/
+inductive PErr | nesting | invalid
+  deriving DecidableEq
+
+mutual
+/-- `validate_list_property(items, depth)`'s `try_for_each` (:108-112); the recursive call's
+depth check is inlined into `validateItem`. -/
+def validateItems : Nat → List PV → Except PErr Unit
+  | _, [] => .ok ()
+  | depth, x :: xs => match validateItem depth x with
+    | .ok () => validateItems depth xs
+    | .error e => .error e
+def validateItem : Nat → PV → Except PErr Unit
+  | depth, .list inner =>
+    if depth + 1 > MAX_VALUE_NESTING then .error .nesting else validateItems (depth + 1) inner
+  | _, v => if isValidP v false then .ok () else .error .invalid
+end
+
+/-- `validate_list_property` (:98). -/
+def validateListProperty (items : List PV) (depth : Nat) : Except PErr Unit :=
+  if depth > MAX_VALUE_NESTING then .error .nesting else validateItems depth items
+
+/-- `validate_property` (:115); `validate_node_property` (:124) and
+`validate_relationship_property` (:129) return it. -/
+def validateProperty : PV → Except PErr Unit
+  | .list items => validateListProperty items 1
+  | v => if isValidP v true then .ok () else .error .invalid
+
+def validate (v : PV) : Bool := (validateProperty v).toBool
+
+/-- Historical `is_valid_property` before #3339 (:62 at 4a4f2a72f): lists of any depth. -/
 def isValid : PV → Bool → Bool
   | .null, allowNull => allowNull
   | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _
@@ -145,24 +187,118 @@ where isValidList : List PV → Bool
   | [] => true
   | x :: xs => isValid x false && isValidList xs
 
-/-- `validate_node_property` / `validate_relationship_property` (:84, :92):
-`Err(INVALID_PROPERTY_MSG)` = `false`. -/
-def validate (v : PV) : Bool := isValid v true
-
 theorem isValidList_iff (xs : List PV) : isValid.isValidList xs = true ↔ ∀ x ∈ xs, isValid x false = true := by
   induction xs with
   | nil => simp [isValid.isValidList]
   | cons x xs ih => simp [isValid.isValidList, ih]
 
-/-- **`isValid_spec`**. -/
-theorem isValid_spec (allowNull : Bool) :
-    isValid .null allowNull = allowNull ∧
-    (∀ xs, isValid (.list xs) allowNull = true ↔ ∀ x ∈ xs, isValid x false = true) ∧
-    isValid (.list [.list [.int]]) true = true ∧ isValid (.list [.int, .null]) true = false ∧
-    isValid .map true = false ∧ isValid (.list [.map]) true = false ∧
-    (∀ v, validate v = isValid v true) := by
-  refine ⟨rfl, fun xs => ?_, rfl, rfl, rfl, rfl, fun _ => rfl⟩
-  simp only [isValid]; exact isValidList_iff xs
+mutual
+/-- Nesting depth (`[]` is 1, scalars 0). -/
+def depth : PV → Nat
+  | .list xs => maxDepth xs + 1
+  | _ => 0
+def maxDepth : List PV → Nat
+  | [] => 0
+  | x :: xs => max (depth x) (maxDepth xs)
+end
+
+/-- An accepted item at nesting `d ≤ MAX` was valid before #3339 and fits: `d + depth ≤ MAX`. -/
+theorem validateItem_ok : ∀ (n : Nat) (v : PV) (d : Nat), sizeOf v < n → d ≤ MAX_VALUE_NESTING →
+    validateItem d v = .ok () → isValid v false = true ∧ d + depth v ≤ MAX_VALUE_NESTING := by
+  intro n
+  induction n with
+  | zero => intro v d h; omega
+  | succ f ih =>
+    intro v d hs hd h
+    have hL : ∀ (l : List PV) (d : Nat), sizeOf l < f → d ≤ MAX_VALUE_NESTING → validateItems d l = .ok () →
+        isValid.isValidList l = true ∧ d + maxDepth l ≤ MAX_VALUE_NESTING := by
+      intro l
+      induction l with
+      | nil => intro d _ hd _; exact ⟨rfl, by simp [maxDepth]; omega⟩
+      | cons y ys ihl =>
+        intro d hsz hd hok
+        simp only [validateItems] at hok
+        split at hok
+        · rename_i hy
+          have h1 := ih y d (by simp at hsz; omega) hd hy
+          have h2 := ihl d (by simp at hsz; omega) hd hok
+          refine ⟨by simp [isValid.isValidList, h1.1, h2.1], ?_⟩
+          simp only [maxDepth]; omega
+        · cases hok
+    cases v with
+    | list xs =>
+      simp only [validateItem] at h
+      split at h
+      · cases h
+      · rename_i hd1
+        have := hL xs (d + 1) (by simp at hs; omega) (by omega) h
+        exact ⟨by simpa [isValid] using this.1, by simp only [depth]; omega⟩
+    | map | node | rel | path | other => simp [validateItem, isValidP] at h
+    | null => simp [validateItem, isValidP] at h
+    | _ => exact ⟨rfl, by simp [depth]; omega⟩
+
+/-- **`validate_depth`**: every property a write accepts was valid before #3339 and has
+depth ≤ `MAX_VALUE_NESTING`, the bound the RDB decoder enforces — so it saves and loads back
+(proofs/value_math `stored_roundtrip`). -/
+theorem validate_depth (v : PV) (h : validateProperty v = .ok ()) :
+    isValid v true = true ∧ depth v ≤ MAX_VALUE_NESTING := by
+  cases v with
+  | list xs =>
+    simp only [validateProperty, validateListProperty] at h
+    split at h
+    · cases h
+    · have := validateItem_ok (sizeOf (PV.list xs) + 1) (.list xs) 0 (by omega) (by decide)
+        (by simp only [validateItem]; rw [if_neg (by decide)]; exact h)
+      exact ⟨by simpa [isValid] using this.1, by omega⟩
+  | null => exact ⟨rfl, by simp [depth]⟩
+  | map | node | rel | path | other => simp [validateProperty, isValidP] at h
+  | _ => exact ⟨rfl, by simp [depth]⟩
+
+/-- `k` lists around an integer (the Rust tests' `nested(k)`). -/
+def nest : Nat → PV
+  | 0 => .int
+  | k + 1 => .list [nest k]
+
+theorem validateItems_nest (k d : Nat) (hd : d ≤ MAX_VALUE_NESTING) :
+    validateItems d [nest k] = if d + k ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
+  induction k generalizing d with
+  | zero => simp [nest, validateItems, validateItem, isValidP, hd]
+  | succ k ih =>
+    have e2 : validateItems d [nest (k + 1)] = match validateItem d (.list [nest k]) with
+        | .ok () => validateItems d [] | .error e => .error e := rfl
+    have e3 : validateItem d (.list [nest k]) =
+        if d + 1 > MAX_VALUE_NESTING then .error .nesting else validateItems (d + 1) [nest k] := rfl
+    rw [e2, e3]
+    by_cases h : d + 1 > MAX_VALUE_NESTING
+    · have : ¬ d + (k + 1) ≤ MAX_VALUE_NESTING := by omega
+      simp [h, this]
+    · rw [if_neg h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
+      by_cases h2 : d + (k + 1) ≤ MAX_VALUE_NESTING <;> simp [h2, validateItems]
+
+/-- **#3339**: `k` nested lists are a valid property iff `k ≤ MAX_VALUE_NESTING`; past it the
+error is the nesting message (`a_property_at_the_cap_is_valid` / `…_past_the_cap_is_refused`). -/
+theorem validate_nest (k : Nat) :
+    validateProperty (nest (k + 1)) = if k + 1 ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
+  simp only [nest, validateProperty, validateListProperty]
+  rw [if_neg (by decide), validateItems_nest k 1 (by decide), Nat.add_comm 1 k]
+
+/-- **Historical (#2722, fixed by #3339 b080a44c1)**: before, any depth was valid, so a
+property could nest past what any recursive walk (drop, hash, RDB save/load) survives. -/
+theorem pre3339_isValid_any_depth (k : Nat) : isValid (nest k) true = true := by
+  have : ∀ k b, isValid (nest k) b = true := by
+    intro k; induction k with
+    | zero => intro b; rfl
+    | succ k ih => intro b; simp [nest, isValid, isValid.isValidList, ih]
+  exact this k true
+
+/-- **`isValid_spec`** (now `validate_spec`): NULL only at top level, lists of primitives, no
+maps — as before #3339 — on concrete shapes. -/
+theorem validate_spec :
+    validateProperty .null = .ok () ∧ validateProperty (.list [.list [.int]]) = .ok () ∧
+    validateProperty (.list [.int, .null]) = .error .invalid ∧
+    validateProperty .map = .error .invalid ∧ validateProperty (.list [.map]) = .error .invalid ∧
+    (∀ v, validate v = (validateProperty v).toBool) := by
+  refine ⟨rfl, ?_, ?_, rfl, ?_, fun _ => rfl⟩ <;> rfl
 
 /-! ## `flatten_label_map` -/
 

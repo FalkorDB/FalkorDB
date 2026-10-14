@@ -5,8 +5,9 @@ import PlannerBuild.Clauses
 * `query_correct`: if every clause plan implements its clause (the theorems of
   Clauses.lean), the plan `plan_query` stitches evaluates to the openCypher
   clause-sequence semantics `Fₙ ∘ … ∘ F₂ ∘ ⟦c₁⟧`.
-* `selfloop_ignores_chain` (bug 4): `ExpandInto(scan, res)` (mod.rs:2255-2263)
-  never runs `res`.
+* `selfloop_ignores_chain` (bug 4 / #2999): `ExpandInto(scan, res)` never runs `res` — the
+  shape the planner built before #3102. **Fixed by #3102 (61284ea4f)**: the planner builds
+  `ExpandInto(Scan(res))` (mod.rs:2262-2285), `selfloop_scan_keeps_chain`.
 * `cp_stitch_loses_correlation` (bug 2) / `cp_stitch_sound`: a MATCH plan
   prepended to the next MATCH's CartesianProduct (mod.rs:2809-2813) is
   correct only when no other component reads its variables.
@@ -80,6 +81,20 @@ is — every hop of the component planned so far — the result is the same. -/
 theorem selfloop_ignores_chain (s : Nat) (scan res res' : Plan) (r : Rec V) (g : G) :
     ev S (.node (.hop .expandInto s) [scan, res]) r g =
       ev S (.node (.hop .expandInto s) [scan, res']) r g := rfl
+
+/-- **#2999 fixed by #3102 (61284ea4f)**: the planner now builds `ExpandInto(Scan(res))`
+(PlanMatch2 `chainRel_selfloop_unbound`): every row of the chain planned so far is scanned
+and expanded, so the earlier hops' rows reach the output. -/
+theorem selfloop_scan_keeps_chain (s sc : Nat) (res : Plan) (r : Rec V) (g : G) :
+    ev S (.node (.hop .expandInto s) [.node (.scan sc) [res]]) r g =
+      forRows (S.step (.hop .expandInto s)) (forRows (S.step (.scan sc)) (ev S res r g).1 (ev S res r g).2).1
+        (forRows (S.step (.scan sc)) (ev S res r g).1 (ev S res r g).2).2 := by
+  simp [ev, Op.isBag]
+
+/-- In particular an empty chain now yields nothing (before, `res` was ignored). -/
+theorem selfloop_scan_empty_chain (s sc : Nat) (res : Plan) (r : Rec V) (g : G)
+    (h : ev S res r g = ([], g)) : ev S (.node (.hop .expandInto s) [.node (.scan sc) [res]]) r g = ([], g) := by
+  rw [selfloop_scan_keeps_chain, h]; rfl
 
 /-! ## Bug 2: a MATCH stitched as a CartesianProduct branch -/
 

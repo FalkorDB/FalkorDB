@@ -182,6 +182,7 @@ theorem findStatus_none {C S} (m : C → Bool) (st : C → S) (cs : List C) (h :
 /-- `WriteAbort` as the settle loop sees it; `invalid` is `WriteAbort::Invalid`
 (query_session.rs:71, #2846): `MvccGraph::commit` refused the version. -/
 inductive Abort | paused | busy | unregistered | notMaster | invalid
+  | stale   -- `WriteAbort::Stale` (#3290); `attempt_settle` never forks, so never produced there
   deriving DecidableEq, Repr
 
 /-- `attempt_settle`'s outcome given: nothing pending, the upgrade result, the write slot,
@@ -207,7 +208,7 @@ def settle : List (Option Abort) → Nat → Nat × Bool
   | o :: os, budget =>
     match o with
     | none => (1, true)
-    | some .paused | some .busy =>
+    | some .paused | some .busy | some .stale =>   -- transient (constraint.rs:215-219)
       if budget = 0 then (1, false) else let r := settle os (budget - 1); (r.1 + 1, r.2)
     | some _ => (1, false)   -- unregistered, notMaster, invalid (constraint.rs:254-265): break
 
@@ -225,7 +226,15 @@ theorem settle_bounded (os : List (Option Abort)) (b : Nat) : (settle os b).1 �
     · split
       · simp
       · have := ih (b - 1); simp; omega
+    · split
+      · simp
+      · have := ih (b - 1); simp; omega
     · simp
+
+/-- A stale fork (#3290) is retried like a busy slot, never reported as settled. -/
+theorem settle_stale_retries (os : List (Option Abort)) (b : Nat) :
+    settle (some .stale :: os) (b + 1) = ((settle os b).1 + 1, (settle os b).2) := by
+  simp [settle]
 
 /-- A deleted graph or a demotion stops at once. -/
 theorem settle_permanent (os : List (Option Abort)) (b : Nat) :

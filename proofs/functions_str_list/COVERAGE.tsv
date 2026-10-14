@@ -67,5 +67,5 @@ eval.rs	check_string_or_null	1261	NOT COVERED	type check only
 eval.rs	eval_quantifier	1616	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
 eval.rs	list_contains	1712	PROVEN	contains_false_iff
 eval.rs	get_elements	1726	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
-value.rs	Contains::contains	1837	PROVEN	contains_false_iff
+value.rs	Contains::contains	1860	PROVEN	contains_false_iff
 value.rs	add_slow (String/List arms)	969	PROVEN	str_concat_size, size_concat

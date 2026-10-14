@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-12): proofs cite `origin/main` @ 4a4f2a72f.
+Current state (2026-10-14): proofs cite `origin/main` @ b080a44c1.
 There is one Lake project per area under `proofs/<area>/` (37 projects, including
 `native_index`, `pr2845_review` and `pr2917_review`).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
@@ -9,10 +9,10 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2572 non-FFI, non-test functions, 2536 are PROVEN and 36 CONDITIONAL (proven only
-under an undischarged hypothesis about other Rust code, named in the row); 1291 FFI
-functions are AXIOMATISED; 0 unlisted. See `.claude/skills/proofs/SKILL.md` for how
-to work with them.
+2596 non-FFI, non-test functions, 2559 are PROVEN, 36 CONDITIONAL (proven only
+under an undischarged hypothesis about other Rust code, named in the row) and 1
+NOT COVERED (a trait declaration); 1291 FFI functions are AXIOMATISED; 0 unlisted.
+See `.claude/skills/proofs/SKILL.md` for how to work with them.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 compared against the C module where relevant. Each entry below gives the repro
@@ -301,6 +301,10 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-14 on main (now b080a44c1): #3014 (bounded queues; closes #3013), #3290 (inline write vs queued write; closes #3093), #3102 (self-loop hop order; closes #2999), #3328 (module-load arguments like C; closes #3268), #3339 (value nesting cap on RDB/RESTORE decode, property writes and bulk insert; security advisory GHSA-mwvh-8fq5-x2j8, also #2722 for stored values). Proofs re-targeted: 37 projects green; 2559 PROVEN + 36 CONDITIONAL of 2596 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: W3-conc-1 deadlock (`acquire_bounded`, `release_exactly_once`, `main_never_blocks`); #3093 (`one_commit_per_version`, `claimFork_on_committed`); W4-redis-3 / #3268 (`rust_c_same_accept`, `error_applies_nothing`; checked live against C); planner bug 4 / #2999 (`selfLoops_perm`, `deferred_after_binder`, `eq_reference` to the old loop); unbounded nesting (`decodeValue_refuses_past_cap`, `stored_roundtrip`, bulk `deep_refused`).
+  - New divergence, confirmed live: C's `strtoll` skips leading whitespace and Rust's integer parsing does not, so `--loadmodule … CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust (`leading_space_divergence`). Intended extensions: Rust accepts `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION`, which C refuses (`rust_only_names`).
+  - #3339 detail: the decoder accepts one level more than writes (MAX_VALUE_NESTING arrays around `[]`, `within_nest_empty`); harmless, since recursion stays bounded and no write can store such a value.
 - 2026-10-12 on main (now 4a4f2a72f): #2350 (native numeric index), #3307 (native-index writes once per unit of work), #2912 (sort_cmp total order; closes #2891), #2917 (map <>, NaN grouping, min/max over NaN, vector/point keys; closes #2913), #2910 (lexer literals; closes #2909), #3104 (pattern-comprehension backtracking; closes #3103), #3000 (closes #2998), #3234 (closes #3233), #3262 (closes #3251), #3113 (closes #3109), plus #3181/#3192 (build/CI). Proofs re-targeted: 37 projects green; 2536 PROVEN + 36 CONDITIONAL of 2572 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - New project `native_index` (#2350/#3307): key encoding preserves and reflects order and is injective except -0.0/+0.0 (`encodeF64_cmp`, `encodeF64_inj`); an index scan returns exactly what a label scan plus filter returns (`range_agrees`, `point_agrees`, `nodeScan_native_agrees`); the batched apply equals applying changes one by one (`applyColumn_eq_sequential`); updates and deletes remove the old entry; reader snapshots are isolated (`snapshot_isolated`). 13 rows are CONDITIONAL on CowBTree's tree invariant, which `remove_batch` still breaks (W7-btree-1, PR #3283). **Since #3307 `remove_batch` has a production caller** (`apply_writes` → `remove_encoded`), so W7-btree-1 is no longer latent; no content/range failure was found over batch-only sequences, and the panic still needs a single-key `remove`, which only tests call.
   - Discharged: ops_aggregate `GroupKey::hash` and sort.rs `cmp_key`/`cmp`/`cmp` are PROVEN again on main's `sort_cmp` (`Discharge.hc_main`, `lawful_main`, ...); value_order's `cmp_key` row no longer counts a refutation as PROVEN; pr2917_review rows are live (merged code is byte-identical to 14e341cf4).

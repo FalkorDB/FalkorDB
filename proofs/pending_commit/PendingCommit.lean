@@ -8,7 +8,10 @@ clauses read through. 322 theorems, no `sorry`/`admit`/`axiom`. Coverage per
 Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66)
 and `pending.rs` (63 non-test) is PROVEN. Repros: `graph/tests/lean_pending_commit.rs`
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
-Line numbers are origin/main (`2c874022a`).
+Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `b080a44c1`.
+#3339 (b080a44c1): property validation bounds list nesting at `MAX_VALUE_NESTING` = 4096 —
+`PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`, history
+`PA.pre3339_isValid_any_depth`; the save/load consequence is value_math `stored_roundtrip`.
 
 ## Re-target to 2c874022a (#2846: the graph's `IdSpace` owns the ids)
 

@@ -4,13 +4,14 @@
 | here | there |
 | --- | --- |
 | `Lock.gil < .graph < .indexer` | `graph/src/locks.rs:9` ordering rule; `query_session.rs:30` `Mode` |
-| `escalateProg`                 | `QuerySession::escalate` (`query_session.rs:242-257`): release R, GIL, W |
-| `inlineWriterProg`             | `QuerySession::begin_writer` (`:144`): GIL, W |
+| `escalateProg`                 | `QuerySession::escalate` (`query_session.rs:379-394`): release R, GIL, W |
+| `inlineWriterProg`             | `QuerySession::begin_writer` (`:182`): GIL, W |
 | `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
-| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1517-1541`) `write_loop` flag protocol |
-| `Pool`                         | `threadpool.rs:58` `bounded_blocking(1024)` MPMC + `spawn` (`:89`) called from `query_mut` on the Redis main thread (`graph_core.rs:1007`) |
+| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1615`) `write_loop` flag protocol |
+| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:59`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
+| `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
 -/
 
 namespace SC.Locks
@@ -173,7 +174,7 @@ def exploreBad : Nat → List D → List D
 theorem recheck_needed :
     (exploreBad 20 [drainInit 2]).any (fun s => terminal s && s.q != 0) = true := by decide +kernel
 
-/-! ## The bounded-queue deadlock (CONFIRMED on a live server)
+/-! ## Historical: the bounded-queue deadlock (W3-conc-1, CONFIRMED live; fixed by #3014 b4634fe4b)
 
 Resources that are not locks also block: the pool's job queue (capacity `cap`,
 `threadpool.rs:59`) and a graph's write channel (capacity 1024, `graph_core.rs:548`).
@@ -221,7 +222,7 @@ enabled event: main holds the GIL waiting for queue space, the worker waits for 
 GIL. (Live: 11 workers, cap 1024, 1400 writes on one graph or 3000 over 16 graphs.) -/
 def deadState : Pool := { queue := 1, running := 1, mainBlocked := true, pendingClients := 1 }
 
-theorem pool_deadlock_reachable :
+theorem pre3014_pool_deadlock_reachable :
     let s0 : Pool := { queue := 0, running := 0, mainBlocked := false, pendingClients := 3 }
     let s1 := { s0 with queue := 1, pendingClients := 2 }
     let s2 := { s1 with queue := 0, running := 1 }
@@ -229,9 +230,9 @@ theorem pool_deadlock_reachable :
     s1 ∈ poolSucc 1 1 s0 ∧ s2 ∈ poolSucc 1 1 s1 ∧ s3 ∈ poolSucc 1 1 s2 ∧
     deadState ∈ poolSucc 1 1 s3 ∧ stuck 1 1 deadState = true := by decide
 
-/-- Fix: `spawn` from the main thread must not block (try-send and reply
-"Max pending queries exceeded", or an unbounded queue as C's thpool has). Then
-main never holds the GIL while waiting, and no state is stuck. -/
+/-- The fix proposed before #3014: `spawn` from the main thread must not block (reject
+with "Max pending queries exceeded", or an unbounded queue as C's thpool has). #3014
+does both; its actual protocol is `succ3014` below. -/
 def poolSuccFixed (s : Pool) : List Pool :=
   (if s.pendingClients > 0 then
     if s.queue < cap then [{ s with queue := s.queue + 1, pendingClients := s.pendingClients - 1 }]
@@ -251,5 +252,94 @@ theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
     · have : s.running < w := by omega
       simp [h, this]
   · simp [h]
+
+/-! ## The #3014 protocol: admission-bounded, nothing blocks the main thread
+
+`admit` (`graph_core.rs:1007`) takes a `QueueSlot` on the main thread or replies "Max
+pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read
+gives its slot back when it starts executing (`admission.take()`), a write carries it into
+the graph's (unbounded) write channel and gives it back when the drainer dequeues it. -/
+
+structure P3014 where
+  pending : Nat    -- commands not yet dispatched
+  queue : Nat      -- pool jobs waiting (each holds a slot)
+  running : Nat    -- workers executing, no slot held
+  matching : Nat   -- workers matching a write, slot held
+  writeQ : Nat     -- writes in write channels (each holds a slot)
+  count : Nat      -- `QUEUED_QUERIES`
+  deriving DecidableEq, Repr
+
+def succ3014 (max : Nat) (s : P3014) : List P3014 :=
+  (if s.pending > 0 then
+    (if s.count < max then [{ s with pending := s.pending - 1, queue := s.queue + 1, count := s.count + 1 }]
+     else [{ s with pending := s.pending - 1 }])                 -- rejected, never waits
+   else []) ++
+  (if s.queue > 0 ∧ s.running + s.matching < w then
+    [{ s with queue := s.queue - 1, running := s.running + 1, count := s.count - 1 },   -- a read starts
+     { s with queue := s.queue - 1, matching := s.matching + 1 }]                      -- a write starts matching
+   else []) ++
+  (if s.matching > 0 then [{ s with matching := s.matching - 1, running := s.running + 1, writeQ := s.writeQ + 1 }]
+   else []) ++                                                   -- unbounded send: never waits
+  (if s.writeQ > 0 then [{ s with writeQ := s.writeQ - 1, count := s.count - 1 }] else []) ++  -- dequeued
+  (if s.running > 0 then [{ s with running := s.running - 1 }] else [])   -- GIL is never held by a blocked main
+
+def Inv3014 (max : Nat) (s : P3014) : Prop :=
+  s.count = s.queue + s.matching + s.writeQ ∧ s.count ≤ max
+
+/-- **The count is exactly the queued queries and never exceeds `MAX_QUEUED_QUERIES`**,
+in every reachable state. -/
+theorem inv3014_step (max : Nat) (s t : P3014) (h : Inv3014 max s) (ht : t ∈ succ3014 w max s) :
+    Inv3014 max t := by
+  obtain ⟨h1, h2⟩ := h
+  by_cases c1 : s.pending > 0 <;> by_cases c2 : s.count < max <;>
+    by_cases c3 : (s.queue > 0 ∧ s.running + s.matching < w) <;> by_cases c4 : s.matching > 0 <;>
+    by_cases c5 : s.writeQ > 0 <;> by_cases c6 : s.running > 0 <;>
+    simp only [succ3014, c1, c2, c3, c4, c5, c6, if_true, if_false, List.mem_append, List.mem_cons,
+      List.mem_nil_iff, or_false, false_or, and_self, ite_true, ite_false, true_and] at ht <;>
+    (repeat' (rcases ht with ht | ht)) <;>
+    (subst_vars; constructor <;> simp <;> omega)
+
+/-- **No state with work left is stuck** (W3-conc-1 is gone): whatever is pending, queued,
+matching or running, some step is enabled — the main thread can always dispatch or
+reject, and every worker can make progress. -/
+theorem never_stuck_3014 (max : Nat) (s : P3014) (hw : 0 < w)
+    (h : s.pending > 0 ∨ s.queue > 0 ∨ s.running > 0 ∨ s.matching > 0 ∨ s.writeQ > 0) :
+    succ3014 w max s ≠ [] := by
+  unfold succ3014
+  intro hn
+  simp only [List.append_eq_nil_iff] at hn
+  obtain ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩ := hn
+  rcases h with h | h | h | h | h
+  · simp [h] at h1; split at h1 <;> simp at h1
+  · by_cases hr : s.running + s.matching < w
+    · simp [h, hr] at h2
+    · rcases Nat.eq_zero_or_pos s.running with h0 | h0
+      · have : s.matching > 0 := by omega
+        simp [this] at h3
+      · simp [h0] at h5
+  · simp [h] at h5
+  · simp [h] at h3
+  · simp [h] at h4
+
+/-- **The main thread never blocks**: with a command pending, dispatching it (admitted or
+rejected) is always enabled — unlike `pre3014_pool_deadlock_reachable`'s `mainBlocked`. -/
+theorem main_never_blocks (max : Nat) (s : P3014) (h : s.pending > 0) :
+    ∃ t ∈ succ3014 w max s, t.pending = s.pending - 1 := by
+  by_cases hc : s.count < max
+  · exact ⟨{ s with pending := s.pending - 1, queue := s.queue + 1, count := s.count + 1 },
+      by simp [succ3014, h, hc], rfl⟩
+  · exact ⟨{ s with pending := s.pending - 1 }, by simp [succ3014, h, hc], rfl⟩
+
+/-- The pre-#3014 deadlock trace, replayed under #3014 (1 worker, `MAX_QUEUED_QUERIES = 1`,
+3 writes): the third command is rejected instead of blocking, and everything drains. -/
+theorem flood_drains :
+    let s0 : P3014 := ⟨3, 0, 0, 0, 0, 0⟩
+    let s1 : P3014 := ⟨2, 1, 0, 0, 0, 1⟩      -- admitted
+    let s2 : P3014 := ⟨2, 0, 0, 1, 0, 1⟩      -- a write starts matching
+    let s3 : P3014 := ⟨1, 0, 0, 1, 0, 1⟩      -- next command rejected ("Max pending queries exceeded")
+    let s4 : P3014 := ⟨1, 0, 1, 0, 1, 1⟩      -- queued to the write channel
+    let s5 : P3014 := ⟨1, 0, 1, 0, 0, 0⟩      -- dequeued
+    s1 ∈ succ3014 1 1 s0 ∧ s2 ∈ succ3014 1 1 s1 ∧ s3 ∈ succ3014 1 1 s2 ∧ s4 ∈ succ3014 1 1 s3 ∧
+    s5 ∈ succ3014 1 1 s4 := by decide
 
 end SC.Locks

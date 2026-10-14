@@ -68,9 +68,9 @@ graph/src/runtime/value.rs	Sub::sub	1045	PROVEN	vArith .sub: arith_agrees, neg_v
 graph/src/runtime/value.rs	Mul::mul	1094	PROVEN	vArith .mul: arith_agrees (scalar subset)
 graph/src/runtime/value.rs	Div::div	1123	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
 graph/src/runtime/value.rs	Rem::rem	1151	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
-graph/src/runtime/value.rs	OrderedEnum::order	1181	MODELLED	V.order (scalar subset; value_order proves the full table)
+graph/src/runtime/value.rs	OrderedEnum::order	1204	MODELLED	V.order (scalar subset; value_order proves the full table)
 graph/src/runtime/value.rs	CompareValue::compare_value	1228	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
-graph/src/runtime/value.rs	Contains::contains	1837	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	Contains::contains	1860	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
 graph/src/runtime/value.rs	compare_floats	1875	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
 graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
 graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()

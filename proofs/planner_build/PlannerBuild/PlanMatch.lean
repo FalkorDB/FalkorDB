@@ -120,8 +120,8 @@ theorem unverified_spec (st : MSt) (n : QN) (l : String) :
 
 inductive MP
   | arg
-  | allScan (n : QN)
-  | labelScan (n : QN)
+  | allScan (n : QN) (cs : List MP)
+  | labelScan (n : QN) (cs : List MP)
   | filter (e : Ex) (c : MP)
   | pathB (ps : List (V × List V)) (c : MP)
   | cvlt (r : QR) (expandInto : Bool) (pathVar : Option V) (cs : List MP)
@@ -130,7 +130,10 @@ inductive MP
   | condTr (r : QR) (emit : Bool) (cs : List MP)
   | cp (cs : List MP)
 
-def scanOf (n : QN) : MP := if n.labels.isEmpty then .allScan n else .labelScan n
+def scanOf (n : QN) : MP := if n.labels.isEmpty then .allScan n [] else .labelScan n []
+
+/-- A scan on top of `res` (#3102: `tree!(IR::AllNodeScan(..), res)`, mod.rs:2268-2276). -/
+def scanOn (n : QN) (res : MP) : MP := if n.labels.isEmpty then .allScan n [res] else .labelScan n [res]
 
 def withF : Option Ex → MP → MP
   | some e, c => .filter e c
@@ -268,7 +271,7 @@ their edge's own (they prune per edge with them). This is what
 nothing (proofs/optimizer_rewrites `References.refsNew_complete`). -/
 def MP.stripped : MP → Bool
   | .arg => true
-  | .allScan n | .labelScan n => n.attrs.isEmpty
+  | .allScan n cs | .labelScan n cs => n.attrs.isEmpty && strippedL cs
   | .filter _ c | .pathB _ c => c.stripped
   | .cvlt r _ _ cs | .shortest r cs => r.frm.attrs.isEmpty && r.to.attrs.isEmpty && strippedL cs
   | .expandInto r _ cs | .condTr r _ cs =>
@@ -283,7 +286,11 @@ theorem stripped_withF (f : Option Ex) (c : MP) : (withF f c).stripped = c.strip
   cases f <;> rfl
 
 theorem scanOf_stripNode (n : QN) : (scanOf (stripNode n)).stripped = true := by
-  unfold scanOf; split <;> simp [MP.stripped, (stripNode_spec n).1]
+  unfold scanOf; split <;> simp [MP.stripped, MP.stripped.strippedL, (stripNode_spec n).1]
+
+theorem scanOn_stripped (n : QN) (res : MP) (h : n.attrs.isEmpty = true) (hr : res.stripped = true) :
+    (scanOn n res).stripped = true := by
+  unfold scanOn; split <;> simp [MP.stripped, MP.stripped.strippedL, h, hr]
 
 /-! ## Relationship order -/
 
@@ -485,7 +492,7 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
   unfold firstRel; rw [topFilters_stripped]
   obtain ⟨h1, h2, h3⟩ := opRel_stripped r
   have hs : (scanOf (opRel r).frm).stripped = true := by
-    unfold scanOf; split <;> simp [MP.stripped, h1]
+    unfold scanOf; split <;> simp [MP.stripped, MP.stripped.strippedL, h1]
   have h3' : r.kind = .fixed → (opRel r).attrs = [] := fun hk => h3 (by simp [isWalk, hk])
   unfold firstOp
   cases hk : r.kind <;> by_cases hb1 : st.bound r.frm.alias <;> by_cases hb2 : st.bound r.to.alias <;>

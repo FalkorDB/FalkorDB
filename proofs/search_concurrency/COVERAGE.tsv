@@ -1,12 +1,13 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/threadpool.rs	new	56	PROVEN	Pool.new_spec, shutdown_drains; Locks.pool_deadlock_reachable (capacity)
-graph/src/threadpool.rs	spawn	89	PROVEN	Locks.pool_deadlock_reachable, fixed_never_stuck; Pool.spawn_after_exit
-graph/src/threadpool.rs	pending_count	105	PROVEN	Pool.pendingCount_spawn
-graph/src/threadpool.rs	shutdown	115	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit)
-graph/src/threadpool.rs	spawn	128	PROVEN	Locks.pool_deadlock_reachable (global wrapper)
-graph/src/threadpool.rs	pending_count	141	PROVEN	Pool.global_spec (gPending)
-graph/src/threadpool.rs	init_thread_pool	152	PROVEN	Pool.global_spec (init: Ok once, then Err)
-graph/src/threadpool.rs	shutdown	161	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	new	59	PROVEN	Pool.new_spec, shutdown_drains; unbounded queue (#3014): Pool.spawn_never_blocks; historical Locks.pre3014_pool_deadlock_reachable (bounded_blocking(1024))
+graph/src/threadpool.rs	spawn	97	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
+graph/src/threadpool.rs	shutdown	119	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit)
+graph/src/threadpool.rs	spawn	132	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
+graph/src/threadpool.rs	init_thread_pool	148	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	shutdown	157	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	try_acquire	185	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
+graph/src/threadpool.rs	try_acquire_in	189	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
+graph/src/threadpool.rs	drop	205	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
 graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
 graph/src/thread_id.rs	set_main_thread	13	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
@@ -16,71 +17,76 @@ graph/src/storage/registry.rs	register_index_backend	31	PROVEN	Once.registry_spe
 graph/src/storage/registry.rs	index_backend	43	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	register_attr_backend	52	PROVEN	Once.registry_spec
 graph/src/storage/registry.rs	attr_backend	62	PROVEN	Once.registry_spec
-graph/src/graph/mvcc_graph.rs	new	80	MODELLED	Mvcc.init
-graph/src/graph/mvcc_graph.rs	from_graph	95	MODELLED	Mvcc.init (arbitrary pub)
-graph/src/graph/mvcc_graph.rs	read	103	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
-graph/src/graph/mvcc_graph.rs	write	108	PROVEN	Mvcc.private_on_committed (Ev.claim CAS)
-graph/src/graph/mvcc_graph.rs	commit	139	PROVEN	Mvcc.no_lost_writes/history_linear (Ev.commit), refused_commit_releases_slot, valid_commit_publishes (Graph::validate as `valid`); schema_version/trim/fold not modelled
-graph/src/graph/mvcc_graph.rs	rollback	221	PROVEN	Mvcc.inv_step (Ev.rollback)
-graph/src/graph/mvcc_graph.rs	drop	227	NOT COVERED	cancel_indexing on drop
+graph/src/graph/mvcc_graph.rs	new	89	MODELLED	Mvcc.init
+graph/src/graph/mvcc_graph.rs	from_graph	104	MODELLED	Mvcc.init (arbitrary pub)
+graph/src/graph/mvcc_graph.rs	read	112	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
+graph/src/graph/mvcc_graph.rs	write	119	PROVEN	Mvcc Ev.claim (CAS + fork, write lock held since #3290): private_on_committed, reader_cannot_claim, refused_commit_releases_slot
+graph/src/graph/mvcc_graph.rs	fork	139	PROVEN	Mvcc Ev.forkW (version ver+1, no slot): one_commit_per_version, inline_write_ok (#3290)
+graph/src/graph/mvcc_graph.rs	claim	151	PROVEN	Mvcc Ev.claimFork (CAS, then version check ⇒ Stale + store(false)): one_commit_per_version, claimFork_stale, claimFork_on_committed, stale_then_rerun (#3290; historical pre3290_multi_write_refused)
+graph/src/graph/mvcc_graph.rs	commit	186	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), refused_commit_releases_slot, valid_commit_publishes (Graph::validate as `valid`); schema_version/trim/fold not modelled
+graph/src/graph/mvcc_graph.rs	rollback	268	PROVEN	Mvcc.inv_step (Ev.rollback)
+graph/src/graph/mvcc_graph.rs	drop	274	NOT COVERED	cancel_indexing on drop
 src/graph_core.rs	up_to_nul	87	NOT COVERED	string helper, not concurrency
 src/graph_core.rs	c_graph_name	104	NOT COVERED	string helper
 src/graph_core.rs	c_graph_key	119	NOT COVERED	string helper
 src/graph_core.rs	register_graph	140	MODELLED	Mvcc.S.registered := true
 src/graph_core.rs	graph_is_registered	188	PROVEN	Mvcc.delete_blocks_writes (registered guard on mutate/commit)
 src/graph_core.rs	rename_graph	202	NOT COVERED	registry re-key; RENAME not modelled
-src/graph_core.rs	new	251	NOT COVERED	WriteQueryOk::new modified predicate
-src/graph_core.rs	sanitise_error	313	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	block_client	328	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	unblock_client	339	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	get_thread_safe_context	348	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	free_thread_safe_context	359	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	reply_error	368	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	signal_modified_key	385	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	yield_ctx	407	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	measure_time_start	424	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	measure_time_end	434	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	hold_string	451	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	free_string	462	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	trim_string_allocation	477	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	replicate_argv	492	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
-src/graph_core.rs	new	543	MODELLED	ThreadedGraph: write channel cap 1024 (Locks.Pool second cycle)
-src/graph_core.rs	from_mvcc	559	MODELLED	as new
-src/graph_core.rs	execute_query	576	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
-src/graph_core.rs	execute_profile	659	MODELLED	as execute_query
-src/graph_core.rs	execute_query_write	715	PROVEN	Mvcc.multi_write_refused: slot claimed before escalation (BUG 5); claim/mutate/commit/rollback
-src/graph_core.rs	reply_profile	823	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
-src/graph_core.rs	new	860	AXIOMATISED	RM_BlockClient FFI
-src/graph_core.rs	drop	868	AXIOMATISED	RM_UnblockClient FFI
-src/graph_core.rs	compute_effective_timeout	886	NOT COVERED	config arithmetic, not concurrency
-src/graph_core.rs	reply_invalid_graph_version	925	NOT COVERED	reply formatting
-src/graph_core.rs	query_mut	937	PROVEN	Locks.pool_deadlock_reachable (spawn from main, GIL held) + drain producer (send then CAS)
-src/graph_core.rs	query_sync	1146	PROVEN	Mvcc.multi_write_refused (inline writer = escalate 0 then claim)
-src/graph_core.rs	profile_mut	1267	MODELLED	same producer protocol as query_mut
-src/graph_core.rs	profile_sync	1361	MODELLED	as query_sync
-src/graph_core.rs	finish_write	1428	PROVEN	Mvcc Ev.commit / Ev.rollback
-src/graph_core.rs	abandon_write	1458	PROVEN	Mvcc Ev.rollback; index resync not modelled
-src/graph_core.rs	commit_and_replicate	1473	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
-src/graph_core.rs	process_write_queued_query	1517	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
-src/graph_core.rs	replicate	1663	AXIOMATISED	RM_Replicate FFI
-src/graph_core.rs	graph_free	1676	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
-src/query_session.rs	begin	127	MODELLED	reader mode (graphR acquire)
-src/query_session.rs	begin_with	134	MODELLED	reader mode
-src/query_session.rs	begin_writer	148	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
-src/query_session.rs	release_locks	172	MODELLED	Op.rel sequence
-src/query_session.rs	graph_arc	180	NOT COVERED	accessor
-src/query_session.rs	with_graph	189	NOT COVERED	borrow helper
-src/query_session.rs	with_graph_mut	205	NOT COVERED	borrow helper
-src/query_session.rs	upgrade_to_write	221	PROVEN	Mvcc.delete_blocks_writes (registry check after escalation)
-src/query_session.rs	escalate	242	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726)
-src/query_session.rs	reauthorize_write	276	NOT COVERED	pause/role flags (Redis state) not modelled
-src/query_session.rs	upgrade_to_write	317	PROVEN	delegates to QuerySession::upgrade_to_write
-src/query_session.rs	drop	327	MODELLED	release in reverse order (Mode field order)
-src/query_session.rs	hold_gil	347	PROVEN	Locks.telemetryProg ordered
-src/query_session.rs	acquire	369	MODELLED	Mvcc Ev.escalate; main thread no-op = Tid 0
-src/query_session.rs	drop	392	MODELLED	Mvcc Ev.release
-src/query_session.rs	lock_gil	413	AXIOMATISED	RM_ThreadSafeContextLock FFI
-src/query_session.rs	release_gil	426	AXIOMATISED	RM_ThreadSafeContextUnlock/Free FFI
+src/graph_core.rs	new	256	NOT COVERED	WriteQueryOk::new modified predicate
+src/graph_core.rs	sanitise_error	318	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	block_client	333	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	unblock_client	344	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	get_thread_safe_context	353	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_thread_safe_context	364	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	reply_error	373	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	signal_modified_key	390	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	yield_ctx	412	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_start	429	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	measure_time_end	439	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	hold_string	456	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	free_string	467	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	trim_string_allocation	482	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	replicate_argv	497	AXIOMATISED	Redis module API FFI wrapper (redismodule.h); no logic
+src/graph_core.rs	new	553	PROVEN	unbounded write channel (#3014); Locks.never_stuck_3014 (send never waits)
+src/graph_core.rs	from_mvcc	569	MODELLED	as new
+src/graph_core.rs	execute_query	587	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
+src/graph_core.rs	execute_profile	674	MODELLED	as execute_query
+src/graph_core.rs	execute_query_write	737	PROVEN	Mvcc fork/claimFork (#3290): inline_write_ok, stale_then_rerun, claimFork_on_committed (retry sees the inline write); historical pre3290_multi_write_refused (BUG 5)
+src/graph_core.rs	reply_profile	891	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	928	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	936	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	954	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	993	NOT COVERED	reply formatting
+src/graph_core.rs	admit	1007	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
+src/graph_core.rs	query_mut	1018	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); historical pre3014_pool_deadlock_reachable; drain producer (send then CAS)
+src/graph_core.rs	query_sync	1222	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then claim; never refused by a matching queued write, #3290)
+src/graph_core.rs	profile_mut	1352	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
+src/graph_core.rs	profile_sync	1453	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1520	PROVEN	Mvcc Ev.commit / Ev.rollback
+src/graph_core.rs	abandon_write	1554	PROVEN	Mvcc Ev.rollback; index resync not modelled
+src/graph_core.rs	commit_and_replicate	1571	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1615	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1764	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1777	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/query_session.rs	begin	159	MODELLED	reader mode (graphR acquire)
+src/query_session.rs	begin_with	166	MODELLED	reader mode
+src/query_session.rs	begin_writer	182	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
+src/query_session.rs	write_version	216	PROVEN	Mvcc Ev.forkW (reader) / Ev.claim (writer): inline_write_ok, reader_cannot_claim
+src/query_session.rs	claim_fork	267	PROVEN	Mvcc Ev.claimFork: claimFork_stale, claimFork_on_committed, one_commit_per_version
+src/query_session.rs	release_locks	303	MODELLED	Op.rel sequence
+src/query_session.rs	graph_arc	311	NOT COVERED	accessor
+src/query_session.rs	with_graph	320	NOT COVERED	borrow helper
+src/query_session.rs	with_graph_mut	336	NOT COVERED	borrow helper
+src/query_session.rs	upgrade_to_write	354	PROVEN	Mvcc.delete_blocks_writes (registry check after escalation)
+src/query_session.rs	escalate	379	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726)
+src/query_session.rs	reauthorize_write	413	NOT COVERED	pause/role flags (Redis state) not modelled
+src/query_session.rs	upgrade_to_write	454	PROVEN	delegates to QuerySession::upgrade_to_write
+src/query_session.rs	drop	464	MODELLED	release in reverse order (Mode field order)
+src/query_session.rs	hold_gil	484	PROVEN	Locks.telemetryProg ordered
+src/query_session.rs	acquire	506	MODELLED	Mvcc Ev.escalate; main thread no-op = Tid 0
+src/query_session.rs	drop	529	MODELLED	Mvcc Ev.release
+src/query_session.rs	lock_gil	550	AXIOMATISED	RM_ThreadSafeContextLock FFI
+src/query_session.rs	release_gil	563	AXIOMATISED	RM_ThreadSafeContextUnlock/Free FFI
 src/dispatch.rs	must_run_inline	36	MODELLED	inline path = Tid 0 in Mvcc (query_sync)
 src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with GIL; delete_blocks_writes, fork_excludes_commit
 graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_never_vector_or_text

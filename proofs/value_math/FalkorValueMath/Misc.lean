@@ -10,7 +10,7 @@ import FalkorValueMath.Conversion
 | `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` :439, `get_point_component` :458, `get_duration_component` :608 (pre-chrono part) |
 | `partialCmp` | `PartialOrd for Value` :1788 |
 | `getNumeric` | `Value::get_numeric` :246 |
-| `Tok`, `encode`, `decode` | `Encode<19>`/`Decode<19> for Value` :1899/:1985 |
+| `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; `Decode<19>` before #3339 (current: Nesting.lean) |
 | `Deduper` | `ValuesDeduper` :1853-1896 |
 | `validatePoint` | `Point::validate` :144 |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
@@ -299,7 +299,8 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>`/`Decode<19>`, value.rs:1899-2047) -/
+/-! ## v19 value codec (`Encode<19>` value.rs:2068; `Decode<19>` before #3339 — the current
+decoder `decode_value` value.rs:2166 is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12
@@ -375,8 +376,10 @@ def readVec (bytes : List Nat) : Option (List F) :=
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
-/- `Decode<19>` with a fuel bound (every token consumes fuel). -/
-def decode : Nat → List (Tok F) → Option (V F × List (Tok F))
+/- Historical `Decode<19>` before #3339 (b080a44c1; value.rs:2131 at 4a4f2a72f): no depth
+bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
+The current decoder is `decodeValue` (Nesting.lean). -/
+def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
   | 0, _ => none
   | fuel + 1, .u tag :: rest =>
     if tag = T_NULL then some (.null, rest)
@@ -410,7 +413,7 @@ def decode : Nat → List (Tok F) → Option (V F × List (Tok F))
 where
   decodeN : Nat → Nat → List (Tok F) → Option (List (V F) × List (Tok F))
   | _, 0, r => some ([], r)
-  | fuel, n + 1, r => match decode fuel r with
+  | fuel, n + 1, r => match pre3339_decode fuel r with
     | some (x, r') => (decodeN fuel n r').map (fun (xs, r'') => (x :: xs, r''))
     | none => none
 
@@ -468,52 +471,52 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
 
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/
-theorem decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
-    decode co fuel (encode co v ++ rest) = some (v, rest) := by
+theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
+    pre3339_decode co fuel (encode co v ++ rest) = some (v, rest) := by
   intro fuel
   induction fuel with
   | zero => intro v _ h; omega
   | succ f ih =>
     intro v rest hs hst
     have hN : ∀ (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
-        decode.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
+        pre3339_decode.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
       intro l
       induction l with
-      | nil => intro r _ _; simp [encodeList, decode.decodeN]
+      | nil => intro r _ _; simp [encodeList, pre3339_decode.decodeN]
       | cons x xs ihl =>
         intro r hsz hsl
         simp only [StorableList] at hsl
-        simp only [encodeList, List.length_cons, List.append_assoc, decode.decodeN]
+        simp only [encodeList, List.length_cons, List.append_assoc, pre3339_decode.decodeN]
         rw [ih x _ (by simp at hsz; omega) hsl.1]
         simp [ihl r (by simp at hsz; omega) hsl.2]
     cases v with
-    | bool b => cases b <;> simp [encode, decode, T_NULL, T_BOOL]
-    | int i => simp [encode, decode, T_NULL, T_BOOL, T_INT64]
-    | float x => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
-    | str s => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
+    | bool b => cases b <;> simp [encode, pre3339_decode, T_NULL, T_BOOL]
+    | int i => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64]
+    | float x => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
+    | str s => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
     | list l =>
       simp only [Storable] at hst
       simp only [encode, List.append_assoc, List.cons_append, List.nil_append]
-      simp only [decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
+      simp only [pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
       simp [hN l rest (by simp at hs; omega) hst]
     | point la lo =>
-      simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         co.narrow_widen]
     | vec v =>
       simp only [Storable] at hst
-      simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         T_VECTOR_F32, readVec_vecBytes co v hst]
-    | datetime t => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | datetime t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME]
-    | date t => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | date t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE]
-    | time t => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | time t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME]
-    | duration t => simp [encode, decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | duration t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION]
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
-      unfold decode
+      unfold pre3339_decode
       simp only [if_pos (show T_NULL = T_NULL from rfl), if_true]
     | map _ => simp [Storable] at hst
     | node _ => simp [Storable] at hst

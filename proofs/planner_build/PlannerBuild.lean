@@ -39,6 +39,7 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
 | `E.PSt`, `E.fresh`, `E.EC`, `E.build`, `E.hoist`, `E.extract` (Nested.lean) | Planner state, `fresh_var`, `ExtractedComprehension`, `build_pattern_comprehension_plan`, `hoist_or_nest`, `extract_pattern_comprehensions` |
 | `E.chainOf`, `extractClause`, `extractFilter` (Nested2.lean) | `extract_clause_expr_comprehensions` / `extract_list_expr_comprehensions` / `extract_filter_comprehensions` |
 | `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1832-2403, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
+| `HopOrder.selfLoopsAfterBinders`, `step`, `flush`, `deferP`; `pre3102_reference` (HopOrder.lean); `E.hopShape`, `E.orderRels` | `self_loops_after_binders` hop_order.rs:25-62; `tests::reference` :84; the call mod.rs:1912-1926 |
 | `E.lowerInline`, `stripNode`, `stripRel`, `stripEndpoints`, `MP.stripped` (PlanMatch.lean) | `lower_inline_attrs` mod.rs:598, `strip_node_attrs` :623, `strip_rel_attrs` :644, `strip_endpoint_attrs` :673 |
 | `subtreeContains`, `stitchBelow`, `ensureInput`, `setIP`, `isRedundantOptional` (Misc.lean) | mod.rs:331, 900, 2806, 787, 2582 |
 | `Fmt.*` | EXPLAIN text mod.rs:341-536 |
@@ -46,6 +47,12 @@ state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
 | `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:814 |
 
 ## Proven (plain English)
+
+* `self_loops_after_binders` (#3102, HopOrder.lean): `selfLoops_perm` (permutation), `kept_sublist` (non-deferred
+  hops keep their order), `deferred_after_binder` (a deferred self-loop comes after its first later binder),
+  `single_pass` (one fold, one step per hop), `early_return_sound`, **`eq_reference`** (= the pre-#3102 loop
+  `pre3102_reference` whenever `self_loop ⇒ from = to`; `wf_needed` shows the premise matters; in the planner
+  `orderRels_eq_reference` needs alias ids unique per pattern), `pr_cases`.
 * `stitchLoop_eq_nest`, `rustStitch_eq_nestStitch`: the Rust stitching loop builds exactly the nested
   fill `pₙ[pₙ₋₁[…p₁]]`, each plan put at the next plan's own insertion point (tree-surgery locality:
   `modify_get_append`, `insertStep_embed`, `stitchLoop_embed`, walks land on real nodes `*_valid`).
@@ -120,11 +127,14 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    `… MATCH (a)-[:R]->(b) DELETE b` deletes a node (C nothing), `SET b.hit = 1` sets 1 property.
    (`WITH a` between them is fine.) Fix: Apply-wrap the previous clause, or mark planner-built scans.
    Tests `bug_where_of_previous_match_dropped`, `…_before_delete`.
-4. **A fixed-length self-loop hop after other hops drops them**: when var-length hops are sorted after
+4. **FIXED by #3102 (61284ea4f; #2999)** — *was:* **A fixed-length self-loop hop after other hops drops them**: when var-length hops are sorted after
    fixed ones (mod.rs:1877-1909) a self-loop on an unbound node is planned as `ExpandInto(scan, res)`
    (mod.rs:2247-2264); the runtime builds only child 0, so `res` is lost.
    `MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c) RETURN a.v, b.v, c.v` on `(:A{v:1})-[:R]->(:B{v:2})-[:S]->(c:C{v:3}), (c)-[:L]->(c)`
    → Rust `[null,2,3]`, C `[1,2,3]`. Test `bug_self_loop_hop_drops_earlier_hops`.
+   Now: `orderRels` (= `self_loops_after_binders`, HopOrder.lean) plans such a self-loop after the hop
+   binding its node, and the no-binder case is `ExpandInto(Scan(res))` — `chainRel_selfloop_unbound`,
+   `Match.selfloop_scan_keeps_chain`; history `pre3102_chainOp_selfloop_unbound`, `selfloop_ignores_chain`.
 
 5. **`NOT (complex)` over an inline pattern predicate keeps NULL rows** (NEW): `expr_to_plan` plans
    `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))` (mod.rs:1543-1549); the
@@ -165,9 +175,7 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
   CALL body walk — fixes bug 1 (`merge_path_last_misplaced` no longer applies: `walkFirst` would pass it).
 * #3100 (correlate MATCH … WHERE with the next CP): Apply-wraps when the CP subtree reads a variable the
   previous plan binds (`reads_plan_variables`) — fixes bug 2 (`cp_stitch_sound` is the remaining CP case).
-* #3102 (self-loop after the binding hop): reorders `sorted_rels` so an unbound fixed self-loop comes after a
-  hop touching its node, and plans the remaining case as `ExpandInto(Scan(res))` — fixes bug 4
-  (`chainRel_selfloop_unbound` describes origin/main).
+* #3102 merged (61284ea4f), see bug 4 and HopOrder.lean.
 * #2981 (inline attrs reading another pattern variable): splits inline maps (`split_inline_attrs`) and checks
   the moved entries where the variable is bound — changes `inline_attrs_to_filter` call sites in `plan_match`
   (binder #2923 case); `inlineAttrs_passes` still describes each produced filter. #2390 now routes those
@@ -215,6 +223,7 @@ import PlannerBuild.Nested2
 import PlannerBuild.Misc
 import PlannerBuild.PlanMatch
 import PlannerBuild.PlanMatch2
+import PlannerBuild.HopOrder
 import PlannerBuild.Fmt
 import PlannerBuild.Rename
 import PlannerBuild.Ast

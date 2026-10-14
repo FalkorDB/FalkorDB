@@ -34,7 +34,9 @@ mutate, commit, rollback, delete, fork):
   (single write slot ⇒ writes serialized, no lost update).
 * `delete_blocks_writes` — after GRAPH.DELETE no mutate/commit is enabled.
 * `fork_excludes_commit` — fork and delete need the GIL a committing writer holds.
-* `multi_write_refused` / `multi_write_ok_in_c` — the slot-window divergence below.
+* #3290: `one_commit_per_version`, `claimFork_stale`, `claimFork_on_committed`,
+  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_claim`; historical
+  `pre3290_multi_write_refused` / `multi_write_ok_in_c` (BUG 5).
 `Locks`:
 * `no_cycle` (+ `path_increasing`) — threads that acquire in rank order cannot form
   a wait-for cycle; `all_programs_ordered` — writer (incl. escalate), inline writer,
@@ -43,8 +45,10 @@ mutate, commit, rollback, delete, fork):
 * `drain_no_lost_message`, `explore_saturated` — exhaustive (2 producers) check of
   the `write_loop` protocol: no message is stranded; `recheck_needed` — without the
   `is_empty` re-check one is.
-* `pool_deadlock_reachable` / `fixed_never_stuck` — the bounded-queue deadlock and
-  its fix.
+* #3014: `inv3014_step` (count = queued, ≤ MAX_QUEUED_QUERIES), `never_stuck_3014`,
+  `main_never_blocks`, `flood_drains`; historical `pre3014_pool_deadlock_reachable` (BUG 1).
+`Pool` (#3014 `QueueSlot`): `acquire_bounded`, `acquire_full`, `release_exactly_once`,
+`paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
 `Tickets`: `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`,
 `stale_release_isolated`, `second_index_never_populated`, `lucky_order_complete`,
 `fixed_trace_complete`.
@@ -70,7 +74,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
 
 ## CONFIRMED bugs (all reproduced on live servers, Rust vs C)
 
-1. **Server deadlock under >1024 queued queries** (`graph/src/threadpool.rs:59,96`,
+1. **FIXED by #3014 (b4634fe4b)** — HISTORICAL (W3-conc-1, 4a4f2a72f): **Server deadlock under >1024 queued queries** (`graph/src/threadpool.rs:59,96`,
    `src/graph_core.rs:1007`). `spawn` does a *blocking* send into a 1024-slot pool
    queue from the Redis main thread, which holds the GIL; running workers escalate
    and wait for the GIL. Permanent hang, 0% CPU, PING times out.
@@ -78,7 +82,8 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    range(1,3000) AS x CREATE (:N)" 45` (16 graphs, <1024 each): Rust hangs forever
    (thread samples: main in `crossfire…send` from `query_mut`, all 11 workers in
    `upgrade_to_write` waiting for the GIL); C completes 3000/3000 in 13 s.
-   Model: `Locks.pool_deadlock_reachable`. Fix: never block the main thread in
+   Model: `Locks.pre3014_pool_deadlock_reachable`. Fixed: unbounded queues bounded by
+   admission (`QueueSlot`), main thread never waits (`never_stuck_3014`). Proposed fix was: never block the main thread in
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
    (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
@@ -106,11 +111,13 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    `pre3088_huge_k_kills_server`. Now `graph.rs:4208,3939` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4014,3955` size by results:
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
-5. **Inline (MULTI/EXEC) write fails with "another write is in progress"**
+5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
    replies `another write is in progress, retry the query` and `M` is not created
-   (3/3); C creates it (3/3). `repro/multi_race.py`. Model: `multi_write_refused`.
+   (3/3); C creates it (3/3). `repro/multi_race.py`. Model: `pre3290_multi_write_refused`.
+   Now the queued write forks without the slot and claims it under the write lock;
+   `inline_write_ok`, `stale_then_rerun`, `one_commit_per_version`.
    Fix: claim the slot after escalation (or block on it under the write lock).
 
 Option validation (re-checked live at fe619ac5f, Rust release vs C `falkordb.so`, ports 19010/19011).
@@ -171,3 +178,8 @@ import SearchConcurrency.Knn
 #print axioms SC.Tickets.second_index_never_populated
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk
+#print axioms SC.Mvcc.one_commit_per_version
+#print axioms SC.Mvcc.claimFork_on_committed
+#print axioms SC.Pool.release_exactly_once
+#print axioms SC.Pool.count_eq_live
+#print axioms SC.Locks.never_stuck_3014

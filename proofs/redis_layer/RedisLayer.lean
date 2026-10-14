@@ -2,6 +2,7 @@ import RedisLayer.Allocator
 import RedisLayer.Args
 import RedisLayer.QueryArgsSpec
 import RedisLayer.Config
+import RedisLayer.LoadArgs
 import RedisLayer.Compact
 import RedisLayer.RoQuery
 import RedisLayer.Bulk
@@ -145,8 +146,11 @@ Headline theorems:
   transitions, `WaitingEntry` guard laws, `drain_conserves`, `capDeferred_suffix`,
   `retain_sound`/`pass2Step_sound` (re-keying), `group_keeps_order` (per-graph arrival order
   survives the sort), `iter_replica_never_writes`.
-* `load_missing`/`load_extra` — load-time config table vs C's documented list;
-  `maxInfo_clamped`; `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
+* `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
+  `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live);
+  `error_applies_nothing`; `cross_eq`; historical `ModuleInit.pre3328_*`;
+  `Bulk.deep_refused` (#3339 depth cap); `QuerySession.claimFork_spec`, `upgrade_stale`,
+  `GraphCore.executeWrite_first` (#3290); `GraphCore.admit_bounded` (#3014); `cGraphName_key`; `rename_moves`; `loopExit_safe`; `escalate_order`,
   `writer_holds_gil`, `release_order`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
   `memTotal_sum`; `sync_is_yield_without_yields`.
 
@@ -163,7 +167,7 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
    `db.indexes()` → `[x]`, plan loses the index scan; C keeps `[range:x]`.
 10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
-    ignores (0), C 1 (`ModuleInit.bool_yes_case`, `table_name_case`, `load_missing`; cause:
+    ignores (0), C 1 (FIXED by #3328: `ModuleInit.pre3328_bool_yes_case`, `pre3328_table_name_case`, `pre3328_load_missing`; now `LoadArgs.fixed3328_counterexamples`; cause:
     redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
 11. `GRAPH.BULK` success reply says `relations created`, C `edges created`
     (`Commands.bulk_reply_differs`).
