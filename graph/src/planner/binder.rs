@@ -1947,10 +1947,21 @@ impl Binder {
                     return Ok(new_tree);
                 }
 
-                let children = node_ref
+                let mut children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Parentheses only group what the parser reads; the tree it
+                // built already carries that grouping. Dropping the wrapper
+                // here gives `(x)` the same bound tree as `x`, so no later
+                // pass has to look through it to recognise a predicate.
+                if matches!(node_ref.data(), ExprIR::Paren)
+                    && children.len() == 1
+                    && let Some(inner) = children.pop()
+                {
+                    return Ok(inner);
+                }
 
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Constant(v) => ExprIR::Constant(v),
@@ -1988,23 +1999,15 @@ impl Binder {
                         // except when the Path comes from a variable-length
                         // relationship pattern (e.g. `[r*]`) — in that case
                         // `r.prop` is treated as a per-edge predicate.
-                        if let Some(first_child) = children.first() {
-                            let root = first_child.root();
-                            let inner = if matches!(root.data(), ExprIR::Paren) {
-                                root.get_child(0)
-                            } else {
-                                Some(root)
-                            };
-                            if let Some(node) = inner
-                                && let ExprIR::Variable(v) = node.data()
-                                && v.ty == Type::Path
-                                && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
-                            {
-                                return Err("Type mismatch: expected Map, Node, Edge, \
-                                             Datetime, Date, Time, Duration, Null, \
-                                             or Point but was Path"
-                                    .to_string());
-                            }
+                        if let Some(first_child) = children.first()
+                            && let ExprIR::Variable(v) = first_child.root().data()
+                            && v.ty == Type::Path
+                            && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                        {
+                            return Err("Type mismatch: expected Map, Node, Edge, \
+                                         Datetime, Date, Time, Duration, Null, \
+                                         or Point but was Path"
+                                .to_string());
                         }
                         ExprIR::Property(prop)
                     }
@@ -2130,10 +2133,20 @@ impl Binder {
                 {
                     return Ok(DynTree::new(ExprIR::Constant(value)));
                 }
+                // AND and OR are associative, so a grouped run of the same
+                // operator - `(a AND b) AND c` - joins its parent's operands
+                // in place. Filters are then split into all their conjuncts.
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
                 for child in children {
+                    let same_op = matches!(
+                        (root.data(), child.root().data()),
+                        (ExprIR::And, ExprIR::And) | (ExprIR::Or, ExprIR::Or)
+                    );
                     root.push_child_tree(child);
+                    if same_op {
+                        root.child_mut(root.num_children() - 1).take_out();
+                    }
                 }
                 Ok(new_tree)
             }
@@ -2701,6 +2714,93 @@ fn merge_scope_vars(
     for (scope, vars) in other.into_iter().enumerate() {
         if vars.len() > scope_vars[scope].len() {
             scope_vars[scope] = vars;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Binder;
+    use crate::parser::cypher::Parser;
+
+    /// The bound IR of `query`, rendered with `Debug`.
+    fn bound(query: &str) -> String {
+        // Binding a call resolves it against the process-global registry.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, _) = Binder::default().bind(raw).expect("bind");
+        format!("{ir:?}")
+    }
+
+    /// Parentheses group the parse; once bound, `(x)` is the same tree as
+    /// `x`, so the optimizer sees the same predicates either way (#3331,
+    /// #3187).
+    #[test]
+    fn parentheses_bind_to_the_same_ir() {
+        let same = [
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7) AND n.s = 1 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE ((n.k = $k) AND ((n.s = $s))) RETURN n",
+                "MATCH (n:A) WHERE n.k = $k AND n.s = $s RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) AND n.t = 2 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k = 1 OR (n.s = 2 OR n.t = 3) RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 OR n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE NOT (n.k IN ([1, 2])) RETURN n",
+                "MATCH (n:A) WHERE NOT n.k IN [1, 2] RETURN n",
+            ),
+            (
+                "MATCH (a), (b) WHERE ((id(a) = 1) AND (id(b) = 2)) RETURN a, b",
+                "MATCH (a), (b) WHERE id(a) = 1 AND id(b) = 2 RETURN a, b",
+            ),
+            (
+                "MATCH (a) WHERE ((a)-->()) RETURN a",
+                "MATCH (a) WHERE (a)-->() RETURN a",
+            ),
+            (
+                "MATCH (n:A) SET n.v = (n.k + 1) RETURN n",
+                "MATCH (n:A) SET n.v = n.k + 1 RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in same {
+            assert_eq!(bound(parenthesised), bound(plain), "{parenthesised}");
+        }
+    }
+
+    /// Only the wrapper goes: grouping that changes the meaning still does.
+    #[test]
+    fn parentheses_that_regroup_still_bind_differently() {
+        let different = [
+            (
+                "MATCH (n:A) WHERE (n.k = 1 OR n.s = 2) AND n.t = 3 RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 AND n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k - (n.s - n.t) = 0 RETURN n",
+                "MATCH (n:A) WHERE n.k - n.s - n.t = 0 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k < n.s) < n.t RETURN n",
+                "MATCH (n:A) WHERE n.k < n.s < n.t RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in different {
+            assert_ne!(bound(parenthesised), bound(plain), "{parenthesised}");
         }
     }
 }
