@@ -24,12 +24,22 @@ const MIN_LATENCY_MS: f64 = 10.0;
 /// with a trailing `"..."`.
 const STR_MAX_LEN: usize = 2048;
 
-/// Truncate `s` to at most `STR_MAX_LEN` characters, appending `"..."` if
-/// truncated.
+/// The longest prefix of `s` that is at most `STR_MAX_LEN` bytes and ends on a
+/// character boundary.
+///
+/// C cuts at byte `STR_MAX_LEN` even inside a character; slicing a `&str` there
+/// panics, so a multi-byte character straddling the limit is left out whole.
+fn prefix(s: &str) -> &str {
+    &s[..s.floor_char_boundary(STR_MAX_LEN)]
+}
+
+/// Truncate `s` to at most `STR_MAX_LEN` bytes (on a character boundary),
+/// appending `"..."` if truncated.
 fn truncate(s: &str) -> String {
     if s.len() > STR_MAX_LEN {
-        let mut t = String::with_capacity(STR_MAX_LEN + 3);
-        t.push_str(&s[..STR_MAX_LEN]);
+        let head = prefix(s);
+        let mut t = String::with_capacity(head.len() + 3);
+        t.push_str(head);
         t.push_str("...");
         t
     } else {
@@ -45,8 +55,7 @@ fn entry_hash(
     let mut hasher = DefaultHasher::new();
     cmd.hash(&mut hasher);
     // Hash at most STR_MAX_LEN bytes of the query (matches C behaviour).
-    let n = query.len().min(STR_MAX_LEN);
-    query[..n].hash(&mut hasher);
+    prefix(query).hash(&mut hasher);
     hasher.finish()
 }
 
