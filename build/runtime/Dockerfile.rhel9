@@ -5,7 +5,11 @@
 # scripts the Debian toolchain uses — so the produced .so has a glibc-2.34
 # baseline and the single-.so self-containment contract still holds.
 #
-# Exported via:  docker build --target artifact --output type=local,dest=<dir>
+# Two targets:
+#   artifact  the .so alone:  docker build --target artifact --output type=local,dest=<dir>
+#   server    a UBI9 server image (redhat/ubi9-minimal): Redis built from
+#             source on this OS, plus that same .so. The counterpart of the
+#             Debian image's `server` target; no browser.
 # Package set mirrors the C repo's build/docker/builder/Dockerfile.rhel9, minus
 # the C-only peg/libcypher-parser bits the Rust port doesn't use.
 
@@ -14,6 +18,8 @@ ARG CXX=clang++
 # BUILD_IMAGE uniformly without a "not consumed" warning; self-contained OSes
 # don't use a toolchain base image.
 ARG BUILD_IMAGE
+# Same Redis release as build/runtime/Dockerfile.
+ARG REDIS_VERSION=8.10.2
 
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
@@ -116,3 +122,111 @@ RUN cargo build --release && \
 # ---------------------------------------------------------------------------
 FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
+
+# ---------------------------------------------------------------------------
+# Redis, built on this OS so redis-server runs against the image's own glibc
+# and OpenSSL. Same recipe as build/runtime/Dockerfile's redis-builder stage:
+# protected-mode off by default, as in the upstream redis image, and the same
+# jemalloc page sizes.
+# ---------------------------------------------------------------------------
+FROM redhat/ubi9 AS redis-builder
+
+ARG REDIS_VERSION
+
+RUN yum install -y git gcc gcc-c++ make openssl-devel && \
+    yum clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64 | i?86) lgPage=12 ;; \
+        *) lgPage=16 ;; \
+    esac; \
+    extraJemallocConfigureFlags="--build=${arch}-linux-gnu --with-lg-page=${lgPage} --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version; \
+    /redis-install/bin/redis-cli --version
+
+# ---------------------------------------------------------------------------
+# Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
+# paths, user, entrypoint and environment -- on redhat/ubi9-minimal.
+# ---------------------------------------------------------------------------
+FROM redhat/ubi9-minimal AS server
+
+# BuildKit auto-ARGs must be re-declared in each stage that consumes them.
+ARG TARGETPLATFORM
+
+ENV FALKORDB_HOME=/var/lib/falkordb \
+    FALKORDB_DATA_PATH=/var/lib/falkordb/data \
+    FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
+    FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
+    FALKORDB_TLS_PATH=/var/lib/falkordb/tls
+
+# Required at runtime:
+#   libstdc++       : falkordb.so
+#   openssl-libs    : redis-server with BUILD_TLS=yes
+#   openssl, bash   : gen-certs.sh (TLS=1)
+#   findutils       : run.sh's data-dir ownership fix-up
+#   util-linux      : setpriv(1), behind the gosu that run.sh calls
+#   shadow-utils    : groupadd/useradd for the falkordb user
+# falkordb is uid/gid 999, as in the Debian image, so a data volume moves
+# between the two images without an ownership change.
+RUN microdnf update -y && \
+    microdnf install -y --setopt=install_weak_deps=0 \
+      libstdc++ openssl-libs openssl bash findutils util-linux shadow-utils && \
+    groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
+    microdnf clean all
+
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+COPY ./build/runtime/gosu-setpriv.sh /usr/local/bin/gosu
+# The sentinel/check-* entry points are symlinks, as in the Debian image.
+RUN chmod 0755 /usr/local/bin/gosu && \
+    ln -s redis-server /usr/local/bin/redis-sentinel && \
+    ln -s redis-server /usr/local/bin/redis-check-rdb && \
+    ln -s redis-server /usr/local/bin/redis-check-aof
+
+# root:falkordb 0775, for the reasons given in build/runtime/Dockerfile.
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    chown root:falkordb ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    ln -s ${FALKORDB_DATA_PATH} /data
+
+WORKDIR ${FALKORDB_HOME}
+
+COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+
+# The builder checked the module against the builder's packages; this image
+# installs far fewer, so check it again here. Then every redis entry point,
+# and that gosu really switches to falkordb.
+RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
+    redis-server --version && \
+    redis-cli --version && \
+    redis-sentinel --version && \
+    redis-check-rdb --version && \
+    redis-check-aof --version && \
+    test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"
+
+ENV ARCH=${TARGETPLATFORM} \
+    TLS=0 \
+    BROWSER=0 \
+    FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
+
+EXPOSE 6379/tcp
+
+# run.sh execs redis-server itself and ignores container args (no CMD).
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
