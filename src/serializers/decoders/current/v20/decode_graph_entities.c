@@ -51,11 +51,17 @@ static SIValue _RdbLoadSIValue
 		case T_STRING:
 			// transfer ownership of the heap-allocated string to the
 			// newly-created SIValue
-			return SI_TransferStringVal(SerializerIO_TryReadCString(rdb));
+			str = SerializerIO_TryReadCString(rdb);
+			// unarmed (RESTORE/COPY/offload): a short read latches the error and
+			// returns NULL instead of jumping; don't hand NULL to the SIValue
+			if(unlikely(str == NULL)) return SI_NullVal();
+			return SI_TransferStringVal(str);
 
 		case T_INTERN_STRING:
 			// create intern string and free loaded buffer
 			str = SerializerIO_TryReadCString(rdb);
+			// unarmed: a short read returns NULL; SI_InternStringVal would crash
+			if(unlikely(str == NULL)) return SI_NullVal();
 			v = SI_InternStringVal(str);
 			rm_free(str);
 			return v;

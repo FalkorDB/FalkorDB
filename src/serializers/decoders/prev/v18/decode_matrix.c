@@ -65,7 +65,7 @@ static void _DecodeTensors
 			GrB_Index i = SerializerIO_TryReadUnsigned (rdb) ;
 			GrB_Index j = SerializerIO_TryReadUnsigned (rdb) ;
 
-			// read tensor blob
+			// read tensor blob (a short read jumps to the landing pad)
 			GrB_Index blob_size;
 			void *blob = SerializerIO_TryReadBuffer (rdb, (size_t*)&blob_size) ;
 			ASSERT (blob != NULL) ;
@@ -73,21 +73,42 @@ static void _DecodeTensors
 			GrB_Vector u;
 			GrB_Info info =
 				GxB_Vector_deserialize (&u, NULL, blob, blob_size, NULL) ;
-			ASSERT (info == GrB_SUCCESS) ;
+			rm_free (blob) ;
+			if (info != GrB_SUCCESS) {
+				SerializerIO_SetError (rdb,
+						"GraphBLAS error %d deserializing tensor (%llu, %llu)",
+						(int) info, (unsigned long long) i,
+						(unsigned long long) j) ;
+				return ;
+			}
 
 			// update number of elements loaded
 			GrB_Index nvals;
 			info = GrB_Vector_nvals (&nvals, u) ;
 			ASSERT (info == GrB_SUCCESS) ;
-			ASSERT (nvals > 0) ;
+			// a tensor holds at least two edges, a single edge is stored
+			// as a scalar entry
+			if (nvals < 2) {
+				GrB_Vector_free (&u) ;
+				SerializerIO_SetError (rdb,
+						"tensor (%llu, %llu) holds %llu edges, expected at least 2",
+						(unsigned long long) i, (unsigned long long) j,
+						(unsigned long long) nvals) ;
+				return ;
+			}
 			*n_elem += nvals;
 
 			// set tensor
 			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
 			info = GrB_Matrix_setElement_UINT64 (A, v, i, j) ;
-			ASSERT (info == GrB_SUCCESS) ;
-
-			rm_free(blob);
+			if (info != GrB_SUCCESS) {
+				GrB_Vector_free (&u) ;
+				SerializerIO_SetError (rdb,
+						"GraphBLAS error %d setting tensor (%llu, %llu)",
+						(int) info, (unsigned long long) i,
+						(unsigned long long) j) ;
+				return ;
+			}
 		}
 
 		// set number of loaded tensors
@@ -116,28 +137,78 @@ static void _decode_and_load_vector
 	uint64_t n_bytes;       // data size in bytes
 	int handling;           // memory owner GraphBLAS / App
 	char   *t_name;         // type name
-	size_t t_name_len = 0;  // type name length
 	GrB_Info info;
 
-	// load vector from stream
+	// load vector from stream (a short read jumps to the landing pad)
 	arr       = SerializerIO_TryReadBuffer   (rdb, &n) ;
-	t_name    = SerializerIO_TryReadBuffer   (rdb, &t_name_len) ;
+	t_name    = SerializerIO_TryReadCString  (rdb) ;
 	n_entries = SerializerIO_TryReadUnsigned (rdb) ;
 	n_bytes   = SerializerIO_TryReadUnsigned (rdb) ;
 	handling  = SerializerIO_TryReadSigned   (rdb) ;
 
+	// the declared size must match the bytes actually read; GraphBLAS trusts it
+	if (n != n_bytes) {
+		rm_free (arr) ;
+		rm_free (t_name) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"matrix vector holds %zu bytes but declares %llu", n,
+				(unsigned long long) n_bytes) ;
+		return ;
+	}
+
 	// get GrB_Type
 	GrB_Type t;  // data type
+	// an unrecognized name is not an error to GraphBLAS: it returns NULL
 	info = GxB_Type_from_name (&t, t_name) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS || t == NULL) {
+		if (info != GrB_SUCCESS) {
+			SerializerIO_SetError (rdb,
+					"GraphBLAS error %d resolving matrix value type '%.64s'",
+					(int) info, t_name) ;
+		} else {
+			SerializerIO_SetError (rdb, "unknown matrix value type '%.64s'",
+					t_name) ;
+		}
+		rm_free (t_name) ;
+		rm_free (arr) ;
+		*v = NULL ;
+		return ;
+	}
 	rm_free (t_name) ;
+
+	// GraphBLAS checks n_entries * type size against n_bytes without guarding
+	// the product; an overflowing count passes and reads past the buffer
+	size_t t_size = 0 ;
+	GxB_Type_size (&t_size, t) ;
+	if (t_size == 0 || n_entries > n_bytes / t_size) {
+		rm_free (arr) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"matrix vector declares %llu entries in %llu bytes",
+				(unsigned long long) n_entries, (unsigned long long) n_bytes) ;
+		return ;
+	}
 
 	// load vector
 	info = GrB_Vector_new (v, t, 0) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		rm_free (arr) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d creating a matrix vector", (int) info) ;
+		return ;
+	}
 
 	info = GxB_Vector_load (*v, &arr, t, n_entries, n_bytes, handling, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		// on failure GraphBLAS leaves 'arr' with us
+		rm_free (arr) ;
+		GrB_Vector_free (v) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d loading a matrix vector", (int) info) ;
+	}
 }
 
 // decode a GraphBLAS matrix
@@ -154,7 +225,16 @@ static GrB_Matrix _Decode_GrB_Matrix
 	GxB_Container container;
 
 	container = SerializerIO_TryReadBuffer (rdb, &n) ;
-	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
+
+	// a wrong-sized buffer can't be a container; writing its fields would
+	// overflow the allocation (a short read already jumped to the landing pad)
+	if (n != sizeof(struct GxB_Container_struct)) {
+		rm_free (container) ;
+		SerializerIO_SetError (rdb,
+				"matrix container holds %zu bytes, expected %zu", n,
+				sizeof (struct GxB_Container_struct)) ;
+		return NULL ;
+	}
 
 	// nullify container's vectors
     container->p = NULL ;
@@ -178,7 +258,13 @@ static GrB_Matrix _Decode_GrB_Matrix
 	ASSERT (info == GrB_SUCCESS) ;
 
 	info = GxB_load_Matrix_from_Container (A, container, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		GrB_Matrix_free (&A) ;
+		GxB_Container_free (&container) ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d loading a matrix", (int) info) ;
+		return NULL ;
+	}
 
 	// A is now back to its original state. The container and its p,h,b,i,x
 	// GrB_Vectors exist but its vectors all have length 0.
@@ -207,8 +293,23 @@ static void _Decode_Delta_Matrix
 	GrB_Matrix DP = _Decode_GrB_Matrix (rdb) ;
 	GrB_Matrix DM = _Decode_GrB_Matrix (rdb) ;
 
+	// defensive: _Decode_GrB_Matrix jumps on a decode failure, so reaching here
+	// with a NULL matrix shouldn't happen; free any that decoded and bail
+	if (M == NULL || DP == NULL || DM == NULL) {
+		if (M  != NULL) GrB_Matrix_free (&M) ;
+		if (DP != NULL) GrB_Matrix_free (&DP) ;
+		if (DM != NULL) GrB_Matrix_free (&DM) ;
+		return ;
+	}
+
 	GrB_Info info = Delta_Matrix_setMatrices (D, &M, &DP, &DM) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		if (M  != NULL) GrB_Matrix_free (&M) ;
+		if (DP != NULL) GrB_Matrix_free (&DP) ;
+		if (DM != NULL) GrB_Matrix_free (&DM) ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d setting delta matrix", (int) info) ;
+	}
 }
 
 // decode label matrices from rdb
@@ -222,20 +323,43 @@ void RdbLoadLabelMatrices_v18
 	//   label id
 	//   matrix
 
-	ASSERT (g   != NULL) ;
-	ASSERT (rdb != NULL) ;
+	ASSERT(g   != NULL);
+	ASSERT(rdb != NULL);
 
-	GrB_Info info;
+	// read number of label matricies: one per label
+	uint64_t n = SerializerIO_TryReadUnsigned(rdb);
+	uint64_t label_count = Graph_LabelTypeCount(g);
+	if(n != label_count) {
+		SerializerIO_SetError(rdb, "%llu label matrices for %llu labels",
+				(unsigned long long) n, (unsigned long long) label_count);
+		return;
+	}
 
-	// read number of label matricies
-	int n = SerializerIO_TryReadUnsigned (rdb) ;
-	
 	// decode each label matrix
-	for (int i = 0; i < n; i++) {
-		// read label ID
-		LabelID l = SerializerIO_TryReadUnsigned (rdb) ;
-		Delta_Matrix lbl = Graph_GetLabelMatrix (g, l) ;
-		_Decode_Delta_Matrix (rdb, lbl) ;
+	for(uint64_t i = 0; i < n; i++) {
+		// read label ID, validated before narrowing to LabelID
+		// (a short read jumps to the landing pad)
+		uint64_t l = SerializerIO_TryReadUnsigned(rdb);
+
+		// label matrices are encoded in id order; l must equal i
+		// this rejects a duplicate or out-of-order id, which would otherwise
+		// decode two matrices onto one label and leave another label empty
+		if(l != i) {
+			SerializerIO_SetError(rdb, "label matrix out of order: %llu",
+					(unsigned long long) l);
+			return;
+		}
+
+		Delta_Matrix lbl = Graph_GetLabelMatrix(g, l);
+
+		GrB_Index nvals;
+		Delta_Matrix_nvals(&nvals, lbl);
+		if(nvals != 0) {
+			SerializerIO_SetError(rdb, "label matrix decoded twice");
+			return;
+		}
+
+		_Decode_Delta_Matrix(rdb, lbl);
 	}
 }
 
@@ -251,8 +375,8 @@ void RdbLoadRelationMatrices_v18
 	//   tensors count X N
 	//   tensors
 
-	ASSERT (g   != NULL) ;
-	ASSERT (rdb != NULL) ;
+	ASSERT(g   != NULL);
+	ASSERT(rdb != NULL);
 
 	GrB_Info info;
 
@@ -261,16 +385,25 @@ void RdbLoadRelationMatrices_v18
 
 	// decode relationship matrices
 	for (int i = 0; i < n; i++) {
-		// read relation ID
-		RelationID r = SerializerIO_TryReadUnsigned (rdb) ;
-		ASSERT (r == i) ;
+		// read relation ID, compared before narrowing to RelationID
+		// (a short read jumps to the landing pad)
+		uint64_t r = SerializerIO_TryReadUnsigned (rdb) ;
+
+		// relation matrices are encoded in id order
+		if (r != (uint64_t) i) {
+			SerializerIO_SetError (rdb, "relation matrix out of order") ;
+			return ;
+		}
 
 		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix (g, r, false) ;
 
 		GrB_Index nvals;
 		Delta_Matrix_nvals (&nvals, DR) ;
-		ASSERT (nvals == 0) ;
+		if (nvals != 0) {
+			SerializerIO_SetError (rdb, "relation matrix decoded twice") ;
+			return ;
+		}
 
 		_Decode_Delta_Matrix(rdb, DR);
 
@@ -301,8 +434,8 @@ void RdbLoadAdjMatrix_v18
 	ASSERT(g   != NULL);
 	ASSERT(rdb != NULL);
 
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
-	_Decode_Delta_Matrix (rdb, adj) ;
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	_Decode_Delta_Matrix(rdb, adj);
 }
 
 // decode labels matrix
@@ -314,10 +447,9 @@ void RdbLoadLblsMatrix_v18
 	// format:
 	//   lbls matrix
 
-	ASSERT (g   != NULL) ;
-	ASSERT (rdb != NULL) ;
+	ASSERT(g   != NULL);
+	ASSERT(rdb != NULL);
 
-	Delta_Matrix lbl = Graph_GetNodeLabelMatrix (g) ;
-	_Decode_Delta_Matrix (rdb, lbl) ;
+	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(g);
+	_Decode_Delta_Matrix(rdb, lbl);
 }
-

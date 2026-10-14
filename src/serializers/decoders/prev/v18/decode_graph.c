@@ -56,7 +56,14 @@ static GraphContext *_DecodeHeader
 	// Schema
 
 	// graph name
-	char *graph_name = SerializerIO_TryReadBuffer(rdb, NULL);
+	char *graph_name = SerializerIO_TryReadCString(rdb);
+
+	// _GetOrCreateGraphContext frees graph_name
+	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+
+	// stash the in-flight graph so the dispatcher's landing pad can tear it
+	// down after a short read unwinds this decoder's locals
+	SerializerIO_SetContext(rdb, gc);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
@@ -66,20 +73,21 @@ static GraphContext *_DecodeHeader
 	uint64_t deleted_edge_count = SerializerIO_TryReadUnsigned(rdb);
 	uint64_t label_count        = SerializerIO_TryReadUnsigned(rdb);
 	uint64_t relation_count     = SerializerIO_TryReadUnsigned(rdb);
-	uint64_t multi_edge[relation_count];
 
-	for(uint i = 0; i < relation_count; i++) {
-		multi_edge[i] = SerializerIO_TryReadUnsigned(rdb);
+	// guard the label and relation counts before they size allocations / drive
+	// loops. graph_name is already freed and gc is stashed, so a SetError jump
+	// tears the partial graph down via the dispatcher's landing pad
+	if(label_count > GRAPH_MAX_LABELS) {
+		SerializerIO_SetError(rdb, "label count %llu exceeds limit",
+				(unsigned long long) label_count);
+		return NULL;  // SetError longjmps (when armed) to the landing pad
+	}
+	if(relation_count > GRAPH_MAX_RELATIONS) {
+		SerializerIO_SetError(rdb, "relation count %llu exceeds limit",
+				(unsigned long long) relation_count);
+		return NULL;  // SetError longjmps (when armed) to the landing pad
 	}
 
-	// total keys representing the graph
-	uint64_t key_number = SerializerIO_TryReadUnsigned(rdb);
-
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
-
-	// stash the in-flight graph so the dispatcher's landing pad can tear it
-	// down after a short read unwinds this decoder's locals
-	SerializerIO_SetContext(rdb, gc);
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -91,15 +99,24 @@ static GraphContext *_DecodeHeader
 	if(first_vkey == true) {
 		_InitGraphDataStructure(g, node_count, edge_count, deleted_node_count,
 				deleted_edge_count) ;
-
 		decoding_context->multi_edge = arr_new (uint64_t, relation_count) ;
-		for (uint i = 0; i < relation_count; i++) {
-			// enable/Disable support for multi-edge
-			// we will enable support for multi-edge on all relationship
-			// matrices once we finish loading the graph
-			arr_append (decoding_context->multi_edge,  multi_edge [i]) ;
-		}
+	}
 
+	// enable/disable support for multi-edge, per relationship matrix; append to
+	// the (gc-owned) array on the first key, discard on later keys. support is
+	// actually enabled on all relationship matrices once the graph is loaded.
+	// a short read mid-loop jumps out - the partial array belongs to gc and is
+	// freed with it, so there is nothing to clean up here
+	for (uint i = 0 ; i < relation_count ; i++) {
+		uint64_t me = SerializerIO_TryReadUnsigned (rdb) ;
+		if (first_vkey == true) {
+			arr_append (decoding_context->multi_edge, me) ;
+		}
+	}
+
+	// total keys representing the graph; a short read would have jumped already
+	uint64_t key_number = SerializerIO_TryReadUnsigned(rdb);
+	if (first_vkey == true) {
 		GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
 	}
 
@@ -127,6 +144,14 @@ static PayloadInfo *_RdbLoadKeySchema
 	//     Number of entities encoded in this state.
 
 	uint64_t payloads_count = SerializerIO_TryReadUnsigned(rdb);
+
+	// guard the payload count before it sizes the array below
+	if(payloads_count > GRAPH_MAX_KEY_PAYLOADS) {
+		SerializerIO_SetError(rdb, "payload count %llu exceeds limit",
+				(unsigned long long) payloads_count);
+		return NULL;  // SetError longjmps to the landing pad
+	}
+
 	PayloadInfo *payloads = arr_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
@@ -156,7 +181,17 @@ GraphContext *RdbLoadGraphContext_v18
 	//      Entities in payload
 	//  Payload(s) X N
 
+	// the decode abort handler is installed once by the dispatcher
+	// (RdbLoadGraph): a short read or a SerializerIO_SetError longjmps straight
+	// back there, so the reads in the call tree below never test for an error by
+	// hand. _DecodeHeader stashes the in-flight graph via SerializerIO_SetContext
+	// so the dispatcher's landing pad can tear it down
 	GraphContext *gc = _DecodeHeader(rdb);
+
+	// armed: _DecodeHeader either returns a graph or jumps, so gc is non-NULL
+	// here; guard defensively so a malformed header can't be dereferenced
+	if (gc == NULL) return NULL ;
+
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -168,6 +203,9 @@ GraphContext *RdbLoadGraphContext_v18
 
 	// load the key schema
 	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
+
+	// a malformed payload count jumps to the landing pad; guard defensively
+	if (payloads == NULL) return gc ;
 
 	// The decode process contains the decode operation of many meta keys, representing independent parts of the graph
 	// Each key contains data on one or more of the following:
@@ -181,7 +219,9 @@ GraphContext *RdbLoadGraphContext_v18
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				RdbLoadNodes_v18(rdb, g, payload.entities_count);
+				RdbLoadNodes_v18(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -193,7 +233,9 @@ GraphContext *RdbLoadGraphContext_v18
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v18(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v18(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -205,7 +247,9 @@ GraphContext *RdbLoadGraphContext_v18
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbLoadEdges_v18 (rdb, g, payload.entities_count) ;
+				RdbLoadEdges_v18 (rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count) ;
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -215,7 +259,9 @@ GraphContext *RdbLoadGraphContext_v18
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v18(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v18(rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -259,7 +305,7 @@ GraphContext *RdbLoadGraphContext_v18
 				break;
 
 			default:
-				ASSERT(false && "Unknown encoding");
+				SerializerIO_SetError(rdb, EMSG_DECODER_UNKNOWN_PAYLOAD);
 				break;
 		}
 	}
