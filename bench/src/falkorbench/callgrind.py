@@ -88,7 +88,7 @@ MAX_SPAN = 4000
 MAX_REL_ERR = 0.02
 
 # A small graph that supports the cg-flagged subset. Deliberately not the full
-# SETUP: that builds 10k nodes, 10k edges, vector and fulltext indexes,
+# SETUP: that builds 10k nodes, 20k edges, vector and fulltext indexes,
 # constraints, UDFs and a DEBUG RELOAD, and every one of those instructions
 # would be paid twice per measured query under instrumentation.
 #
