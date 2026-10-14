@@ -10,7 +10,9 @@ use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
+use graph::graph::graphblas::serialization::{
+    Decode, Encode, Reader, Writer, decode_capacity, index_field_type,
+};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
@@ -176,7 +178,7 @@ impl Decode<19> for Header {
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
 
-        let mut multi_edge = Vec::with_capacity(relationship_count as usize);
+        let mut multi_edge = Vec::with_capacity(decode_capacity(relationship_count));
         for _ in 0..relationship_count {
             let flag = r.read_unsigned()?;
             multi_edge.push(flag != 0);
@@ -467,7 +469,7 @@ impl Decode<19> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
-        let mut attribute_names = Vec::with_capacity(attr_count as usize);
+        let mut attribute_names = Vec::with_capacity(decode_capacity(attr_count));
         for _ in 0..attr_count {
             let buf = r.read_buffer()?;
             attribute_names.push(Arc::new(strip_null_terminator(&buf)));
@@ -475,7 +477,7 @@ impl Decode<19> for Schema {
 
         // --- Node schemas ---
         let node_schema_count = r.read_unsigned()?;
-        let mut node_labels = Vec::with_capacity(node_schema_count as usize);
+        let mut node_labels = Vec::with_capacity(decode_capacity(node_schema_count));
         let mut indexes = Vec::new();
         let mut constraints = Vec::new();
         for _ in 0..node_schema_count {
@@ -499,7 +501,7 @@ impl Decode<19> for Schema {
         // `rebuild_indexes` calls `create_index_sync` with the right
         // entity type.
         let rel_schema_count = r.read_unsigned()?;
-        let mut relationship_types = Vec::with_capacity(rel_schema_count as usize);
+        let mut relationship_types = Vec::with_capacity(decode_capacity(rel_schema_count));
         for _ in 0..rel_schema_count {
             let (type_name, info, mut schema_constraints) =
                 decode_schema_entry(r, &attribute_names)?;
@@ -541,7 +543,7 @@ fn decode_schema_entry(
         let language = strip_null_terminator(&lang_buf);
 
         let sw_count = r.read_unsigned()?;
-        let mut stopwords = Vec::with_capacity(sw_count as usize);
+        let mut stopwords = Vec::with_capacity(decode_capacity(sw_count));
         for _ in 0..sw_count {
             let sw_buf = r.read_buffer()?;
             stopwords.push(Arc::new(strip_null_terminator(&sw_buf)));
@@ -582,7 +584,7 @@ fn decode_schema_entry(
     };
 
     let constraint_count = r.read_unsigned()?;
-    let mut constraints = Vec::with_capacity(constraint_count as usize);
+    let mut constraints = Vec::with_capacity(decode_capacity(constraint_count));
     for _ in 0..constraint_count {
         let constraint_type_id = r.read_unsigned()?;
         let ct = match constraint_type_id {
@@ -592,7 +594,7 @@ fn decode_schema_entry(
         // No status field: see `encode_constraint_block`. Both engines write only active
         // constraints, so anything present here is operational by construction.
         let fields_count = r.read_unsigned()?;
-        let mut properties = Vec::with_capacity(fields_count as usize);
+        let mut properties = Vec::with_capacity(decode_capacity(fields_count));
         for _ in 0..fields_count {
             let attr_id = r.read_unsigned()? as usize;
             let prop_name = if attr_id < attribute_names.len() {

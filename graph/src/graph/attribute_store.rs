@@ -118,7 +118,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::graphblas::serialization::{Decode, Encode, Reader, Writer, decode_capacity};
 use crate::runtime::value::Value;
 
 /// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
@@ -1467,7 +1467,7 @@ impl Decode<19> for AttributeStore {
             let entity_id = r.read_unsigned()?;
             let attr_count = r.read_unsigned()?;
 
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(decode_capacity(attr_count));
             for _ in 0..attr_count {
                 // Narrow with `try_from`, not `as`: the id is a u64 on the wire, and
                 // truncating first would turn an encoded 65_536 into 0, which then
@@ -2096,6 +2096,53 @@ mod tests {
             Some(Value::Int(10)),
             "an id wider than u16 must be dropped, not narrowed onto attribute 0"
         );
+    }
+
+    #[test]
+    fn decode_with_count_rejects_an_attr_count_the_stream_cannot_back() {
+        // The declared attribute count is far larger than what follows. The
+        // decoder has to fail on the missing data, not reserve for the count.
+        let mut rec = Recorder::default();
+        rec.write_unsigned(7);
+        rec.write_unsigned(u64::MAX);
+        let mut r = Replay {
+            ops: rec.ops.into(),
+        };
+
+        let mut store = AttributeStore::default();
+        assert!(store.decode_with_count(&mut r, 1, 1).is_err());
+    }
+
+    #[test]
+    fn value_decode_rejects_an_array_len_the_stream_cannot_back() {
+        use crate::graph::graphblas::serialization::si_type;
+
+        let mut rec = Recorder::default();
+        rec.write_unsigned(si_type::T_ARRAY);
+        rec.write_unsigned(u64::MAX);
+        let mut r = Replay {
+            ops: rec.ops.into(),
+        };
+
+        assert!(Value::decode(&mut r).is_err());
+    }
+
+    #[test]
+    fn value_decode_rejects_a_vector_dim_larger_than_its_buffer() {
+        use crate::graph::graphblas::serialization::si_type;
+
+        // dim says u32::MAX floats, the buffer holds one
+        let mut buf = u32::MAX.to_le_bytes().to_vec();
+        buf.extend_from_slice(&1.0f32.to_le_bytes());
+
+        let mut rec = Recorder::default();
+        rec.write_unsigned(si_type::T_VECTOR_F32);
+        rec.write_buffer(&buf);
+        let mut r = Replay {
+            ops: rec.ops.into(),
+        };
+
+        assert!(Value::decode(&mut r).is_err());
     }
 
     #[test]

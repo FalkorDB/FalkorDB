@@ -42,6 +42,7 @@ tests/flow/test_function_calls
 tests/flow/test_graph_copy.py
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
+tests/flow/test_graph_restore.py
 tests/flow/test_harmonic_centrality.py
 tests/flow/test_graph_info.py
 tests/flow/test_graph_merge
