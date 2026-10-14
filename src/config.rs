@@ -68,7 +68,11 @@ lazy_static! {
 
 // ── Runtime-configurable atomics ──
 
-pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(u32::MAX as u64);
+/// Queries that may wait at once — in the thread pool plus every graph's write
+/// queue — before new ones get "Max pending queries exceeded". Deliberately
+/// finite, unlike C's unlimited default, so a stalled graph cannot queue
+/// without bound.
+pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(10_000);
 pub static TIMEOUT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_DEFAULT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
@@ -106,8 +110,8 @@ pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
 pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 /// Whether graph teardown may happen off the calling thread. Settable at run-time as
 /// in C, but not yet read: this engine always frees off-thread (see
-/// `graph_core::graph_free`).
-pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
+/// `graph_core::graph_free`), so it defaults to 1 — C's default, and what happens.
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
 
 // ── Read-only runtime configs ──
 
