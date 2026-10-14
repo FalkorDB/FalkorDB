@@ -86,13 +86,15 @@ pub fn apply_effects(
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
-    // Index DDL last, once no other record can refuse the buffer: the index map
-    // is shared by every MVCC version, so discarding this version on a refusal
-    // would not undo a `CREATE_INDEX` / `DROP_INDEX` that had already run
+    // Index DDL last, once no other record can refuse the buffer: the RediSearch
+    // index map is shared by every MVCC version, so discarding this version on a
+    // refusal would not undo a `CREATE_INDEX` / `DROP_INDEX` that had already run
     // (#3023). In record order, so a drop and a re-create of one index keep
     // their meaning. `docs` was collected against the indexes as they stood
     // before this buffer's DDL; an index this buffer creates is populated from
-    // the version it publishes instead, which holds everything the buffer wrote.
+    // what the buffer wrote instead: RediSearch from the version it publishes,
+    // and the native index's columns (part of this version) from the graph as
+    // it now stands.
     //
     // One case this does not cover: a statement that is itself refused here
     // (an index that already exists, a drop of one that does not) still leaves
@@ -101,8 +103,11 @@ pub fn apply_effects(
         ddl.run(g)?;
     }
 
-    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
-    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+    // Both indexes once for the whole buffer: the native index's staged changes, then
+    // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
+    // an UPDATE followed by a DELETE of the same node — and the native apply keeps only each
+    // entry's last change.
+    g.commit_index_docs(&mut docs);
     Ok(())
 }
 
@@ -313,7 +318,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, docs, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -323,13 +328,7 @@ fn apply_record(
             // same record shape reaching the two paths differently.
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
-                g.set_nodes_attributes_rows_of_labels(
-                    &ids,
-                    &label_ids,
-                    &attr_ids,
-                    &rows,
-                    &mut docs.node_adds,
-                )?;
+                g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             }
             Ok(())
         }
@@ -376,7 +375,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
+                g.set_relationships_attributes(&map, docs)?;
             }
             Ok(())
         }
@@ -399,13 +398,7 @@ fn apply_record(
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_nodes_attributes_rows_of_labels(
-                &ids,
-                &label_ids,
-                &attr_ids,
-                &rows,
-                &mut docs.node_adds,
-            )?;
+            g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             Ok(())
         }
 
@@ -425,19 +418,14 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, docs)?;
             Ok(())
         }
 
         Record::SetLabels { ids, labels } => {
             require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_node_labels_product(
-                &ids.iter().collect::<Vec<_>>(),
-                &label_ids,
-                &mut docs.node_adds,
-                false,
-            );
+            g.set_node_labels_product(&ids.iter().collect::<Vec<_>>(), &label_ids, docs, false);
             Ok(())
         }
 
@@ -454,7 +442,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, docs);
             Ok(())
         }
 
@@ -479,13 +467,13 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut docs.node_removes)?;
+            g.delete_nodes(&nodes, docs)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut docs.edge_removes)?;
+            g.delete_relationships(&edges, docs)?;
             Ok(())
         }
 
