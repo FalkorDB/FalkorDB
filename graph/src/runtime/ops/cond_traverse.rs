@@ -644,8 +644,12 @@ impl<'a> CondTraverseOp<'a> {
             let row_idx = active_subset[row_i as usize];
             // If the to-alias is already bound on the input batch row, the
             // planner should have inserted ExpandInto, not CondTraverse —
-            // but be defensive and skip mismatches.
-            if let Some(Value::Node(bound)) = batch.value_at(to_alias.id, row_idx)
+            // but be defensive and skip mismatches. `is_bound_at` is
+            // required: `value_at` also returns a value-present-but-unbound
+            // slot, which is how a previous scope's node leaks into an id
+            // the binder reused.
+            if batch.is_bound_at(to_alias.id, row_idx)
+                && let Some(Value::Node(bound)) = batch.value_at(to_alias.id, row_idx)
                 && bound != dest_id
             {
                 continue;
@@ -761,18 +765,32 @@ impl<'a> CondTraverseOp<'a> {
     ) -> Result<(), String> {
         let env = BatchRow::new(batch, row_idx);
 
-        let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
-            Value::Node(id) => Some(id),
-            _ => None,
-        });
-        if from_id.is_none() && batch.is_bound_at(rp.from.alias.id, row_idx) {
+        // Only an explicitly bound slot is an endpoint. A previous scope can
+        // leave a node in the same id with the bound bit clear; reading it
+        // here would traverse from that node instead of the one this clause
+        // bound.
+        let from_bound = batch.is_bound_at(rp.from.alias.id, row_idx);
+        let from_id = if from_bound {
+            env.value_at(rp.from.alias.id).and_then(|v| match v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+        } else {
+            None
+        };
+        if from_id.is_none() && from_bound {
             return Ok(());
         }
-        let to_id = env.value_at(rp.to.alias.id).and_then(|v| match v {
-            Value::Node(id) => Some(id),
-            _ => None,
-        });
-        if to_id.is_none() && batch.is_bound_at(rp.to.alias.id, row_idx) {
+        let to_bound = batch.is_bound_at(rp.to.alias.id, row_idx);
+        let to_id = if to_bound {
+            env.value_at(rp.to.alias.id).and_then(|v| match v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+        } else {
+            None
+        };
+        if to_id.is_none() && to_bound {
             return Ok(());
         }
 

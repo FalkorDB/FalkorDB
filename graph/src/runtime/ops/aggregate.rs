@@ -1181,33 +1181,34 @@ impl<'a> Iterator for AggregateOp<'a> {
                     combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
-                // Insert pre-projection key variable values into acc so
-                // downstream operators can find them, but skip any slot that
-                // is already occupied by an aggregation output to avoid
-                // overwriting computed results (e.g., a MapProjection result).
-                for (name, tree) in self.keys {
-                    if let ExprIR::Variable(original_var) = tree.root().data()
-                        && let Some(value) = key.get(name)
-                        && !self
-                            .agg
-                            .iter()
-                            .any(|(agg_name, _)| agg_name.id == original_var.id)
-                    {
-                        acc.insert(original_var, value.clone());
-                    }
-                }
-                acc.merge(&key);
                 // Unbind internal accumulator variables so they don't leak
                 // to downstream operators and collide with variables in
                 // subsequent scopes that reuse the same slot IDs.
+                //
+                // Pre-projection key ids are intentionally not copied onto
+                // the output row. `Row` addresses slots by id alone, and the
+                // binder restarts ids in the scope after WITH/RETURN. Publishing
+                // the previous scope's node (the grouping key `m`) makes the
+                // next clause's variable that reused that id look already
+                // bound — `MATCH (m)-[r]->(b)` then treats `b` as `m` and
+                // drops the real neighbor. Evaluation above still sees the
+                // pre-projection ids via `combined`.
                 for (_, tree) in self.agg {
                     unbind_agg_accumulators(&tree.root(), &mut acc);
                 }
+                // Restore projected bindings after the unbind. A grouping
+                // key's post-projection id can coincide with an accumulator
+                // slot (the binder reuses ids across scopes), and the unbind
+                // would otherwise clear that key. `key` holds only
+                // post-projection ids: grouping-key names and
+                // copy_from_parent targets.
+                acc.merge(&key);
                 // Re-bind aggregate output names last: an accumulator slot id
                 // can coincide with another aggregate's output name (the binder
                 // may reuse slot IDs), and the unbind above would otherwise
-                // clear that output. Output bindings must win. This also matters
-                // for keyless empty-input groups where the output value is Null,
+                // clear that output. Output bindings must win over a grouping
+                // key that landed on the same id. This also matters for
+                // keyless empty-input groups where the output value is Null,
                 // since an unbound Null slot is dropped during columnar finish.
                 for (name, val) in agg_outputs {
                     acc.insert(name, val);
