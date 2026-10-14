@@ -39,18 +39,16 @@ use crate::config::{
     ASYNC_DELETE, BOLT_PORT, CONFIG_NAMES, CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO,
     CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
-    CONFIGURATION_TEMP_FOLDER, CONFIGURATION_THREAD_COUNT, CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
-    DELTA_MAX_PENDING_CHANGES, EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES,
-    MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
-    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
+    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
+    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
-use std::fs::{self, File};
-use std::path::Path;
 use std::sync::atomic::Ordering;
 
 /// C's reply for a name it does not know, in GET and SET alike.
-const UNKNOWN_FIELD: &str = "Unknown configuration field";
+pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
 
 /// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
 const JS_MIN_SIZE: i64 = 1_048_576;
@@ -113,7 +111,7 @@ fn config_get_one(
 }
 
 /// Validate and parse a config SET request. Returns the parsed value or error.
-fn validate_config_set(
+pub(crate) fn validate_config_set(
     name: &str,
     value: &str,
 ) -> Result<ConfigValue, String> {
@@ -203,36 +201,46 @@ fn validate_config_set(
     }
 }
 
-/// Cross-validate timeout configuration constraints.
+/// Cross-validate timeout configuration constraints against the current
+/// `TIMEOUT_DEFAULT` / `TIMEOUT_MAX`.
+fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
+    let mut timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
+    let mut timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
+    check_timeout_constraints(&mut timeout_default, &mut timeout_max, validated)
+}
+
+/// Cross-validate timeout configuration constraints, starting from
+/// `timeout_default` / `timeout_max` and updating them to the values `validated`
+/// would leave behind.
 ///
 /// Rules:
 /// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
 /// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
 /// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
-fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
-    // Compute what the new values will be after applying.
-    let mut new_timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
-    let mut new_timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
-
+pub(crate) fn check_timeout_constraints(
+    timeout_default: &mut i64,
+    timeout_max: &mut i64,
+    validated: &[(&str, ConfigValue)],
+) -> Result<(), String> {
     let mut setting_timeout = false;
     for (name, val) in validated {
         match *name {
             "TIMEOUT" => {
                 setting_timeout = true;
             }
-            "TIMEOUT_DEFAULT" => new_timeout_default = val.as_i64(),
-            "TIMEOUT_MAX" => new_timeout_max = val.as_i64(),
+            "TIMEOUT_DEFAULT" => *timeout_default = val.as_i64(),
+            "TIMEOUT_MAX" => *timeout_max = val.as_i64(),
             _ => {}
         }
     }
 
     // Cannot set deprecated TIMEOUT when new configs are active
-    if setting_timeout && (new_timeout_default > 0 || new_timeout_max > 0) {
+    if setting_timeout && (*timeout_default > 0 || *timeout_max > 0) {
         return Err("The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead".to_string());
     }
 
     // TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
-    if new_timeout_default > 0 && new_timeout_max > 0 && new_timeout_default > new_timeout_max {
+    if *timeout_default > 0 && *timeout_max > 0 && *timeout_default > *timeout_max {
         // Determine which one is being set to produce the right error message
         let setting_default = validated.iter().any(|(n, _)| *n == "TIMEOUT_DEFAULT");
         if setting_default {
@@ -244,14 +252,13 @@ fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Resu
     Ok(())
 }
 
-#[derive(Clone)]
-enum ConfigValue {
+pub(crate) enum ConfigValue {
     Int(i64),
     Uint(u64),
 }
 
 /// Apply a validated config value.
-fn apply_config_set(
+pub(crate) fn apply_config_set(
     ctx: &Context,
     name: &str,
     val: &ConfigValue,
@@ -306,154 +313,6 @@ impl ConfigValue {
             Self::Uint(v) => *v,
         }
     }
-}
-
-/// Configs C has that this engine accepts and stores but does not act on yet.
-/// Setting one at load time logs that the value is accepted and ignored.
-const IGNORED_CONFIGS: &[&str] = &[
-    "ASYNC_DELETE",
-    "DELAY_INDEXING",
-    "DELTA_MAX_PENDING_CHANGES",
-    "EFFECTS_THRESHOLD",
-];
-
-/// Parse a load-time value C requires to be a positive integer
-/// (`_Config_ParsePositiveInteger`).
-fn parse_positive(value: &str) -> Option<i64> {
-    value.parse::<i64>().ok().filter(|v| *v > 0)
-}
-
-/// Parse a load-time value C requires to be a non-negative integer
-/// (`_Config_ParseNonNegativeInteger`).
-fn parse_non_negative(value: &str) -> Option<i64> {
-    value.parse::<i64>().ok().filter(|v| *v >= 0)
-}
-
-/// C's `TEMP_FOLDER` checks, with its error texts.
-fn validate_temp_folder(path: &str) -> Result<(), String> {
-    let p = Path::new(path);
-    if !p.exists() {
-        return Err("TEMP_FOLDER path does not exist".to_string());
-    }
-    if !p.is_dir() {
-        return Err("TEMP_FOLDER path is not a directory".to_string());
-    }
-    let probe = p.join(".falkordb_temp_test");
-    if File::create(&probe).is_err() {
-        return Err("No write access to TEMP_FOLDER path".to_string());
-    }
-    let _ = fs::remove_file(&probe);
-    Ok(())
-}
-
-/// Validate and apply one load-only config (one `GRAPH.CONFIG SET` refuses).
-/// Returns `None` when `name` is not a load-only config.
-fn set_load_only_config(
-    ctx: &Context,
-    name: &str,
-    value: &str,
-) -> Option<Result<(), String>> {
-    let invalid = || Err(format!("Failed to set config value {name} to {value}"));
-    let res = match name {
-        "CACHE_SIZE" | "THREAD_COUNT" | "OMP_THREAD_COUNT" => match parse_positive(value) {
-            Some(v) => {
-                match name {
-                    "CACHE_SIZE" => *CONFIGURATION_CACHE_SIZE.lock(ctx) = v,
-                    "THREAD_COUNT" => *CONFIGURATION_THREAD_COUNT.lock(ctx) = v,
-                    _ => OMP_THREAD_COUNT.store(v, Ordering::Relaxed),
-                }
-                Ok(())
-            }
-            None => invalid(),
-        },
-        "NODE_CREATION_BUFFER" | "INDEX_WORKER_THREADS" => match parse_non_negative(value) {
-            Some(v) => {
-                if name == "NODE_CREATION_BUFFER" {
-                    *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx) = v;
-                } else {
-                    *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = v;
-                }
-                Ok(())
-            }
-            None => invalid(),
-        },
-        "IMPORT_FOLDER" => {
-            *CONFIGURATION_IMPORT_FOLDER.lock(ctx) = value.to_string();
-            Ok(())
-        }
-        "TEMP_FOLDER" => validate_temp_folder(value).map(|()| {
-            *CONFIGURATION_TEMP_FOLDER.lock(ctx) = value.to_string();
-        }),
-        // Not validated at load time (yet); accepted and unused, as before.
-        "BOLT_PORT" => Ok(()),
-        _ => return None,
-    };
-    Some(res)
-}
-
-/// Apply the module's load arguments (`--loadmodule falkordb.so NAME VALUE ...`)
-/// the way C's `Config_Init` does: names are case-insensitive, every value is
-/// validated, and an odd argument count, an unknown name or an invalid value
-/// refuses the load. Run-time configs go through the same validation and
-/// setter as `GRAPH.CONFIG SET`; load-only configs get C's load-time rules.
-///
-/// Runs in `graph_init`, after Redis has applied any `graph.*` lines from
-/// redis.conf, so a module argument wins over the same `graph.*` config.
-///
-/// Returns the message to log on failure.
-pub fn apply_module_args(
-    ctx: &Context,
-    args: &[String],
-) -> Result<(), String> {
-    if args.len() % 2 == 1 {
-        return Err(format!(
-            "FalkorDB received {} arguments, all configurations should be key-value pairs",
-            args.len()
-        ));
-    }
-
-    let mut old_timeout_specified = false;
-    let mut new_timeout_specified = false;
-    for [field, value] in args.as_chunks::<2>().0 {
-        let name = field.to_ascii_uppercase();
-        let failed = |err: String| format!("Failed setting field '{field}' with error: {err}");
-
-        if let Some(res) = set_load_only_config(ctx, &name, value) {
-            res.map_err(failed)?;
-            continue;
-        }
-        let parsed = validate_config_set(&name, value).map_err(|err| {
-            if err == UNKNOWN_FIELD {
-                format!("Encountered unknown configuration field '{field}'")
-            } else {
-                failed(err)
-            }
-        })?;
-        // C applies the pairs one at a time, so each is checked against the
-        // timeouts set so far.
-        validate_timeout_cross_constraints(&[(name.as_str(), parsed.clone())]).map_err(failed)?;
-        match name.as_str() {
-            "TIMEOUT" => old_timeout_specified = true,
-            "TIMEOUT_DEFAULT" | "TIMEOUT_MAX" => new_timeout_specified = true,
-            _ => {}
-        }
-        apply_config_set(ctx, &name, &parsed);
-        if IGNORED_CONFIGS.contains(&name.as_str()) {
-            ctx.log_warning(&format!(
-                "FalkorDB: configuration field '{name}' is deprecated and has no effect in this \
-                 version; the value '{value}' is accepted and ignored"
-            ));
-        }
-    }
-
-    if old_timeout_specified && new_timeout_specified {
-        return Err(
-            "The TIMEOUT configuration parameter should be removed when specifying \
-                    TIMEOUT_DEFAULT and/or TIMEOUT_MAX"
-                .to_string(),
-        );
-    }
-    Ok(())
 }
 
 pub fn graph_config(

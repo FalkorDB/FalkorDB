@@ -22,12 +22,11 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
-use crate::commands::config_cmd::apply_module_args;
 use crate::commands::constraint::{Settling, settle_constraint};
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
-    get_thread_count, normalize_node_creation_buffer,
+    apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
