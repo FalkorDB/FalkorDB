@@ -16,6 +16,7 @@
 #include "serializer_io.h"
 #include "../redismodule.h"
 
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -25,8 +26,8 @@ typedef struct {
 	size_t cap;             // io buffer capacity
 	size_t count;           // number of bytes written to io buffer
 	RedisModuleIO *stream;  // redis module io
-	bool corrupt;           // decode: the payload broke the buffer framing
-	const char *corrupt_reason;  // what broke it, for the failure log
+	SerializerIO io;        // owning serializer; malformed framing is reported
+	                        // through it via the single SerializerIO_SetError API
 } BufferedIO;
 
 // generic serializer
@@ -51,31 +52,27 @@ struct SerializerIO_Opaque {
 	bool encoder;           // true is serializer is used for encoding, false decoding
 	void *stream;           // RedisModuleIO* or a Stream descriptor
 	bool free_buff;         // true if serializer has a buffer to free
-	bool error;             // sticky decode failure flag (short read or bad data)
+	bool error;             // decode failure flag (short read or bad data)
 	char error_reason[256];  // decoder-detected bad data, empty otherwise
 	bool (*IsError)(void*); // backend error probe, NULL for encoders
+
+	// non-local abort support (serializer_io.h). the decoder dispatcher arms one
+	// handler for the whole decode; while 'armed', a TryRead that short-reads or
+	// a SerializerIO_SetError on malformed data longjmps to 'handler' instead of
+	// returning. an unarmed reader (e.g. graph offload) latches 'error' and
+	// returns instead
+	bool armed;             // true while a handler is installed
+	jmp_buf handler;        // where to jump on a decode failure
+	void *context;          // in-flight object the landing pad tears down (gc)
 };
 
-// probe whether a buffered serializer failed: either the RedisModuleIO behind it
-// hit an IO error (e.g. a short read during diskless replication or a truncated
-// RESTORE payload) or the payload broke the buffer framing
+// probe whether a buffered serializer hit a backend IO error (e.g. a short read
+// during diskless replication or a truncated RESTORE payload). malformed buffer
+// framing is reported separately, through SerializerIO_SetError on buffer->io
 static inline bool Buffered_IsError
 (
 	void *stream  // BufferedIO*
 ) {
 	BufferedIO *buffer = (BufferedIO*)stream;
-	return buffer->corrupt || RedisModule_IsIOError(buffer->stream);
-}
-
-// mark a buffered serializer's payload as malformed; the read layer latches the
-// serializer's sticky error flag through Buffered_IsError
-static inline void Buffered_SetCorrupt
-(
-	BufferedIO *buffer,  // buffer
-	const char *reason   // what was malformed
-) {
-	if(!buffer->corrupt) {
-		buffer->corrupt_reason = reason;
-	}
-	buffer->corrupt = true;
+	return RedisModule_IsIOError(buffer->stream);
 }

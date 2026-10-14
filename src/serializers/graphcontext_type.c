@@ -13,7 +13,6 @@
 #include "encoder/encode_graph.h"
 #include "decoders/decode_graph.h"
 #include "../util/redis_version.h"
-#include "decoders/decode_previous.h"
 
 // forward declerations of the module event handler functions
 void ModuleEventHandler_AUXBeforeKeyspaceEvent(void);
@@ -52,12 +51,8 @@ static void *_GraphContextType_RdbLoad
 		// previous version
 	}
 
-	if(encver < GRAPH_ENCODING_LATEST_V) {
-		gc = Decode_Previous(rdb, encver);
-	} else {
-		// current version
-		gc = RdbLoadGraph(rdb);
-	}
+	// single decode dispatcher for every supported version
+	gc = RdbLoadGraph(rdb, encver);
 
 	// decode failed (e.g. a short read on a truncated payload or replication
 	// stream); the decoder already tore down any partial graph - abort the load

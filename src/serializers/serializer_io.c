@@ -32,6 +32,21 @@ static bool RedisIO_IsError
 	return RedisModule_IsIOError((RedisModuleIO*)stream);
 }
 
+// latch a short read / backend IO error and longjmp straight to the armed
+// landing pad; reached only from the TryRead API. the decoder dispatcher arms
+// the handler for the whole decode, so an armed abort jumps; an unarmed reader
+// (e.g. graph offload) just latches the flag and returns. the error reason is
+// left empty on purpose: Redis logs short reads itself
+static void _SerializerIO_Abort
+(
+	SerializerIO io  // serializer
+) {
+	io->error = true;
+	if(io->armed) {
+		longjmp(io->handler, 1);
+	}
+}
+
 //------------------------------------------------------------------------------
 // Serializer Write API
 //------------------------------------------------------------------------------
@@ -157,78 +172,67 @@ static void *Stream_ReadBuffer
 //------------------------------------------------------------------------------
 // Serializer Read API
 //------------------------------------------------------------------------------
-
-// macro for creating the serializer read functions
 //
-// reads short-circuit once an IO error (short read) has been latched, and every
-// read probes its backend afterwards so a truncated stream latches the sticky
-// error flag instead of crashing; callers detect it via SerializerIO_Error
-#define SERIALIZERIO_READ(suffix, t)                                   \
-t SerializerIO_Read##suffix(SerializerIO io) {                         \
-	ASSERT(io != NULL);                                               \
-	if(unlikely(io->error)) {                                         \
-		return (t)0;                                                  \
-	}                                                                \
-	t value = io->Read##suffix(io->stream);                          \
-	if(unlikely(io->IsError != NULL && io->IsError(io->stream))) {    \
-		io->error = true;                                            \
-		return (t)0;                                                  \
-	}                                                                \
-	return value;                                                    \
+// reads go through the SerializerIO_TryRead* variants: each performs the read
+// then probes the backend; on a short read it latches the sticky error flag
+// and, if a landing pad is armed, longjmps to it - so decoders never have to
+// test for a short read after a read. an unarmed reader (e.g. graph offload)
+// just latches the flag and returns
+
+// macro for creating the try-read serializer functions
+#define SERIALIZERIO_TRY_READ(suffix, t)                               \
+t SerializerIO_TryRead##suffix(SerializerIO io) {                      \
+	ASSERT(io != NULL);                                                \
+	t value = io->Read##suffix(io->stream);                            \
+	if(unlikely(io->IsError != NULL && io->IsError(io->stream))) {     \
+		_SerializerIO_Abort(io);  /* latches + longjmps */             \
+	}                                                                  \
+	return value;                                                      \
 }
 
-SERIALIZERIO_READ(Unsigned, uint64_t)
-SERIALIZERIO_READ(Signed, int64_t)
-SERIALIZERIO_READ(String, RedisModuleString*)
-SERIALIZERIO_READ(Double, double)
-SERIALIZERIO_READ(Float, float)
-SERIALIZERIO_READ(LongDouble, long double)
+SERIALIZERIO_TRY_READ(Unsigned, uint64_t)
+SERIALIZERIO_TRY_READ(Signed, int64_t)
+SERIALIZERIO_TRY_READ(String, RedisModuleString*)
+SERIALIZERIO_TRY_READ(Double, double)
+SERIALIZERIO_TRY_READ(Float, float)
+SERIALIZERIO_TRY_READ(LongDouble, long double)
 
-// read buffer from stream
-void *SerializerIO_ReadBuffer
+// try to read a buffer from stream, aborting the decode on a short read
+void *SerializerIO_TryReadBuffer
 (
 	SerializerIO io,  // stream
 	size_t *lenptr    // number of bytes to read
 ) {
 	ASSERT(io != NULL);
 
-	// once an IO error has been latched, stop touching the stream and hand back
-	// a safe, empty, heap-allocated buffer; callers can free it and keep going
-	// until the next error checkpoint aborts the decode
-	if(unlikely(io->error)) {
-		if(lenptr != NULL) *lenptr = 0;
-		return rm_calloc(1, 1);
-	}
-
 	size_t len = 0;
 	void *data = io->ReadBuffer(io->stream, &len);
 
 	if(unlikely(io->IsError != NULL && io->IsError(io->stream))) {
-		io->error = true;
+		// free the partial read before the jump would orphan it
 		if(data != NULL) rm_free(data);
 		if(lenptr != NULL) *lenptr = 0;
-		return rm_calloc(1, 1);
+		_SerializerIO_Abort(io);  // latches + longjmps
 	}
 
 	if(lenptr != NULL) *lenptr = len;
 	return data;
 }
 
-// read a NUL-terminated string, see serializer_io.h
-char *SerializerIO_ReadCString
+// try to read a NUL-terminated string, see serializer_io.h
+char *SerializerIO_TryReadCString
 (
 	SerializerIO io  // stream
 ) {
 	ASSERT(io != NULL);
 
 	size_t len = 0;
-	char *s = SerializerIO_ReadBuffer(io, &len);
+	char *s = SerializerIO_TryReadBuffer(io, &len);  // aborts on a short read
 
-	if(!io->error && (len == 0 || s[len - 1] != '\0')) {
+	// a buffer that doesn't end in NUL is malformed; fail the decode
+	if(len == 0 || s[len - 1] != '\0') {
 		SerializerIO_SetError(io, "string of %zu bytes is not NUL-terminated",
-				len);
-		rm_free(s);
-		return rm_calloc(1, 1);
+				len);  // latches + longjmps
 	}
 
 	return s;
@@ -261,6 +265,12 @@ void SerializerIO_SetError
 	}
 
 	io->error = true;
+
+	// abort to the landing pad; the reason is logged there, where
+	// the key name is known. unarmed callers fall through to the sticky-flag path
+	if(io->armed) {
+		longjmp(io->handler, 1);
+	}
 }
 
 // why the decode failed, see serializer_io.h
@@ -270,24 +280,52 @@ const char *SerializerIO_ErrorReason
 ) {
 	ASSERT(io != NULL);
 
-	if(!io->error) {
-		return NULL;
-	}
-
-	if(io->error_reason[0] != '\0') {
+	// every malformed-data reason is set in one place, via SerializerIO_SetError;
+	// a short read leaves the reason empty (Redis reports those itself)
+	if(io->error && io->error_reason[0] != '\0') {
 		return io->error_reason;
 	}
 
-	// buffered serializers record framing errors on the buffer
-	if(io->free_buff && !io->encoder) {
-		BufferedIO *buffer = (BufferedIO*)io->stream;
-		if(buffer->corrupt) {
-			return buffer->corrupt_reason;
-		}
-	}
-
-	// short read
 	return NULL;
+}
+
+// arm the abort handler, see serializer_io.h
+jmp_buf *SerializerIO_Arm
+(
+	SerializerIO io  // serializer
+) {
+	ASSERT(io != NULL);
+	ASSERT(io->armed == false);  // handlers don't nest
+	io->armed = true;
+	return &io->handler;
+}
+
+// tear down the abort handler, see serializer_io.h
+void SerializerIO_Disarm
+(
+	SerializerIO io  // serializer
+) {
+	ASSERT(io != NULL);
+	io->armed = false;
+}
+
+// stash the in-flight object, see serializer_io.h
+void SerializerIO_SetContext
+(
+	SerializerIO io,  // serializer
+	void *context     // object to recover at the landing pad
+) {
+	ASSERT(io != NULL);
+	io->context = context;
+}
+
+// fetch the in-flight object, see serializer_io.h
+void *SerializerIO_GetContext
+(
+	SerializerIO io  // serializer
+) {
+	ASSERT(io != NULL);
+	return io->context;
 }
 
 //------------------------------------------------------------------------------
@@ -325,7 +363,7 @@ static bool _load_buffer
 
 	// the encoder never flushes an empty buffer
 	if(unlikely(cap == 0)) {
-		Buffered_SetCorrupt(buffer, "empty serializer buffer");
+		SerializerIO_SetError(buffer->io, "empty serializer buffer");
 		buffer->cap = 0;
 		return false;
 	}
@@ -425,7 +463,7 @@ do {                                                                 \
 	uint8_t s = *((uint8_t*)(buffer->buffer + buffer->count));       \
 	buffer->count++;                                                 \
 	if(unlikely(s != TYPE_ENCODE(t))) {                              \
-		Buffered_SetCorrupt(buffer, "unexpected value type");        \
+		SerializerIO_SetError(buffer->io, "unexpected value type");        \
 		return (t)0;                                                 \
 	}                                                                \
 } while (0);
@@ -467,7 +505,7 @@ static t BufferSerializerIOv2_Read##suffix(void *io) {          \
                                                                 \
 	/* a malformed buffer may not hold a full value */          \
 	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(t))) { \
-		Buffered_SetCorrupt(buffer, "value overruns its buffer"); \
+		SerializerIO_SetError(buffer->io, "value overruns its buffer"); \
 		return (t)0;                                            \
 	}                                                           \
                                                                 \
@@ -568,7 +606,7 @@ void *BufferSerializerIOv2_ReadBuffer
 		RedisModule_Log (NULL, "warning",
 			"BufferSerializer ReadBuffer: no bytes available for type field "
 			"(count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
-		Buffered_SetCorrupt (buffer, "no room for a value type") ;
+		SerializerIO_SetError(buffer->io, "no room for a value type") ;
 		goto fail ;
 	}
 
@@ -586,7 +624,7 @@ void *BufferSerializerIOv2_ReadBuffer
 			RedisModule_Log (NULL, "warning",
 				"BufferSerializer ReadBuffer: blob type found at unexpected "
 				"position (count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
-			Buffered_SetCorrupt (buffer, "misplaced blob marker") ;
+			SerializerIO_SetError(buffer->io, "misplaced blob marker") ;
 			goto fail ;
 		}
 
@@ -614,7 +652,7 @@ void *BufferSerializerIOv2_ReadBuffer
 				"BufferSerializer ReadBuffer: insufficient bytes for length "
 				"field (remaining: %zu, needed: %zu)",
 				(size_t) (buffer->cap - buffer->count), sizeof (size_t)) ;
-			Buffered_SetCorrupt (buffer, "no room for a buffer length") ;
+			SerializerIO_SetError(buffer->io, "no room for a buffer length") ;
 			goto fail ;
 		}
 
@@ -628,7 +666,7 @@ void *BufferSerializerIOv2_ReadBuffer
 				"BufferSerializer ReadBuffer: sub-buffer length %zu exceeds "
 				"remaining bytes %zu",
 				l, (size_t) (buffer->cap - buffer->count)) ;
-			Buffered_SetCorrupt (buffer, "buffer length overruns its buffer") ;
+			SerializerIO_SetError(buffer->io, "buffer length overruns its buffer") ;
 			goto fail ;
 		}
 
@@ -652,7 +690,7 @@ void *BufferSerializerIOv2_ReadBuffer
 			(unsigned) TYPE_ENCODE (char *),
 			(unsigned) TYPE_ENCODE (blob_t)) ;
 
-		Buffered_SetCorrupt (buffer, "unexpected buffer type") ;
+		SerializerIO_SetError(buffer->io, "unexpected buffer type") ;
 		goto fail ;
 	}
 
@@ -790,6 +828,10 @@ SerializerIO SerializerIOv2_FromBufferedRedisModuleIO
 	serializer->stream    = buffer_io;
 	serializer->encoder   = encoder;
 	serializer->free_buff = true;
+
+	// back-pointer so the buffered reader can report malformed framing through
+	// the single SerializerIO_SetError API
+	buffer_io->io = serializer;
 
 	// decoders latch short reads via the backend error probe
 	if(!encoder) serializer->IsError = Buffered_IsError;

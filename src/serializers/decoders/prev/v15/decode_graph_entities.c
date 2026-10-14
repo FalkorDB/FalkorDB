@@ -11,25 +11,47 @@ static SIValue _RdbLoadPoint(SerializerIO rdb);
 static SIValue _RdbLoadSIArray(SerializerIO rdb);
 static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
 
+// decode a single SIValue
+// 'allowed' is the set of value types acceptable in the current context:
+// entity properties accept SI_VALID_PROPERTY_VALUE, array elements additionally
+// accept T_NULL; any other tag fails the decode
 static SIValue _RdbLoadSIValue
 (
-	SerializerIO rdb
+	SerializerIO rdb,  // RDB
+	SIType allowed     // accepted value types
 ) {
 	// Format:
 	// SIType
 	// Value
-	SIType t = SerializerIO_ReadUnsigned(rdb);
+	SIType t = SerializerIO_TryReadUnsigned(rdb);
+
+	// reject any tag not accepted in this context (also rejects the 0 tag a short
+	// read would leave behind)
+	if(unlikely (!(t & allowed))) {
+		if(t & SI_ALL) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_INVALID_PROPERTY_VALUE);
+		} else {
+			SerializerIO_SetError(rdb, EMSG_VALUE_UNKNOWN_TYPE,
+					(unsigned long long) t);
+		}
+		return SI_NullVal();
+	}
+
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		return SI_LongVal(SerializerIO_TryReadSigned(rdb));
 	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
-	case T_STRING:
+		return SI_DoubleVal(SerializerIO_TryReadDouble(rdb));
+	case T_STRING: {
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		char *str = SerializerIO_TryReadCString(rdb);
+		// unarmed (offload): a short read latches the error and returns NULL
+		if(unlikely(str == NULL)) return SI_NullVal();
+		return SI_TransferStringVal(str);
+	}
 	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		return SI_BoolVal(SerializerIO_TryReadSigned(rdb));
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
@@ -37,7 +59,10 @@ static SIValue _RdbLoadSIValue
 	case T_VECTOR_F32:
 		return _RdbLoadVector(rdb, t);
 	case T_NULL:
-	default: // currently impossible
+		return SI_NullVal();
+	default:
+		SerializerIO_SetError(rdb, EMSG_VALUE_UNKNOWN_TYPE,
+				(unsigned long long) t);
 		return SI_NullVal();
 	}
 }
@@ -46,8 +71,8 @@ static SIValue _RdbLoadPoint
 (
 	SerializerIO rdb
 ) {
-	double lat = SerializerIO_ReadDouble(rdb);
-	double lon = SerializerIO_ReadDouble(rdb);
+	double lat = SerializerIO_TryReadDouble(rdb);
+	double lon = SerializerIO_TryReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
@@ -63,10 +88,19 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
-	SIValue list = SI_Array(arrayLen);
-	for(uint i = 0; i < arrayLen; i++) {
-		SIValue elem = _RdbLoadSIValue(rdb);
+	uint64_t arrayLen = SerializerIO_TryReadUnsigned(rdb);
+
+	// guard an absurd element count before it drives the loop below
+	if(unlikely(arrayLen > GRAPH_MAX_SIARRAY_LEN)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "array length",
+				(unsigned long long) arrayLen);
+		return SI_NullVal();
+	}
+
+	// reserve only a modest initial capacity, never the full claimed length
+	SIValue list = SI_Array(arrayLen < 1024 ? arrayLen : 1024);
+	for(uint64_t i = 0; i < arrayLen; i++) {
+		SIValue elem = _RdbLoadSIValue(rdb, SI_VALID_PROPERTY_VALUE | T_NULL);
 		SIArray_Append(&list, elem);
 		SIValue_Free(elem);
 	}
@@ -90,13 +124,20 @@ static SIValue _RdbLoadVector
 
 	SIValue vector;
 
-	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
+	uint64_t dim = SerializerIO_TryReadUnsigned(rdb);
+
+	// guard an absurd dimension before it sizes the allocation / drives the loop
+	if(unlikely(dim > GRAPH_MAX_SIARRAY_LEN)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "vector dimension",
+				(unsigned long long) dim);
+		return SI_NullVal();
+	}
 
 	vector = SI_Vectorf32(dim);
 	float *values = SIVector_Elements(vector);
 
 	for(uint32_t i = 0; i < dim; i++) {
-		values[i] = SerializerIO_ReadFloat(rdb);
+		values[i] = SerializerIO_TryReadFloat(rdb);
 	}
 
 	return vector;
@@ -113,13 +154,17 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
+	uint64_t n = SerializerIO_TryReadUnsigned (rdb) ;
 
 	if (n == 0) {
 		return ;
 	}
 
-	ASSERT (n <= UINT16_MAX) ;
+	// an entity can't hold more distinct properties than the graph has attributes
+	if (unlikely (n > GRAPH_MAX_ATTRIBUTES)) {
+		SerializerIO_SetError (rdb, EMSG_DECODE_ENTITY_PROPS) ;
+		return ;  // unreachable: SetError longjmps
+	}
 
 	// small path: all storage lives on the stack, no allocation needed
 	if (likely (n <= ENTITY_PROP_STACK_THRESHOLD)) {
@@ -127,8 +172,8 @@ static void _RdbLoadEntity
 		AttributeID ids  [n] ;
 
 		for (uint64_t i = 0 ; i < n ; i++) {
-			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
-			vals [i] = _RdbLoadSIValue (rdb) ;
+			ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
+			vals [i] = _RdbLoadSIValue (rdb, SI_VALID_PROPERTY_VALUE) ;
 		}
 
 		AttributeSet_Add (e->attributes, ids, vals, n, false) ;
@@ -143,8 +188,8 @@ static void _RdbLoadEntity
 	// remove this comment if that assumption ever changes
 
 	for (uint64_t i = 0 ; i < n ; i++) {
-		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
-		vals [i] = _RdbLoadSIValue (rdb) ;
+		ids  [i] = SerializerIO_TryReadUnsigned (rdb) ;
+		vals [i] = _RdbLoadSIValue (rdb, SI_VALID_PROPERTY_VALUE) ;
 	}
 
 	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
@@ -157,7 +202,8 @@ void RdbLoadNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t node_count
+	uint64_t node_count,
+	uint64_t id_limit
 ) {
 	// Node Format:
 	//      ID
@@ -167,6 +213,8 @@ void RdbLoadNodes_v15
 	//      (name, value type, value) X N
 
 	Graph *g = GraphContext_GetGraph (gc) ;
+	uint64_t label_count = Graph_LabelTypeCount (g) ;
+	uint64_t prev_graph_node_count = Graph_NodeCount (g) ;
 
 	// get delay indexing configuration
 	bool delay_indexing ;
@@ -174,15 +222,37 @@ void RdbLoadNodes_v15
 
 	for (uint64_t i = 0 ; i < node_count ; i++) {
 		Node n ;
-		NodeID id = SerializerIO_ReadUnsigned (rdb) ;
+		NodeID id = SerializerIO_TryReadUnsigned (rdb) ;
+
+		// ids run below the header's live + deleted node count
+		if(unlikely(id >= id_limit)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "node id",
+					(unsigned long long) id);
+			return;
+		}
 
 		// #labels M
-		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned (rdb) ;
+		uint64_t nodeLabelCount = SerializerIO_TryReadUnsigned (rdb) ;
+
+		// guard the per-node label count before it sizes the VLA below
+		if(unlikely(nodeLabelCount > label_count)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_LIMIT, "node label count",
+					(unsigned long long) nodeLabelCount,
+					(unsigned long long) label_count);
+			return;
+		}
 
 		// * (labels) x M
 		LabelID labels [nodeLabelCount] ;
-		for (uint64_t i = 0 ; i < nodeLabelCount ; i ++){
-			labels [i] = SerializerIO_ReadUnsigned (rdb) ;
+		for (uint64_t j = 0 ; j < nodeLabelCount ; j ++){
+			uint64_t l = SerializerIO_TryReadUnsigned (rdb) ;
+			// labels index the schema array; reject an out-of-range id
+			if(unlikely(l >= label_count)) {
+				SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "node label",
+						(unsigned long long) l);
+				return;
+			}
+			labels [j] = l ;
 		}
 
 		Serializer_Graph_SetNode (g, id, labels, nodeLabelCount, &n) ;
@@ -191,8 +261,8 @@ void RdbLoadNodes_v15
 
 		// introduce n to each relevant index
 		if (!delay_indexing) {
-			for (int i = 0 ; i < nodeLabelCount ; i++) {
-				Schema *s = GraphContext_GetSchemaByID (gc, labels [i],
+			for (uint64_t j = 0 ; j < nodeLabelCount ; j++) {
+				Schema *s = GraphContext_GetSchemaByID (gc, labels [j],
 						SCHEMA_NODE) ;
 				ASSERT (s != NULL) ;
 
@@ -203,22 +273,38 @@ void RdbLoadNodes_v15
 			}
 		}
 	}
+
+	if(prev_graph_node_count + node_count != Graph_NodeCount (g)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded node");
+	}
 }
 
 void RdbLoadDeletedNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t deleted_node_count
+	uint64_t deleted_node_count,
+	uint64_t id_limit
 ) {
 	// Format:
 	// node id X N
 
 	Graph *g = GraphContext_GetGraph (gc) ;
+	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount (g) ;
 
 	for (uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = SerializerIO_ReadUnsigned (rdb) ;
+		NodeID id = SerializerIO_TryReadUnsigned (rdb) ;
+		if(unlikely(id >= id_limit)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted node id",
+					(unsigned long long) id);
+			return;
+		}
 		Serializer_Graph_MarkNodeDeleted (g, id) ;
+	}
+
+	if(deleted_node_count + prev_deleted_node_count !=
+	   Graph_DeletedNodeCount (g)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted node");
 	}
 }
 
@@ -226,7 +312,9 @@ void RdbLoadEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t edge_count
+	uint64_t edge_count,
+	uint64_t node_id_limit,
+	uint64_t edge_id_limit
 ) {
 	// Format:
 	// {
@@ -239,6 +327,8 @@ void RdbLoadEdges_v15
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
+	uint64_t rel_count = Graph_RelationTypeCount (g) ;
+	uint64_t prev_edge_count = Graph_EdgeCount (g) ;
 
 
 	Schema     *s               = NULL;
@@ -271,10 +361,30 @@ void RdbLoadEdges_v15
 
 		Edge e;
 
-		e.id         = SerializerIO_ReadUnsigned(rdb);
-		e.src_id     = SerializerIO_ReadUnsigned(rdb);
-		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
-		e.relationID = SerializerIO_ReadUnsigned(rdb);
+		e.id         = SerializerIO_TryReadUnsigned(rdb);
+		e.src_id     = SerializerIO_TryReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_TryReadUnsigned(rdb);
+		e.relationID = SerializerIO_TryReadUnsigned(rdb);
+
+		// edge id indexes the edge datablock; src/dest form connections; the
+		// relation id indexes the multi_edge array and the schema. reject bad
+		// ids before any of them is used
+		if(unlikely(e.id >= edge_id_limit)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "edge id",
+					(unsigned long long) e.id);
+			return;
+		}
+		if(unlikely(e.src_id >= node_id_limit || e.dest_id >= node_id_limit)) {
+			SerializerIO_SetError(rdb,
+					EMSG_DECODE_ID_RANGE, "edge endpoint",
+					(unsigned long long) e.src_id, (unsigned long long) e.dest_id);
+			return;
+		}
+		if(unlikely((uint64_t) e.relationID >= rel_count)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_RELATION_ID_RANGE, "edge relation id",
+					e.relationID);
+			return;
+		}
 
 		// determine if relation contains tensors
 		bool tensor = decoding_context->multi_edge [e.relationID] ;
@@ -378,22 +488,37 @@ void RdbLoadEdges_v15
 		Serializer_OptimizedFormConnections (g, prev_relation,
 				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true) ;
 	}
+
+	if(edge_count + prev_edge_count != Graph_EdgeCount (g)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "decoded edge");
+	}
 }
 
 void RdbLoadDeletedEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t deleted_edge_count
+	uint64_t deleted_edge_count,
+	uint64_t id_limit
 ) {
 	// Format:
 	// edge id X N
 
 	Graph *g = GraphContext_GetGraph (gc) ;
+	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount (g) ;
 
 	for (uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = SerializerIO_ReadUnsigned (rdb) ;
+		EdgeID id = SerializerIO_TryReadUnsigned (rdb) ;
+		if(unlikely(id >= id_limit)) {
+			SerializerIO_SetError(rdb, EMSG_DECODE_ID_RANGE, "deleted edge id",
+					(unsigned long long) id);
+			return;
+		}
 		Serializer_Graph_MarkEdgeDeleted (g, id) ;
 	}
-}
 
+	if(deleted_edge_count + prev_deleted_edge_count !=
+	   Graph_DeletedEdgeCount (g)) {
+		SerializerIO_SetError(rdb, EMSG_DECODE_COUNT_MISMATCH, "deleted edge");
+	}
+}

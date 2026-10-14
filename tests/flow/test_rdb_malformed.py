@@ -7,6 +7,7 @@ from rdb_payload import (GraphValue, reframe, crc64, rdb_module_values,
                          T_VECTOR_F32)
 
 import os
+import time
 import shutil
 import tempfile
 import subprocess
@@ -55,6 +56,20 @@ def _log_size(env):
         return os.path.getsize(_log_path(env))
     except FileNotFoundError:
         return 0
+
+
+# wait for the decoder's "Failed loading graph key" line to be flushed to the
+# server log (RedisModule_Log can lag the RESTORE reply), then return the log
+# from 'offset' on. returns as soon as the line appears; on timeout returns the
+# last read so the caller's assertion fails loudly. None only when there is no
+# log file at all (RLTest run without output capture)
+def _await_failed_line(env, offset, attempts=50, delay=0.02):
+    for _ in range(attempts):
+        log = _read_log(env, offset)
+        if log is not None and FAILED in log:
+            return log
+        time.sleep(delay)
+    return _read_log(env, offset)
 
 
 # the schema prefix ("node_schema[k]") of the label named 'label'
@@ -135,9 +150,11 @@ class testRdbMalformed():
         self.env.assertTrue(self.conn.ping())
         self.env.assertEqual(self.conn.keys("*"), [])
 
-        log = _read_log(self.env, log_start)
+        log = _await_failed_line(self.env, log_start)
         if log is None:
-            return
+            # no server log to read (RLTest without output capture): the reason
+            # can't be verified here, so skip visibly instead of passing silently
+            self.env.skip()
         lines = [l for l in log.splitlines() if FAILED in l]
         self.env.assertEqual(len(lines), 1)
         if lines:
@@ -191,6 +208,16 @@ class testRdbMalformed():
         gv.set_uint(f"{e}.type", 1 << 24)
         gv.remove_value(f"{e}.value")
         self._assert_rejected(gv, f"unknown value type {1 << 24}")
+
+    def test_array_too_long(self):
+        # an array length past GRAPH_MAX_SIARRAY_LEN is rejected before it drives
+        # the element-decode loop (graph_limits.h)
+        gv = self._value()
+        p = _property_of_type(gv, T_ARRAY)
+        self.env.assertGreater(gv.fields[f"{p}.length"].value, 0)
+        n = (1 << 28) + 1
+        gv.set_uint(f"{p}.length", n)
+        self._assert_rejected(gv, f"array length {n} exceeds limit")
 
     def test_unterminated_string_property(self):
         gv = self._value()
@@ -256,7 +283,7 @@ class testRdbMalformed():
         self.env.assertEqual(a0.size, a1.size)
         self.env.assertNotEqual(a0.value, a1.value)
         gv.set_bytes(a1.off, a0.value)
-        self._assert_rejected(gv, "duplicate attribute name")
+        self._assert_rejected(gv, "duplicate or out of order attribute")
 
     def test_unterminated_attribute_name(self):
         gv = self._value()
@@ -282,13 +309,13 @@ class testRdbMalformed():
         gv = self._value()
         s = _schema(gv, "N")
         gv.set_uint(f"{s}.constraint[0].type", 9)
-        self._assert_rejected(gv, "unknown constraint type")
+        self._assert_rejected(gv, "invalid constraint: unknown type")
 
     def test_constraint_unknown_attribute(self):
         gv = self._value()
         s = _schema(gv, "N")
         gv.set_uint(f"{s}.constraint[0].attribute[0]", 99)
-        self._assert_rejected(gv, "constraint on an unknown attribute")
+        self._assert_rejected(gv, "invalid constraint: unknown attribute")
 
     def test_constraint_without_attributes(self):
         gv = self._value()
@@ -296,7 +323,7 @@ class testRdbMalformed():
         self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
         gv.set_uint(f"{c}.attribute_count", 0)
         gv.remove_value(f"{c}.attribute[0]")
-        self._assert_rejected(gv, "constraint with 0 attributes")
+        self._assert_rejected(gv, "invalid constraint: bad attribute count")
 
     # counts and ids are read as 64 bits and checked before they are narrowed:
     # each corruption below wraps to the healthy value once narrowed
@@ -307,14 +334,14 @@ class testRdbMalformed():
         c = f"{_schema(gv, 'N')}.constraint[0]"
         self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
         gv.set_uint(f"{c}.attribute_count", 257)
-        self._assert_rejected(gv, "constraint with 257 attributes")
+        self._assert_rejected(gv, "invalid constraint: bad attribute count")
 
     def test_constraint_attribute_wraps(self):
         # narrows to the same attribute (AttributeID is 16 bits)
         gv = self._value()
         name = f"{_schema(gv, 'N')}.constraint[0].attribute[0]"
         gv.set_uint(name, (1 << 16) + gv.fields[name].value)
-        self._assert_rejected(gv, "constraint on an unknown attribute")
+        self._assert_rejected(gv, "invalid constraint: unknown attribute")
 
     def test_unique_constraint_without_index(self):
         # the unique constraint moved to an attribute no index covers
@@ -324,7 +351,7 @@ class testRdbMalformed():
                   if n.startswith(f"{s}.constraint[")]
         self.env.assertEqual(len(unique), 1)
         gv.set_uint(f"{unique[0]}.attribute[0]", _attribute(gv, "s"))
-        self._assert_rejected(gv, "constraint can't be created",
+        self._assert_rejected(gv, "invalid constraint",
                               "missing supporting exact-match index")
 
     def test_cch_without_relationship_types(self):
@@ -342,7 +369,7 @@ class testRdbMalformed():
         t1 = gv.fields[f"{s}.constraint[1].type"].value
         self.env.assertNotEqual(t0, t1)
         gv.set_uint(f"{s}.constraint[1].type", t0)
-        self._assert_rejected(gv, "duplicate constraint")
+        self._assert_rejected(gv, "invalid constraint: duplicate")
 
     def test_unsupported_index_language(self):
         gv = self._value()
@@ -354,30 +381,49 @@ class testRdbMalformed():
     def test_invalid_index_field_type(self):
         gv = self._value()
         gv.set_uint(f"{_schema(gv, 'N')}.index.field[0].type", 0x80)
-        self._assert_rejected(gv, "invalid index field")
+        self._assert_rejected(gv, "invalid index: invalid field")
 
     def test_invalid_vector_metric(self):
         gv = self._value()
         name = f"{_schema(gv, 'V')}.index.field[0].similarity"
         self.env.assertEqual(gv.fields[name].value, 0)   # euclidean
         gv.set_uint(name, 9)
-        self._assert_rejected(gv, "invalid index field")
+        self._assert_rejected(gv, "invalid index: invalid field")
 
     #---------------------------------------------------------------------------
     # matrices
     #---------------------------------------------------------------------------
 
+    def test_too_many_labels(self):
+        # a label count past GRAPH_MAX_LABELS is rejected in the header, before
+        # it sizes any allocation (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["label_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("label_count", n)
+        self._assert_rejected(gv, f"label count {n} exceeds limit")
+
+    def test_too_many_relations(self):
+        # a relation count past GRAPH_MAX_RELATIONS is rejected in the header,
+        # before the multi-edge loop reads it (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["relation_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("relation_count", n)
+        self._assert_rejected(gv, f"relation count {n} exceeds limit")
+
     def test_label_matrix_unknown_label(self):
+        # label matrices are encoded one per label in id order; a label id that
+        # isn't the expected position (here out of range) breaks that order
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 99)
-        self._assert_rejected(gv, "label matrix for an unknown label: 99")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_label_matrix_negative_label(self):
         # read into a signed 32-bit LabelID, 0xFFFFFFFF passed for -1
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 0xFFFFFFFF)
-        self._assert_rejected(gv,
-            f"label matrix for an unknown label: {0xFFFFFFFF}")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_label_matrix_missing(self):
         # the last label matrix dropped, count adjusted: well formed, one short
@@ -390,10 +436,12 @@ class testRdbMalformed():
         self._assert_rejected(gv, f"{n - 1} label matrices for {n} labels")
 
     def test_label_matrix_twice(self):
+        # a second matrix claiming label 0 lands at index 1, where the strict
+        # id-order check (l must equal i) rejects it
         gv = self._value()
         self.env.assertEqual(gv.fields["label_matrix[0].label"].value, 0)
         gv.set_uint("label_matrix[1].label", 0)
-        self._assert_rejected(gv, "label matrix decoded twice")
+        self._assert_rejected(gv, "label matrix out of order")
 
     def test_relation_matrix_out_of_order(self):
         gv = self._value()
@@ -422,13 +470,13 @@ class testRdbMalformed():
         gv = self._value()
         name = "label_matrix[0].M.x.bytes"
         gv.set_uint(name, gv.fields[name].value + 8)
-        self._assert_rejected(gv, "matrix vector holds")
+        self._assert_rejected(gv, "malformed matrix: vector byte count")
 
     def test_matrix_container_size(self):
         gv = self._value()
         name = "label_matrix[0].M.container"
         gv.set_length(name, gv.fields[name].size - 8)
-        self._assert_rejected(gv, "matrix container holds")
+        self._assert_rejected(gv, "malformed matrix: container size")
 
     def test_matrix_vector_entries_overflow(self):
         # entries * type size wraps to 0, which GraphBLAS' own size check
@@ -437,7 +485,7 @@ class testRdbMalformed():
         v, size = _int_vector(gv, "i")
         entries = (1 << 64) // size
         gv.set_uint(f"{v}.entries", entries)
-        self._assert_rejected(gv, f"matrix vector declares {entries} entries")
+        self._assert_rejected(gv, "malformed matrix: vector entry count")
 
     def test_unknown_matrix_type(self):
         # GxB_Type_from_name reports an unknown name as success, NULL type
@@ -445,7 +493,7 @@ class testRdbMalformed():
         v, _ = _int_vector(gv, "p")
         f = gv.fields[f"{v}.type"]
         gv.set_bytes(f.off + 4, b"X")
-        self._assert_rejected(gv, "unknown matrix value type 'GrB_X")
+        self._assert_rejected(gv, "malformed matrix: unknown value type")
 
     #---------------------------------------------------------------------------
     # framing
@@ -465,6 +513,15 @@ class testRdbMalformed():
         gv = self._value()
         gv.set_uint("payload[0].type", 99)
         self._assert_rejected(gv, "unknown payload type")
+
+    def test_too_many_payloads(self):
+        # a payload count past GRAPH_MAX_KEY_PAYLOADS is rejected before it sizes
+        # the payload array (graph_limits.h)
+        gv = self._value()
+        self.env.assertGreater(gv.fields["payload_count"].value, 0)
+        n = (1 << 16) + 1
+        gv.set_uint("payload_count", n)
+        self._assert_rejected(gv, f"payload count {n} exceeds limit")
 
 
 #-------------------------------------------------------------------------------
@@ -532,9 +589,9 @@ def _assert_short_read_exit(env, rdb):
     exit_code, log = _start_on_rdb(env, rdb)
     tail = f"exit code {exit_code}: " + log[-2000:]
     env.assertEqual(exit_code, 1, message=tail)
-    env.assertContains("Internal error in RDB reading", log, message=tail)
-    env.assertContains("Unexpected EOF reading RDB file", log, message=tail)
-    env.assertNotContains(FAILED, log, message=tail)
+    env.assertContains("Internal error in RDB reading", log)
+    env.assertContains("Unexpected EOF reading RDB file", log)
+    env.assertNotContains(FAILED, log)
 
 
 # cut the saved file halfway through the first value of 'module_type'
@@ -635,13 +692,10 @@ class testRdbLoadMalformedGraphKey():
         # well-framed graph data the module rejected it exits 0. what matters:
         # the server exited by itself (no signal, no hang)
         exit_code, log = _start_on_rdb(self.env, bad)
-        tail = f"exit code {exit_code}: " + log[-2000:]
-        self.env.assertIsNotNone(exit_code, message=tail)
-        self.env.assertGreaterEqual(-1 if exit_code is None else exit_code, 0,
-                                    message=tail)
+        self.env.assertIsNotNone(exit_code)
+        self.env.assertGreaterEqual(-1 if exit_code is None else exit_code, 0)
         ours = log.find(f"{FAILED} '{GRAPH_ID}': unsupported index language")
         redis_line = log.find("Internal error in RDB reading")
-        self.env.assertGreater(ours, -1, message=tail)
-        self.env.assertGreater(redis_line, ours, message=tail)
-        self.env.assertContains("not able to load", log[redis_line:],
-                                message=tail)
+        self.env.assertGreater(ours, -1)
+        self.env.assertGreater(redis_line, ours)
+        self.env.assertContains("not able to load", log[redis_line:])
