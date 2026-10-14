@@ -48,6 +48,7 @@
 #include "../query_ctx.h"
 #include "../errors/errors.h"
 #include "../graph/graph_hub.h"
+#include "../graph/graph_write_queue.h"
 #include "../util/thpool/pool.h"
 #include "../errors/error_msgs.h"
 #include "constraint/constraint.h"
@@ -282,7 +283,9 @@ static bool _Constraint_Drop
 
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
-	// acquire graph write lock
+	// acquire the GIL before the graph write lock (worker / async path only);
+	// serialization against GRAPH.QUERY writers comes from running under the
+	// single-writer election (see Async_Constraint_Op / _Constraint_Create).
 	if (from_thread) {
 		RedisModule_ThreadSafeContextLock (ctx) ;
 	}
@@ -518,6 +521,13 @@ static bool _Constraint_Create
 		return false ;
 	}
 
+	// acquire the GIL before the graph write lock (worker / async path only).
+	// serialization against concurrent GRAPH.QUERY writers is provided by the
+	// single-writer election: on the async path this function runs as a
+	// WriteTask via GraphContext_SubmitWrite (see Async_Constraint_Op), so the
+	// write_in_progress token is already held by the draining writer and no
+	// other writer lifecycle can run. the sync AOF / replicated path runs on
+	// the main thread already holding the GIL.
 	if (from_thread) {
 		RedisModule_ThreadSafeContextLock (ctx) ;
 	}
@@ -618,28 +628,82 @@ static void Constraint_Op
 	GraphConstraintCtx_Free (rm_ctx, &ctx) ;
 }
 
+// executor the single-writer drain invokes to run a GRAPH.CONSTRAINT op
+// (the body previously inlined in Async_Constraint_Op): build a thread-safe
+// context for the still-blocked client, run the create/drop (which replies and
+// frees ctx), then unblock the client. runs under the write_in_progress token
+// held by the elected writer, so it never races a GRAPH.QUERY writer
+static void _constraint_exec_task
+(
+	void *payload  // GraphConstraintCtx *
+) {
+	GraphConstraintCtx       *ctx    = (GraphConstraintCtx *)payload ;
+	RedisModuleBlockedClient *bc     = ctx->bc ;
+	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
+
+	Constraint_Op (rm_ctx, ctx) ;  // runs _Constraint_Create/_Drop, frees ctx
+
+	// unblock client
+	RedisModule_UnblockClient (bc, NULL) ;
+
+	// clear any error this job may have set
+	ErrorCtx_Clear () ;
+
+	// free thread-safe context
+	RedisModule_FreeThreadSafeContext (rm_ctx) ;
+}
+
 // GRAPH.CONSTRAINT internal command handler
 // executed on a worker thread to avoid blocking the main thread
+//
+// submits the constraint operation to the target graph's single-writer
+// election so it runs serialized against GRAPH.QUERY writes (and every other
+// writer), instead of mutating the shared schema state concurrently
 static void Async_Constraint_Op
 (
 	void *_ctx  // command context
 ) {
 	ASSERT (_ctx != NULL) ;
 
-	GraphConstraintCtx       *ctx    = (GraphConstraintCtx *)_ctx ;
-	RedisModuleBlockedClient *bc     = ctx->bc ;
-	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
+	GraphConstraintCtx *ctx = (GraphConstraintCtx *)_ctx ;
 
-	Constraint_Op (rm_ctx, ctx) ;
+	// locate the target graph to find its single-writer queue; CREATE creates
+	// the graph if missing, DROP does not
+	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext (ctx->bc) ;
+	GraphContext   *gc     = NULL ;
+	bool            create = (ctx->op == CT_CREATE) ;
+	GraphContext_Retrieve (rm_ctx, ctx->graph_id, false, create, true, &gc) ;
 
-	// unblock client
-	RedisModule_UnblockClient (bc, NULL) ;
+	if (gc == NULL) {
+		// no such graph, or the key holds a non-graph value:
+		// GraphContext_Retrieve already wrote the error reply to rm_ctx -
+		// deliver it by unblocking the client (no graph state to serialize on)
+		RedisModule_UnblockClient (ctx->bc, NULL) ;
+		GraphConstraintCtx_Free (rm_ctx, &ctx) ;
+		RedisModule_FreeThreadSafeContext (rm_ctx) ;
+		return ;
+	}
 
-	// clear any error this job may have set before freeing the context
-	ErrorCtx_Clear () ;
-
-	// free thread-safe context
+	// done with the lookup context; the elected writer's task builds its own
 	RedisModule_FreeThreadSafeContext (rm_ctx) ;
+
+	// run the constraint op under the graph's single-writer election: the
+	// elected writer runs _constraint_exec_task(ctx), which replies, unblocks
+	// and frees ctx (ownership of ctx passes to the task on success)
+	if (!GraphContext_SubmitWrite (gc, _constraint_exec_task, ctx)) {
+		// pending-write queue is full - reply and unblock without running the
+		// op (running inline would bypass the election and reintroduce the
+		// schema-corruption race)
+		RedisModuleCtx *c = RedisModule_GetThreadSafeContext (ctx->bc) ;
+		RedisModule_ReplyWithError (c, "Graph write queue is full") ;
+		RedisModule_UnblockClient (ctx->bc, NULL) ;
+		GraphConstraintCtx_Free (c, &ctx) ;
+		RedisModule_FreeThreadSafeContext (c) ;
+	}
+
+	// release the lookup reference (GraphContext_SubmitWrite held its own ref
+	// across the queued / drained task)
+	GraphContext_DecreaseRefCount (gc) ;
 }
 
 // command handler for GRAPH.CONSTRAINT command

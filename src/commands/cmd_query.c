@@ -14,6 +14,7 @@
 #include "execution_ctx.h"
 #include "../udf/udf_ctx.h"
 #include "../graph/graph.h"
+#include "../graph/graph_write_queue.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "index_operations.h"
@@ -354,6 +355,14 @@ static void _ExecuteQuery
 	GraphQueryCtx_Free(gq_ctx);
 }
 
+// executor the single-writer drain invokes for a delegated write query
+static void _query_write_task
+(
+	void *payload  // GraphQueryCtx *
+) {
+	_ExecuteQuery ((GraphQueryCtx *)payload) ;
+}
+
 static bool _DelegateQuery
 (
 	GraphContext *gc,
@@ -362,7 +371,7 @@ static bool _DelegateQuery
 	ASSERT(gq_ctx != NULL);
 
 	//--------------------------------------------------------------------------
-	// delegate query to the current graph writer thread
+	// delegate query to the graph's single-writer election
 	//--------------------------------------------------------------------------
 
 	// clear this thread data
@@ -378,39 +387,9 @@ static bool _DelegateQuery
 	// reset query stage from executing back to waiting
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
 
-	// queue query
-	return GraphContext_EnqueueWriteQuery(gc, gq_ctx);
-}
-
-// process all queued write queries
-// writer will only release write access when the queue is truly empty
-void enter_writer_loop
-(
-	GraphContext *gc
-) {
-	while (true) {
-		// drain the queue
-		GraphQueryCtx *gq_ctx;
-		while ((gq_ctx = (GraphQueryCtx *)GraphContext_DequeueWriteQuery (gc))) {
-			_ExecuteQuery (gq_ctx) ;
-		}
-
-		// release write access
-		GraphContext_ExitWrite (gc) ;
-
-		// race condition handling: after releasing write access, another thread
-		// may have enqueued a query
-		// we must check the queue again and attempt
-		// to reacquire write access
-		// if we succeed, continue processing
-		// if we fail, another thread is now the writer and will handle the queue
-		if (GraphContext_WriteQueueEmpty    (gc) ||
-			!GraphContext_TimeTryEnterWrite (gc, 0)) {
-			// either the queue is empty
-			// or the another thread became a writer
-			break ;
-		}
-	}
+	// submit to the graph's single-writer election; the elected writer runs
+	// _query_write_task(gq_ctx) -> _ExecuteQuery(gq_ctx)
+	return GraphContext_SubmitWrite(gc, _query_write_task, gq_ctx);
 }
 
 // optnone: Clang's -O2/-O3 inter-procedural analysis converts every
@@ -586,30 +565,14 @@ void _query
 	if (readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
 		_ExecuteQuery (gq_ctx) ;
 	} else {
-		// increase graph ref count, guard against the graph context
-		// being free too early as the writer need access to the graph's
-		// pending queries queue and the writer's flag
-		GraphContext_IncreaseRefCount (gc) ;
-
-		// thread failed getting exclusive write access to graph
-		// delegate query to current writer
+		// delegate the write query to the graph's single-writer election;
+		// on success the elected writer owns gq_ctx, runs it, and replies to
+		// the client. the ref-count guarding gc while the task is queued /
+		// drained is managed inside GraphContext_SubmitWrite
 		if (!_DelegateQuery (gc, gq_ctx)) {
 			ErrorCtx_SetError (EMSG_WRITE_QUEUE_FULL) ;
-
-			// counter to GraphContext_IncreaseRefCount just above
-			GraphContext_DecreaseRefCount (gc) ;
 			goto cleanup ;
 		}
-
-		// try to acquire exclusive write access to graph
-		if (GraphContext_TimeTryEnterWrite (gc, 0)) {
-			// thread has exclusive write access to graph
-			// go ahead and run the query
-			enter_writer_loop (gc) ;
-		}
-
-		// counter to GraphContext_IncreaseRefCount just above
-		GraphContext_DecreaseRefCount (gc) ;
 	}
 
 	return ;
