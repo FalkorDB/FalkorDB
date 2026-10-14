@@ -41,7 +41,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{
     runtime::Runtime,
-    value::{CompareValue, DisjointOrNull, Value},
+    value::{CompareValue, DisjointOrNull, Value, sort_cmp_f64},
 };
 use std::{cmp::Ordering, sync::Arc};
 use thin_vec::thin_vec;
@@ -120,8 +120,10 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
+                    // A comparison against NaN decides nothing, as in C.
                     if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Less || cmp == DisjointOrNull::ComparedNull) {
+                    ((ord == Ordering::Less && cmp != DisjointOrNull::NaN)
+                        || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)
@@ -141,8 +143,10 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
+                    // A comparison against NaN decides nothing, as in C.
                     if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Greater || cmp == DisjointOrNull::ComparedNull) {
+                    ((ord == Ordering::Greater && cmp != DisjointOrNull::NaN)
+                        || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)
@@ -408,7 +412,9 @@ fn sum_batch(
 }
 
 /// Bulk `max` aggregator. Walks all inputs once; keeps the max via
-/// `compare_value`, ignoring null/disjoint comparisons.
+/// `compare_value`, ignoring null and NaN comparisons. As in C, a NaN neither
+/// replaces the current max nor is replaced, so it survives only as the first
+/// non-null input.
 fn max_batch(
     _: &Runtime,
     inputs: &[Value],
@@ -425,7 +431,9 @@ fn max_batch(
             continue;
         }
         let (ord, cmp) = val.compare_value(&best);
-        if ord == Ordering::Greater && cmp != DisjointOrNull::ComparedNull {
+        if ord == Ordering::Greater
+            && !matches!(cmp, DisjointOrNull::ComparedNull | DisjointOrNull::NaN)
+        {
             best = val.clone();
         }
     }
@@ -500,7 +508,9 @@ fn min_batch(
             continue;
         }
         let (ord, cmp) = val.compare_value(&best);
-        if ord == Ordering::Less && cmp != DisjointOrNull::ComparedNull {
+        if ord == Ordering::Less
+            && !matches!(cmp, DisjointOrNull::ComparedNull | DisjointOrNull::NaN)
+        {
             best = val.clone();
         }
     }
@@ -612,11 +622,7 @@ pub fn finalize_percentile_disc(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    Arc::make_mut(values).sort_by(|a, b| {
-        a.get_numeric()
-            .partial_cmp(&b.get_numeric())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    Arc::make_mut(values).sort_by(|a, b| sort_cmp_f64(a.get_numeric(), b.get_numeric()));
 
     let index = if *percentile > 0.0 {
         (values.len() as f64 * *percentile).ceil() as usize - 1
@@ -642,11 +648,7 @@ pub fn finalize_percentile_cont(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    Arc::make_mut(values).sort_by(|a, b| {
-        a.get_numeric()
-            .partial_cmp(&b.get_numeric())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    Arc::make_mut(values).sort_by(|a, b| sort_cmp_f64(a.get_numeric(), b.get_numeric()));
 
     #[allow(clippy::float_cmp)]
     if *percentile == 1.0 || values.len() == 1 {
