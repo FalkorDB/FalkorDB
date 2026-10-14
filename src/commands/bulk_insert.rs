@@ -10,7 +10,7 @@ use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::index_docs::IndexDocs,
-    runtime::value::Value,
+    runtime::value::{MAX_VALUE_NESTING, Value, value_nesting_error},
     threadpool::spawn,
 };
 use parking_lot::RwLock;
@@ -98,9 +98,9 @@ fn read_property(
     // Parse a possibly-nested value without recursion: `BI_ARRAY` elements are
     // expanded onto an explicit work stack instead of recursive calls, so
     // arbitrarily deep attacker-supplied `GRAPH.BULKINSERT` data cannot overflow
-    // the call stack (an uncatchable abort) and arrays of any depth are
-    // supported. Each frame holds a partially-built array and how many elements
-    // it still expects.
+    // the call stack (an uncatchable abort). Depth is still capped at
+    // `MAX_VALUE_NESTING`, as everywhere a value enters. Each frame holds a
+    // partially-built array and how many elements it still expects.
     let mut stack: Vec<(thin_vec::ThinVec<Value>, usize)> = Vec::new();
 
     loop {
@@ -126,6 +126,12 @@ fn read_property(
                 BI_LONG => Value::Int(read_i64_ne(data, idx)?),
                 BI_STRING => Value::String(Arc::new(read_cstring(data, idx)?.to_string())),
                 BI_ARRAY => {
+                    // Iterative here, but the value it builds is walked
+                    // recursively everywhere else (drop, save, replies), so
+                    // depth is bounded like every other way a value enters.
+                    if stack.len() >= MAX_VALUE_NESTING {
+                        return Err(value_nesting_error());
+                    }
                     let len = read_i64_ne(data, idx)?;
                     if len < 0 {
                         return Err(format!("negative array length in bulk data: {len}"));
@@ -889,13 +895,14 @@ pub fn graph_bulk_insert(
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             // Build, commit and replicate under one session, which releases its locks
             // when this block ends — before the client is unblocked below.
-            let result: Result<(), String> = 'phase: {
+            // A loop only to run the insert again if an inline writer commits while
+            // phase 1 builds (see the escalation below); every other path breaks.
+            let result: Result<(), String> = 'phase: loop {
                 let session = QuerySession::begin_with(&graph, facts);
-                // Phase 1: build the new version as a reader, GIL-free. What we take
-                // here is the MVCC *write slot* — the single-writer marker on
-                // `MvccGraph`, not a lock — so if another writer holds it, fail with a
-                // retryable error rather than blocking.
-                let Some(g_arc) = session.with_graph(|tg| tg.graph.write()) else {
+                // Phase 1: build the new version as a reader, GIL-free, into a private
+                // fork. The MVCC write slot is claimed only when phase 2 escalates, so
+                // an inline writer is never refused because this insert is building.
+                let Ok(g_arc) = session.write_version() else {
                     break 'phase Err(
                         "ERR another write is in progress, retry the query".to_string()
                     );
@@ -916,17 +923,20 @@ pub fn graph_bulk_insert(
                     )
                 };
                 if let Err(e) = inserted {
-                    session.with_graph(|tg| tg.graph.rollback());
+                    session.release_slot();
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
                 if let Err(e) = session.upgrade_to_write() {
-                    // Release the MVCC slot from phase 1 — only commit()/rollback()
-                    // clear it, so skipping this leaves the graph permanently
-                    // unwritable.
-                    session.with_graph(|tg| tg.graph.rollback());
+                    // Drop the phase 1 fork (and the slot, if it was claimed).
+                    session.release_slot();
+                    // An inline writer committed while phase 1 built: nothing was
+                    // published, so build again on top of its version.
+                    if session.is_stale() {
+                        continue 'phase;
+                    }
                     break 'phase Err(e.to_string());
                 }
                 // Publish the index documents inside the writer scope, matching
@@ -946,7 +956,7 @@ pub fn graph_bulk_insert(
                 // published here outlives the fork that `commit` would refuse,
                 // and nothing can take it back.
                 if let Err(e) = g_arc.borrow().validate() {
-                    session.with_graph(|tg| tg.graph.rollback());
+                    session.release_slot();
                     break 'phase Err(e.to_string());
                 }
                 g_arc.borrow_mut().commit_index_docs(&mut docs);
@@ -987,7 +997,7 @@ pub fn graph_bulk_insert(
                 // is a string this closure owns a reference to, and the session holds
                 // the GIL.
                 unsafe { held.replicate(ts_ctx) };
-                Ok(())
+                break 'phase Ok(());
             };
             match result {
                 Ok(()) => {
