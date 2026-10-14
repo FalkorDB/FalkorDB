@@ -258,7 +258,7 @@ fn rebuild_context(
         for lib in &libs {
             for qname in &lib.function_names {
                 if let Some(persistent) = raw_funcs.get(qname) {
-                    persistent_funcs.insert(qname.to_lowercase(), persistent.clone());
+                    persistent_funcs.insert(qname.clone(), persistent.clone());
                 }
             }
         }
@@ -289,10 +289,9 @@ pub fn call_udf_bridge(
         let state = state.borrow();
         let state = state.as_ref().ok_or("JS context not initialized")?;
 
-        let lower_name = name.to_lowercase();
         let persistent_fn = state
             .functions
-            .get(&lower_name)
+            .get(name)
             .ok_or_else(|| format!("UDF function '{name}' not found in JS context"))?;
 
         // Set up timeout interrupt handler. We always install one: a configured
