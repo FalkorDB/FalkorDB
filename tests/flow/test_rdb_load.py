@@ -25,10 +25,13 @@ def _read_resp(f):
     raise RuntimeError(f"unexpected RESP type {t!r}")
 
 
-def capture_restore_payload(conn, port, src, dst):
+def capture_restore_payload(conn, src, dst):
     """The `GRAPH.RESTORE` payload `GRAPH.COPY src dst` replicates, read by
     posing as a replica on a raw socket."""
-    s = socket.create_connection(("127.0.0.1", port))
+    # The server's address as the test connection sees it: a local server, or
+    # the CI service container.
+    kw = conn.connection_pool.connection_kwargs
+    s = socket.create_connection((kw["host"], kw["port"]))
     try:
         f = s.makefile("rb")
         s.sendall(b"*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n")
@@ -229,7 +232,7 @@ class testRdbLoad():
         self.conn.execute_command(
             "GRAPH.QUERY", "src", f"CREATE ({{v: '{MARKER.decode()}'}})"
         )
-        payload = capture_restore_payload(self.conn, self.env.port, "src", "dst")
+        payload = capture_restore_payload(self.conn, "src", "dst")
         self.conn.flushall()
         self.env.assertEqual(payload.count(ENCODED_MARKER), 1)
         nested = (_unsigned(T_ARRAY) + _unsigned(1)) * depth + _unsigned(T_NULL)
