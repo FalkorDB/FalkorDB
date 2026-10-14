@@ -152,16 +152,18 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 # Required at runtime:
 #   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
 #   libssl3                         : redis-server with BUILD_TLS=yes
+#   libstdc++6                      : falkordb.so. Named here because otherwise
+#                                     only apt's dependency on it keeps it
 #   gosu                            : run.sh drops root to `falkordb`; the
 #                                     browser entrypoint drops to nextjs
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
-# runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
-# we can run the trim straight through without the load-bearing ordering the
-# old layout required.
+# runtime (ncurses, login, passwd, util-linux, PAM, perl), then autoremove
+# what they leave behind. Perl goes last: PAM's removal script runs
+# pam-auth-update, which is a perl script.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 gosu; \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 libstdc++6 gosu; \
     apt-get upgrade -y; \
     # Create the falkordb user/group, which run.sh runs redis-server as,
     # BEFORE purging `passwd` (which provides groupadd/useradd). uid/gid 999
@@ -174,7 +176,6 @@ RUN set -eux; \
     groupadd -g 1001 nodejs && useradd -r -u 1001 -g nodejs nextjs; \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true); \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true); \
-    (dpkg --force-remove-essential --purge perl-base || true); \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true); \
     (dpkg --purge passwd || true); \
     # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
@@ -187,6 +188,16 @@ RUN set -eux; \
     dpkg --force-remove-essential --purge \
         util-linux mount bsdutils \
         libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2; \
+    # Nothing logs in, and gosu does not use PAM; login, passwd and util-linux
+    # were PAM's only users, and the only readers of login.defs. Nothing runs
+    # sysvinit-utils' tools (pidof, killall5). No `|| true`, for the reason above.
+    dpkg --force-remove-protected --force-remove-essential --purge \
+        libpam-runtime libpam-modules libpam-modules-bin libpam0g \
+        login.defs sysvinit-utils; \
+    (dpkg --force-remove-essential --purge perl-base || true); \
+    # Libraries only the purged packages used (sqlite from python, libsemanage
+    # from passwd, ...).
+    apt-get autoremove --purge -y; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
@@ -231,6 +242,8 @@ RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" 
     if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: forbidden dyn dep in final image"; exit 1; \
     fi && \
+    unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so /usr/local/bin/redis-server 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
     redis-server --version && \
     redis-cli --version && \
     redis-sentinel --version && \
