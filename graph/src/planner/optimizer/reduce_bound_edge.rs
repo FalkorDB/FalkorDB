@@ -25,7 +25,7 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::variable_read_outside;
+use super::references::variable_read_outside;
 
 pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();

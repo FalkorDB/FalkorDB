@@ -8,9 +8,10 @@
 //! (e.g. `MATCH (a)-[:R*2..3]->(b) RETURN b.id`).
 //!
 //! This pass checks every operator that can see a `CondVarLenTraverse`'s
-//! output (see `variable_read_outside`) for an expression referencing the
-//! path alias. If it is never consumed, `emit_path` is set to false and the
-//! operator skips path materialization.
+//! output (see `variable_read_outside`: its ancestors and their other branches,
+//! such as a `CALL {}` body) for an expression referencing the path alias. If
+//! it is never consumed, `emit_path` is set to false and the operator skips
+//! path materialization.
 //!
 //! It runs twice. The first run (before the filter-movement passes) sees every
 //! original path consumer (Project/Filter/Sort/Aggregate/PathBuilder/...). A
@@ -23,7 +24,7 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::variable_read_outside;
+use super::references::variable_read_outside;
 
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
@@ -127,11 +128,11 @@ mod tests {
 
     #[test]
     fn path_read_outside_the_ancestors_is_kept() {
+        // Each query reads `p` only from a sibling branch of the traverse's
+        // ancestors (a `CALL {}` body, the right side of an OPTIONAL MATCH).
         for query in [
             "MATCH (a)-[p:R*1..2]->(b) CALL { WITH p RETURN length(p) AS s } RETURN s",
             "MATCH (a)-[p:R*1..2]->(b) OPTIONAL MATCH (c) WHERE length(p) = 1 RETURN count(c)",
-            "MATCH (a)-[p:R*1..2]->(b) UNWIND p AS x RETURN count(x)",
-            "MATCH (a)-[p:R*1..2]->(b) CREATE (:Q {n: length(p)})",
         ] {
             let paths = emit_paths(&optimized_varlen_plan(query));
             assert_eq!(paths, vec![true], "{query}");

@@ -23,16 +23,16 @@
 //!
 //! The intermediate variable `b` must be anonymous (`_anon*` prefix), have no
 //! labels (the v1 runtime does not apply mid-chain label filters), have no
-//! inline attribute predicates, and not be read by any operator outside the
-//! outer CT's subtree. Both edges must be anonymous, non-bidirectional,
-//! non-variable-length, and have no inline attribute predicates. Both ops must have empty
+//! inline attribute predicates, and not be referenced by any ancestor of the
+//! outer CT. Both edges must be anonymous, non-bidirectional, non-variable-
+//! length, and have no inline attribute predicates. Both ops must have empty
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into;
+use super::references::ir_references_variable;
 
 fn is_anon(name_opt: Option<&std::sync::Arc<String>>) -> bool {
     name_opt.is_some_and(|n| n.starts_with("_anon"))
@@ -51,24 +51,31 @@ fn rel_attrs_empty(
     matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
 }
 
-fn node_attrs_empty(
-    node: &crate::parser::ast::QueryNode<std::sync::Arc<String>, crate::parser::ast::Variable>
-) -> bool {
-    use crate::parser::ast::ExprIR;
-    let root = node.attrs.root();
-    matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
-}
-
-/// True when no operator outside the subtree rooted at `idx` (the parent
-/// CondTraverse, which consumes the intermediate) reads the variable
-/// `(var_id, scope_id)`.
+/// True when no operator anywhere in the plan references the variable
+/// `(var_id, scope_id)`. Reuses the per-IR-node reference check from
+/// [`ir_references_variable`], which reports false for the traversal
+/// operators themselves, so the two hops being fused never veto their own
+/// intermediate.
+///
+/// Whole-plan rather than the ancestor spine. The predicate that must not be
+/// dropped is the intermediate's own inline attrs, and the planner emits that
+/// Filter directly above the operator that binds it — i.e. *between* the two
+/// hops, which is below the parent, not above it. Walking upwards from the
+/// parent would miss it. Fusion happens to be blocked in that case anyway,
+/// because the pass requires the child to be a direct CondTraverse child and
+/// the interposed Filter breaks the adjacency, but that is a structural
+/// accident: it protects the plan only for as long as nobody teaches this pass
+/// to see through Filters. Checking the whole plan states the requirement
+/// instead of relying on the shape.
 fn intermediate_unreferenced(
     plan: &DynTree<IR>,
-    idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
     var_id: u32,
     scope_id: u32,
 ) -> bool {
-    !reduce_expand_into::variable_read_outside(plan, idx, var_id, scope_id)
+    !plan
+        .root()
+        .indices::<Bfs>()
+        .any(|idx| ir_references_variable(plan.node(idx).data(), var_id, scope_id))
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -77,7 +84,6 @@ fn can_fuse(
     parent_ct: &IR,
     child_ct: &IR,
     plan: &DynTree<IR>,
-    parent_idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
 ) -> bool {
     let (
         IR::CondTraverse {
@@ -88,6 +94,7 @@ fn can_fuse(
             chain: _p_chain,
             optional: p_opt,
             bind_relationship: true,
+            ..
         },
         IR::CondTraverse {
             relationship: c_rel,
@@ -97,6 +104,7 @@ fn can_fuse(
             chain: c_chain,
             optional: c_opt,
             bind_relationship: true,
+            ..
         },
     ) = (parent_ct, child_ct)
     else {
@@ -153,26 +161,32 @@ fn can_fuse(
     if !intermediate.labels.is_empty() {
         return false;
     }
-    if !node_attrs_empty(intermediate) {
-        return false;
-    }
-    // Endpoint inline attrs on entry hop's `from` and final `to` are
-    // handled by surrounding Filter nodes (planner emits them above the CT),
-    // so we only need to check the relationships and intermediate here.
+    // The intermediate's own inline attrs no longer live on the pattern; if it
+    // had any they are a Filter now, which the reference check below catches.
+    //
+    // Endpoint inline attrs on the entry hop's `from` and the final `to` are
+    // handled by the surrounding Filter nodes the planner emits, and those
+    // endpoints survive fusion, so they need no check here.
     // The child's `from` and parent's `to` are external to the fused chain.
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
 
-    // Intermediate must not be read by anything that sees the parent CT's
-    // output, since after fusion it disappears from the binding set.
-    if !intermediate_unreferenced(
-        plan,
-        parent_idx,
-        intermediate.alias.id,
-        intermediate.alias.scope_id,
-    ) {
+    // The intermediate disappears from the binding set on fusion, so nothing
+    // anywhere may still read it.
+    if !intermediate_unreferenced(plan, intermediate.alias.id, intermediate.alias.scope_id) {
         return false;
+    }
+    // Neither may the edges. A fused chain binds no per-hop edge, so a
+    // predicate on one has nothing left to test — an inline `-[{k: 1}]->` is a
+    // Filter above the hop at this point (it only moves into the operator
+    // after this pass has run), and that Filter is what this check sees. This
+    // replaces the old `rel_attrs_empty` probe, which read the attrs directly
+    // back when they were still on the pattern.
+    for edge in [&p_rel.alias, &c_rel.alias] {
+        if !intermediate_unreferenced(plan, edge.id, edge.scope_id) {
+            return false;
+        }
     }
     true
 }
@@ -194,7 +208,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             if !matches!(child_node.data(), IR::CondTraverse { .. }) {
                 continue;
             }
-            if can_fuse(parent_node.data(), child_node.data(), plan, idx) {
+            if can_fuse(parent_node.data(), child_node.data(), plan) {
                 fuse_target = Some(idx);
                 break;
             }
