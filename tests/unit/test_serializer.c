@@ -71,26 +71,26 @@ void test_serializer(void) {
 	//--------------------------------------------------------------------------
 
 	// read unsigned
-	TEST_ASSERT(SerializerIO_ReadUnsigned(reader) == unsigned_v);
+	TEST_ASSERT(SerializerIO_TryReadUnsigned(reader) == unsigned_v);
 
 	// read signed
-	TEST_ASSERT(SerializerIO_ReadSigned(reader) == signed_v);
+	TEST_ASSERT(SerializerIO_TryReadSigned(reader) == signed_v);
 
 	// read buffer
 	size_t read_len;
-	char *read_buff = SerializerIO_ReadBuffer(reader, &read_len);
+	char *read_buff = SerializerIO_TryReadBuffer(reader, &read_len);
 	TEST_ASSERT(read_len == write_len);
 	TEST_ASSERT(strcmp(read_buff, write_buff) == 0);
 	rm_free(read_buff);
 
 	// read double
-	TEST_ASSERT(SerializerIO_ReadDouble(reader) == double_v);
+	TEST_ASSERT(SerializerIO_TryReadDouble(reader) == double_v);
 
 	// read float
-	TEST_ASSERT(SerializerIO_ReadFloat(reader) == float_v);
+	TEST_ASSERT(SerializerIO_TryReadFloat(reader) == float_v);
 
 	// read long double
-	TEST_ASSERT(SerializerIO_ReadLongDouble(reader) == longdouble_v);
+	TEST_ASSERT(SerializerIO_TryReadLongDouble(reader) == longdouble_v);
 
 	fclose(fs_read_stream);      // close file streams
 	close(pipefd[0]);            // close pipe
@@ -146,19 +146,19 @@ void test_serializer_generic_write(void) {
 	//--------------------------------------------------------------------------
 
 	// read unsigned
-	TEST_ASSERT(SerializerIO_ReadUnsigned(reader) == unsigned_v);
+	TEST_ASSERT(SerializerIO_TryReadUnsigned(reader) == unsigned_v);
 
 	// read signed
-	TEST_ASSERT(SerializerIO_ReadSigned(reader) == signed_v);
+	TEST_ASSERT(SerializerIO_TryReadSigned(reader) == signed_v);
 
 	// read double
-	TEST_ASSERT(SerializerIO_ReadDouble(reader) == double_v);
+	TEST_ASSERT(SerializerIO_TryReadDouble(reader) == double_v);
 
 	// read float
-	TEST_ASSERT(SerializerIO_ReadFloat(reader) == float_v);
+	TEST_ASSERT(SerializerIO_TryReadFloat(reader) == float_v);
 
 	// read long double
-	TEST_ASSERT(SerializerIO_ReadLongDouble(reader) == longdouble_v);
+	TEST_ASSERT(SerializerIO_TryReadLongDouble(reader) == longdouble_v);
 
 	fclose(fs_read_stream);      // close file streams
 	close(pipefd[0]);	         // close pipe

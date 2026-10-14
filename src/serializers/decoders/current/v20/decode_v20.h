@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../serializers_include.h"
+#include "../../../../graph/graph_limits.h"  // GRAPH_MAX_* decode bounds
 
 GraphContext *RdbLoadGraphContext_latest
 (

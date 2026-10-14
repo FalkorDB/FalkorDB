@@ -4,11 +4,9 @@ from common import *
 from falkordb import FalkorDB
 
 # decoders versions to tests
+# versions 10-13 (RedisGraph 2.8-2.12) are no longer decodable; the oldest
+# supported encoding is 14 (FalkorDB v4.0)
 VERSIONS = [
-        {'decoder_version': 10, 'tag': 'redislabs/redisgraph:2.8.7'},
-        {'decoder_version': 11, 'tag': 'redislabs/redisgraph:2.8.12'},
-        {'decoder_version': 12, 'tag': 'redislabs/redisgraph:2.8.14'},
-        {'decoder_version': 13, 'tag': 'redislabs/redisgraph:2.12.8'},
         {'decoder_version': 14, 'tag': 'falkordb/falkordb:v4.0.7'},
         {'decoder_version': 15, 'tag': 'falkordb/falkordb:v4.2.2'},
         {'decoder_version': 16, 'tag': 'falkordb/falkordb:v4.8.5'},
@@ -135,22 +133,6 @@ class test_prev_rdb_decode():
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
-
-    def test_v10_decode(self):
-        decoder_id = 10
-        self._test_decode(decoder_id)
-
-    def test_v11_decode(self):
-        decoder_id = 11
-        self._test_decode(decoder_id)
-
-    def test_v12_decode(self):
-        decoder_id = 12
-        self._test_decode(decoder_id)
-
-    def test_v13_decode(self):
-        decoder_id = 13
-        self._test_decode(decoder_id)
 
     def test_v14_decode(self):
         decoder_id = 14

@@ -332,7 +332,6 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 ) {
 	ASSERT(io != NULL);
 
-	// zeroed: the shared error probe reads the corrupt flag
 	BufferedIO *buffer_io = rm_calloc(1, sizeof(BufferedIO));
 
 	buffer_io->stream = io;
@@ -371,6 +370,10 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 	serializer->stream    = buffer_io;
 	serializer->encoder   = encoder;
 	serializer->free_buff = true;
+
+	// back-pointer, mirroring the v2 serializer (this prev reader never reports
+	// framing errors itself, but keep the field consistent)
+	buffer_io->io = serializer;
 
 	// decoders latch short reads via the backend error probe
 	if(!encoder) serializer->IsError = Buffered_IsError;

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../../../serializers_include.h"
+#include "../../../../graph/graph_limits.h"  // GRAPH_MAX_* decode bounds
 
 GraphContext *RdbLoadGraphContext_v19
 (
@@ -23,10 +24,10 @@ void AUXLoadUDF_v19
 // decode nodes
 void RdbLoadNodes_v19
 (
-	SerializerIO rdb,          // RDB
-	Graph *g,                  // graph context
-	const uint64_t node_count, // number of nodes to decode
-	const uint64_t id_limit    // node ids are below this (header counts)
+	SerializerIO rdb,           // RDB
+	Graph *g,                   // graph context
+	const uint64_t node_count,  // number of nodes to decode
+	const uint64_t id_limit     // node ids are below this (header counts)
 );
 
 // decode deleted nodes
@@ -41,10 +42,10 @@ void RdbLoadDeletedNodes_v19
 // decode edges
 void RdbLoadEdges_v19
 (
-	SerializerIO rdb,         // RDB
-	Graph *g,                 // graph context
-	const uint64_t n,         // virtual key capacity
-	const uint64_t id_limit   // edge ids are below this (header counts)
+	SerializerIO rdb,        // RDB
+	Graph *g,                // graph context
+	const uint64_t n,        // virtual key capacity
+	const uint64_t id_limit  // edge ids are below this (header counts)
 );
 
 // decode deleted edges

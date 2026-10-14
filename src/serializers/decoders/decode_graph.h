@@ -10,8 +10,10 @@
 
 #include "../serializers_include.h"
 
-// load RDB
-GraphContext *RdbLoadGraph(RedisModuleIO *rdb);
+// load a graph key of any supported encoding version; the single decode
+// dispatcher - installs one abort handler and dispatches to the per-version
+// decoder (see decode_graph.c)
+GraphContext *RdbLoadGraph(RedisModuleIO *rdb, int encver);
 
 // log why a graph key failed to load, once, naming the key
 // silent for short reads, which Redis reports itself
