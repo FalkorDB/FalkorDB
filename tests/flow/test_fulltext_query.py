@@ -370,3 +370,20 @@ class testFulltextIndexQuery():
         )
         self.env.assertEqual(len(result.result_set), 5)
         self.env.assertEqual([row[0] for row in result.result_set], [0, 1, 2, 3, 4])
+
+    def test06_fulltext_query_non_string_arguments(self):
+        # a non-string label / relationship type or query matches nothing:
+        # no rows, not an error (as C)
+        for q in ["CALL db.idx.fulltext.queryNodes(1, 2)",
+                  "CALL db.idx.fulltext.queryNodes(null, 'hello')",
+                  "CALL db.idx.fulltext.queryNodes('L1', 1)",
+                  "CALL db.idx.fulltext.queryRelationships(1, 2)",
+                  "CALL db.idx.fulltext.queryRelationships('E', null)"]:
+            self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # only the rows with a non-string label are dropped
+        result = self.graph.query(
+            """UNWIND [1, 'L1'] AS l
+            CALL db.idx.fulltext.queryNodes(l, 'hello') YIELD node
+            RETURN l, node.v""")
+        self.env.assertEqual(result.result_set, [['L1', 'hello redis world']])
