@@ -31,7 +31,7 @@ graph/src/runtime/batch.rs	grow_cols	721	PROVEN	BB.growCols: growCols_spec
 graph/src/runtime/batch.rs	finish_row	736	PROVEN	Concat concat_origins
 graph/src/runtime/batch.rs	finish	749	PROVEN	Concat builderCol (present/anyBound -> classifyStored / value-only / Unbound)
 graph/src/runtime/batch.rs	new	830	PROVEN	Batch.new0: new0_spec
-graph/src/runtime/batch.rs	rows_only	852	PROVEN	BatchMisc.rowsOnly: rowsOnly_spec (#2845)
+graph/src/runtime/batch.rs	rows_only	852	PROVEN	BatchMisc.rowsOnly: rowsOnly_spec (#2845); CallBoundary Pr2845.projectEmpty_fast_eq_general
 graph/src/runtime/batch.rs	from_columns	865	PROVEN	Batch.fromColumns: fromColumns_column, foldl_setColumn_column
 graph/src/runtime/batch.rs	into_compacted	883	PROVEN	Batch compact_spec
 graph/src/runtime/batch.rs	gather	896	PROVEN	Batch.gather: gather_obs, gather_fields, gather_wf, gather_originRow
@@ -50,7 +50,7 @@ graph/src/runtime/batch.rs	set_column	1225	PROVEN	Batch column_setColumn, setCol
 graph/src/runtime/batch.rs	value_at	1263	PROVEN	Batch valueAt_isSome
 graph/src/runtime/batch.rs	compare_rows_at	1281	PROVEN	Batch.compareRowsAt (cv = Value::sort_cmp): compareRowsAt_spec
 graph/src/runtime/batch.rs	origin_row	1297	PROVEN	Batch.originRow: originRow_spec, accessors_spec
-graph/src/runtime/batch.rs	has_origins	1311	PROVEN	BatchMisc.hasOrigins: hasOrigins_spec, hasOrigins_zero_not_unset (#2845)
+graph/src/runtime/batch.rs	has_origins	1311	PROVEN	BatchMisc.hasOrigins: hasOrigins_spec, hasOrigins_zero_not_unset (#2845); Pr2845.hasOrigins_iff, originRow_none
 graph/src/runtime/batch.rs	set_origin_rows	1318	PROVEN	Batch.setOriginRows: accessors_spec
 graph/src/runtime/batch.rs	num_columns	1327	PROVEN	Batch.numColumns: accessors_spec
 graph/src/runtime/batch.rs	is_bound_at	1335	PROVEN	Batch.isBound: accessors_spec
@@ -149,7 +149,7 @@ graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.m
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch; miscompiled_differs (#2922)
 graph/src/runtime/ops/batched_result_emitter.rs	seed	575	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	602	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent)
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	602	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len; historical pre2845_emit_origin_lost_old
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	619	PROVEN	Emitter drain_spec, drain_conserve
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	648	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	673	PROVEN	Emitter packRows_spec, stream_rows_active

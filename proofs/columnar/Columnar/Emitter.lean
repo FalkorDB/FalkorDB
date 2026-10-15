@@ -265,7 +265,7 @@ theorem finishLen_eq (pc : Nat) (ho bc : Bool) (count : Nat) (h : pc > 0 ∨ ho 
 
 /-- Since #2845 (eb470521b) a column-less parent that carries origins — the entry
 projection of a `CALL {}` body importing nothing — is gathered, so every result
-keeps its row (and its origin; `proofs/pr2845_review` `emit_origin_sound`). Before
+keeps its row (and its origin; CallBoundary `Pr2845.emit_origin_sound`). Before
 #2845 `should_expand` read only `num_columns() > 0` and this case was a 0-row batch. -/
 theorem finishLen_origins_kept : finishLen 0 true false 5 = 5 := rfl
 

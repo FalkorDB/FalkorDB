@@ -3,9 +3,10 @@ import FalkorValueOrder.SortCmp
 # Main (4a4f2a72f): `sort_cmp` with #2917's `sort_cmp_f32`, and `Hash for Value`
 
 #2917 (7fdf06a0e) is merged; the files it touched in this area are byte-identical to the
-PR head 14e341cf4 that proofs/pr2917_review modelled. `scF32`, `fkey32` and the
-hash-consistency proof are copied from proofs/pr2917_review `Review.lean`, re-stated for
-this project's `hwords` (Model.lean, now main's hash).
+PR head 14e341cf4. The retired proofs/pr2917_review (its review project) is folded in
+here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims and the
+203f2022c counterexamples (`pre14e341_*`), re-stated for this project's `hwords`
+(Model.lean, now main's hash).
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
@@ -20,7 +21,7 @@ this project's `hwords` (Model.lean, now main's hash).
 namespace ValueOrder.Main
 open ValueOrder ValueOrder.Laws ValueOrder.SC
 
-/-! ## `sort_cmp_f32` (copied from pr2917_review) -/
+/-! ## `sort_cmp_f32` -/
 
 /-- `sort_cmp_f32` (value.rs:1905). -/
 def scF32 (a b : F) : Ordering :=
@@ -119,7 +120,7 @@ theorem scMain_fixes_2891 :
     scMain (.int (P53 + 1)) (.flt (.num P53)) = .gt ∧
     scMain m1 m3 = .lt ∧ scMain m1 m2 ≠ .eq ∧ scMain m2 m3 ≠ .eq := by decide
 
-/-! ## `Hash for Value` agrees with `sort_cmp` (copied from pr2917_review, on `hwords`) -/
+/-! ## `Hash for Value` agrees with `sort_cmp` (on `hwords`) -/
 
 theorem f32HashBits_of_eq (x y : F) (h : scF32 x y = .eq) : f32HashBits x = f32HashBits y := by
   rw [scF32_key, cmp3_eq_iff] at h
@@ -357,6 +358,86 @@ theorem listSort_perm (xs : List V) : (listSort xs).Perm xs := by
   | cons x xs ih =>
     simp only [listSort, List.foldr_cons]
     exact (insertBy_perm scMain x _).trans (ih.cons x)
+
+/-! ## #2917's per-shape key claims (folded in from the retired proofs/pr2917_review) -/
+
+/-- Float `-0.0` and `0.0` are one key. -/
+theorem float_signed_zero_one_key :
+    scMain (.flt .negZero) (.flt (.num 0)) = .eq ∧
+    hwords (.flt .negZero) = hwords (.flt (.num 0)) := by decide
+
+/-- Every Float NaN, whatever its sign and payload, is one key. -/
+theorem float_nans_one_key (s s' : Bool) (p p' : Nat) :
+    scMain (.flt (.nan s p)) (.flt (.nan s' p')) = .eq ∧
+    hwords (.flt (.nan s p)) = hwords (.flt (.nan s' p')) :=
+  ⟨(main_nans_one_key s s' p p').1, (main_nans_one_key s s' p p').2.1⟩
+
+/-- Vector NaN components are one key, whatever their sign and payload. -/
+theorem vec_nans_one_key (s s' : Bool) (p p' : Nat) :
+    scMain (.vecf32 [.nan s p]) (.vecf32 [.nan s' p']) = .eq ∧
+    hwords (.vecf32 [.nan s p]) = hwords (.vecf32 [.nan s' p']) := by
+  refine ⟨?_, (main_nans_one_key s s' p p').2.2.2⟩
+  simp [scMain, sc, scF32, zipNe, fpcmp, F.nkey, isNaN, cmpB, cmpN, cmpI, thn]
+
+/-- Point NaN components are one key. (The Rust `point()` constructor refuses a NaN
+coordinate — "latitude must be a finite number" — so this is defensive.) -/
+theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
+    scMain (.point (.nan s p) y) (.point (.nan s' p') y) = .eq ∧
+    hwords (.point (.nan s p) y) = hwords (.point (.nan s' p') y) := by
+  refine ⟨?_, ?_⟩
+  · simp only [scMain, sc, scF32_refl, thn_eq]
+    simp [scF32, fpcmp, F.nkey, isNaN, cmpB, cmpN, cmpI]
+  · simp [hwords, f32HashBits, isNaN, F.nkey]
+
+/-- Signed zeros nested in a list stay apart too. -/
+theorem signed_zeros_apart_nested :
+    scMain (.list [.vecf32 [.negZero]]) (.list [.vecf32 [.num 0]]) = .lt := by decide
+
+/-! ## The PR at 203f2022c (before its head 14e341cf4): history
+
+`sort_cmp_f32` was main's `sort_cmp_f64` order and vector/point components were hashed
+by `to_bits`, so `sort_cmp`-equal components could hash apart (CodeRabbit on #2917). -/
+
+mutual
+def hwordsPre14e341 : V → List UInt64
+  | .null => [0]
+  | .bool b => [1, if b then 1 else 0]
+  | .int i => [2, w i]
+  | .flt f => [2, floatWord f]
+  | .str s => [3, UInt64.ofNat s, 0xff]
+  | .list xs => [4, UInt64.ofNat xs.length] ++ hwordsListPre14e341 xs
+  | .map ks vs => [5, UInt64.ofNat ks.length] ++ hwordsMapPre14e341 ks vs
+  | .node n => [6, UInt64.ofNat n]
+  | .vecf32 xs => [9] ++ xs.map (fun f => UInt64.ofNat (bits32 f))
+  | .point lat lon => [10, UInt64.ofNat (bits32 lat), UInt64.ofNat (bits32 lon)]
+
+def hwordsListPre14e341 : List V → List UInt64
+  | [] => []
+  | x :: xs => hwordsPre14e341 x ++ hwordsListPre14e341 xs
+
+def hwordsMapPre14e341 : List Nat → List V → List UInt64
+  | k :: ks, v :: vs => [UInt64.ofNat k, 0xff] ++ hwordsPre14e341 v ++ hwordsMapPre14e341 ks vs
+  | _, _ => []
+end
+
+def scPre14e341 : V → V → Ordering := sc scF64
+
+def nan2 : F := .nan true (2 ^ 51 - 1)
+
+/-- Two vector NaNs were `sort_cmp`-equal but hashed apart (Rust 2 groups, C 1). -/
+theorem pre14e341_vec_nan_hash_differs :
+    scPre14e341 (.vecf32 [F.qnan]) (.vecf32 [nan2]) = .eq ∧
+    hwordsPre14e341 (.vecf32 [F.qnan]) ≠ hwordsPre14e341 (.vecf32 [nan2]) := by decide
+
+/-- `-0.0`/`0.0` vector components were `sort_cmp`-equal but hashed apart. -/
+theorem pre14e341_vec_zero_eq_but_hash_differs :
+    scPre14e341 (.vecf32 [.negZero]) (.vecf32 [.num 0]) = .eq ∧
+    hwordsPre14e341 (.vecf32 [.negZero]) ≠ hwordsPre14e341 (.vecf32 [.num 0]) := by decide
+
+theorem pre14e341_point_zero_eq_but_hash_differs :
+    scPre14e341 (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = .eq ∧
+    hwordsPre14e341 (.point .negZero (.num 0)) ≠ hwordsPre14e341 (.point (.num 0) (.num 0)) := by
+  decide
 
 #print axioms scMain_total
 #print axioms main_hash_consistent

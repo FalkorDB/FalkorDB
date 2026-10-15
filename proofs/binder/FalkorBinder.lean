@@ -73,6 +73,9 @@ in two places while the removed ids are still in the IR
   `callSubquery_covers`, `importProjections_covers`, `createCheck_*`); `mayBool_sound_except`, `mayEntity_eq`;
   `nodeToValue_sound`/`_complete`, `foldCall_sound`, `rewriteStruct_shape`, `rewriteRegex_spec`;
   `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`.
+* #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
+  `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
+  `body_import_value`, `union_branch_label_alias` (open, #3027), `pushed_read_unbound` (W6-opt-1).
 
 ## Confirmed bugs (repro: `cargo test -p graph --test lean_binder`; tests assert the C answer and fail today)
 1. **Clause fold** (general cause of #2923): parser/cypher.rs:1540-1547 folds `MATCH p MATCH q` (and `CREATE`,
@@ -167,3 +170,4 @@ import FalkorBinder.BindIR
 import FalkorBinder.Types
 import FalkorBinder.Fold
 import FalkorBinder.AggEq
+import FalkorBinder.CallBoundary

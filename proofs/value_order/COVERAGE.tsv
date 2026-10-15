@@ -26,7 +26,7 @@ graph/src/runtime/value.rs	is_leap	787	NOT COVERED	calendar helper; outside the 
 graph/src/runtime/value.rs	days_from_civil	794	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	civil_from_days	811	NOT COVERED	calendar helper; outside the order model
 graph/src/runtime/value.rs	write_date_into	826	NOT COVERED	formatting helper; outside the order model
-graph/src/runtime/value.rs	Hash::hash	846	PROVEN	hwords/floatWord/f32HashBits (main since #2917 7fdf06a0e; Fx stream): Main.main_hash_consistent (sort_cmp-equal => equal words, every wf value), Main.main_nans_one_key (W9-hash-1 fixed), sane_hash_consistent, hash_not_consistent_with_eq (vs Value::eq, harmless: GroupKey uses sort_cmp); history SC.pre2917_hash_not_consistent; Str words abstracted; Path/Rel/temporal arms not modelled
+graph/src/runtime/value.rs	Hash::hash	846	PROVEN	hwords/floatWord/f32HashBits (main since #2917 7fdf06a0e; Fx stream): Main.main_hash_consistent (sort_cmp-equal => equal words, every wf value), Main.main_nans_one_key (W9-hash-1 fixed), Main.float_nans_one_key, float_signed_zero_one_key, vec_nans_one_key, point_nans_one_key (#2917 claims), sane_hash_consistent, hash_not_consistent_with_eq (vs Value::eq, harmless: GroupKey uses sort_cmp); history SC.pre2917_hash_not_consistent, Main.pre14e341_vec_nan_hash_differs (PR at 203f2022c); Str words abstracted; Path/Rel/temporal arms not modelled
 graph/src/runtime/value.rs	Add::add	936	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Value::add_slow	951	NOT COVERED	arithmetic; outside the order model
 graph/src/runtime/value.rs	Sub::sub	1068	NOT COVERED	arithmetic; outside the order model
@@ -78,7 +78,7 @@ graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	NOT COVERED	column 
 graph/src/runtime/value.rs	Value::sort_cmp	1552	PROVEN	SC.sc (generic in sort_cmp_f32) = Main.scMain: Main.scMain_total (total preorder on every wf value, nested lists/maps/vectors/points), Main.scMain_fixes_2891, SC.sc_laws
 graph/src/runtime/value.rs	Value::sort_cmp_map	1589	PROVEN	SC.sc map arm (len, sorted keys, values; mapC): SC.map_swap, SC.map_trans, Main.scMain_total, Main.main_hash_consistent
 graph/src/runtime/value.rs	sort_cmp_f64	1914	PROVEN	SC.scF64: SC.scF64_key (NaN on top, -0.0 = 0.0), SC.scF64_lw, SC.scF64_refl
-graph/src/runtime/value.rs	sort_cmp_f32	1928	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart
+graph/src/runtime/value.rs	sort_cmp_f32	1928	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
 graph/src/runtime/value.rs	f32_hash_bits	1942	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
 graph/src/runtime/value.rs	sort_cmp_int_float	1954	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1281	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)

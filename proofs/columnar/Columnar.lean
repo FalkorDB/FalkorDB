@@ -9,6 +9,7 @@ import Columnar.Lanes
 import Columnar.Gather
 import Columnar.BatchMisc
 import Columnar.Dispatch
+import Columnar.CallBoundary
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
@@ -123,7 +124,7 @@ proofs/ops_aggregate.
   `hasOrigins_spec`, `hasOrigins_zero_not_unset` (it separates "all origins 0" from
   "never stamped", which `origin_row` cannot). `Emitter.finishLen` takes the new
   `has_origins` arm of `start_batch`. The per-row origin argument is in
-  proofs/pr2845_review (`emit_origin_sound`).
+  `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
 ## Wave 6 (`Dispatch`)
 `VectorEval::eval` dispatch PROVEN: **`eval_sound`** — for every expression tree, given

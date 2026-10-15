@@ -1,5 +1,5 @@
 /-
-# PR #2845, columnar side: `rows_only`, `has_origins`, the empty-projection
+# #2845 (eb470521b), columnar side: `rows_only`, `has_origins`, the empty-projection
 # fast path and the emitter's gather guard
 
 Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` :853,
@@ -9,9 +9,10 @@ runtime/ops/project.rs `eval` :54-147, and
 runtime/ops/batched_result_emitter.rs `start_batch` :602, `finish_batch` :648.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
-inspect, the value-level laws being proofs/columnar's.
+inspect, the value-level laws being this project's. Folded in from the
+retired proofs/pr2845_review.
 -/
-namespace Pr2845
+namespace Columnar.Pr2845
 
 structure Batch (V : Type) where
   len : Nat
@@ -222,4 +223,4 @@ theorem concatColless_perRow {V : Type} (bs : List (Batch V)) :
     simp [List.length_flatMap]
   rw [hl]
 
-end Pr2845
+end Columnar.Pr2845

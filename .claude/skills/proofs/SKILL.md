@@ -53,8 +53,12 @@ changed functions, and prove or refute each claim the PR makes. Confirm any refu
 live. Also check that the existing theorems still hold for the new code. A PR that
 changes `Eq`/`Hash`/`Ord`/`sort_cmp`/`compare_value` (or anything a `HashMap` key or a
 sort uses) **must** get a `pr<N>_review` project proving Eq ⇒ equal Hash and the order
-laws on the PR's code (see `pr2917_review`). Until it merges, its COVERAGE rows stay
-commented out.
+laws on the PR's code (value_order `Main.lean` holds what pr2917_review proved). Until
+it merges, its COVERAGE rows stay commented out. **Once the PR merges, delete the review
+project**: fold each theorem into the owning project (drop it if an equivalent already
+exists there, otherwise move it, re-stated on the owner's definitions), merge its COVERAGE
+rows into the owner's rows, and update names cited in FINDINGS.md (see the retired
+pr2845_review → binder/columnar/optimizer_rewrites `CallBoundary.lean`).
 
 **Hypotheses about Rust code**: a theorem that takes a premise about another Rust
 fn's behaviour (a contract structure, `(hc : ∀ …)`, an invariant some other code

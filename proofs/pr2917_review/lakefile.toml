@@ -1,5 +1,0 @@
-name = "pr2917-review"
-defaultTargets = ["Pr2917Review"]
-
-[[lean_lib]]
-name = "Pr2917Review"

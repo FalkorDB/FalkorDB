@@ -1,6 +1,6 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/ops/aggregate.rs	eq	94	PROVEN	gkEq (veq = sort_cmp == Equal since #2917): gkEq_iff, Discharge.veqMain_equiv (an equivalence on main)
-graph/src/runtime/ops/aggregate.rs	hash	110	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent = pr2917_review hashPR_consistent, copied under VO/)
+graph/src/runtime/ops/aggregate.rs	eq	94	PROVEN	gkEq (veq = sort_cmp == Equal since #2917): gkEq_iff, Discharge.gkEq_spec (= GroupKey::eq on main), Discharge.veqMain_equiv (an equivalence on main)
+graph/src/runtime/ops/aggregate.rs	hash	110	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent)
 graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	176	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
 graph/src/runtime/ops/aggregate.rs	args_for	217	PROVEN	argsFor: argsFor_spec
 graph/src/runtime/ops/aggregate.rs	fold	238	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
@@ -38,7 +38,7 @@ graph/src/runtime/ops/limit.rs	next	52	PROVEN	limitOp_spec, limit_zero
 graph/src/runtime/ops/skip.rs	new	32	PROVEN	SkipSt.new: skip_new_spec
 graph/src/runtime/ops/skip.rs	next	50	PROVEN	skipOp_spec, skip_beyond, skip_limit
 graph/src/runtime/ops/project.rs	new	33	PROVEN	ProjectSt.new: project_new_spec
-graph/src/runtime/ops/project.rs	eval	54	PROVEN	project_flatten (row count per active row; the #2845 empty-projection fast path is proved equal to the general path in pr2845_review projectEmpty_fast_eq_general)
+graph/src/runtime/ops/project.rs	eval	54	PROVEN	project_flatten (row count per active row; the #2845 empty-projection fast path is proved equal to the general path in proofs/columnar Pr2845.projectEmpty_fast_eq_general, projectMerged_eq_main)
 graph/src/runtime/ops/project.rs	next	135	PROVEN	project_flatten
 graph/src/runtime/ops/unwind.rs	new	64	PROVEN	UnwindSt.new: unwind_new_spec, packCeiling_bounds
 graph/src/runtime/ops/unwind.rs	next	90	PROVEN	unwind_batches, chunks_flatten, unwind_null

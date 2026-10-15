@@ -76,6 +76,22 @@ theorem gk_hash_consistent_main (st : List UInt64) (a b : List WV) (h : gkEq veq
     gkHash hvMain st a = gkHash hvMain st b :=
   gkHash_consistent veqMain hvMain hc_main st a b h
 
+/-- `GroupKey::eq` (aggregate.rs:94) written directly: same length, and every zipped pair
+`sort_cmp`-equal. -/
+def gkEqR (a b : List V) : Bool :=
+  a.length == b.length && (a.zip b).all (fun p => scMain p.1 p.2 == .eq)
+
+/-- The generic `gkEq veqMain` is main's `GroupKey::eq` (from the retired pr2917_review). -/
+theorem gkEq_spec : ∀ a b : List WV, gkEq veqMain a b = gkEqR (a.map (·.1)) (b.map (·.1))
+  | [], [] => rfl
+  | [], _ :: _ => by simp [gkEq, gkEqR]
+  | _ :: _, [] => by simp [gkEq, gkEqR]
+  | x :: xs, y :: ys => by
+    have ih := gkEq_spec xs ys
+    simp only [gkEqR, List.map_cons, List.length_cons, List.zip_cons_cons, List.all_cons] at ih ⊢
+    simp only [gkEq, veqMain, ih, gkEqR]
+    cases (scMain x.1 y.1 == .eq) <;> simp [Nat.add_right_cancel_iff]
+
 /-- `GroupKey::eq` on main is an equivalence (needed by a `HashMap` key): it inherits
 reflexivity, symmetry and transitivity from `sort_cmp`. -/
 theorem veqMain_equiv (x y z : WV) :

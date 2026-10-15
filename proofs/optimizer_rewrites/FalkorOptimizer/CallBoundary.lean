@@ -1,4 +1,3 @@
-import Pr2845Review.Row
 /-
 # The boundary is invisible to `push_filters_down` (claim 2 REFUTED in general)
 
@@ -17,9 +16,11 @@ ancestors, and the Filter's `Argument` belongs to an `Optional` inside the
 body — whose rows are that `Optional`'s left input (the entry projection's
 output), not the Apply's left rows. The walk ignores both, so ids of the
 OUTER left branch are believed available at that `Argument`, while the
-runtime row there has the slot unbound (`body_own_unbound`).
+runtime row there has the slot unbound (proofs/binder
+`FalkorBinder.Pr2845.body_own_unbound`, `pushed_read_unbound`). W6-opt-1.
+Folded in from the retired proofs/pr2845_review (#2845, eb470521b).
 -/
-namespace Pr2845
+namespace Falkor.Opt.Pr2845
 
 inductive K
   | apply (leftVars : List Nat) (filterInLeft : Bool)
@@ -65,12 +66,6 @@ theorem filter_pushed_through_boundary :
     inherited callOptAncestors = [0] ∧ pushable [0] [] (inherited callOptAncestors) = true := by
   decide
 
-/-- At that `Argument` the row is the Optional's left input, i.e. the entry
-projection's output: slot 0 is unbound for every outer row, so the pushed
-`n.id` read fails ("Variable n not found"; C returns `[[1,3],[2,3],[3,3]]`). -/
-theorem pushed_read_unbound {V : Type} (r : RowF V) :
-    bodyInputNew (importProj [] 1 []).2 r 0 = none := rfl
-
 /-- The fix keeps the conjunct above (`n` is not available there) … -/
 theorem fixed_keeps_filter :
     inheritedFixed callOptAncestors = [] ∧ pushable [0] [] (inheritedFixed callOptAncestors) = false := by
@@ -99,4 +94,4 @@ targets, whose slots `body_import_value` shows carry the outer values. -/
 theorem fixed_optional_inherits_left (lo : List Nat) (rest : List K) :
     inheritedFixed (.optional lo false :: rest) = lo := rfl
 
-end Pr2845
+end Falkor.Opt.Pr2845

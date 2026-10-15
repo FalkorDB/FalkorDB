@@ -1,63 +1,27 @@
+import FalkorBinder.Resolve
 /-
-# PR #2845, binder side: the entry projection and fresh-id minting
+# CALL {} entry projection as a record boundary (#2845, eb470521b)
 
-Model of the merged `bind_call_body` (graph/src/planner/binder.rs:824-971 at
-merge commit 39560cbdf; identical on origin/main a9377c636, where #2845 landed as eb470521b) and `build_import_projections` (binder.rs:979-1003).
-Scope tables, `fresh_var` and `mint_fresh_iff` are copied from
-proofs/binder (Table.lean) unchanged.
+Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
+(graph/src/planner/binder.rs:824-971) and `build_import_projections`
+(binder.rs:979-1003); scope tables, `freshVar`, `mint_fresh_iff`,
+`projectName` are this project's (Table.lean, Resolve.lean). Historical
+counterexamples on main before #2845 (da6f808c3) are named `pre2845_…`
+(fixed by #2845, eb470521b; closes #2601, #2602).
+
+* Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
+  `branchNew_entry`), unchanged when something is imported (`bodyNew_eq_old`).
+* Fresh ids: entry ids are `0..k-1`, the next mint is `k` (`importProj_spec`,
+  `entry_ids_below`); body scope disjoint from outer scopes (`body_scope_disjoint`).
+* No slot aliasing for plain bodies at runtime (`body_own_unbound`,
+  `body_import_value`, `new_scan_scans`; `pre2845_old_aliases`).
+* UNION bodies alias binder keys `(scope_id, id)` (`union_branch_label_alias`,
+  open, #3027 fixes it: `relabel_3027`, `union_branch_label_3027`).
+* W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
+  `filter_pushed_through_boundary`): the pushed read is unbound
+  (`pushed_read_unbound`).
 -/
-namespace Pr2845
-
-abbrev Name := String
-
-inductive Ty
-  | any | node | rel | path
-  deriving DecidableEq, Repr
-
-/-- `parser::ast::Variable`; the record slot is `id` alone. -/
-structure Var where
-  name  : Name
-  id    : Nat
-  scope : Nat
-  ty    : Ty
-  deriving DecidableEq, Repr
-
-abbrev Env := List (Name × Var)
-
-namespace Env
-def has (e : Env) (k : Name) : Bool := e.any (·.1 == k)
-def insert (e : Env) (k : Name) (v : Var) : Env :=
-  if e.has k then e.map (fun p => if p.1 == k then (k, v) else p) else e ++ [(k, v)]
-def ids (e : Env) : List Nat := e.map (·.2.id)
-def Covers (e : Env) : Prop := ∀ i ∈ e.ids, i < e.length
-end Env
-
-/-- `Binder::fresh_var` (binder.rs:2243): the id is the table's size. -/
-def freshVar (e : Env) (name : Name) (ty : Ty) (scope : Nat) : Var :=
-  { name, id := e.length, scope, ty }
-
-/-- copied from proofs/binder `mint_fresh_iff`. -/
-theorem mint_fresh_iff (len : Nat) (H : List Nat) :
-    (∀ j, len + j ∉ H) ↔ (∀ i ∈ H, i < len) := by
-  constructor
-  · intro h i hi
-    apply Classical.byContradiction
-    intro hlt
-    have := h (i - len)
-    rw [show len + (i - len) = i by omega] at this
-    exact this hi
-  · intro h j hj
-    have := h _ hj
-    omega
-
-theorem Env.insert_new_eq {e : Env} {k : Name} {v : Var} (h : e.has k = false) :
-    e.insert k v = e ++ [(k, v)] := by
-  simp [Env.insert, h]
-
-/-- `project_name` (binder.rs:2165) on the body's own (top) scope table. -/
-def projectName (e : Env) (scope : Nat) (n : Name) (t : Ty) : Env × Var :=
-  let v := freshVar e n t scope
-  (e.insert n v, v)
+namespace FalkorBinder.Pr2845
 
 /-- `build_import_projections` (binder.rs:979): one `project_name` per
 imported variable, in the HashMap's iteration order (`imported`, any order),
@@ -250,4 +214,112 @@ theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < ou
 
 theorem union_branch_label_3027 : relabel outerLabels (branchQ true) ["B"] = ["B"] := by decide
 
-end Pr2845
+/-! ## Runtime side: the entry projection is a record boundary
+
+
+A runtime row is a dense array indexed by `Variable.id` alone
+(runtime/row.rs; `scope_id` never reaches the row). Modelled as a function
+`Nat → Option V` (`none` = unbound slot).
+
+* `Argument` (runtime/ops/argument.rs) hands the sub-plan the outer row as is.
+* `ProjectOp::eval` (runtime/ops/project.rs:54-147) builds a fresh row from
+  its projections only (`Row::with_capacity`, `result.insert(target, …)`,
+  then `BatchBuilder::push_row`) and drops its input.
+-/
+abbrev RowF (V : Type) := Nat → Option V
+
+/-- The fresh row an entry projection `(inner, outer)` pairs builds. -/
+def projRow {V : Type} (ps : List (Var × Var)) (r : RowF V) : RowF V := fun i =>
+  match ps.find? (fun p => p.1.id == i) with
+  | some p => r p.2.id
+  | none => none
+
+/-- What the first operator of the body sees: origin/main had no projection
+when nothing was imported (the `Argument` row itself), the merged code always
+has one. -/
+def bodyInputOld {V : Type} (ps : List (Var × Var)) (imported : Bool) (r : RowF V) : RowF V :=
+  if imported then projRow ps r else r
+
+def bodyInputNew {V : Type} (ps : List (Var × Var)) (r : RowF V) : RowF V := projRow ps r
+
+theorem projRow_unbound {V : Type} (ps : List (Var × Var)) (r : RowF V) (i : Nat)
+    (h : i ∉ ps.map (·.1.id)) : projRow ps r i = none := by
+  unfold projRow
+  have : ps.find? (fun p => p.1.id == i) = none := by
+    rw [List.find?_eq_none]
+    intro p hp heq
+    simp only [beq_iff_eq] at heq
+    exact h (heq ▸ List.mem_map.mpr ⟨p, hp, rfl⟩)
+  rw [this]
+
+/-- An imported slot carries exactly the outer value (targets are distinct:
+`importProj_spec` mints them `0..k-1`). -/
+theorem projRow_import {V : Type} (ps : List (Var × Var)) (r : RowF V) (p : Var × Var)
+    (hp : p ∈ ps) (hd : (ps.map (·.1.id)).Nodup) : projRow ps r p.1.id = r p.2.id := by
+  unfold projRow
+  induction ps with
+  | nil => simp at hp
+  | cons q qs ih =>
+    simp only [List.find?_cons]
+    by_cases hq : q.1.id = p.1.id
+    · have : q = p := by
+        rcases List.mem_cons.mp hp with rfl | hmem
+        · rfl
+        · exfalso
+          have hn := (List.nodup_cons.mp hd).1
+          apply hn
+          show q.1.id ∈ _
+          rw [hq]
+          exact List.mem_map.mpr ⟨p, hmem, rfl⟩
+      subst this; simp
+    · have hmem : p ∈ qs := by
+        rcases List.mem_cons.mp hp with rfl | hmem
+        · exact absurd rfl hq
+        · exact hmem
+      have hb : (q.1.id == p.1.id) = false := by simpa using hq
+      rw [hb]
+      exact ih hmem (List.nodup_cons.mp hd).2
+
+/-- **Claim 2 (no slot aliasing), plain bodies.** For any outer row, every
+variable the body mints itself (id `≥ k`, `entry_ids_below`) is unbound
+when the body starts — so a body scan endpoint never looks already bound
+(#2601) and a body predicate never reads an outer value (#2602). -/
+theorem body_own_unbound {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : Distinct imp)
+    (r : RowF V) (j : Nat) (hj : imp.length ≤ j) :
+    bodyInputNew (importProj [] s imp).2 r j = none := by
+  apply projRow_unbound
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
+  rw [h3]; simp; omega
+
+/-- … and every imported variable reads its outer value. -/
+theorem body_import_value {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : Distinct imp)
+    (r : RowF V) (p : Var × Var) (hp : p ∈ (importProj [] s imp).2) :
+    bodyInputNew (importProj [] s imp).2 r p.1.id = r p.2.id := by
+  apply projRow_import _ _ _ hp
+  obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
+  rw [h3]; simp only [List.length_nil, Nat.zero_add, List.map_id']
+  exact List.nodup_range
+
+/-- origin/main, import-less body: the body's first variable (id 0) reads
+the outer row's slot 0 — the `x` of `MATCH (x:A:B) CALL { MATCH (n:A:B
+{id:1}) … }`. -/
+theorem pre2845_old_aliases : ∃ r : RowF Nat, bodyInputOld [] false r 0 = some 7 ∧
+    bodyInputNew [] r 0 = none :=
+  ⟨fun _ => some 7, rfl, rfl⟩
+
+/-- Runtime choice of a scan endpoint (#2601): an already-bound slot turns a
+full scan into an expand from that slot. -/
+def scanMode {V : Type} (r : RowF V) (endpoint : Nat) : Bool := (r endpoint).isSome
+
+theorem new_scan_scans {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : Distinct imp)
+    (r : RowF V) (j : Nat) (hj : imp.length ≤ j) :
+    scanMode (bodyInputNew (importProj [] s imp).2 r) j = false := by
+  simp [scanMode, body_own_unbound s imp hd r j hj]
+
+/-- At that `Argument` the row is the Optional's left input, i.e. the entry
+projection's output: slot 0 is unbound for every outer row, so the pushed
+`n.id` read fails ("Variable n not found"; C returns `[[1,3],[2,3],[3,3]]`). -/
+theorem pushed_read_unbound {V : Type} (r : RowF V) :
+    bodyInputNew (importProj [] 1 []).2 r 0 = none := rfl
+
+end FalkorBinder.Pr2845

@@ -69,6 +69,8 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
   `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
   `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
+  W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
+  `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.
 
 ## CONFIRMED bugs (Rust repro: `cargo test -p graph --test lean_optimizer_rewrites`;
 ## Cypher compared on live servers, Rust release module vs C `bin/macos-arm64v8-release/falkordb.so`)
@@ -197,3 +199,4 @@ import FalkorOptimizer.References2
 import FalkorOptimizer.Passes
 import FalkorOptimizer.Helpers
 import FalkorOptimizer.Sequence
+import FalkorOptimizer.CallBoundary
