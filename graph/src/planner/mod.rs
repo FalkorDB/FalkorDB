@@ -30,6 +30,7 @@
 //! - **Sort/Skip/Limit**: Order and paginate results
 
 pub mod binder;
+mod hop_order;
 pub mod optimizer;
 pub mod tree;
 
@@ -39,6 +40,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
@@ -1907,6 +1909,21 @@ impl Planner {
                 };
                 (base, has_bound, unfiltered)
             });
+            // Past the first hop, a fixed-length self-loop on a node nothing
+            // has bound yet could only scan that node again and cross it with
+            // the hops before it (the var-length hop that reaches it was
+            // sorted later). Move it to just after the first later hop that
+            // binds the node, so it becomes an ExpandInto on the bound node.
+            let sorted_rels = self_loops_after_binders(
+                sorted_rels,
+                |r| HopShape {
+                    from: (r.from.alias.id, r.from.alias.scope_id),
+                    to: (r.to.alias.id, r.to.alias.scope_id),
+                    self_loop: r.from.alias.id == r.to.alias.id,
+                    fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
+                },
+                |node| self.visited.contains(node),
+            );
             let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
@@ -2245,12 +2262,18 @@ impl Planner {
                             res
                         )
                     } else {
+                        // The node is not bound yet: scan it once per row of
+                        // the hops planned so far, so the scan sits on top of
+                        // `res` and no earlier hop is dropped.
                         let scan = if rel.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(rel.from.clone()))
+                            tree!(IR::AllNodeScan(rel.from.clone()), res)
                         } else {
-                            tree!(IR::NodeByLabelScan {
-                                node: rel.from.clone(),
-                            })
+                            tree!(
+                                IR::NodeByLabelScan {
+                                    node: rel.from.clone(),
+                                },
+                                res
+                            )
                         };
                         tree!(
                             IR::ExpandInto {
@@ -2258,8 +2281,7 @@ impl Planner {
                                 emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
-                            scan,
-                            res
+                            scan
                         )
                     }
                 } else if self

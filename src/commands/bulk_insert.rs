@@ -10,7 +10,7 @@ use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::index_docs::IndexDocs,
-    runtime::value::Value,
+    runtime::value::{MAX_VALUE_NESTING, Value, value_nesting_error},
     threadpool::spawn,
 };
 use parking_lot::RwLock;
@@ -98,9 +98,9 @@ fn read_property(
     // Parse a possibly-nested value without recursion: `BI_ARRAY` elements are
     // expanded onto an explicit work stack instead of recursive calls, so
     // arbitrarily deep attacker-supplied `GRAPH.BULKINSERT` data cannot overflow
-    // the call stack (an uncatchable abort) and arrays of any depth are
-    // supported. Each frame holds a partially-built array and how many elements
-    // it still expects.
+    // the call stack (an uncatchable abort). Depth is still capped at
+    // `MAX_VALUE_NESTING`, as everywhere a value enters. Each frame holds a
+    // partially-built array and how many elements it still expects.
     let mut stack: Vec<(thin_vec::ThinVec<Value>, usize)> = Vec::new();
 
     loop {
@@ -126,6 +126,12 @@ fn read_property(
                 BI_LONG => Value::Int(read_i64_ne(data, idx)?),
                 BI_STRING => Value::String(Arc::new(read_cstring(data, idx)?.to_string())),
                 BI_ARRAY => {
+                    // Iterative here, but the value it builds is walked
+                    // recursively everywhere else (drop, save, replies), so
+                    // depth is bounded like every other way a value enters.
+                    if stack.len() >= MAX_VALUE_NESTING {
+                        return Err(value_nesting_error());
+                    }
                     let len = read_i64_ne(data, idx)?;
                     if len < 0 {
                         return Err(format!("negative array length in bulk data: {len}"));
