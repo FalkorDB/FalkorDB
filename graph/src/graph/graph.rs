@@ -104,6 +104,7 @@ use crate::{
     },
     index::{
         Field,
+        cch::CchIndex,
         indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
     parser::cypher::Parser,
@@ -437,6 +438,14 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
     constraints: Vec<Constraint>,
+    /// CCH shortest-path indexes. One entry per definition, and the whole
+    /// [`CchIndexDef`](crate::index::cch::CchIndexDef) is the key.
+    ///
+    /// Empty until the DDL lands (#3213), so a graph with no CCH index pays
+    /// one `Vec` header. `new_version` clones the `Vec`, which clones one `Arc<Cch>` per
+    /// index — no hierarchy data is copied. `pub(crate)` because the `impl Graph` block
+    /// that owns it lives in [`crate::index::cch::index`], not in this file.
+    pub(crate) cch_indexes: Vec<CchIndex>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
@@ -847,6 +856,7 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             constraints: Vec::new(),
+            cch_indexes: Vec::new(),
             version,
             schema_version: 0,
             #[cfg(feature = "index-falkordb")]
@@ -960,6 +970,7 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             constraints: Vec::new(),
+            cch_indexes: Vec::new(),
             version: 0,
             schema_version,
             // Empty on restore: the RDB does not carry the index, so the
@@ -1046,6 +1057,9 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
+            // One `Arc<Cch>` clone per index; the hierarchy itself is shared, so a reader
+            // that already holds the old version keeps it and rollback costs nothing.
+            cch_indexes: self.cch_indexes.clone(),
             version: self.version + 1,
             schema_version: self.schema_version,
             #[cfg(feature = "index-falkordb")]
