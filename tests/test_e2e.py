@@ -1705,6 +1705,28 @@ def test_list_comprehension():
     assert res.result_set == [[[]]]
 
 
+def test_list_comprehension_non_list_source():
+    # A null source gives null, like reduce() and the quantifiers; it is not
+    # UNWIND, where null means "no rows".
+    for q in [
+        "RETURN [x IN null | x] AS result",
+        "RETURN [x IN null WHERE x > 1] AS result",
+        "WITH null AS l RETURN [x IN l | x + 1] AS result",
+    ]:
+        assert query(q).result_set == [[None]], q
+
+    # A scalar source is a type error, not a one-element list.
+    for q in [
+        "RETURN [x IN 5 | x] AS result",
+        "WITH 'a' AS l RETURN [x IN l | x] AS result",
+    ]:
+        query_exception(q, "Type mismatch: expected List or Null but was")
+
+    # Empty lists and ranges still give [].
+    assert query("RETURN [x IN [] | x] AS result").result_set == [[[]]]
+    assert query("RETURN [x IN range(1, 0) | x] AS result").result_set == [[[]]]
+
+
 @pytest.mark.extra
 def test_syntax_outside_the_grammar_is_rejected():
     # Each of these used to parse and run.
