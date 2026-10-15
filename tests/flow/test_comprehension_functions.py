@@ -736,3 +736,12 @@ class testComprehensionFunctions(FlowTestsBase):
 
         finally:
             g.delete()
+
+    def test25_pattern_comprehension_labels_do_not_constrain_the_match(self):
+        # A label on a shared node inside a pattern comprehension filters the
+        # comprehension only, not the MATCH that bound the node.
+        g = self.db.select_graph("comprehension_label_leak")
+        g.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+        res = g.query("MATCH (a) RETURN a.v, [(a:A)-->(b) | b.v] AS l ORDER BY a.v")
+        self.env.assertEqual(res.result_set, [[0, []], [1, [0]], [5, []]])
+        g.delete()
