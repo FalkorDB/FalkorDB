@@ -83,6 +83,12 @@ fn read_u64(
     u64::from_le_bytes(b[off..off + FIELD].try_into().unwrap())
 }
 
+/// Whether [`read_width`] can load a field of `width` bytes. The const asserts on [`CowBTree`] gate
+/// `DOC_BYTES` with it, so a tree can only be built with a doc width it can read back.
+const fn is_read_width(width: usize) -> bool {
+    matches!(width, 1 | 2 | 4 | 8)
+}
+
 /// Read a little-endian unsigned integer of `width` ∈ {1, 2, 4, 8} bytes at `off`, zero-extended to a
 /// `u64`. Widths are powers of two so every read is a single fixed-size load, never a variable-length copy.
 fn read_width(
@@ -118,6 +124,9 @@ fn read_width(
 /// `1 < BRANCH_MAX / 2`. At `3` a single-child branch is never repaired and its lone child drains into an
 /// empty non-root leaf.
 ///
+/// The `DOC_BYTES` const generic is the byte width of the doc field in an AoS leaf entry (default 8). It
+/// must be 1, 2, 4 or 8 — the widths [`read_width`] loads (see [`is_read_width`]).
+///
 /// Both default to 256, which keeps behaviour identical to the original fixed bounds; the assert in
 /// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` trips any out-of-range monomorphization that
 /// builds a tree:
@@ -145,8 +154,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> Def
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
             assert!(
-                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
-                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
+                is_read_width(DOC_BYTES),
+                "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
             );
         }
         Self {
@@ -167,8 +176,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
             assert!(
-                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
-                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
+                is_read_width(DOC_BYTES),
+                "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
             );
         }
         Self::default()
@@ -185,8 +194,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
             assert!(
-                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
-                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
+                is_read_width(DOC_BYTES),
+                "DOC_BYTES must be 1, 2, 4 or 8: it is the AoS doc field width, read back with read_width, which loads only those widths"
             );
         }
         // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the
