@@ -262,3 +262,33 @@ class testFilters():
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
         self.env.assertEqual(columnar.result_set, [['else']] * 5)
+
+    def test10_subscript_as_predicate(self):
+        # a subscript returns whatever the element is, so it is accepted as a
+        # predicate and its type is checked at runtime, as in C
+        # https://github.com/FalkorDB/FalkorDB/issues/3261
+        g = self.db.select_graph("subscript_predicate")
+        g.query("CREATE (:N {flags: [true, false]}), (:N {flags: [false]}), (:N)")
+
+        for query, expected in [
+            ("MATCH (n:N) WHERE n.flags[0] RETURN count(n)", [[1]]),
+            ("MATCH (n:N) WHERE NOT n.flags[0] RETURN count(n)", [[1]]),
+            ("WITH [true] AS l WHERE true AND l[0] RETURN 1", [[1]]),
+            ("WITH {a: true} AS m WHERE m['a'] RETURN 1", [[1]]),
+            ("WITH [null] AS l WHERE l[0] RETURN count(*)", [[0]]),
+        ]:
+            self.env.assertEqual(g.query(query).result_set, expected, depth=1)
+
+        for query, error in [
+            # a non-boolean element is a runtime type error
+            ("WITH [1] AS l WHERE l[0] RETURN 1",
+             "Type mismatch: expected Boolean but was Integer"),
+            # a slice is always a list, never a predicate
+            ("WITH [true] AS l WHERE l[0..1] RETURN 1",
+             "Expected boolean predicate"),
+        ]:
+            try:
+                g.query(query)
+                self.env.assertTrue(False, depth=1)
+            except redis.ResponseError as e:
+                self.env.assertContains(error, str(e), depth=1)
