@@ -423,6 +423,16 @@ class testAggregations():
         self.env.assertEqual(
             self.graph.query("MATCH (q:Q) RETURN count(*)").result_set, [[5]])
 
+    def test_row_dependent_percentile_uses_first_row(self):
+        # A percentile argument that changes per row used the last row's value;
+        # C uses the first row's (#2980).
+        self.get_res_and_assertEquals(
+            "UNWIND range(1, 10) AS x RETURN percentileDisc(x, x / 10.0), percentileCont(x, 1.0 - x / 10.0)",
+            [[1, 9.1]])
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, percentileDisc(x, x / 10.0) ORDER BY k",
+            [[0, 2], [1, 1]])
+
     def test_nan_grouping_and_min_max(self):
         # Issue #2913: grouping compared keys with `=`, under which NaN is not
         # equal to itself, so every NaN opened its own group; and min/max let
