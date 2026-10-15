@@ -1169,3 +1169,33 @@ class testQueryValidationFlow(FlowTestsBase):
             self.env.assertEqual(actual, [['a', 1], ['b', 0]])
         finally:
             g.delete()
+
+    def test52_query_cannot_conclude_with_with(self):
+        # a query, or a CALL subquery body, may not end with WITH
+        # https://github.com/FalkorDB/FalkorDB/issues/3271
+        g = self.fresh_graph("conclude_with_with")
+        try:
+            queries = [
+                "MATCH (n) WITH n",
+                "UNWIND [1] AS x WITH x",
+                "WITH 1 AS x",
+                "CREATE (a) WITH a",
+                "MATCH (n) CALL { WITH n MATCH (m) WITH m } RETURN 1",
+                "MATCH (n) CALL { WITH n } RETURN 1",
+            ]
+            for query in queries:
+                try:
+                    g.query(query)
+                    self.env.assertTrue(False, message=query)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Query cannot conclude with WITH", str(e))
+
+            # the rejected CREATE did not run
+            self.env.assertEqual(g.query("MATCH (n) RETURN count(n)").result_set, [[0]])
+
+            # WITH followed by a RETURN or an update clause is fine
+            self.env.assertEqual(g.query("WITH 1 AS x RETURN x").result_set, [[1]])
+            g.query("WITH 1 AS x CREATE (:N {x: x})")
+            self.env.assertEqual(g.query("MATCH (n:N) RETURN n.x").result_set, [[1]])
+        finally:
+            g.delete()
