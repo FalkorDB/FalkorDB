@@ -818,11 +818,11 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Pow => res.push(
                     node.children()
-                        .flat_map(|child| self.eval_node(&child, env, agg_group_key))
-                        .reduce(apply_pow)
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
+                        .reduce(|acc, value| apply_pow(acc?, value?))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
-                        })?,
+                        })??,
                 ),
                 ExprIR::Distinct => {
                     let rt = self.rt()?;
