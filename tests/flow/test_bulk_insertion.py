@@ -991,7 +991,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         res = self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", 1, 1, 1, 1,
                                       node_token, edge_token)
         self.env.assertContains("1 nodes created", res)
-        self.env.assertContains("1 relations created", res)
+        self.env.assertContains("1 edges created", res)
 
         graph = self.db.select_graph(graphname)
         query_result = graph.query("MATCH (n:N)-[:R]->(n) RETURN n.v")

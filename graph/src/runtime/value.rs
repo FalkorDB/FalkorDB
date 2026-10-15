@@ -162,37 +162,6 @@ impl Point {
         // Earth's radius in meters
         EARTH_RADIUS * c
     }
-
-    /// Validates that the point coordinates are within valid ranges
-    pub fn validate(&self) -> Result<(), String> {
-        // Check for NaN or infinite values first
-        if !self.latitude.is_finite() {
-            return Err(format!(
-                "latitude must be a finite number, got {}",
-                self.latitude
-            ));
-        }
-        if !self.longitude.is_finite() {
-            return Err(format!(
-                "longitude must be a finite number, got {}",
-                self.longitude
-            ));
-        }
-        // Then check range bounds
-        if self.latitude < -90.0 || self.latitude > 90.0 {
-            return Err(format!(
-                "latitude should be within the range -90.0 to 90.0, got {}",
-                self.latitude
-            ));
-        }
-        if self.longitude < -180.0 || self.longitude > 180.0 {
-            return Err(format!(
-                "longitude should be within the range -180.0 to 180.0, got {}",
-                self.longitude
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Runtime value type representing all possible Cypher values.
