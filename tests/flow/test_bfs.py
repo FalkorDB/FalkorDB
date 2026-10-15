@@ -233,3 +233,20 @@ class testBFS(FlowTestsBase):
         expected_result = [[['b'], ['e']]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    # smoke test for the project_graph_to_matrix integration used by BFS:
+    # parallel edges should still project as a single reachable destination.
+    def test08_bfs_parallel_edges_smoke(self):
+        self.graph.query("""
+            MATCH (a {v: 'a'})
+            CREATE (f {v: 'f'})
+            CREATE (a)-[:E1]->(f)
+            CREATE (a)-[:E1]->(f)
+        """)
+
+        result = self.graph.query("""
+            MATCH (a {v: 'a'})
+            CALL algo.BFS(a, 1, 'E1') YIELD nodes
+            RETURN [n IN nodes | n.v]
+        """).result_set[0][0]
+
+        self.env.assertEquals(result.count('f'), 1)
