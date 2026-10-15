@@ -141,6 +141,14 @@ fn lookup_sorted(
         .map(|pos| &attrs[pos].1)
 }
 
+/// How many staged attributes set a value, i.e. would count as `Properties set`.
+fn count_set(attrs: &[(u16, Value)]) -> usize {
+    attrs
+        .iter()
+        .filter(|(_, v)| !matches!(v, Value::Null))
+        .count()
+}
+
 /// A relationship whose id was handed out and then taken back, because the node
 /// it hung off was cancelled in the same commit.
 ///
@@ -229,6 +237,12 @@ pub struct Pending {
     /// says nothing about them leaves the replica's relationship id space with a
     /// hole, and `IdSpace::verify` refuses the whole payload.
     pub(crate) cancelled_relationships: Vec<CancelledRelationship>,
+    /// Properties the cancelled nodes and relationships were created with.
+    ///
+    /// Cancelling unwinds their staged attributes, so commit never imports
+    /// them and would not count them; C reports them as set, together with
+    /// the create and the delete that `cancelled_*` count.
+    pub(crate) cancelled_properties: usize,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
     pub(crate) new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
@@ -389,6 +403,7 @@ impl Pending {
             deleted_node_labels: Vec::new(),
             cancelled_nodes: RoaringTreemap::new(),
             cancelled_relationships: Vec::new(),
+            cancelled_properties: 0,
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
@@ -701,6 +716,7 @@ impl Pending {
             .remove(&id.into())
             .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
             .unwrap_or_default();
+        self.cancelled_properties += count_set(&attrs);
 
         let rels = self.remove_pending_relationships_for_node(id, g)?;
 
@@ -760,6 +776,7 @@ impl Pending {
                 }
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
+            self.cancelled_properties += attrs.as_deref().map_or(0, count_set);
             self.deleted_relationships.remove(rel_id.into());
             // Handed over to the id space, which records the cancellation as it
             // returns the id to the free set. Leaving it here too would have the
@@ -1116,6 +1133,18 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
+        // Entities created and deleted within this segment never reach the
+        // graph, but the query did create and delete them: count both, as C
+        // does, along with the properties they were created with.
+        if !self.cancelled_nodes.is_empty() || !self.cancelled_relationships.is_empty() {
+            let cancelled_nodes = self.cancelled_nodes.len();
+            let mut s = stats.borrow_mut();
+            s.nodes_created += cancelled_nodes;
+            s.nodes_deleted += cancelled_nodes;
+            s.relationships_created += self.cancelled_relationships.len();
+            s.relationships_deleted += self.cancelled_relationships.len();
+            s.properties_set += self.cancelled_properties;
+        }
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut()
@@ -1672,6 +1701,7 @@ impl Pending {
         self.cancelled_nodes.clear();
         self.taken_relationship_ids.clear();
         self.cancelled_relationships.clear();
+        self.cancelled_properties = 0;
         self.index_docs.node_adds.clear();
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
