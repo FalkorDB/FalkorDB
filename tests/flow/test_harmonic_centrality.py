@@ -320,3 +320,18 @@ class testCentrality(FlowTestsBase):
         # the final node has no outgoing edges -> score is exactly 0
         self.env.assertEqual(scores[N - 1], 0.0)
 
+
+    def test09_centrality_with_deleted_node(self):
+        # chain 1 -> 2 -> 3 -> 4, node 0 deleted: the unfiltered run must
+        # still use every id up to the highest, so node 4 is scored and
+        # counted as reachable
+        self.graph.query("UNWIND range(0, 4) AS i CREATE (:A {id: i})")
+        self.graph.query("""MATCH (a:A), (b:A) WHERE b.id = a.id + 1 AND a.id > 0
+                            CREATE (a)-[:R]->(b)""")
+        self.graph.query("MATCH (n:A {id: 0}) DELETE n")
+
+        res = self.graph.query("""CALL algo.HarmonicCentrality()
+                                  YIELD node, reachable
+                                  RETURN node.id, reachable
+                                  ORDER BY node.id""").result_set
+        self.env.assertEqual(res, [[1, 4], [2, 3], [3, 2], [4, 1]])
