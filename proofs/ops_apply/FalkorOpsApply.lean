@@ -12,7 +12,7 @@ Lean 4 models of `graph/src/runtime/ops/{merge,apply,optional,semi_apply,
 or_apply_multiplexer,foreach,union}.rs` (plus the argument-batch idiom of
 `runtime/batch.rs`), proved against per-row openCypher reference semantics and
 checked against the C engine on live servers.  Build: `lake build` (core Lean
-4.34, no Mathlib); no `sorry`/`admit`/`axiom`.  Machine-readable coverage:
+4.35, no Mathlib); no `sorry`/`admit`/`axiom`.  Machine-readable coverage:
 `COVERAGE.tsv`.  Repros: `graph/tests/lean_ops_apply.rs`
 (`cargo test -p graph --test lean_ops_apply -- --nocapture`; every `bug_*` test
 asserts C's answer and FAILS today).

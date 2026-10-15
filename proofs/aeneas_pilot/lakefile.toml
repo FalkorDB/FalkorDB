@@ -3,7 +3,7 @@ defaultTargets = ["AeneasPilot"]
 
 # `Aeneas` here is a MINIMAL SHIM (Aeneas.lean) of the few Aeneas.Std
 # primitives the extracted narrow_int uses, so the extracted file type-checks on
-# our Lean 4.34.0 without Mathlib. The full extraction is regenerated into
+# our Lean 4.35.0 without Mathlib. The full extraction is regenerated into
 # full/ (git-ignored) by ./extract.sh.
 [[lean_lib]]
 name = "Aeneas"

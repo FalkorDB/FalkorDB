@@ -7,6 +7,7 @@ There is one Lake project per area under `proofs/<area>/` (36 projects, includin
 functions_str_list; the PR review projects `pr2845_review` and `pr2917_review` were
 retired on 2026-10-15 after their PRs merged, their theorems folded into the owning
 projects).
+All projects pin Lean `leanprover/lean4:v4.35.0` (upgraded from v4.34.0 on 2026-10-15).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
 Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.

@@ -1,4 +1,4 @@
-{"version": "1.2.0",
+{"version": "1.3.0",
  "packagesDir": ".lake/packages",
  "packages":
  [{"type": "path",
@@ -7,6 +7,7 @@
    "manifestFile": "lake-manifest.json",
    "inherited": false,
    "dir": "../graph_queries",
+   "copy": false,
    "configFile": "lakefile.toml"}],
  "name": "«falkor-pending-commit»",
  "lakeDir": ".lake",

@@ -1,7 +1,7 @@
 # IdList (effects v3 replication) — Lean verification report
 
 Target: `graph/src/effects/v3/id_list.rs` (plus `Reader` in `graph/src/effects/reader.rs`,
-`narrow_int::width_for`). Lean 4.34.0, core only.
+`narrow_int::width_for`). Lean 4.35.0, core only.
 
 ```
 cd proofs/id_list && lake build        # Build completed successfully

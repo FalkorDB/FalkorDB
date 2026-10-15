@@ -4,7 +4,7 @@ public import Lean
 # Minimal shim of the Aeneas standard library (NOT the real one)
 
 The real library (`AeneasVerif/aeneas` `backends/lean`, nightly-2026.09.24-557f7a1)
-needs Lean v4.31.0 + Mathlib v4.31.0. This shim reproduces, on core Lean 4.34.0,
+needs Lean v4.31.0 + Mathlib v4.31.0. This shim reproduces, on core Lean 4.35.0,
 only what `Extracted/NarrowInt.lean` touches, mirroring the real definitions:
 
 | shim                  | real Aeneas                                                          |

@@ -28,7 +28,7 @@ extracted def and these proofs break — which is the point.
   charon release 0.1.271 emits LLBC this Aeneas rejects) + `rustup toolchain
   install nightly-2026-09-17 -c rustc-dev,llvm-tools,rust-src`. ~5 min total.
 * **Lean version**: Aeneas' Lean library pins Lean **v4.31.0 + Mathlib v4.31.0**
-  (we use 4.34.0, no Mathlib). Fetching Mathlib hit "No space left on device"
+  (we use 4.35.0, no Mathlib). Fetching Mathlib hit "No space left on device"
   (<9 GB free), so the full library was NOT built; hence the `Aeneas.lean` shim.
 * **narrow_int**: extracts cleanly (65 lines); type-checks unmodified against
   the shim; 5 theorems proved here, incl. refinement to the id_list hand model.

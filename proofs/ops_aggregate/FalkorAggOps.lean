@@ -14,7 +14,7 @@ import FalkorAggOps.Discharge
 /-!
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
-Build: `cd proofs/ops_aggregate && lake build` (Lean 4.34.0, core only, no Mathlib).
+Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
 No `sorry` / `admit` / `axiom`. 70 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 (graph/tests/lean_ops_aggregate.rs; the 5 `bug_*` tests fail today, the 3 `agrees_*` pass).

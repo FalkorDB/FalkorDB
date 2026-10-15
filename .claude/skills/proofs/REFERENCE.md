@@ -5,7 +5,7 @@
 ```
 proofs/<area>/
   lakefile.toml        # name, defaultTargets, [[lean_lib]] (copy an existing one)
-  lean-toolchain       # leanprover/lean4:v4.34.0
+  lean-toolchain       # leanprover/lean4:v4.35.0
   .gitignore           # .lake/
   <Root>.lean          # imports the modules; header doc-comment = the report
   <Root>/*.lean        # modules, < ~400 lines each, build after each

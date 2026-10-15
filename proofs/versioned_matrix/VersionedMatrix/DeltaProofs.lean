@@ -433,7 +433,7 @@ theorem nvals_eq {v : VM} (h : Inv v) :
     len_filter_mem h.nd_m h.nd_dm h.dm_m] at hsplit
   have : (v.m.filter (fun p => !(decide (p ∈ v.dm)))).length =
       (v.m.filter (fun a => decide ¬(decide (a ∈ v.dm)) = true)).length := by
-    congr 1; apply List.filter_congr; intro x _; simp
+    congr 1
   simp only [effList, List.length_append]
   omega
 

@@ -2,7 +2,7 @@
 # runtime_core: Lean 4 model of `graph/src/runtime/runtime.rs`, `runtime/ops/mod.rs` and
 # `runtime/ops/batched_result_emitter.rs`
 
-Build: `lake build` (core Lean 4.34, no Mathlib). No `sorry`/`admit`/`axiom`: the
+Build: `lake build` (core Lean 4.35, no Mathlib). No `sorry`/`admit`/`axiom`: the
 contracts of the stores underneath (attribute/label name tables, attribute store batch
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
 Rust repros: `graph/tests/lean_runtime_core.rs`

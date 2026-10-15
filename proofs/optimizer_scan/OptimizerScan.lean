@@ -5,7 +5,7 @@ Targets: `graph/src/planner/optimizer/select_scan_node.rs`, `utilize_index.rs`,
 `utilize_node_by_id.rs`, `reorder_labels.rs`, plus the runtime pieces their rewrites hand
 work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query_node`).
 
-Build: `lake build` (Lean 4.34, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
+Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
 64 theorems, 34 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`

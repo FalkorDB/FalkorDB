@@ -9,7 +9,7 @@ A Lean 4 model of FalkorDB-rs's Cypher string and list functions
 `math.rs`, and the list/regex/quantifier arms of `graph/src/runtime/eval.rs`),
 checked against the openCypher spec and the C implementation (`master`
 branch, `src/arithmetic/{string,list}_funcs/*.c`, `src/util/strutil.c`).
-Build: `cd proofs/functions_str_list && lake build` (Lean 4.34, core only).
+Build: `cd proofs/functions_str_list && lake build` (Lean 4.35, core only).
 No `sorry`/`admit`/`axiom`; headline theorems use only `propext`,
 `Quot.sound`, `Classical.choice`. Repros: `graph/tests/lean_functions_str_list.rs`
 (`cargo test -p graph --test lean_functions_str_list -- --nocapture`).
