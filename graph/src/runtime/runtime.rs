@@ -1989,9 +1989,20 @@ pub fn map_to_index_options(
                 }
             };
             // Required and case-insensitive, as in C (`strcasecmp`); stored
-            // lowercase, the form the rest of the engine matches on.
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
             let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
                 None => {
                     return Err(
                         "Invalid vector index configuration: similarityFunction is required".into(),
