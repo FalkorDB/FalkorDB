@@ -824,6 +824,23 @@ impl Tensor {
             self.dp.resize(nrows, ncols);
             self.dm.resize(nrows, ncols);
             self.mt.resize(ncols, nrows);
+            // `me` is keyed by pair, not sized by node count, so the resizes
+            // above never reach it: drop the ids of every pair they cut off, or
+            // those ids outlive the pair's sentinel as edges no forward entry
+            // leads to.
+            let orphans: Vec<(MeBlock, u64, u64)> = self
+                .me
+                .iter()
+                .flat_map(|(block, me)| {
+                    me.iter(0, GrB_INDEX_MAX).filter_map(move |(key, id)| {
+                        let (src, dst) = compound_key_inverse(*block, key);
+                        (src >= nrows || dst >= ncols).then_some((*block, key, id))
+                    })
+                })
+                .collect();
+            for (block, key, id) in orphans {
+                self.me_block_mut(block).remove(key, id);
+            }
             return;
         }
         // Growing: the base is always COW-shared with the committed snapshot,
@@ -1999,6 +2016,39 @@ mod tests {
         t.wait_fwd();
         // And a read must still see the data.
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
+    }
+
+    /// A shrink drops the forward entries of every pair it cuts off, and has to
+    /// drop their `me` ids with them. `me` is keyed by pair rather than sized by
+    /// node count, so resizing the layers does not reach it: before the fix the
+    /// cut-off multi pair's ids survived as edges `iter_edges` still listed and
+    /// `edge_count` still counted, with no forward entry leading to them.
+    #[test]
+    fn shrinking_drops_the_multi_edge_ids_of_pairs_it_cuts_off() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        // (0, 1) and (5, 6) are multi pairs, (1, 2) a single one.
+        t.set_all_from_slices(
+            &[0, 0, 1, 5, 5, 5],
+            &[1, 1, 2, 6, 6, 6],
+            &[10, 11, 12, 20, 21, 22],
+        );
+        t.flush();
+        t.wait();
+        assert_eq!(t.edge_count(), 6);
+
+        t.resize(4, 4);
+        t.wait();
+
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![(0, 1, 10), (0, 1, 11), (1, 2, 12)],
+            "a pair outside the shrunk tensor kept its multi-edge ids"
+        );
+        assert_eq!(t.edge_count(), 3, "edge count after the shrink");
+        assert_eq!(t.multi_pairs(), 1, "only (0, 1) is still a multi pair");
     }
 
     /// Deleting everything must not leave the base *and* a base-sized `dm`
