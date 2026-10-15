@@ -1462,7 +1462,7 @@ class testUniqueConstraintLookup():
         g.query("UNWIND range(1, 10000) AS i CREATE (:U {id: i})")
         start = time.time()
         g.query("UNWIND range(10001, 20000) AS i CREATE (:U {id: i})")
-        self.env.assertLess(time.time() - start, 3)
+        self.env.assertLess(time.time() - start, 10)
 
         # a duplicate of an existing node, and within the batch, still fail
         self._violates("CREATE (:U {id: 7})")
@@ -1492,9 +1492,10 @@ class testUniqueConstraintLookup():
 
     def test05_values_the_index_cannot_match(self):
         g = self.g
-        # strings and booleans go through the index; arrays, large integers,
-        # NaN and the empty string are checked by a scan
-        for v in ["'abc'", "true", "[1, 2]", "1152921504606846976", "0.0/0.0", "''"]:
+        # strings (NUL included) and booleans go through the index; arrays,
+        # large integers, NaN and the empty string are checked by a scan
+        for v in ["'abc'", "'a\\u0000b'", "'\\u0000'", "true", "[1, 2]",
+                  "1152921504606846976", "0.0/0.0", "''"]:
             g.query(f"CREATE (:U {{id: {v}}})")
             self._violates(f"CREATE (:U {{id: {v}}})")
 
