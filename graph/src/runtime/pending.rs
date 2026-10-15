@@ -39,7 +39,12 @@ use crate::{
         constraint::{ConstraintStatus, ConstraintType},
         graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
     },
-    runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
+    runtime::{
+        ordermap::OrderMap,
+        orderset::OrderSet,
+        runtime::QueryStatistics,
+        value::{MAX_VALUE_NESTING, Value},
+    },
 };
 
 /// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
@@ -59,6 +64,8 @@ fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
+/// Whether a non-list value is a valid property: a primitive, or NULL when
+/// `allow_null`. Lists are checked by [`validate_list_property`].
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
@@ -75,25 +82,52 @@ fn is_valid_property(
         | Value::Date(_)
         | Value::Time(_)
         | Value::Duration(_) => true,
-        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
+    }
+}
+
+/// Checks a list property: elements are primitives or lists, nested at most
+/// [`MAX_VALUE_NESTING`] deep. `depth` is the nesting of `items` itself (a
+/// top-level list is depth 1).
+///
+/// Lists can be built arbitrarily deep at runtime (e.g. `reduce(a = 1, i IN
+/// range(1, n) | [a])`), so this cannot be caught when the query is parsed.
+/// The bound is what lets every stored value be saved and loaded back: the
+/// RDB decoder refuses anything deeper. The walk is recursive, but stops at
+/// the bound, so it cannot itself run too deep.
+fn validate_list_property(
+    items: &[Value],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(format!(
+            "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+        ));
+    }
+    items.iter().try_for_each(|v| match v {
+        Value::List(inner) => validate_list_property(inner, depth + 1),
+        v if is_valid_property(v, false) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
+    })
+}
+
+/// Checks a property value: a primitive, NULL, or a list of primitives.
+fn validate_property(value: &Value) -> Result<(), String> {
+    match value {
+        Value::List(items) => validate_list_property(items, 1),
+        v if is_valid_property(v, true) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Binary-search a sorted `(attr_id, Value)` slice.
@@ -232,33 +266,7 @@ pub struct Pending {
     pub(crate) schema_rel_attr_count: usize,
 }
 
-/// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
-/// -> (src, dst) }`.
-///
-/// The endpoints ride along because they are captured at deletion time — the
-/// edge is gone from the tensor by the time the 24-byte RediSearch key has to
-/// be rebuilt, so they cannot be looked up again.
-pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
-
-/// The index documents a unit of work produced, in both directions and for
-/// both entity kinds.
-///
-/// One type rather than four parallel maps, and used for both the per-commit
-/// set and the deferred one it folds into. They have to stay in
-/// correspondence — a document added to the wrong half is a stale RediSearch
-/// entry that nothing later notices — and four loose fields on `Pending` made
-/// that the caller's job at every site.
-#[derive(Default)]
-pub struct IndexDocs {
-    /// Node documents to add, keyed by label id.
-    pub node_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Node documents to remove, keyed by label id.
-    pub node_removes: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add, keyed by relationship type id.
-    pub edge_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove — see [`EdgeDocRemovals`].
-    pub edge_removes: EdgeDocRemovals,
-}
+pub use crate::index::index_docs::{EdgeDocRemovals, IndexDocs};
 
 impl IndexDocs {
     /// True when nothing was produced, so a caller can skip the work of
@@ -280,6 +288,13 @@ impl IndexDocs {
         &mut self,
         other: &mut Self,
     ) {
+        // The native index's changes are applied to the private version before a commit's
+        // documents are folded for publishing; anything still here would be dropped.
+        #[cfg(feature = "index-falkordb")]
+        debug_assert!(
+            other.native.is_empty(),
+            "native index writes must be applied before the documents are folded"
+        );
         for (slot, ids) in other.node_adds.drain() {
             *self.node_adds.entry(slot).or_default() |= ids;
         }
@@ -1132,18 +1147,14 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut().set_nodes_labels_bulk(
-                &rows,
-                &cols,
-                &mut self.index_docs.node_adds,
-                all_new,
-            );
+            g.borrow_mut()
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_docs.node_removes);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -1151,15 +1162,13 @@ impl Pending {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_docs.node_adds,
+                    &mut self.index_docs,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                let (nremoved, nset) = g.set_nodes_attributes(
-                    &self.existing_nodes_attrs,
-                    &mut self.index_docs.node_adds,
-                )?;
+                let (nremoved, nset) =
+                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_docs)?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -1170,16 +1179,14 @@ impl Pending {
         {
             let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g.import_relationship_attrs(
-                    &self.new_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
-                );
+                let nset = g
+                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
+                    &mut self.index_docs,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -1190,7 +1197,7 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
@@ -1205,7 +1212,7 @@ impl Pending {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
                 &self.deleted_nodes,
                 &explicit_rels,
-                &mut self.index_docs.edge_removes,
+                &mut self.index_docs,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
@@ -1229,7 +1236,7 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)
+                .delete_relationships(&explicit_rels, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
@@ -1238,6 +1245,12 @@ impl Pending {
                 .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
+        // The native index, once for the whole `Commit`. Before the constraint checks, which is
+        // where each write call used to leave it, so nothing that runs after the writes sees the
+        // index in a different state than before. SETs run before DELETEs above, so one batch can
+        // hold an entry's add and then its remove; `apply` keeps only the last.
+        g.borrow_mut().apply_index_writes(&mut self.index_docs);
+
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has
         // the mutations from this transaction (writes apply immediately to
@@ -1663,6 +1676,8 @@ impl Pending {
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
+        #[cfg(feature = "index-falkordb")]
+        self.index_docs.native.clear();
 
         // Close this segment's batch and open the next at the boundary the
         // commit just left. Closing is where the batch's shape is owed —
@@ -1857,5 +1872,65 @@ mod label_effect_tests {
             records(&pending, &g),
             vec![labelled(true, &[m]), labelled(false, &[l])]
         );
+    }
+}
+
+#[cfg(test)]
+mod property_nesting_tests {
+    use super::{INVALID_PROPERTY_MSG, validate_node_property, validate_relationship_property};
+    use crate::runtime::value::{MAX_VALUE_NESTING, Value};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// Validation is recursive, so it runs on the query pool's stack size.
+    fn on_worker_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_property_at_the_cap_is_valid() {
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            assert_eq!(validate_node_property(&v), Ok(()));
+            assert_eq!(validate_relationship_property(&v), Ok(()));
+        });
+    }
+
+    #[test]
+    fn a_property_past_the_cap_is_refused() {
+        // Every stored value has to load back, and the RDB decoder refuses
+        // anything deeper than the cap.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING + 1);
+            let expected = Err(format!(
+                "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+            ));
+            assert_eq!(validate_node_property(&v), expected);
+            assert_eq!(validate_relationship_property(&v), expected);
+        });
+    }
+
+    #[test]
+    fn non_primitive_elements_keep_their_error() {
+        let v = Value::List(Arc::new(thin_vec![Value::Map(Arc::default())]));
+        assert_eq!(validate_node_property(&v), Err(INVALID_PROPERTY_MSG.into()));
+        assert_eq!(
+            validate_node_property(&Value::List(Arc::new(thin_vec![Value::Null]))),
+            Err(INVALID_PROPERTY_MSG.into())
+        );
+        assert_eq!(validate_node_property(&Value::Null), Ok(()));
     }
 }
