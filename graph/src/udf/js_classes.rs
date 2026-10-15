@@ -740,8 +740,9 @@ fn js_traverse_impl<'js>(
             let inner_results =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
             let mut result_idx = 0;
+            // The start node is not pre-marked: an edge back to it (a
+            // self-loop at depth 1) reports it, as C does.
             let mut visited: HashSet<u64> = HashSet::new();
-            visited.insert(start_id);
 
             // Track seen relationship IDs per source node to avoid emitting
             // the same edge twice when direction == "both" and returnType == "edges".
