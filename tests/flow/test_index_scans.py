@@ -1385,3 +1385,26 @@ class testIndexScanFlow():
             self.env.assertEqual(g.query(q, params).result_set, expected, message=q)
 
         g.delete()
+
+    def test_43_merged_filters_use_the_index(self):
+        # A pattern's inline attributes and its WHERE are separate filters
+        # that push-down merges into one; the merge keeps the conjuncts flat,
+        # so the index still sees the indexed one.
+        g = self.db.select_graph('merged_filters_index')
+        g.query("UNWIND range(1, 300) AS i CREATE (:A {k: i % 100, s: i % 3, t: i % 7})")
+        g.create_node_range_index('A', 'k')
+        wait_for_indices_to_sync(g)
+
+        expected = g.query("MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN count(n)").result_set
+        queries = [
+            "MATCH (n:A {s: 1}) WHERE (n.k = 7 AND n.t = 2) RETURN count(n)",
+            "MATCH (n:A {s: 1, t: 2}) WHERE ((n.k = 7) AND n.k >= 0) RETURN count(n)",
+            "MATCH (n:A {k: 7}) WHERE (n.s = 1 AND (n.t = 2)) RETURN count(n)",
+        ]
+        for q in queries:
+            plan = str(g.explain(q))
+            self.env.assertContains('Node By Index Scan', plan, message=q)
+            self.env.assertNotContains('Label Scan', plan, message=q)
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        g.delete()

@@ -565,10 +565,8 @@ pub(super) fn inline_attrs_to_filter(
 
     if filters.is_empty() {
         None
-    } else if filters.len() == 1 {
-        Some(filters.pop().unwrap())
     } else {
-        Some(tree!(ExprIR::And; filters))
+        Some(ExprIR::and_of(filters))
     }
 }
 
@@ -798,12 +796,7 @@ impl PatternMode {
         self,
         parent: &ExprIR<Variable>,
     ) -> Self {
-        if self == Self::SemiApply
-            && !matches!(
-                parent,
-                ExprIR::And | ExprIR::Or | ExprIR::Not | ExprIR::Paren
-            )
-        {
+        if self == Self::SemiApply && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not) {
             Self::Exists
         } else {
             self
@@ -1500,13 +1493,6 @@ impl Planner {
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
 
-        // Unwrap Paren nodes transparently
-        if matches!(node.data(), ExprIR::Paren)
-            && let Some(child) = node.get_child(0)
-        {
-            return self.expr_to_plan(&child, inline_map, input);
-        }
-
         // Inline-pattern variable → SemiApply (pass if pattern exists)
         if let ExprIR::Variable(v) = node.data()
             && let Some(graph) = inline_map.get(&v.id)
@@ -1656,11 +1642,7 @@ impl Planner {
 
         // Apply scalar filter first (cheapest).
         if !scalar_parts.is_empty() {
-            let filter_expr = if scalar_parts.len() == 1 {
-                Arc::new(scalar_parts.into_iter().next().unwrap())
-            } else {
-                Arc::new(tree!(ExprIR::And; scalar_parts))
-            };
+            let filter_expr = Arc::new(ExprIR::and_of(scalar_parts));
             plan = tree!(IR::Filter(filter_expr), plan);
         }
 
@@ -2414,11 +2396,7 @@ impl Planner {
         // applied here so they sit above the stitching target, ensuring
         // the bound variable's env is available when the filter runs.
         if !bound_filters.is_empty() {
-            let filter_expr = if bound_filters.len() == 1 {
-                bound_filters.pop().unwrap()
-            } else {
-                tree!(ExprIR::And; bound_filters)
-            };
+            let filter_expr = ExprIR::and_of(bound_filters);
             res = tree!(IR::Filter(Arc::new(filter_expr)), res);
         }
         res
