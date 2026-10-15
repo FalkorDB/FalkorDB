@@ -161,7 +161,9 @@ pub struct CondTraverseOp<'a> {
     optional_unmatched: std::cell::RefCell<Vec<usize>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Maximum number of records this operator should produce. Once reached,
-    /// subsequent `next()` calls return `None`. Set by limit propagation.
+    /// subsequent `next()` calls return `None`. Set by limit propagation
+    /// (`Runtime::hard_record_cap`), which stops at any row-dropping operator
+    /// between here and the `Limit`, so the stop never loses a needed row.
     record_cap: Option<usize>,
     /// Number of records produced so far (tracked when `record_cap` is set).
     produced: usize,
@@ -246,6 +248,7 @@ impl<'a> CondTraverseOp<'a> {
         optional: bool,
         bind_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
+        pack_hint: Option<usize>,
         record_cap: Option<usize>,
     ) -> Self {
         let rp = relationship_pattern;
@@ -321,7 +324,7 @@ impl<'a> CondTraverseOp<'a> {
                 edge: relationship_pattern.alias.id,
                 transposed: false,
             },
-            record_cap,
+            pack_hint,
         );
 
         Self {
