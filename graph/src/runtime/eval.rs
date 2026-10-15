@@ -874,10 +874,14 @@ impl<'a> ExprEval<'a> {
                             .and_then(|e| e.value_at(key.id))
                             .ok_or_else(|| String::from("Variable not found"))?;
 
-                        return match finalize {
-                            Some(func) => Ok((func)(acc)),
-                            None => Ok(acc),
-                        };
+                        // Push, don't `return`: the aggregate may be one
+                        // operand of an enclosing frame still on the stack,
+                        // e.g. the list literal `[min(x), max(x)]`.
+                        res.push(match finalize {
+                            Some(func) => (func)(acc),
+                            None => acc,
+                        });
+                        continue;
                     }
                     // Fast path for struct-constructor functions (duration,
                     // date, point, ...): when the binder rewrote a
