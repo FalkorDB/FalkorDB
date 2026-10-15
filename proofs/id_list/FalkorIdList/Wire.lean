@@ -91,8 +91,7 @@ def widthOfCode (c : Nat) : Nat :=
   | _ => 8
 
 theorem widthFor_fits (v : Nat) (h : v < W) : v < 256 ^ widthFor v := by
-  unfold widthFor W at *
-  split <;> (try split) <;> (try split) <;> simp <;> omega
+  grind [widthFor, W]
 
 theorem widthFor_cases (v : Nat) : widthFor v = 1 ∨ widthFor v = 2 ∨ widthFor v = 4 ∨ widthFor v = 8 := by
   unfold widthFor; split <;> (try split) <;> (try split) <;> simp

@@ -99,10 +99,7 @@ def step (t : Tally) (bucket ids : Nat) : Tally :=
 def bucketEnd (bucket : Nat) : Nat := bucket * 65536 + 65535
 
 theorem le_pieceEnd (lo e : Nat) (h : lo ≤ e) : lo ≤ min e (bucketEnd (lo / 65536)) := by
-  unfold bucketEnd
-  have h1 := Nat.mod_add_div lo 65536
-  have h2 := Nat.mod_lt lo (show 65536 > 0 by decide)
-  omega
+  grind [bucketEnd]
 
 /-- The `while lo <= end` loop of `add_range` (`:356`), `lo`/`end` < 2^64, with
 `piece_end.checked_add(1)`'s `None => break` at the top of the id space. -/
