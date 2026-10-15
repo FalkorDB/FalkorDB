@@ -638,12 +638,9 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         IndexType::Range
     };
 
-    // Strip the type prefix from the field name to get the raw attribute name.
-    let attr_name = match ty {
-        IndexType::Range => name.strip_prefix("range:").unwrap_or(&name).to_string(),
-        IndexType::Vector => name.strip_prefix("vector:").unwrap_or(&name).to_string(),
-        IndexType::Fulltext => name.clone(),
-    };
+    // `name` is the bare attribute name `encode_schema_index_block` writes, as C
+    // does, never a prefixed RediSearch field name, so it is used verbatim: an
+    // attribute may itself be called `range:x`.
 
     let vector_options = if is_vector {
         let dimension = r.read_unsigned()?;
@@ -695,7 +692,7 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         )
     };
 
-    Ok((Arc::new(attr_name), field))
+    Ok((Arc::new(name), field))
 }
 
 impl Schema {
