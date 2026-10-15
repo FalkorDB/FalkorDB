@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-14): proofs cite `origin/main` @ b080a44c1.
+Current state (2026-10-15): proofs cite `origin/main` @ cab3cf192.
 There is one Lake project per area under `proofs/<area>/` (37 projects, including
 `native_index`, `pr2845_review` and `pr2917_review`).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
@@ -9,9 +9,9 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2596 non-FFI, non-test functions, 2559 are PROVEN, 36 CONDITIONAL (proven only
+2602 non-FFI, non-test functions, 2565 are PROVEN, 36 CONDITIONAL (proven only
 under an undischarged hypothesis about other Rust code, named in the row) and 1
-NOT COVERED (a trait declaration); 1291 FFI functions are AXIOMATISED; 0 unlisted.
+NOT COVERED (a trait declaration); 1292 FFI functions are AXIOMATISED; 0 unlisted.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
@@ -301,6 +301,10 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-15 on main (now cab3cf192): #2897 (CowBTree BRANCH_MAX >= 4; closes #2893), #3285 (DOC_BYTES limited to readable widths; closes #3238), #3336 (UDF value nesting cap; security advisory GHSA-frmf-ffvc-mxx5). Proofs re-targeted: 37 projects green; 2565 PROVEN + 36 CONDITIONAL of 2602 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: W1 #13 bug 2 (`constAssert_rejects_B3`, `remove_spec_asserted`); W7-btree-2 (`readWidth_admitted`, `admitted_fromPairs_roundtrip`); UDF conversion recursion (`fromJs_frames`/`toJs_frames`: at most cap+1 levels for any input, cyclic values included; `fromJs_eq_pre3336`: unchanged at or below the cap; `pre3336_self_array_overflows`).
+  - Still present: W7-btree-1 (`remove_batch` one-child branch, PR #3283), which the 13 native_index CONDITIONAL rows rest on.
+  - New, model only, not confirmed live (`cap_asymmetry_vecf32`): the two UDF conversion directions count a VecF32 or Path leaf differently, so 1024 lists around a vecf32 pass `value_to_js` but are refused by `js_to_value` on the way back; an identity UDF returns a nesting error for that value (an error, not a crash).
 - 2026-10-14 on main (now b080a44c1): #3014 (bounded queues; closes #3013), #3290 (inline write vs queued write; closes #3093), #3102 (self-loop hop order; closes #2999), #3328 (module-load arguments like C; closes #3268), #3339 (value nesting cap on RDB/RESTORE decode, property writes and bulk insert; security advisory GHSA-mwvh-8fq5-x2j8, also #2722 for stored values). Proofs re-targeted: 37 projects green; 2559 PROVEN + 36 CONDITIONAL of 2596 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W3-conc-1 deadlock (`acquire_bounded`, `release_exactly_once`, `main_never_blocks`); #3093 (`one_commit_per_version`, `claimFork_on_committed`); W4-redis-3 / #3268 (`rust_c_same_accept`, `error_applies_nothing`; checked live against C); planner bug 4 / #2999 (`selfLoops_perm`, `deferred_after_binder`, `eq_reference` to the old loop); unbounded nesting (`decodeValue_refuses_past_cap`, `stored_roundtrip`, bulk `deep_refused`).
   - New divergence, confirmed live: C's `strtoll` skips leading whitespace and Rust's integer parsing does not, so `--loadmodule … CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust (`leading_space_divergence`). Intended extensions: Rust accepts `INDEX_WORKER_THREADS`, `BOLT_PORT`, `EFFECTS_COMPRESSION`, which C refuses (`rust_only_names`).

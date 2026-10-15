@@ -154,7 +154,7 @@ theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x 
         conv => rhs; rw [← List.take_append_drop (cs'.length / 2) cs']
         rw [mem_flat_append]
 
-/-- **`CowBTree::insert` (`mod.rs:206`)**: a well-formed tree stays well-formed (growing a level on a
+/-- **`CowBTree::insert` (`mod.rs:223`)**: a well-formed tree stays well-formed (growing a level on a
     root split) and its entries become exactly the reference sorted-set insertion. -/
 theorem insert_spec (c : Cfg) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     TreeWF c (insert c h t x).2 (insert c h t x).1 ∧

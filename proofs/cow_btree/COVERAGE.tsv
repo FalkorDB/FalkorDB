@@ -1,25 +1,26 @@
 file	function	line	bucket	lean_name_or_reason
 # tests.rs is test-only by file name (differential tests vs BTreeSet); not listed.
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	NOT COVERED	byte encoding; PROVEN in proofs/index_layer (Leaf.docLeBytes_*)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	NOT COVERED	byte encoding; PROVEN in proofs/index_layer (LeafAosD.docLeBytes_*)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	NOT COVERED	page byte encoding abstracted to the sorted entry list; PROVEN in proofs/index_layer
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	88	NOT COVERED	page byte encoding abstracted to the sorted entry list; PROVEN in proofs/index_layer
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::default	133	MODELLED	Cfg (const assert) + .leaf []; b3_* (Bugs.lean) show BRANCH_MAX >= 3 is too weak for remove
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::new	155	MODELLED	= default (.leaf [], Cfg)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::from_sorted	173	MODELLED	fromSorted (chunks + buildRoot); contents PROVEN in proofs/index_layer
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert	206	PROVEN	insert/insertRet: insert_spec, insertRet_spec (returned bool = tuple was absent), insertFlag_spec
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert_batch	224	MODELLED	insertBatch (route fixed by #2278: route_keeps_all, route_routes_TOP); contents PROVEN in proofs/index_layer
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::remove	243	PROVEN	remove/removeRet: remove_spec, removeRet_spec (returned bool = tuple was present), collapse_spec; b3_one_remove_not_wf (bug at BRANCH_MAX=3)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::remove_batch	269	PROVEN	removeBatchTree: removeBatchTree_spec (= List.filter, sorted), removeBatchTree_unsorted (assert); BUG rb_remove_batch_not_wf (BugsBatch.lean)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range	297	PROVEN	range/rangeWith DocExtract: range_spec, rangeDocs_spec, range_empty; snapshot_isolated
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::point	307	PROVEN	point_spec, rangeDocs_spec (= range(k, k))
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::contains_key	326	PROVEN	containsKey: containsKey_spec
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::first_doc	340	PROVEN	firstDocGo/firstDoc: firstDocGo_spec, firstDoc_spec, firstDoc_eq_point (point lookup = head of the sorted filter)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range_tuples	391	PROVEN	rangeWith TupleExtract: rangeTuples_spec, rangeTuples_enc
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::heap_bytes	402	PROVEN	heapBytes: heapBytes_eq, heapSum_split, heapBytes_aos
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (heap_bytes)	403	PROVEN	heapWalk: heapWalk_eq, foldl_heapWalk
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::count	431	NOT COVERED	nested helper of #[cfg(test)] len (PROVEN in proofs/index_layer: Leaf.walk_spec)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::is_empty	446	PROVEN	isEmpty: b3_drained_is_empty_lies (counterexample at BRANCH_MAX=3)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (leaves)	457	NOT COVERED	nested helper of #[cfg(test)] leaves (PROVEN in proofs/index_layer: Leaf.walk_spec)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	is_read_width	88	PROVEN	Assert.isReadWidth, constAssert (gates DOC_BYTES); bytes PROVEN in proofs/index_layer (isReadWidth_iff, readWidth_admitted)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	NOT COVERED	page byte encoding abstracted to the sorted entry list; PROVEN in proofs/index_layer (readWidth_admitted)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::default	150	PROVEN	Assert.constAssert (the const assert, #2897 BRANCH_MAX >= 4, #3285 is_read_width), Cfg.ofAssert, constAssert_default; pre2897_b3_excluded (BRANCH_MAX=3 now rejected); contents .leaf []
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::new	172	PROVEN	= default (.leaf [], Assert.constAssert, Cfg.ofAssert)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::from_sorted	190	MODELLED	fromSorted (chunks + buildRoot) under Assert.constAssert; contents PROVEN in proofs/index_layer (asserted_fromSorted_contents)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert	223	PROVEN	insert/insertRet: insert_spec, insertRet_spec (returned bool = tuple was absent), insertFlag_spec
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert_batch	241	MODELLED	insertBatch (route fixed by #2278: route_keeps_all, route_routes_TOP); contents PROVEN in proofs/index_layer
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::remove	260	PROVEN	remove/removeRet: remove_spec, removeRet_spec, collapse_spec; Assert.remove_spec_asserted, removeRet_spec_asserted (4 <= BRANCH_MAX discharged by the #2897 const assert); historical pre2897_b3_one_remove_not_wf
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::remove_batch	286	PROVEN	removeBatchTree: removeBatchTree_spec (= List.filter, sorted), removeBatchTree_unsorted (assert); BUG rb_remove_batch_not_wf (BugsBatch.lean)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range	314	PROVEN	range/rangeWith DocExtract: range_spec, rangeDocs_spec, range_empty; snapshot_isolated
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::point	324	PROVEN	point_spec, rangeDocs_spec (= range(k, k))
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::contains_key	343	PROVEN	containsKey: containsKey_spec
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::first_doc	357	PROVEN	firstDocGo/firstDoc: firstDocGo_spec, firstDoc_spec, firstDoc_eq_point (point lookup = head of the sorted filter)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range_tuples	408	PROVEN	rangeWith TupleExtract: rangeTuples_spec, rangeTuples_enc
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::heap_bytes	419	PROVEN	heapBytes: heapBytes_eq, heapSum_split, heapBytes_aos
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (heap_bytes)	420	PROVEN	heapWalk: heapWalk_eq, foldl_heapWalk
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::count	448	NOT COVERED	nested helper of #[cfg(test)] len (PROVEN in proofs/index_layer: Leaf.walk_spec)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::is_empty	463	PROVEN	isEmpty: pre2897_b3_drained_is_empty_lies (historical counterexample at BRANCH_MAX=3, now rejected by the assert: pre2897_b3_excluded)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk (leaves)	474	NOT COVERED	nested helper of #[cfg(test)] leaves (PROVEN in proofs/index_layer: Leaf.walk_spec)
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	MODELLED	packBranches; contents PROVEN in proofs/index_layer
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	MODELLED	buildRoot; contents PROVEN in proofs/index_layer
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	combine_with_sibling	113	PROVEN	cws: cws_content, cws_measure, combine_two_not_uf, rebalance_eq_cws

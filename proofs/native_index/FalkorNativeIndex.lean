@@ -12,7 +12,7 @@ import FalkorNativeIndex.Ddl
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets origin/main 4a4f2a72f: `graph/src/index/falkordb/{encode,numeric,falkordb_index,
+Targets origin/main cab3cf192 (only `cow_btree/mod.rs` cites moved since 4a4f2a72f: #2897, #3285): `graph/src/index/falkordb/{encode,numeric,falkordb_index,
 pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`
 (`apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`, `new_version`'s
 fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
@@ -23,7 +23,7 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 | `Float.lean`: `F64` bits, `isNaN`, `pos`, `fpcmp`, `encodeF64` | `f64::to_bits`/`partial_cmp` (IEEE 754 §3.4/§5.11), `encode.rs:50-55` |
 | `IntF.lean`: `roundNat`, `magBits`, `i64ToF64` | `i as f64` (value_order `roundNat`, copied) |
 | `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
-| `Tree.lean`: `tInsert`…`tRange` (CowBTree contents, copied from cow_btree) | `cow_btree/mod.rs:173-307` |
+| `Tree.lean`: `tInsert`…`tRange` (CowBTree contents, copied from cow_btree) | `cow_btree/mod.rs:190-324` |
 | `Numeric.lean`: `NumericIndex.*`, `rangeBounds`, `IndexQuery` | `numeric.rs:39-254` |
 | `Index.lean`: `hmGet`…, `IndexColumn.*`, `ColumnEntry.ready`, `FalkorDbIndex.*` | `falkordb_index.rs:38-355`, `:409-432` |
 | `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `applyColumn`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:364-400` |
@@ -76,7 +76,7 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 ## Gaps / hypotheses
 - **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its proven content spec
   (cow_btree / index_layer), which holds under cow_btree's `TreeWF`; `remove_batch` breaks `TreeWF`
-  (cow_btree Bug 3) and now has a production caller (`apply_writes` → `remove_encoded`). A model search
+  (cow_btree Bug 3 = W7-btree-1, fix PR #3283 still open at cab3cf192) and now has a production caller (`apply_writes` → `remove_encoded`). A model search
   of batch-only sequences found no content/range/empty-page failure. Rows that read through the tree
   are CONDITIONAL on this.
 - **Caller uniqueness** (`nodeAttrsSet_hit`, `edgeAttrsSetWith_hit`, `newNodeAttrs_hit`): each node's

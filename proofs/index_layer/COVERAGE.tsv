@@ -221,13 +221,14 @@ graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediS
 # graph/src/index/redisearch/redis.rs	(no fns; bindgen consts/types)	0	AXIOMATISED	Redis module ABI types
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	88	PROVEN	Leaf.readWidth_eq (widths 1/2/4/8); LeafAosD.docBytes3_reads_garbage (any other width reads 8 bytes: BUG for DOC_BYTES 3/5/6/7)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	133	PROVEN	Leaf.emptyTree_contents
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	155	PROVEN	Leaf.emptyTree_contents (new = default)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	173	PROVEN	Leaf.fromSorted_contents
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	224	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	431	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	457	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	is_read_width	88	PROVEN	Leaf.isReadWidth: isReadWidth_iff, isReadWidth_upto16; LeafAosD.docBytesAssert_iff, docBytesAssert_rejects_3 (#3285)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width); historical LeafAosD.pre3285_docBytes3_reads_garbage
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	150	PROVEN	Leaf.emptyTree_contents; LeafAosD.constAssert (const assert, #2897/#3285)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	172	PROVEN	Leaf.emptyTree_contents (new = default); LeafAosD.constAssert
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	190	PROVEN	Leaf.fromSorted_contents, LeafAosD.asserted_fromSorted_contents (under the const assert)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	241	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	448	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	474	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	Leaf.buildRoot_contents
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	565	PROVEN	Leaf.makePrivate_cow

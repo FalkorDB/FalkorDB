@@ -213,8 +213,8 @@ W5-idx-2 no-options shape; fixed by #3087.
   for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
   NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
   but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
-  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (`docBytes3_reads_garbage`,
-  `docBytes3_last_oob`). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
+  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (now historical `pre3285_docBytes3_reads_garbage`,
+  `pre3285_docBytes3_last_oob`; FIXED by #3285, see below). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
   `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
   `DOC_BYTES ∈ {1, 2, 4, 8}`.
 - Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).
@@ -224,6 +224,17 @@ W5-idx-2 no-options shape; fixed by #3087.
   `mod.rs:1400`; later citations +4). Bug 9 is fixed (`pre3081_open_bound_excludes_inf` →
   `fixed3081_open_bound_includes_inf`; `numRange_exact` drops its finite-only premise). Bug 11
   (undirected edge-index scan once) is fixed in `edge_by_index_scan.rs`, proved in `ops_traverse`.
+- Still present: bugs 1-4, 7, 8, 10, 12, 13.
+
+## Re-target to cab3cf192 (#2897, #3285)
+- `cow_btree/mod.rs`: #3285 (cab3cf192) adds `is_read_width` (`mod.rs:88`, `LeafBytes.isReadWidth`) and
+  gates `DOC_BYTES` with it in the const asserts; #2897 (7b60f28db) raises the `BRANCH_MAX` bound to 4.
+  Every later line of `mod.rs` moved (+6 to `read_width` :94, +17 from `default` :150); citations updated.
+  Bug 14 (W7-btree-2) is FIXED by #3285: `readWidth_admitted` (`read_width` loads exactly `w` bytes on
+  every admitted width), `isReadWidth_upto16`, `docBytesAssert_iff`, `admitted_doc_read`,
+  `admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (vs `pre3285_assert_admitted_3`,
+  `docBytesAssert_vs_pre3285`: the asserts differ on exactly 3/5/6/7), and
+  `asserted_fromSorted_contents` (`from_sorted` under the full const assert `constAssert`).
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
 -/
 import FalkorIndexLayer.Model

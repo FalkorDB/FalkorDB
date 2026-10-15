@@ -3,8 +3,8 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9; `type_convert.rs`
-and `js_globals.rs` re-targeted to 8743953a8 (#3074, #3079 — see "Fixed on main").
+`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9; `js_globals.rs`
+re-targeted to 8743953a8 (#3079), `type_convert.rs` to cab3cf192 (#3074, #3336 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in
 `graph/tests/lean_algo_udf.rs`; wave 5 in the standalone package
@@ -20,7 +20,8 @@ Every `bug_*` test asserts C's answer and fails today.
 | `AlgoUdf.Compact`    | `build_compact_adj_*` id ↔ index maps, WCC/CDLP/pageRank/Harmonic result assembly, deleted-id skipping, betweenness sampling |
 | `AlgoUdf.Paths`      | `far_endpoint`, `cmp_found_path`, `record_found_path`, cost accumulation, `build_path_batch`, Dijkstra dispatch guard |
 | `AlgoUdf.MsfFlow`    | `msf_keep_min_score` monoid laws, MSF component keys, maxFlow flow/edge alignment and super-node freshness |
-| `AlgoUdf.Marshal`/`MarshalThm` | `value_to_js` / `js_to_value` over an abstract f64 and QuickJS value model |
+| `AlgoUdf.Marshal`/`MarshalThm` | `value_to_js` / `js_to_value` over an abstract f64 and QuickJS value/heap model (cyclic values included) |
+| `AlgoUdf.Nesting`/`MarshalCap` | #3336: the depth cap `MAX_UDF_VALUE_NESTING`, `value_to_js_at` / `js_to_value_at` with an explicit stack |
 | `AlgoUdf.Repo`       | `UdfRepo::load`/`delete` + the lowercase-keyed function registry |
 | `AlgoUdf.Neighbors`  | `collect_edges`, `js_get_neighbors` filters |
 | `AlgoUdf.Graph`      | shared graph view for the path searches (`Edge`, weighted `Walk`, hop `HWalk`/`NWalk`, `node_successors`) |
@@ -121,7 +122,7 @@ Known before this wave (counterexamples added):
 * HarmonicCentrality source vector sized `node_count` not `node_id_bound` (:2777) —
   `Compact.unfiltered_drops_high_ids`.
 * pageRank with an unknown label errors (:727-778) — `Compact.pagerank_unknown_label_compact_empty`.
-* Forged `__falkor_type` markers accepted (type_convert.rs:258-268) —
+* Forged `__falkor_type` markers accepted (type_convert.rs:351-358) —
   `Marshal.forged_node_marker`, `forged_edge_marker`.
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) —
@@ -157,6 +158,24 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
   Now: `UdfGlobals.validate_runtime_same_globals`, `graph_global_in_both`,
   `validate_runtime_same_graph`. Historical: `pre3079_validate_lacks_graph`.
 
+## Fixed on main (re-target 8743953a8 → cab3cf192)
+* #3336 (`33a956360`, GHSA-frmf-ffvc-mxx5) — `value_to_js` / `js_to_value` recurse through
+  `value_to_js_at` (:110) / `js_to_value_at` (:262) with a depth bounded by `MAX_UDF_VALUE_NESTING = 1024`
+  (:67; error `udf_nesting_error` :87; `with_stack` :80 is AXIOMATISED stack switching). The JS side
+  is modelled over a QuickJS heap, so a self-containing array is an input. Generic `Step` theorems
+  (`Nesting.lean`) instantiated for both directions (`MarshalCap.lean`):
+  `fromJs_frames`, `toJs_frames` (MAX + 1 levels always suffice, any input, any heap);
+  `fromJs_past_cap`, `toJs_past_cap` (past the cap: an `Err`, never an overflow); `fromJs_eq_pre3336`,
+  `toJs_eq_pre3336`, `pre3336_finished_eq` (within the cap: exactly the old result on any stack the old
+  code finished on); `self_array_error`, `fromJs_nestArr_ok`/`_past`, `advisory_array_error`,
+  `nestList_rt`, `toJs_nestList_past` (the Rust tests); `fromJs_needs_all_frames` (bound tight).
+  Historical: `pre3336_self_array_overflows` (the old code overflows every stack on `a = [a]`),
+  `pre3336_nestArr_overflows` (n nested arrays needed n + 1 levels).
+  `fromJs` now also models the `"path"` arm (:359-397), which the earlier model sent to the map branch.
+* Model finding (not a crash, not confirmed live): `cap_asymmetry_vecf32` — `value_to_js` counts only
+  List/Map toward the cap, `js_to_value` also counts the array carrying a VecF32 (and the object carrying
+  a Path), so `MAX` lists around a vecf32 (or path) convert into JS but an identity UDF cannot return them.
+
 ## Shared with C (live-checked, same answer on both) — not divergences
 * maxIterations / samplingSize / maxLen are truncated by `as i32`/`as u32`
   after the positivity check (`Config.maxIterations_wraps_to_zero`, `samplingSize_wraps`, `maxLen_wraps`).
@@ -171,7 +190,7 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 * getNeighbors `types: [123]` silently disables the type filter
   (`Neighbors.non_string_types_disable_filter`); C crashes on that input (C bug).
 * betweenness samples deleted slots on the unfiltered path (`Compact.seed0_samples_deleted`).
-* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs:148, 157) — modelled as an error.
+* Datetime `ts * 1000` is unchecked i64 arithmetic (type_convert.rs:215, 224) — modelled as an error.
 
 ## Gaps (earlier waves)
 Closed in wave 5: Dijkstra, the DFS enumeration, the BFS bound, BFS parent→edge
@@ -184,6 +203,7 @@ import AlgoUdf.Paths
 import AlgoUdf.MsfFlow
 import AlgoUdf.Marshal
 import AlgoUdf.MarshalThm
+import AlgoUdf.MarshalCap
 import AlgoUdf.Repo
 import AlgoUdf.Neighbors
 import AlgoUdf.Graph

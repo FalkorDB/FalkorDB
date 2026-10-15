@@ -1,6 +1,6 @@
 /-
 # Byte-level helpers of the COW B+-tree leaf pages
-(`graph/src/index/falkordb/data_structures/cow_btree/{mod.rs,leaf/*.rs}`, origin/main 8743953a8)
+(`graph/src/index/falkordb/data_structures/cow_btree/{mod.rs,leaf/*.rs}`, origin/main cab3cf192)
 
 Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 (for `x < 256^8`), `rd b off w` reads `w` little-endian bytes at `off`.
@@ -9,7 +9,8 @@ Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 | --- | --- |
 | `le`, `unle`, `rd` | `to_le_bytes()[..w]`, `from_le_bytes` |
 | `readU64` | `read_u64` `cow_btree/mod.rs:79` |
-| `readWidth` | `read_width` `cow_btree/mod.rs:88` |
+| `isReadWidth` | `is_read_width` `cow_btree/mod.rs:88` (#3285) |
+| `readWidth` | `read_width` `cow_btree/mod.rs:94` |
 | `readU16` | `read_u16` `leaf/compact.rs:18` |
 | `widthFor` | `narrow_int::width_for` via `pow2_bytes_for` `leaf/mod.rs:42` |
 | `slice` | `&bytes[lo..hi]` |
@@ -43,7 +44,7 @@ def rd (b : List Nat) (off w : Nat) : Nat := unle ((b.drop off).take w)
 def readU64 (b : List Nat) (off : Nat) : Nat := rd b off 8
 /-- `read_u16` (`leaf/compact.rs:18`). -/
 def readU16 (b : List Nat) (off : Nat) : Nat := rd b off 2
-/-- `read_width` (`cow_btree/mod.rs:88`): widths 1/2/4, anything else reads 8. -/
+/-- `read_width` (`cow_btree/mod.rs:94-110`): widths 1/2/4, anything else reads 8. -/
 def readWidth (b : List Nat) (off w : Nat) : Nat :=
   match w with
   | 1 => rd b off 1
@@ -55,6 +56,22 @@ def W (w : Nat) : Prop := w = 1 ∨ w = 2 ∨ w = 4 ∨ w = 8
 
 theorem readWidth_eq (b : List Nat) (off w : Nat) (hw : W w) : readWidth b off w = rd b off w := by
   rcases hw with rfl | rfl | rfl | rfl <;> rfl
+
+/-- `is_read_width` (`cow_btree/mod.rs:88-90`, #3285): `matches!(width, 1 | 2 | 4 | 8)`. -/
+def isReadWidth (w : Nat) : Bool := w == 1 || w == 2 || w == 4 || w == 8
+
+theorem isReadWidth_iff (w : Nat) : isReadWidth w = true ↔ W w := by
+  unfold isReadWidth W; simp only [Bool.or_eq_true, beq_iff_eq]; omega
+
+/-- **#3285: `read_width` is total on every width `is_read_width` admits** — it loads exactly `w`
+    bytes (never the 8-byte fallback for a narrower width), so a `DOC_BYTES` that passes the const
+    asserts is read back as written. -/
+theorem readWidth_admitted (b : List Nat) (off w : Nat) (hw : isReadWidth w = true) :
+    readWidth b off w = rd b off w := readWidth_eq b off w ((isReadWidth_iff w).1 hw)
+
+/-- The admitted widths are exactly 1, 2, 4, 8 (the Rust test `doc_bytes_accepts_exactly_the_readable_widths`
+    checks `0..=16`). -/
+theorem isReadWidth_upto16 : (List.range 17).filter isReadWidth = [1, 2, 4, 8] := by decide
 
 /-- `narrow_int::width_for`. -/
 def widthFor (x : Nat) : Nat :=

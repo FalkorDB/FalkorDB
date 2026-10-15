@@ -39,13 +39,16 @@ theorem pre2278_route_drops_TOP_example :
       [(.leaf [enc 0 0, enc 1 0], []), (.leaf [enc 2 0, enc 3 0], [])] := by
   simp [pre2278_route, enc, TOP, W]
 
-/-! ## Bug 2: with `BRANCH_MAX = 3` (allowed by the assert, `mod.rs:135-138`) remove breaks the tree
+/-! ## Bug 2 (historical, FIXED by #2897, 7b60f28db): with `BRANCH_MAX = 3` remove broke the tree
 
-The underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:197`, reported at `:473`): a branch merged
+Before #2897 the const assert (`mod.rs:152-155`) only demanded `BRANCH_MAX >= 3`. The underflow flag of a
+branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:197`, reported at `:473`): a branch merged
 down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
 rebalance (`node.rs:212` guard) and drains to an empty non-root leaf. `is_empty()` then lies, and
 a later `insert_batch` hits `Node::min` on the empty leaf (out-of-bounds panic, `node.rs:234`) or the
-single-child `debug_assert` (`node.rs:71`). -/
+single-child `debug_assert` (`node.rs:71`). The `pre2897_b3_*` theorems below replay it on
+`CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `pre2897_b3_excluded`, and
+`remove_spec_asserted` for every configuration the assert admits). -/
 
 def c23 : Cfg := ⟨2, 3, by decide, by decide⟩
 
@@ -64,22 +67,22 @@ theorem t5_wf : TreeWF c23 t5.2 t5.1 := by
   simp [TreeWF, WFb, COK, Sorted, HI, W, c23]
 
 /-- One remove already leaves a single-child branch (`TreeWF` violated). -/
-theorem b3_one_remove : remAll c23 t5 [0] =
+theorem pre2897_b3_one_remove : remAll c23 t5 [0] =
     (.branch [2] [.branch [] [.leaf [1]], .branch [3] [.leaf [2], .leaf [3, 4]]], 2) := by
   rfl
 
-theorem b3_one_remove_not_wf : ¬ TreeWF c23 (remAll c23 t5 [0]).2 (remAll c23 t5 [0]).1 := by
-  rw [b3_one_remove]
+theorem pre2897_b3_one_remove_not_wf : ¬ TreeWF c23 (remAll c23 t5 [0]).2 (remAll c23 t5 [0]).1 := by
+  rw [pre2897_b3_one_remove]
   simp [TreeWF, WFb, COK]
 
 /-- Removing everything leaves a tree with no entries whose `is_empty()` is `false`. -/
-theorem b3_drained_is_empty_lies :
+theorem pre2897_b3_drained_is_empty_lies :
     toList (remAll c23 t5 [0, 1, 2, 3, 4]).2 (remAll c23 t5 [0, 1, 2, 3, 4]).1 = [] ∧
     isEmpty (remAll c23 t5 [0, 1, 2, 3, 4]).1 = false := by
   decide
 
 /-- ...and its right subtree's `Node::min` is the panic case. -/
-theorem b3_drained_min_panics :
+theorem pre2897_b3_drained_min_panics :
     remAll c23 t5 [0, 1, 2, 3, 4] =
       (.branch [2] [.branch [] [.leaf []], .branch [] [.leaf []]], 2) ∧
     minOpt 1 (.branch [] [.leaf []]) = none :=

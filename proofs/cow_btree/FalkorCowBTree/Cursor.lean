@@ -286,7 +286,7 @@ theorem new_inv_rest (c : Cfg) (h : Nat) (root : Node) (lo hi : Nat) (hw : TreeW
     rw [← hr] at hsr; exact (sorted_append.1 hsr).1
   · exact hr
 
-/-- **`CowBTree::range(lo, hi)` (`mod.rs:297`) collects exactly the entries whose key lies in the
+/-- **`CowBTree::range(lo, hi)` (`mod.rs:314`) collects exactly the entries whose key lies in the
     inclusive range `[lo, hi]`, in `(key, doc)` order**, on every well-formed tree, for all `lo`, `hi`
     (duplicates of a key all appear; `lo > hi` yields nothing). Its docs are `docOf` of these. -/
 theorem range_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)

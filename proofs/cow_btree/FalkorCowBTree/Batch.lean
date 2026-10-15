@@ -146,7 +146,7 @@ def removeBatch (c : Cfg) : Nat → Node → List E → Node
       let mu := mergeUnderfull c st.1 st.2 0                          -- line 534
       .branch mu.1 mu.2                                               -- line 535
 
-/-- `CowBTree::remove_batch` (`mod.rs:269-292`). `none` is the `assert!` panic on unsorted input. -/
+/-- `CowBTree::remove_batch` (`mod.rs:286-309`). `none` is the `assert!` panic on unsorted input. -/
 def removeBatchTree (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Option (Node × Nat) :=
   if batch = [] then some (root, h)                                    -- lines 273-275
   else if batch.Pairwise (· ≤ ·) then some (collapse h (removeBatch c h root batch))  -- lines 278-291
@@ -652,7 +652,7 @@ theorem collapse_toList : ∀ (h : Nat) (n : Node), toList (collapse h n).2 (col
   | _ + 1, .branch _ [] => rfl
   | _ + 1, .branch _ (_ :: _ :: _) => rfl
 
-/-- **`CowBTree::remove_batch` (`mod.rs:269`), headline**: on a well-formed tree and a batch sorted as
+/-- **`CowBTree::remove_batch` (`mod.rs:286`), headline**: on a well-formed tree and a batch sorted as
     the `assert!` demands, it does not panic, and the tree afterwards holds exactly the entries not in
     the batch — the reference `List.filter` — still strictly sorted. -/
 theorem removeBatchTree_spec (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hw : TreeWF c h t)
@@ -671,7 +671,7 @@ theorem removeBatchTree_spec (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hw
     · rw [collapse_toList, removeBatch_content c h true t 0 HI batch hw hb (fun _ _ => Nat.zero_le _)]
       exact Sorted.sublist (List.filter_sublist) hs
 
-/-- An unsorted batch is the `assert!` panic (`mod.rs:278`). -/
+/-- An unsorted batch is the `assert!` panic (`mod.rs:295`). -/
 theorem removeBatchTree_unsorted (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hne : batch ≠ [])
     (hb : ¬ SortedLe batch) : removeBatchTree c h t batch = none := by
   unfold removeBatchTree; simp [hne, hb]

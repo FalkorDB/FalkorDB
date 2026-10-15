@@ -12,16 +12,18 @@ entry list and each operation *is* its proven content spec. Copied from
 
 | here | Rust | proven contents |
 | --- | --- | --- |
-| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:206`) | cow_btree `insert_spec` (= `sins`) |
-| `tRemove` | `CowBTree::remove` (`:243`) | cow_btree `remove_spec` (= `List.erase`) |
-| `tInsertBatch` | `CowBTree::insert_batch` (`:224`) | index_layer `Leaf.insertBatch_contents` (= union) |
-| `tRemoveBatch` | `CowBTree::remove_batch` (`:269`) | cow_btree `removeBatchTree_spec` (= `List.filter`) |
-| `tRange` | `CowBTree::range` / `point` (`:297`, `:307`) | cow_btree `range_spec`, `rangeDocs_spec` |
-| `tFromSorted` | `CowBTree::from_sorted` (`:173`) | index_layer (contents = input) |
+| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:223`) | cow_btree `insert_spec` (= `sins`) |
+| `tRemove` | `CowBTree::remove` (`:260`) | cow_btree `remove_spec` (= `List.erase`) |
+| `tInsertBatch` | `CowBTree::insert_batch` (`:241`) | index_layer `Leaf.insertBatch_contents` (= union) |
+| `tRemoveBatch` | `CowBTree::remove_batch` (`:286`) | cow_btree `removeBatchTree_spec` (= `List.filter`) |
+| `tRange` | `CowBTree::range` / `point` (`:314`, `:324`) | cow_btree `range_spec`, `rangeDocs_spec` |
+| `tFromSorted` | `CowBTree::from_sorted` (`:190`) | index_layer (contents = input) |
 
 **The hypothesis this rests on** (so the numeric-index rows that read through the tree are
 CONDITIONAL): those specs are proven under cow_btree's `TreeWF`, which `remove_batch` does *not*
-preserve (cow_btree Bug 3, `rb_remove_batch_not_wf`). Since #3307 `remove_batch` has a production
+preserve (cow_btree Bug 3 = FINDINGS W7-btree-1, `rb_remove_batch_not_wf`; fix pending in PR #3283,
+still open at cab3cf192). `remove_spec`'s other premise, `BRANCH_MAX >= 4`, is discharged since #2897
+(7b60f28db) by the const assert (cow_btree `remove_spec_asserted`). Since #3307 `remove_batch` has a production
 caller (`FalkorDbIndex::apply_writes` → `remove_encoded`). A bounded search over the cow_btree model
 (`LEAF_MAX = 2, BRANCH_MAX = 4` and `3, 5`; 300+200 seeds × 30-40 alternating `remove_batch` /
 `insert_batch` steps on 40-130 entries) found no content, range or empty-page divergence on the

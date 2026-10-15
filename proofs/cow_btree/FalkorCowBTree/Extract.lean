@@ -125,14 +125,14 @@ theorem rangeWith_spec {α} (ex : Extract α) (hex : ex.Lawful) (c : Cfg) (h : N
   unfold rangeWith
   rw [takeWith_eq ex hex, ← range, range_spec c h root lo hi n hw hn]
 
-/-- **`CowBTree::range` / `point` (`mod.rs:297`, `:307`)** as the Rust yields them: the docs. -/
+/-- **`CowBTree::range` / `point` (`mod.rs:314`, `:324`)** as the Rust yields them: the docs. -/
 theorem rangeDocs_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)
     (hn : (toList h root).length ≤ n) :
     rangeWith DocExtract h root lo hi n =
       ((toList h root).filter (fun e => decide (lo ≤ keyOf e ∧ keyOf e ≤ hi))).map docOf :=
   rangeWith_spec DocExtract DocExtract_lawful c h root lo hi n hw hn
 
-/-- **`CowBTree::range_tuples` (`mod.rs:391`)**: the `(key, doc)` pairs of exactly the entries with key
+/-- **`CowBTree::range_tuples` (`mod.rs:408`)**: the `(key, doc)` pairs of exactly the entries with key
     in `[lo, hi]`, in order. -/
 theorem rangeTuples_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)
     (hn : (toList h root).length ≤ n) :
@@ -152,7 +152,7 @@ theorem rangeTuples_enc (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : 
   simp only [Function.comp, enc, keyOf, docOf, id]
   exact Nat.div_add_mod' e W
 
-/-! ## `heap_bytes` (`mod.rs:402-424`) -/
+/-! ## `heap_bytes` (`mod.rs:419-441`) -/
 
 /-- What `heap_bytes` reads off each page: a leaf's blob length (`leaf.raw().len()`, fixed by the byte
     encoding — `proofs/index_layer` proves it per format), a branch's two `Vec` capacities (not part of
@@ -164,18 +164,18 @@ structure Mem where
   sepSize : Nat := 16
   nodeSize : Nat
 
-/-- One branch's own bytes (`mod.rs:417-419`). -/
+/-- One branch's own bytes (`mod.rs:434-436`). -/
 def Mem.branch (m : Mem) (seps : List E) (cs : List Node) : Nat :=
   m.sepCap seps cs * m.sepSize + m.childCap seps cs * m.nodeSize
 
-/-- The nested `walk` of `heap_bytes` (`mod.rs:403-421`), accumulator-passing as in the Rust. -/
+/-- The nested `walk` of `heap_bytes` (`mod.rs:420-438`), accumulator-passing as in the Rust. -/
 def heapWalk (m : Mem) : Nat → Node → Nat → Nat
   | _, .leaf es, acc => acc + m.raw es                                          -- line 410
   | 0, .branch _ _, acc => acc
   | h + 1, .branch seps cs, acc =>
     cs.foldl (fun a ch => heapWalk m h ch a) (acc + m.branch seps cs)          -- lines 417-420
 
-/-- `CowBTree::heap_bytes` (`mod.rs:402`). -/
+/-- `CowBTree::heap_bytes` (`mod.rs:419`). -/
 def heapBytes (m : Mem) (h : Nat) (root : Node) : Nat := heapWalk m h root 0
 
 /-- The closed form: every page contributes its own bytes once. -/

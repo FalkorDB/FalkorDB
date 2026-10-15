@@ -8,8 +8,9 @@ The contract that makes remove work is the **underflow flag**: `remove_one` retu
 `Some(true)` the node may be *weak* (an empty leaf, or a branch with a single child) and the parent
 must repair it (`rebalance`). The flag is computed as `count < LEAF_MAX / 2` for a leaf and
 `children < BRANCH_MAX / 2` for a branch (`node.rs:197`, reported at `:473`). A weak branch has one child, so the
-contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**. The const assert only demands
-`BRANCH_MAX >= 3` (`mod.rs:135-138`); `Bugs.lean` shows the contract (and the tree) breaking at 3.
+contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands since
+#2897 (`mod.rs:152-155`; `Assert.remove_spec_asserted`). Before it the assert only demanded 3; `Bugs.lean`
+shows the contract (and the tree) breaking there (`pre2897_b3_*`).
 -/
 
 namespace CowBTree
@@ -498,7 +499,7 @@ theorem removeOne_mem (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ (h : Nat) (r : Bool) (n 
 
 /-! ## `CowBTree::remove` -/
 
-/-- The root-collapse loop (`mod.rs:250-257`) turns a weak root into a well-formed root. -/
+/-- The root-collapse loop (`mod.rs:267-274`) turns a weak root into a well-formed root. -/
 theorem collapse_spec (c : Cfg) : ∀ (h : Nat) (n : Node) (lo hi : Nat), Weak c h n lo hi →
     WFb c true (collapse h n).2 (collapse h n).1 lo hi ∧ toList (collapse h n).2 (collapse h n).1 = toList h n
   | 0, .leaf es, lo, hi, hw => by simp only [collapse]; exact ⟨hw, trivial⟩
@@ -523,7 +524,7 @@ theorem collapse_spec (c : Cfg) : ∀ (h : Nat) (n : Node) (lo hi : Nat), Weak c
   | 0, .branch _ _, _, _, hw => by simp [Weak] at hw
   | _ + 1, .leaf _, _, _, hw => by simp [Weak] at hw
 
-/-- **`CowBTree::remove` (`mod.rs:243`)**, for `BRANCH_MAX >= 4`: a well-formed tree stays well-formed
+/-- **`CowBTree::remove` (`mod.rs:260`)**, for `BRANCH_MAX >= 4`: a well-formed tree stays well-formed
     (losing root levels as needed) and its entries become exactly the reference `List.erase`. -/
 theorem remove_spec (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     TreeWF c (remove c h t x).2 (remove c h t x).1 ∧

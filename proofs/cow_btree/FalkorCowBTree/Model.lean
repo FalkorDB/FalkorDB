@@ -51,7 +51,9 @@ def docOf (e : E) : Nat := e % W
     `pre2278_route` still uses it). -/
 def TOP : E := enc (W - 1) (W - 1)
 
-/-- The const-generic parameters and the `const { assert!(..) }` of `mod.rs:134-144`. -/
+/-- The const-generic parameters. `hB : 3 ≤ B` is what `pack_branches` needs; the const assert
+    (`mod.rs:151-160`) demands `4 ≤ B` since #2897 — `Assert.constAssert`, `Cfg.ofAssert` — and the
+    weaker bound here only lets the historical `BRANCH_MAX = 3` counterexample be stated. -/
 structure Cfg where
   L : Nat
   B : Nat
@@ -148,7 +150,7 @@ def mergeBatch (c : Cfg) (es batch : List E) : List (List E) :=
   if es.length + batch.length ≤ c.L then [mergeWalk none es batch]
   else chunks c.L (by have := c.hL; omega) (mergeWalk none es batch)
 
-/-! ## Single insert (`node.rs:306`, `mod.rs:206`) -/
+/-! ## Single insert (`node.rs:306`, `mod.rs:223`) -/
 
 /-- `Node::insert_one`. Returns the replacement node and `Some (sep, right)` on a split. -/
 def insertOne (c : Cfg) : Nat → Node → E → Node × Option (E × Node)
@@ -172,13 +174,13 @@ def insertOne (c : Cfg) : Nat → Node → E → Node × Option (E × Node)
         (.branch ls.dropLast (cs'.take mid),                 -- line 350 (pop)
          some (ls.getLast?.getD 0, .branch (seps'.drop mid) (cs'.drop mid)))
 
-/-- `CowBTree::insert` (`mod.rs:206`; its returned `bool` is `insertFlag`, `Lookup.lean`). The ghost height grows by one on a root split. -/
+/-- `CowBTree::insert` (`mod.rs:223`; its returned `bool` is `insertFlag`, `Lookup.lean`). The ghost height grows by one on a root split. -/
 def insert (c : Cfg) (h : Nat) (root : Node) (x : E) : Node × Nat :=
   match insertOne c h root x with
   | (n, none) => (n, h)
   | (n, some (s, r)) => (.branch [s] [n, r], h + 1)
 
-/-! ## Single remove (`node.rs:456`, `mod.rs:243`) -/
+/-! ## Single remove (`node.rs:456`, `mod.rs:260`) -/
 
 /-- `Combined` (`node.rs:38`). -/
 inductive Combined where
@@ -232,23 +234,23 @@ def removeOne (c : Cfg) : Nat → Node → E → Option (Node × Bool)
       let r := if u then rebalance c seps cs1 i else (seps, cs1)   -- lines 470-471
       some (.branch r.1 r.2, decide (r.2.length < c.B / 2))        -- line 473 (`Branch::is_underfull`, line 197)
 
-/-- The root-collapse loop of `CowBTree::remove` (`mod.rs:250-257`). -/
+/-- The root-collapse loop of `CowBTree::remove` (`mod.rs:267-274`). -/
 def collapse : Nat → Node → Node × Nat
   | h + 1, .branch _ [ch] => collapse h ch
   | h, n => (n, h)
 
-/-- `CowBTree::remove` (`mod.rs:243`; its returned `bool` is `removeOne(..).isSome`, `Lookup.lean`). -/
+/-- `CowBTree::remove` (`mod.rs:260`; its returned `bool` is `removeOne(..).isSome`, `Lookup.lean`). -/
 def remove (c : Cfg) (h : Nat) (root : Node) (x : E) : Node × Nat :=
   match removeOne c h root x with
   | none => (root, h)
   | some (n, _) => collapse h n
 
-/-- `CowBTree::is_empty` (`mod.rs:446`). -/
+/-- `CowBTree::is_empty` (`mod.rs:463`). -/
 def isEmpty : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-! ## Bulk paths (`node.rs:56`, `:90`, `:244`; `mod.rs:173`, `:224`) -/
+/-! ## Bulk paths (`node.rs:56`, `:90`, `:244`; `mod.rs:190`, `:241`) -/
 
 /-- `pack_branches` (`node.rs:56`): chunks of `BRANCH_MAX`, except a remainder of `BRANCH_MAX + 1`
     is split `BRANCH_MAX - 1` + `2`. Separators are `Node::min` of every non-first child
@@ -306,14 +308,14 @@ def applyBatch (c : Cfg) : Nat → Node → List E → List Node
       (fun p => if p.2 = [] then [p.1] else applyBatch c h p.1 p.2)   -- lines 287-292
     packBranches c h newChildren                                      -- line 295
 
-/-- `CowBTree::insert_batch` (`mod.rs:224`). -/
+/-- `CowBTree::insert_batch` (`mod.rs:241`). -/
 def insertBatch (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Node × Nat :=
   if batch = [] then (root, h)
   else
     let frags := applyBatch c h root batch
     buildRoot c frags.length h frags
 
-/-- `CowBTree::from_sorted` (`mod.rs:173`). -/
+/-- `CowBTree::from_sorted` (`mod.rs:190`). -/
 def fromSorted (c : Cfg) (pairs : List E) : Node × Nat :=
   if pairs = [] then (.leaf [], 0)
   else
