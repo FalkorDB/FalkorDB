@@ -1357,3 +1357,27 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE n.v >= 1.0/0.0 RETURN n.k",
              "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"],
             expected_rows=[[['inf'], ['one']], [['-inf']], [['inf']], [['-inf']]])
+
+    def test_42_range_index_beside_fulltext_index(self):
+        # A range index on an attribute that already has a fulltext index
+        # must be queried through its own (range) field, not the fulltext
+        # one that was registered first.
+        g = self.db.select_graph("range_beside_fulltext")
+        try:
+            g.query("CREATE (:L {s:'foo', v:1}), (:L {s:'bar', v:2}), (:L {s:'dog', v:3})")
+            create_node_fulltext_index(g, 'L', 's', 'v', sync=True)
+            create_node_range_index(g, 'L', 's', 'v', sync=True)
+            for q, expected in [
+                    ("MATCH (n:L) WHERE n.s = 'foo' RETURN n.s", [['foo']]),
+                    ("MATCH (n:L) WHERE n.s > 'c' RETURN n.s", [['dog'], ['foo']]),
+                    ("MATCH (n:L {s:'bar'}) RETURN n.s", [['bar']]),
+                    ("MATCH (n:L) WHERE n.s IN ['foo', 'dog'] RETURN n.s", [['dog'], ['foo']]),
+                    ("MATCH (n:L) WHERE n.v = 2 RETURN n.s", [['bar']]),
+                    ("MATCH (n:L) WHERE n.v >= 2 RETURN n.s", [['bar'], ['dog']])]:
+                self.env.assertContains('Node By Index Scan', str(g.explain(q)))
+                self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
+            # The fulltext index still answers fulltext queries.
+            res = g.query("CALL db.idx.fulltext.queryNodes('L', 'foo') YIELD node RETURN node.s")
+            self.env.assertEqual(res.result_set, [['foo']])
+        finally:
+            g.delete()
