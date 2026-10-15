@@ -3,3 +3,8 @@ defaultTargets = ["FalkorReplication"]
 
 [[lean_lib]]
 name = "FalkorReplication"
+
+# effects_emit_apply's memo loop (`FalkorEA.memoGroup`) is imported, not copied.
+[[require]]
+name = "falkor-effects-emit-apply"
+path = "../effects_emit_apply"

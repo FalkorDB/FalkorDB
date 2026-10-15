@@ -3,3 +3,8 @@ defaultTargets = ["PendingCommit"]
 
 [[lean_lib]]
 name = "PendingCommit"
+
+# graph_queries' IdSpace model (`GQ.IdS`, `GQ.rCancel`) is imported, not copied.
+[[require]]
+name = "falkor-graph-queries"
+path = "../graph_queries"

@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-id-list»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../id_list",
+   "configFile": "lakefile.toml"}],
  "name": "«falkor-aeneas-pilot»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

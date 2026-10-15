@@ -47,8 +47,9 @@ Conventions are in [REFERENCE.md](REFERENCE.md).
 a Rust test, or a live query compared with the C module. Record it in FINDINGS.md with
 `file:line`, the repro, and the Rust vs C output. Keep the counterexample as a theorem.
 
-**Review a PR with the proofs**: in a new `proofs/pr<N>_review/` project, copy the
-definitions you need from the owning projects. Model the PR's merged code for the
+**Review a PR with the proofs**: in a new `proofs/pr<N>_review/` project, import the
+definitions you need from the owning projects (Lake path dependency, see REFERENCE.md);
+copy only what the PR changes. Model the PR's merged code for the
 changed functions, and prove or refute each claim the PR makes. Confirm any refutation
 live. Also check that the existing theorems still hold for the new code. A PR that
 changes `Eq`/`Hash`/`Ord`/`sort_cmp`/`compare_value` (or anything a `HashMap` key or a

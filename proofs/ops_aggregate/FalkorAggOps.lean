@@ -71,7 +71,8 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
 
 ## Gaps / assumptions
 Sort order inside `SortCmp` is a parameter `cv`; on main it is `Value::sort_cmp`, whose laws are
-proven in proofs/value_order and instantiated here (`Discharge.lean`, copies under `VO/`).
+proven in proofs/value_order and instantiated here (`Discharge.lean`, which imports
+proofs/value_order as a Lake path dependency).
 Floats: no IEEE reasoning in the aggregates; the avg/sum/stdev overflow behaviour is checked with
 `#eval` against C only. HashMap iteration order and the typed-column machinery (batch.rs
 builders, classify_*, concat, gather) are not modelled. The scalar aggregate bodies are dead code

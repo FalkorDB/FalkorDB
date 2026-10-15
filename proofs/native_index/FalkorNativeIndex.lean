@@ -21,9 +21,9 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 | Lean | Rust |
 | --- | --- |
 | `Float.lean`: `F64` bits, `isNaN`, `pos`, `fpcmp`, `encodeF64` | `f64::to_bits`/`partial_cmp` (IEEE 754 §3.4/§5.11), `encode.rs:50-55` |
-| `IntF.lean`: `roundNat`, `magBits`, `i64ToF64` | `i as f64` (value_order `roundNat`, copied) |
+| `IntF.lean`: `roundNat`, `magBits`, `i64ToF64` | `i as f64` (value_order `roundNat`, imported) |
 | `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
-| `Tree.lean`: `tInsert`…`tRange` (CowBTree contents, copied from cow_btree) | `cow_btree/mod.rs:190-324` |
+| `Tree.lean`: `tInsert`…`tRange` (CowBTree contents; encoding/sorted lemmas imported from cow_btree) | `cow_btree/mod.rs:190-324` |
 | `Numeric.lean`: `NumericIndex.*`, `rangeBounds`, `IndexQuery` | `numeric.rs:39-254` |
 | `Index.lean`: `hmGet`…, `IndexColumn.*`, `ColumnEntry.ready`, `FalkorDbIndex.*` | `falkordb_index.rs:38-355`, `:409-432` |
 | `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `applyColumn`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:364-400` |

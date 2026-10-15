@@ -1,10 +1,11 @@
 import PendingCommit.PendingCancel
+import GraphQueries.IdRust
 /-
 # Discharging `CancelSpec`: `Graph::cancel_node_id` / `cancel_relationship_id`
 
 `PendingCancel.lean` takes the graph's cancel as the hypothesis `CancelSpec`.
-Here the graph's two id spaces are modelled (copied from proofs/graph_queries
-`IdRust.lean`, which copies proofs/id_space `Model.lean`) and the hypothesis is
+Here the graph's two id spaces are proofs/graph_queries' `GQ.IdS` / `GQ.rCancel`
+(`IdRust.lean`, imported via a Lake path dependency) and the hypothesis is
 proved for the Rust bodies:
 
 * `cancel_node_id` (graph.rs:1449) = `self.node_ids.cancel(id)?`,
@@ -16,30 +17,7 @@ proved for the Rust bodies:
 -/
 namespace PendingCommit.PS.CancelRust
 
-/-- `struct IdSpace` (id_space.rs:164), list form (graph_queries `GQ.IdS`). -/
-structure IdS where
-  live : Nat
-  recycled : List Nat
-  entryBound : Nat
-  taken : List Nat
-
-/-- `RoaringTreemap::insert`. -/
-def ins (l : List Nat) (x : Nat) : List Nat := if x ∈ l then l else l ++ [x]
-
-def bound (s : IdS) : Nat := s.live + s.recycled.length
-def above (t : List Nat) (eb : Nat) : Nat := (t.filter (fun x => decide (eb ≤ x))).length
-
-/-- `checked` (id_space.rs:403). -/
-def rChecked (s : IdS) : Bool :=
-  let e := s.entryBound + above s.taken s.entryBound
-  decide (e < 2 ^ 64) && e == bound s
-
-/-- `cancel` (id_space.rs:529). -/
-def rCancel (s : IdS) (id : Nat) : Option IdS :=
-  if id ∈ s.taken then none
-  else
-    let s' : IdS := { s with taken := ins s.taken id, recycled := ins s.recycled id }
-    if rChecked s' then some s' else none
+open GQ (IdS ins rCancel)
 
 /-- The graph's two id spaces: `(node_ids, relationship_ids)`. -/
 abbrev Gr := IdS × IdS

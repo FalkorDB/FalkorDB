@@ -1,11 +1,12 @@
 import FalkorNativeIndex.Float
+import FalkorValueOrder.Model
 set_option linter.unusedSimpArgs false
 
 /-!
 # `i as f64` at the bit level (`encode.rs:31`, `value.rs:1267-1268`)
 
-`bitlenAux` / `bitlen` / `roundNat` are copied from value_order
-(`proofs/value_order/FalkorValueOrder/Model.lean:111-128`, IEEE round-to-nearest-even to 53
+`bitlenAux` / `bitlen` / `roundNat` are imported from value_order
+(`proofs/value_order/FalkorValueOrder/Model.lean:111-128`, Lake path dependency; IEEE round-to-nearest-even to 53
 significant bits). `magBits m` is the binary64 encoding of the positive double nearest `m`: biased
 exponent `1022 + L` (`L` = bit length of the rounded value) and the 52 fraction bits below the
 implicit one.
@@ -17,23 +18,7 @@ converted `i64` is finite (not NaN). `2^53` and `2^53 + 1` convert to the same b
 
 namespace NI
 
-def bitlenAux : Nat → Nat → Nat
-  | 0, _ => 0
-  | fuel + 1, n => if n = 0 then 0 else 1 + bitlenAux fuel (n / 2)
-
-/-- Number of significant bits (`0` for `0`); fuel 70 covers every `i64`. -/
-def bitlen (n : Nat) : Nat := bitlenAux 70 n
-
-/-- Round a natural to 53 significant bits, ties to even. -/
-def roundNat (m : Nat) : Nat :=
-  let L := bitlen m
-  if L ≤ 53 then m else
-    let e := L - 53
-    let q := m / 2 ^ e
-    let r := m % 2 ^ e
-    let half := 2 ^ (e - 1)
-    let q' := if r > half ∨ (r = half ∧ q % 2 = 1) then q + 1 else q
-    q' * 2 ^ e
+export ValueOrder (bitlenAux bitlen roundNat)
 
 /-- binary64 encoding of the positive double nearest `m > 0`. -/
 def magBits (m : Nat) : Nat :=

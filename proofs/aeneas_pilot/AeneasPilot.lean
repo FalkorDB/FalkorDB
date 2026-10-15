@@ -1,4 +1,5 @@
 import Extracted.NarrowInt
+import FalkorIdList.Wire
 /-!
 # Aeneas feasibility pilot — proofs against Rust-EXTRACTED definitions
 
@@ -11,7 +12,7 @@ It is type-checked unmodified; `import Aeneas` resolves to the local shim
 | here                         | there                                             |
 |------------------------------|---------------------------------------------------|
 | `falkor_aeneas_pilot.narrow_int.width_for` (extracted) | `graph/src/narrow_int.rs:19` |
-| `widthFor` (hand model, copied verbatim) | `proofs/id_list/FalkorIdList/Wire.lean:74` |
+| `widthFor` (hand model, imported) | `proofs/id_list/FalkorIdList/Wire.lean:74` |
 
 Bridge theorem `width_for_refines` shows the hand-written model used by
 proofs/id_list is exactly the extracted Rust function, so every id_list theorem
@@ -60,9 +61,9 @@ open Aeneas Aeneas.Std falkor_aeneas_pilot
 
 namespace AeneasPilot
 
-/-- Hand model from proofs/id_list/FalkorIdList/Wire.lean:74 (verbatim). -/
-def widthFor (v : Nat) : Nat :=
-  if v ≤ 0xFF then 1 else if v ≤ 0xFFFF then 2 else if v ≤ 0xFFFFFFFF then 4 else 8
+-- The hand model is proofs/id_list's own `IdListWire.widthFor` (Lake path dependency),
+-- so the bridge below is literally about the definition the id_list theorems use.
+export IdListWire (widthFor)
 
 @[simp] theorem U64.ofNat_val (n : Nat) (h : n < 2 ^ 64) : (U64.ofNat n h).val = n := by
   simp [U64.ofNat, UScalar.ofNat, UScalar.val, UScalarTy.numBits]; omega

@@ -1,5 +1,5 @@
 import FalkorReplication.Guard
-import FalkorReplication.Memo
+import FalkorEffectsEmitApply.Basic
 import FalkorReplication.Faithful
 /-
 # Effects v3: emit and apply agree, so master and replica cannot silently diverge
@@ -57,7 +57,7 @@ no clock and no plan choice for the two sides to disagree about.
 | `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
 | `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
 | `Guard.*` (`Guard.lean`) | every fn of `src/divergence_guard.rs` line by line: `onFailure_client_noop`, `onFailure_loading_exits`, `onFailure_replicated_resyncs`, `forceFullResync_exit_iff`, `masterAddress_some`, `clip_spec`; `guardReplica_spec`, `stepNode_failure_matches_guard` tie them to `stepNode` |
-| refinement (wave 4)      | `intern_refines`, `applyRec_addLabel_refines`/`_addAttribute_refines` (= `apply_add_schema`), `idsOf_refines` (= `IdSpace::reserve` on a fresh batch), `memo_refines_groupBy`/`emit_refines` (= the `slots`/`index`/`last` loops, `Memo.lean`) |
+| refinement (wave 4)      | `intern_refines`, `applyRec_addLabel_refines`/`_addAttribute_refines` (= `apply_add_schema`), `idsOf_refines` (= `IdSpace::reserve` on a fresh batch), `memo_refines_groupBy`/`emit_refines` (= the `slots`/`index`/`last` loops, effects_emit_apply `Basic.lean`) |
 
 ## Three mechanisms the proof turns on
 
@@ -1553,8 +1553,8 @@ theorem guard_loading_halts (r : Bool) : guardReplica ⟨r, true⟩ = some .halt
 /-! ## Refinement: the abstract steps are the engine's
 
 Each abstract step of this model is proven equal to a faithful model of the
-Rust function it stands for (`FalkorMemo`, copied from
-proofs/effects_emit_apply; `FalkorFaithful`, restating proofs/effects_emit_apply
+Rust function it stands for (`FalkorEA.memoGroup`, imported from
+proofs/effects_emit_apply `Basic.lean` via a Lake path dependency; `FalkorFaithful`, restating proofs/effects_emit_apply
 and proofs/id_space). So `emit_apply`, `stream_simulation` and
 `replica_never_serves_a_different_graph` are statements about those functions. -/
 
@@ -1595,31 +1595,31 @@ theorem idsOf_refines (σ : GState) (n : Nat) : idsOf σ n = FalkorFaithful.rese
   simp [idsOf, FalkorFaithful.reserveFresh, reusedOf, freshCount]
 
 theorem addTo_bridge {K} [DecidableEq K] {A} (k : K) (x : A) :
-    ∀ acc, addTo k x acc = FalkorMemo.addTo k x acc := by
+    ∀ acc, addTo k x acc = FalkorEA.addTo k x acc := by
   intro acc; induction acc with
   | nil => rfl
-  | cons hd tl ih => obtain ⟨k', g⟩ := hd; simp only [addTo, FalkorMemo.addTo, ih]
+  | cons hd tl ih => obtain ⟨k', g⟩ := hd; simp only [addTo, FalkorEA.addTo, ih]
 
 theorem groupBy_bridge {K} [DecidableEq K] {A} (key : A → K) (l : List A) :
-    groupBy key l = FalkorMemo.groupBy key l := by
-  unfold groupBy FalkorMemo.groupBy
-  suffices ∀ acc, groupAux key l acc = FalkorMemo.groupAux key l acc from this []
+    groupBy key l = FalkorEA.groupBy key l := by
+  unfold groupBy FalkorEA.groupBy
+  suffices ∀ acc, groupAux key l acc = FalkorEA.groupAux key l acc from this []
   induction l with
   | nil => intro acc; rfl
-  | cons x rest ih => intro acc; simp only [groupAux, FalkorMemo.groupAux, addTo_bridge, ih]
+  | cons x rest ih => intro acc; simp only [groupAux, FalkorEA.groupAux, addTo_bridge, ih]
 
 /-- **`emit`'s `groupBy` is the engine's `slots`/`index`/`last` loop**
 (`digest_created_nodes`, `digest_deleted_nodes`). -/
 theorem memo_refines_groupBy {K} [DecidableEq K] {A} (key : A → K) (l : List A) :
-    FalkorMemo.memoGroup key l = groupBy key l := by
-  rw [groupBy_bridge]; exact FalkorMemo.memoGroup_eq_groupBy key l
+    FalkorEA.memoGroup key l = groupBy key l := by
+  rw [groupBy_bridge]; exact FalkorEA.memoGroup_eq_groupBy key l
 
 /-- `emit` written with the engine's loops is `emit`. -/
 theorem emit_refines (p : Pending) (σ : GState) :
     emit p σ = schemaRecs Record.addLabel σ.labels.length p.newLabels
       ++ schemaRecs Record.addAttribute σ.attrs.length p.newAttrs
-      ++ (FalkorMemo.memoGroup NodeSpec.shape p.created).map createRec
-      ++ (FalkorMemo.memoGroup Prod.snd p.deleted).map deleteRec := by
+      ++ (FalkorEA.memoGroup NodeSpec.shape p.created).map createRec
+      ++ (FalkorEA.memoGroup Prod.snd p.deleted).map deleteRec := by
   simp only [emit, memo_refines_groupBy]
 
 /-! ## The id space the engine keeps (#2846)

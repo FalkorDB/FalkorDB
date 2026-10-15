@@ -15,3 +15,8 @@ name = "Extracted"
 
 [[lean_lib]]
 name = "AeneasPilot"
+
+# id_list's hand model `widthFor` is imported, not copied.
+[[require]]
+name = "falkor-id-list"
+path = "../id_list"

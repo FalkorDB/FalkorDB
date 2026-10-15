@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-value-order»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../value_order",
+   "configFile": "lakefile.toml"}],
  "name": "«falkor-ops-aggregate»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

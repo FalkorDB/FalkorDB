@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-graph-queries»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../graph_queries",
+   "configFile": "lakefile.toml"}],
  "name": "«falkor-pending-commit»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

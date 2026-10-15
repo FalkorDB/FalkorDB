@@ -3,3 +3,8 @@ defaultTargets = ["FalkorAggOps"]
 
 [[lean_lib]]
 name = "FalkorAggOps"
+
+# value_order's models (Value, F, sort_cmp, Hash) are imported, not copied.
+[[require]]
+name = "falkor-value-order"
+path = "../value_order"

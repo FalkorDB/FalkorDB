@@ -1,4 +1,5 @@
 import FalkorNativeIndex.Agree
+import FalkorCowBTree.Basic
 set_option linter.unusedSimpArgs false
 
 /-!
@@ -6,9 +7,9 @@ set_option linter.unusedSimpArgs false
 
 The native index calls six tree operations. Their behaviour on contents is **proven in
 `proofs/cow_btree`** (and `proofs/index_layer` for `insert_batch`); here the tree *is* its sorted
-entry list and each operation *is* its proven content spec. Copied from
-`proofs/cow_btree/FalkorCowBTree/{Model,Basic}.lean` (`enc`/`keyOf`/`docOf`, `Sorted`, `sorted_ext`,
-`sins`, `mem_sins`, `sorted_sins`, `mem_erase_sorted`):
+entry list and each operation *is* its proven content spec. `enc`/`keyOf`/`docOf`, `Sorted`,
+`sorted_ext`, `sins`, `mem_sins`, `sorted_sins`, `mem_erase_sorted` are imported from
+`proofs/cow_btree/FalkorCowBTree/{Model,Basic}.lean` (Lake path dependency):
 
 | here | Rust | proven contents |
 | --- | --- | --- |
@@ -32,121 +33,15 @@ batch-only paths production uses; Bug 3's panic needs a single-key `remove`, whi
 
 namespace NI
 
-/-- A `(key, doc)` entry as one number (lexicographic order = `Nat` order). -/
-def enc (k d : Nat) : Nat := k * W + d
-def keyOf (e : Nat) : Nat := e / W
-def docOf (e : Nat) : Nat := e % W
+/-! The entry encoding and the sorted-list lemmas are proofs/cow_btree's (`Model.lean`,
+`Basic.lean`), imported via a Lake path dependency. Its `W` is this project's `W` (`2^64`). -/
+export CowBTree (enc keyOf docOf keyOf_enc docOf_enc Sorted sorted_cons sorted_ext sins mem_sins
+  sorted_sins mem_erase_sorted sorted_erase)
 
-theorem keyOf_enc (k d : Nat) (hd : d < W) : keyOf (enc k d) = k := by
-  unfold keyOf enc; rw [Nat.add_comm, Nat.add_mul_div_right _ _ (by decide : 0 < W)]
-  rw [Nat.div_eq_of_lt hd]; omega
-
-theorem docOf_enc (k d : Nat) (hd : d < W) : docOf (enc k d) = d := by
-  unfold docOf enc; rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hd]
+theorem W_eq : CowBTree.W = W := rfl
 
 theorem enc_keyOf_docOf (e : Nat) : enc (keyOf e) (docOf e) = e := by
-  unfold enc keyOf docOf; have := Nat.div_add_mod e W; rw [Nat.mul_comm] at this; omega
-
-def Sorted (l : List Nat) : Prop := l.Pairwise (· < ·)
-
-theorem sorted_cons {a : Nat} {l : List Nat} : Sorted (a :: l) ↔ (∀ b ∈ l, a < b) ∧ Sorted l :=
-  List.pairwise_cons
-
-theorem sorted_ext : ∀ {l₁ l₂ : List Nat}, Sorted l₁ → Sorted l₂ → (∀ e, e ∈ l₁ ↔ e ∈ l₂) → l₁ = l₂
-  | [], [], _, _, _ => rfl
-  | [], b :: _, _, _, h => absurd ((h b).2 (List.mem_cons_self)) (List.not_mem_nil)
-  | a :: _, [], _, _, h => absurd ((h a).1 (List.mem_cons_self)) (List.not_mem_nil)
-  | a :: as, b :: bs, h₁, h₂, h => by
-    rw [sorted_cons] at h₁ h₂
-    have hab : a = b := by
-      have ha := (h a).1 List.mem_cons_self
-      have hb := (h b).2 List.mem_cons_self
-      rcases List.mem_cons.1 ha with ha | ha
-      · exact ha
-      rcases List.mem_cons.1 hb with hb | hb
-      · exact hb.symm
-      have := h₂.1 a ha; have := h₁.1 b hb; omega
-    subst hab
-    congr 1
-    apply sorted_ext h₁.2 h₂.2
-    intro e
-    constructor
-    · intro he
-      have := (h e).1 (List.mem_cons_of_mem _ he)
-      rcases List.mem_cons.1 this with h' | h'
-      · subst h'; have := h₁.1 e he; omega
-      · exact h'
-    · intro he
-      have := (h e).2 (List.mem_cons_of_mem _ he)
-      rcases List.mem_cons.1 this with h' | h'
-      · subst h'; have := h₂.1 e he; omega
-      · exact h'
-
-/-- Sorted-set insert (cow_btree `sins`). -/
-def sins (x : Nat) : List Nat → List Nat
-  | [] => [x]
-  | y :: ys => if x < y then x :: y :: ys else if x = y then y :: ys else y :: sins x ys
-
-theorem mem_sins (x : Nat) : ∀ (l : List Nat) (e : Nat), e ∈ sins x l ↔ e ∈ l ∨ e = x
-  | [], e => by simp [sins]
-  | y :: ys, e => by
-    unfold sins
-    split
-    · simp only [List.mem_cons]
-      constructor
-      · rintro (h | h | h) <;> simp [h]
-      · rintro ((h | h) | h) <;> simp [h]
-    · split
-      · subst_vars; simp only [List.mem_cons]
-        constructor
-        · rintro (h | h) <;> simp [h]
-        · rintro ((h | h) | h) <;> simp [h]
-      · simp only [List.mem_cons, mem_sins x ys e]
-        constructor
-        · rintro (h | h | h) <;> simp [h]
-        · rintro ((h | h) | h) <;> simp [h]
-
-theorem sorted_sins (x : Nat) : ∀ (l : List Nat), Sorted l → Sorted (sins x l)
-  | [], _ => by simp [sins, Sorted]
-  | y :: ys, h => by
-    unfold sins
-    rw [sorted_cons] at h
-    split
-    · rw [sorted_cons]; refine ⟨?_, sorted_cons.2 h⟩
-      intro b hb; rcases List.mem_cons.1 hb with hb | hb
-      · omega
-      · have := h.1 b hb; omega
-    · split
-      · exact sorted_cons.2 h
-      · rw [sorted_cons]; refine ⟨?_, sorted_sins x ys h.2⟩
-        intro b hb; rcases (mem_sins x ys b).1 hb with hb | hb
-        · exact h.1 b hb
-        · omega
-
-theorem mem_erase_sorted (x : Nat) : ∀ (l : List Nat), Sorted l → ∀ e, e ∈ l.erase x ↔ e ∈ l ∧ e ≠ x
-  | [], _, e => by simp
-  | y :: ys, h, e => by
-    rw [sorted_cons] at h
-    by_cases hxy : y = x
-    · subst hxy
-      simp only [List.erase_cons_head]
-      constructor
-      · intro he; exact ⟨List.mem_cons_of_mem _ he, by have := h.1 e he; omega⟩
-      · rintro ⟨he, hne⟩; rcases List.mem_cons.1 he with he | he
-        · exact absurd he hne
-        · exact he
-    · rw [List.erase_cons_tail (by simpa using hxy)]
-      simp only [List.mem_cons, mem_erase_sorted x ys h.2 e]
-      constructor
-      · rintro (he | ⟨he, hne⟩)
-        · subst he; exact ⟨Or.inl rfl, hxy⟩
-        · exact ⟨Or.inr he, hne⟩
-      · rintro ⟨he | he, hne⟩
-        · exact Or.inl he
-        · exact Or.inr ⟨he, hne⟩
-
-theorem sorted_erase (x : Nat) (l : List Nat) (h : Sorted l) : Sorted (l.erase x) :=
-  List.Pairwise.sublist (List.erase_sublist) h
+  unfold enc keyOf docOf; have := Nat.div_add_mod e CowBTree.W; rw [Nat.mul_comm] at this; omega
 
 /-! ## The tree, as its contents -/
 

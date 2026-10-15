@@ -9,6 +9,9 @@
 #      `-- AXIOM-OK: <justification>` comment.
 #      Comments and docstrings are stripped before the scan,
 #      so prose like "zero sorry" is fine.
+#   A project may import another through a Lake path dependency
+#   (`[[require]] path = "../value_order"`): `lake build` builds it first, in its own
+#   .lake/, and its sources are scanned when that project itself is checked.
 #
 # Usage: proofs/lean_ci.sh [--no-build] [dir ...]     (default: all projects)
 # Exit status: 0 iff every project builds and is clean.

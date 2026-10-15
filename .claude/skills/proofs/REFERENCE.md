@@ -14,8 +14,19 @@ proofs/<area>/
 ```
 
 No Mathlib: use core Lean 4 plus `omega`, `simp`, `decide`, `induction`, and the
-`List`/`Array` lemmas in core. Projects are standalone. When you need another
-project's definitions, copy them and say where they came from.
+`List`/`Array` lemmas in core. When you need another project's definitions, import
+them instead of copying: add a Lake path dependency to `lakefile.toml`
+
+```toml
+[[require]]
+name = "falkor-value-order"      # the dependency's own `name`
+path = "../value_order"
+```
+
+then `lake update` (commit the generated `lake-manifest.json`) and `import
+FalkorValueOrder.Model`. `export Ns (a b c)` inside your namespace keeps local short
+names. All projects pin the same toolchain; `lean_ci.sh` builds dependencies first
+(inside their own `.lake`) and scans only each project's own files.
 
 ## Faithful models
 

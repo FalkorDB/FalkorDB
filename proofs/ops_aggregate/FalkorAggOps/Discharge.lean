@@ -1,6 +1,6 @@
 import FalkorAggOps.SortCmp
 import FalkorAggOps.AggState
-import FalkorAggOps.VO.Main
+import FalkorValueOrder.Main
 /-!
 # Discharging the `compare_value`/`Hash` hypotheses on main (4a4f2a72f)
 
@@ -10,10 +10,9 @@ for which the hypotheses are false, so the sort.rs `cmp_key`/`cmp`/`cmp` rows an
 aggregate.rs `GroupKey::hash` row were CONDITIONAL. On main:
 
 * sort.rs sorts by `Value::sort_cmp` (#2912 b033aecc6): `cv = scMain`, a total preorder on
-  every well-formed value (proofs/value_order `Main.scMain_total`, copied under `VO/`).
+  every well-formed value (proofs/value_order `Main.scMain_total`, imported via the Lake path dependency `../value_order`).
 * `GroupKey::eq` is `sort_cmp == Equal` and `Hash for Value` canonicalises NaN and f32
-  components (#2917 7fdf06a0e): `hc` holds (proofs/value_order `Main.main_hash_consistent`;
-  the same theorem as proofs/pr2917_review `hashPR_consistent`).
+  components (#2917 7fdf06a0e): `hc` holds (proofs/value_order `Main.main_hash_consistent`).
 
 Values are well-formed (`wf`: Ints are `i64`, Float `num`s representable, one value per
 map key) — every `Value` the engine builds is.
