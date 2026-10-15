@@ -1261,19 +1261,25 @@ impl Graph {
             return pos;
         }
 
-        self.relationship_types
-            .push(Arc::new(relationship_type.to_string()));
-        self.relationship_matrices.insert(
-            self.relationship_types.len() - 1,
-            Tensor::new(self.node_cap, self.node_cap),
-        );
-        // As in `get_relationship_matrix_mut`: `relationship_type_matrix` is
-        // relationships x types, so registering a type widens it here. A type
-        // registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used
-        // to leave it a column short, and every later edge delete built a
-        // removal mask the matrix refused, keeping the deleted edge's type.
+        self.register_relationship_type(Arc::new(relationship_type.to_string()))
+    }
+
+    /// Append a new relationship type: its name, its tensor, and the extra
+    /// column in `relationship_type_matrix` (relationships x types). Every
+    /// registration goes through here so none can skip the resize: a type
+    /// registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used to
+    /// leave the matrix a column short, and every later edge delete built a
+    /// removal mask the matrix refused, keeping the deleted edge's type (#3244).
+    fn register_relationship_type(
+        &mut self,
+        relationship_type: Arc<String>,
+    ) -> TypeId {
+        self.relationship_types.push(relationship_type);
+        let id = self.relationship_types.len() - 1;
+        self.relationship_matrices
+            .insert(id, Tensor::new(self.node_cap, self.node_cap));
         self.resize();
-        TypeId(self.relationship_types.len() - 1)
+        TypeId(id)
     }
 
     pub fn get_plan(
@@ -1373,17 +1379,7 @@ impl Graph {
         relationship_type: &Arc<String>,
     ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
-            self.relationship_types.push(relationship_type.clone());
-
-            self.relationship_matrices.insert(
-                self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap),
-            );
-            // As for labels above: `relationship_type_matrix` is relationships
-            // x types, so registering a type changes one of its dimensions.
-            // `create_relationships_bulk` reconciles too, but that is the write
-            // catching up rather than the change accounting for itself.
-            self.resize();
+            self.register_relationship_type(relationship_type.clone());
         }
 
         self.relationship_types
