@@ -145,6 +145,13 @@ fn combine_with_sibling<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DO
 /// same [`combine_with_sibling`] step. A merge that itself stays under-full (a nearly-empty subtree
 /// draining) shrinks the list further and, if the whole branch drops below minimum, propagates up as
 /// this branch's own underflow — resolved by the parent's merge or the root-level level-collapse.
+///
+/// Unlike the single-key path, a batch can leave an under-full node *below* an under-full child: a
+/// child that ends with one child of its own cannot repair that lone grandchild (it has no sibling),
+/// so it reports its own underflow and leaves the repair to this level. Combining two branches
+/// concatenates their child lists, carrying that grandchild into the combined node, so each node the
+/// combine produces is repaired the same way ([`Node::merge_underfull_below`]) and then re-checked
+/// here — its repair may have shrunk it under-full again.
 fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
     children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
     seps: &mut Vec<(u64, u64)>,
@@ -152,7 +159,15 @@ fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYT
     let mut i = 0;
     while children.len() > 1 && i < children.len() {
         if children[i].is_underfull() {
-            i = combine_with_sibling(children, seps, i);
+            let len = children.len();
+            let left = if i + 1 < len { i } else { i - 1 };
+            let _ = combine_with_sibling(children, seps, i);
+            // A merge leaves one node at `left`; a borrow leaves two, at `left` and `left + 1`.
+            let produced = if children.len() < len { 1 } else { 2 };
+            for child in &mut children[left..left + produced] {
+                child.merge_underfull_below();
+            }
+            i = left;
         } else {
             i += 1;
         }
@@ -539,6 +554,18 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 merge_underfull(&mut children, &mut seps);
                 Node::Branch(Arc::new(Branch { seps, children }))
             }
+        }
+    }
+
+    /// Repair under-full children of a node a batch-path [`Node::combine`] just produced (see
+    /// [`merge_underfull`]). A no-op for a leaf, and for a branch whose children are all min-full,
+    /// so a repair only recurses down the seam where an under-full node was carried in.
+    fn merge_underfull_below(&mut self) {
+        if let Node::Branch(branch_arc) = self
+            && branch_arc.children.iter().any(Node::is_underfull)
+        {
+            let branch = make_private(branch_arc);
+            merge_underfull(&mut branch.children, &mut branch.seps);
         }
     }
 
