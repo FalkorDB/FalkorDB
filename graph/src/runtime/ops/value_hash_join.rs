@@ -143,29 +143,61 @@ fn keys_match(
 }
 
 /// Map a key to the `i64` the [`JoinHashTable::Int`] fast path is keyed on,
-/// honouring `Value`'s numeric equality (`Int(n)` and the whole float `n.0`
+/// honouring Cypher's numeric equality (`Int(n)` and the whole float `n.0`
 /// compare equal and hash identically, so they must share a key). Integers map
-/// directly; a float maps only if it round-trips through `i64` exactly (a whole
-/// number, in range — matching the `Value` `Hash`/`compare_value` rules);
-/// anything else (string, non-whole float, NaN, …) can't equal an integer key,
-/// so it returns `None`. Only scalar numerics are accepted, so a null-bearing
-/// key can never reach the integer table.
+/// directly; a float maps only if it is a whole number; anything else
+/// (string, non-whole float, NaN, …) can't equal an integer key, so it returns
+/// `None`. Only scalar numerics are accepted, so a null-bearing key can never
+/// reach the integer table.
+///
+/// Both are limited to magnitudes below [`INT_KEY_LIMIT`] (2^53). `=` compares
+/// an `Int` with a `Float` as `i as f64`, which rounds above 2^53, so there it
+/// is not exact equality on the integer: `2^53 + 1 = 2^53.0` is true while
+/// `2^53 + 1 = 2^53` is false. An exact `i64` key cannot express that, so a
+/// build key that large moves the table to the general path (where
+/// [`keys_match`] applies `=` itself), and a probe key that large cannot match
+/// anything the integer table holds: every key there is below 2^53 and exactly
+/// representable, and no value of 2^53 or more equals one of them.
 fn key_as_i64(key: &Value) -> Option<i64> {
     match key {
-        Value::Int(n) => Some(*n),
-        Value::Float(f) => {
-            let n = *f as i64;
-            (n as f64 == *f).then_some(n)
-        }
+        Value::Int(n) if n.unsigned_abs() < INT_KEY_LIMIT => Some(*n),
+        Value::Float(f) if f.abs() < INT_KEY_LIMIT as f64 && f.fract() == 0.0 => Some(*f as i64),
         _ => None,
+    }
+}
+
+/// Integer-table keys stay below this magnitude; see [`key_as_i64`].
+const INT_KEY_LIMIT: u64 = 1 << f64::MANTISSA_DIGITS;
+
+/// Whether two build keys can share one table entry: only when every probe key
+/// that matches one also matches the other. [`keys_match`] alone is not enough,
+/// because `=` is not transitive across `Int` and `Float` above 2^53 —
+/// `2^53` and `2^53.0` are equal, and so are `2^53.0` and `2^53 + 1`, but not
+/// `2^53` and `2^53 + 1`. So an `Int` and a `Float` (at any depth of a list or
+/// map) never share an entry.
+fn same_build_key(
+    a: &Value,
+    b: &Value,
+) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => false,
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| same_build_key(a, b))
+        }
+        (Value::Map(x), Value::Map(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, a)| y.get(k).is_some_and(|b| same_build_key(a, b)))
+        }
+        _ => keys_match(a, b),
     }
 }
 
 /// Insert one build row into the general (`Value`) table, grouping rows that
 /// share a key under a single bucket entry (re-using it on a hash collision or
-/// a repeated key). Grouping uses the same [`keys_match`] test as the probe
-/// side, so two keys share an entry exactly when a probe key matching one must
-/// also match the other.
+/// a repeated key). Two keys share an entry only when a probe key matching one
+/// must also match the other ([`same_build_key`]).
 ///
 /// A key that [`Value::is_never_equal`] rejects is dropped rather than stored.
 /// `keys_match` would reject it on every probe, so it can never join — and
@@ -182,7 +214,7 @@ fn insert_value(
         return;
     }
     let bucket = table.entry(hash_value(&key)).or_default();
-    match bucket.iter_mut().find(|(k, _)| keys_match(k, &key)) {
+    match bucket.iter_mut().find(|(k, _)| same_build_key(k, &key)) {
         Some((_, refs)) => refs.push(slot),
         None => bucket.push((key, smallvec![slot])),
     }
@@ -292,7 +324,9 @@ impl<'a> ValueHashJoinOp<'a> {
                     // All-integer column: key directly on the `i64` — the
                     // build side's hot path (no `Value` box / hash / drop).
                     None => {
-                        if let Column::Ints(ints) = &column {
+                        if let Column::Ints(ints) = &column
+                            && ints[i].unsigned_abs() < INT_KEY_LIMIT
+                        {
                             int_table.entry(ints[i]).or_default().push(slot);
                         } else {
                             // Heterogeneous keys: honour `Value` numeric equality
@@ -343,10 +377,20 @@ impl<'a> ValueHashJoinOp<'a> {
                 let Some(bucket) = table.get(&hash_value(key)) else {
                     return;
                 };
-                bucket
-                    .iter()
-                    .find(|(k, _)| keys_match(k, key))
-                    .map(|(_, refs)| refs)
+                // Usually one entry matches; more only when the build side
+                // holds keys `=` cannot group, like `2^53` and `2^53.0`, that
+                // both equal this probe key (see [`same_build_key`]).
+                for (_, refs) in bucket.iter().filter(|(k, _)| keys_match(k, key)) {
+                    for slot in refs {
+                        let env = BatchRow::new(
+                            &self.right_batches[slot.batch as usize],
+                            slot.row as usize,
+                        )
+                        .to_owned_row();
+                        self.right_match_envs.push(env);
+                    }
+                }
+                return;
             }
         };
         let Some(refs) = refs else {
@@ -478,7 +522,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::RightRowRef;
-    use super::{ValueTable, insert_value, key_as_i64, keys_match};
+    use super::{ValueTable, hash_value, insert_value, key_as_i64, keys_match, same_build_key};
     use crate::runtime::{ordermap::OrderMap, value::Value};
 
     fn list(items: Vec<Value>) -> Value {
@@ -583,5 +627,51 @@ mod tests {
         let entries: usize = table.values().map(Vec::len).sum();
         assert_eq!(entries, 1);
         assert_eq!(table.values().next().unwrap()[0].1.len(), 64);
+    }
+
+    /// Above 2^53 `=` compares an `Int` with a `Float` through `as f64`, so it
+    /// is not exact integer equality there (#3018).
+    #[test]
+    fn int_float_keys_above_2_pow_53_follow_cypher_equality() {
+        let two53 = 1i64 << 53;
+        let (int_lo, int_hi, float) = (
+            Value::Int(two53),
+            Value::Int(two53 + 1),
+            Value::Float(two53 as f64),
+        );
+        // `=`-equal keys must hash alike ...
+        assert!(keys_match(&int_hi, &float));
+        assert_eq!(hash_value(&int_hi), hash_value(&float));
+        assert_eq!(hash_value(&int_lo), hash_value(&float));
+        // ... stay off the exact integer table ...
+        assert_eq!(key_as_i64(&int_lo), None);
+        assert_eq!(key_as_i64(&float), None);
+        assert_eq!(key_as_i64(&Value::Int(two53 - 1)), Some(two53 - 1));
+        assert_eq!(
+            key_as_i64(&Value::Float((two53 - 1) as f64)),
+            Some(two53 - 1)
+        );
+        // ... and never share a build entry across Int and Float, since `=`
+        // is not transitive there (2^53 = 2^53.0 = 2^53 + 1, 2^53 <> 2^53 + 1).
+        assert!(!same_build_key(&int_lo, &float));
+        assert!(!same_build_key(
+            &list(vec![int_lo.clone()]),
+            &list(vec![float.clone()])
+        ));
+        assert!(same_build_key(&int_lo, &Value::Int(two53)));
+
+        let mut table = ValueTable::default();
+        for (row, key) in [int_lo, float, int_hi].into_iter().enumerate() {
+            insert_value(
+                &mut table,
+                key,
+                RightRowRef {
+                    batch: 0,
+                    row: row as u32,
+                },
+            );
+        }
+        let entries: usize = table.values().map(Vec::len).sum();
+        assert_eq!(entries, 3);
     }
 }
