@@ -996,3 +996,35 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         graph = self.db.select_graph(graphname)
         query_result = graph.query("MATCH (n:N)-[:R]->(n) RETURN n.v")
         self.env.assertEqual(query_result.result_set, [[7]])
+
+    # A token header that names a property twice (`p,q,p`) must not leave two
+    # entries for one attribute on the entity: the first non-null value wins,
+    # which is what C reads back for n.p.
+    def test15_duplicate_property_in_header(self):
+        graphname = "bulk_dup_props"
+
+        def long(v):
+            return struct.pack("=Bq", 4, v)
+        null = struct.pack("=B", 0)
+
+        # node token: label "L", properties p,q,p; two records
+        #   (1, 2, 3)    -> p = 1
+        #   (NULL, 2, 3) -> p = 3, the first non-null
+        node_token = (b"L\0" + struct.pack("=I", 3) + b"p\0q\0p\0" +
+                      long(1) + long(2) + long(3) +
+                      null + long(2) + long(3))
+        # edge token: type "R", properties p,p; one record 0->1 with (5, 6)
+        edge_token = (b"R\0" + struct.pack("=I", 2) + b"p\0p\0" +
+                      struct.pack("=QQ", 0, 1) + long(5) + long(6))
+
+        self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", 2, 1, 1, 1,
+                                node_token, edge_token)
+        graph = self.db.select_graph(graphname)
+
+        res = graph.query("MATCH (n:L) RETURN n.p, properties(n) ORDER BY id(n)")
+        self.env.assertEqual(res.result_set, [[1, {'p': 1, 'q': 2}],
+                                              [3, {'p': 3, 'q': 2}]])
+        res = graph.query("MATCH (n:L {p: 3}) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = graph.query("MATCH ()-[e:R]->() RETURN e.p, properties(e)")
+        self.env.assertEqual(res.result_set, [[5, {'p': 5}]])
