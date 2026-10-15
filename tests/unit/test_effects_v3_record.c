@@ -19,6 +19,8 @@
 // docs/effects-v3.md for the v3 blocks. A disagreement is settled against those
 // and the fixture regenerated, never by editing an expectation here.
 
+#include "src/effects/effects.h"
+#include "src/effects/effects_internal.h"
 #include "src/effects/effects_v3_encode.h"
 #include "src/effects/effects_v3_id_list.h"
 #include "src/effects/effects_bytes.h"
@@ -454,6 +456,41 @@ void test_effectsV3Record_constraintDDL(void) {
 	}
 }
 
+// a buffer taken over at a version other than the one it was built on must
+// carry its sink across the arms
+//
+// EffectsBuffer_New picks the arm from Config_EFFECTS_VERSION, so a unit test -
+// where that config is a zeroed static - gets the v2 arm, and EffectsV3_Encode
+// then asks for the body at version 3. Moving the discriminant without moving
+// the sink put eb->v3.flags on byte 0 of eb->v2.bytes and the next read of
+// eb->v3.body on the remains of that pointer. A union arm mismatch is valid C,
+// so the symptom was a segfault rather than a refusal.
+//
+// Not test-only: the same happens for any buffer on the v2 arm, which is what
+// the DEFAULT EFFECTS_VERSION produces.
+static void test_effectsV3Record_takeBodyAcrossArms(void) {
+	EffectsBuffer *eb = EffectsBuffer_New();
+
+	EffectsBytes *body = EffectsBuffer_TakeBody(eb, 3, 0);
+	TEST_ASSERT(body != NULL);
+
+	const unsigned char payload[] = { 0xAB, 0xCD };
+	EffectsBytes_Write(body, payload, sizeof(payload));
+
+	size_t n = 0;
+	unsigned char *out = EffectsBuffer_Buffer(eb, &n);
+
+	// the v3 header is two bytes - version then flags - and then the body it
+	// was handed, which is what proves the sink survived the move
+	TEST_ASSERT_(n == 4, "expected 2 header + 2 body bytes, got %zu", n);
+	TEST_ASSERT_(out[0] == 3, "version byte %u, want 3", out[0]);
+	TEST_ASSERT_(out[1] == 0, "flags byte %u, want 0", out[1]);
+	TEST_ASSERT(out[2] == 0xAB && out[3] == 0xCD);
+
+	rm_free(out);
+	EffectsBuffer_Free(eb);
+}
+
 TEST_LIST = {
 	{ "EffectsV3Record:deleteNode",       test_effectsV3Record_deleteNode },
 	{ "EffectsV3Record:labels",           test_effectsV3Record_labels },
@@ -467,5 +504,7 @@ TEST_LIST = {
 	{ "EffectsV3Record:constraintDDL",
 		test_effectsV3Record_constraintDDL },
 	{ "EffectsV3Record:singularRecords",  test_effectsV3Record_singularRecords },
+	{ "EffectsV3Record:takeBodyAcrossArms",
+		test_effectsV3Record_takeBodyAcrossArms },
 	{ NULL, NULL }
 };

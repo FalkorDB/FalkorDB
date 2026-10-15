@@ -40,7 +40,10 @@ typedef enum {
 	Config_TEMP_FOLDER               = 18,  // path to temp folder
 	Config_JS_HEAP_SIZE              = 19,  // quickjs js runtime heap size limit
 	Config_JS_STACK_SIZE             = 20,  // quickjs js runtime stack size limit
-	Config_END_MARKER                = 21
+	// appended rather than inserted: the values are explicit, so slotting one
+	// in beside EFFECTS_THRESHOLD would renumber everything after it
+	Config_EFFECTS_VERSION           = 21,  // effects payload version to EMIT
+	Config_END_MARKER                = 22
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -61,6 +64,7 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_CMD_INFO,
 	Config_CMD_INFO_MAX_QUERY_COUNT,
 	Config_EFFECTS_THRESHOLD,
+	Config_EFFECTS_VERSION,
 	Config_DELAY_INDEXING,
 	Config_JS_HEAP_SIZE,
 	Config_JS_STACK_SIZE

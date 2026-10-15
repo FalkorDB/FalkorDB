@@ -255,11 +255,29 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	double      weights[fields_count];
 	const char* phonetics[fields_count];
 
+	// WHICH of the three the statement actually STATED, as opposed to which
+	// ended up with a value - every field ends up with all three.
+	//
+	// Invisible locally, because an option left out gets the same default here
+	// that Index_FulltextCreate would apply anyway. Not invisible on the wire:
+	// an effect carries a presence flag meaning "the statement said this", and
+	// MUTATES an index that may already exist. Announcing a default as though
+	// stated has already diverged a live replica once with language, and
+	// phonetic is worse - C's default is the literal string "no" while Rust
+	// reads any non-empty phonetic as ENABLED.
+	bool weight_stated  [fields_count];
+	bool nostem_stated  [fields_count];
+	bool phonetic_stated[fields_count];
+
 	// collect fields and configuration
 	for(uint i = 0; i < fields_count; i++) {
 		weights  [i] = INDEX_FIELD_DEFAULT_WEIGHT ;
 		nostems  [i] = INDEX_FIELD_DEFAULT_NOSTEM ;
 		phonetics[i] = INDEX_FIELD_DEFAULT_PHONETIC ;
+
+		weight_stated  [i] = false ;
+		nostem_stated  [i] = false ;
+		phonetic_stated[i] = false ;
 
 		if(SI_TYPE(fields[i]) & T_STRING) {
 			_fields[i] = fields[i].stringval;
@@ -269,13 +287,16 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			_fields[i] = tmp.stringval;
 
 			if(MAP_GET(fields[i], "weight", tmp)) {
-				weights[i] = SI_GET_NUMERIC(tmp);
+				weights[i]       = SI_GET_NUMERIC(tmp);
+				weight_stated[i] = true;
 			}
 			if(MAP_GET(fields[i], "nostem", tmp)) {
-				nostems[i] = tmp.longval;
+				nostems[i]       = tmp.longval;
+				nostem_stated[i] = true;
 			}
 			if(MAP_GET(fields[i], "phonetic", tmp)) {
-				phonetics[i] = tmp.stringval;
+				phonetics[i]       = tmp.stringval;
+				phonetic_stated[i] = true;
 			}
 		}
 
@@ -317,7 +338,10 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	}
 
 	for(uint i = 0; i < fields_count; i++) {
-		// construct options map
+		// THE BUILD MAP, unchanged: all three options for every field whether
+		// the statement named them or not, added in this order. This is what
+		// constructs the index field AND what the v2 encoder writes, and v2's
+		// bytes are frozen - so nothing here may move, including key order.
 		Map_Add(&options, SI_ConstStringVal("weight"),
 				SI_DoubleVal(weights[i]));
 		Map_Add(&options, SI_ConstStringVal("phonetic"),
@@ -325,8 +349,44 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		Map_Add(&options, SI_ConstStringVal("nostem"),
 				SI_BoolVal(nostems[i]));
 
+		// THE STATED MAP: not "what will this field end up with" but "what did
+		// the statement actually say". Only v3 reads it, because only v3 has a
+		// presence flag per option, and that flag cannot be answered from a map
+		// pre-filled with defaults. It matters most for phonetic: C's default is
+		// the literal string "no" (index_field.h:15) while Rust reads any
+		// non-empty phonetic as ENABLED.
+		//
+		// Rebuilt per field rather than edited, so a value one field stated
+		// cannot survive into the next.
+		SIValue stated = SI_Map(5);
+		if(language != NULL) {
+			Map_Add(&stated, SI_ConstStringVal("language"),
+					SI_ConstStringVal(language));
+		}
+		if(stopwords != NULL) {
+			SIValue sw = SIArray_New(arr_len(stopwords));
+			for(uint j = 0; j < arr_len(stopwords); j++) {
+				SIArray_Append(&sw, SI_ConstStringVal(stopwords[j]));
+			}
+			Map_Add(&stated, SI_ConstStringVal("stopwords"), sw);
+			SIArray_Free(sw);
+		}
+		if(weight_stated[i]) {
+			Map_Add(&stated, SI_ConstStringVal("weight"),
+					SI_DoubleVal(weights[i]));
+		}
+		if(phonetic_stated[i]) {
+			Map_Add(&stated, SI_ConstStringVal("phonetic"),
+					SI_ConstStringVal(phonetics[i]));
+		}
+		if(nostem_stated[i]) {
+			Map_Add(&stated, SI_ConstStringVal("nostem"),
+					SI_BoolVal(nostems[i]));
+		}
+
 		idx = GraphHub_AddIndex(gc, label, _fields[i], GETYPE_NODE,
-				INDEX_FLD_FULLTEXT, options, true);
+				INDEX_FLD_FULLTEXT, options, stated, true);
+		Map_Free(stated);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
