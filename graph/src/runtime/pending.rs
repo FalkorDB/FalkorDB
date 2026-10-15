@@ -26,7 +26,7 @@
 
 use std::{cell::RefCell, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
@@ -38,6 +38,10 @@ use crate::{
     graph::{
         constraint::{ConstraintStatus, ConstraintType},
         graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
+    },
+    index::{
+        Index,
+        indexer::{IndexQuery, IndexType},
     },
     runtime::{
         ordermap::OrderMap,
@@ -139,6 +143,116 @@ fn lookup_sorted(
         .binary_search_by_key(&attr_id, |(k, _)| *k)
         .ok()
         .map(|pos| &attrs[pos].1)
+}
+
+/// Whether the supporting index's exact match on `value` returns every entity
+/// whose composite-key component equals it. Other values (large integers the
+/// index stores rounded, NaN, the empty string, and any type it does not index)
+/// are checked by a scan instead. A string containing NUL is fine: the tag
+/// encoding escapes it to `_00` on both the write and the query path.
+fn is_value_valid_for_index_lookup(value: &Value) -> bool {
+    match value {
+        Value::Int(i) => !Index::int_loses_f64_precision(*i),
+        Value::Float(f) => !f.is_nan(),
+        Value::Bool(_) => true,
+        Value::String(s) => !s.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether a unique constraint is violated by this commit, given `members`: the
+/// affected entities (a subset of `affected`) carrying the constrained label or
+/// type.
+///
+/// Like C's `EnforceUniqueEntity`, each member's values are looked up in the
+/// constraint's supporting index, so the cost is per member, not per entity in
+/// the label. The index lags only this commit (each `Commit` publishes its
+/// documents before the next runs), so a candidate it returns is re-verified
+/// against the graph, and members are compared among themselves. Without an
+/// operational index, or for a value it cannot match exactly, the label is
+/// scanned once for the whole set instead.
+///
+/// `is_candidate` tells whether an entity the index or scan returned is still a
+/// live member of the label or type.
+#[allow(clippy::too_many_arguments)]
+fn unique_violated<Id, L, S>(
+    properties: &[Arc<String>],
+    members: impl Iterator<Item = Id>,
+    affected: &RoaringTreemap,
+    attr: impl Fn(Id, &Arc<String>) -> Option<Value>,
+    is_candidate: impl Fn(Id) -> bool,
+    indexed: bool,
+    lookup: impl Fn(IndexQuery<Value>) -> L,
+    scan: impl FnOnce() -> S,
+) -> bool
+where
+    Id: Copy + Into<u64>,
+    L: Iterator<Item = Id>,
+    S: Iterator<Item = Id>,
+{
+    let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut lookups = Vec::new();
+    let mut use_index = indexed;
+    for id in members {
+        // A NULL or absent constrained property: the entity does not participate.
+        let Some(values) = properties
+            .iter()
+            .map(|prop| attr(id, prop).filter(|v| !matches!(v, Value::Null)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let mut it = values.iter();
+        let key = Graph::build_composite_key(properties, |_| it.next().cloned());
+        if !keys.insert(key) {
+            // Two entities written in this commit share a key. That is a
+            // violation whatever the index or the rest of the label holds, so
+            // there is nothing left to look up or scan.
+            return true;
+        }
+        if use_index {
+            if values.iter().all(is_value_valid_for_index_lookup) {
+                lookups.push(values);
+            } else {
+                // One value the index cannot match exactly sends the whole set
+                // to a single scan, so the lookups gathered so far are unused.
+                use_index = false;
+                lookups = Vec::new();
+            }
+        }
+    }
+    if keys.is_empty() {
+        return false;
+    }
+
+    // Members are already compared among themselves above.
+    let collides = |other: Id| {
+        !affected.contains(other.into())
+            && is_candidate(other)
+            && keys.contains(&Graph::build_composite_key(properties, |prop| {
+                attr(other, prop)
+            }))
+    };
+    if use_index {
+        lookups.into_iter().any(|values| {
+            let mut eqs = properties
+                .iter()
+                .zip(values)
+                .map(|(key, value)| IndexQuery::Equal {
+                    key: key.clone(),
+                    value,
+                })
+                .collect::<Vec<_>>();
+            let query = if eqs.len() == 1 {
+                eqs.pop().unwrap()
+            } else {
+                IndexQuery::And(eqs)
+            };
+            lookup(query).any(collides)
+        })
+    } else {
+        scan().any(collides)
+    }
 }
 
 /// A relationship whose id was handed out and then taken back, because the node
@@ -1377,15 +1491,13 @@ impl Pending {
             return Ok(());
         };
         let label_id = usize::from(label_id) as u64;
+        let members = affected_node_ids
+            .iter()
+            .filter(|&node_id| self.constraint_node_has_label(g, node_id, label_id));
 
-        for node_id in affected_node_ids {
-            // Check if this node has the constrained label
-            if !self.constraint_node_has_label(g, node_id, label_id) {
-                continue;
-            }
-
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for node_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_node_attribute(node_id.into(), prop)
@@ -1397,38 +1509,34 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_node_attribute(node_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        // a constrained property is NULL or absent, so this node
-                        // does not participate in the constraint
-                        continue;
-                    }
-
-                    // Build a set of all existing keys for this label in one pass
-                    if let Some(lm) = g.get_label_matrix(label) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (other_id, _) in lm.iter(0, u64::MAX) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_node_attribute(other_id.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this node does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_id
-                            {
-                                return Err(format!(
-                                    "unique constraint violation on node of type {label}"
-                                ));
-                            }
-                            seen.insert(other_key, other_id);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(NodeId::from),
+                    affected_node_ids,
+                    |node_id: NodeId, prop| g.get_node_attribute(node_id, prop),
+                    |node_id| {
+                        let node_id = u64::from(node_id);
+                        !self.deleted_nodes.contains(node_id)
+                            && self.constraint_node_has_label(g, node_id, label_id)
+                    },
+                    constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range)),
+                    |query| g.get_indexed_nodes(label, query),
+                    || {
+                        g.get_label_matrix(label).into_iter().flat_map(|lm| {
+                            lm.iter(0, u64::MAX)
+                                .map(|(node_id, _)| NodeId::from(node_id))
+                        })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation on node of type {label}"
+                    ));
                 }
             }
         }
@@ -1442,23 +1550,21 @@ impl Pending {
         affected_edge_ids: &RoaringTreemap,
     ) -> Result<(), String> {
         let type_name = &constraint.label;
-
-        for edge_id in affected_edge_ids {
+        let members = affected_edge_ids.iter().filter(|&edge_id| {
             // Edges created this transaction resolve their type from
             // Pending's reverse index — no relationship-matrix read, which
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            let has_type = match self.created_rel_types.get(&edge_id.into()) {
+            match self.created_rel_types.get(&edge_id.into()) {
                 Some(created_type) => created_type.as_str() == type_name.as_str(),
                 None => g.edge_has_type(edge_id.into(), type_name),
-            };
-            if !has_type {
-                continue;
             }
+        });
 
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for edge_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_relationship_attribute(edge_id.into(), prop)
@@ -1470,38 +1576,37 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_relationship_attribute(edge_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        // a constrained property is NULL or absent, so this edge
-                        // does not participate in the constraint
-                        continue;
-                    }
-
-                    // Build a set of all existing keys for this type in one pass
-                    if let Some(tensor) = g.get_relationship_matrix(type_name) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_relationship_attribute(other_eid.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this edge does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_eid
-                            {
-                                return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {type_name}"
-                                ));
-                            }
-                            seen.insert(other_key, other_eid);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(RelationshipId::from),
+                    affected_edge_ids,
+                    |edge_id: RelationshipId, prop| g.get_relationship_attribute(edge_id, prop),
+                    // Both the index and the tensor hold edges of this type
+                    // only, and a type never changes.
+                    |edge_id| !self.deleted_relationships.contains(edge_id.into()),
+                    constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range)),
+                    |query| {
+                        g.get_indexed_edges(type_name, query)
+                            .map(|(_, _, edge_id)| edge_id)
+                    },
+                    || {
+                        g.get_relationship_matrix(type_name)
+                            .into_iter()
+                            .flat_map(|t| {
+                                t.iter(0, u64::MAX, false)
+                                    .map(|(_, _, edge_id)| RelationshipId::from(edge_id))
+                            })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation, on edge of relationship-type {type_name}"
+                    ));
                 }
             }
         }
