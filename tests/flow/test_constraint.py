@@ -610,6 +610,49 @@ class testConstraintNodes():
         drop_unique_node_constraint(self.g, "Widget", "alpha", "zulu")
         self.env.assertEqual(len(widget_constraints()), 0)
 
+    def test10_unique_constraint_empty_or_whitespace_value(self):
+        # regression test (crash): a UNIQUE constraint whose constrained
+        # string value is empty or whitespace-only used to segfault the server
+        # during write-commit enforcement. RediSearch stores such a value as an
+        # empty, non-matchable TAG token, so the "find myself in the index"
+        # iterator in EnforceUniqueEntity returned NULL and the result was
+        # dereferenced (the guarding ASSERT is compiled out in release builds).
+        # see src/constraint/unique_constraint.c
+        g = self.g
+
+        # fresh label, isolated from the rest of the suite
+        create_unique_node_constraint(g, 'Blank', 'id', sync=True)
+
+        # none of these constrained values round-trip through the RediSearch
+        # TAG index (empty/all-whitespace normalize to an empty token; leading/
+        # trailing whitespace is trimmed so the raw query token no longer
+        # matches the stored, trimmed tag). before the fix any one of them
+        # crashed the server on commit
+        vals = ["''", "' '", "'  '", "'\t'", "'\n'", "' abc'", "'abc '", "'  abc  '"]
+        for val in vals:
+            g.query(f"CREATE (n:Blank) SET n.id = {val}")
+
+        # server survived and keeps serving queries
+        res = g.query("MATCH (n:Blank) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], len(vals))
+
+        # a normal value is still enforced: a genuine duplicate is rejected
+        g.query("CREATE (n:Blank) SET n.id = 'unique-val'")
+        try:
+            g.query("CREATE (n:Blank) SET n.id = 'unique-val'")
+            self.env.assertTrue(False) # should not reach
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation", str(e))
+
+        # async-creation path: build a constraint over a graph that ALREADY
+        # contains an empty-valued node - enforcement runs on the indexer
+        # thread and used to crash there too
+        g.query("CREATE (n:Blank2) SET n.id = ''")
+        g.query("CREATE (n:Blank2) SET n.id = 'x'")
+        create_unique_node_constraint(g, 'Blank2', 'id', sync=True)
+        res = g.query("MATCH (n:Blank2) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], 2)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
