@@ -1069,9 +1069,7 @@ impl<'a> ExprEval<'a> {
                     let row = env.map_or_else(Row::new, RowView::to_owned_row);
                     res.push(runtime.run_nested_plan(nested.id, &nested.result, &row)?);
                 }
-                ExprIR::Paren => {
-                    res.push(self.eval_node(&node.child(0), env, agg_group_key)?);
-                }
+                ExprIR::Paren => unreachable!("the binder removes every Paren"),
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
