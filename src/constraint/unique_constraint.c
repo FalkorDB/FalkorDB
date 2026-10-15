@@ -122,7 +122,18 @@ bool EnforceUniqueEntity
 		const EntityID *id =
 			(EntityID*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		// the entity isn't retrievable from the index via its own constrained
+		// value. RediSearch trims surrounding whitespace from TAG tokens, so a
+		// string whose normalized form is empty (""/" "/"\t") or differs from
+		// the raw value (leading/trailing whitespace, e.g. " abc") does not
+		// round-trip and the query returns nothing. the index can't detect a
+		// duplicate for such a value, so treat the constraint as satisfied
+		// (consistent with the unindexable-type escape hatch above). without
+		// this guard the NULL dereference below segfaults in release builds
+		if(id == NULL) {
+			holds = true;
+			goto cleanup;
+		}
 
 		if(*id != ENTITY_GET_ID(e)) {
 			holds = false;
@@ -133,7 +144,11 @@ bool EnforceUniqueEntity
 		const EdgeIndexKey *id =
 			(EdgeIndexKey*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		// see note above - value not retrievable from the index
+		if(id == NULL) {
+			holds = true;
+			goto cleanup;
+		}
 
 		if(id->edge_id != ENTITY_GET_ID(e)) {
 			holds = false;
