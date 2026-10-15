@@ -113,3 +113,11 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test04_named_path_projection(self):
+        result = self.g.query("CREATE p=(n) RETURN p")
+        self.env.assertEqual(len(result.result_set), 1)
+
+        path = result.result_set[0][0]
+        self.env.assertEqual(len(path.nodes()), 1)
+        self.env.assertEqual(len(path.edges()), 0)
+
