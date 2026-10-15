@@ -18,7 +18,7 @@ ARG BUILD_IMAGE
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS builder
+FROM amazonlinux:2023.12.20260930.0 AS builder
 
 # Re-declared inside the stage: the pre-FROM `ARG CXX` is global scope and is
 # NOT visible here otherwise, which would silently expand ${CXX} to empty and
