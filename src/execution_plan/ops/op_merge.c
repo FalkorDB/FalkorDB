@@ -435,7 +435,9 @@ static Record MergeConsume
 	}
 
 	// lock everything
-	QueryCtx_AcquireWriteLock ();
+	if (!QueryCtx_AcquireWriteLock ()) {
+		return NULL ;
+	}
 
 	// phase 3: commit create stream, pull created records
 	// calls ON CREATE updates

@@ -420,3 +420,57 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
+    def test_12_concurrent_delete_and_index_lifecycle_stress(self):
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # make sure graph exists and has data for index operations
+            self.graph.query("UNWIND range(1, 200) AS x CREATE (:N {age:x})")
+
+            async def writer():
+                for i in range(100):
+                    try:
+                        await g.query(f"CREATE (:N {{age:{i % 50}}})")
+                    except ResponseError:
+                        pass
+
+            async def index_mutator():
+                for _ in range(80):
+                    try:
+                        await g.query("CREATE INDEX FOR (n:N) ON (n.age)")
+                    except ResponseError:
+                        pass
+
+                    try:
+                        await g.query("DROP INDEX FOR (n:N) ON (n.age)")
+                    except ResponseError:
+                        pass
+
+            async def deleter():
+                for _ in range(60):
+                    try:
+                        await g.delete()
+                    except ResponseError:
+                        pass
+
+            results = await asyncio.gather(
+                writer(),
+                index_mutator(),
+                deleter(),
+                return_exceptions=True
+            )
+
+            # only ResponseError exceptions are expected from racing commands.
+            for res in results:
+                if isinstance(res, Exception):
+                    self.env.assertTrue(isinstance(res, ResponseError))
+
+            # server should stay alive and able to execute queries.
+            self.graph.query("RETURN 1")
+
+            await pool.aclose()
+
+        asyncio.run(run(self))

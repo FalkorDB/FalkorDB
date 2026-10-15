@@ -110,7 +110,10 @@ static Record UpdateConsume
 		}
 
 		// lock everything
-		QueryCtx_AcquireWriteLock () ;
+		if (!QueryCtx_AcquireWriteLock ()) {
+			StagedUpdatesCtx_Free (&op->staged_updates) ;
+			return NULL ;
+		}
 
 		CommitUpdates (op->gc, op->staged_updates) ;
 	}

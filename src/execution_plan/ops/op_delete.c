@@ -93,7 +93,9 @@ static void _BulkDeleteEntities
 	ASSERT ((node_count + total_edge_count) > 0) ;
 
 	// lock everything
-	QueryCtx_AcquireWriteLock () ;
+	if (!QueryCtx_AcquireWriteLock ()) {
+		goto cleanup;
+	}
 
 	// NOTE: delete edges before nodes
 	// required as a deleted node must be detached
@@ -123,6 +125,7 @@ static void _BulkDeleteEntities
 		GraphHub_DeleteNodes (gc, nodes, node_count, true);
 	}
 
+cleanup:
 	// clean up
 	if (outgoing != NULL) {
 		arr_free (outgoing) ;
@@ -192,7 +195,10 @@ static void _DeleteEntities
 	}
 
 	// lock everything
-	QueryCtx_AcquireWriteLock () ;
+	bool lock_acquired = QueryCtx_AcquireWriteLock () ;
+	if (!lock_acquired) {
+		goto cleanup ;
+	}
 	// NOTE: delete edges before nodes
 	// required as a deleted node must be detached
 
@@ -213,6 +219,7 @@ static void _DeleteEntities
 		GraphHub_DeleteNodes (gc, op->deleted_nodes, node_count, true) ;
 	}
 
+cleanup:
 	// clean up
 	if (implicit_edges != NULL) {
 		arr_free (implicit_edges) ;
