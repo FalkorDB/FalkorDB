@@ -259,3 +259,29 @@ class testNodeByIDFlow(FlowTestsBase):
         except Exception as e:
             self.env.assertFalse("query crashed")
 
+
+    def test_id_seek_on_a_graph_that_never_held_a_node(self):
+        # An empty graph reported its highest node id as 0, which the id seek
+        # read as "id 0 exists", so it returned a phantom node 0. Writes to it
+        # survived: SET landed on the node the next CREATE made, and DELETE
+        # failed with "0 was never allocated here".
+        # https://github.com/FalkorDB/FalkorDB/issues/2965
+        g = self.db.select_graph("node_by_id_empty")
+
+        q = "MATCH (n) WHERE id(n) = 0 RETURN id(n)"
+        self.env.assertEqual(g.query(q).result_set, [])
+        self.env.assertContains("NodeByIdSeek", str(g.explain(q)))
+        res = g.query("MATCH (n) WHERE id(n) >= 0 RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        res = g.query("MATCH (n) WHERE id(n) = 0 DELETE n")
+        self.env.assertEqual(res.nodes_deleted, 0)
+
+        res = g.query("MATCH (n) WHERE id(n) = 0 SET n.x = 1, n:Z RETURN id(n)")
+        self.env.assertEqual(res.result_set, [])
+        self.env.assertEqual(res.properties_set, 0)
+
+        g.query("CREATE (:Q)")
+        res = g.query("MATCH (n) RETURN labels(n), properties(n)")
+        self.env.assertEqual(res.result_set, [[["Q"], {}]])
+        g.delete()
