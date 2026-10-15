@@ -68,3 +68,14 @@ void str_truncate
 	uint max_len       // string max length
 );
 
+// find the trimmed bounds of a string (only space characters trimmed)
+// returns the trimmed start pointer in out_start and the trimmed length in out_len
+void str_trim_range
+(
+	const char *str,
+	const char **out_start,
+	size_t *out_len
+);
+
+
+
