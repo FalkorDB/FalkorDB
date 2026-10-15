@@ -25,6 +25,7 @@ on error): live at fe619ac5f, `CREATE VECTOR INDEX FOR (n:L) ON (n.emb)` answers
 -/
 
 namespace ValueMath.Ddl
+open FalkorCore
 
 open ValueMath
 

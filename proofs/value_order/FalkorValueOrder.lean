@@ -143,7 +143,7 @@ Model.lean: `F` gained NaN sign/payload, `-0.0`, fractions and ±inf; `V` gained
 
 | here | there (value.rs at b033aecc6; since 4a4f2a72f see Main.lean) |
 | --- | --- |
-| `Laws.lean`: `Lw`, `thn`, `lexA`, `zipNe`, `cmp3_lw` | generic comparator laws |
+| proofs/core `FalkorCore/Laws.lean`: `Lw`, `thn`, `lexA`, `zipNe`, `cmp3_lw` | generic comparator laws (shared core; `F`, `fpcmp`, `cmpI`, bit layouts also live in `FalkorCore`, re-exported by Model.lean) |
 | `SC.scF64`, `SC.scIntFloat`, `SC.sc` | `sort_cmp_f64` (:1888, also `sort_cmp_f32` :1900), `sort_cmp_int_float` (:1914), `Value::sort_cmp` (:1526), `sort_cmp_map` (:1563) |
 
 * `SC.scF64_key`, `SC.scIntFloat_key` — the float and Int/Float arms order by a numeric key

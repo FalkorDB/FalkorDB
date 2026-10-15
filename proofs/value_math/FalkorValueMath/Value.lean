@@ -1,4 +1,5 @@
 import FalkorValueMath.Int64
+import FalkorCore.Value
 /-!
 # `Value` and its arithmetic (`graph/src/runtime/value.rs:180`, `:903-1171`)
 
@@ -12,39 +13,12 @@ modelled and proved in `proofs/functions_temporal`.
 -/
 
 namespace ValueMath
+open FalkorCore
 
-inductive V (F : Type) where
-  | null
-  | bool (b : Bool)
-  | int (i : Int)
-  | float (f : F)
-  | str (s : String)
-  | list (l : List (V F))
-  | map (m : List (String × V F))
-  | node (id : Nat)
-  | rel (id : Nat)
-  | path (l : List (V F))
-  | vec (v : List F)
-  | point (lat lon : F)
-  | datetime (t : Int)
-  | date (t : Int)
-  | time (t : Int)
-  | duration (t : Int)
-  deriving Inhabited
+/-! `V F` (the engine `Value`, all 16 variants), `V.name`, `V.order`, `V.isNull`, `V.isNum`,
+`V.isList` are proofs/core's (`FalkorCore/Value.lean`, opened in every module). -/
 
 variable {F : Type}
-
-/-- `Value::name` (value.rs:1352). -/
-def V.name : V F → String
-  | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
-  | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
-  | .rel _ => "Relationship" | .path _ => "Path" | .vec _ => "VecF32" | .point .. => "Point"
-  | .datetime _ => "Datetime" | .date _ => "Date" | .time _ => "Time"
-  | .duration _ => "Duration"
-
-def V.isNull : V F → Bool
-  | .null => true
-  | _ => false
 
 /-- The float operations the arithmetic uses; `fmt6` is Rust's `{:.6}`. -/
 structure FOps (F : Type) where
@@ -358,10 +332,6 @@ theorem sub_dur_date (a d : Int) : sub o t (.duration a) (.date d) =
     .error "Type mismatch: cannot subtract a temporal value from a duration" := rfl
 
 /-! ## `*`: the result is an error exactly when a non-null operand is not a number -/
-
-def V.isNum : V F → Bool
-  | .int _ | .float _ => true
-  | _ => false
 
 theorem mul_ok_iff (x y : V F) :
     (∃ r, mul o x y = .ok r) ↔ (x.isNull ∨ y.isNull ∨ (x.isNum ∧ y.isNum)) := by

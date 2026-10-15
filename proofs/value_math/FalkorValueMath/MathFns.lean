@@ -14,6 +14,7 @@ branches the Rust code adds around them are proved.
 -/
 
 namespace ValueMath
+open FalkorCore
 
 inductive FC where
   | nan | pinf | ninf | pzero | nzero | pos | neg
@@ -266,12 +267,8 @@ theorem log_int_nonpos (n : Int) (hn : n ≤ 0) (hz : m.ln .pzero = .ninf) (hneg
 
 /-! ## `coalesce` (math.rs:314) -/
 
-/-- `OrderedEnum::order` (value.rs:1178). -/
-def order : V FC → Nat
-  | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
-  | .str _ => 2 ^ 11 | .list _ => 2 ^ 3 | .map _ => 2 ^ 0 | .node _ => 2 ^ 1
-  | .rel _ => 2 ^ 2 | .path _ => 2 ^ 4 | .point .. => 2 ^ 5 | .datetime _ => 2 ^ 6
-  | .date _ => 2 ^ 7 | .time _ => 2 ^ 8 | .duration _ => 2 ^ 10 | .vec _ => 2 ^ 18
+/-- `OrderedEnum::order` (value.rs:1178): proofs/core's `V.order`. -/
+def order (x : V FC) : Nat := x.order
 
 /-- `compare_value(x, Null).0` (value.rs:1224): no same-variant or Int/Float arm matches
 a `Null` right operand unless `x` is `Null`, so the `(_, Null)` arm compares type
@@ -280,7 +277,7 @@ def cmpWithNull (x : V FC) : Ordering := compare (order x) (order .null)
 
 /-- `*arg == Value::Null` is exactly "is `Null`": no other variant shares Null's order. -/
 theorem eq_null_iff (x : V FC) : cmpWithNull x = .eq ↔ x = .null := by
-  cases x <;> simp [cmpWithNull, order, compare, compareOfLessAndEq] <;> decide
+  cases x <;> simp [cmpWithNull, order, V.order, compare, compareOfLessAndEq] <;> decide
 
 def coalesce : List (V FC) → V FC
   | [] => .null

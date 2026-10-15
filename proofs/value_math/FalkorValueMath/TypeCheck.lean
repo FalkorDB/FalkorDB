@@ -17,6 +17,7 @@ import FalkorValueMath.Value
 -/
 
 namespace ValueMath
+open FalkorCore
 
 inductive Ty where
   | null | bool | int | float | string
@@ -50,10 +51,6 @@ def Ty.isList : Ty → Bool
 
 def Ty.isAny : Ty → Bool
   | .any => true
-  | _ => false
-
-def V.isList : V F → Bool
-  | .list _ => true
   | _ => false
 
 mutual

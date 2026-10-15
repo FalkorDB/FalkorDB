@@ -1,4 +1,4 @@
-import FalkorValueOrder.Model
+import FalkorCore.Order
 /-!
 # Generic comparator laws (used by `SortCmp.lean`)
 
@@ -13,10 +13,10 @@ proves the facts the `sort_cmp` proofs need, for any `α`:
 * `lexA` — slice order (`[T]::cmp`, and the `zip`/`find`/`unwrap_or_else(len)`
   shape of `sort_cmp`'s list arm): `lexA_swap`, `lexA_trans`, `lexA_refl`,
   `lexA_eq` with the laws required only of elements from the lists (`P`).
-* `cmp3` (Model.lean) is a total order with `eq ↔ =`: `cmp3_lw`, `cmp3_eq_iff`.
+* `cmp3` (Order.lean) is a total order with `eq ↔ =`: `cmp3_lw`, `cmp3_eq_iff`.
 -/
-namespace ValueOrder.Laws
-open ValueOrder
+namespace FalkorCore.Laws
+open FalkorCore
 
 structure Lw {α : Type} (c : α → α → Ordering) : Prop where
   swap : ∀ a b, c b a = (c a b).swap
@@ -245,4 +245,4 @@ theorem cmp3_refl (a : Nat × Int × Nat) : cmp3 a a = .eq := (cmp3_eq_iff a a).
 #print axioms cmp3_lw
 #print axioms lexA_trans
 
-end ValueOrder.Laws
+end FalkorCore.Laws

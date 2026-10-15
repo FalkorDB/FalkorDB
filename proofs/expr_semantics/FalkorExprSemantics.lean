@@ -1,6 +1,8 @@
 import FalkorExprSemantics.Eval
 import FalkorExprSemantics.EvalMore
 import FalkorExprSemantics.BFS
+import FalkorCore.Int64
+import FalkorCore.Float
 /-
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
@@ -109,31 +111,13 @@ in the source comment, not proved here.
 set_option linter.unusedSectionVars false
 
 namespace FalkorExpr
+open FalkorCore
 
-/-! ## i64 -/
+/-! ## i64
 
-def I64MIN : Int := -9223372036854775808
-def I64MAX : Int := 9223372036854775807
+`I64MIN`/`I64MAX`, `InI64`, `wrap`, `wrap_inRange`, `wrap_id` and the `wrapping_*` ops
+(`wAdd`…`wRem`) are proofs/core's (`FalkorCore/Int64.lean`). -/
 
-/-- Two's-complement wrap of a mathematical integer into i64. -/
-def wrap (x : Int) : Int := (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
-
-def InI64 (x : Int) : Prop := I64MIN ≤ x ∧ x ≤ I64MAX
-
-theorem wrap_inRange (x : Int) : InI64 (wrap x) := by
-  unfold InI64 wrap I64MIN I64MAX; omega
-
-/-- Wrapping is the identity on in-range results. -/
-theorem wrap_id {x : Int} (h : InI64 x) : wrap x = x := by
-  unfold InI64 I64MIN I64MAX at h; unfold wrap; omega
-
-def wAdd (a b : Int) : Int := wrap (a + b)
-def wSub (a b : Int) : Int := wrap (a - b)
-def wMul (a b : Int) : Int := wrap (a * b)
-/-- `i64::wrapping_div` — truncating division; only `MIN / -1` wraps. -/
-def wDiv (a b : Int) : Int := wrap (Int.tdiv a b)
-/-- `i64::wrapping_rem` — truncating remainder. -/
-def wRem (a b : Int) : Int := wrap (Int.tmod a b)
 /-- `i64::checked_neg`. -/
 def checkedNeg (a : Int) : Option Int := if a = I64MIN then none else some (-a)
 def checkedAbs (a : Int) : Option Int := if a = I64MIN then none else some (if a < 0 then -a else a)
@@ -163,7 +147,7 @@ theorem neg_eq_sub_zero {x : Int} (hx : InI64 x) (hne : x ≠ I64MIN) :
   simp only [hne, ↓reduceIte]
   rw [wrap_id]
   · simp
-  · unfold InI64 I64MIN I64MAX at *; omega
+  · simp only [InI64, I64MIN, I64MAX] at *; omega
 
 /-! ## f64, abstractly -/
 
@@ -202,9 +186,7 @@ def V.order : V F → Nat
   | .null => 32768 | .bool _ => 4096 | .int _ => 8192 | .flt _ => 16384
   | .str _ => 2048 | .other t => t
 
-inductive Flag where
-  | disjoint | comparedNull | nan | none
-  deriving DecidableEq, Repr
+-- `Flag` (`compare_value`'s second component) is proofs/core's `FalkorCore.Flag`.
 
 def cmpNat (a b : Nat) : Ordering := if a < b then .lt else if a = b then .eq else .gt
 def cmpInt (a b : Int) : Ordering := if a < b then .lt else if a = b then .eq else .gt
@@ -1470,8 +1452,8 @@ theorem rangeIter_ok_up (stepAbs endv : Int) (hs : 0 < stepAbs) (hs' : stepAbs �
     by_cases h : cur > endv
     · simp [h]
     · simp only [h, decide_false, Bool.false_eq_true, ↓reduceIte, List.cons.injEq, true_and]
-      have hin : InI64 (cur + stepAbs) := by unfold InI64 I64MIN I64MAX at *; omega
-      have hst : InI64 stepAbs := by unfold InI64 I64MIN I64MAX at *; omega
+      have hin : InI64 (cur + stepAbs) := by simp only [InI64, I64MIN, I64MAX] at *; omega
+      have hst : InI64 stepAbs := by simp only [InI64, I64MIN, I64MAX] at *; omega
       rw [wrap_id hst, wrap_id hin]
       exact rangeIter_ok_up stepAbs endv hs hs' hroom fuel (cur + stepAbs)
         (by unfold I64MIN at *; omega)

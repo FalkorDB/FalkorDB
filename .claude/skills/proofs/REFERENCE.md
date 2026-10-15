@@ -24,7 +24,10 @@ path = "../value_order"
 ```
 
 then `lake update` (commit the generated `lake-manifest.json`) and `import
-FalkorValueOrder.Model`. `export Ns (a b c)` inside your namespace keeps local short
+FalkorValueOrder.Model`. Shared foundations live in `proofs/core` (`FalkorCore`: the
+engine Value `V F`, the float model `F`, `i64` helpers, `cmpI`/comparator laws); reuse
+them with `open FalkorCore` rather than defining another copy (pilot: value_order,
+value_math, expr_semantics, functions_str_list use it). `export Ns (a b c)` inside your namespace keeps local short
 names. All projects pin the same toolchain; `lean_ci.sh` builds dependencies first
 (inside their own `.lake`) and scans only each project's own files.
 

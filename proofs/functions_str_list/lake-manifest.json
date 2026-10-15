@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«falkor-core»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../core",
+   "configFile": "lakefile.toml"}],
  "name": "«falkor-functions-str-list»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

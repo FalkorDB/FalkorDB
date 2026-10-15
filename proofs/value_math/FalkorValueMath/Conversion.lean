@@ -21,6 +21,7 @@ no `.`, and the `strtod` + `floor` path otherwise. C `AR_TOFLOAT` uses `strtof` 
 -/
 
 namespace ValueMath
+open FalkorCore
 
 def isDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
 def digitVal (c : Char) : Nat := c.toNat - '0'.toNat

@@ -3,3 +3,8 @@ defaultTargets = ["FalkorExprSemantics"]
 
 [[lean_lib]]
 name = "FalkorExprSemantics"
+
+# Shared foundations (i64 helpers, compare Flag): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"

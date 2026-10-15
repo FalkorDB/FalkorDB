@@ -1,12 +1,12 @@
 import FalkorNativeIndex.Float
-import FalkorValueOrder.Model
+import FalkorCore.Float
 set_option linter.unusedSimpArgs false
 
 /-!
 # `i as f64` at the bit level (`encode.rs:31`, `value.rs:1267-1268`)
 
-`bitlenAux` / `bitlen` / `roundNat` are imported from value_order
-(`proofs/value_order/FalkorValueOrder/Model.lean:111-128`, Lake path dependency; IEEE round-to-nearest-even to 53
+`bitlenAux` / `bitlen` / `roundNat` are imported from proofs/core
+(`FalkorCore/Float.lean`, Lake path dependency; IEEE round-to-nearest-even to 53
 significant bits). `magBits m` is the binary64 encoding of the positive double nearest `m`: biased
 exponent `1022 + L` (`L` = bit length of the rounded value) and the 52 fraction bits below the
 implicit one.
@@ -18,7 +18,7 @@ converted `i64` is finite (not NaN). `2^53` and `2^53 + 1` convert to the same b
 
 namespace NI
 
-export ValueOrder (bitlenAux bitlen roundNat)
+export FalkorCore (bitlenAux bitlen roundNat)
 
 /-- binary64 encoding of the positive double nearest `m > 0`. -/
 def magBits (m : Nat) : Nat :=

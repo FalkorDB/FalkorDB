@@ -17,6 +17,7 @@ import FalkorValueMath.Conversion
 -/
 
 namespace ValueMath
+open FalkorCore
 
 /-! ## `format_duration` -/
 

@@ -16,6 +16,7 @@ else `SI_GET_NUMERIC(a) + SI_GET_NUMERIC(b)` as a double (Booleans count as 0/1)
 -/
 
 namespace ValueMath
+open FalkorCore
 
 variable {F : Type}
 

@@ -34,6 +34,7 @@ never read a missing or misaligned column.
 -/
 
 namespace ValueMath.Proc
+open FalkorCore
 
 open ValueMath
 

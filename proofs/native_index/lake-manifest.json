@@ -3,10 +3,10 @@
  "packages":
  [{"type": "path",
    "scope": "",
-   "name": "«falkor-value-order»",
+   "name": "«falkor-core»",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
-   "dir": "../value_order",
+   "dir": "../core",
    "configFile": "lakefile.toml"},
   {"type": "path",
    "scope": "",

@@ -1,3 +1,4 @@
+import FalkorCore.Int64
 /-!
 # `i64` arithmetic of `Value` (Int lanes of `Add/Sub/Mul/Div/Rem for Value`)
 
@@ -15,6 +16,7 @@ conversion as the arm64 `fcvtzs` saturating truncation `satTrunc`.
 -/
 
 namespace ValueMath
+open FalkorCore
 
 /-- 2^63 and 2^64 as literals, so `omega` can reason about them. -/
 notation "TWO63" => (9223372036854775808 : Int)
@@ -22,19 +24,10 @@ notation "TWO64" => (18446744073709551616 : Int)
 notation "I64MIN" => (-9223372036854775808 : Int)
 notation "I64MAX" => (9223372036854775807 : Int)
 
-/-- In `i64` range. -/
-def InI64 (x : Int) : Prop := I64MIN ≤ x ∧ x ≤ I64MAX
+/-! `InI64`, `wrap`, `wrap_id` and the `wrapping_*` ops (`wAdd`…`wRem`) are proofs/core's
+(`FalkorCore/Int64.lean`). -/
 
-instance : DecidablePred InI64 := fun x => by unfold InI64; infer_instance
-
-/-- Two's-complement wrap onto `i64`. -/
-def wrap (x : Int) : Int := (x + TWO63) % TWO64 - TWO63
-
-theorem wrap_inI64 (x : Int) : InI64 (wrap x) := by
-  unfold InI64 wrap; omega
-
-theorem wrap_id {x : Int} (h : InI64 x) : wrap x = x := by
-  unfold InI64 at h; unfold wrap; omega
+theorem wrap_inI64 (x : Int) : InI64 (wrap x) := FalkorCore.wrap_inRange x
 
 theorem wrap_wrap (x : Int) : wrap (wrap x) = wrap x := wrap_id (wrap_inI64 x)
 
@@ -44,13 +37,7 @@ theorem wrap_add_mul (x k : Int) : wrap (x + k * TWO64) = wrap x := by
 
 /-! ## Rust `wrapping_*` (value.rs:915, 1048, 1097, 1130, 1158) -/
 
-def wAdd (a b : Int) : Int := wrap (a + b)
-def wSub (a b : Int) : Int := wrap (a - b)
-def wMul (a b : Int) : Int := wrap (a * b)
-/-- `i64::wrapping_div` for `b ≠ 0`: truncating division, only `MIN / -1` wraps. -/
-def wDiv (a b : Int) : Int := wrap (Int.tdiv a b)
-/-- `i64::wrapping_rem` for `b ≠ 0`: truncating remainder (`MIN % -1 = 0`). -/
-def wRem (a b : Int) : Int := wrap (Int.tmod a b)
+-- `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem` are `FalkorCore`'s.
 
 theorem wAdd_comm (a b : Int) : wAdd a b = wAdd b a := by
   unfold wAdd; rw [Int.add_comm]

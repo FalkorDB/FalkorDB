@@ -28,6 +28,7 @@ import FalkorValueMath.Misc
 -/
 
 namespace ValueMath
+open FalkorCore
 
 variable {F : Type}
 

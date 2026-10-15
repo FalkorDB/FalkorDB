@@ -15,6 +15,7 @@ listed in `FalkorValueMath.lean`.
 -/
 
 namespace ValueMath.ConvReg
+open FalkorCore
 
 open ValueMath
 

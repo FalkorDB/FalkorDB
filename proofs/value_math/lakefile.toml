@@ -3,3 +3,8 @@ defaultTargets = ["FalkorValueMath"]
 
 [[lean_lib]]
 name = "FalkorValueMath"
+
+# Shared foundations (the engine Value `V F`, i64 helpers): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"

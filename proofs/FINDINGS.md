@@ -1,8 +1,10 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
 Current state (2026-10-15): proofs cite `origin/main` @ cab3cf192.
-There is one Lake project per area under `proofs/<area>/` (35 projects, including
-`native_index`; the PR review projects `pr2845_review` and `pr2917_review` were
+There is one Lake project per area under `proofs/<area>/` (36 projects, including
+`native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
+`F`, i64, orderings), imported by value_order, value_math, expr_semantics,
+functions_str_list; the PR review projects `pr2845_review` and `pr2917_review` were
 retired on 2026-10-15 after their PRs merged, their theorems folded into the owning
 projects).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,

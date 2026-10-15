@@ -3,3 +3,8 @@ defaultTargets = ["FalkorValueOrder"]
 
 [[lean_lib]]
 name = "FalkorValueOrder"
+
+# Shared foundations (float model F, orderings, comparator laws, i64): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"

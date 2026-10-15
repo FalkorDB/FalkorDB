@@ -23,6 +23,7 @@ bit-for-bit given the same libm. Live (ports 18920/18921): 25 calls incl. `cot(0
 -/
 
 namespace ValueMath.Trig
+open FalkorCore
 
 open ValueMath
 

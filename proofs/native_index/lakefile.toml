@@ -9,7 +9,7 @@ name = "FalkorNativeIndex"
 name = "falkor-cow-btree"
 path = "../cow_btree"
 
-# value_order's `roundNat`/`bitlen` (IEEE round-to-nearest-even) are imported, not copied.
+# proofs/core's `roundNat`/`bitlen` (IEEE round-to-nearest-even) are imported, not copied.
 [[require]]
-name = "falkor-value-order"
-path = "../value_order"
+name = "falkor-core"
+path = "../core"

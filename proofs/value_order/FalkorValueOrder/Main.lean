@@ -19,7 +19,7 @@ here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims an
 | `listSort`   | `list.sort` (functions/list.rs:210): `sort_by(Value::sort_cmp)` |
 -/
 namespace ValueOrder.Main
-open ValueOrder ValueOrder.Laws ValueOrder.SC
+open FalkorCore ValueOrder FalkorCore.Laws ValueOrder.SC
 
 /-! ## `sort_cmp_f32` -/
 

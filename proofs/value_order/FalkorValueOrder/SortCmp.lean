@@ -1,4 +1,5 @@
-import FalkorValueOrder.Laws
+import FalkorValueOrder.Model
+import FalkorCore.Laws
 /-!
 # `Value::sort_cmp` (#2912 b033aecc6, generic in `sort_cmp_f32`) and its laws
 
@@ -13,7 +14,7 @@ See the report in `FalkorValueOrder.lean` ("Wave 9").
 | `hwords` / `hwordsPre2917` | `Hash for Value` (:823) on main / before #2917, in Model.lean |
 -/
 namespace ValueOrder.SC
-open ValueOrder ValueOrder.Laws
+open FalkorCore ValueOrder FalkorCore.Laws
 
 /-! ## Floats -/
 

@@ -17,6 +17,7 @@ Maps are held with keys already sorted and unique (the `sort()` of `compare_map`
 -/
 
 namespace ValueMath
+open FalkorCore
 
 inductive DN where
   | disjoint | comparedNull | nan | none

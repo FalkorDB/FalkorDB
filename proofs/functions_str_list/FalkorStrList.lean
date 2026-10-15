@@ -1,5 +1,6 @@
 import FalkorStrList.Misc
 import FalkorStrList.Entity
+import FalkorCore.Int64
 /-
 # String and list functions: totality and spec agreement
 
@@ -18,7 +19,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 
 | here | there |
 | --- | --- |
-| `inI64`, `wrap64`, `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
+| `InI64`, `wrap` (proofs/core), `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
 | `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:573-584` |
 | `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1722-1750` |
 | `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
@@ -170,29 +171,26 @@ Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVe
 -/
 
 namespace FalkorStrList
+open FalkorCore
 
 /-! ## Machine integers
 
 Rust `i64` values are modelled as `Int` together with the range predicate
-`inI64`. A debug build panics exactly when an arithmetic result leaves that
+`InI64`. A debug build panics exactly when an arithmetic result leaves that
 range; a release build (the `[profile.release]` in `Cargo.toml` sets no
-`overflow-checks`) wraps, which is `wrap64`. `asUsize` is Rust's `x as usize`
+`overflow-checks`) wraps, which is `wrap`. `asUsize` is Rust's `x as usize`
 on a 64-bit target. -/
 
-def I64MIN : Int := -9223372036854775808
-def I64MAX : Int := 9223372036854775807
 def I32MAX : Int := 2147483647
-def inI64 (x : Int) : Prop := I64MIN ≤ x ∧ x ≤ I64MAX
-instance (x : Int) : Decidable (inI64 x) := by unfold inI64; infer_instance
-
-def wrap64 (x : Int) : Int := (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
+-- `I64MIN`/`I64MAX`, `InI64` (range) and `wrap` (release wrap) are proofs/core's
+-- (`FalkorCore/Int64.lean`).
 def asUsize (x : Int) : Nat := (x % 18446744073709551616).toNat
 /-- C's `(int32_t)x` truncation, as used by `AR_SUBSCRIPT` / `AR_SLICE`. -/
 def trunc32 (x : Int) : Int := (x + 2147483648) % 4294967296 - 2147483648
 
 theorem asUsize_wrap64 (x : Int) (h0 : 0 ≤ x) (h1 : x < 18446744073709551616) :
-    asUsize (wrap64 x) = x.toNat := by
-  unfold asUsize wrap64; omega
+    asUsize (wrap x) = x.toNat := by
+  unfold asUsize wrap; omega
 
 /-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs:573-584`) -/
 
@@ -206,8 +204,8 @@ def getElement (l : List α) (i : Int) : Option α :=
 
 /-- `len + i` never overflows: `len ≤ i64::MAX` and `i < 0`. -/
 theorem getElement_noOverflow (len : Nat) (i : Int) (hl : (len : Int) ≤ I64MAX)
-    (hi : inI64 i) : inI64 (getElementIdx len i) := by
-  unfold getElementIdx inI64 at *; unfold I64MIN I64MAX at *; split <;> omega
+    (hi : InI64 i) : InI64 (getElementIdx len i) := by
+  unfold getElementIdx InI64 I64MAX at *; split <;> omega
 
 /-- The unchecked `values[n as usize]` is in bounds whenever the guard holds, so
 indexing is total (no panic for any `i : i64`, including `i64::MIN`). -/
@@ -267,8 +265,8 @@ theorem getElements_bounds (len : Nat) (s e : Int) (h : ¬ sliceStart len s > sl
   split <;> split <;> omega
 
 theorem getElements_noOverflow (len : Nat) (x : Int) (hl : (len : Int) ≤ I64MAX)
-    (hx : inI64 x) (hneg : x < 0) : inI64 ((len : Int) + x) := by
-  unfold inI64 I64MIN I64MAX at *; omega
+    (hx : InI64 x) (hneg : x < 0) : InI64 ((len : Int) + x) := by
+  simp only [InI64, I64MIN, I64MAX] at *; omega
 
 /-- The clamp of the openCypher spec: negative bounds count from the end,
 then everything is clamped into `[0, len]`. -/
@@ -323,7 +321,7 @@ def listRemoveDebug (l : List α) (idx count : Int) : Out α :=
   let len : Int := l.length
   let n := removeNorm l.length idx
   if n < 0 ∨ n ≥ len ∨ count ≤ 0 then .ok l
-  else if ¬ inI64 (n + count) then .panic "attempt to add with overflow"
+  else if ¬ InI64 (n + count) then .panic "attempt to add with overflow"
   else
     let e := min (n + count).toNat l.length
     .ok (l.take n.toNat ++ l.drop e)
@@ -334,7 +332,7 @@ def listRemoveRelease (l : List α) (idx count : Int) : List α :=
   let n := removeNorm l.length idx
   if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
   else
-    let e := min (asUsize (wrap64 (n + count))) l.length
+    let e := min (asUsize (wrap (n + count))) l.length
     l.take n.toNat ++ l.drop e
 
 /-- Spec (and C): drop `count` elements starting at the normalised index. -/
@@ -355,18 +353,18 @@ theorem pre2952_listRemove_end_overflows :
 /-- …but the release build is right by accident: a wrapped (negative) sum
 becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
 list shorter than `i64::MAX` and every `i64` pair. -/
-theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : inI64 idx) :
-    inI64 (removeNorm len idx) := by
-  unfold removeNorm inI64 I64MIN I64MAX at *; split <;> omega
+theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : InI64 idx) :
+    InI64 (removeNorm len idx) := by
+  unfold removeNorm at *; simp only [InI64, I64MIN, I64MAX] at *; split <;> omega
 
 theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : inI64 idx) (hc : inI64 count) :
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
     listRemoveRelease l idx count = listRemoveSpec l idx count := by
   have hn := removeNorm_range l.length idx hl hi
   unfold listRemoveRelease listRemoveSpec
   simp only []
   generalize removeNorm l.length idx = n at *
-  unfold inI64 I64MIN I64MAX at *
+  simp only [InI64, I64MIN, I64MAX] at *
   split
   · rfl
   · rename_i hg
@@ -427,17 +425,17 @@ theorem listRemove_huge_count : listRemove [1, 2, 3] 1 I64MAX = [1] := by decide
 /-- `list.remove` equals the spec (and C) for every list shorter than
 `i64::MAX` and every `i64` index and count, in debug and release alike. -/
 theorem listRemove_eq_spec (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : inI64 idx) (hc : inI64 count) :
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
     listRemove l idx count = listRemoveSpec l idx count := by
   have hn := removeNorm_range l.length idx hl hi
   unfold listRemove listRemoveSpec removeSpan
   generalize removeNorm l.length idx = n at *
-  unfold inI64 I64MIN I64MAX at *
+  simp only [InI64, I64MIN, I64MAX] at *
   by_cases hg : n < 0 ∨ n ≥ (l.length : Int) ∨ count ≤ 0
   · simp only [if_pos hg]
   · simp only [if_neg hg]
     have hsat : (satAdd64 n count).toNat = min (n + count).toNat 9223372036854775807 := by
-      unfold satAdd64 I64MAX I64MIN
+      unfold satAdd64; unfold I64MAX I64MIN
       split <;> (try split) <;> omega
     rw [hsat]
     congr 1
@@ -453,7 +451,7 @@ theorem listRemove_eq_spec (l : List α) (idx count : Int)
 /-- The fix agrees with the old release build wherever that was defined: the
 historical release model already matched the spec (`listRemoveRelease_eq_spec`). -/
 theorem listRemove_eq_preRelease (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : inI64 idx) (hc : inI64 count) :
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
     listRemove l idx count = listRemoveRelease l idx count := by
   rw [listRemove_eq_spec l idx count hl hi hc, listRemoveRelease_eq_spec l idx count hl hi hc]
 
@@ -464,10 +462,10 @@ def insertNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + id
 
 /-- `len + idx + 1` never overflows, and when the range guard passes the
 position is a valid split point for `vs[..pos]` / `vs[pos..]`. -/
-theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi : inI64 idx) :
-    inI64 (insertNorm len idx) ∧
+theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi : InI64 idx) :
+    InI64 (insertNorm len idx) ∧
     (¬ (insertNorm len idx < 0 ∨ insertNorm len idx > len) → (insertNorm len idx).toNat ≤ len) := by
-  unfold insertNorm inI64 I64MIN I64MAX at *
+  unfold insertNorm at *; simp only [InI64, I64MIN, I64MAX] at *
   constructor
   · split <;> omega
   · intro h; split at * <;> omega
@@ -557,8 +555,8 @@ theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
       rw [Int.mul_neg] at hmulI h0
       constructor <;> omega
 
-theorem range_noOverflow (start stop step : Int) (h1 : inI64 start) (h2 : inI64 stop)
-    (l : List Int) (hr : range start stop step = .ok l) : ∀ x ∈ l, inI64 x := by
+theorem range_noOverflow (start stop step : Int) (h1 : InI64 start) (h2 : InI64 stop)
+    (l : List Int) (hr : range start stop step = .ok l) : ∀ x ∈ l, InI64 x := by
   intro x hx
   unfold range at hr
   split at hr
@@ -570,7 +568,7 @@ theorem range_noOverflow (start stop step : Int) (h1 : inI64 start) (h2 : inI64 
       · cases hr
         rename_i hs hdir _
         have := range_elems_between start stop step hs hdir x hx
-        unfold inI64 at *; omega
+        simp only [InI64] at *; omega
 
 /-- The two C/TCK checks: first and last elements. -/
 theorem range_examples :
@@ -583,10 +581,10 @@ The constructor stores `step: step.unsigned_abs() as i64` (`eval.rs:1215`); for
 `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluates
 `-self.step`, which overflows before the (known, #2894) `+=`. -/
 
-def rangeIterStepField (step : Int) : Int := wrap64 step.natAbs
+def rangeIterStepField (step : Int) : Int := wrap step.natAbs
 
 theorem rangeIter_negate_overflows :
-    rangeIterStepField I64MIN = I64MIN ∧ ¬ inI64 (-(rangeIterStepField I64MIN)) := by decide
+    rangeIterStepField I64MIN = I64MIN ∧ ¬ InI64 (-(rangeIterStepField I64MIN)) := by decide
 
 /-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1616-1660`) -/
 
