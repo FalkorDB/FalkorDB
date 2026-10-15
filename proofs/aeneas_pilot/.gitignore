@@ -1,4 +1,4 @@
 /.lake
 /rust/target
 /llbc
-/full/.lake
+/full/

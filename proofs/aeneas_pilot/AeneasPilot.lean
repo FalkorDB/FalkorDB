@@ -33,6 +33,10 @@ extracted def and these proofs break — which is the point.
   the shim; 5 theorems proved here, incl. refinement to the id_list hand model.
   Drift check: mutating the Rust arm to `0..=0x1FF => 1` and re-extracting makes
   `width_for_refines` fail to build (verified in a scratch copy).
+* **full/ is not committed** (git-ignored): `./extract.sh` regenerates it,
+  Lake scaffolding included (`full/lakefile.toml` pins the real Aeneas lib);
+  then `cd full && lake exe cache get && lake build`. Only narrow_int (above)
+  is checked here; the rest of the extraction carries no theorems.
 * **runtime::bitset**: extracts (full/Extracted/Bitset.lean) via charon on the
   pilot crate; `ThinVec` (external crate), `Iterator::all`/`zip`,
   `BitOrAssign<&u64>` come out as axioms (no Aeneas model). Not type-checked.
