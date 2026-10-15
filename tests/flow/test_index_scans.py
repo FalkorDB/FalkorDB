@@ -1321,6 +1321,22 @@ class testIndexScanFlow():
             with_idx.delete()
             no_idx.delete()
 
+    def test_36_unservable_value_keeps_filter(self):
+        # A value the index can't look up exactly (a folded date() or
+        # point(), a computed int beyond 2^52, a date() in an IN list)
+        # must not return every node of the label or lose rows.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:date('2020-01-01'), k:'date'}),"
+            " (:L {v:point({latitude:1.0, longitude:2.0}), k:'p'})",
+            ["MATCH (n:L) WHERE n.v = date('2020-01-01') RETURN n.k",
+             "MATCH (n:L {v: date('2020-01-01')}) RETURN n.k",
+             "MATCH (n:L) WHERE n.v > date('2019-01-01') RETURN n.k",
+             "MATCH (n:L) WHERE n.v IN [date('2020-01-01'), 5] RETURN n.k",
+             "MATCH (n:L) WHERE n.v = point({latitude:1.0, longitude:2.0}) RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 4503599627370495 * 2 RETURN n.k"])
+
     def test_38_exclusive_equal_string_bounds(self):
         # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
         # shortcut must only apply when both bounds are inclusive.
