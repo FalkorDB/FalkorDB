@@ -40,6 +40,20 @@ void Delta_Matrix_lock
 ) {
 	ASSERT (C) ;
 
+	// Defensive: ASSERT() is no-op in release builds. Without this NULL
+	// guard, callers passing a NULL Delta_Matrix (observed during
+	// RESTORE of a v18-encoded graph where a relation matrix slot was
+	// unpopulated) would segfault via pthread_mutex_lock(&NULL->mutex).
+	// Log + early-return so the host process stays up; the upstream
+	// caller still receives undefined behavior for whatever they were
+	// trying to do, but Redis itself does not crash.
+	if (C == NULL) {
+		RedisModule_Log(NULL, "warning",
+			"Delta_Matrix_lock: NULL matrix — skipping lock "
+			"(upstream caller bug)");
+		return ;
+	}
+
 	int res = pthread_mutex_lock (&C->mutex) ;
 
 	ASSERT (res       == 0) ;
@@ -54,6 +68,11 @@ void Delta_Matrix_unlock
 	Delta_Matrix C
 ) {
 	ASSERT (C) ;
+	if (C == NULL) {
+		RedisModule_Log(NULL, "warning",
+			"Delta_Matrix_unlock: NULL matrix — skipping unlock");
+		return ;
+	}
 	ASSERT (C->locked == true) ;
 
 	C->locked = false ;
