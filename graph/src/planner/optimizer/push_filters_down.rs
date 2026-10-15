@@ -78,6 +78,31 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
     }
 }
 
+/// Variables the rows leaving `node` carry.
+///
+/// Like `collect_subtree_variables`, except that below an env-resetting
+/// operator only its named outputs survive. Variable IDs are per scope, so a
+/// variable matched below a `WITH` can share its ID with an unrelated one
+/// bound after it; counting it as visible would let a filter on the later one
+/// be pushed below the operator that binds it.
+fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+    if let Some(outputs) = branch_output_variables(node) {
+        return outputs;
+    }
+    let below: HashSet<u32> = node
+        .children()
+        .flat_map(|child| collect_subtree_variables(&child))
+        .collect();
+    let mut vars: HashSet<u32> = collect_subtree_variables(node)
+        .difference(&below)
+        .copied()
+        .collect();
+    for child in node.children() {
+        vars.extend(branch_visible_variables(&child));
+    }
+    vars
+}
+
 /// Pushes filter conjuncts down through nodes.
 ///
 /// Transforms:
@@ -235,7 +260,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             }
                         };
                         if !filter_in_left {
-                            let left_vars = collect_subtree_variables(&parent.child(0));
+                            let left_vars = branch_visible_variables(&parent.child(0));
                             inherited.extend(left_vars);
                         }
                         break;
