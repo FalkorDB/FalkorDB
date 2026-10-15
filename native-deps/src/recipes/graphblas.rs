@@ -145,6 +145,10 @@ pub fn build(
     let flags = ctx.toolchain.common_c_flags();
     CMake::new(&source, &build_dir)
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", entry.display()))
+        // GNUInstallDirs picks lib64 on 64-bit RPM distros (rhel9,
+        // amazonlinux2023), but the archive is looked up under lib/ below, by
+        // lagraph.rs and by Resolved::lib.
+        .arg("-DCMAKE_INSTALL_LIBDIR=lib")
         .arg("-DSUITESPARSE_USE_FORTRAN=OFF")
         .arg("-DBUILD_STATIC_LIBS=ON")
         .arg("-DBUILD_SHARED_LIBS=OFF")

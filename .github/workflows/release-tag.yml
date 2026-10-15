@@ -1,11 +1,19 @@
-# Release the Rust engine (>= 6.0.0) by pushing a tag.
+# Release the Rust engine (>= 6.0.0). This is the ONLY release pipeline: it
+# creates the GitHub Release, builds and uploads the per-platform .so assets,
+# retags the runtime images, and pushes the per-OS server images. No other
+# workflow listens for a release.
 #
-# WHY TAG-PUSH: a tag push runs the workflow files from the TAGGED COMMIT'S OWN
-# TREE, so this pipeline is immune to which branch is the repository default.
-# `release:` and `workflow_run` are default-branch-only events — after the Rust
-# tree becomes the default branch of FalkorDB/FalkorDB (with the C engine still
-# on `master`), a `release:`-driven publish would fire the WRONG tree's workflows
-# (or none at all). Routing on the tag makes engine selection automatic:
+# WHY ONE TRIGGER, AND WHY THE TAG
+# Publishing a release drafted in the UI also creates its tag, so a `release:`
+# listener and a tag-push listener BOTH fire for the same release. When the
+# image and artifact workflows listened for `release:` while also being called
+# from here, every release ran them twice side by side, and the two artifact
+# builds raced for the same build cache. The tag push is the one event every
+# release produces, whether it is cut with `git push` or from the UI, so it is
+# the only trigger.
+#
+# A tag push runs the workflow files from the TAGGED COMMIT'S OWN TREE, which
+# makes engine selection automatic:
 #
 #   git push origin v5.2.0   → C tree's workflows   (master lineage, no this file)
 #   git push origin v6.0.0   → this pipeline        (Rust lineage)
@@ -15,16 +23,21 @@
 # a mis-tagged Rust release fails loudly instead of publishing as C.
 #
 # WHAT IT DOES
-#   1. guard          — validate tag shape, major >= 6, Cargo.toml version match
-#   2. create-release — create the GitHub Release for the tag (idempotent)
-#   3. artifacts      — build + upload the per-platform .so assets
-#   4. image          — retag the validated rc-pr-<N> manifest to semver
+#   1. guard             — validate tag shape, major >= 6, Cargo.toml version match
+#   2. create-release    — create the GitHub Release (idempotent)
+#   3. build-artifacts   — build the per-platform .so files, and the rhel9 and
+#                          amazonlinux2023 server images (_build-artifacts.yml)
+#   4. publish-artifacts — require the full set, checksum, upload to the release
+#   5. image             — retag the validated rc-mg-<sha> manifest to semver,
+#                          and to :latest if this is the highest release
+#   6. publish-images    — push the per-OS server images as <semver>-<os>-<arch>
+#   7. browser-tests     — exercise the published image
 #
-# Steps 3 and 4 reuse release-artifacts.yml / release-image.yml via workflow_call
-# — the same code paths the `release:` event uses, so there is one publish
-# implementation, not two. create-release runs BEFORE image because the
-# latest-pointer decision in release-image.yml compares against the list of
-# published releases.
+# workflow_dispatch re-runs all of it for an existing tag; every step is
+# idempotent (existing release reused, assets uploaded with --clobber, retag
+# overwrites). To rebuild the images from source instead of retagging — the
+# rc-mg-<sha> image was swept, or the commit never went through the merge
+# queue — use release-image.yml.
 
 name: Release (tag)
 
@@ -109,8 +122,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Releasing $TAG (semver=$SEMVER prerelease=$PRERELEASE) at $(git rev-parse HEAD)"
 
-  # Create the Release up front: release-artifacts.yml uploads assets to it, and
-  # release-image.yml's :latest decision reads the published-release list.
+
+  # Create the Release up front: publish-artifacts uploads assets to it, and the
+  # image job's :latest decision reads the published-release list, which must
+  # include this one.
   create-release:
     needs: guard
     runs-on: ubuntu-latest
@@ -134,24 +149,187 @@ jobs:
           gh release create "$TAG" "${FLAGS[@]}"
           echo "Created release $TAG"
 
-  # Per-platform .so assets → uploaded to the release.
-  artifacts:
-    needs: [guard, create-release]
-    uses: ./.github/workflows/release-artifacts.yml
+  # Per-platform .so assets. BUILD (fan-out) and PUBLISH (fan-in) are separate so
+  # a partial matrix failure never leaves a half-populated release: the build
+  # cells only produce workflow artifacts, and publish-artifacts downloads them,
+  # requires the FULL set, generates SHA256SUMS, then uploads.
+  build-artifacts:
+    needs: guard
+    uses: ./.github/workflows/_build-artifacts.yml
     permissions:
-      contents: write
+      contents: read
       packages: read
     with:
-      tag: ${{ needs.guard.outputs.tag }}
-      commit_sha: ${{ needs.guard.outputs.commit_sha }}
+      revision: ${{ needs.guard.outputs.commit_sha }}
+      # Release builds run on a tag that is already in this repository —
+      # reviewed code, so this build may write the cache.
+      trusted_revision: true
+      export_images: true
+    # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
+
+  publish-artifacts:
+    needs: [guard, create-release, build-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: falkordb-*.so
+          path: downloaded
+
+      - name: Assemble + assert complete set + checksums
+        env:
+          SUFFIXES: ${{ needs.build-artifacts.outputs.suffixes }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # download-artifact lays each artifact down under downloaded/<name>/...
+          find downloaded -type f \( -name 'falkordb-*.so' -o -name 'falkordb-*.so.sha256' \) \
+            -exec cp -t dist {} +
+          # Completeness gate: every platform built must be present, else FAIL
+          # (never publish a partial release).
+          MISSING=""
+          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
+            if [ ! -f "dist/falkordb-${s}.so" ]; then MISSING="$MISSING falkordb-${s}.so"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing expected release assets:$MISSING"; exit 1
+          fi
+          ( cd dist && sha256sum falkordb-*.so > SHA256SUMS )
+          echo "Publishing:"; ls -1 dist
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
+            --clobber
+
+  # Runtime images: retag the multi-arch manifest the merge queue built and
+  # tested for this commit (rc-mg-<sha>) to the release tags on both registries.
+  # No layer rebuild — what CI validated is what ships. That image only exists
+  # for a commit that went through the queue, and only for cleanup-rc-images.yml's
+  # TTL; otherwise rebuild from source with release-image.yml.
+  image:
+    needs: [guard, create-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }} → ${{ needs.guard.outputs.semver }} (${{ matrix.repo }})
+        env:
+          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:    ${{ github.repository }}
+          TAG:        ${{ needs.guard.outputs.semver }}
+          COMMIT_SHA: ${{ needs.guard.outputs.commit_sha }}
+          REPO:       ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}"
+          TAGS=(-t "ghcr.io/falkordb/${REPO}:${TAG}" -t "falkordb/${REPO}:${TAG}")
+          # :latest moves only when this release is the highest semver across all
+          # non-draft, non-prerelease releases, so a backport patch on an old
+          # version branch does not clobber it. Decided here, right before the
+          # push, so a newer release published meanwhile is already in the list.
+          HIGHEST=$(gh api "/repos/${GH_REPO}/releases" --paginate \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -1)
+          echo "highest published release: $HIGHEST; this release: $TAG"
+          if [ "$HIGHEST" = "$TAG" ]; then
+            # From 6.0 GA the Rust engine is the default, so :latest moves on
+            # BOTH registries — same as the rebuild path in _build-flavour.yml.
+            TAGS+=(-t "ghcr.io/falkordb/${REPO}:latest" -t "falkordb/${REPO}:latest")
+          fi
+          docker buildx imagetools create "${TAGS[@]}" "${SRC}"
+
+  # Per-OS server images: falkordb-server:<semver>-rhel9-x64 and
+  # -amazonlinux2023-x64. Unlike the Debian images, nothing before the release
+  # builds them, so build-artifacts builds them from the tagged commit next to
+  # the .so files, and this job pushes them. Pushing here rather than in the
+  # build keeps registry credentials out of the job that compiles code. No
+  # :latest-<os> tag: these are pinned by version.
+  publish-images:
+    needs: [guard, build-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download server images
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: image-falkordb-server-*
+          path: images
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push falkordb-server:${{ needs.guard.outputs.semver }}-<os>
+        env:
+          SEMVER:   ${{ needs.guard.outputs.semver }}
+          SUFFIXES: ${{ needs.build-artifacts.outputs.image_suffixes }}
+        run: |
+          set -euo pipefail
+          # Completeness gate: push nothing unless every image is here.
+          MISSING=""
+          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
+            if [ -z "$(find images -name "falkordb-server-${s}.tar" -print -quit)" ]; then
+              MISSING="$MISSING falkordb-server-${s}"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing server images:$MISSING"; exit 1
+          fi
+          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
+            docker load --input "$(find images -name "falkordb-server-${s}.tar" -print -quit)"
+            for DST in "falkordb/falkordb-server:${SEMVER}-${s}" "ghcr.io/falkordb/falkordb-server:${SEMVER}-${s}"; do
+              docker tag "falkordb-server:${s}" "$DST"
+              docker push "$DST"
+            done
+          done
 
   # Browser tests for the released image. Mirrors the C engine's
   # browser-tests-trigger.yml hook so both engines exercise the browser on a
-  # stable release. Deliberately chained AFTER `image` rather than off a
-  # `release:` event: browser tests need the PUBLISHED image, and `release:`
-  # fires the moment the release is created — racing the image push. It is also
-  # why this is not a `release:` listener at all; that event is version-blind and
-  # would fire for the C engine's releases too.
+  # stable release. Chained AFTER `image` because browser tests need the
+  # PUBLISHED image.
   browser-tests:
     needs: [guard, image]
     uses: ./.github/workflows/browser-tests-trigger.yml
@@ -159,18 +337,3 @@ jobs:
       contents: read
     with:
       tag: ${{ needs.guard.outputs.tag }}
-
-  # Runtime images → retag the rc-pr-<N> manifest that PR CI already validated.
-  image:
-    needs: [guard, create-release]
-    uses: ./.github/workflows/release-image.yml
-    permissions:
-      contents: read
-      packages: write
-      pull-requests: read
-    with:
-      tag: ${{ needs.guard.outputs.semver }}
-      commit_sha: ${{ needs.guard.outputs.commit_sha }}
-      mode: retag
-    # Docker Hub credentials for the release push.
-    secrets: inherit
