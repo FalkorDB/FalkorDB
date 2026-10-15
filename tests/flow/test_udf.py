@@ -1876,3 +1876,18 @@ class test_udf_javascript():
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
+    def test_get_neighbors_without_config(self):
+        """
+        node.getNeighbors() with no argument uses the default config.
+        """
+
+        script = """
+        falkor.register('n', function(x) {
+            return x.getNeighbors().map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("lib_nocfg", script)
+        self.graph.query("CREATE (a {id:0})-[:R]->(:B {id:1}), (a)<-[:R]-(:C {id:2})")
+
+        res = self.graph.query("MATCH (a {id:0}) RETURN lib_nocfg.n(a)").result_set
+        self.env.assertEqual(res, [[[1]]])
