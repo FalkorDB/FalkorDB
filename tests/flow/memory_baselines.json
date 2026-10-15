@@ -1,0 +1,14 @@
+{
+    "_comment": [
+        "Baselines used by tests/flow/test_memory_regression.py.",
+        "Each entry maps a workload name to its baseline 'total_graph_sz_mb'.",
+        "An empty / missing entry means the workload is bootstrapped (the test",
+        "records the current value and passes without a comparison).",
+        "To (re)populate baselines run:",
+        "    MEMORY_REGRESSION_UPDATE=1 \\",
+        "        ./tests/flow/tests.sh TEST=test_memory_regression",
+        "and commit the resulting tests/flow/memory_baselines.json.",
+        "See tests/flow/README_memory_regression.md for full details."
+    ],
+    "workloads": {}
+}
