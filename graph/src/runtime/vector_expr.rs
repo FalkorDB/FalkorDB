@@ -454,7 +454,10 @@ impl<'a> VectorEval<'a> {
                         still_live.push(pos);
                     }
                     v => {
-                        return Err(format!("Type mismatch: expected Bool but was {v:?}"));
+                        return Err(format!(
+                            "Type mismatch: expected Boolean or Null but was {}",
+                            v.name()
+                        ));
                     }
                 }
             }
