@@ -36,6 +36,9 @@ atomic_refcell = "0.1.14"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"
+# Nested-dissection elimination ordering for the CCH path index (pure Rust;
+# swap-able for a C METIS binding behind index::cch::order::Ordering).
+feral-metis = "0.3.0"
 itertools = "0.15.0"
 json-escape = "0.3.1"
 lru = "0.18.1"
