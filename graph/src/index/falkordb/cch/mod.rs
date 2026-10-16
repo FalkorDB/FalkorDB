@@ -7,6 +7,7 @@
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
+//! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
@@ -24,6 +25,7 @@ mod input;
 pub(crate) mod maint;
 mod nd;
 mod order;
+mod partial;
 pub(crate) mod procedure;
 mod query;
 pub mod rdb;
@@ -249,15 +251,12 @@ impl Cch {
     /// # Errors
     /// [`CchError::InvalidWeight`] if a changed pair's new weight is negative or NaN.
     /// Nothing is written in that case, nor on [`Recustomized::NeedsRebuild`].
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3217. Nothing calls it yet.
     pub fn recustomize_scoped(
         &mut self,
-        _changed: &[(u64, u64)],
-        _weights: &WeightCsr,
+        changed: &[(u64, u64)],
+        weights: &WeightCsr,
     ) -> Result<Recustomized, CchError> {
-        unimplemented!("scoped recustomization, #3217")
+        self.recustomize_scoped_impl(changed, weights)
     }
 
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
