@@ -67,7 +67,11 @@ fn record_mut(
     let is_write = plan.iter().any(|n| {
         matches!(
             n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+            IR::Commit
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. }
+                | IR::CreateCchIndex { .. }
+                | IR::DropCchIndex { .. }
         )
     });
     // Writes build a private version instead of mutating the published one in
