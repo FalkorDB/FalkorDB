@@ -24,9 +24,9 @@
 
 use crate::commands::constraint::{Settling, settle_constraint};
 use crate::config::{
-    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
-    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
-    apply_module_args, get_thread_count, normalize_node_creation_buffer,
+    CONFIGURATION_CCH_INDEX, CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE,
+    CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
+    OMP_THREAD_COUNT, apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
@@ -304,6 +304,12 @@ pub fn graph_init(
     // Initialize the thread pool with the configured thread count.
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
+
+    // Publish CCH_INDEX to the graph engine, which cannot read module configs.
+    graph::runtime::runtime::CCH_DDL_ENABLED.store(
+        *CONFIGURATION_CCH_INDEX.lock(ctx),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Publish the normalized NODE_CREATION_BUFFER to the graph engine: it is
     // the chunk size matrix capacities grow by (see `Graph::grow_cap`).

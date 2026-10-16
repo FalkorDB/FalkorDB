@@ -62,6 +62,7 @@ IMMUTABLE_MODULE_ARGS = (
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
     "TIMEOUT",
+    "CCH_INDEX",
 )
 
 # `Env(...moduleArgs="...string...")` — capture the literal string content.
