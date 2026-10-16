@@ -9,7 +9,7 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, btree_map::Entry};
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -1015,26 +1015,55 @@ impl FalkorDbIndex {
 /// CCH shortest-path indexes, held next to the columns. `Graph`'s CCH methods build a
 /// hierarchy from the graph first, then hand it here; nothing here reads the graph.
 ///
-/// The signatures are fixed here so the DDL, maintenance and procedure changes can be written
-/// against them. Every body is `unimplemented!()`: nothing in the engine calls these, so a
-/// graph with no CCH index behaves exactly as it did before.
+/// MVCC: an entry holds its hierarchy as `Arc<Cch>`, and `Graph::new_version` clones the `Arc`.
+/// Every write here adds, replaces or removes an entry on the version it is called on only,
+/// so a reader holding an older version keeps its hierarchy, and rolling a write back is
+/// dropping the new version. Every write is all-or-nothing.
 impl FalkorDbIndex {
-    /// The index held over exactly `def`, if it is ready to answer.
+    /// The entry held over `def` in any state, looked up by its definition, the whole key
+    /// ([`VersionedIndex::entry`]).
+    #[must_use]
+    pub(crate) fn cch_entry(
+        &self,
+        def: &CchIndexDef,
+    ) -> Option<&IndexEntry<CchIndex>> {
+        CchIndex::entry(self, def)
+    }
+
+    /// The index held over exactly `def`, if it is ready to answer: an entry that is still
+    /// building is not returned.
     #[must_use]
     pub(crate) fn cch_index(
         &self,
-        _def: &CchIndexDef,
+        def: &CchIndexDef,
     ) -> Option<&CchIndex> {
-        unimplemented!("Graph API, #3212")
+        self.cch_entry(def)
+            .filter(|idx| !idx.is_building())
+            .map(|idx| &idx.index)
     }
 
-    /// Every held CCH definition, in no guaranteed order.
+    /// Every held CCH definition, ready or not, in definition order.
     pub(crate) fn cch_defs(&self) -> impl Iterator<Item = &CchIndexDef> {
-        unimplemented!("Graph API, #3212");
-        // Unreachable, but it pins the return type: `impl Iterator` needs a concrete type
-        // and `unimplemented!()` alone leaves the compiler without one.
-        #[allow(unreachable_code)]
-        std::iter::empty()
+        self.cch_indexes.keys()
+    }
+
+    /// Hold `index` in `state`, as a new index: the next generation, like a column's.
+    ///
+    /// # Errors
+    /// [`CchError::AlreadyExists`] if an entry over the same definition is held, in any state.
+    pub(crate) fn add_cch(
+        &mut self,
+        index: CchIndex,
+        state: BuildState<()>,
+    ) -> Result<(), CchError> {
+        match self.cch_indexes.entry(index.def.clone()) {
+            Entry::Occupied(_) => Err(CchError::AlreadyExists),
+            Entry::Vacant(slot) => {
+                self.indexes_created += 1;
+                slot.insert(IndexEntry::new(index, state, self.indexes_created));
+                Ok(())
+            }
+        }
     }
 
     /// Stop holding the index over `def`.
@@ -1043,9 +1072,12 @@ impl FalkorDbIndex {
     /// [`CchError::NotFound`] if no entry over `def` is held.
     pub(crate) fn drop_cch(
         &mut self,
-        _def: &CchIndexDef,
+        def: &CchIndexDef,
     ) -> Result<(), CchError> {
-        unimplemented!("Graph API, #3212")
+        self.cch_indexes
+            .remove(def)
+            .map(drop)
+            .ok_or(CchError::NotFound)
     }
 }
 
