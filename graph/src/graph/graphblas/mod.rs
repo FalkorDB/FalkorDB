@@ -10,6 +10,8 @@
 //! graphblas/
 //!   mod.rs                  <-- Auto-generated FFI bindings (GrB_* / GxB_* symbols)
 //!   matrix.rs               <-- Safe wrapper around GrB_Matrix (boolean sparse matrix)
+//!   settings.rs             <-- Typed storage settings (sparsity, orientation, integer widths)
+//!   csr.rs                  <-- Row-major CSR export of a matrix
 //!   vector.rs               <-- Safe wrapper around GrB_Vector (boolean sparse vector)
 //!   tensor.rs               <-- 3D sparse structure for multi-edge storage
 //!   versioned_matrix.rs     <-- Copy-on-write matrix with MVCC delta tracking
@@ -70,6 +72,7 @@
 
 #[cfg(test)]
 mod block_scaling_bench;
+pub mod csr;
 #[cfg(test)]
 mod degree_bench;
 #[cfg(test)]
@@ -80,6 +83,7 @@ pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
 pub mod serialization;
+pub mod settings;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
