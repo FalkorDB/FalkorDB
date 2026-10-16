@@ -12,6 +12,7 @@
 //! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
 //! - `maint.rs`     keeping the indexes correct after writes (#3214)
 //! - `procedure.rs` `db.idx.cch.query` and the CCH rows of `db.indexes()`
+//! - `rdb.rs`       the CCH definitions payload of an RDB (encoding version 20)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -25,6 +26,7 @@ mod nd;
 mod order;
 pub(crate) mod procedure;
 mod query;
+pub mod rdb;
 #[cfg(test)]
 pub(crate) mod testkit;
 

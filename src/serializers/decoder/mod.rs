@@ -14,7 +14,7 @@ use super::EncodeState;
 use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
-use super::{DECODE_STATE, PendingGraph};
+use super::{CchDefs, DECODE_STATE, PendingGraph};
 
 /// What one RDB key turned out to hold.
 pub enum LoadedKey {
@@ -124,6 +124,7 @@ pub fn rdb_load_graph(
                 relationship_tensors: Vec::new(),
                 adj_matrix: VersionedMatrix::<bool>::new(0, 0),
                 lbls_matrix: VersionedMatrix::<bool>::new(0, 0),
+                cch_defs: CchDefs::default(),
             };
             decode_state.pending.insert(hdr.graph_name.clone(), pg);
         } else {
@@ -189,6 +190,7 @@ pub fn rdb_load_graph(
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
     let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
     let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut cch_defs = CchDefs::default();
 
     for (state, count) in &payloads {
         match *state {
@@ -223,6 +225,9 @@ pub fn rdb_load_graph(
             EncodeState::LblsMatrix => {
                 lbls_matrix = VersionedMatrix::decode(&mut r)?;
             }
+            EncodeState::CchIndices => {
+                cch_defs.decode(&mut r)?;
+            }
             _ => {}
         }
     }
@@ -252,6 +257,7 @@ pub fn rdb_load_graph(
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    cch_defs.build(&mut graph);
 
     Ok(LoadedKey::Graph(Box::new(graph)))
 }
@@ -300,6 +306,9 @@ fn decode_payloads_into_pending(
             EncodeState::LblsMatrix => {
                 pg.lbls_matrix = VersionedMatrix::decode(r)?;
             }
+            EncodeState::CchIndices => {
+                pg.cch_defs.decode(r)?;
+            }
             _ => {}
         }
     }
@@ -337,6 +346,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    pg.cch_defs.build(&mut graph);
 
     graph
 }
@@ -469,6 +479,7 @@ fn load_graph_from_reader(
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
     let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
     let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut cch_defs = CchDefs::default();
 
     for (state, count) in &payloads {
         match *state {
@@ -503,6 +514,9 @@ fn load_graph_from_reader(
             EncodeState::LblsMatrix => {
                 lbls_matrix = VersionedMatrix::decode(r)?;
             }
+            EncodeState::CchIndices => {
+                cch_defs.decode(r)?;
+            }
             _ => {}
         }
     }
@@ -532,6 +546,7 @@ fn load_graph_from_reader(
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    cch_defs.build(&mut graph);
 
     Ok(graph)
 }

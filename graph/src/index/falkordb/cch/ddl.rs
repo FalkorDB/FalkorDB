@@ -82,8 +82,8 @@ pub(crate) fn create_cch_index<'a>(
     }
     // Not replicated: the bump makes the write count as modified, so `commit_and_replicate` logs
     // "modified but produced no effects payload" (there is no verbatim-query fallback on main)
-    // and shows "Indexes created" in the reply. Replicas and the AOF do not get the index: no
-    // effect carries it, and the RDB does not save CCH indexes yet.
+    // and shows "Indexes created" in the reply. Replicas and the AOF get the index only through
+    // an RDB until CCH DDL emits effects.
     runtime.stats.borrow_mut().indexes_created += 1;
     Ok(BatchOp::Once(None))
 }

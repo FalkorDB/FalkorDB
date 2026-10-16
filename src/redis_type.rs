@@ -894,7 +894,7 @@ const _: () = {
 
 pub static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
@@ -992,7 +992,7 @@ unsafe extern "C" fn graphmeta_aux_load(
 
 pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
     "graphmeta",
-    19,
+    serializers::ENCODING_VERSION,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),

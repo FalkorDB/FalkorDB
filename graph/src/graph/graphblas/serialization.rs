@@ -138,7 +138,10 @@ pub enum EncodeState {
     RelationMatrices = 7,
     AdjMatrix = 8,
     LblsMatrix = 9,
-    Final = 10,
+    /// Graph-level CCH path-index definitions.
+    CchIndices = 10,
+    /// Never saved to an RDB.
+    Final = 11,
 }
 
 impl EncodeState {
@@ -155,10 +158,43 @@ impl EncodeState {
             7 => Some(Self::RelationMatrices),
             8 => Some(Self::AdjMatrix),
             9 => Some(Self::LblsMatrix),
-            10 => Some(Self::Final),
+            10 => Some(Self::CchIndices),
+            11 => Some(Self::Final),
             _ => None,
         }
     }
+}
+
+/// Read past one [`EncodeState::CchIndices`] payload without building anything, and return how
+/// many index definitions it held.
+///
+/// For a build without the `index-falkordb` feature, which has no CCH index but must still load
+/// a graph saved by one that has: it drops the definitions (the caller logs that) and leaves the
+/// stream exactly where the full decoder (`index::falkordb::cch::rdb::decode_cch_defs`) would,
+/// because the payload is nothing but unsigned values (the index count, then per index its
+/// relationship-type count, the type ids and the weight attribute id) and every one of them is
+/// read here. It refuses what the full decoder refuses, so a malformed payload fails the load in
+/// either build.
+///
+/// # Errors
+/// A truncated stream, an index with no relationship types, or a weight attribute id above
+/// `u16::MAX`.
+pub fn skip_cch_defs(r: &mut dyn Reader) -> Result<u64, String> {
+    let count = r.read_unsigned()?;
+    for _ in 0..count {
+        let n = r.read_unsigned()?;
+        if n == 0 {
+            return Err("CCH index with no relationship types".to_string());
+        }
+        for _ in 0..n {
+            r.read_unsigned()?;
+        }
+        let attr = r.read_unsigned()?;
+        if attr > u64::from(u16::MAX) {
+            return Err(format!("CCH weight attribute id {attr} out of range"));
+        }
+    }
+    Ok(count)
 }
 
 /// A single payload entry with state, count, and offset into the entity stream.
@@ -274,5 +310,20 @@ mod tests {
         let res = bitmap.decode_with_count(&mut OneBuffer(Some(Vec::new())), 1 << 61, 0);
         let err = res.expect_err("overflowing count accepted");
         assert!(err.contains("out of range"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn state_numbers_match_c() {
+        assert_eq!(EncodeState::CchIndices as u64, 10);
+        assert_eq!(EncodeState::Final as u64, 11);
+        assert!(matches!(
+            EncodeState::from_u64(10),
+            Some(EncodeState::CchIndices)
+        ));
+        assert!(matches!(
+            EncodeState::from_u64(9),
+            Some(EncodeState::LblsMatrix)
+        ));
+        assert!(EncodeState::from_u64(12).is_none());
     }
 }

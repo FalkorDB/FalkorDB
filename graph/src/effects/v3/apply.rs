@@ -70,7 +70,12 @@ pub fn apply_effects(
     // the version is published — records arrive grouped by shape rather than
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
-    let mut docs = IndexDocs::default();
+    // A replay: what the primary accepted is applied, not refused again by this server's own
+    // rules (see `IndexDocs::replay`).
+    let mut docs = IndexDocs {
+        replay: true,
+        ..IndexDocs::default()
+    };
     for record in payload.records() {
         apply_record(g, record?, &mut docs)?;
     }
@@ -2740,12 +2745,15 @@ mod tests {
             }
         }
 
-        /// The write-time weight check runs on replay too: the graph methods the records apply
-        /// through hold it. A primary with the index refuses these before emitting them, so a
-        /// buffer carrying one comes from a primary without it (CCH DDL is not replicated), and the
-        /// replica refuses it like any apply failure rather than corrupt its index.
+        /// The write-time weight check does not run on replay. A primary with the index refuses
+        /// these before emitting them, so a buffer carrying one comes from a primary without it
+        /// (CCH DDL is not replicated, while the definitions ride every RDB, the AOF preamble
+        /// included). Refusing it would fail the buffer: a full resync on a replica, `exit(1)`
+        /// loading the AOF. The buffer applies, and the index that cannot take the weight is
+        /// given up on. The same write through the graph method outside a replay is still
+        /// refused, before anything is written.
         #[test]
-        fn a_weight_the_index_cannot_hold_fails_the_buffer() {
+        fn a_replayed_weight_the_index_cannot_hold_applies_and_gives_up_the_index() {
             for (what, record) in [
                 (
                     "a negative update",
@@ -2767,15 +2775,27 @@ mod tests {
                     },
                 ),
             ] {
-                let (mut g, _) = cch_setup();
-                let flushes = flush_count();
-                let err = apply_one(&mut g, record).expect_err(what);
+                let (mut g, def) = cch_setup();
+                apply_one(&mut g, record).expect(what);
                 assert!(
-                    err.to_string().contains("CCH weight constraint violation"),
-                    "{what}: {err}"
+                    !g.cch_indexes().any(|d| *d == def),
+                    "{what}: the index is dropped"
                 );
-                assert_eq!(flush_count(), flushes, "{what}: refused before the flush");
             }
+            // Outside a replay (a Cypher write, `GRAPH.BULK`), the graph method refuses it.
+            let (mut g, def) = cch_setup();
+            let before = held(&g, &def);
+            let flushes = flush_count();
+            let attrs: FxHashMap<u64, Vec<(u16, Value)>> =
+                FxHashMap::from_iter([(0, vec![(TIME, Value::Float(-1.0))])]);
+            let mut docs = IndexDocs::default();
+            let err = g
+                .set_relationships_attributes_of_type(TypeId(ROAD as usize), &attrs, &mut docs)
+                .expect_err("refused at the write");
+            assert!(err.contains("CCH weight constraint violation"), "{err}");
+            g.apply_cch_writes(&mut docs).expect("nothing staged");
+            assert_eq!(flush_count(), flushes, "refused before anything was staged");
+            assert!(Arc::ptr_eq(&before, &held(&g, &def)));
             // Not indexed: another type, another attribute.
             for record in [
                 float_edge_update(&[2], FERRY, TIME, -1.0),
@@ -2822,10 +2842,12 @@ mod tests {
             float_edge_update(&[0], ROAD, OTHER, 7.0)
                 .encode(&mut buf)
                 .unwrap();
-            float_edge_update(&[0], ROAD, TIME, -1.0)
+            // An edge that does not exist: the buffer is refused after the first record staged
+            // its index write.
+            float_edge_update(&[99], ROAD, OTHER, 1.0)
                 .encode(&mut buf)
                 .unwrap();
-            apply_effects(&mut g, &buf).expect_err("a negative weight cannot be indexed");
+            apply_effects(&mut g, &buf).expect_err("the edge is not live");
             let seven = Value::Float(7.0);
             let column = g
                 .falkordb_index
