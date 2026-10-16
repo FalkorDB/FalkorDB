@@ -5227,7 +5227,7 @@ impl Graph {
     /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
     /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
     /// definition, and whatever [`Cch::build`] reports.
-    pub fn create_cch_index(
+    pub(crate) fn create_cch_index(
         &mut self,
         def: CchIndexDef,
     ) -> Result<(), CchError> {
@@ -5250,7 +5250,7 @@ impl Graph {
     ///
     /// # Errors
     /// [`CchError::NotFound`] if no index with this definition is held.
-    pub fn drop_cch_index(
+    pub(crate) fn drop_cch_index(
         &mut self,
         def: &CchIndexDef,
     ) -> Result<(), CchError> {
