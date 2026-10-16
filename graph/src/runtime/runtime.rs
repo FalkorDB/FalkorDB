@@ -582,6 +582,8 @@ impl<'a> Runtime<'a> {
                 result.push(batch);
             }
         }
+        // Every `Commit` has run: bring the CCH indexes up to date, once for the whole query.
+        self.flush_cch()?;
         let run_duration = start.elapsed();
 
         self.stats.borrow_mut().labels_added += self.g.borrow().labels_count() - labels_count;
@@ -590,6 +592,27 @@ impl<'a> Runtime<'a> {
             stats: self.stats.take(),
             result,
         })
+    }
+
+    /// Rebuild the CCH indexes this query's `Commit`s touched, on its private version, and
+    /// forget what was recorded. A no-op for read queries, and for writes to a graph with no
+    /// CCH index (nothing is ever recorded there): one `is_empty()` check, no allocation.
+    ///
+    /// # Errors
+    /// An index could not be rebuilt (a weight that is negative or not finite, say); the
+    /// caller fails the query, and its rollback leaves the committed indexes as they were.
+    pub fn flush_cch(&self) -> Result<(), String> {
+        if !self.write {
+            return Ok(());
+        }
+        let dirty = self.pending.borrow_mut().take_cch_dirty();
+        if dirty.is_empty() {
+            return Ok(());
+        }
+        self.g
+            .borrow_mut()
+            .cch_flush(dirty)
+            .map_err(|e| e.to_string())
     }
 
     /// Creates a single-row default batch.

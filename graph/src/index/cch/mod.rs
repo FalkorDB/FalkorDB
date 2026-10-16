@@ -312,14 +312,8 @@ pub struct CchIndex {
     pub cch: Arc<Cch>,
 }
 
-/// What a write query touched, accumulated in `Pending` across `Commit`s (survives `end_segment()`).
-///
-/// Empty for every graph with no CCH index, so the maintenance hook (#3214) costs one
-/// `is_empty()` check on the existing write path.
-#[derive(Default)]
-pub struct CchDirty {
-    // filled in by the maintenance change (#3214): touched rel types and weight attributes, created/deleted nodes, deleted-edge count
-}
+mod maint;
+pub use maint::CchDirty;
 
 #[cfg(test)]
 mod tests {

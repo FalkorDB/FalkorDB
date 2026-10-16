@@ -9,7 +9,7 @@ use crate::{
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
-    index::index_docs::IndexDocs,
+    index::{cch::CchDirty, index_docs::IndexDocs},
     runtime::value::{MAX_VALUE_NESTING, Value, value_nesting_error},
     threadpool::spawn,
 };
@@ -812,6 +812,8 @@ pub fn graph_bulk_insert(
                 ctx.ctx,
                 &mut docs,
             )
+            // Bulk insert does not go through `Pending`: rebuild every CCH index.
+            .and_then(|()| g.cch_flush(CchDirty::all()).map_err(|e| e.to_string()))
         };
         // The commit joins the token result rather than sitting in the `Ok` arm
         // below. `commit` validates before publishing, and returning its refusal
@@ -921,6 +923,8 @@ pub fn graph_bulk_insert(
                         rel_token_count,
                         &mut docs,
                     )
+                    // Still GIL-free, before escalation: rebuild every CCH index.
+                    .and_then(|()| g.cch_flush(CchDirty::all()).map_err(|e| e.to_string()))
                 };
                 if let Err(e) = inserted {
                     session.release_slot();

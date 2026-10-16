@@ -376,9 +376,8 @@ pub struct Pending {
     ///
     /// Like [`Self::published`], deliberately **not** reset by [`Self::end_segment`]: the hook runs
     /// once, after the whole query, so it must see every `Commit`'s changes, not just the last.
-    /// Never read yet; nothing writes to it either, so it stays `Default`
-    /// for every query and costs one empty struct per `Pending`.
-    #[allow(dead_code)]
+    /// Only filled when the graph holds a CCH index, so otherwise it stays `Default`, which
+    /// allocates nothing.
     cch_dirty: CchDirty,
     /// Schema baseline: number of labels when the current commit window started.
     pub(crate) schema_label_count: usize,
@@ -1241,6 +1240,10 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
+        // One check per `Commit`: with no CCH index held, nothing is recorded.
+        if !g.borrow().cch_indexes.is_empty() {
+            self.record_cch_dirty(&g.borrow());
+        }
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut()
@@ -1390,6 +1393,59 @@ impl Pending {
         self.deferred_docs.absorb(&mut self.index_docs);
 
         Ok(())
+    }
+
+    /// Note in `cch_dirty` what this `Commit` is about to change that a CCH index could care
+    /// about. Runs before anything is applied, so every relationship being deleted or
+    /// updated can still be resolved to its type. Edges cascaded from deleted nodes need no
+    /// entry of their own: a deleted node already dirties every index.
+    fn record_cch_dirty(
+        &mut self,
+        g: &Graph,
+    ) {
+        let dirty = &mut self.cch_dirty;
+        if !self.created_nodes.is_empty() || !self.deleted_nodes.is_empty() {
+            dirty.nodes_changed();
+        }
+        // A type created by this very commit is in no index, so a miss is skipped.
+        for type_name in self.created_rels_by_type.keys() {
+            if let Some(t) = g.get_type_id(type_name) {
+                dirty.rel_type_changed(t);
+            }
+        }
+        // Ids that do not resolve (created and deleted within this commit, already gone)
+        // are skipped, as `Graph::delete_relationships` skips them.
+        let existing_type = |id: u64| {
+            g.endpoints_for_edge(id)
+                .map(|_| g.get_relationship_type_id(RelationshipId::from(id)))
+        };
+        for id in &self.deleted_relationships {
+            if let Some(t) = existing_type(id) {
+                dirty.rel_type_changed(t);
+            }
+        }
+        let weight_attrs: Vec<u16> = g.cch_indexes.iter().map(|i| i.def.weight_attr).collect();
+        for (&id, attrs) in &self.existing_relationships_attrs {
+            let mut weights = attrs
+                .iter()
+                .map(|(attr, _)| *attr)
+                .filter(|attr| weight_attrs.contains(attr))
+                .peekable();
+            if weights.peek().is_none() {
+                continue;
+            }
+            if let Some(t) = existing_type(id) {
+                for attr in weights {
+                    dirty.attr_changed(t, attr);
+                }
+            }
+        }
+    }
+
+    /// Hand over everything recorded for CCH maintenance by this query's `Commit`s, once,
+    /// at the end of the query.
+    pub fn take_cch_dirty(&mut self) -> CchDirty {
+        std::mem::take(&mut self.cch_dirty)
     }
 
     /// Enforce graph constraints on all entities affected by this transaction.
