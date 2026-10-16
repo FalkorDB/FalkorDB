@@ -95,7 +95,7 @@ use crate::{
         endpoint_index::EndpointIndex,
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
-            serialization::{Encode, EncodeState, PayloadEntry, Writer},
+            serialization::{Encode, EncodeState, PayloadEntry, Writer, encode_cch_defs},
             tensor::{GrB_INDEX_MAX, Tensor},
             vector::Vector,
             versioned_matrix::{self, VersionedMatrix},
@@ -4990,6 +4990,9 @@ impl Graph {
             }
             EncodeState::AdjMatrix => self.adjacancy_matrix.encode(w),
             EncodeState::LblsMatrix => self.node_labels_matrix.encode(w),
+            EncodeState::CchIndices => {
+                encode_cch_defs(w, &self.cch_indexes().cloned().collect::<Vec<_>>())
+            }
             _ => {}
         }
     }

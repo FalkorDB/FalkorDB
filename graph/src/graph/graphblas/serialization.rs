@@ -6,6 +6,8 @@
 
 use roaring::RoaringTreemap;
 
+use crate::{graph::graph::TypeId, index::cch::CchIndexDef};
+
 /// Abstraction over a serialization sink.
 ///
 /// The root crate implements this for `BufferedWriter` (v19 buffered IO).
@@ -138,7 +140,10 @@ pub enum EncodeState {
     RelationMatrices = 7,
     AdjMatrix = 8,
     LblsMatrix = 9,
-    Final = 10,
+    /// Graph-level CCH path-index definitions (definition only; hierarchies are rebuilt on load).
+    CchIndices = 10,
+    /// Never written to an RDB.
+    Final = 11,
 }
 
 impl EncodeState {
@@ -155,7 +160,8 @@ impl EncodeState {
             7 => Some(Self::RelationMatrices),
             8 => Some(Self::AdjMatrix),
             9 => Some(Self::LblsMatrix),
-            10 => Some(Self::Final),
+            10 => Some(Self::CchIndices),
+            11 => Some(Self::Final),
             _ => None,
         }
     }
@@ -237,5 +243,179 @@ impl Decode<19> for RoaringTreemap {
             self.insert(id);
         }
         Ok(())
+    }
+}
+
+/// Writes CCH index definitions as C's `RdbSaveCCH_v20` / `CCHIndex_RdbSave` do: the index
+/// count, then per index the relationship-type count, each relationship-type id, and the weight
+/// attribute id, all as unsigned values. Definition only; the hierarchy is rebuilt on load.
+pub fn encode_cch_defs(
+    w: &mut dyn Writer,
+    defs: &[CchIndexDef],
+) {
+    w.write_unsigned(defs.len() as u64);
+    for def in defs {
+        w.write_unsigned(def.rel_types().len() as u64);
+        for t in def.rel_types() {
+            w.write_unsigned(t.0 as u64);
+        }
+        w.write_unsigned(u64::from(def.weight_attr));
+    }
+}
+
+/// Reads what [`encode_cch_defs`] writes. Rebuilds each definition through
+/// `CchIndexDef::new`, so the sorted/deduplicated invariant holds whatever the stream order was.
+///
+/// # Errors
+/// A truncated stream, an index with no relationship types, or a weight attribute id above `u16::MAX`.
+pub fn decode_cch_defs(r: &mut dyn Reader) -> Result<Vec<CchIndexDef>, String> {
+    let count = r.read_unsigned()?;
+    let mut defs = Vec::new();
+    for _ in 0..count {
+        let n = r.read_unsigned()?;
+        if n == 0 {
+            return Err("CCH index with no relationship types".to_string());
+        }
+        let mut types = Vec::new();
+        for _ in 0..n {
+            types.push(TypeId(r.read_unsigned()? as usize));
+        }
+        let attr = r.read_unsigned()?;
+        let attr = u16::try_from(attr)
+            .map_err(|_| format!("CCH weight attribute id {attr} out of range"))?;
+        defs.push(CchIndexDef::new(types, attr));
+    }
+    Ok(defs)
+}
+
+#[cfg(test)]
+mod cch_def_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    #[derive(Default)]
+    struct Stream(VecDeque<u64>);
+    impl Writer for Stream {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.0.push_back(val);
+        }
+        fn write_signed(
+            &mut self,
+            _: i64,
+        ) {
+            unreachable!()
+        }
+        fn write_double(
+            &mut self,
+            _: f64,
+        ) {
+            unreachable!()
+        }
+        fn write_buffer(
+            &mut self,
+            _: &[u8],
+        ) {
+            unreachable!()
+        }
+    }
+    impl Reader for Stream {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            self.0.pop_front().ok_or_else(|| "truncated".to_string())
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            unreachable!()
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            unreachable!()
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn matches_the_c_stream_layout() {
+        // C: count, then per index n, n rel ids, weight attr -- hand-written, not from our writer.
+        let defs = [
+            CchIndexDef::new(vec![TypeId(1), TypeId(4)], 7),
+            CchIndexDef::new(vec![TypeId(2)], 0),
+        ];
+        let mut s = Stream::default();
+        encode_cch_defs(&mut s, &defs);
+        assert_eq!(s.0, [2, 2, 1, 4, 7, 1, 2, 0]);
+    }
+
+    #[test]
+    fn round_trips_and_normalises() {
+        let mut s = Stream::default();
+        // unsorted, duplicated rel ids as a foreign writer might produce
+        s.0.extend([1, 3, 5, 2, 5, 9]);
+        let defs = decode_cch_defs(&mut s).unwrap();
+        assert_eq!(defs, vec![CchIndexDef::new(vec![TypeId(2), TypeId(5)], 9)]);
+        assert!(s.0.is_empty());
+        let mut out = Stream::default();
+        encode_cch_defs(&mut out, &defs);
+        assert_eq!(out.0, [1, 2, 2, 5, 9]);
+    }
+
+    #[test]
+    fn refuses_malformed_streams() {
+        for bad in [vec![1], vec![1, 0, 3], vec![1, 1, 2], vec![1, 1, 2, 70000]] {
+            assert!(
+                decode_cch_defs(&mut Stream(bad.clone().into())).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_numbers_match_c() {
+        assert_eq!(EncodeState::CchIndices as u64, 10);
+        assert_eq!(EncodeState::Final as u64, 11);
+        assert!(matches!(
+            EncodeState::from_u64(10),
+            Some(EncodeState::CchIndices)
+        ));
+        assert!(matches!(
+            EncodeState::from_u64(9),
+            Some(EncodeState::LblsMatrix)
+        ));
+        assert!(EncodeState::from_u64(12).is_none());
+    }
+
+    #[test]
+    fn graph_encodes_its_defs_and_a_graph_without_any_has_none() {
+        use crate::{
+            graph::{graph::Graph, graphblas::test_init},
+            index::cch::{
+                Cch, CchIndex,
+                testkit::{grid, to_input},
+            },
+        };
+        use std::sync::Arc;
+        test_init::ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "cch_rdb_test");
+        assert!(
+            g.cch_indexes().next().is_none(),
+            "no index, no CchIndices payload"
+        );
+
+        let def = CchIndexDef::new(vec![TypeId(3), TypeId(1)], 5);
+        g.cch_indexes.push(CchIndex {
+            def: def.clone(),
+            cch: Arc::new(Cch::build(&to_input(&grid(2, 2))).expect("build")),
+        });
+        let mut s = Stream::default();
+        let p = PayloadEntry {
+            state: EncodeState::CchIndices,
+            count: 1,
+            offset: 0,
+        };
+        g.encode_payload(&mut s, &p);
+        assert_eq!(s.0, [1, 2, 1, 3, 5]);
+        assert_eq!(decode_cch_defs(&mut s).unwrap(), vec![def]);
     }
 }
