@@ -13,15 +13,17 @@ use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
+use graph::index::cch::CchIndexDef;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
 use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
+/// RDB encoding version. Matches C FalkorDB v20: the v19 format (buffered IO with type tags)
+/// plus the CCH-definitions payload (`EncodeState::CchIndices`).
 #[allow(dead_code)]
-pub const ENCODING_VERSION: u64 = 19;
+pub const ENCODING_VERSION: u64 = 20;
 
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
@@ -94,6 +96,7 @@ pub struct PendingGraph {
     pub relationship_tensors: Vec<Tensor>,
     pub adj_matrix: VersionedMatrix<bool>,
     pub lbls_matrix: VersionedMatrix<bool>,
+    pub cch_defs: Vec<CchIndexDef>,
 }
 
 impl DecodeState {
