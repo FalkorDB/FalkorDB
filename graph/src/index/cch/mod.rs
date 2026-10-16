@@ -17,6 +17,7 @@ pub mod customize;
 pub mod index;
 pub mod input;
 pub mod order;
+pub mod partial;
 pub mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
