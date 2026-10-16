@@ -327,6 +327,17 @@ pub enum IR {
         index_type: IndexType,
         entity_type: EntityType,
     },
+    /// CREATE CCH INDEX operation. Spans one or more relationship types, unlike
+    /// `CreateIndex`'s single label.
+    CreateCchIndex {
+        rel_types: Vec<Arc<String>>,
+        weight_attr: Arc<String>,
+    },
+    /// DROP CCH INDEX operation.
+    DropCchIndex {
+        rel_types: Vec<Arc<String>>,
+        weight_attr: Arc<String>,
+    },
 }
 
 /// Returns true if the subtree rooted at `idx` contains any node matching `predicate`.
@@ -533,6 +544,12 @@ impl Display for IR {
             }
             Self::DropIndex { label, attrs, .. } => {
                 write!(f, "Drop Index | :{label}({attrs:?})")
+            }
+            Self::CreateCchIndex { rel_types, .. } => {
+                write!(f, "Create CCH Index | :{rel_types:?}")
+            }
+            Self::DropCchIndex { rel_types, .. } => {
+                write!(f, "Drop CCH Index | :{rel_types:?}")
             }
         }
     }
@@ -3307,6 +3324,20 @@ impl Planner {
                     entity_type
                 })
             }
+            QueryIR::CreateCchIndex {
+                rel_types,
+                weight_attr,
+            } => tree!(IR::CreateCchIndex {
+                rel_types,
+                weight_attr
+            }),
+            QueryIR::DropCchIndex {
+                rel_types,
+                weight_attr,
+            } => tree!(IR::DropCchIndex {
+                rel_types,
+                weight_attr
+            }),
             // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query { clauses: q, write } => self.plan_query(q, write),
             QueryIR::Union { branches, all } => {

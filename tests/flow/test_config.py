@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 24 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 25 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -49,6 +49,7 @@ class testConfig(FlowTestsBase):
                 ("EFFECTS_THRESHOLD", 300),
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
+                ("CCH_INDEX", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),

@@ -1066,6 +1066,20 @@ pub enum QueryIR<TVar> {
         index_type: IndexType,
         entity_type: EntityType,
     },
+    /// CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.w)
+    ///
+    /// A CCH path index spans one or more relationship types, unlike every other
+    /// index type (which takes a single label) -- hence its own variant rather
+    /// than reusing `CreateIndex`.
+    CreateCchIndex {
+        rel_types: Vec<Arc<String>>,
+        weight_attr: Arc<String>,
+    },
+    /// DROP CCH INDEX FOR ()-[e:A|B]->() ON (e.w)
+    DropCchIndex {
+        rel_types: Vec<Arc<String>>,
+        weight_attr: Arc<String>,
+    },
     /// UNION of multiple sub-query branches.
     /// `all` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
     Union {
@@ -1173,6 +1187,18 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                     f,
                     "DROP {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
                 )
+            }
+            Self::CreateCchIndex {
+                rel_types,
+                weight_attr,
+            } => {
+                writeln!(f, "CREATE CCH INDEX ON :{rel_types:?}({weight_attr})")
+            }
+            Self::DropCchIndex {
+                rel_types,
+                weight_attr,
+            } => {
+                writeln!(f, "DROP CCH INDEX ON :{rel_types:?}({weight_attr})")
             }
             Self::Query { clauses, .. } => {
                 for q in clauses {
@@ -1331,6 +1357,12 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::DropIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter)),
+            Self::CreateCchIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter)),
+            Self::DropCchIndex { .. } => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::Query { clauses, .. } => {

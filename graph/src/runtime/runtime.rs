@@ -41,6 +41,7 @@ use crate::effects::EffectsBuffer;
 use crate::{
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
+    index::cch::CchError,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
@@ -71,7 +72,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     marker::PhantomData,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -205,6 +209,32 @@ pub struct Runtime<'a> {
     _marker: PhantomData<&'a ()>,
 }
 
+/// Enables `CREATE`/`DROP CCH INDEX`. Off by default; the root crate sets it once at module load
+/// from the `CCH_INDEX` config. Experimental until persistence and maintenance are complete.
+pub static CCH_DDL_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// The query error for a failed CCH create/drop, worded like C's where C has a message.
+#[must_use]
+pub fn cch_error_message(e: &CchError) -> String {
+    match e {
+        CchError::AlreadyExists => String::from(
+            "a CCH index already exists over these relationship types and weight attribute",
+        ),
+        CchError::NotFound => {
+            String::from("no CCH index over these relationship types and weight attribute")
+        }
+        CchError::UnknownRelType => String::from("CCH index error: unknown relationship type"),
+        CchError::UnknownAttribute => String::from("CCH index error: unknown weight attribute"),
+        CchError::GraphTooLarge => {
+            String::from("CCH index error: graph is too large for a CCH index")
+        }
+        CchError::InvalidWeight => {
+            String::from("CCH index error: edge weights must be finite and >= 0")
+        }
+        CchError::Internal(msg) => format!("CCH index error: {msg}"),
+    }
+}
+
 pub trait GetVariables {
     fn get_variables(&self) -> Vec<Variable>;
 }
@@ -260,7 +290,9 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Commit
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
-                | IR::DropIndex { .. } => {}
+                | IR::DropIndex { .. }
+                | IR::CreateCchIndex { .. }
+                | IR::DropCchIndex { .. } => {}
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -1303,7 +1335,30 @@ impl<'a> Runtime<'a> {
                 index_type,
                 entity_type,
             } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
+            IR::CreateCchIndex {
+                rel_types,
+                weight_attr,
+            } => super::index_ddl::create_cch_index(self, rel_types, weight_attr),
+            IR::DropCchIndex {
+                rel_types,
+                weight_attr,
+            } => super::index_ddl::drop_cch_index(self, rel_types, weight_attr),
         }
+    }
+
+    pub(crate) fn check_cch_ddl_allowed(&self) -> Result<(), String> {
+        if !self.write {
+            return Err(String::from(
+                "graph.RO_QUERY is to be executed only on read-only queries",
+            ));
+        }
+        if !CCH_DDL_ENABLED.load(Ordering::Relaxed) {
+            return Err(String::from(
+                "CCH indexes are disabled: enable the CCH_INDEX module config \
+                 (a replica replaying CREATE/DROP CCH INDEX needs it enabled too)",
+            ));
+        }
+        Ok(())
     }
 
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(

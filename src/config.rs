@@ -63,6 +63,8 @@ lazy_static! {
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
         RedisGILGuard::new(100_000.into());
     pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
+    /// Enables CREATE/DROP CCH INDEX (experimental; off by default).
+    pub static ref CONFIGURATION_CCH_INDEX: RedisGILGuard<bool> = RedisGILGuard::new(false);
     pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/tmp".into());
     pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
@@ -164,6 +166,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "EFFECTS_THRESHOLD",
     "BOLT_PORT",
     "DELAY_INDEXING",
+    "CCH_INDEX",
     "IMPORT_FOLDER",
     "TEMP_FOLDER",
     "JS_HEAP_SIZE",
@@ -188,6 +191,7 @@ enum LoadArg {
     OmpThreadCount(i64),
     NodeCreationBuffer(i64),
     IndexWorkerThreads(i64),
+    CchIndex(bool),
     ImportFolder(String),
     TempFolder(String),
     /// Not validated at load time (yet); accepted and unused, as before.
@@ -236,6 +240,12 @@ fn validate_load_only(
         "OMP_THREAD_COUNT" => positive.map(LoadArg::OmpThreadCount),
         "NODE_CREATION_BUFFER" => non_negative.map(LoadArg::NodeCreationBuffer),
         "INDEX_WORKER_THREADS" => non_negative.map(LoadArg::IndexWorkerThreads),
+        // `yes` / `no` only, as C's `_Config_ParseYesNo`; read-only once loaded.
+        "CCH_INDEX" => match value {
+            v if v.eq_ignore_ascii_case("yes") => Some(LoadArg::CchIndex(true)),
+            v if v.eq_ignore_ascii_case("no") => Some(LoadArg::CchIndex(false)),
+            _ => None,
+        },
         "IMPORT_FOLDER" => Some(LoadArg::ImportFolder(value.to_string())),
         "TEMP_FOLDER" => {
             return Some(
@@ -259,6 +269,7 @@ fn apply_load_arg(
         LoadArg::OmpThreadCount(v) => OMP_THREAD_COUNT.store(v, Ordering::Relaxed),
         LoadArg::NodeCreationBuffer(v) => *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx) = v,
         LoadArg::IndexWorkerThreads(v) => *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = v,
+        LoadArg::CchIndex(v) => *CONFIGURATION_CCH_INDEX.lock(ctx) = v,
         LoadArg::ImportFolder(v) => *CONFIGURATION_IMPORT_FOLDER.lock(ctx) = v,
         LoadArg::TempFolder(v) => *CONFIGURATION_TEMP_FOLDER.lock(ctx) = v,
         LoadArg::BoltPort => {}

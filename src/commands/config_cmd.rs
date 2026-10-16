@@ -19,7 +19,10 @@
 //!
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, INDEX_WORKER_THREADS, OMP_THREAD_COUNT, CACHE_SIZE,
-//!   NODE_CREATION_BUFFER, BOLT_PORT, IMPORT_FOLDER, TEMP_FOLDER
+//!   NODE_CREATION_BUFFER, BOLT_PORT, CCH_INDEX, IMPORT_FOLDER, TEMP_FOLDER
+//!
+//! CCH_INDEX (read-only, off by default) gates only CREATE/DROP CCH INDEX. RDB load still
+//! rebuilds CCH indexes found in a dump with it off: the data must load.
 //!
 //! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
 //! this engine reads either one yet: graph teardown is always off-thread (see
@@ -36,13 +39,14 @@
 //! concurrent queries do not see a partial configuration update.
 
 use crate::config::{
-    ASYNC_DELETE, BOLT_PORT, CONFIG_NAMES, CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO,
-    CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
-    CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
-    CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
-    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    ASYNC_DELETE, BOLT_PORT, CONFIG_NAMES, CONFIGURATION_CACHE_SIZE, CONFIGURATION_CCH_INDEX,
+    CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER,
+    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
+    CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES, EFFECTS_COMPRESSION,
+    EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -98,6 +102,7 @@ fn config_get_one(
         }
         "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
         "DELAY_INDEXING" => RedisValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx))),
+        "CCH_INDEX" => RedisValue::Integer(i64::from(*CONFIGURATION_CCH_INDEX.lock(ctx))),
         "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
         "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
@@ -193,6 +198,7 @@ pub(crate) fn validate_config_set(
         | "CACHE_SIZE"
         | "NODE_CREATION_BUFFER"
         | "BOLT_PORT"
+        | "CCH_INDEX"
         | "IMPORT_FOLDER"
         | "TEMP_FOLDER" => {
             Err("This configuration parameter cannot be set at run-time".to_string())

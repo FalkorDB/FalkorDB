@@ -17,6 +17,7 @@ The files, and the question each one asks:
                              compression, byte determinism
   test_effects_ddl.py        index and constraint DDL as effects, including
                              the indexes a query never named
+  test_effects_cch_ddl.py    CCH index DDL, which is not replicated yet
   test_effects_topology.py   divergence, forced resync, promotion
   test_effects_commands.py   GRAPH.RECORD, and the commands that still
                              replicate verbatim
@@ -63,9 +64,12 @@ wrong reason. **If a spawn-forcing flag is ever added to the `Env(...)` below
 classifier will not see it, every one of these files will stay in the services
 bucket where it cannot work, and nothing will say so.** Change the classifier
 to follow this import, or move that `Env(...)` back into the files that need it.
+`_setup(moduleArgs=...)` is the one sanctioned way in: the classifier matches a
+`moduleArgs="..."` literal anywhere in a file, so `test_effects_cch_ddl.py`
+spells `CCH_INDEX` as a literal and lands in the spawn bucket on its own.
 
-A skip here is a skip EVERYWHERE, for the same reason. All of these files are
-in `services_files` and none is in `spawn_files`, so a guard of the form
+A skip here is a skip EVERYWHERE, for the same reason. All of these files but
+`test_effects_cch_ddl.py` are in `services_files`, so a guard of the form
 `if os.getenv("FALKORDB_USE_SERVICE"): Environment.skip(None)` does not mean
 "runs in the other mode" -- it means the class never runs in CI at all. The
 `SANITIZER` guard in `_setup` is the one deliberate exception: replication
@@ -112,16 +116,19 @@ class _EffectsBase():
     # setup
     #-------------------------------------------------------------------------
 
-    def _setup(self, compression=0):
+    def _setup(self, compression=0, moduleArgs=None):
         # replication under sanitizer is unreliable, as test_replication.py notes
         if SANITIZER:
             Environment.skip(None)
 
         # No `enableDebugCommand`: every class here runs against the shared
-        # services container under CI (`test_matrix_split.py` puts all nine
-        # files in `services_files`), and `common.py:564` documents the flag as
-        # a no-op in that mode anyway. Nothing here needs DEBUG.
-        self.env, self.db = Env(env='oss', useSlaves=True)
+        # services container under CI (`test_matrix_split.py` puts all but
+        # `test_effects_cch_ddl.py` in `services_files`), and `common.py:564`
+        # documents the flag as a no-op in that mode anyway. Nothing here needs
+        # DEBUG. `moduleArgs`
+        # reach both sides; an immutable key must be a literal in the caller's
+        # own file (see the trap in the module docstring).
+        self.env, self.db = Env(moduleArgs=moduleArgs, env='oss', useSlaves=True)
         self.master  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
 
