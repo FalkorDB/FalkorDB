@@ -539,7 +539,6 @@ impl Topology {
     }
 
     /// Every rank below `rank` in the chordal supergraph, ascending.
-    #[allow(dead_code)] // only scoped recustomization needs it (#3217)
     pub(crate) fn down(
         &self,
         rank: u32,
