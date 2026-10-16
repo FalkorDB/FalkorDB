@@ -253,3 +253,61 @@ class testNullHandlingFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[None, 1]])
         graph.delete()
 
+    # A null grouping key projected after an aggregate must not crash the
+    # server when the accumulator slot collides with it (issue #3150
+    # follow-up), and grouping-key order must survive the accumulator unbind.
+    def test11_null_key_after_aggregate(self):
+        """A null grouping key projected after an aggregate must not crash the
+        server when the accumulator slot collides with it (issue #3150
+        follow-up), and grouping-key order must survive the accumulator unbind."""
+        graph = self.db.select_graph(GRAPH_ID + "_null_key_after_agg")
+        try:
+            graph.delete()
+        except redis.ResponseError:
+            pass
+        graph.query("CREATE (:K:Node {id:'k', tier:1})-[:P {cap:1.0, w:1}]->(:D:Node {id:'d'})")
+
+        queries = [
+            "MATCH (n:D) WITH n, 1 AS hops RETURN n.id AS id, min(hops), n.tier AS tier",
+            "MATCH p=(s:Node {id:'k'})-[:P*1..8]->(n) WITH n, length(p) AS hops "
+            "RETURN n.id AS id, min(hops), n.tier AS tier",
+            "MATCH (s:Node {id:'k'}) CALL algo.SSpaths({sourceNode: s, relTypes: ['P'], weightProp: 'w', "
+            "relDirection: 'outgoing', maxLen: 8, pathCount: 1000}) YIELD path "
+            "WITH last(nodes(path)) AS n, length(path) AS hops RETURN n.id AS id, min(hops), n.tier AS tier",
+            "MATCH (n:D) WITH n RETURN n.id AS id, count(*), n.tier AS tier",
+            "MATCH (n:D) RETURN n.id AS id, count(n), n.tier AS tier",
+            "WITH 'd' AS id, 1 AS h, null AS t RETURN id, min(h), t",
+        ]
+        for q in queries:
+            res = graph.query(q)
+            self.env.assertEqual(res.result_set, [['d', 1, None]])
+
+        # Grouping keys whose pre-projection ids differ from their output ids
+        # must not overwrite each other.
+        res = graph.query("WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*) AS n")
+        self.env.assertEqual(res.result_set, [[2, 1, 1]])
+        res = graph.query("MATCH (k:K)-[:P]->(d:D) RETURN d.id AS x, k.id AS y, count(*) AS n")
+        self.env.assertEqual(res.result_set, [['d', 'k', 1]])
+        res = graph.query("MATCH (k:K)-[:P]->(d:D) WITH d, k RETURN d AS x, k AS y, count(*) AS n")
+        self.env.assertEqual([r[0].properties['id'] for r in res.result_set], ['d'])
+        self.env.assertEqual([r[1].properties['id'] for r in res.result_set], ['k'])
+        graph.delete()
+
+        # OPTIONAL MATCH nulls projected before collect().
+        graph = self.db.select_graph(GRAPH_ID + "_null_key_optional")
+        try:
+            graph.delete()
+        except redis.ResponseError:
+            pass
+        graph.query("CREATE (:Invitation {id:'inv1', email:'m@x.org', created_at:1})")
+        res = graph.query(
+            "MATCH (inv:Invitation {id:'inv1'}) "
+            "OPTIONAL MATCH (u:User) WHERE u.email = inv.email "
+            "OPTIONAL MATCH (newer:Invitation) WHERE newer.email = inv.email AND newer.created_at > inv.created_at "
+            "RETURN inv, u IS NOT NULL, u.a, u.b, collect(newer)")
+        self.env.assertEqual(len(res.result_set), 1)
+        row = res.result_set[0]
+        self.env.assertEqual(row[0].properties['id'], 'inv1')
+        self.env.assertEqual(row[1:], [False, None, None, []])
+        graph.delete()
+
