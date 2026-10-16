@@ -607,7 +607,11 @@ pub fn execute_query(
     let is_write = plan.iter().any(|n| {
         matches!(
             n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+            IR::Commit
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. }
+                | IR::CreateCchIndex { .. }
+                | IR::DropCchIndex { .. }
         )
     });
     let g = if is_write {
@@ -684,7 +688,11 @@ pub fn execute_profile(
     let is_write = plan.iter().any(|n| {
         matches!(
             n,
-            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+            IR::Commit
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. }
+                | IR::CreateCchIndex { .. }
+                | IR::DropCchIndex { .. }
         )
     });
     if is_write {
@@ -796,7 +804,11 @@ fn try_query_write(
     let cached = first_cached;
     debug_assert!(plan.iter().any(|n| matches!(
         n,
-        IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+        IR::Commit
+            | IR::CreateIndex { .. }
+            | IR::DropIndex { .. }
+            | IR::CreateCchIndex { .. }
+            | IR::DropCchIndex { .. }
     )));
 
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;

@@ -9,12 +9,14 @@
 //! - `customize.rs` Phase 2: customization (#3209)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
+//! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
 
 mod customize;
+pub(crate) mod ddl;
 mod input;
 mod nd;
 mod order;
@@ -212,7 +214,7 @@ pub struct CchIndexDef {
 impl CchIndexDef {
     /// Sorts and deduplicates `rel_types`, so equal sets are equal indexes.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         mut rel_types: Vec<TypeId>,
         weight_attr: u16,
     ) -> Self {
