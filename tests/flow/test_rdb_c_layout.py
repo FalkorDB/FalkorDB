@@ -16,6 +16,17 @@ CT_MANDATORY = 1
 LABEL = "Person"
 CONSTRAINT_FIELDS = ["p1", "p2", "p3", "p4", "p5"]
 
+# Redis encodes a module type id as nine 6-bit characters, then the 10-bit encver.
+_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+
+def module_type_head(name, encver):
+    """A module type id as an RDB saves it before each value: a 64-bit length."""
+    v = 0
+    for c in name:
+        v = (v << 6) | _B64.index(c)
+    return b"\x81" + ((v << 10) | encver).to_bytes(8, "big")
+
 
 class testRdbCLayout():
     """Guard the RDB schema layout against C's v19 encoder.
@@ -253,3 +264,19 @@ class testRdbCLayout():
                     f"expected {len(script) + 1}, found {blob[idx - 1]}. A prefix of "
                     f"{len(script)} means the script was written unterminated, and C "
                     f"reads it as a C string")
+
+    def test05_encoding_version_follows_the_build(self):
+        # A module built without `index-falkordb` has no CCH index, never writes
+        # the CCH-definitions payload and must stay at encoding version 19, so its
+        # RDBs are the ones it wrote before; with the feature every graph is stamped
+        # 20, as C's v20 does (test_cch_index.py covers the payload itself).
+        self._reset()
+        self.db.select_graph(GRAPH_ID + "_encver").query("CREATE (:Person {p1: 1})")
+        blob = self._dump_bytes()
+        expected = 20 if INDEX_FALKORDB else 19
+        for encver in (19, 20):
+            found = module_type_head("graphdata", encver) in blob
+            self.env.assertEqual(found, encver == expected,
+                message=f"graphdata saved with encver {encver}: {found}; this build "
+                        f"(FALKORDB_FEATURES={os.getenv('FALKORDB_FEATURES', '')!r}) "
+                        f"must write {expected}")

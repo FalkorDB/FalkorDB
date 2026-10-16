@@ -19,6 +19,7 @@ use crate::{
 };
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
+use redis_module::logging::log_warning;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 
@@ -70,6 +71,8 @@ pub fn graph_effect(
     // Any CCH index the records touched is rebuilt inside `apply`, so a failure to
     // do so diverges like any other apply failure.
     let result = EffectsPayload::apply(&mut fork, buf).map_err(|e| e.to_string());
+    // Logged once the version is published: a refused buffer's are dropped with it.
+    let cch_warnings = fork.take_cch_warnings();
 
     // Folded into the same result rather than handled in the `Ok` arm. `commit`
     // validates before publishing, and a version it refuses is dropped — so
@@ -86,6 +89,9 @@ pub fn graph_effect(
 
     match result {
         Ok(()) => {
+            for warning in cch_warnings {
+                log_warning(format!("GRAPH.EFFECT on graph '{key_str}': {warning}"));
+            }
             ctx.replicate_verbatim();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }

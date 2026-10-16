@@ -10,6 +10,7 @@
 //! avoids. The write path mutates a version's own copy instead.
 
 use std::collections::{BTreeMap, HashMap};
+use std::mem;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
@@ -599,6 +600,31 @@ pub struct FalkorDbIndex {
     /// update an entry in place (`CchIndex`'s [`VersionedIndex`] lookup); everything else goes
     /// through the CCH methods below.
     pub(super) cch_indexes: BTreeMap<CchIndexDef, IndexEntry<CchIndex>>,
+    /// What the CCH maintenance had to warn about while writing this version (an index it
+    /// dropped, say), for the owner of the write to take and log: the graph crate logs
+    /// nothing itself. Never carried into the next version.
+    pub(super) cch_warnings: VersionWarnings,
+}
+
+/// Messages raised while writing one version, for its owner to take
+/// ([`FalkorDbIndex::take_cch_warnings`]). A clone is empty: a new version starts with none,
+/// so a message is never reported twice.
+#[derive(Default)]
+pub(crate) struct VersionWarnings(Vec<String>);
+
+impl Clone for VersionWarnings {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl VersionWarnings {
+    pub(crate) fn push(
+        &mut self,
+        warning: String,
+    ) {
+        self.0.push(warning);
+    }
 }
 
 impl FalkorDbIndex {
@@ -1229,7 +1255,6 @@ impl FalkorDbIndex {
     /// Hold `index`, built and `Ready`, as a new index: the next generation, like a
     /// column's. The caller has checked that no entry over the same definition is held
     /// ([`Self::cch_entry`]), before building it.
-    #[cfg(test)]
     pub(crate) fn add_cch(
         &mut self,
         index: CchIndex,
@@ -1278,11 +1303,28 @@ impl FalkorDbIndex {
         entry.generation = generation;
     }
 
+    /// Give up on the built entry over `def`: `FAILED` with `reason`, no hierarchy, no build.
+    /// It stays so until it is dropped and created again; only its definition is saved.
+    pub(crate) fn fail_cch(
+        &mut self,
+        def: &CchIndexDef,
+        reason: &str,
+    ) {
+        let entry = self.cch_indexes.get_mut(def).expect("held");
+        entry.index.hierarchy = Hierarchy::Failed(Arc::from(reason));
+        entry.state = BuildState::Ready;
+    }
+
     /// A new generation, for an index created or built again on this version: the version's
     /// count of indexes created, counted up.
     pub(crate) fn next_generation(&mut self) -> u64 {
         self.indexes_created += 1;
         self.indexes_created
+    }
+
+    /// The warnings the CCH maintenance raised on this version, oldest first, leaving none.
+    pub(crate) fn take_cch_warnings(&mut self) -> Vec<String> {
+        mem::take(&mut self.cch_warnings.0)
     }
 
     /// Stop holding the index over `def`.
