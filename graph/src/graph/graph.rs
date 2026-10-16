@@ -86,9 +86,10 @@ use crate::index::falkordb::falkordb_index::ScanFilter;
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    cch::{CchError, CchIndex, CchIndexDef},
+    cch::{Cch, CchError, CchIndex, CchIndexDef, CchInput},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
+    versioned::BuildState,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -5299,22 +5300,30 @@ impl Graph {
     /// # Errors
     /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
     /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
-    /// definition, and whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
+    /// definition, and whatever [`Cch::build`] reports.
     pub fn create_cch_index(
         &mut self,
-        _def: CchIndexDef,
+        def: CchIndexDef,
     ) -> Result<(), CchError> {
-        unimplemented!("Graph API, #3212")
+        // Before anything is built, against every held entry, ready or not.
+        if self.falkordb_index.cch_entry(&def).is_some() {
+            return Err(CchError::AlreadyExists);
+        }
+        let cch = Cch::build(&CchInput::build(self, &def)?)?;
+        self.falkordb_index.add_cch(
+            CchIndex {
+                def,
+                cch: Arc::new(cch),
+            },
+            BuildState::Ready,
+        )
     }
 
+    /// Stop holding the index for `def` on this version. Earlier versions that still hold
+    /// it keep their `Arc`, so a reader mid-query is unaffected.
+    ///
     /// # Errors
     /// [`CchError::NotFound`] if no index with this definition is held.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
     pub fn drop_cch_index(
         &mut self,
         def: &CchIndexDef,
@@ -5322,38 +5331,19 @@ impl Graph {
         self.falkordb_index.drop_cch(def)
     }
 
-    /// Every CCH index definition held by this version, in no guaranteed order.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
+    /// Every CCH index definition held by this version, ready or not, in definition order.
     pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
         self.falkordb_index.cch_defs()
     }
 
-    /// The index for `def`, if this version holds it and it is ready to answer: a building
-    /// index is not returned.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
+    /// The index held for exactly `def`, if it is ready to answer: a building index is not
+    /// returned.
     #[must_use]
     pub fn cch_index(
         &self,
         def: &CchIndexDef,
     ) -> Option<&CchIndex> {
         self.falkordb_index.cch_index(def)
-    }
-
-    /// Rebuild every CCH index from the current graph. Used by RDB load (the hierarchy is not
-    /// persisted, only the definition) and by maintenance.
-    ///
-    /// # Errors
-    /// Whatever [`Cch::build`](crate::index::falkordb::cch::Cch::build) reports for any held
-    /// definition.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
-    pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
-        unimplemented!("Graph API, #3212")
     }
 }
 
@@ -6149,6 +6139,9 @@ mod grow_cap_tests {
 
 #[cfg(all(test, feature = "index-falkordb"))]
 mod falkordb_index_tests;
+
+#[cfg(all(test, feature = "index-falkordb"))]
+mod cch_index_tests;
 
 #[cfg(test)]
 mod restore_tests {

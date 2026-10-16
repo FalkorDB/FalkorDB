@@ -88,6 +88,7 @@ use std::sync::Arc;
 
 use super::order::{Rank, Topology};
 use super::{Cch, CchError, CchInput, WeightCsr, index_id};
+use crate::graph::graph::NodeId;
 
 /// The four per-arc arrays a customization produces, indexed by arc id. Each is written
 /// once, by the customization that builds it, and never grows, so they are boxed slices.
@@ -109,6 +110,46 @@ impl Metric {
     }
 }
 
+/// Whether `weights` has the shape every [`WeightCsr`] out of
+/// [`CchInput::build`](super::CchInput) has: a well-formed CSR
+/// ([`Csr::is_well_formed`](super::Csr::is_well_formed)), one weight per entry, and rows
+/// strictly ascending (one entry per node pair). Never panics, whatever `weights` holds.
+fn well_formed(weights: &WeightCsr) -> bool {
+    let csr = &weights.csr;
+    // Rows are sliced only once the offsets are known to be in range.
+    csr.is_well_formed()
+        && weights.values.len() == csr.neighbors.len()
+        && (0..csr.node_count).all(|node| csr.row(node).windows(2).all(|pair| pair[0] < pair[1]))
+}
+
+/// Whether `weights` fits `topology`: the same node count, [`well_formed`], and an arc in the
+/// chordal supergraph for every entry other than a self-loop. Looks at no weight value.
+///
+/// A pure check that never panics, whatever `weights` holds: the gate [`customize`] goes
+/// through (and the test-only `Cch::fits`). `false` means only a rebuild can take these
+/// weights, because they come from a later version of the graph than the hierarchy was
+/// built for (one that gained a node or a new adjacency), or that they are malformed, a bug
+/// [`validate`] tells apart.
+pub(crate) fn fits(
+    topology: &Topology,
+    weights: &WeightCsr,
+) -> bool {
+    let csr = &weights.csr;
+    csr.node_count == topology.node_count()
+        && well_formed(weights)
+        && (0..csr.node_count).all(|row| {
+            let u = index_id(row);
+            let rank_u = topology.rank_of(NodeId::from(u));
+            csr.row(row).iter().all(|&v| {
+                // a self-loop is never seeded, so it needs no arc
+                v == u
+                    || topology
+                        .arc_slot(rank_u, topology.rank_of(NodeId::from(v)))
+                        .is_some()
+            })
+        })
+}
+
 /// Reject a metric this index cannot be correct for, before any of it is written.
 ///
 /// Dijkstra-style relaxation needs non-negative weights, and a NaN compares false with
@@ -121,33 +162,27 @@ impl Metric {
 ///    now, which can be a later version than the one the hierarchy was built for. A graph
 ///    that has since gained nodes gives weights for more nodes:
 ///    [`CchError::NeedsRebuild`], expected on a live graph.
-/// 2. **The shape**: a well-formed CSR
-///    ([`Csr::is_well_formed`](super::Csr::is_well_formed)), one weight per entry, rows
-///    strictly ascending. Every [`WeightCsr`] comes out of [`CchInput::build`](super::CchInput)
-///    with this shape, so one without it is a bug, [`CchError::Internal`], refused rather
-///    than indexed past an array's end. A repeated pair would be seeded twice, the last
-///    weight silently winning.
-/// 3. **The weights:** [`CchError::InvalidWeight`].
-///
-/// An edge between two nodes the hierarchy has no arc for (a new adjacency) is the other
-/// "later graph" case. It is found while seeding ([`seed`]), after the weight check, so
-/// weights with both a new adjacency and an invalid weight give
-/// [`CchError::InvalidWeight`]: a rebuild would refuse that weight the same way.
+/// 2. **The shape** ([`well_formed`]). Every [`WeightCsr`] comes out of
+///    [`CchInput::build`](super::CchInput) with it, so one without it is a bug,
+///    [`CchError::Internal`], refused rather than indexed past an array's end. A repeated
+///    pair would be seeded twice, the last weight silently winning.
+/// 3. **An arc for every entry** ([`fits`]): a new adjacency, an edge between two nodes the
+///    hierarchy does not join, is the other "later graph" case, [`CchError::NeedsRebuild`].
+///    It is checked before the weights, so weights with both a new adjacency and an invalid
+///    weight ask for the rebuild, which then refuses that weight.
+/// 4. **The weights:** [`CchError::InvalidWeight`].
 fn validate(
     topology: &Topology,
     weights: &WeightCsr,
 ) -> Result<(), CchError> {
-    let csr = &weights.csr;
-    let node_count = topology.node_count();
-    if csr.node_count != node_count {
+    if weights.csr.node_count != topology.node_count() {
         return Err(CchError::NeedsRebuild);
     }
-    // Rows are sliced only once the offsets are known to be in range.
-    if !csr.is_well_formed()
-        || weights.values.len() != csr.neighbors.len()
-        || !(0..node_count).all(|node| csr.row(node).windows(2).all(|pair| pair[0] < pair[1]))
-    {
+    if !well_formed(weights) {
         return Err(CchError::Internal("the weight CSR is malformed"));
+    }
+    if !fits(topology, weights) {
+        return Err(CchError::NeedsRebuild);
     }
     // A negative weight, `-inf` and NaN are refused; `+inf` and `-0.0` are not.
     if weights
@@ -321,7 +356,7 @@ impl Cch {
     /// another node count than `input`'s, weights with an edge its skeleton lacks, or a
     /// malformed CSR. [`CchInput::build`] makes the weights and the skeleton from one graph,
     /// so each is a bug; never [`CchError::NeedsRebuild`], since this is the rebuild.
-    pub fn build(input: &CchInput) -> Result<Self, CchError> {
+    pub(crate) fn build(input: &CchInput) -> Result<Self, CchError> {
         if input.skeleton.node_count != input.n || input.weights.csr.node_count != input.n {
             return Err(CchError::Internal(
                 "the input's skeleton or weights are for another node count",
@@ -372,6 +407,20 @@ impl Cch {
     pub fn memory_usage(&self) -> usize {
         // `size_of::<Self>()` already covers `Metric`'s four inline headers
         size_of::<Self>() + self.topology.memory_usage() + self.metric.memory_usage()
+    }
+
+    /// Whether [`Self::customized`] would accept the shape of `input`'s weights: same node
+    /// count, sane arrays, and no adjacency the hierarchy has no arc for. Looks at no weight
+    /// value, so `true` does not rule out [`CchError::InvalidWeight`]. `false` means only a
+    /// rebuild can take these weights. The same check `customized` runs (see [`fits`]).
+    /// Only the tests call it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn fits(
+        &self,
+        input: &CchInput,
+    ) -> bool {
+        fits(&self.topology, &input.weights)
     }
 
     pub(crate) fn topology(&self) -> &Topology {
@@ -963,7 +1012,8 @@ mod tests {
 
     /// Recustomizing must land exactly where a fresh build on the new metric would. The
     /// two metrics share an edge *set*, so they share a skeleton, hence a topology, hence
-    /// an arc-slot layout — which is what makes the arrays directly comparable.
+    /// an arc-slot layout — which is what makes the arrays directly comparable. The new
+    /// hierarchy shares the topology, and the one it came from keeps its own metric.
     #[test]
     fn recustomizing_equals_a_fresh_build_with_the_new_metric() {
         let base = random_sparse(30, 90, 9, 17);
@@ -986,7 +1036,85 @@ mod tests {
         assert_eq!(cch.metric.downward_middle, fresh.metric.downward_middle);
         // ... and the arrays did change, while the hierarchy it came from kept its own
         assert_ne!(cch.metric.upward_weight, built.metric.upward_weight);
-        let original = Cch::build(&first).expect("build");
-        assert_eq!(built.metric.upward_weight, original.metric.upward_weight);
+        check_metric(&built, &base, &first);
+    }
+
+    /// `fits` is the gate `customized` uses: `false` exactly when `customized` refuses the
+    /// shape, and `true` for any weights over the same adjacency, whatever their values.
+    #[test]
+    fn fits_agrees_with_what_customized_accepts() {
+        let cch = Cch::build(&to_input(&path(4))).expect("build");
+        let shape = Some(CchError::NeedsRebuild);
+
+        let own = to_input(&path(4));
+        let reweighted = to_input(&reweight(&path(4), |_, w| w + 3.0));
+        let mut negative = path(4);
+        let (u, v, _) = entries(&negative)[0];
+        negative.set(u, v, -1.0);
+        let negative = to_input(&negative);
+        // spliced in by hand, in order (row 2 is [1, 3]): `to_input` drops self-loops
+        let mut looped = to_input(&path(4));
+        let csr = &mut looped.weights.csr;
+        let at = csr.row_offsets[2] as usize + 1;
+        csr.neighbors = [&csr.neighbors[..at], &[2], &csr.neighbors[at..]].concat();
+        looped.weights.values = [
+            &looped.weights.values[..at],
+            &[1.0],
+            &looped.weights.values[at..],
+        ]
+        .concat();
+        for offset in &mut csr.row_offsets[3..] {
+            *offset += 1;
+        }
+        let csr = &looped.weights.csr;
+        assert!(
+            csr.neighbors[csr.row_offsets[2] as usize..csr.row_offsets[3] as usize].contains(&2),
+            "row 2 has 2 -> 2"
+        );
+
+        let more_nodes = to_input(&path(5));
+        let mut short = to_input(&path(4));
+        short.weights.values = short.weights.values[1..].into();
+        let mut new_adjacency = path(4);
+        new_adjacency.set(0, 3, 1.0);
+        let new_adjacency = to_input(&new_adjacency);
+        let mut bad_offsets = to_input(&path(4));
+        bad_offsets.weights.csr.row_offsets.swap(1, 2);
+        // row 1 is [0, 2]: repeating its 0 is a second weight for the pair 1 -> 0
+        let mut repeated = to_input(&path(4));
+        let csr = &mut repeated.weights.csr;
+        let at = csr.row_offsets[1] as usize;
+        csr.neighbors.insert(at, csr.neighbors[at]);
+        repeated.weights.values.insert(at, 7.0);
+        for offset in &mut csr.row_offsets[2..] {
+            *offset += 1;
+        }
+
+        // `fits` is false for weights from a later graph and for malformed ones alike;
+        // `customized` tells them apart, `NeedsRebuild` against `Internal` (a bug).
+        for (what, input, fits, malformed) in [
+            ("its own weights", &own, true, false),
+            ("new values, same edges", &reweighted, true, false),
+            ("a negative value: shape is fine", &negative, true, false),
+            ("a self-loop needs no arc", &looped, true, false),
+            ("one node more", &more_nodes, false, false),
+            ("an adjacency with no arc", &new_adjacency, false, false),
+            ("a short weight array", &short, false, true),
+            ("decreasing offsets", &bad_offsets, false, true),
+            ("a repeated pair", &repeated, false, true),
+        ] {
+            assert_eq!(cch.fits(input), fits, "{what}");
+            let refused = cch.customized(&input.weights).err();
+            assert_eq!(
+                refused == shape,
+                !fits && !malformed,
+                "{what}: customized disagrees with fits"
+            );
+            assert_eq!(
+                matches!(refused, Some(CchError::Internal(_))),
+                malformed,
+                "{what}: a malformed CSR is a bug"
+            );
+        }
     }
 }

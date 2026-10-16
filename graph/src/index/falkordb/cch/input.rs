@@ -62,7 +62,7 @@ impl CchInput {
     /// and operator here is built by this function, so that is a bug or an
     /// allocation failure, never something in the graph's data: bad weights
     /// and unknown names are the errors above.
-    pub fn build(
+    pub(crate) fn build(
         graph: &Graph,
         def: &CchIndexDef,
     ) -> Result<Self, CchError> {

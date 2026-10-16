@@ -35,20 +35,20 @@ graph/src/graph/graph.rs	set_nodes_attributes	1861	PROVEN	via insert_attrs: Span
 graph/src/graph/graph.rs	import_node_attrs	1898	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	import_node_attrs_resolved	1946	MODELLED	bulk path, no null filter
 graph/src/graph/graph.rs	import_relationship_attrs	2055	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	set_relationships_attributes	2860	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_relationships_attributes	2867	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	set_node_labels_product	2141	AXIOMATISED	GraphBLAS assign as set product
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2220	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	remove_nodes_labels	2266	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
 graph/src/graph/graph.rs	delete_nodes	2300	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2694	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2953	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	3088	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	create_relationships_bulk	2701	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2960	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	3095	NOT COVERED	tensor (proofs/versioned_matrix)
 graph/src/graph/graph.rs	get_or_create_node_attr_id	1979	NOT COVERED	name interning
 graph/src/graph/graph.rs	get_or_create_rel_attr_id	2048	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3927	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3950	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	3962	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	4043	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index	3934	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	3957	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	3969	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	4050	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors
