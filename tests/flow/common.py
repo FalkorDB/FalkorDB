@@ -22,6 +22,13 @@ Defaults.decode_responses = True
 
 SANITIZER     = os.getenv('SANITIZER', '')      != ''
 CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
+# The module under test was built with `--features index-falkordb` (the native
+# index, and the CCH path index with it). Whoever builds the module says so:
+# FALKORDB_FEATURES=index-falkordb. Tests that only make sense with the feature
+# skip without it; tests whose expectations depend on it (they are listed in
+# flow_tests_index_falkordb.txt) assert the module agrees, so a wrong
+# declaration fails loudly instead of skipping silently.
+INDEX_FALKORDB = 'index-falkordb' in os.getenv('FALKORDB_FEATURES', '').split(',')
 
 # Per-socket read timeout (seconds) applied to redis clients constructed
 # from this module. Tests that issue heavy synthetic workloads

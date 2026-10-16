@@ -187,7 +187,9 @@ pub(super) fn ir_references_variable(
         | IR::Union
         | IR::Commit
         | IR::CreateIndex { .. }
-        | IR::DropIndex { .. } => false,
+        | IR::DropIndex { .. }
+        | IR::CreateCchIndex { .. }
+        | IR::DropCchIndex { .. } => false,
         // Holds no expression: its children are the query's plan and the nested
         // plans, each visited as its own node. What a nested plan reads is not
         // lost either — the `ExprIR::NestedPlan` that calls it carries those

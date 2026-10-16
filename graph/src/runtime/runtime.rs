@@ -38,6 +38,8 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 use crate::effects::EffectsBuffer;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::cch;
 use crate::{
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
@@ -298,7 +300,9 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Commit
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
-                | IR::DropIndex { .. } => {}
+                | IR::DropIndex { .. }
+                | IR::CreateCchIndex { .. }
+                | IR::DropCchIndex { .. } => {}
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -1409,6 +1413,22 @@ impl<'a> Runtime<'a> {
                 index_type,
                 entity_type,
             } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
+            #[cfg(feature = "index-falkordb")]
+            IR::CreateCchIndex {
+                rel_types,
+                weight_attr,
+            } => cch::ddl::create_cch_index(self, rel_types, weight_attr),
+            #[cfg(feature = "index-falkordb")]
+            IR::DropCchIndex {
+                rel_types,
+                weight_attr,
+            } => cch::ddl::drop_cch_index(self, rel_types, weight_attr),
+            // The statements parse in every build; only executing them needs the feature.
+            #[cfg(not(feature = "index-falkordb"))]
+            IR::CreateCchIndex { .. } | IR::DropCchIndex { .. } => Err(String::from(
+                "CCH indexes are not available: this module was built without the \
+                 index-falkordb feature",
+            )),
         }
     }
 

@@ -10,12 +10,14 @@
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `index.rs`     the logic behind `Graph`'s CCH methods, over [`CchIndex`] (#3212)
+//! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
 
 pub mod customize;
+pub mod ddl;
 pub mod index;
 pub mod input;
 mod nd;
