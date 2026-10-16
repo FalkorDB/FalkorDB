@@ -104,8 +104,8 @@ graph/src/index/falkordb/unique.rs	fewest_candidates	69	PROVEN	fewest/fewestLoop
 graph/src/index/falkordb/mod.rs	unsupported_by_native_index	47	PROVEN	unsupportedByNativeIndex (entity, label, describe q): unsupported_spec; raised exactly when query_numeric declines: nodeScanOp_error_iff, edgeScanOp_error_iff
 graph/src/index/falkordb/mod.rs	describe_predicate	63	PROVEN	describe/describeAll/oneKey (reason as a value, Decline.lean): describe_equal (encodability tested), describe_inList, describe_leaves, describe_and, describe_or (the three union reasons), describe_or_reason_sound (spanning / non-member reports are real declines); cosmetic: describe_empty_in_misreported (a = 1 OR a IN [] is called "not all-numeric"; the real reason is the empty IN list, not reachable from the planner)
 graph/src/index/falkordb/mod.rs	union_members	149	PROVEN	unionMembers (nested combinators count by attribute but are not served): unionMembers_sameAttr, unionKeys_served, describe_or
-graph/src/graph/graph.rs	redisearch_fields	150	PROVEN	redisearchFieldsAll (cfg(not(index-falkordb)): the identity): redisearchFieldsAll_id
-graph/src/graph/graph.rs	redisearch_fields	157	PROVEN	redisearchFields (index-falkordb: drop each key's Range fields, drop a key left with none): redisearchFields_mem, redisearchFields_no_range, redisearchFields_keeps_nonrange (Fulltext/Vector kept, also beside a Range field), redisearchFields_nonempty, redisearchFields_drops_range_only, redisearchFields_idem, native_owns_range (the Range attribute is built natively by populate)
+graph/src/graph/graph.rs	redisearch_fields	149	PROVEN	redisearchFieldsAll (cfg(not(index-falkordb)): the identity): redisearchFieldsAll_id
+graph/src/graph/graph.rs	redisearch_fields	156	PROVEN	redisearchFields (index-falkordb: drop each key's Range fields, drop a key left with none): redisearchFields_mem, redisearchFields_no_range, redisearchFields_keeps_nonrange (Fulltext/Vector kept, also beside a Range field), redisearchFields_nonempty, redisearchFields_drops_range_only, redisearchFields_idem, native_owns_range (the Range attribute is built natively by populate)
 graph/src/graph/graph.rs	node_matches	4390	PROVEN	G.nodeMatches: nodeMatches_spec, nodeMatches_none; nodeFilteredScan_agrees (the scan keeps exactly what the built column answers), nodeScan_building_agrees
 graph/src/graph/graph.rs	relationship_matches	4402	PROVEN	G.relationshipMatches: relationshipMatches_spec; edgeFilteredScan_agrees, edgeScan_building_agrees
 graph/src/index/falkordb/versioned.rs	IndexEntry::discarded_against	469	PROVEN	Batch.discardedAgainst: discardedAgainst_none_iff (None iff the published copy has the same generation and one commit fewer; another generation or no copy = Gone, a different count = AnotherBatch)
@@ -116,7 +116,7 @@ graph/src/index/falkordb/versioned.rs	Graph::with_batch_index/Cch	589	NOT COVERE
 graph/src/index/falkordb/versioned.rs	Graph::take_index	813	PROVEN	Batch.V.withBatchIndex (the replacement arm, both entries present): commit_swap
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::set_batches_published	913	PROVEN	Batch.V.setBatchesPublished: setBatchesPublished_writer, setBatchesPublished_batch, commit_batches
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::batch_published_since	923	PROVEN	Batch.V.batchPublishedSince: batchPublishedSince_after_batch, batchPublishedSince_same
-graph/src/graph/graph.rs	Graph::new_build_version	1144	PROVEN	Batch.V.newBuildVersion: newBuildVersion_spec (new_version at the same data version), newVersion_version; commit_keeps_version, commit_not_stale (a batch never makes a writer's fork stale)
+graph/src/graph/graph.rs	Graph::new_build_version	1143	PROVEN	Batch.V.newBuildVersion: newBuildVersion_spec (new_version at the same data version), newVersion_version; commit_keeps_version, commit_not_stale (a batch never makes a writer's fork stale)
 graph/src/graph/mvcc_graph.rs	MvccGraph::commit_indexer_batch	262	PROVEN	Batch.commitIndexerBatch: commit_discarded (nothing published), commit_same, commit_swap, commit_catchUp (#3567), commit_invalid, commit_keeps_version, commit_not_stale, commit_batches (Graph::validate abstract; the shared tail of commit_version is not modelled); #3545 compare-and-swap: Batch.commitIndexerBatchE (the swap's pointer check as `unchanged`): commit_cas_current (nothing slipped in: the commit above), commit_cas_stale (another version slipped in: Stale, `now` stays published), commit_cas_invalid; search_concurrency Mvcc.swap_overtaken_publishes_nothing (the commit theorems hold for any catch-up limit, #2355)
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::refresh	197	PROVEN	Rebase.IndexColumn.refresh: refresh_mem (the tuples of the written ids as `from` has them come out, those `to` has go in, below the cursor while Building), refresh_inv (a column holding exactly the tuples of the entities `from` puts in it holds those of `to`; given Frame: `from` and `to` agree outside the written set; Frame is the hypothesis about what writers record)
 graph/src/index/falkordb/falkordb_index.rs	placed_in	254	PROVEN	Rebase.placedIn: placedIn_mem (a node column cuts the set by id at both ends, any `to`), placedIn_rel_mem (a relationship column keeps the edges whose build_place is in [from, next), any ends), placedIn_edge_spec/placedIn_node_spec, placedIn_none_eq_placedBelow_node/_edge (refresh's call with from = None is the old placed_below) (#3568)
@@ -145,24 +145,24 @@ graph/src/index/falkordb/versioned.rs	Graph::rebase_index/Restart	768	NOT COVERE
 graph/src/index/falkordb/graph_writes.rs	entity_tuples	445	PROVEN	Rebase.entityTuples: entityTuples_spec (the tuple of each id whose label or type holds, none otherwise)
 graph/src/graph/mvcc_graph.rs	MvccGraph::rebase_onto_indexer_batches	171	PROVEN	Rebase.mvccRebase: mvccRebase_noop (nothing overtaken: Ok, fork untouched), mvccRebase_unborrowed (an escalating writer's fork always succeeds), mvccRebase_borrowed_release/_debug (Err(Stale) / panic); V.rebased_keeps_data, V.rebased_not_stale (no data version change); the fork is now a plain Graph taken by &mut, so the borrowed arms (mvccRebase_borrowed_*) describe code that is gone and mvccRebase_noop/_unborrowed are the whole function
 graph/src/graph/graph.rs	Graph::build_place	3958	PROVEN	Rebase.BuildCursor.fromId (with the version's edge endpoints): fromId_spec
-graph/src/graph/graph.rs	Graph::create_cch_index	5429	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
-graph/src/graph/graph.rs	Graph::drop_cch_index	5466	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
-graph/src/graph/graph.rs	Graph::cch_indexes	5486	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
-graph/src/graph/graph.rs	Graph::cch_index	5494	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::create_cch_index	5435	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::drop_cch_index	5471	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::cch_indexes	5514	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/graph/graph.rs	Graph::cch_index	5522	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
 graph/src/graph/graph.rs	query_index_nodes	4340	NOT COVERED	native Range column (#3740): query_index_numeric_nodes until #3736; wraps query_column, re-target pending
 graph/src/graph/graph.rs	query_index_edges	4358	NOT COVERED	native Range column (#3740): query_index_numeric_edges until #3736; wraps query_column, re-target pending
-graph/src/index/falkordb/cch/mod.rs	Csr::row	106	PROVEN	Cch.Csr.row?: row?_spec (i[p[u]..p[u+1]], none = the panic), row?_isSome_of_wf (a well-formed Csr never panics for u < n)
-graph/src/index/falkordb/cch/mod.rs	Csr::is_well_formed	130	PROVEN	Cch.Csr.isWellFormed: isWellFormed_iff (n+1 offsets from 0, never decreasing, ending at i.len(); every id below n)
-graph/src/index/falkordb/cch/mod.rs	Csr::is_symmetric_simple	151	PROVEN	Cch.Csr.isSymmetricSimple: isSymmetricSimple_iff (well formed, rows strictly increasing, no self-loop, entries mirrored; binary_search by its std contract on a sorted slice), isSymmetricSimple_any_bs
-graph/src/index/falkordb/cch/mod.rs	CchIndexDef::new	226	PROVEN	Cch.defNew: defNew_spec (sorted, duplicate-free, same members), defNew_eq_of_same_members (equal sets are equal indexes)
-graph/src/index/falkordb/cch/mod.rs	Cch::query	346	NOT COVERED	not modelled yet: CCH Phase 3, query (#3210, #3324); the stub this row proved panicked is implemented
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry	483	PROVEN	Cch.cchEntry: cchEntry_spec (the BTreeMap binding of exactly that definition)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry_mut	490	PROVEN	Cch.cchEntry: cchEntry_spec (the slot of exactly that definition, as FalkorDbIndex.setEntry does for columns)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_record	501	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363): a Building entry keeps the written edge ids
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_rebase	521	NOT COVERED	not modelled yet: CCH writes during a build (08c): over edge ids, Absorbed::Restart
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_catch_up	553	NOT COVERED	not modelled yet: CCH writes during a build (08c): over edge ids, Absorbed::Restart
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_read	608	NOT COVERED	not modelled yet: the CCH background build (07c): one batch builds and adopts the hierarchy
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_add	620	NOT COVERED	not modelled yet: the CCH background build (07c): one batch builds and adopts the hierarchy
+graph/src/index/falkordb/cch/mod.rs	Csr::row	108	PROVEN	Cch.Csr.row?: row?_spec (i[p[u]..p[u+1]], none = the panic), row?_isSome_of_wf (a well-formed Csr never panics for u < n)
+graph/src/index/falkordb/cch/mod.rs	Csr::is_well_formed	132	PROVEN	Cch.Csr.isWellFormed: isWellFormed_iff (n+1 offsets from 0, never decreasing, ending at i.len(); every id below n)
+graph/src/index/falkordb/cch/mod.rs	Csr::is_symmetric_simple	153	PROVEN	Cch.Csr.isSymmetricSimple: isSymmetricSimple_iff (well formed, rows strictly increasing, no self-loop, entries mirrored; binary_search by its std contract on a sorted slice), isSymmetricSimple_any_bs
+graph/src/index/falkordb/cch/mod.rs	CchIndexDef::new	228	PROVEN	Cch.defNew: defNew_spec (sorted, duplicate-free, same members), defNew_eq_of_same_members (equal sets are equal indexes)
+graph/src/index/falkordb/cch/mod.rs	Cch::query	348	NOT COVERED	not modelled yet: CCH Phase 3, query (#3210, #3324); the stub this row proved panicked is implemented
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry	484	PROVEN	Cch.cchEntry: cchEntry_spec (the BTreeMap binding of exactly that definition)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::entry_mut	491	PROVEN	Cch.cchEntry: cchEntry_spec (the slot of exactly that definition, as FalkorDbIndex.setEntry does for columns)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_record	502	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363): a Building entry keeps the written edge ids
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::writer_rebase	522	NOT COVERED	not modelled yet: CCH writes during a build (08c): over edge ids, Absorbed::Restart
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_catch_up	554	NOT COVERED	not modelled yet: CCH writes during a build (08c): over edge ids, Absorbed::Restart
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_read	609	NOT COVERED	not modelled yet: the CCH background build (07c): one batch builds and adopts the hierarchy
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_add	621	NOT COVERED	not modelled yet: the CCH background build (07c): one batch builds and adopts the hierarchy
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_insert	387	PROVEN	Rebase.IndexColumn.indexerInsert: indexerInsert_mem, insert_inv (Inv preserved for the state the batch leaves, given Frame and the batch's content), placedIn_edge_spec/placedIn_node_spec (the published column keeps its tuples; the batch adds those of entities no writer changed; written entities placed in [from, next) add their tuple as published has it) (#3568)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::batch_len	409	PROVEN	Memory.IndexColumn.batchLen: batchLen_spec (= EncodedTuples::len)
 graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::memory_usage	432	PROVEN	Memory.IndexColumn.memoryUsage (delegates to NumericIndex::memory_usage = CowBTree::heap_bytes, proved in cow_btree heapBytes_eq for a TreeWF tree (every reachable tree is: Reachable_wf_asserted); the walk is the parameter hb) (#3569)
@@ -174,26 +174,26 @@ graph/src/index/falkordb/versioned.rs	VersionedIndex::batch_len	344	PROVEN	trait
 graph/src/index/falkordb/versioned.rs	VersionedIndex::memory_usage	366	PROVEN	trait signature; the IndexColumn impl: Memory.IndexColumn.memoryUsage; IndexEntry::memory_usage: Memory.EN.memoryUsage_*
 graph/src/index/falkordb/versioned.rs	IndexEntry::memory_usage	410	PROVEN	Memory.EN.memoryUsage: memoryUsage_ready, memoryUsage_building, memoryUsage_building_quiet (the pages, plus the since set's serialized size while Building and non-empty; by_this_version not counted) (#3569)
 graph/src/index/falkordb/versioned.rs	Graph::insert_index	637	PROVEN	Batch.V.insertedOnto: Rebase.insertedOnto_eq_caughtUpOnto, Batch.commit_catchUp_insert (published's copy with the batch inserted, the batch's state and commit count; same entry shape as the refresh catch-up); column: indexerInsert_mem; the path's invariant: Rebase.insert_inv (given Frame) (#3568)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_insert	582	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: the CCH arm of indexer_fit never chooses an insert)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::batch_len	595	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: the CCH arm of indexer_fit never chooses an insert)
-graph/src/index/falkordb/cch/mod.rs	id_index	67	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	index_id	75	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	CchError::from	283	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
-graph/src/index/falkordb/cch/mod.rs	Csr::row_range	118	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/mod.rs	CchIndexDef::rel_types	242	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	Csr::from_export	177	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	From::from	189	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	From::from	196	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
-graph/src/index/falkordb/cch/mod.rs	VersionedIndex::memory_usage	634	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
-graph/src/index/falkordb/cch/mod.rs	CchError::query_message	295	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
-graph/src/index/falkordb/cch/mod.rs	CchIndex::pending	408	NOT COVERED	not modelled yet: the CCH background build (07c)
-graph/src/index/falkordb/cch/mod.rs	CchIndex::cch	432	NOT COVERED	not modelled yet: the CCH background build (07c)
-graph/src/index/falkordb/cch/mod.rs	CchIndex::failure	446	NOT COVERED	not modelled yet: the CCH background build (07c)
-graph/src/index/falkordb/cch/mod.rs	build_off_the_lock	678	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::indexer_insert	583	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: the CCH arm of indexer_fit never chooses an insert)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::batch_len	596	PROVEN	Cch.cchVersionedUnreachable: cchVersionedUnreachable_panics (unreachable!: the CCH arm of indexer_fit never chooses an insert)
+graph/src/index/falkordb/cch/mod.rs	id_index	69	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	index_id	77	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	CchError::from	285	NOT COVERED	not modelled yet: CCH Phase 1, ordering and triangulation (#3208, #3321)
+graph/src/index/falkordb/cch/mod.rs	Csr::row_range	120	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
+graph/src/index/falkordb/cch/mod.rs	CchIndexDef::rel_types	244	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	Csr::from_export	179	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	From::from	191	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	From::from	198	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
+graph/src/index/falkordb/cch/mod.rs	VersionedIndex::memory_usage	635	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
+graph/src/index/falkordb/cch/mod.rs	CchError::query_message	297	NOT COVERED	not modelled yet: CREATE/DROP CCH INDEX (#3213, #3362)
+graph/src/index/falkordb/cch/mod.rs	CchIndex::pending	410	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/cch/mod.rs	CchIndex::cch	433	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/cch/mod.rs	CchIndex::failure	447	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/cch/mod.rs	build_off_the_lock	679	NOT COVERED	not modelled yet: the CCH background build (07c)
 graph/src/index/falkordb/versioned.rs	Graph::fit	551	NOT COVERED	not modelled yet: the CCH background build (07c)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_building_indexes	1190	NOT COVERED	not modelled yet: the CCH background build (07c)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::add_cch_building	1269	NOT COVERED	not modelled yet: the CCH background build (07c)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::hold_cch	1277	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::add_cch_building	1268	NOT COVERED	not modelled yet: the CCH background build (07c)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::hold_cch	1276	NOT COVERED	not modelled yet: the CCH background build (07c)
 graph/src/index/falkordb/online_build.rs	stopping	490	NOT COVERED	not modelled yet: the CCH background build (07c)
 graph/src/index/falkordb/cch/input.rs	CchInput::validate	159	NOT COVERED	not modelled yet: the CCH background build (07c)
 graph/src/index/falkordb/cch/input.rs	CchInput::scored_weights	168	NOT COVERED	not modelled yet: the CCH background build (07c)
@@ -260,9 +260,9 @@ graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns	1062
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::intersect_columns::group	1070	NOT COVERED	numeric array elements and conjunctions (#2452): not modelled yet
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_index	1241	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_defs	1251	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	1323	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	1334	NOT COVERED	not modelled yet: the CCH Graph index API (#3212, #3361); the stub this row proved panicked is implemented
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_entry	1221	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::add_cch	1259	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::add_cch	1258	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_column	717	PROVEN	createNumeric (Ready, RDB-load path): numeric_createNumeric, entry_createNumeric (create_numeric until #3736; the column is a RangeIndex holding only its numeric kind)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::query_column	1012	NOT COVERED	native Range column (#3740): query_numeric until #3736, whose routing moved into range::Selection::of; queryNumeric models the pre-#3736 match, re-target pending
 graph/src/index/falkordb/falkordb_index.rs	ScanFilter::matches	486	NOT COVERED	native Range column (#3740): matches through range::Selection::matches since #3736, re-target pending
@@ -287,18 +287,18 @@ graph/src/index/falkordb/cch/customize.rs	WeightCsr::entries	394	NOT COVERED	not
 graph/src/index/falkordb/cch/customize.rs	customize	413	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
 graph/src/index/falkordb/cch/customize.rs	seed	432	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
 graph/src/index/falkordb/cch/customize.rs	relax	491	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/customize.rs	Cch::build	552	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/customize.rs	Cch::customized	595	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/customize.rs	Cch::node_count	631	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
-graph/src/index/falkordb/cch/customize.rs	Cch::topology	665	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
-graph/src/index/falkordb/cch/customize.rs	Cch::upward_weight	670	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
-graph/src/index/falkordb/cch/customize.rs	Cch::downward_weight	678	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
-graph/src/index/falkordb/cch/customize.rs	Cch::upward_middle	687	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
-graph/src/index/falkordb/cch/customize.rs	Cch::downward_middle	695	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	Cch::build	551	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
+graph/src/index/falkordb/cch/customize.rs	Cch::customized	594	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
+graph/src/index/falkordb/cch/customize.rs	Cch::node_count	630	NOT COVERED	not modelled yet: CCH Phase 2, customization (#3209, #3323)
+graph/src/index/falkordb/cch/customize.rs	Cch::topology	664	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	Cch::upward_weight	669	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	Cch::downward_weight	677	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	Cch::upward_middle	686	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
+graph/src/index/falkordb/cch/customize.rs	Cch::downward_middle	694	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/customize.rs	well_formed	312	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
 graph/src/index/falkordb/cch/customize.rs	check_shape	322	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
 graph/src/index/falkordb/cch/customize.rs	Metric::memory_usage	262	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
-graph/src/index/falkordb/cch/customize.rs	Cch::memory_usage	640	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
+graph/src/index/falkordb/cch/customize.rs	Cch::memory_usage	639	NOT COVERED	not modelled yet: the CCH Graph index API and memory report (#3212, #3361)
 graph/src/index/falkordb/cch/customize.rs	Index::index	158	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
 graph/src/index/falkordb/cch/customize.rs	WeightArr::from_vec	169	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
 graph/src/index/falkordb/cch/customize.rs	WeightArr::set	182	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
@@ -306,7 +306,7 @@ graph/src/index/falkordb/cch/customize.rs	WeightArr::new_version	192	NOT COVERED
 graph/src/index/falkordb/cch/customize.rs	WeightArr::memory_usage	199	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
 graph/src/index/falkordb/cch/customize.rs	Metric::new_version	252	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
 graph/src/index/falkordb/cch/customize.rs	Buffers::into_metric	298	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
-graph/src/index/falkordb/cch/customize.rs	Cch::new_version	610	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
+graph/src/index/falkordb/cch/customize.rs	Cch::new_version	609	NOT COVERED	not modelled yet: CCH chunked copy-on-write weight arrays (12a)
 graph/src/index/falkordb/cch/query.rs	Chain::new	67	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	Chain::relax_from	99	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
 graph/src/index/falkordb/cch/query.rs	Chain::arcs_up_to	136	NOT COVERED	not modelled yet: CCH Phase 3, elimination-tree query and path unpacking (#3210, #3324)
@@ -333,10 +333,10 @@ graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::tensor_weights	361	N
 graph/src/index/falkordb/cch/input/weight_ops.rs	WeightOps::multi_edge_pass	405	NOT COVERED	not modelled yet: CCH input from a graph (#3211, #3360)
 graph/src/index/falkordb/cch/input.rs	is_valid_weight	40	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
 graph/src/index/falkordb/cch/input.rs	CchInput::weights_for	132	NOT COVERED	not modelled yet: CCH write maintenance (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	check_edge_weights	344	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	type_name	633	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	attribute_name	642	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
-graph/src/index/falkordb/cch/maint.rs	index_name	651	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	check_edge_weights	358	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	type_name	675	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	attribute_name	684	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
+graph/src/index/falkordb/cch/maint.rs	index_name	693	NOT COVERED	not modelled yet: the CCH weight check at the write (#3622)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; nodeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	318	NOT COVERED	native Range column (#3740): reads query_column and its ScanFilter, rewritten by #3736; edgeScanOp/scanOp model the pre-#3736 queryNumeric answers, re-target pending
 graph/src/index/falkordb/range.rs	RangeKind::for_each_stored_key	43	NOT COVERED	native Range column (#3740): trait signature; not modelled yet
@@ -385,34 +385,34 @@ graph/src/index/falkordb/cch/partial.rs	bad_entry	54	NOT COVERED	not modelled ye
 graph/src/index/falkordb/cch/partial.rs	Cch::recustomize_seeded	98	NOT COVERED	not modelled yet: CCH scoped recustomization (#3217, #3366), seeded pair by pair (#3363)
 graph/src/graph/graph.rs	Graph::apply_cch_writes	3997	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/graph/graph.rs	Graph::take_cch_warnings	4020	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/customize.rs	Cch::joins	649	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/customize.rs	Cch::build_checked	563	NOT COVERED	not modelled yet: the CCH background build (#3768, #3771)
+graph/src/index/falkordb/cch/customize.rs	Cch::joins	648	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/customize.rs	Cch::build_checked	562	NOT COVERED	not modelled yet: the CCH background build (#3768, #3771)
 graph/src/index/falkordb/cch/input/pair_weights.rs	cheapest_edge	18	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/cch/input/pair_weights.rs	PairWeights::new	56	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/cch/input/pair_weights.rs	PairWeights::get	77	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/cch/input/weight_ops.rs	edge_weight	112	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchChanges::pairs	117	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchChanges::set_structural	121	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchChanges::push	126	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchChanges::classify	142	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchDirty::is_empty	173	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchDirty::get	189	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	CchDirty::entry	196	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	edges_created	218	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	edges_deleted	238	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	edge_attrs_set	260	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	record	297	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	spanning	317	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	Display::fmt	401	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	flush	467	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	update	541	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::rebuild_cch_in_background	1295	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::take_cch_warnings	1315	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchChanges::pairs	128	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchChanges::set_structural	132	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchChanges::push	137	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchChanges::classify	153	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchDirty::is_empty	184	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchDirty::get	200	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	CchDirty::entry	207	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	edges_created	229	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	edges_deleted	249	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	edge_attrs_set	271	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	record	308	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	spanning	328	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	Display::fmt	416	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	flush	494	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/cch/maint.rs	update	583	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::rebuild_cch_in_background	1294	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::take_cch_warnings	1326	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
 graph/src/index/falkordb/falkordb_index.rs	VersionWarnings::push	622	NOT COVERED	not modelled yet: CCH maintenance under writes (#3214, #3363)
-graph/src/index/falkordb/cch/maint.rs	absorb	598	NOT COVERED	not modelled yet: CCH writes during a build (08c)
-graph/src/index/falkordb/cch/mod.rs	CchIndex::restart_count_reset	440	NOT COVERED	not modelled yet: CCH writes during a build (08c)
-graph/src/index/falkordb/cch/mod.rs	CchIndex::absorb	650	NOT COVERED	not modelled yet: CCH writes during a build (08c)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::next_generation	1309	NOT COVERED	not modelled yet: CCH writes during a build (08c)
+graph/src/index/falkordb/cch/maint.rs	absorb	640	NOT COVERED	not modelled yet: CCH writes during a build (08c)
+graph/src/index/falkordb/cch/mod.rs	CchIndex::restart_count_reset	441	NOT COVERED	not modelled yet: CCH writes during a build (08c)
+graph/src/index/falkordb/cch/mod.rs	CchIndex::absorb	651	NOT COVERED	not modelled yet: CCH writes during a build (08c)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::next_generation	1320	NOT COVERED	not modelled yet: CCH writes during a build (08c)
 graph/src/index/falkordb/cch/procedure.rs	parse_cch_query_config	34	NOT COVERED	not modelled yet: db.idx.cch.query and the db.indexes CCH listing (#3364)
 graph/src/index/falkordb/cch/procedure.rs	cch_path_from_node_ids	130	NOT COVERED	not modelled yet: db.idx.cch.query and the db.indexes CCH listing (#3364)
 graph/src/index/falkordb/cch/procedure.rs	cch_index_rows	184	NOT COVERED	not modelled yet: db.idx.cch.query and the db.indexes CCH listing (#3364)

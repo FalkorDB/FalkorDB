@@ -13,6 +13,7 @@
 //! - `maint.rs`     keeping the indexes correct after writes (#3214), and the write-time weight check
 //! - `procedure.rs` `db.idx.cch.query` and the CCH rows of `db.indexes()`
 //! - `fallback.rs`  the graph search a query falls back to while the hierarchy cannot answer
+//! - `rdb.rs`       the CCH definitions payload of an RDB (encoding version 20)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -27,6 +28,7 @@ mod order;
 mod partial;
 pub(crate) mod procedure;
 mod query;
+pub mod rdb;
 #[cfg(test)]
 pub(crate) mod testkit;
 
@@ -414,7 +416,6 @@ impl CchIndex {
     }
 
     /// An index over a hierarchy built already, for a `Ready` entry.
-    #[cfg(test)]
     #[must_use]
     pub(crate) const fn built(
         def: CchIndexDef,

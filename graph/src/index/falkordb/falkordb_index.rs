@@ -1255,7 +1255,6 @@ impl FalkorDbIndex {
     /// Hold `index`, built and `Ready`, as a new index: the next generation, like a
     /// column's. The caller has checked that no entry over the same definition is held
     /// ([`Self::cch_entry`]), before building it.
-    #[cfg(test)]
     pub(crate) fn add_cch(
         &mut self,
         index: CchIndex,
@@ -1302,6 +1301,18 @@ impl FalkorDbIndex {
         entry.index.restart_count_reset();
         entry.state = BuildState::building(());
         entry.generation = generation;
+    }
+
+    /// Give up on the built entry over `def`: `FAILED` with `reason`, no hierarchy, no build.
+    /// It stays so until it is dropped and created again; only its definition is saved.
+    pub(crate) fn fail_cch(
+        &mut self,
+        def: &CchIndexDef,
+        reason: &str,
+    ) {
+        let entry = self.cch_indexes.get_mut(def).expect("held");
+        entry.index.hierarchy = Hierarchy::Failed(Arc::from(reason));
+        entry.state = BuildState::Ready;
     }
 
     /// A new generation, for an index created or built again on this version: the version's

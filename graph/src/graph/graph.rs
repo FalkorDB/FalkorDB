@@ -85,16 +85,15 @@ use std::mem;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::falkordb_index::ScanFilter;
+#[cfg(all(test, feature = "index-falkordb"))]
+use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    cch::{self, CchError, CchIndexDef, CchInput, maint::check_edge_weights},
+    cch::maint::{check_edge_weights, index_name},
+    cch::rdb::encode_cch_defs,
+    cch::{self, Cch, CchError, CchIndex, CchIndexDef, CchInput},
     falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes,
-};
-#[cfg(all(test, feature = "index-falkordb"))]
-use crate::index::falkordb::{
-    cch::{Cch, CchIndex},
-    versioned::IndexId,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -2043,6 +2042,7 @@ impl Graph {
         #[cfg(feature = "index-falkordb")]
         check_edge_weights(
             self,
+            docs,
             data.iter().map(|(id, attrs)| (id, attrs)),
             Some(type_id),
         )?;
@@ -2078,7 +2078,7 @@ impl Graph {
         docs: &mut IndexDocs,
     ) -> Result<usize, String> {
         #[cfg(feature = "index-falkordb")]
-        check_edge_weights(self, attrs, None)?;
+        check_edge_weights(self, docs, attrs, None)?;
         let index_add_edge_docs = &mut docs.edge_adds;
         let nset = self.relationship_attrs.import_attrs(attrs);
 
@@ -2916,7 +2916,7 @@ impl Graph {
     ) -> Result<(usize, usize), String> {
         // Before anything is written, so a refused weight leaves the graph untouched.
         #[cfg(feature = "index-falkordb")]
-        check_edge_weights(self, attrs, None)?;
+        check_edge_weights(self, docs, attrs, None)?;
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
@@ -2951,7 +2951,7 @@ impl Graph {
         docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
         #[cfg(feature = "index-falkordb")]
-        check_edge_weights(self, attrs, Some(type_id))?;
+        check_edge_weights(self, docs, attrs, Some(type_id))?;
         let index_add_edge_docs = &mut docs.edge_adds;
         // Before the overwrite, while the old values are still readable.
         #[cfg(feature = "index-falkordb")]
@@ -4004,7 +4004,7 @@ impl Graph {
                 return Ok(());
             }
             let dirty = mem::take(&mut docs.cch);
-            cch::maint::flush(self, &dirty).map_err(|e| e.to_string())
+            cch::maint::flush(self, &dirty, docs.replay).map_err(|e| e.to_string())
         }
         #[cfg(not(feature = "index-falkordb"))]
         {
@@ -5341,6 +5341,12 @@ impl Graph {
             }
             EncodeState::AdjMatrix => self.adjacancy_matrix.encode(w),
             EncodeState::LblsMatrix => self.node_labels_matrix.encode(w),
+            // Only a build with the CCH index writes, or ever asks for, this payload.
+            #[cfg(feature = "index-falkordb")]
+            EncodeState::CchIndices => {
+                // In definition order, the map's, so the same indexes always save alike.
+                encode_cch_defs(w, &self.cch_indexes().cloned().collect::<Vec<_>>());
+            }
             _ => {}
         }
     }
@@ -5444,7 +5450,6 @@ impl Graph {
     /// # Errors
     /// As [`Self::create_cch_index`], and whatever [`CchInput::build`] and [`Cch::build`]
     /// report beyond it, which is a bug or a resource limit. Nothing is held on error.
-    #[cfg(test)]
     pub(crate) fn build_cch_index_now(
         &mut self,
         def: CchIndexDef,
@@ -5480,6 +5485,29 @@ impl Graph {
     ) -> bool {
         self.indexer_prepare(&IndexId::Cch(def.clone()), usize::MAX)
             .is_some()
+    }
+
+    /// Build the CCH indexes an RDB load decoded, after every other index. Only definitions
+    /// are persisted, so each hierarchy is built here from the loaded graph, through
+    /// [`Self::build_cch_index_now`], before the graph is published, as a column is built in one
+    /// batch on load.
+    ///
+    /// A definition that cannot be built (a weight this engine refuses but a C dump may hold,
+    /// a type or attribute the dump does not have, a duplicate definition) is dropped rather
+    /// than failing the load: the index is derived data and the graph must load. Returns one
+    /// message per dropped definition, for the caller to log.
+    pub fn load_cch_indexes(
+        &mut self,
+        defs: Vec<CchIndexDef>,
+    ) -> Vec<String> {
+        defs.into_iter()
+            .filter_map(|def| {
+                let name = index_name(self, &def);
+                self.build_cch_index_now(def)
+                    .err()
+                    .map(|e| format!("CCH definition {name} was not rebuilt and is dropped: {e}"))
+            })
+            .collect()
     }
 
     /// Every CCH index definition held by this version, ready or not, in definition order.

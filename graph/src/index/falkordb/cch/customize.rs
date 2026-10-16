@@ -548,7 +548,6 @@ impl Cch {
     /// another node count than `input`'s, weights with an edge its skeleton lacks, or a
     /// malformed CSR. [`CchInput::build`] makes the weights and the skeleton from one graph,
     /// so each is a bug; never [`CchError::NeedsRebuild`], since this is the rebuild.
-    #[cfg(test)]
     pub(crate) fn build(input: &CchInput) -> Result<Self, CchError> {
         Self::build_checked(input, || Ok(()))
     }
