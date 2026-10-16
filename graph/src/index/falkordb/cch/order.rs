@@ -134,7 +134,6 @@ pub(crate) struct Topology {
     /// Upward adjacency.
     upward: RankRows,
     /// Downward adjacency: the transpose of `upward`.
-    #[allow(dead_code)] // built with `upward`; scoped recustomization (#3217) is its reader
     downward: RankRows,
 }
 
@@ -267,7 +266,6 @@ impl Topology {
     }
 
     /// Every rank below `rank` in the chordal supergraph, ascending.
-    #[cfg(test)] // scoped recustomization (#3217) is its first caller outside the tests
     pub(crate) fn down(
         &self,
         rank: Rank,

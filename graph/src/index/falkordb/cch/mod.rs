@@ -7,6 +7,7 @@
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization (#3209)
+//! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `maint.rs`     keeping indexes correct under writes (#3214): the write-time weight check
@@ -20,6 +21,7 @@ mod input;
 pub(crate) mod maint;
 mod nd;
 mod order;
+mod partial;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
@@ -320,39 +322,6 @@ pub struct Cch {
 }
 
 impl Cch {
-    /// Recompute the metric after the edges in `changed` changed weight, touching only the
-    /// arcs those changes can reach.
-    ///
-    /// `changed` lists node-space `(u, v)` pairs whose cheapest weight may differ from the
-    /// last customization — raised, lowered, removed, or added where the hierarchy already
-    /// has an arc. Direction does not matter (an arc carries both), duplicates are fine,
-    /// and self-loops are ignored. `weights` is the **complete** new metric, the same
-    /// [`WeightCsr`] a full [`Cch::customized`] would take:
-    /// - a removed edge is simply absent from it, and seeds its arc with infinity, as an
-    ///   explicit `+inf` (a closed edge) does;
-    /// - every pair whose weight differs from the previous metric must be in `changed`.
-    ///   A pair left out keeps its old arc weights, so the result is wrong, not refused.
-    ///
-    /// # Preconditions
-    /// `weights` came from `CchInput::build`, which has already
-    /// refused negative and NaN weights. This path re-checks only the seeds of
-    /// the arcs in `changed` (before writing anything), not the whole metric: doing the
-    /// latter would cost O(edges) and make the scoped path no cheaper than the full one.
-    ///
-    /// # Errors
-    /// [`CchError::InvalidWeight`] if a changed pair's new weight is negative or NaN.
-    /// Nothing is written in that case, nor on [`Recustomized::NeedsRebuild`].
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3217. Nothing calls it yet.
-    pub fn recustomize_scoped(
-        &mut self,
-        _changed: &[(u64, u64)],
-        _weights: &WeightCsr,
-    ) -> Result<Recustomized, CchError> {
-        unimplemented!("scoped recustomization, #3217")
-    }
-
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
     ///
     /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
