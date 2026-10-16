@@ -3,10 +3,12 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader, decode_cch_defs};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
+use graph::index::cch::CchIndexDef;
+use redis_module::logging::log_warning;
 use redis_module::raw::RedisModuleIO;
 use roaring::RoaringTreemap;
 
@@ -124,6 +126,7 @@ pub fn rdb_load_graph(
                 relationship_tensors: Vec::new(),
                 adj_matrix: VersionedMatrix::<bool>::new(0, 0),
                 lbls_matrix: VersionedMatrix::<bool>::new(0, 0),
+                cch_defs: Vec::new(),
             };
             decode_state.pending.insert(hdr.graph_name.clone(), pg);
         } else {
@@ -189,6 +192,7 @@ pub fn rdb_load_graph(
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
     let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
     let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut cch_defs: Vec<CchIndexDef> = Vec::new();
 
     for (state, count) in &payloads {
         match *state {
@@ -223,6 +227,9 @@ pub fn rdb_load_graph(
             EncodeState::LblsMatrix => {
                 lbls_matrix = VersionedMatrix::decode(&mut r)?;
             }
+            EncodeState::CchIndices => {
+                cch_defs.extend(decode_cch_defs(&mut r)?);
+            }
             _ => {}
         }
     }
@@ -252,6 +259,7 @@ pub fn rdb_load_graph(
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    build_cch_indexes(&mut graph, cch_defs);
 
     Ok(LoadedKey::Graph(Box::new(graph)))
 }
@@ -300,6 +308,9 @@ fn decode_payloads_into_pending(
             EncodeState::LblsMatrix => {
                 pg.lbls_matrix = VersionedMatrix::decode(r)?;
             }
+            EncodeState::CchIndices => {
+                pg.cch_defs.extend(decode_cch_defs(r)?);
+            }
             _ => {}
         }
     }
@@ -337,8 +348,22 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    build_cch_indexes(&mut graph, pg.cch_defs);
 
     graph
+}
+
+/// Builds each decoded CCH index definition on the freshly loaded graph, after every other index,
+/// like C's decode finalization. A definition that cannot be built is dropped with a warning and
+/// never fails the load (see `Graph::load_cch_indexes`). A graph without CCH indexes never
+/// reaches it.
+fn build_cch_indexes(
+    graph: &mut Graph,
+    defs: Vec<CchIndexDef>,
+) {
+    for dropped in graph.load_cch_indexes(defs) {
+        log_warning(format!("RDB load of graph '{}': {dropped}", graph.name()));
+    }
 }
 
 /// Rebuild indexes from the decoded schema information.
@@ -469,6 +494,7 @@ fn load_graph_from_reader(
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
     let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
     let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut cch_defs: Vec<CchIndexDef> = Vec::new();
 
     for (state, count) in &payloads {
         match *state {
@@ -503,6 +529,9 @@ fn load_graph_from_reader(
             EncodeState::LblsMatrix => {
                 lbls_matrix = VersionedMatrix::decode(r)?;
             }
+            EncodeState::CchIndices => {
+                cch_defs.extend(decode_cch_defs(r)?);
+            }
             _ => {}
         }
     }
@@ -532,6 +561,7 @@ fn load_graph_from_reader(
         graph.add_constraint_raw(c);
     }
     graph.populate_indexes_sync();
+    build_cch_indexes(&mut graph, cch_defs);
 
     Ok(graph)
 }

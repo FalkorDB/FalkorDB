@@ -172,7 +172,7 @@ impl Graph {
     }
 
     /// `(:A|B {w})` for `def`; ids that no longer resolve print as `#id`.
-    fn cch_index_name(
+    pub(crate) fn cch_index_name(
         &self,
         def: &CchIndexDef,
     ) -> String {

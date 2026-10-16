@@ -57,6 +57,27 @@ impl Graph {
         Ok(())
     }
 
+    /// Build the CCH indexes an RDB load decoded, after every other index. Only definitions
+    /// are persisted, so each hierarchy is built here from the loaded graph.
+    ///
+    /// A definition that cannot be built (a weight this engine refuses but a C dump may hold,
+    /// a graph past the size ceiling, a type or attribute the dump does not have, a duplicate
+    /// definition) is dropped rather than failing the load: the index is derived data and the
+    /// graph must load. Returns one message per dropped definition, for the caller to log.
+    pub fn load_cch_indexes(
+        &mut self,
+        defs: Vec<CchIndexDef>,
+    ) -> Vec<String> {
+        defs.into_iter()
+            .filter_map(|def| {
+                let name = self.cch_index_name(&def);
+                self.create_cch_index(def)
+                    .err()
+                    .map(|e| format!("CCH index {name} was not rebuilt and is dropped: {e}"))
+            })
+            .collect()
+    }
+
     /// Every CCH index definition held by this version, in no guaranteed order.
     pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
         self.cch_indexes.iter().map(|idx| &idx.def)
@@ -420,5 +441,28 @@ mod tests {
 
         assert_eq!(g.rebuild_cch_indexes(), Err(CchError::UnknownRelType));
         assert!(Arc::ptr_eq(&kept, &g.cch_index(&good).unwrap().cch));
+    }
+
+    /// RDB load: a definition that cannot be built is dropped with a message, and the graph
+    /// and every other index load as usual.
+    #[test]
+    fn a_load_drops_only_the_definitions_it_cannot_build() {
+        let mut edges = TypedEdgeList::new(3);
+        edges.push(0, 1, 2.0, 0);
+        edges.push(1, 2, 3.0, 0);
+        edges.push(0, 2, -1.0, 1); // C accepts it; this engine does not
+        let (mut g, attr) = real_graph(&edges, 2, "cch_load_drops");
+        let good = def_for(&g, &[0], attr);
+        let bad = def_for(&g, &[0, 1], attr);
+        let unknown = CchIndexDef::new(vec![TypeId(9)], attr);
+
+        let dropped = g.load_cch_indexes(vec![bad.clone(), good.clone(), unknown, good.clone()]);
+        assert_eq!(dropped.len(), 3, "{dropped:?}");
+        assert!(dropped[0].contains("(:T0|T1 {w})") && dropped[0].contains("negative"));
+        assert!(dropped[1].contains("(:#9 {w})"), "{dropped:?}");
+        assert!(dropped[2].contains("already exists"), "{dropped:?}");
+        assert_eq!(g.cch_indexes().collect::<Vec<_>>(), vec![&good]);
+        assert_eq!(g.cch_index(&good).unwrap().cch.query(0, 2).unwrap().0, 5.0);
+        assert_eq!(g.relationship_count(), 3, "the graph itself loaded");
     }
 }
