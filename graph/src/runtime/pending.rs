@@ -1442,8 +1442,14 @@ impl Pending {
         }
     }
 
-    /// Hand over everything recorded for CCH maintenance by this query's `Commit`s, once,
-    /// at the end of the query.
+    /// What this query's `Commit`s have recorded for CCH maintenance so far.
+    #[must_use]
+    pub const fn cch_dirty(&self) -> &CchDirty {
+        &self.cch_dirty
+    }
+
+    /// Hand over everything recorded for CCH maintenance by this query's `Commit`s: at the
+    /// end of the query, or earlier when a procedure is about to read a touched index.
     pub fn take_cch_dirty(&mut self) -> CchDirty {
         std::mem::take(&mut self.cch_dirty)
     }
