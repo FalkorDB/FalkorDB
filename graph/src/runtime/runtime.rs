@@ -41,7 +41,7 @@ use crate::effects::EffectsBuffer;
 use crate::{
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
-    index::cch::CchError,
+    index::cch::{CchError, CchIndexDef},
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
@@ -613,6 +613,24 @@ impl<'a> Runtime<'a> {
             .borrow_mut()
             .cch_flush(dirty)
             .map_err(|e| e.to_string())
+    }
+
+    /// Bring the CCH indexes up to date before a procedure reads the one for `def`, if this
+    /// query has touched it. Flushes everything recorded so far (the end-of-query flush then
+    /// finds nothing left, unless later `Commit`s record more); a query that never reads a
+    /// touched index flushes once, at its end, as before.
+    ///
+    /// # Errors
+    /// As [`Self::flush_cch`].
+    pub fn flush_cch_before_reading(
+        &self,
+        def: &CchIndexDef,
+    ) -> Result<(), String> {
+        if self.write && self.pending.borrow().cch_dirty().touches(def) {
+            self.flush_cch()
+        } else {
+            Ok(())
+        }
     }
 
     /// Creates a single-row default batch.

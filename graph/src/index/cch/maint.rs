@@ -218,6 +218,7 @@ mod tests {
     use crate::planner::IR;
     use crate::runtime::functions::{init_functions, init_udf_functions};
     use crate::runtime::runtime::Runtime;
+    use crate::runtime::value::Value;
 
     thread_local! {
         /// Calls to [`Graph::cch_flush`] on this thread.
@@ -262,6 +263,14 @@ mod tests {
             &mut self,
             query: &str,
         ) -> Result<(), String> {
+            self.rows(query).map(|_| ())
+        }
+
+        /// [`Self::write`], returning the first column of every row.
+        fn rows(
+            &mut self,
+            query: &str,
+        ) -> Result<Vec<Value>, String> {
             let plan = self.committed().borrow().get_plan(query)?.plan;
             let next = self.mvcc.write().expect("the write slot is free");
             let outcome = {
@@ -279,10 +288,20 @@ mod tests {
                     None,
                     &NoLocks,
                 );
-                runtime.query().map(|_| ())
+                runtime.query().map(|summary| {
+                    let mut rows = Vec::new();
+                    if let Some(var) = runtime.return_names.first() {
+                        for batch in &summary.result {
+                            for row in batch.active_indices() {
+                                rows.push(batch.column(var.id).get(row));
+                            }
+                        }
+                    }
+                    rows
+                })
             };
             match outcome {
-                Ok(()) => self.mvcc.commit(next).expect("the version validates"),
+                Ok(_) => self.mvcc.commit(next).expect("the version validates"),
                 Err(_) => self.mvcc.rollback(),
             }
             outcome
@@ -636,5 +655,112 @@ mod tests {
         edges.edges.retain(|e| !(e.3 == 0 && e.2 == 3.0));
         check(&db, &both, &edges.select(&[0, 1]));
         check(&db, &zero, &edges.select(&[0]));
+    }
+
+    /// 0 -> 1 -> 2 at 1.0 each and a direct 0 -> 2 at 5.0, type `T0`; `0 -> 1` again at 1.0
+    /// as type `T1`. Indexes over `T0` and over `T1`.
+    fn triangle(db: &mut Db) -> (CchIndexDef, CchIndexDef) {
+        let mut edges = TypedEdgeList::new(3);
+        edges.push(0, 1, 1.0, 0);
+        edges.push(1, 2, 1.0, 0);
+        edges.push(0, 2, 5.0, 0);
+        edges.push(0, 1, 1.0, 1);
+        load(db, &edges, 2);
+        (db.create_index(&[0]), db.create_index(&[1]))
+    }
+
+    /// `db.idx.cch.query` from node 0 to node 2 over `T0`, as the rest of a query.
+    const QUERY_0_2: &str = "WITH 1 AS one MATCH (s), (t) WHERE id(s) = 0 AND id(t) = 2 \
+        CALL db.idx.cch.query({sourceNode: s, targetNode: t, relTypes: ['T0'], weightProp: 'w'}) \
+        YIELD pathWeight RETURN pathWeight";
+
+    /// A procedure reading an index the same write query has touched sees that query's
+    /// writes, and the query still flushes once, not once more at its end.
+    #[test]
+    fn a_procedure_sees_the_writes_earlier_in_its_query() {
+        let mut db = Db::new("cch_maint_inquery_set");
+        triangle(&mut db);
+        let start = flushes();
+        let rows = db.rows(&format!("{} SET r.w = 10.0 {QUERY_0_2}", pair(0, 1)));
+        assert_eq!(
+            rows,
+            Ok(vec![Value::Float(5.0)]),
+            "read the pre-write hierarchy"
+        );
+        assert_eq!(
+            flushes() - start,
+            1,
+            "flushed before the read only, not again at the end"
+        );
+    }
+
+    /// Same with the cheap edge deleted earlier in the query: the procedure answers without
+    /// it rather than failing the query on a hierarchy that still holds it.
+    #[test]
+    fn a_procedure_after_a_delete_in_its_query() {
+        let mut db = Db::new("cch_maint_inquery_delete");
+        triangle(&mut db);
+        let rows = db.rows(&format!("{} DELETE r {QUERY_0_2}", pair(0, 1)));
+        assert_eq!(rows, Ok(vec![Value::Float(5.0)]));
+    }
+
+    /// The in-query flush happens only when the procedure reads an index the query touched:
+    /// a query without the procedure, a procedure in a query that touched nothing, and a
+    /// procedure reading an untouched index (with a touched one written again after the read)
+    /// each flush exactly as often as without the procedure.
+    #[test]
+    fn only_a_read_of_a_touched_index_flushes_early() {
+        let mut db = Db::new("cch_maint_inquery_count");
+        let (zero, one) = triangle(&mut db);
+
+        let start = flushes();
+        db.ok(&format!("{} SET r.w = 2.0", pair(0, 1)));
+        assert_eq!(
+            flushes() - start,
+            1,
+            "a write without the procedure: the end flush"
+        );
+
+        let start = flushes();
+        let rows = db.rows(&format!(
+            "MATCH (n:N) WHERE id(n) = 0 SET n.x = 1 {QUERY_0_2}"
+        ));
+        assert_eq!(rows, Ok(vec![Value::Float(3.0)]));
+        assert_eq!(
+            flushes() - start,
+            0,
+            "a node property touches no index: no flush"
+        );
+
+        let start = flushes();
+        let rows = db.rows(&QUERY_0_2.replacen("WITH 1 AS one ", "", 1));
+        assert_eq!(rows, Ok(vec![Value::Float(3.0)]));
+        assert_eq!(
+            flushes() - start,
+            0,
+            "a query writing nothing does not flush"
+        );
+
+        let (zero_before, one_before) = (db.cch(&zero), db.cch(&one));
+        let start = flushes();
+        let q = format!(
+            "MATCH ()-[r:T1]->() SET r.w = 7.0 {} WITH pathWeight \
+             MATCH ()-[q:T1]->() SET q.w = 8.0 RETURN pathWeight",
+            QUERY_0_2.trim_end_matches(" RETURN pathWeight")
+        );
+        assert_eq!(db.rows(&q), Ok(vec![Value::Float(3.0)]));
+        assert_eq!(
+            flushes() - start,
+            1,
+            "reading T0 must not flush the T1 change early (T1 is written again after the read)"
+        );
+        assert!(
+            Arc::ptr_eq(&zero_before, &db.cch(&zero)),
+            "T0 was never touched"
+        );
+        assert!(
+            !Arc::ptr_eq(&one_before, &db.cch(&one)),
+            "T1 was rebuilt, once"
+        );
     }
 }

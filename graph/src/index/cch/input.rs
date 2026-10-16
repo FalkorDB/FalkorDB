@@ -117,18 +117,61 @@ unsafe fn cch_edge_weight(
     // No null check on `attrs`: the only caller sets it from a live
     // `&AttributeStore` held for the whole apply, so it cannot be null, and a
     // null check would not catch the one real risk (a dangling pointer).
-    let w = match unsafe { (*ctx.attrs).get_attr_by_idx(edge_id, ctx.attr_idx) } {
-        Some(Value::Float(f)) => f,
-        #[allow(clippy::cast_precision_loss)]
-        Some(Value::Int(k)) => k as f64,
-        _ => DEFAULT_WEIGHT,
-    };
+    let w = edge_weight(unsafe { &*ctx.attrs }, ctx.attr_idx, edge_id);
     // NaN fails both comparisons.
     if (0.0..f64::INFINITY).contains(&w) {
         w
     } else {
         INVALID_WEIGHT
     }
+}
+
+/// The weight attribute of one edge as a number, [`DEFAULT_WEIGHT`] when it
+/// is missing or not a number. Not validated: the one weight rule shared by
+/// the index build, which checks the result, and by [`cheapest_edge`].
+pub(crate) fn edge_weight(
+    attrs: &AttributeStore,
+    attr_idx: u16,
+    edge_id: u64,
+) -> f64 {
+    match attrs.get_attr_by_idx(edge_id, attr_idx) {
+        Some(Value::Float(f)) => f,
+        #[allow(clippy::cast_precision_loss)]
+        Some(Value::Int(k)) => k as f64,
+        _ => DEFAULT_WEIGHT,
+    }
+}
+
+/// The cheapest edge from `src` to `dst` over `tensors`, by [`edge_weight`],
+/// as `(edge id, weight)`; `None` when no tensor has one.
+///
+/// Per tensor, one [`Tensor::get`]: the pair's effective inline value
+/// (pending `dp` first, committed `m` unless `dm` deletes it) and, for a
+/// [`MULTI_EDGE`] pair, that pair's row of its `me` block, so the cost is the
+/// pair's own edges, never a row scan. Ties go to the first tensor in order,
+/// then to the lowest edge id. A pair outside a tensor's dimensions has no
+/// edge there.
+pub(crate) fn cheapest_edge<'t>(
+    tensors: impl IntoIterator<Item = &'t Tensor>,
+    attrs: &AttributeStore,
+    attr_idx: u16,
+    src: u64,
+    dst: u64,
+) -> Option<(u64, f64)> {
+    let mut best: Option<(u64, f64)> = None;
+    for tensor in tensors {
+        let m = tensor.fwd_m();
+        if src >= m.nrows() || dst >= m.ncols() {
+            continue;
+        }
+        for id in tensor.get(src, dst) {
+            let w = edge_weight(attrs, attr_idx, id);
+            if best.is_none_or(|(_, best_w)| w < best_w) {
+                best = Some((id, w));
+            }
+        }
+    }
+    best
 }
 
 // The operators below take the types they mean, and are cast to GraphBLAS's

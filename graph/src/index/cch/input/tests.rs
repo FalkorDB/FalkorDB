@@ -16,7 +16,8 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::DEFAULT_WEIGHT;
-use crate::graph::graph::{Graph, TypeId};
+use crate::graph::graph::{EdgeDirection, Graph, NodeId, TypeId};
+use crate::graph::graphblas::tensor::Tensor;
 use crate::graph::graphblas::test_init;
 use crate::index::cch::{CchError, CchIndexDef, CchInput, MAX_NODES};
 use crate::index::index_docs::IndexDocs;
@@ -986,6 +987,164 @@ mod blocks {
         }
         check(&t, "committed (m)");
     }
+}
+
+/// The rule the path procedure used before [`super::cheapest_edge`]: scan
+/// `u`'s outgoing edges of `types`, keep those ending at `v`, and take the
+/// first strict minimum of the numeric weight (1.0 when missing). The oracle
+/// for the per-pair lookup, which must pick the same edge, ties included.
+fn scan_cheapest(
+    g: &Graph,
+    types: &[Arc<String>],
+    attr: u16,
+    u: u64,
+    v: u64,
+) -> Option<(u64, f64)> {
+    let mut best: Option<(u64, f64)> = None;
+    for (_, dst, eid) in
+        g.get_node_relationships_by_type(NodeId::from(u), types, EdgeDirection::Outgoing)
+    {
+        if u64::from(dst) != v {
+            continue;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let w = match g.get_relationship_attribute_by_idx(eid, attr) {
+            Some(Value::Int(i)) => i as f64,
+            Some(Value::Float(f)) => f,
+            _ => 1.0,
+        };
+        if best.is_none_or(|(_, b)| w < b) {
+            best = Some((u64::from(eid), w));
+        }
+    }
+    best
+}
+
+/// [`super::cheapest_edge`] against [`scan_cheapest`] on every ordered pair of
+/// `0..n`, for `types` in the given order and reversed (the order breaks
+/// ties). Returns how many pairs had a tie for the minimum across or within
+/// types, so a caller can check the fixture really exercised ties.
+fn assert_cheapest_matches_scan(
+    b: &Builder,
+    types: &[&str],
+    n: u64,
+    layer: &str,
+) -> usize {
+    let mut ties = 0;
+    for order in [types.to_vec(), types.iter().rev().copied().collect()] {
+        let names: Vec<Arc<String>> = order.iter().map(|t| Arc::new(String::from(*t))).collect();
+        let tensors: Vec<&Tensor> = names
+            .iter()
+            .map(|t| b.g.get_relationship_matrix(t).expect("type exists"))
+            .collect();
+        let attrs = b.g.relationship_attrs();
+        for u in 0..n {
+            for v in 0..n {
+                let got = super::cheapest_edge(tensors.iter().copied(), attrs, b.weight_attr, u, v);
+                let want = scan_cheapest(&b.g, &names, b.weight_attr, u, v);
+                assert_eq!(got, want, "{layer}, order {order:?}: ({u}, {v})");
+                if let Some((_, w)) = want {
+                    let tied = tensors
+                        .iter()
+                        .flat_map(|t| t.get(u, v))
+                        .filter(|&id| super::edge_weight(attrs, b.weight_attr, id) == w)
+                        .count();
+                    ties += usize::from(tied > 1);
+                }
+            }
+        }
+    }
+    ties
+}
+
+/// The path procedure's per-hop lookup picks exactly the edge the old
+/// outgoing-edge scan picked: random parallel edges on three types (so most
+/// pairs are multi-edge pairs read from `me`), weights from a small set with
+/// missing and integer ones (so ties are common), on the committed base,
+/// then with uncommitted deletions (`dm`, `me`'s `dm`) and additions
+/// (`dp`, promotions) on top, then folded again.
+#[test]
+fn cheapest_edge_picks_what_the_outgoing_scan_picked() {
+    const N: u64 = 30;
+    let types = ["A", "B", "C"];
+    let mut b = Builder::new("cch_in_cheapest", N);
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        state >> 33
+    };
+    let weight = |k: u64| match k % 6 {
+        0 => None,
+        1 => Some(Value::Int(1)),
+        2 => f(1.0),
+        3 => f(2.0),
+        4 => Some(Value::Int(2)),
+        _ => f(0.5),
+    };
+    let mut random_edges = |count: usize| -> Vec<(u64, u64, Option<Value>)> {
+        (0..count)
+            .map(|_| (next() % N, next() % N, weight(next())))
+            .collect()
+    };
+    let mut ids = Vec::new();
+    for t in types {
+        let edges = random_edges(600);
+        ids.extend(b.add(t, &edges));
+    }
+    b.g.flush_for_bulk();
+    let tensor = |b: &Builder, t: &str| -> (u64, u64, u64, bool) {
+        let x =
+            b.g.get_relationship_matrix(&Arc::new(String::from(t)))
+                .unwrap();
+        (
+            x.fwd_m().nvals(),
+            x.fwd_dp().nvals(),
+            x.fwd_dm().nvals(),
+            x.has_multi_edge(),
+        )
+    };
+    for t in types {
+        let (m, dp, _, multi) = tensor(&b, t);
+        assert!(
+            m > 0 && dp == 0 && multi,
+            "{t}: committed base with multi-edge pairs"
+        );
+    }
+    let ties = assert_cheapest_matches_scan(&b, &types, N, "committed");
+    assert!(
+        ties > 100,
+        "only {ties} tied pairs: the fixture does not test ties"
+    );
+
+    let mut del = RoaringTreemap::new();
+    for (i, &id) in ids.iter().enumerate() {
+        if i % 7 == 0 {
+            del.insert(id);
+        }
+    }
+    let mut docs = IndexDocs::default();
+    b.g.delete_relationships(&del, &mut docs).expect("delete");
+    for t in types {
+        let edges = random_edges(40);
+        b.add(t, &edges);
+    }
+    for t in types {
+        let (_, dp, dm, _) = tensor(&b, t);
+        assert!(dp > 0 && dm > 0, "{t}: uncommitted additions and deletions");
+        let x =
+            b.g.get_relationship_matrix(&Arc::new(String::from(t)))
+                .unwrap();
+        assert!(
+            x.edge_versioned_all().any(|(_, me)| me.dm().nvals() > 0),
+            "{t}: deletions inside committed multi-edge pairs"
+        );
+    }
+    assert_cheapest_matches_scan(&b, &types, N, "pending");
+
+    b.g.flush_for_bulk();
+    assert_cheapest_matches_scan(&b, &types, N, "folded");
 }
 
 /// A tensor narrower than the input's dimension (`n` is the widest tensor in
