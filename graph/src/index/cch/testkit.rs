@@ -2235,3 +2235,179 @@ mod maintenance_tests {
         assert_eq!(after.n, edits.len());
     }
 }
+
+/// `Cch::build` / `Cch::customize` rejecting invalid weights. Weights must be
+/// finite and `>= 0`, so a negative weight, NaN and both infinities are
+/// `CchError::InvalidWeight`. Black-box tests: they use only the signatures
+/// in this module's parent (`mod.rs`).
+#[cfg(test)]
+mod rejection_tests {
+    use super::{EdgeList, grid, to_input};
+    use crate::index::cch::{Cch, CchError};
+
+    const BAD_WEIGHTS: [(&str, f64); 4] = [
+        ("negative", -1.0),
+        ("NaN", f64::NAN),
+        ("+inf", f64::INFINITY),
+        ("-inf", f64::NEG_INFINITY),
+    ];
+
+    /// `base` with its first edge's weight overwritten -- keeps the same
+    /// directed-pair pattern `customize` expects (the same arcs `build`
+    /// saw), changing only the one value under test.
+    fn with_one_bad_weight(
+        mut base: EdgeList,
+        bad: f64,
+    ) -> EdgeList {
+        base.edges[0].2 = bad;
+        base
+    }
+
+    #[test]
+    fn build_rejects_every_invalid_weight() {
+        for &(label, w) in &BAD_WEIGHTS {
+            let input = to_input(&with_one_bad_weight(grid(2, 2), w));
+            assert!(
+                matches!(Cch::build(&input), Err(CchError::InvalidWeight)),
+                "build should reject a {label} weight"
+            );
+        }
+    }
+
+    #[test]
+    fn customize_rejects_every_invalid_weight() {
+        let base = grid(2, 2);
+        let good = to_input(&base);
+        for &(label, w) in &BAD_WEIGHTS {
+            let mut cch = Cch::build(&good).expect("a valid input must build");
+            let bad_weights = to_input(&with_one_bad_weight(base.clone(), w)).weights;
+            assert_eq!(
+                cch.customize(&bad_weights),
+                Err(CchError::InvalidWeight),
+                "customize should reject a {label} weight"
+            );
+        }
+    }
+
+    /// A refused `customize` must leave the index usable: re-customizing
+    /// with good weights afterward must still succeed. Whether the refused
+    /// call left the *previous* metric byte-for-byte untouched is customize's
+    /// own test to make (it can compare its own internals); this only
+    /// checks the index isn't bricked.
+    #[test]
+    fn customize_refused_does_not_brick_the_index() {
+        let base = grid(2, 2);
+        let good = to_input(&base);
+        let mut cch = Cch::build(&good).expect("a valid input must build");
+
+        let bad_weights = to_input(&with_one_bad_weight(base.clone(), f64::NAN)).weights;
+        assert_eq!(cch.customize(&bad_weights), Err(CchError::InvalidWeight));
+
+        assert_eq!(cch.customize(&good.weights), Ok(()));
+    }
+}
+
+/// The shared checker against a real `Graph` index (`Graph` -> input ->
+/// Phase 1/2 -> query), on the kit's graph families.
+#[cfg(test)]
+mod real_index_tests {
+    use std::sync::Arc;
+
+    use roaring::RoaringTreemap;
+    use rustc_hash::FxHashMap;
+
+    use super::{
+        EdgeList, assert_path_simple, check_index_against_oracle, disconnected_components, grid,
+        random_zero_heavy, tied_paths, with_isolated_nodes, with_parallel_edges, with_self_loops,
+        zero_weight_cycle,
+    };
+    use crate::graph::{graph::Graph, graphblas::test_init};
+    use crate::index::cch::CchIndexDef;
+    use crate::index::index_docs::IndexDocs;
+    use crate::runtime::value::Value;
+
+    /// A `Graph` holding exactly `edges` as one relationship type `R`, every
+    /// relationship carrying an explicit weight attribute `w`.
+    fn real_graph(
+        edges: &EdgeList,
+        name: &str,
+    ) -> (Graph, u16) {
+        test_init::ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, name);
+        // A fresh graph's id spaces open their first batch themselves.
+        let ids: RoaringTreemap = g
+            .node_id_space()
+            .reserve(edges.n, &RoaringTreemap::new())
+            .expect("reserved")
+            .into_iter()
+            .collect();
+        assert_eq!(ids.len(), edges.n as u64, "a fresh graph hands out 0..n");
+        g.create_nodes(&ids).expect("creatable");
+        let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
+
+        let rel_ids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(edges.edges.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        let srcs: Vec<u64> = edges.edges.iter().map(|e| u64::from(e.0)).collect();
+        let dsts: Vec<u64> = edges.edges.iter().map(|e| u64::from(e.1)).collect();
+        g.create_relationships_bulk(&Arc::new(String::from("R")), &srcs, &dsts, &rel_ids)
+            .expect("creatable");
+
+        let mut weights: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+        for (e, &id) in edges.edges.iter().zip(&rel_ids) {
+            weights.insert(id, vec![(attr, Value::Float(e.2))]);
+        }
+        g.import_relationship_attrs(&weights, &mut IndexDocs::default());
+        (g, attr)
+    }
+
+    #[test]
+    fn real_index_agrees_with_the_oracle_on_kit_graphs() {
+        let graphs: Vec<(&str, EdgeList)> = vec![
+            ("grid", grid(4, 4)),
+            (
+                "parallel",
+                with_parallel_edges(6, &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)], 3, 9, 7),
+            ),
+            ("selfloops", with_self_loops(grid(3, 3), &[0, 4, 8], 0.5)),
+            ("components", disconnected_components(3, 5, 8, 9, 11)),
+            ("tied", tied_paths(4, 1.5)),
+            ("zero_cycle", zero_weight_cycle(5)),
+            ("isolated", with_isolated_nodes(grid(3, 3), 3)),
+        ];
+        for (name, edges) in &graphs {
+            let (mut g, attr) = real_graph(edges, &format!("kit_e2e_{name}"));
+            let rel = g.get_type_id("R").expect("type R exists");
+            let def = CchIndexDef::new(vec![rel], attr);
+            g.create_cch_index(def.clone()).expect("create");
+            let idx = g.cch_index(&def).expect("held");
+            check_index_against_oracle(|s, t| idx.cch.query(s, t), edges);
+        }
+    }
+
+    /// About half the edges weigh 0: zero-weight cycles and many equal-weight
+    /// walks. Every returned path must be simple as well as right.
+    #[test]
+    fn real_index_returns_simple_correct_paths_on_zero_heavy_graphs() {
+        for seed in 0..30u64 {
+            let edges = random_zero_heavy(12, 40, 5, seed);
+            assert!(edges.edges.iter().any(|e| e.2 == 0.0), "seed {seed}");
+            let (mut g, attr) = real_graph(&edges, &format!("kit_zero_{seed}"));
+            let rel = g.get_type_id("R").expect("type R exists");
+            let def = CchIndexDef::new(vec![rel], attr);
+            g.create_cch_index(def.clone()).expect("create");
+            let idx = g.cch_index(&def).expect("held");
+            check_index_against_oracle(
+                |s, t| {
+                    let got = idx.cch.query(s, t);
+                    if let Some((_, path)) = &got {
+                        assert_path_simple(path);
+                    }
+                    got
+                },
+                &edges,
+            );
+        }
+    }
+}
