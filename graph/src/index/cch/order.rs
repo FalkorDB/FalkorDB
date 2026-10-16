@@ -22,10 +22,6 @@
 //!   possible because child absorption only ever reads *lower* ranks — already finished and
 //!   contiguous in the flat buffer by the time their parent is processed.
 
-// Phase 1 lands on its own, before anything outside this file calls it: `Cch` grows its
-// topology field in the customization change (#3209), and the tests below are the only caller until then.
-#![allow(dead_code)]
-
 use feral_metis::{CscPattern, MetisOptions, OrderingError, metis_order};
 
 use std::ffi::CString;
@@ -489,7 +485,14 @@ impl Topology {
         self.cch_i.len()
     }
 
+    /// `perm[rank] = node id`, the whole array — the elimination order itself.
+    #[allow(dead_code)] // the tests and the kit's oracle take it; the Graph API (#3212) will too
+    pub(crate) fn perm(&self) -> &[u32] {
+        &self.perm
+    }
+
     /// `perm[rank]`.
+    #[allow(dead_code)] // the query change (#3210) maps ranks back to node ids with it
     pub(crate) fn node_of(
         &self,
         rank: u32,
@@ -524,6 +527,7 @@ impl Topology {
     }
 
     /// Every rank below `rank` in the chordal supergraph, ascending.
+    #[allow(dead_code)] // only scoped recustomization needs it (#3217)
     pub(crate) fn down(
         &self,
         rank: u32,
