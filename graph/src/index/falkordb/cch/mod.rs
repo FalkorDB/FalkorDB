@@ -167,7 +167,6 @@ impl CchIndexDef {
     }
 
     /// Sorted, duplicate-free — normalised by [`Self::new`], which is the only constructor.
-    #[cfg(test)] // only the tests read it until the input build (#3211) does
     #[must_use]
     pub fn rel_types(&self) -> &[TypeId] {
         &self.rel_types
