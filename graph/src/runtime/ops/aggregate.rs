@@ -1181,6 +1181,18 @@ impl<'a> Iterator for AggregateOp<'a> {
                     combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
+                // Unbind internal accumulator variables so they don't leak
+                // to downstream operators and collide with variables in
+                // subsequent scopes that reuse the same slot IDs.  This must
+                // run before the key/output bindings below: an accumulator
+                // slot id can coincide with an output-scope id (a grouping
+                // key, possibly NULL, or an aggregate output), and those
+                // bindings must survive.  Precedence after the unbind is:
+                // pre-projection originals, then the key row (names win over
+                // originals), then aggregate outputs.
+                for (_, tree) in self.agg {
+                    unbind_agg_accumulators(&tree.root(), &mut acc);
+                }
                 // Insert pre-projection key variable values into acc so
                 // downstream operators can find them, but skip any slot that
                 // is already occupied by an aggregation output to avoid
@@ -1197,18 +1209,6 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 acc.merge(&key);
-                // Unbind internal accumulator variables so they don't leak
-                // to downstream operators and collide with variables in
-                // subsequent scopes that reuse the same slot IDs.
-                for (_, tree) in self.agg {
-                    unbind_agg_accumulators(&tree.root(), &mut acc);
-                }
-                // Re-bind aggregate output names last: an accumulator slot id
-                // can coincide with another aggregate's output name (the binder
-                // may reuse slot IDs), and the unbind above would otherwise
-                // clear that output. Output bindings must win. This also matters
-                // for keyless empty-input groups where the output value is Null,
-                // since an unbound Null slot is dropped during columnar finish.
                 for (name, val) in agg_outputs {
                     acc.insert(name, val);
                 }
