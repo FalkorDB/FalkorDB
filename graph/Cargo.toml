@@ -33,6 +33,10 @@ index-falkordb = []
 ahash = "0.8"
 arc-swap = "1"
 atomic_refcell = "0.1.14"
+# Safe slice reinterpretation: the CCH skeleton's u32 arrays are handed to the
+# ordering backend as i32 without a copy (index::cch::order). Already in the
+# lock file through roaring.
+bytemuck = "1.25"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"
