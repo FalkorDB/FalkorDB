@@ -923,9 +923,9 @@ fn register_betweenness(funcs: &mut Functions) {
             let node_labels = extract_node_labels(&config)?;
             let rel_types = extract_rel_types(&config)?;
 
-            // Parse samplingSize
+            // Parse samplingSize; the default matches C's BETWEENNESS_DEFAULT_SAMPLE_SIZE
             let sampling_size: usize = match config.get(&Arc::new(String::from("samplingSize"))) {
-                None | Some(Value::Null) => 16,
+                None | Some(Value::Null) => 32,
                 Some(Value::Int(n)) => {
                     if *n <= 0 {
                         return Err(String::from("samplingSize must be a positive integer"));

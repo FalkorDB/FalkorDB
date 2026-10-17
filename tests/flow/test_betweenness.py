@@ -437,3 +437,23 @@ class testBetweenness(FlowTestsBase):
         # Different seeds should give different results
         self.env.assertNotEqual(centrality_scores7['B'], centrality_scores8['B'])
 
+    def test_betweenness_default_sampling_size(self):
+        """Without samplingSize, a graph of up to 32 nodes uses every node as a source."""
+
+        # directed chain 0 -> 1 -> ... -> 23
+        # node i lies on every shortest path from 0..i-1 to i+1..23
+        n = 24
+        self.graph.query("""UNWIND range(0, $n - 2) AS i
+                            MERGE (a:N {name: i})
+                            MERGE (b:N {name: i + 1})
+                            CREATE (a)-[:R]->(b)""", {'n': n})
+
+        result = self.graph.query("""CALL algo.betweenness()
+                                     YIELD node, score
+                                     RETURN node.name, score""")
+
+        scores = {name: score for name, score in result.result_set}
+        self.env.assertEqual(len(scores), n)
+        for i in range(n):
+            self.env.assertEqual(scores[i], i * (n - 1 - i))
+
