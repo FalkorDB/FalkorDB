@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Edit, Write
 `binder`, `pending_commit`, `index_layer`, …). Each models the Rust code it
 covers line by line and proves properties about that model. Lean 4 only, no
 Mathlib. The toolchain comes from each project's `lean-toolchain`
-(all pin `leanprover/lean4:v4.35.0`; aeneas_pilot's git-ignored `full/` pins v4.31.0 for the real Aeneas library).
+(all pin `leanprover/lean4:v4.35.0`).
 
 - `proofs/<area>/<Root>.lean` — the header is the report: Lean↔Rust `file:line` table, theorems, bugs, gaps.
 - `proofs/<area>/COVERAGE.tsv` — one row per Rust fn: bucket PROVEN / CONDITIONAL / AXIOMATISED / MODELLED / NOT COVERED.

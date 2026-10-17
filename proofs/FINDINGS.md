@@ -1,7 +1,7 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
 Current state (2026-10-17): proofs cite `origin/main` @ 0f45a8685.
-There is one Lake project per area under `proofs/<area>/` (36 projects, including
+There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
 functions_str_list; the PR review projects `pr2845_review` and `pr2917_review` were
@@ -422,4 +422,4 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - f64 arithmetic is abstract (no IEEE reasoning).
 - GraphBLAS, RediSearch, the Redis module API and QuickJS are hypotheses or axioms at the FFI boundary.
 - `Arc`, concurrency and HashMap iteration order are not modelled.
-- Aeneas extraction works only for small pure modules (`narrow_int` is proven on extracted code); larger modules are blocked by iterators, closures, `dyn`, `roaring` and `smallvec`. See `proofs/aeneas_pilot`.
+- Aeneas extraction works only for small pure modules (`narrow_int::width_for` was proven on extracted code); larger modules are blocked by iterators, closures, `dyn`, `roaring` and `smallvec`. The pilot (`proofs/aeneas_pilot`) was removed on 2026-10-17: it added no coverage (`width_for` is PROVEN in id_list and runtime_ds), needed Charon/Aeneas on Lean v4.31, and committed generated Lean. Its last version is in 26cf24871.

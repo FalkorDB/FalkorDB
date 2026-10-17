@@ -3,8 +3,8 @@
 #
 # For every top-level Lake project proofs/<dir>/ (has lakefile.toml|lakefile.lean):
 #   1. `lake build` must succeed;
-#   2. its own .lean sources (excluding .lake/ and nested Lake projects, e.g.
-#      aeneas_pilot/full/) must contain no `sorry`, no `admit`, no
+#   2. its own .lean sources (excluding .lake/ and nested Lake projects)
+#      must contain no `sorry`, no `admit`, no
 #      `native_decide`, and no `axiom` unless that same line carries a
 #      `-- AXIOM-OK: <justification>` comment.
 #      Comments and docstrings are stripped before the scan,
