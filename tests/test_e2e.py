@@ -1946,6 +1946,74 @@ def test_optional_match_null_merge():
 
 
 
+@pytest.mark.parametrize(
+    "edges, expected_degrees, central_sum, triangles, simple_paths",
+    [
+        ([(1, 2)], [[1, 2, 0, 0, 0]], 0, 0, 0),
+        (
+            [(1, 2), (2, 3), (3, 4)],
+            [[1, 2, 0, 1, 0], [2, 3, 1, 1, 1], [3, 4, 1, 0, 0]],
+            1, 0, 1,
+        ),
+        (
+            [(1, 2), (1, 3), (2, 3)],
+            [[1, 2, 1, 1, 1], [1, 3, 1, 1, 1], [2, 3, 1, 1, 1]],
+            3, 1, 0,
+        ),
+        (
+            [(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4), (1, 5), (2, 6)],
+            [
+                [1, 2, 3, 3, 9], [1, 3, 3, 2, 6], [1, 4, 3, 2, 6],
+                [1, 5, 3, 0, 0], [2, 3, 3, 2, 6], [2, 4, 3, 2, 6],
+                [2, 6, 3, 0, 0], [3, 4, 2, 2, 4],
+            ],
+            37, 4, 25,
+        ),
+    ],
+    ids=["single-edge", "path", "triangle", "issue-3371"],
+)
+def test_optional_match_aggregated_degrees(
+    edges, expected_degrees, central_sum, triangles, simple_paths
+):
+    """Filters after grouped OPTIONAL MATCH must see freshly bound neighbors (#3371)."""
+    nodes = sorted({node for edge in edges for node in edge})
+    patterns = [f"(v{node}:MT04 {{id: {node}}})" for node in nodes]
+    patterns += [f"(v{u})-[:E04]->(v{v})" for u, v in edges]
+    query("CREATE " + ", ".join(patterns), write=True)
+
+    degrees = """
+        MATCH (u:MT04)-[:E04]-(v:MT04) WHERE u.id<v.id
+        OPTIONAL MATCH (u)-[ru:E04]-(nu:MT04) WHERE nu<>v
+        WITH u,v,count(ru) AS du
+        OPTIONAL MATCH (v)-[rv:E04]-(nv:MT04) WHERE nv<>u
+        WITH u,v,du,count(rv) AS dv
+    """
+    # Leaves exercise null extension and count(null)=0, while internal edges
+    # exercise both positive counts and scalar multiplication across WITH.
+    res = query(degrees + "RETURN u.id,v.id,du,dv,du*dv ORDER BY u.id,v.id")
+    assert res.result_set == expected_degrees
+
+    aggregate = degrees + """
+        WITH sum(du*dv) AS central_sum
+        OPTIONAL MATCH p=(a:MT04)-[:E04]-(b:MT04)-[:E04]-(c:MT04)-[:E04]-(a)
+        WHERE a.id<b.id AND b.id<c.id
+        WITH central_sum,count(p) AS triangles
+    """
+    res = query(aggregate + "RETURN central_sum,triangles")
+    assert res.result_set == [[central_sum, triangles]]
+
+    # Preserve the issue's final projection as well as checking its components.
+    res = query(aggregate + "RETURN central_sum-3*triangles AS value")
+    assert res.result_set == [[simple_paths]]
+    res = query("""
+        MATCH p=(a:MT04)-[:E04]-(b:MT04)-[:E04]-(c:MT04)-[:E04]-(d:MT04)
+        WHERE a.id<d.id
+        AND all(n IN [a,b,c,d] WHERE single(m IN [a,b,c,d] WHERE m=n))
+        RETURN count(p) AS value
+    """)
+    assert res.result_set == [[simple_paths]]
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""

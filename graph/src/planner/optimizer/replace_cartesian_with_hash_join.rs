@@ -112,7 +112,7 @@ fn try_hash_join_rewrite(
         vec![(**filter).clone()]
     };
 
-    let cp_children_vars: Vec<HashSet<u32>> = cp_node
+    let cp_children_vars: Vec<HashSet<(u32, u32)>> = cp_node
         .children()
         .map(|c| collect_subtree_variables(&c))
         .collect();
@@ -209,5 +209,79 @@ fn try_hash_join_rewrite(
         let mut result = DynTree::new(IR::Filter(remaining_filter));
         result.root_mut().push_child_tree(join_subtree);
         Some(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::ast::QueryNode;
+    use crate::runtime::functions::Type;
+
+    fn variable(
+        id: u32,
+        scope_id: u32,
+    ) -> Variable {
+        Variable {
+            name: None,
+            id,
+            scope_id,
+            ty: Type::Any,
+        }
+    }
+
+    fn scan(
+        id: u32,
+        scope_id: u32,
+    ) -> DynTree<IR> {
+        tree!(IR::AllNodeScan(Arc::new(QueryNode::new(
+            variable(id, scope_id),
+            Default::default(),
+            Arc::new(DynTree::new(ExprIR::Map)),
+        ))))
+    }
+
+    #[test]
+    fn hash_join_uses_the_branch_with_the_matching_scope() {
+        let filter = Arc::new(tree!(
+            ExprIR::Eq,
+            tree!(ExprIR::Variable(variable(0, 1))),
+            tree!(ExprIR::Variable(variable(1, 1)))
+        ));
+        let mut plan = tree!(
+            IR::Filter(filter),
+            tree!(IR::CartesianProduct, scan(0, 0), scan(0, 1), scan(1, 1))
+        );
+        replace_cartesian_with_hash_join(&mut plan);
+
+        let root = plan.root();
+        assert!(matches!(root.data(), IR::CartesianProduct));
+        let IR::AllNodeScan(unrelated) = root.child(0).data() else {
+            panic!("the other scope's scan must remain outside the join");
+        };
+        assert_eq!((unrelated.alias.id, unrelated.alias.scope_id), (0, 0));
+        let join = root.child(1);
+        assert!(matches!(join.data(), IR::ValueHashJoin { .. }));
+        for (child, expected) in join.children().zip([(0, 1), (1, 1)]) {
+            let IR::AllNodeScan(node) = child.data() else {
+                panic!("expected a scan");
+            };
+            assert_eq!((node.alias.id, node.alias.scope_id), expected);
+        }
+    }
+
+    #[test]
+    fn hash_join_still_optimizes_variables_in_the_same_scope() {
+        let filter = Arc::new(tree!(
+            ExprIR::Eq,
+            tree!(ExprIR::Variable(variable(0, 1))),
+            tree!(ExprIR::Variable(variable(1, 1)))
+        ));
+        let mut plan = tree!(
+            IR::Filter(filter),
+            tree!(IR::CartesianProduct, scan(0, 1), scan(1, 1))
+        );
+        replace_cartesian_with_hash_join(&mut plan);
+        assert!(matches!(plan.root().data(), IR::ValueHashJoin { .. }));
     }
 }

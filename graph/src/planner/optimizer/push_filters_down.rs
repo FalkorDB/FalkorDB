@@ -56,13 +56,13 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// enclosing `Apply` propagates through `Argument`. Returns `None` for
 /// operators that pass their input environment through unchanged, where the
 /// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<(u32, u32)>> {
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
-                .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .map(|(v, _)| (v.id, v.scope_id))
+                .chain(copies.iter().map(|(v, _)| (v.id, v.scope_id)))
                 .collect(),
         ),
         IR::Aggregate {
@@ -70,8 +70,8 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
         } => Some(
             names
                 .iter()
-                .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .map(|v| (v.id, v.scope_id))
+                .chain(projections.iter().map(|(v, _)| (v.id, v.scope_id)))
                 .collect(),
         ),
         _ => None,
