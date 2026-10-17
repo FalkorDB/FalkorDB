@@ -16,4 +16,4 @@ hypothesis
 pytest
 textual
 textual-dev
-RLTest>=0.7.28
+RLTest>=0.7.29

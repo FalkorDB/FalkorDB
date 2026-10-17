@@ -59,7 +59,7 @@ use crate::{
         functions::{FnType, Type, apply_pow, regex_captures_list},
         ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
-        row::RowView,
+        row::{Row, RowView},
         runtime::Runtime,
         value::{CompareValue, Contains, DisjointOrNull, Value, ValueTypeOf},
     },
@@ -479,7 +479,9 @@ impl<'a> ExprEval<'a> {
     ///   branch unless it is `false` or `null`, so a non-boolean condition is
     ///   truthy rather than an error;
     /// - value form (`CASE subject WHEN v THEN …`): a branch is selected when
-    ///   its condition compares equal to the subject.
+    ///   its condition compares equal to the subject, on the same terms as `=`,
+    ///   so a `null` on either side selects nothing rather than matching
+    ///   another `null`.
     fn eval_case<R: RowView + ?Sized>(
         &self,
         has_subject: bool,
@@ -498,7 +500,12 @@ impl<'a> ExprEval<'a> {
         while i + 1 < num_arms {
             let when = self.eval_node(&arms.child(i), env, agg_group_key)?;
             let matched = match &subject {
-                Some(subject) => when == *subject,
+                // `PartialEq` reports two nulls as equal because it keeps only
+                // the ordering half of `compare_value`. `=` reads the other
+                // half, and the value form has to agree with it.
+                Some(subject) => {
+                    when.compare_value(subject) == (Ordering::Equal, DisjointOrNull::None)
+                }
                 None => !matches!(when, Value::Bool(false) | Value::Null),
             };
             if matched {
@@ -1055,9 +1062,14 @@ impl<'a> ExprEval<'a> {
                 ExprIR::PatternComprehension(_) => {
                     unreachable!("PatternComprehension should be handled by the planner")
                 }
-                ExprIR::Paren => {
-                    res.push(self.eval_node(&node.child(0), env, agg_group_key)?);
+                ExprIR::NestedPlan(nested) => {
+                    let runtime = self
+                        .runtime
+                        .ok_or_else(|| String::from("A nested plan needs a runtime"))?;
+                    let row = env.map_or_else(Row::new, RowView::to_owned_row);
+                    res.push(runtime.run_nested_plan(nested.id, &nested.result, &row)?);
                 }
+                ExprIR::Paren => unreachable!("the binder removes every Paren"),
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
@@ -1679,10 +1691,14 @@ where
         let prev = first?;
         for next in iter {
             let next = next?;
-            match prev.partial_cmp(&next) {
-                None => return Ok(Value::Null),
-                Some(Ordering::Less | Ordering::Greater) => {}
-                Some(Ordering::Equal) => return Ok(Value::Bool(false)),
+            // As C's `AR_NE`: null makes it null, and disjoint types or NaN
+            // are unequal even when the ordering half reads `Equal` (a map
+            // stops at its first disjoint value: `{a:1} <> {a:'x'}`).
+            match prev.compare_value(&next) {
+                (_, DisjointOrNull::ComparedNull) => return Ok(Value::Null),
+                (_, DisjointOrNull::NaN | DisjointOrNull::Disjoint)
+                | (Ordering::Less | Ordering::Greater, _) => {}
+                (Ordering::Equal, DisjointOrNull::None) => return Ok(Value::Bool(false)),
             }
         }
         Ok(Value::Bool(true))

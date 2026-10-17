@@ -1306,6 +1306,19 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
+    /// How many `(src, dst)` pairs end at one of `dsts`: the selected rows of
+    /// the backward adjacency `mt`, counted in one bulk product whose cost
+    /// follows `dsts` rather than the tensor (see
+    /// [`VersionedMatrix::count_in_rows`]). Pairs, not edges: a multi-edge pair
+    /// counts once. `dsts` must be as long as the tensor is wide.
+    #[must_use]
+    pub fn count_pairs_into(
+        &self,
+        dsts: &Vector<bool>,
+    ) -> u64 {
+        self.mt.count_in_rows(dsts)
+    }
+
     /// How many pairs are multi-edge, computed from `me` rather than tracked.
     ///
     /// Promotion completeness makes this a structural property of `me`:
@@ -1693,6 +1706,31 @@ impl<'a> Iter<'a> {
             buf: Vec::new(),
             buf_pos: 0,
         }
+    }
+
+    /// Re-seek to a new row range, reusing the underlying GraphBLAS iterators
+    /// instead of allocating a fresh pair.
+    ///
+    /// The mirror of [`versioned_matrix::Iter::seek`], for callers that scan
+    /// many single-row ranges of the same tensor. Building an `Iter` allocates
+    /// a `GxB_Iterator` per layer and, on the forward side, waits the tensor
+    /// first, so doing it per row makes the scan cost far more than the rows
+    /// it visits.
+    ///
+    /// The buffered multi-edge ids belong to the pair the iterator was sitting
+    /// on, so they are dropped here — after a seek the next `next()` must start
+    /// from the new range.
+    pub fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        match &mut self.base {
+            BaseIter::Forward(it) => it.seek(min_row, max_row),
+            BaseIter::Backward(it) => it.seek(min_row, max_row),
+        }
+        self.buf.clear();
+        self.buf_pos = 0;
     }
 }
 

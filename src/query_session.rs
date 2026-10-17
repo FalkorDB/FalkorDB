@@ -21,6 +21,8 @@
 //! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
+use atomic_refcell::AtomicRefCell;
+use graph::graph::{graph::Graph, mvcc_graph::Claim};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::{Context, ContextFlags, raw};
@@ -57,6 +59,24 @@ pub enum WriteAbort {
     /// The graph key was deleted or replaced while no per-graph lock was held.
     #[error("graph was deleted or replaced while the query was running, aborting")]
     GraphUnregistered,
+    /// Another writer holds `MvccGraph`'s write slot.
+    ///
+    /// Distinct from the per-graph lock, which `upgrade_to_write` does take:
+    /// holding that one does not reserve the MVCC slot, so a second writer can
+    /// still be mid-commit. Transient by construction — it ends when that writer
+    /// commits — so callers that can retry should.
+    #[error("Write query aborted: another write is in progress")]
+    WriteSlotBusy,
+    /// Another writer committed while this one was still matching as a reader,
+    /// so the version it built no longer extends the committed graph. Nothing
+    /// was mutated or published yet: the caller discards it and runs the write
+    /// again from the start.
+    #[error("Write query aborted: the graph was written while this query was matching")]
+    Stale,
+    /// The version this write produced failed `Graph::validate`, so it was not
+    /// published. An engine fault rather than a reason to retry.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 /// The locks held by one query, on one thread. Not `Send`, because the GIL must be
@@ -72,6 +92,30 @@ pub struct QuerySession {
     /// the session escalates, so it is unread for a reader and for
     /// [`Self::begin_writer`].
     facts: WriteFacts,
+    /// This session's private version, while it does not yet hold
+    /// `MvccGraph`'s write slot — see [`Self::write_version`].
+    fork: RefCell<Option<Arc<AtomicRefCell<Graph>>>>,
+    /// Where this session stands on `MvccGraph`'s write slot.
+    slot: Cell<Slot>,
+}
+
+/// A session's relation to `MvccGraph`'s single write slot.
+///
+/// The slot is only ever *held* by a session in writer mode: a write that
+/// starts as a reader builds into an unclaimed fork and claims the slot when it
+/// escalates. An inline writer, which holds the GIL and the write lock from the
+/// start, therefore never finds the slot taken by a query that is still
+/// matching (#3093) — that query finds its fork stale instead, and re-runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    /// No write version.
+    None,
+    /// A private version, slot not claimed yet.
+    Forked,
+    /// The slot is ours: only commit or rollback releases it.
+    Claimed,
+    /// Another writer committed after the fork was made; the fork is gone.
+    Stale,
 }
 
 /// The two facts about a write that decide which re-checks apply when it escalates.
@@ -127,6 +171,8 @@ impl QuerySession {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
             facts,
+            fork: RefCell::new(None),
+            slot: Cell::new(Slot::None),
         }
     }
 
@@ -145,6 +191,103 @@ impl QuerySession {
             // These are the inline main-thread paths anyway, where Redis's own dispatch
             // gated the command and no pause or role-change window can open mid-command.
             facts: WriteFacts::CLIENT,
+            fork: RefCell::new(None),
+            slot: Cell::new(Slot::None),
+        }
+    }
+
+    /// The facts this session was begun with, to begin another for the same
+    /// write.
+    pub const fn facts(&self) -> WriteFacts {
+        self.facts
+    }
+
+    /// The private version a write builds into.
+    ///
+    /// In writer mode the write slot is claimed now. In reader mode the version
+    /// is an unclaimed fork, and the slot is claimed when the query escalates
+    /// ([`Self::upgrade_to_write`]); if another writer committed in between,
+    /// escalation fails with [`WriteAbort::Stale`] and [`Self::is_stale`]
+    /// reports it.
+    ///
+    /// # Errors
+    ///
+    /// [`WriteAbort::WriteSlotBusy`] in writer mode if the slot is held.
+    pub fn write_version(&self) -> Result<Arc<AtomicRefCell<Graph>>, WriteAbort> {
+        debug_assert_eq!(self.slot.get(), Slot::None, "one write version per session");
+        if self.is_writer() {
+            let version = self
+                .with_graph(|tg| tg.graph.write())
+                .ok_or(WriteAbort::WriteSlotBusy)?;
+            self.slot.set(Slot::Claimed);
+            Ok(version)
+        } else {
+            let version = self.with_graph(|tg| tg.graph.fork());
+            *self.fork.borrow_mut() = Some(Arc::clone(&version));
+            self.slot.set(Slot::Forked);
+            Ok(version)
+        }
+    }
+
+    /// Release the write slot if this session claimed it, discarding the
+    /// private version; otherwise just drop the unclaimed fork. Idempotent.
+    pub fn release_slot(&self) {
+        if self.slot.get() == Slot::Claimed {
+            self.with_graph(|tg| tg.graph.rollback());
+        }
+        self.fork.borrow_mut().take();
+        if self.slot.get() != Slot::Stale {
+            self.slot.set(Slot::None);
+        }
+    }
+
+    /// The private version was committed, which released the slot.
+    pub fn committed(&self) {
+        debug_assert_eq!(self.slot.get(), Slot::Claimed);
+        self.slot.set(Slot::None);
+    }
+
+    /// Whether this session holds the write slot.
+    pub fn holds_slot(&self) -> bool {
+        self.slot.get() == Slot::Claimed
+    }
+
+    /// Whether the write lost its version to a writer that committed while it
+    /// was matching, so it must be run again from the start.
+    pub fn is_stale(&self) -> bool {
+        self.slot.get() == Slot::Stale
+    }
+
+    fn is_writer(&self) -> bool {
+        matches!(*self.mode.borrow(), Some(Mode::Writer { .. }))
+    }
+
+    /// Claim the write slot for the fork made in reader mode. Writer mode only:
+    /// the slot is then held only under the write lock.
+    fn claim_fork(&self) -> Result<(), WriteAbort> {
+        if self.slot.get() != Slot::Forked {
+            return Ok(());
+        }
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a fork for Slot::Forked");
+        match self.with_graph(|tg| tg.graph.claim(&fork)) {
+            Ok(()) => {
+                self.slot.set(Slot::Claimed);
+                Ok(())
+            }
+            Err(Claim::Stale) => {
+                self.slot.set(Slot::Stale);
+                Err(WriteAbort::Stale)
+            }
+            // Unreachable while every claimant holds the write lock, which we
+            // do; kept as the retryable error rather than a panic.
+            Err(Claim::Busy) => {
+                *self.fork.borrow_mut() = Some(fork);
+                Err(WriteAbort::WriteSlotBusy)
+            }
         }
     }
 
@@ -202,10 +345,12 @@ impl QuerySession {
 
     /// Become a writer, if not one already.
     ///
-    /// Idempotent. The brief window holding no per-graph lock is safe: this query
-    /// owns the single MVCC write slot for its whole lifetime, so no other writer
-    /// can commit, and it has not yet touched the shared index — a reader entering
-    /// the window sees a consistent older state.
+    /// Idempotent. The brief window holding no per-graph lock is safe: the query
+    /// has not yet touched the shared index, so a reader entering the window sees
+    /// a consistent older state; and a writer that commits in it (an inline one,
+    /// which holds the GIL and the write lock throughout) makes this query's
+    /// version stale, which the slot claim below detects before any mutation is
+    /// published.
     pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
         if self.escalate() {
             // The key could have been deleted in the window where we held no
@@ -218,6 +363,10 @@ impl QuerySession {
             // Same window, the other half of what C re-validates here: this instance
             // may no longer be allowed to originate a write at all.
             reauthorize_write(self.facts)?;
+            // Only now, under the write lock, take the MVCC write slot for the
+            // version built while matching — and find out whether an inline
+            // writer committed in the window, making it stale.
+            self.claim_fork()?;
         }
         Ok(())
     }

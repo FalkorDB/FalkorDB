@@ -40,7 +40,7 @@
 use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
 use graph::threadpool::spawn;
@@ -53,6 +53,19 @@ const MB: usize = 1 << 20;
 /// Take the graph read lock, sample the attribute stores, build the flat key-value
 /// reply array. Runs on a worker thread, or synchronously for MULTI/REPLICATED.
 #[allow(clippy::too_many_lines)]
+/// A schema name as `GRAPH.MEMORY` replies it: ended at its first NUL, and
+/// length-framed.
+///
+/// C replies these with `RM_ReplyWithCString(Schema_GetName(s))`, which is a *bulk*
+/// reply — length-framed — over a C string, so the name ends at its first NUL. Replying
+/// it as a RESP status instead escapes nothing: a label name can hold CR/LF
+/// (``CREATE (:`L\r\n+PWNED`)``), and those bytes then either inject into the next
+/// reply on the connection or come back mangled where Redis sanitises a status. Same
+/// rule, and same reason, as `GRAPH.LIST` (`commands::list::c_reply_name`).
+fn c_schema_name(name: &str) -> RedisValue {
+    RedisValue::StringBuffer(up_to_nul(name).as_bytes().to_vec())
+}
+
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,
@@ -127,7 +140,9 @@ fn memory_report(
     ));
     let mut label_attrs = Vec::new();
     for (name, mb) in &node_attr_by_label_mb {
-        label_attrs.push(RedisValue::SimpleString(name.clone()));
+        // A query can no longer put a NUL in a label name, but a name decoded from an
+        // RDB written before that still has to reply rather than abort.
+        label_attrs.push(c_schema_name(name));
         label_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(label_attrs));
@@ -150,7 +165,8 @@ fn memory_report(
     ));
     let mut type_attrs = Vec::new();
     for (name, mb) in &edge_attr_by_type_mb {
-        type_attrs.push(RedisValue::SimpleString(name.clone()));
+        // Replied as the label names above are.
+        type_attrs.push(c_schema_name(name));
         type_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(type_attrs));
@@ -192,23 +208,16 @@ pub fn graph_memory(
         if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
             return Err(RedisError::Str("ERR expected SAMPLES keyword"));
         }
+        // Any non-negative count, as C's `RedisModule_StringToULongLong`; 0 is
+        // accepted and, like any count, clamped to 1..=10000 by
+        // `memory_usage_report`.
         let count_str = args.next_arg()?;
-        let count_s = count_str.to_string_lossy();
-        // Reject negative values (starts with '-')
-        if count_s.starts_with('-') {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        let count = count_s
-            .parse::<usize>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
-        if count == 0 {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        count
+        count_str
+            .to_string_lossy()
+            .parse::<u64>()
+            .map_err(|_| RedisError::Str("ERR SAMPLES must be a non-negative integer"))?
+            .try_into()
+            .unwrap_or(usize::MAX)
     } else {
         100
     };

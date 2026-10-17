@@ -42,6 +42,7 @@ mod allocator;
 mod commands;
 mod config;
 mod dispatch;
+mod divergence_guard;
 mod graph_core;
 mod module_init;
 mod query_session;
@@ -112,6 +113,9 @@ redis_module! {
             ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
         ],
         enum: [],
-        module_args_as_configuration: true,
+        // Module arguments are parsed once, in `graph_init`, the way C's
+        // `Config_Init` parses them (see `apply_module_args`). They are applied
+        // after redis.conf's `graph.*` lines, so a module argument wins.
+        module_args_as_configuration: false,
     ]
 }

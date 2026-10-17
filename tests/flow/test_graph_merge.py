@@ -781,3 +781,64 @@ class testGraphMergeFlow():
         self.env.assertEqual(edge.properties['created'], True)
         self.env.assertEqual(edge.properties['matched'], True)
 
+    def test38_merge_referencing_deleted_entity(self):
+        """
+        a MERGE pattern that references an entity deleted earlier in the same
+        query must not resurrect it: no relationship may be attached to a
+        deleted node, and ON CREATE SET must not write through a deleted edge
+        """
+
+        # MERGE against a deleted node used to silently create a relationship
+        # anchored on it, and whether it did depended on unrelated trailing
+        # clauses, so two equivalent queries disagreed
+        # https://github.com/FalkorDB/FalkorDB/issues/651
+        queries = ["CREATE (x) DELETE x MERGE (x)-[:n0]->(x) CREATE ()",
+                   """CREATE (x) DELETE x
+                      MERGE (x)-[:n0]->(x)
+                      CREATE (y) DELETE y
+                      CREATE ()"""]
+
+        for q in queries:
+            # start with a clean graph
+            self.graph.delete()
+
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("endpoint was not found", str(e))
+
+            # no relationship may have been created either way
+            actual = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+            self.env.assertEqual(actual.result_set, [[0]])
+
+        # ON CREATE SET must not write a property through a deleted edge, with
+        # or without an intervening WITH *
+        # https://github.com/FalkorDB/FalkorDB/issues/1030
+        tail = """MERGE ()-[:C]->() ON CREATE SET x.n0 = 0
+                  WITH *
+                  MATCH ()-[{n0:0}]->()
+                  RETURN COUNT(*) AS n"""
+
+        queries = ["""CREATE ()-[x:A]->()-[y:B]->()
+                      DELETE y
+                      DELETE x
+                   """ + tail,
+                   """CREATE ()-[x:A]->()-[y:B]->()
+                      DELETE y
+                      WITH *
+                      DELETE x
+                   """ + tail]
+
+        for q in queries:
+            # start with a clean graph
+            self.graph.delete()
+
+            # no edge carries the property, the deleted edge must not be written
+            self.env.assertEqual(self.graph.query(q).result_set, [[0]])
+
+            # the MERGE itself must still have run - without this the count
+            # above would also be satisfied by the pattern being skipped
+            actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
+            self.env.assertEqual(actual.result_set, [[1]])

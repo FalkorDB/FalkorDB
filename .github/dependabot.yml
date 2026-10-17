@@ -1,23 +1,45 @@
 updates:
+# Every entry groups its whole ecosystem into a single PR (`patterns: "*"`),
+# matching the pip / uv / docker entries further down. Ungrouped, a weekly run
+# opens one PR per dependency, each of which re-runs the full build+test matrix
+# and has to be reviewed and merged on its own.
+#
+# Grouping is per update entry, so the floor is one PR per ecosystem per target
+# branch, not one PR overall: Dependabot resolves each manifest separately and
+# cannot mix, say, a Cargo.lock bump with an actions pin in one commit.
+#
+# Group names are unique across entries on purpose — the two github-actions
+# entries below would otherwise differ only by the branch segment of the
+# generated branch name.
+#
+# See issue #2868.
 - directory: /
   ignore:
   - dependency-name: "github/gh-aw-actions/**" # Managed by gh aw compile. Version-locked to the gh-aw compiler; do not bump.
   package-ecosystem: github-actions
   schedule:
     interval: weekly
+  groups:
+    github-actions:
+      patterns:
+        - "*"
 - directory: /
   package-ecosystem: cargo
   schedule:
     interval: weekly
+  groups:
+    cargo-deps:
+      patterns:
+        - "*"
 # Keep the C engine's GitHub Actions bumps alive on `master`.
 #
 # Dependabot reads .github/dependabot.yml from the DEFAULT branch ONLY. Once this
 # tree is the default branch, master's own copy of the file is never read again
 # and C silently stops receiving dependency PRs — so the entry has to live here,
-# with target-branch pointing at master. Mirrors master's config verbatim
-# (github-actions at /, weekly, 7-day cooldown); C has no other ecosystem,
-# because its native dependencies are git submodules, bumped by
-# submodule-update.yml rather than by Dependabot.
+# with target-branch pointing at master. Mirrors master's config
+# (github-actions at /, weekly, 7-day cooldown), grouped like the entry above;
+# C has no other ecosystem, because its native dependencies are git submodules,
+# bumped by submodule-update.yml rather than by Dependabot.
 #
 # Two entries may share package-ecosystem + directory as long as target-branch
 # differs — that is the supported way to cover several branches.
@@ -30,6 +52,10 @@ updates:
     interval: weekly
   cooldown:
     default-days: 7
+  groups:
+    github-actions-master:
+      patterns:
+        - "*"
 # Python test dependencies for the e2e / TCK / flow suites.
 #
 # `redis` in tests/requirements.txt carries an explicit upper bound with a

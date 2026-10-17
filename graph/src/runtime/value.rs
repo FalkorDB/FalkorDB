@@ -45,6 +45,29 @@ use crate::{
     runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
 };
 
+/// The deepest a value may nest: `[]` and `{}` are depth 1, `[[]]` is depth 2.
+///
+/// `Value` is recursive, and so is everything that walks one — drop, hash,
+/// compare, the RDB encoder, reply formatting, the UDF conversions — one stack
+/// frame (or a few) per level. A value deep enough exhausts the stack of the
+/// thread that touches it, which is an abort rather than an error. So every
+/// place a nested value can *enter* the engine refuses one deeper than this,
+/// and every recursive walk can then rely on the bound.
+///
+/// On a release build a 2 MiB thread (Rust's default, and what the query pool
+/// runs on) frees a nested list of about 25,900 levels before its stack runs
+/// out. 4,096 leaves a wide margin below that, and is far beyond any nesting
+/// real data uses; the tests run values at exactly this depth on a 2 MiB
+/// thread.
+pub const MAX_VALUE_NESTING: usize = 4096;
+
+/// The error an entry point returns for a value nested past
+/// [`MAX_VALUE_NESTING`].
+#[must_use]
+pub fn value_nesting_error() -> String {
+    format!("Value nesting exceeds the maximum depth of {MAX_VALUE_NESTING}")
+}
+
 /// A trait for formatting values as JSON, similar to Display but for JSON output
 pub trait DisplayJson {
     fn fmt_json(
@@ -842,6 +865,9 @@ impl Hash for Value {
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
                     casted.hash(state);
+                } else if x.is_nan() {
+                    // every NaN is one grouping key, whatever its sign/payload
+                    f64::NAN.to_bits().hash(state);
                 } else {
                     x.to_bits().hash(state);
                 }
@@ -873,13 +899,13 @@ impl Hash for Value {
             Self::VecF32(x) => {
                 9.hash(state);
                 for f in x.iter() {
-                    f.to_bits().hash(state);
+                    f32_hash_bits(*f).hash(state);
                 }
             }
             Self::Point(p) => {
                 10.hash(state);
-                p.latitude.to_bits().hash(state);
-                p.longitude.to_bits().hash(state);
+                f32_hash_bits(p.latitude).hash(state);
+                f32_hash_bits(p.longitude).hash(state);
             }
             Self::Datetime(x) => {
                 11.hash(state);
@@ -1234,6 +1260,12 @@ impl CompareValue for Value {
                 Self::compare_list(a, b)
             }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
+            // Vector equality is element-wise: vecf32([1.0,2.0]) equals
+            // vecf32([1.0,2.0]). Without this arm the fallthrough compared
+            // only the type order, so `=` and `<>` were both always false
+            // for vectors and MERGE on a vector property duplicated on
+            // every execution (#2604).
+            (Self::VecF32(a), Self::VecF32(b)) => (compare_vecf32(a, b), DisjointOrNull::None),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
                 (rel_a.cmp(rel_b), DisjointOrNull::None)
@@ -1404,12 +1436,17 @@ impl Value {
         let mut first_not_equal = Ordering::Equal;
         let mut null_counter: usize = 0;
         let mut not_equal_counter: usize = 0;
+        // members whose comparison was inconclusive for a reason other than
+        // NULL: incomparable types (`Disjoint`) or NaN
+        let mut inconclusive_counter: usize = 0;
 
         for (a_value, b_value) in a.iter().zip(b) {
             let (compare_result, disjoint_or_null) = a_value.compare_value(b_value);
             if disjoint_or_null != DisjointOrNull::None {
                 if disjoint_or_null == DisjointOrNull::ComparedNull {
                     null_counter += 1;
+                } else {
+                    inconclusive_counter += 1;
                 }
                 not_equal_counter += 1;
                 if first_not_equal == Ordering::Equal {
@@ -1423,14 +1460,31 @@ impl Value {
             }
         }
 
-        // if all the elements in the shared range yielded false comparisons
-        if not_equal_counter == min_len && null_counter < not_equal_counter {
+        // if all the elements in the shared range yielded false comparisons.
+        // `first_not_equal` still being `Equal` means no member actually
+        // decided the order — every comparison was inconclusive — so there is
+        // no conclusive verdict to report, and saying `None` here would claim
+        // the lists are equal.
+        if not_equal_counter == min_len
+            && null_counter < not_equal_counter
+            && first_not_equal != Ordering::Equal
+        {
             return (first_not_equal, DisjointOrNull::None);
         }
 
         // if there was a null comparison on non-disjoint arrays
         if null_counter > 0 && len_a == len_b {
             return (first_not_equal, DisjointOrNull::ComparedNull);
+        }
+
+        // a member compared inconclusively and no other member decided the
+        // order, so the list comparison is inconclusive too. Reachable only
+        // when a member pair shares a variant that `compare_value` has no arm
+        // for — none today, but a guard for any future variant — since every
+        // other inconclusive comparison reports an ordering. Lists of unequal
+        // length keep their old answer: length alone still decides them.
+        if inconclusive_counter > 0 && first_not_equal == Ordering::Equal && len_a == len_b {
+            return (Ordering::Equal, DisjointOrNull::Disjoint);
         }
 
         // if there was a difference in some member, without any null compare
@@ -1478,6 +1532,145 @@ impl Value {
             }
         }
         (Ordering::Equal, DisjointOrNull::None)
+    }
+
+    /// The total order `ORDER BY` and `list.sort` sort by.
+    ///
+    /// [`CompareValue::compare_value`] answers the three-valued `=`/`<`
+    /// question, and its ordering half is not a total order: NaN is `Less`
+    /// than every number in both directions, `Int` against `Float` rounds the
+    /// integer to `f64` (so `2^53 = 2^53.0 = 2^53+1` while `2^53 < 2^53+1`),
+    /// and maps stop at the first null/disjoint value. `slice::sort_by` panics
+    /// on such a comparator, so sorting uses this order instead:
+    ///
+    /// - values of different types order by type, except that `Int` and
+    ///   `Float` are one numeric type ordered by exact value (no rounding);
+    /// - NaN sorts above every number and equal to itself;
+    /// - lists and paths are lexicographic, then shorter first;
+    /// - maps order by key count, then sorted keys, then values in key order.
+    #[must_use]
+    pub fn sort_cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (Self::Int(a), Self::Int(b))
+            | (Self::Datetime(a), Self::Datetime(b))
+            | (Self::Date(a), Self::Date(b))
+            | (Self::Time(a), Self::Time(b))
+            | (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
+            (Self::Float(a), Self::Float(b)) => sort_cmp_f64(*a, *b),
+            (Self::Int(i), Self::Float(f)) => sort_cmp_int_float(*i, *f),
+            (Self::Float(f), Self::Int(i)) => sort_cmp_int_float(*i, *f).reverse(),
+            (Self::String(a), Self::String(b)) => a.cmp(b),
+            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| x.sort_cmp(y))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| a.len().cmp(&b.len())),
+            (Self::Map(a), Self::Map(b)) => Self::sort_cmp_map(a, b),
+            (Self::VecF32(a), Self::VecF32(b)) => a.len().cmp(&b.len()).then_with(|| {
+                a.iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| sort_cmp_f32(*x, *y))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            }),
+            (Self::Node(a), Self::Node(b)) => a.cmp(b),
+            (Self::Relationship(a), Self::Relationship(b)) => a.cmp(b),
+            (Self::Point(a), Self::Point(b)) => sort_cmp_f32(a.longitude, b.longitude)
+                .then_with(|| sort_cmp_f32(a.latitude, b.latitude)),
+            _ => self.order().cmp(&other.order()),
+        }
+    }
+
+    fn sort_cmp_map(
+        a: &OrderMap<Arc<String>, Self>,
+        b: &OrderMap<Arc<String>, Self>,
+    ) -> Ordering {
+        a.len().cmp(&b.len()).then_with(|| {
+            let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
+            a_keys.sort();
+            let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
+            b_keys.sort();
+            a_keys.cmp(&b_keys).then_with(|| {
+                a_keys
+                    .iter()
+                    .map(|key| a[*key].sort_cmp(&b[*key]))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            })
+        })
+    }
+
+    /// True when Cypher `=` involving this value can never be TRUE — not even
+    /// against an identical copy of itself.
+    ///
+    /// `=` is three-valued, and [`Self::compare_value`] reports that faithfully
+    /// in its [`DisjointOrNull`] flag: `[1, null]` against `[1, null]` is
+    /// `(Ordering::Equal, ComparedNull)`, meaning *"equal as far as the
+    /// non-NULL elements go, but the answer is UNKNOWN"*. Such a value carries
+    /// its own verdict — an inconclusive comparison comes from its contents,
+    /// and nothing it is compared against can clear that — so comparing it with
+    /// itself decides the question for every possible partner. `ExprEval` maps
+    /// the same flags to `Value::Null` when it evaluates `=`, so a caller that
+    /// honours this predicate agrees with the `=` operator by construction.
+    ///
+    /// **Not for grouping.** `DISTINCT`, aggregation keys and `UNION` compare
+    /// under grouping semantics, where NULL *does* equal NULL: `UNWIND [null,
+    /// null] AS x RETURN DISTINCT x` is one row, while `null = null` is NULL.
+    /// This predicate answers the `=` question only. Its caller today is the
+    /// `Value Hash Join` operator, which uses it to keep a key that can never
+    /// join out of its hash table.
+    #[must_use]
+    pub fn is_never_equal(&self) -> bool {
+        // The exact test is a self-comparison, but it is not free on the shapes
+        // that need it least -- `compare_map` allocates and sorts both key
+        // lists on every call -- so a cheap walk gates it.
+        self.may_fail_self_match()
+            && !matches!(
+                self.compare_value(self),
+                (Ordering::Equal, DisjointOrNull::None)
+            )
+    }
+
+    /// Cheap conservative pre-filter for [`Self::is_never_equal`]: `false` only
+    /// for values that are *certain* to compare equal to themselves.
+    ///
+    /// A hint, not the decision — the exact comparison it gates is what
+    /// decides — so being wrong either way is safe: a false positive merely
+    /// pays for that comparison, and a false negative only reports `false` from
+    /// `is_never_equal` for a value that can never be equal, which is the
+    /// conservative answer every caller must already handle. Variants are
+    /// therefore listed only where `compare_value` is *known* to give a
+    /// conclusive self-comparison; everything else answers `true` and gets
+    /// compared properly, which is also what stops a newly added variant from
+    /// silently slipping past.
+    fn may_fail_self_match(&self) -> bool {
+        match self {
+            // Self-comparison of these is `(Equal, None)` by construction.
+            Self::Bool(_)
+            | Self::Int(_)
+            | Self::String(_)
+            | Self::Node(_)
+            | Self::Relationship(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_) => false,
+            // NaN never compares equal, not even to itself -- also as a
+            // vector element (`compare_vecf32`).
+            Self::Float(f) => f.is_nan(),
+            Self::VecF32(v) => v.iter().any(|f| f.is_nan()),
+            // A container is unmatchable exactly when one of its members is.
+            Self::List(items) | Self::Path(items) => items.iter().any(Self::may_fail_self_match),
+            Self::Map(entries) => entries.values().any(Self::may_fail_self_match),
+            // Null (`ComparedNull`), Point (NaN coordinates) -- and any future
+            // variant.
+            _ => true,
+        }
     }
 }
 
@@ -1713,6 +1906,118 @@ fn compare_floats(
         None => (Ordering::Less, DisjointOrNull::NaN),
     }
 }
+
+/// Total order on `f64` for sorting: IEEE order for numbers (`-0.0` equals
+/// `0.0`), with NaN above every number and equal to itself.
+#[inline]
+#[must_use]
+pub fn sort_cmp_f64(
+    a: f64,
+    b: f64,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// [`sort_cmp_f64`] for `f32` (points and vectors), except that `-0.0` sorts
+/// before `0.0`: C groups vectors and points by their component bits, so
+/// signed zeros are different keys there, while every NaN is one key.
+#[inline]
+fn sort_cmp_f32(
+    a: f32,
+    b: f32,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(Ordering::Equal) => b.is_sign_negative().cmp(&a.is_sign_negative()),
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// The bits [`Value::hash`] uses for an `f32` component: one value for every
+/// NaN, as [`sort_cmp_f32`] treats them as equal.
+#[inline]
+fn f32_hash_bits(f: f32) -> u32 {
+    if f.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        f.to_bits()
+    }
+}
+
+/// Compares an integer with a float by exact value, without rounding the
+/// integer to `f64` (above 2^53 `i as f64` merges neighbouring integers). NaN
+/// sorts above every integer, as in [`sort_cmp_f64`].
+#[inline]
+fn sort_cmp_int_float(
+    i: i64,
+    f: f64,
+) -> Ordering {
+    // 2^63 is exactly representable; every f64 in [-2^63, 2^63) truncates to
+    // an i64 without overflow.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f.is_nan() || f >= TWO_POW_63 {
+        return Ordering::Less;
+    }
+    if f < -TWO_POW_63 {
+        return Ordering::Greater;
+    }
+    let whole = f.trunc();
+    // `whole` is integral and in range, so the cast is exact, and so is the
+    // fractional part `f - whole`.
+    i.cmp(&(whole as i64)).then_with(|| {
+        let frac = f - whole;
+        if frac > 0.0 {
+            Ordering::Less
+        } else if frac < 0.0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    })
+}
+
+/// Orders two vectors the way C's `SIVector_Compare` does: dimension first,
+/// then the first element where `x != y` decides by `x > y`. So a NaN element
+/// never compares equal (not even to NaN) and orders `Less` in both
+/// directions.
+fn compare_vecf32(
+    a: &[f32],
+    b: &[f32],
+) -> Ordering {
+    fn first_difference(
+        a: &[f32],
+        b: &[f32],
+    ) -> Ordering {
+        a.iter()
+            .zip(b)
+            .find(|(x, y)| x != y)
+            .map_or(Ordering::Equal, |(x, y)| {
+                if x > y {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            })
+    }
+
+    a.len().cmp(&b.len()).then_with(|| {
+        // An early-exit loop does not vectorise, so scan fixed-size blocks
+        // with a branch-free `!=` reduction (NEON / SSE / AVX) and rescan
+        // element by element only the block that holds the difference.
+        let (blocks_a, rest_a) = a.as_chunks::<16>();
+        let (blocks_b, rest_b) = b.as_chunks::<16>();
+        for (x, y) in blocks_a.iter().zip(blocks_b) {
+            if x.iter().zip(y).fold(false, |diff, (p, q)| diff | (p != q)) {
+                return first_difference(x, y);
+            }
+        }
+        first_difference(rest_a, rest_b)
+    })
+}
+
 #[derive(Default, Debug)]
 pub struct ValuesDeduper {
     seen: RefCell<rustc_hash::FxHashSet<u64>>,
@@ -1847,65 +2152,742 @@ impl Encode<19> for Value {
 
 impl Decode<19> for Value {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let tag = r.read_unsigned()?;
-        match tag {
-            si_type::T_NULL => Ok(Self::Null),
-            si_type::T_BOOL => Ok(Self::Bool(r.read_signed()? != 0)),
-            si_type::T_INT64 => Ok(Self::Int(r.read_signed()?)),
-            si_type::T_DOUBLE => Ok(Self::Float(r.read_double()?)),
-            // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
-            t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
-                let buf = r.read_buffer()?;
-                let s = if buf.last() == Some(&0) {
-                    String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
-                } else {
-                    String::from_utf8_lossy(&buf).to_string()
-                };
-                if t == (si_type::T_INTERN | si_type::T_STRING) {
-                    Ok(Self::String(
-                        crate::runtime::string_pool::global().intern(Arc::new(s)),
-                    ))
-                } else {
-                    Ok(Self::String(Arc::new(s)))
-                }
+        decode_value(r, 0)
+    }
+}
+
+/// [`Value::decode`] for a value inside `depth` enclosing arrays.
+///
+/// Recursive, so the depth is counted and a value inside more than
+/// [`MAX_VALUE_NESTING`] arrays is a decode error: `GRAPH.RESTORE` hands this
+/// a client's bytes, and a few hundred KB of nested `T_ARRAY` headers would
+/// otherwise be tens of thousands of frames. Every value the engine accepts is
+/// within the same bound, so nothing it saved is refused here.
+fn decode_value(
+    r: &mut dyn Reader,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(value_nesting_error());
+    }
+    let tag = r.read_unsigned()?;
+    match tag {
+        si_type::T_NULL => Ok(Value::Null),
+        si_type::T_BOOL => Ok(Value::Bool(r.read_signed()? != 0)),
+        si_type::T_INT64 => Ok(Value::Int(r.read_signed()?)),
+        si_type::T_DOUBLE => Ok(Value::Float(r.read_double()?)),
+        // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
+            let buf = r.read_buffer()?;
+            let s = if buf.last() == Some(&0) {
+                String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
+            } else {
+                String::from_utf8_lossy(&buf).to_string()
+            };
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
+                Ok(Value::String(
+                    crate::runtime::string_pool::global().intern(Arc::new(s)),
+                ))
+            } else {
+                Ok(Value::String(Arc::new(s)))
             }
-            si_type::T_ARRAY => {
-                let len = r.read_unsigned()?;
-                let mut items = ThinVec::with_capacity(len as usize);
-                for _ in 0..len {
-                    items.push(Self::decode(r)?);
-                }
-                Ok(Self::List(Arc::new(items)))
-            }
-            si_type::T_POINT => {
-                let lat = r.read_double()?;
-                let lon = r.read_double()?;
-                Ok(Self::Point(Point {
-                    latitude: lat as f32,
-                    longitude: lon as f32,
-                }))
-            }
-            si_type::T_VECTOR_F32 => {
-                let bytes = r.read_buffer()?;
-                if bytes.len() < 4 {
-                    return Err("vector buffer too short".into());
-                }
-                let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-                let mut v = ThinVec::with_capacity(dim);
-                for i in 0..dim {
-                    let off = 4 + i * 4;
-                    if off + 4 > bytes.len() {
-                        return Err("vector data truncated".into());
-                    }
-                    v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
-                }
-                Ok(Self::VecF32(Arc::new(v)))
-            }
-            si_type::T_DATETIME => Ok(Self::Datetime(r.read_signed()?)),
-            si_type::T_DATE => Ok(Self::Date(r.read_signed()?)),
-            si_type::T_TIME => Ok(Self::Time(r.read_signed()?)),
-            si_type::T_DURATION => Ok(Self::Duration(r.read_signed()?)),
-            _ => Err(format!("unknown SIType tag: {tag}")),
         }
+        si_type::T_ARRAY => {
+            let len = r.read_unsigned()?;
+            let mut items = ThinVec::with_capacity(len as usize);
+            for _ in 0..len {
+                items.push(decode_value(r, depth + 1)?);
+            }
+            Ok(Value::List(Arc::new(items)))
+        }
+        si_type::T_POINT => {
+            let lat = r.read_double()?;
+            let lon = r.read_double()?;
+            Ok(Value::Point(Point {
+                latitude: lat as f32,
+                longitude: lon as f32,
+            }))
+        }
+        si_type::T_VECTOR_F32 => {
+            let bytes = r.read_buffer()?;
+            if bytes.len() < 4 {
+                return Err("vector buffer too short".into());
+            }
+            let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+            let mut v = ThinVec::with_capacity(dim);
+            for i in 0..dim {
+                let off = 4 + i * 4;
+                if off + 4 > bytes.len() {
+                    return Err("vector data truncated".into());
+                }
+                v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+            }
+            Ok(Value::VecF32(Arc::new(v)))
+        }
+        si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
+        si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
+        si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
+        si_type::T_DURATION => Ok(Value::Duration(r.read_signed()?)),
+        _ => Err(format!("unknown SIType tag: {tag}")),
+    }
+}
+
+#[cfg(test)]
+mod vecf32_compare_tests {
+    use super::{CompareValue, DisjointOrNull, Ordering, Value};
+    use std::sync::Arc;
+
+    fn vecf32(values: &[f32]) -> Value {
+        Value::VecF32(Arc::new(values.iter().copied().collect()))
+    }
+
+    fn eq(
+        a: &Value,
+        b: &Value,
+    ) -> bool {
+        a.compare_value(b).0 == Ordering::Equal
+    }
+
+    fn disjoint(
+        a: &Value,
+        b: &Value,
+    ) -> bool {
+        a.compare_value(b).1 == DisjointOrNull::Disjoint
+    }
+
+    // Regression (#2604): vector equality was always false (and `<>` also
+    // always false), because compare_value had no VecF32 arm and the
+    // fallthrough compared only the type order.
+    #[test]
+    fn vecf32_equals_identical_vector() {
+        let a = vecf32(&[1.0, 2.0]);
+        assert!(eq(&a, &vecf32(&[1.0, 2.0])));
+        assert!(!disjoint(&a, &vecf32(&[1.0, 2.0])));
+    }
+
+    fn ordering(
+        a: &Value,
+        b: &Value,
+    ) -> Ordering {
+        a.compare_value(b).0
+    }
+
+    #[test]
+    fn vecf32_unequals_different_vector() {
+        let a = vecf32(&[0.1, 0.1, 0.1, 0.1, 0.1]);
+        let b = vecf32(&[0.2, 0.2, 0.2, 0.2, 0.9]);
+        assert!(!eq(&a, &b));
+        assert!(!disjoint(&a, &b));
+        // Both directions: the smaller operand orders Less both ways round.
+        assert_eq!(ordering(&a, &b), Ordering::Less);
+        assert_eq!(ordering(&b, &a), Ordering::Greater);
+    }
+
+    #[test]
+    fn vecf32_unequals_different_dimension() {
+        let a = vecf32(&[1.0]);
+        let b = vecf32(&[1.0, 2.0]);
+        assert!(!eq(&a, &b));
+        assert!(!disjoint(&a, &b));
+        // Dimension decides first: the shorter vector is Less.
+        assert_eq!(ordering(&a, &b), Ordering::Less);
+        assert_eq!(ordering(&b, &a), Ordering::Greater);
+    }
+
+    #[test]
+    fn vecf32_empty_vectors_equal() {
+        assert!(eq(&vecf32(&[]), &vecf32(&[])));
+        // Empty is the shortest vector: Less than any non-empty one.
+        assert_eq!(ordering(&vecf32(&[]), &vecf32(&[1.0])), Ordering::Less);
+        assert_eq!(ordering(&vecf32(&[1.0]), &vecf32(&[])), Ordering::Greater);
+    }
+
+    #[test]
+    fn vecf32_with_nan_components() {
+        // As in C's `SIVector_Compare`: a NaN element is never equal, not even
+        // to NaN, and orders `Less` whichever side it is on.
+        let nan = vecf32(&[1.0, f32::NAN]);
+        assert!(!eq(&nan, &nan));
+        assert!(!eq(&nan, &vecf32(&[1.0, 2.0])));
+        assert_eq!(
+            ordering(&vecf32(&[f32::NAN]), &vecf32(&[1.0])),
+            Ordering::Less
+        );
+        assert_eq!(
+            ordering(&vecf32(&[1.0]), &vecf32(&[f32::NAN])),
+            Ordering::Less
+        );
+    }
+
+    // The comparison scans 16-element blocks before the tail, so place the
+    // first difference in a block, in the tail, and behind a later one.
+    #[test]
+    fn vecf32_first_difference_decides_at_any_position() {
+        let base: Vec<f32> = (0..37).map(|i| i as f32).collect();
+        assert!(eq(&vecf32(&base), &vecf32(&base)));
+        for i in [0, 15, 16, 31, 32, 36] {
+            let mut bigger = base.clone();
+            bigger[i] += 0.5;
+            // A later, opposite difference must not override the first one.
+            if i < 36 {
+                bigger[36] -= 100.0;
+            }
+            assert_eq!(
+                ordering(&vecf32(&base), &vecf32(&bigger)),
+                Ordering::Less,
+                "{i}"
+            );
+            assert_eq!(
+                ordering(&vecf32(&bigger), &vecf32(&base)),
+                Ordering::Greater,
+                "{i}"
+            );
+        }
+        // Signed zeros are equal, as with C's `!=`.
+        assert!(eq(&vecf32(&[0.0; 20]), &vecf32(&[-0.0; 20])));
+    }
+}
+
+#[cfg(test)]
+mod is_never_equal_tests {
+    use super::{CompareValue, DisjointOrNull, OrderMap, Ordering, Value};
+    use std::sync::Arc;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn vector(items: Vec<f32>) -> Value {
+        Value::VecF32(Arc::new(items.into_iter().collect()))
+    }
+
+    /// Every value whose `=` can never be TRUE, at any nesting depth.
+    #[test]
+    fn values_carrying_an_unknown_are_never_equal() {
+        assert!(Value::Null.is_never_equal());
+        assert!(Value::Float(f64::NAN).is_never_equal());
+        assert!(list(vec![Value::Int(1), Value::Null]).is_never_equal());
+        assert!(list(vec![list(vec![Value::Null])]).is_never_equal());
+        assert!(map(vec![("a", Value::Null)]).is_never_equal());
+        assert!(list(vec![map(vec![("a", Value::Null)])]).is_never_equal());
+        assert!(map(vec![("a", Value::Float(f64::NAN))]).is_never_equal());
+
+        // A NaN vector element never compares equal either, at any depth.
+        assert!(vector(vec![1.0, f32::NAN]).is_never_equal());
+        assert!(list(vec![vector(vec![f32::NAN])]).is_never_equal());
+        assert!(list(vec![vector(vec![1.0]), Value::Null]).is_never_equal());
+        assert!(list(vec![list(vec![vector(vec![f32::NAN])])]).is_never_equal());
+        assert!(map(vec![("a", vector(vec![f32::NAN]))]).is_never_equal());
+    }
+
+    /// `compare_list` must not report a conclusive verdict when no member
+    /// actually decided the order. Its "all members compared false" branch used
+    /// to return `(Equal, None)` in that case, which reads as *"these lists are
+    /// equal, definitively"* -- so `[vec, null]` matched itself. Vectors now
+    /// compare element-wise, so lists of them get a conclusive verdict.
+    #[test]
+    fn compare_list_keeps_an_inconclusive_verdict() {
+        let vec_list = list(vec![vector(vec![1.0, 2.0])]);
+        assert_eq!(
+            vec_list.compare_value(&vec_list),
+            (Ordering::Equal, DisjointOrNull::None)
+        );
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![9.0, 9.0])])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        // Mixed: one member equal, one member NULL.
+        let mixed = list(vec![vector(vec![1.0]), Value::Null]);
+        assert_eq!(
+            mixed.compare_value(&mixed),
+            (Ordering::Equal, DisjointOrNull::ComparedNull)
+        );
+
+        // Everything that already had a decisive ordering keeps it. A real
+        // inequality still outranks an unknown, NaN still reports an ordering,
+        // and length alone still decides lists of different length.
+        assert_eq!(
+            list(vec![Value::Int(1), Value::Null])
+                .compare_value(&list(vec![Value::Int(2), Value::Null])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Float(f64::NAN)]).compare_value(&list(vec![Value::Float(f64::NAN)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![1.0, 2.0]), Value::Int(1)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Int(1)]).compare_value(&list(vec![Value::Int(1)])),
+            (Ordering::Equal, DisjointOrNull::None)
+        );
+    }
+
+    /// Values that compare equal to themselves, so `=` can hold for them.
+    #[test]
+    fn ordinary_values_are_not_never_equal() {
+        assert!(!Value::Int(1).is_never_equal());
+        assert!(!Value::Float(1.5).is_never_equal());
+        assert!(!Value::Float(f64::INFINITY).is_never_equal());
+        assert!(!Value::Bool(true).is_never_equal());
+        assert!(!Value::String(Arc::new("x".to_string())).is_never_equal());
+        assert!(!Value::Datetime(0).is_never_equal());
+        assert!(!list(vec![]).is_never_equal());
+        assert!(!list(vec![Value::Int(1), Value::Int(2)]).is_never_equal());
+        assert!(!map(vec![]).is_never_equal());
+        assert!(!map(vec![("a", Value::Int(1))]).is_never_equal());
+        assert!(!vector(vec![]).is_never_equal());
+        assert!(!vector(vec![1.0, 2.0]).is_never_equal());
+        assert!(!list(vec![vector(vec![1.0, 2.0])]).is_never_equal());
+    }
+
+    /// `is_never_equal` must agree with the self-comparison it stands for, and
+    /// the pre-filter must only ever skip values that really do self-match --
+    /// the invariant that lets the cheap walk gate the exact comparison.
+    #[test]
+    fn agrees_with_the_self_comparison_it_stands_for() {
+        let corpus = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(0),
+            Value::Float(1.5),
+            Value::Float(f64::NAN),
+            Value::Float(f64::INFINITY),
+            Value::String(Arc::new("x".to_string())),
+            Value::Datetime(0),
+            Value::Date(0),
+            Value::Time(0),
+            Value::Duration(0),
+            list(vec![]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![list(vec![Value::Null])]),
+            list(vec![map(vec![("a", Value::Null)])]),
+            map(vec![]),
+            map(vec![("a", Value::Int(1))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            vector(vec![1.0, 2.0]),
+            list(vec![vector(vec![1.0, 2.0])]),
+            list(vec![vector(vec![1.0]), Value::Null]),
+            list(vec![list(vec![vector(vec![1.0])])]),
+            map(vec![("a", vector(vec![1.0]))]),
+            vector(vec![]),
+            vector(vec![1.0, f32::NAN]),
+            list(vec![vector(vec![f32::NAN])]),
+            map(vec![("a", vector(vec![f32::NAN]))]),
+        ];
+        for v in corpus {
+            let self_matches =
+                matches!(v.compare_value(&v), (Ordering::Equal, DisjointOrNull::None));
+            assert_eq!(
+                v.is_never_equal(),
+                !self_matches,
+                "is_never_equal disagrees with the self-comparison for {v:?}"
+            );
+            if !v.may_fail_self_match() {
+                assert!(
+                    self_matches,
+                    "pre-filter waved through a value that cannot match itself: {v:?}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sort_cmp_tests {
+    use super::{OrderMap, Ordering, Point, Value, sort_cmp_f64};
+    use std::hash::{Hash, Hasher};
+    use std::sync::Arc;
+
+    const P53: i64 = 1 << 53;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(Arc::new(s.to_string()))
+    }
+
+    /// Values on which `compare_value(..).0` is not a total order (#2891),
+    /// plus neighbours of every type so the order between types is covered.
+    fn corpus() -> Vec<Value> {
+        vec![
+            Value::Null,
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Int(i64::MIN),
+            Value::Int(-1),
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(P53 - 1),
+            Value::Int(P53),
+            Value::Int(P53 + 1),
+            Value::Int(P53 + 2),
+            Value::Int(i64::MAX),
+            Value::Float(f64::NEG_INFINITY),
+            Value::Float(-1.5),
+            Value::Float(-0.0),
+            Value::Float(0.0),
+            Value::Float(0.5),
+            Value::Float(1.0),
+            Value::Float(P53 as f64),
+            Value::Float((P53 + 2) as f64),
+            Value::Float(9_223_372_036_854_775_808.0),
+            Value::Float(-9_223_372_036_854_775_808.0),
+            Value::Float(f64::INFINITY),
+            Value::Float(f64::NAN),
+            Value::Float(-f64::NAN),
+            string(""),
+            string("s"),
+            list(vec![]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(1))]),
+            map(vec![("a", string("s")), ("b", Value::Int(3))]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(2))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, -f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
+            Value::VecF32(Arc::new([-0.0].into_iter().collect())),
+            Value::VecF32(Arc::new([0.0].into_iter().collect())),
+            list(vec![Value::VecF32(Arc::new([-0.0].into_iter().collect()))]),
+            list(vec![Value::VecF32(Arc::new([0.0].into_iter().collect()))]),
+            point(-0.0, 0.0),
+            point(0.0, 0.0),
+            point(f32::NAN, 1.0),
+            point(-f32::NAN, 1.0),
+        ]
+    }
+
+    fn point(
+        latitude: f32,
+        longitude: f32,
+    ) -> Value {
+        Value::Point(Point {
+            latitude,
+            longitude,
+        })
+    }
+
+    fn hash_of(v: &Value) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+
+    /// Grouping and DISTINCT put keys in a hash table whose equality is
+    /// `sort_cmp`, so keys that `sort_cmp` calls equal must hash equally.
+    /// Floats merge `-0.0` with `0.0` and every NaN; vector and point
+    /// components merge every NaN but keep signed zeros apart, as C does.
+    #[test]
+    fn sort_cmp_equal_keys_hash_equally() {
+        let values = corpus();
+        for a in &values {
+            for b in &values {
+                if a.sort_cmp(b) == Ordering::Equal {
+                    assert_eq!(hash_of(a), hash_of(b), "{a:?} vs {b:?}");
+                }
+            }
+        }
+        let vec = |f: f32| Value::VecF32(Arc::new([f].into_iter().collect()));
+        assert_eq!(vec(f32::NAN).sort_cmp(&vec(-f32::NAN)), Ordering::Equal);
+        assert_ne!(vec(-0.0).sort_cmp(&vec(0.0)), Ordering::Equal);
+        assert_ne!(point(-0.0, 0.0).sort_cmp(&point(0.0, 0.0)), Ordering::Equal);
+        assert_eq!(
+            Value::Float(-0.0).sort_cmp(&Value::Float(0.0)),
+            Ordering::Equal
+        );
+    }
+
+    /// `sort_cmp` is a total order: reflexive, antisymmetric and transitive
+    /// over every pair and triple of the corpus. `compare_value` breaks each
+    /// of these (NaN, `2^53` Int/Float, maps).
+    #[test]
+    fn sort_cmp_is_a_total_order() {
+        let values = corpus();
+        for a in &values {
+            assert_eq!(a.sort_cmp(a), Ordering::Equal, "{a:?}");
+            for b in &values {
+                let ab = a.sort_cmp(b);
+                assert_eq!(ab, b.sort_cmp(a).reverse(), "{a:?} vs {b:?}");
+                for c in &values {
+                    let bc = b.sort_cmp(c);
+                    if ab == bc {
+                        assert_eq!(a.sort_cmp(c), ab, "{a:?} {b:?} {c:?}");
+                    }
+                    if ab == Ordering::Equal {
+                        assert_eq!(a.sort_cmp(c), bc, "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nan_sorts_above_every_number_and_below_null() {
+        let nan = Value::Float(f64::NAN);
+        for number in [
+            Value::Int(i64::MAX),
+            Value::Float(f64::INFINITY),
+            Value::Float(-1.0),
+        ] {
+            assert_eq!(nan.sort_cmp(&number), Ordering::Greater);
+            assert_eq!(number.sort_cmp(&nan), Ordering::Less);
+        }
+        assert_eq!(nan.sort_cmp(&Value::Null), Ordering::Less);
+        assert_eq!(sort_cmp_f64(f64::NAN, f64::NAN), Ordering::Equal);
+        assert_eq!(sort_cmp_f64(-0.0, 0.0), Ordering::Equal);
+    }
+
+    #[test]
+    fn int_float_compare_exactly() {
+        let f = Value::Float(P53 as f64);
+        assert_eq!(Value::Int(P53).sort_cmp(&f), Ordering::Equal);
+        assert_eq!(Value::Int(P53 + 1).sort_cmp(&f), Ordering::Greater);
+        assert_eq!(f.sort_cmp(&Value::Int(P53 + 1)), Ordering::Less);
+        assert_eq!(Value::Int(P53 - 1).sort_cmp(&f), Ordering::Less);
+        assert_eq!(Value::Int(1).sort_cmp(&Value::Float(1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(2).sort_cmp(&Value::Float(1.5)),
+            Ordering::Greater
+        );
+        assert_eq!(Value::Int(-2).sort_cmp(&Value::Float(-1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(-1).sort_cmp(&Value::Float(-1.5)),
+            Ordering::Greater
+        );
+        // i64::MAX rounds up to 2^63 as f64, but is below it.
+        let two_63 = Value::Float(9_223_372_036_854_775_808.0);
+        assert_eq!(Value::Int(i64::MAX).sort_cmp(&two_63), Ordering::Less);
+        assert_eq!(
+            Value::Int(i64::MIN).sort_cmp(&Value::Float(-9_223_372_036_854_775_808.0)),
+            Ordering::Equal
+        );
+    }
+
+    /// The inputs that made `ORDER BY` panic with "comparison function does
+    /// not correctly implement a total order" sort cleanly.
+    #[test]
+    fn sorting_the_panicking_inputs_succeeds() {
+        let nan = f64::NAN;
+        let mut floats: Vec<Value> = [
+            1.0, 6.0, nan, 2.0, nan, 1.0, 3.0, 20.0, 1.0, 12.0, nan, nan, 4.0, nan, nan, nan, 5.0,
+            nan, 6.0, 17.0, 18.0,
+        ]
+        .into_iter()
+        .map(Value::Float)
+        .collect();
+        floats.sort_by(Value::sort_cmp);
+        let numbers: Vec<f64> = floats
+            .iter()
+            .map(|v| match v {
+                Value::Float(f) => *f,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(numbers[..13].is_sorted());
+        assert!(numbers[13..].iter().all(|f| f.is_nan()));
+
+        let mut mixed: Vec<Value> = (0..24)
+            .map(|i| {
+                let n = P53 - 1 + (i * 7) % 4;
+                if i % 2 == 0 {
+                    Value::Int(n)
+                } else {
+                    Value::Float(n as f64)
+                }
+            })
+            .collect();
+        mixed.sort_by(Value::sort_cmp);
+        assert!(mixed.is_sorted_by(|a, b| a.sort_cmp(b).is_le()));
+    }
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
+    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, si_type};
+    use std::{collections::VecDeque, sync::Arc};
+    use thin_vec::thin_vec;
+
+    /// The query pool's worker stack: Rust's default for a spawned thread.
+    const WORKER_STACK: usize = 2 << 20;
+
+    #[derive(Debug)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Double(f64),
+        Buffer(Vec<u8>),
+    }
+
+    #[derive(Default)]
+    struct Tape(VecDeque<Op>);
+
+    impl Writer for Tape {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.0.push_back(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.0.push_back(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.0.push_back(Op::Double(val));
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.0.push_back(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    impl Reader for Tape {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.0.pop_front() {
+                Some(Op::Unsigned(v)) => Ok(v),
+                other => Err(format!("tape: expected unsigned, got {other:?}")),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.0.pop_front() {
+                Some(Op::Signed(v)) => Ok(v),
+                other => Err(format!("tape: expected signed, got {other:?}")),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            match self.0.pop_front() {
+                Some(Op::Double(v)) => Ok(v),
+                other => Err(format!("tape: expected double, got {other:?}")),
+            }
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.0.pop_front() {
+                Some(Op::Buffer(v)) => Ok(v),
+                other => Err(format!("tape: expected buffer, got {other:?}")),
+            }
+        }
+    }
+
+    /// `[[...[1]...]]` with `depth` lists, built without recursion.
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// The RDB encoding of `depth` nested single-element lists around a NULL,
+    /// written directly so a payload deeper than any `Value` can be built.
+    fn nested_tape(depth: usize) -> Tape {
+        let mut t = Tape::default();
+        for _ in 0..depth {
+            t.write_unsigned(si_type::T_ARRAY);
+            t.write_unsigned(1);
+        }
+        t.write_unsigned(si_type::T_NULL);
+        t
+    }
+
+    fn list_depth(mut v: &Value) -> usize {
+        let mut depth = 0;
+        while let Value::List(items) = v {
+            depth += 1;
+            v = &items[0];
+        }
+        depth
+    }
+
+    /// Run `f` on a thread with the query pool's stack size.
+    fn on_worker_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn rdb_decode_accepts_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING);
+            let v = Value::decode(&mut t).expect("a value at the cap decodes");
+            assert!(t.0.is_empty());
+            assert_eq!(list_depth(&v), MAX_VALUE_NESTING);
+            drop(v);
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_one_past_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING + 1);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_the_advisory_payload() {
+        // 60,000 levels: the GRAPH.RESTORE payload that used to exhaust the
+        // stack. The decoder stops at the cap, so this runs on a worker-sized
+        // stack too.
+        on_worker_stack(|| {
+            let mut t = nested_tape(60_000);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_round_trip_at_the_cap() {
+        // Everything a stored value goes through on its way to an RDB and
+        // back, and the drop of both copies, on a worker-sized stack.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            let mut t = Tape::default();
+            v.encode(&mut t);
+            let back = Value::decode(&mut t).expect("what was saved loads back");
+            assert!(t.0.is_empty());
+            assert_eq!(back, v);
+            drop(back);
+            drop(v);
+        });
     }
 }

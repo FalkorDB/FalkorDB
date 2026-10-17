@@ -28,6 +28,13 @@ import os
 import re
 import sys
 
+# GitHub Actions caps one workflow run's matrix at 256 jobs and drops the rest
+# without failing. _flow-flavour.yml is called once per flavour so each call
+# gets its own budget; the release flavour is the binding one because it runs
+# both buckets across two architectures.
+GHA_MATRIX_CAP = 256
+MAX_ARCHS = 2
+
 # Cluster topology forces spawn regardless of moduleArgs.
 CLUSTER_RE = re.compile(
     r"\bEnv\s*\([^)]*\b(oss-cluster|shardsCount)\b",
@@ -160,6 +167,23 @@ def main():
     print(f"test_files={json.dumps(services + spawn)}")
     # On stderr so it shows up in the GHA log without polluting $GITHUB_OUTPUT.
     print(f"  services: {len(services)}, spawn: {len(spawn)}", file=sys.stderr)
+
+    # GitHub caps a workflow run at 256 matrix jobs and SILENTLY DROPS the
+    # over-budget cells — the ceiling arrives as tests quietly ceasing to run,
+    # not as a red X. The worst case is the release flavour, which multiplies
+    # both buckets by two architectures. Fail loudly instead, so the cap
+    # announces itself the first time it is reached.
+    worst_case = (len(services) + len(spawn)) * MAX_ARCHS
+    if worst_case > GHA_MATRIX_CAP:
+        print(
+            f"error: the release flow matrix would be {worst_case} cells "
+            f"({len(services)} services + {len(spawn)} spawn, x{MAX_ARCHS} archs), "
+            f"over GitHub's cap of {GHA_MATRIX_CAP} jobs per workflow run. "
+            f"GHA drops the excess silently. Split a flavour into its own "
+            f"_flow-flavour.yml call, or reduce the file list.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

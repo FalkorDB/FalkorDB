@@ -423,3 +423,42 @@ class testPathFilter(FlowTestsBase):
             """MATCH (n) WHERE (n)-[:KNOWS]-() OR n.name = 'Alice'
                RETURN n""").structured_plan
         self.env.assertIsNotNone(locate_operation(plan, "Or Apply Multiplexer"))
+
+        # a constant as the other XOR operand: there is no row-dependent side
+        # for the multiplexer to build a branch from, which used to segfault.
+        # https://github.com/FalkorDB/FalkorDB/issues/2252
+        # https://github.com/FalkorDB/FalkorDB/issues/271
+        # the pattern holds for every row, so `pattern XOR TRUE` is never true
+        query = "MATCH (a) WHERE ()-[]->() XOR TRUE RETURN a.name"
+        self.env.assertEqual(self.graph.query(query).result_set, [])
+
+        query = "MATCH (v1) WHERE ()-[]-() XOR TRUE RETURN true"
+        self.env.assertEqual(self.graph.query(query).result_set, [])
+
+        # negating it keeps every row
+        # https://github.com/FalkorDB/FalkorDB/issues/1466
+        query = """MATCH (n) WHERE NOT((()--()) XOR TRUE)
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set,
+                             [['Alice'], ['Bob']])
+
+        # a pattern XORed with a false constant reduces to the pattern itself
+        query = """MATCH (n) WHERE (n)-[:KNOWS]->() XOR FALSE
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+
+        # a node variable is not a boolean - this must be a type error rather
+        # than a crash while cloning the plan
+        # https://github.com/FalkorDB/FalkorDB/issues/438
+        query = """MATCH (v0:Person), (v2:Person)
+                   WHERE (v2)<-[]-(v0 {name: 'Alice'}) XOR v2
+                   RETURN v0.name"""
+        try:
+            self.graph.query(query)
+            assert(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Type mismatch", str(e))
+
+        # the server is still usable after all of the above
+        query = "MATCH (n) RETURN count(n)"
+        self.env.assertEqual(self.graph.query(query).result_set, [[2]])

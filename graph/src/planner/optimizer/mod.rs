@@ -54,6 +54,7 @@ mod reduce_bound_edge;
 mod reduce_count;
 mod reduce_expand_into;
 mod reduce_var_len_path;
+mod references;
 mod reorder_labels;
 mod replace_cartesian_with_hash_join;
 mod select_scan_node;
@@ -126,6 +127,15 @@ pub fn optimize(
     graph: &Graph,
     params: &HashMap<String, Value>,
 ) -> DynTree<IR> {
+    // The query's plan and each nested plan are independent plans.
+    if matches!(plan.root().data(), IR::NestedPlans) {
+        let mut root = DynTree::new(IR::NestedPlans);
+        for child in plan.root().children() {
+            let optimized = optimize(&child.clone_as_tree(), graph, params);
+            root.root_mut().push_child_tree(optimized);
+        }
+        return root;
+    }
     let mut optimized_plan = plan.clone();
 
     reduce_count(&mut optimized_plan, graph);

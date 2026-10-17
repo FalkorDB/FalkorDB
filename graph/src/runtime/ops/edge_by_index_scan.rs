@@ -82,6 +82,8 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -91,12 +93,18 @@ impl<'a> EdgeByIndexScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
-                from: relationship_pattern.from.alias.id,
-                to,
-                edge: relationship_pattern.alias.id,
-                transposed,
-            }),
+            // `None`, for the same reason as `node_by_index_scan`: capping an
+            // index scan hangs `tests/flow/test_constraint.py`, and this line
+            // does it on its own. See the comment there.
+            emitter: BatchedResultEmitter::with_binding(
+                EdgeEndpoints {
+                    from: relationship_pattern.from.alias.id,
+                    to,
+                    edge: relationship_pattern.alias.id,
+                    transposed,
+                },
+                None,
+            ),
             relationship_pattern,
             query,
             transposed,
@@ -321,7 +329,24 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // so we don't rebuild the full-type Vec per row.
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                        let g = self.runtime.g.borrow();
+                        // Edge index: a numeric Equal/Range on a column we own is served
+                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+                        // string/geo/composite or a missing column falls through to RediSearch during
+                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
+                            Box::new(hit)
+                        } else {
+                            Box::new(g.get_indexed_edges(label, q))
+                        };
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = Box::new(g.get_indexed_edges(label, q));
+                        it
                     } else {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
@@ -341,6 +366,19 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 None
                             }
                         }))
+                    };
+
+                // An undirected pattern matches each edge in both
+                // orientations (a self-loop once), as `CondTraverse` does;
+                // the index yields it once, `src -> dst`.
+                let oriented_hits: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if rp.bidirectional {
+                        Box::new(base.flat_map(|(src, dst, edge)| {
+                            std::iter::once((src, dst, edge))
+                                .chain((src != dst).then_some((dst, src, edge)))
+                        }))
+                    } else {
+                        base
                     };
 
                 // Filter edges by *both* endpoints when the child has
@@ -366,7 +404,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 let same_endpoint_alias = rp.from.alias == rp.to.alias;
                 let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
-                        Box::new(base.filter(move |(src, dst, _)| {
+                        Box::new(oriented_hits.filter(move |(src, dst, _)| {
                             let (from_id, to_id) = if transposed {
                                 (*dst, *src)
                             } else {
@@ -377,7 +415,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 && (!same_endpoint_alias || from_id == to_id)
                         }))
                     } else {
-                        base
+                        oriented_hits
                     };
                 Ok(Some(RowIter::many(edges)))
             }) {

@@ -83,22 +83,23 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64,
-    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
+    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
     GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
     GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
     GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
     GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container,
+    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_kount, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -138,7 +139,7 @@ pub fn init(
         //   * Default — GxB_JIT_RUN: mirror the FalkorDB C module
         //     (src/module.c:106). PreJIT kernels statically linked into
         //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
-        //     graphblas.sh) are used for hot ops; RUN additionally permits
+        //     the native-deps GraphBLAS recipe) are used for hot ops; RUN additionally permits
         //     dlopen of any kernel already present in the on-disk cache,
         //     without any runtime compilation. In the shipped runtime image
         //     the cache is empty and no compiler is installed, so any op
@@ -152,10 +153,10 @@ pub fn init(
         //   * `--features prejit_harvest` — GxB_JIT_ON: full JIT including
         //     compile-on-demand. Selected at build time, never at runtime —
         //     prevents an env-var typo from accidentally enabling JIT in
-        //     a shipped binary. Used exclusively by gen_prejit.sh to
+        //     a shipped binary. Used exclusively by `native-deps prejit` to
         //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
         //     sources we then check in as the next generation of vendored
-        //     PreJIT (see graphblas.sh harvest mode).
+        //     PreJIT (see native-deps/src/prejit.rs).
         #[cfg(feature = "prejit_harvest")]
         let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
         #[cfg(not(feature = "prejit_harvest"))]
@@ -760,6 +761,36 @@ impl<T> Matrix<T> {
         t.nvals()
     }
 
+    /// How many entries the rows `rows` selects hold: `Σ_{i ∈ rows} |A(i, :)|`.
+    ///
+    /// One `w = Aᵀ·x` over `PLUS_PAIR`, then a `PLUS` reduction of `w`. On a
+    /// by-row matrix GraphBLAS computes the transposed product by pushing each
+    /// selected row into `w`, so the cost follows `rows` and their lengths,
+    /// not the size of the matrix — where `A·x` would visit every row. `PAIR`
+    /// reads only the two patterns, so the element type of `self` does not
+    /// matter. `rows` must be `nrows` long. Call [`Self::wait`] first if
+    /// `self` may have queued mutations.
+    #[must_use]
+    pub fn count_in_rows(
+        &self,
+        rows: &Vector<bool>,
+    ) -> u64 {
+        let w = Vector::<u64>::new(self.ncols());
+        unsafe {
+            let info = GrB_mxv(
+                w.ptr(),
+                null_mut(),
+                null_mut(),
+                GxB_PLUS_PAIR_UINT64,
+                *self.m,
+                rows.ptr(),
+                GrB_DESC_T0,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        w.sum()
+    }
+
     #[must_use]
     pub fn pending(&self) -> bool {
         unsafe {
@@ -1335,6 +1366,42 @@ impl Matrix<bool> {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Set every pair in `rows` x `cols` to `true`, in one GraphBLAS call.
+    ///
+    /// `GrB_Matrix_assign_BOOL` takes the two index lists and forms the
+    /// cartesian product itself, so the product is never enumerated on this
+    /// side — which is the whole reason for the method. Setting a million
+    /// nodes' single label went from a million `setElement` calls to one.
+    ///
+    /// No mask, no accumulator and no descriptor: assign writes `x` at every
+    /// `(i, j)` in `I x J` and leaves everything outside that block alone,
+    /// which is the union this wants. Duplicates in either list are harmless —
+    /// assigning `true` twice is assigning `true`.
+    pub fn assign_product_true(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        if rows.is_empty() || cols.is_empty() {
+            return;
+        }
+        unsafe {
+            let info = GrB_Matrix_assign_BOOL(
+                *self.m,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                true,
+                rows.as_ptr(),
+                rows.len() as u64,
+                cols.as_ptr(),
+                cols.len() as u64,
+                std::ptr::null_mut(),
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);

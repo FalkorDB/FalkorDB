@@ -24,14 +24,13 @@ use std::sync::Arc;
 use crate::graph::graph::{Graph, RelationshipId};
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     pending::Pending,
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
@@ -88,9 +87,14 @@ impl<'a> ExpandIntoOp<'a> {
             && relationship_pattern.from.labels.is_empty()
             && !relationship_pattern.to.labels.is_empty();
         let emitter: BatchedResultEmitter<'a, RelationshipId> = if synthetic_label {
-            BatchedResultEmitter::new_without_alias()
+            // `None`, measured: capping made no difference (346,839 against
+            // 355,075 instructions on `LIMIT 10`). `ExpandInto` never packs a
+            // wasted batch because its input is already capped upstream — the
+            // scan and the traverse feeding it both lower their own ceilings —
+            // so there is nothing here for a cap to save.
+            BatchedResultEmitter::new_without_alias(None)
         } else {
-            BatchedResultEmitter::new(relationship_pattern.alias.id)
+            BatchedResultEmitter::new(relationship_pattern.alias.id, None)
         };
         Self {
             runtime,
@@ -119,7 +123,6 @@ impl<'a> ExpandIntoOp<'a> {
     /// `from` carries all the required labels.
     #[allow(clippy::too_many_arguments)]
     fn expand_row(
-        runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         synthetic_label: bool,
         emit_relationship: bool,
@@ -163,13 +166,9 @@ impl<'a> ExpandIntoOp<'a> {
         }
 
         let env = BatchRow::new(batch, row_idx);
-        let filter_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.attrs,
-            rp.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let has_edge_filter = matches!(filter_attrs, Value::Map(ref m) if !m.is_empty());
+        // An edge predicate is applied by the Filter above. The planner sets
+        // `emit_relationship` for such an edge, so every candidate edge is
+        // emitted for it to test rather than one representative per pair.
 
         // Edge directions to probe: forward, plus reverse when the pattern is
         // bidirectional and not a self-loop. NodeId is Copy, so this fixed array
@@ -195,7 +194,7 @@ impl<'a> ExpandIntoOp<'a> {
         for &(edge_src, edge_dst) in &pairs[..npairs] {
             let mat_src = u64::from(edge_src);
             let mat_dst = u64::from(edge_dst);
-            if !emit_relationship && !has_edge_filter {
+            if !emit_relationship {
                 // One representative edge per (src, dst) pair.
                 let mut found_id: Option<RelationshipId> = None;
                 'outer: for &tidx in edge_type_indices.iter() {
@@ -223,25 +222,6 @@ impl<'a> ExpandIntoOp<'a> {
                     }
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                         continue;
-                    }
-                    if let Value::Map(ref filter_map) = filter_attrs
-                        && !filter_map.is_empty()
-                    {
-                        let mut matches = true;
-                        for (attr, avalue) in filter_map.iter() {
-                            if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
-                                if *avalue == pvalue {
-                                    continue;
-                                }
-                                matches = false;
-                                break;
-                            }
-                            matches = false;
-                            break;
-                        }
-                        if !matches {
-                            continue;
-                        }
                     }
                     row_edges.push(id);
                 }
@@ -288,7 +268,6 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
                     Self::expand_row(
-                        runtime,
                         rp,
                         synthetic_label,
                         emit_relationship,

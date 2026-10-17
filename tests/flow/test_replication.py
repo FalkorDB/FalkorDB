@@ -182,6 +182,17 @@ class testReplication(FlowTestsBase):
         replica_result = replica.ro_query(q).result_set
         env.assertEqual(replica_result, result)
 
+        # the comparison above is symmetric: it passes just as well when BOTH
+        # sides lost the OPTIONS, so it cannot see an option dropped on the way
+        # out or materialised into a default on the way in. Assert against the
+        # values the statement above actually stated, on the replica, so that
+        # what reached it is checked rather than merely agreed on.
+        q = "CALL db.indexes() YIELD label, language, stopwords"
+        l1 = [r for r in replica.ro_query(q).result_set if r[0] == 'L1']
+        env.assertEqual(len(l1), 1)
+        env.assertEqual(l1[0][1], 'german')
+        env.assertEqual(sorted(l1[0][2]), ['a', 'b'])
+
         # drop fulltext index
         q = "CALL db.idx.fulltext.drop('L')"
         result = src.query(q)

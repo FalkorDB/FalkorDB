@@ -61,6 +61,13 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Scope tables no longer on `env_stack`: the scopes of a CALL body,
+    /// popped when the body closes, and those of UNION branches, each bound
+    /// by its own binder. The planner mints fresh variables at
+    /// `scope_vars[scope].len()`, so `bind` must report, for every scope, the
+    /// largest table any of them used, or those ids collide with real
+    /// variables (or index past the table).
+    retired_scope_vars: Vec<Vec<Variable>>,
 }
 
 impl Default for Binder {
@@ -72,6 +79,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            retired_scope_vars: vec![],
         }
     }
 }
@@ -94,16 +102,17 @@ impl Binder {
     ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
         let mut bound = self.bind_ir(ir)?;
         self.update_all_node_labels(&mut bound);
-        let scope_vars = self
-            .env_stack
-            .iter()
-            .map(|env| {
-                let mut vars = env.values().cloned().collect::<Vec<_>>();
-                vars.sort_by_key(|v| v.id);
-                vars
-            })
-            .collect();
+        let mut scope_vars = self.scope_vars();
+        merge_scope_vars(
+            &mut scope_vars,
+            std::mem::take(&mut self.retired_scope_vars),
+        );
         Ok((bound, scope_vars))
+    }
+
+    /// The live scopes' variables, indexed by scope id.
+    fn scope_vars(&self) -> Vec<Vec<Variable>> {
+        self.env_stack.iter().map(sorted_scope_vars).collect()
     }
 
     /// Post-process the bound IR: update every QueryNode's labels to the
@@ -262,7 +271,8 @@ impl Binder {
                 let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     let binder = Self::default();
-                    let (bound, _) = binder.bind(branch)?;
+                    let (bound, branch_scope_vars) = binder.bind(branch)?;
+                    merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
                     let columns = bound.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
@@ -730,9 +740,13 @@ impl Binder {
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();
-        while self.env_stack.len() > saved_env_stack_len {
-            self.env_stack.pop();
-        }
+        let mut inner_scopes = vec![vec![]; saved_env_stack_len];
+        inner_scopes.extend(
+            self.env_stack
+                .drain(saved_env_stack_len..)
+                .map(|env| sorted_scope_vars(&env)),
+        );
+        merge_scope_vars(&mut self.retired_scope_vars, inner_scopes);
         *self.current_env_mut() = saved_env;
 
         // 4. If returning, check for variable shadowing, allocate outer IDs,
@@ -779,6 +793,34 @@ impl Binder {
     /// Bind the inner body of a CALL subquery with scope isolation.
     /// For Query bodies: set env to imported vars, bind normally.
     /// For Union bodies: create binders initialized with imported vars for each branch.
+    ///
+    /// # The body's entry projection
+    ///
+    /// Every body gets one, even a body that imports nothing, because it is
+    /// the record boundary between the outer scope and the body — not merely
+    /// the carrier for imported values.
+    ///
+    /// The body is bound in its own scope, so its variables are numbered from
+    /// 0; a runtime row is a dense array indexed by `Variable.id` alone, with
+    /// `scope_id` never reaching the row. The enclosing `Apply` feeds the
+    /// outer row into the body through an `Argument` leaf, so without a
+    /// boundary the body's variables are written over the outer bindings
+    /// occupying those same slots — a body predicate is then tested against an
+    /// outer value, and a body scan endpoint looks already bound.
+    ///
+    /// `Project` is that boundary: `ProjectOp` builds a fresh batch holding
+    /// only what it projects and drops its input, so nothing below it reaches
+    /// the body. An empty projection still carries row count and `origin_row`,
+    /// which is all a body importing nothing needs from the outer stream.
+    ///
+    /// This mirrors the C engine, where an `Argument` is planted only beneath
+    /// a childless `Project` (`_find_feeding_points`), so the outer record
+    /// likewise only ever enters a body through a projection that rebuilds it.
+    /// C can also omit the `Argument` entirely for a non-importing body, since
+    /// its `Apply` is row-at-a-time and re-runs the body per outer record;
+    /// Rust's `Apply` is batched and needs the `Argument` to carry cardinality
+    /// and `origin_row` correlation, so it takes the projection route for
+    /// every body.
     fn bind_call_body(
         &mut self,
         body: RawQueryIR,
@@ -802,24 +844,25 @@ impl Binder {
                 // the CALL body is isolated, not a child scope)
                 self.env_stack.push(HashMap::new());
 
-                if !imported.is_empty() {
-                    // Allocate fresh inner IDs for imported variables and build
-                    // projection pairs that map outer → inner.
-                    let projections = self.build_import_projections(&imported);
+                // Allocate fresh inner IDs for imported variables and build
+                // projection pairs that map outer → inner. Emitted even when
+                // nothing is imported: this clause is the body's entry
+                // projection, and the body needs it as a record boundary
+                // whether or not it carries a value across. See
+                // `bind_call_body`'s note on why.
+                let projections = self.build_import_projections(&imported);
 
-                    // Emit a bound import WITH as the first clause
-                    bound.push(QueryIR::With {
-                        distinct: false,
-                        all: false,
-                        exprs: projections,
-                        copy_from_parent: vec![],
-                        orderby: vec![],
-                        skip: None,
-                        limit: None,
-                        filter: None,
-                        write: false,
-                    });
-                }
+                bound.push(QueryIR::With {
+                    distinct: false,
+                    all: false,
+                    exprs: projections,
+                    copy_from_parent: vec![],
+                    orderby: vec![],
+                    skip: None,
+                    limit: None,
+                    filter: None,
+                    write: false,
+                });
 
                 // Bind remaining clauses (skip raw import WITH)
                 for clause in clauses.into_iter().skip(skip_count) {
@@ -858,6 +901,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        retired_scope_vars: vec![],
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -865,20 +909,20 @@ impl Binder {
                         let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
-                        if !imported.is_empty() {
-                            let projections = binder.build_import_projections(&imported);
-                            bound_clauses.push(QueryIR::With {
-                                distinct: false,
-                                all: false,
-                                exprs: projections,
-                                copy_from_parent: vec![],
-                                orderby: vec![],
-                                skip: None,
-                                limit: None,
-                                filter: None,
-                                write: false,
-                            });
-                        }
+                        // Entry projection for this branch, emitted even when
+                        // the branch imports nothing (see `bind_call_body`).
+                        let projections = binder.build_import_projections(&imported);
+                        bound_clauses.push(QueryIR::With {
+                            distinct: false,
+                            all: false,
+                            exprs: projections,
+                            copy_from_parent: vec![],
+                            orderby: vec![],
+                            skip: None,
+                            limit: None,
+                            filter: None,
+                            write: false,
+                        });
 
                         for clause in clauses.into_iter().skip(skip_count) {
                             bound_clauses.push(binder.bind_ir(clause)?);
@@ -903,6 +947,9 @@ impl Binder {
                     } else {
                         first_columns = Some(columns);
                     }
+                    let mut branch_scope_vars = binder.scope_vars();
+                    merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
+                    merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
@@ -1827,6 +1874,23 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::PatternComprehension(graph) => {
+                // Where parent-scope variables are visible (ORDER BY), a name
+                // the pattern shares with one must refer to it rather than
+                // become a fresh pattern-local variable, as it would in an
+                // ordinary expression. Copy such names in first, so
+                // `bind_graph` reuses them and the cleanup below keeps them.
+                if self.use_parent_scope {
+                    for name in graph.variables() {
+                        if !name.starts_with("_anon")
+                            && !self.current_env().contains_key(&name)
+                            && !locals.iter().any(|scope| scope.contains_key(&name))
+                        {
+                            // Not a parent variable either: the pattern binds it.
+                            let _ = self.resolve_name(&name, locals);
+                        }
+                    }
+                }
+
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
                 let outer_scope_names: HashSet<Arc<String>> =
@@ -1883,10 +1947,22 @@ impl Binder {
                     return Ok(new_tree);
                 }
 
-                let children = node_ref
+                let mut children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Parentheses only group what the parser reads; the tree it
+                // built already carries that grouping. Returning the single
+                // operand gives `(x)` the same bound tree as `x`, so no bound
+                // tree - and nothing downstream of the binder - ever holds an
+                // `ExprIR::Paren`.
+                if matches!(node_ref.data(), ExprIR::Paren) {
+                    debug_assert_eq!(children.len(), 1, "`(...)` has one operand");
+                    return children
+                        .pop()
+                        .ok_or_else(|| String::from("Empty parenthesised expression"));
+                }
 
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Constant(v) => ExprIR::Constant(v),
@@ -1924,23 +2000,15 @@ impl Binder {
                         // except when the Path comes from a variable-length
                         // relationship pattern (e.g. `[r*]`) — in that case
                         // `r.prop` is treated as a per-edge predicate.
-                        if let Some(first_child) = children.first() {
-                            let root = first_child.root();
-                            let inner = if matches!(root.data(), ExprIR::Paren) {
-                                root.get_child(0)
-                            } else {
-                                Some(root)
-                            };
-                            if let Some(node) = inner
-                                && let ExprIR::Variable(v) = node.data()
-                                && v.ty == Type::Path
-                                && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
-                            {
-                                return Err("Type mismatch: expected Map, Node, Edge, \
-                                             Datetime, Date, Time, Duration, Null, \
-                                             or Point but was Path"
-                                    .to_string());
-                            }
+                        if let Some(first_child) = children.first()
+                            && let ExprIR::Variable(v) = first_child.root().data()
+                            && v.ty == Type::Path
+                            && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                        {
+                            return Err("Type mismatch: expected Map, Node, Edge, \
+                                         Datetime, Date, Time, Duration, Null, \
+                                         or Point but was Path"
+                                .to_string());
                         }
                         ExprIR::Property(prop)
                     }
@@ -1981,7 +2049,12 @@ impl Binder {
                         }
                         ExprIR::FuncInvocation(func)
                     }
-                    ExprIR::Paren => ExprIR::Paren,
+                    ExprIR::Paren => unreachable!("returned above"),
+                    ExprIR::NestedPlan(_) => {
+                        return Err(String::from(
+                            "A nested plan is created by the planner, never parsed",
+                        ));
+                    }
                     ExprIR::ShortestPath(info) => {
                         // Verify children (source/dest vars) are bound
                         for child in &children {
@@ -2060,6 +2133,14 @@ impl Binder {
                     && let Ok(value) = pure_fn(&args)
                 {
                     return Ok(DynTree::new(ExprIR::Constant(value)));
+                }
+                // AND and OR are associative, so a grouped run of the same
+                // operator - `(a AND b) AND c` - joins its parent's operands
+                // in place. Filters are then split into all their conjuncts.
+                match new_data {
+                    ExprIR::And => return Ok(ExprIR::and_of(children)),
+                    ExprIR::Or => return Ok(ExprIR::or_of(children)),
+                    _ => {}
                 }
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -2242,10 +2323,10 @@ impl Binder {
                 node.children().all(Self::expr_may_return_boolean)
             }
 
-            // Transparent wrappers – recurse into the single child
-            ExprIR::Paren | ExprIR::Distinct => {
-                node.get_child(0).is_some_and(Self::expr_may_return_boolean)
-            }
+            // Transparent wrapper – recurse into the single child
+            ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_boolean),
+
+            ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Function calls – use the registered return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
@@ -2266,7 +2347,8 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_) => false,
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Eq
@@ -2315,10 +2397,10 @@ impl Binder {
             // matches the pre-variant behaviour.
             ExprIR::Case { .. } => true,
 
-            // Transparent wrappers – recurse into the single child
-            ExprIR::Paren | ExprIR::Distinct => {
-                node.get_child(0).is_some_and(Self::expr_may_return_entity)
-            }
+            // Transparent wrapper – recurse into the single child
+            ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_entity),
+
+            ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Subscript and property access could produce entities at runtime
             ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
@@ -2334,6 +2416,7 @@ impl Binder {
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
             | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_)
             | ExprIR::Or
             | ExprIR::And
             | ExprIR::Xor
@@ -2609,4 +2692,114 @@ fn raw_exprs_structurally_equal(
     }
 
     nodes_eq(a, a.root().idx(), b, b.root().idx())
+}
+
+/// One scope's variables, ordered by id.
+fn sorted_scope_vars(env: &HashMap<Arc<String>, Variable>) -> Vec<Variable> {
+    let mut vars = env.values().cloned().collect::<Vec<_>>();
+    vars.sort_by_key(|v| v.id);
+    vars
+}
+
+/// Merge `other` into `scope_vars`, keeping for each scope whichever table is
+/// longer, so ids minted at `len()` are fresh for both.
+fn merge_scope_vars(
+    scope_vars: &mut Vec<Vec<Variable>>,
+    other: Vec<Vec<Variable>>,
+) {
+    if scope_vars.len() < other.len() {
+        scope_vars.resize(other.len(), vec![]);
+    }
+    for (scope, vars) in other.into_iter().enumerate() {
+        if vars.len() > scope_vars[scope].len() {
+            scope_vars[scope] = vars;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Binder;
+    use crate::parser::cypher::Parser;
+
+    /// The bound IR of `query`, rendered with `Debug`.
+    fn bound(query: &str) -> String {
+        // Binding a call resolves it against the process-global registry.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, _) = Binder::default().bind(raw).expect("bind");
+        format!("{ir:?}")
+    }
+
+    /// Parentheses group the parse; once bound, `(x)` is the same tree as
+    /// `x`, so the optimizer sees the same predicates either way (#3331,
+    /// #3187).
+    #[test]
+    fn parentheses_bind_to_the_same_ir() {
+        let same = [
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7) AND n.s = 1 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE ((n.k = $k) AND ((n.s = $s))) RETURN n",
+                "MATCH (n:A) WHERE n.k = $k AND n.s = $s RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) AND n.t = 2 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k = 1 OR (n.s = 2 OR n.t = 3) RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 OR n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE NOT (n.k IN ([1, 2])) RETURN n",
+                "MATCH (n:A) WHERE NOT n.k IN [1, 2] RETURN n",
+            ),
+            (
+                "MATCH (a), (b) WHERE ((id(a) = 1) AND (id(b) = 2)) RETURN a, b",
+                "MATCH (a), (b) WHERE id(a) = 1 AND id(b) = 2 RETURN a, b",
+            ),
+            (
+                "MATCH (a) WHERE ((a)-->()) RETURN a",
+                "MATCH (a) WHERE (a)-->() RETURN a",
+            ),
+            (
+                "MATCH (n:A) SET n.v = (n.k + 1) RETURN n",
+                "MATCH (n:A) SET n.v = n.k + 1 RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in same {
+            assert_eq!(bound(parenthesised), bound(plain), "{parenthesised}");
+        }
+    }
+
+    /// Only the wrapper goes: grouping that changes the meaning still does.
+    #[test]
+    fn parentheses_that_regroup_still_bind_differently() {
+        let different = [
+            (
+                "MATCH (n:A) WHERE (n.k = 1 OR n.s = 2) AND n.t = 3 RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 AND n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k - (n.s - n.t) = 0 RETURN n",
+                "MATCH (n:A) WHERE n.k - n.s - n.t = 0 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k < n.s) < n.t RETURN n",
+                "MATCH (n:A) WHERE n.k < n.s < n.t RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in different {
+            assert_ne!(bound(parenthesised), bound(plain), "{parenthesised}");
+        }
+    }
 }

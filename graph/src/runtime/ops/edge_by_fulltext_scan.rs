@@ -54,14 +54,13 @@ impl<'a> EdgeByFulltextScanOp<'a> {
         record_cap: Option<usize>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let mut emitter = BatchedResultEmitter::with_binding(ScoredColumn {
-            id: edge.id,
-            score: score.as_ref().map(|v| v.id),
-        });
-        // A downstream Skip/Limit lowers how many rows are needed; shrink the
-        // pack ceiling so the first emit drains just enough index results
-        // instead of a full BATCH_SIZE worth of work.
-        emitter.apply_record_cap(record_cap);
+        let emitter = BatchedResultEmitter::with_binding(
+            ScoredColumn {
+                id: edge.id,
+                score: score.as_ref().map(|v| v.id),
+            },
+            record_cap,
+        );
         Self {
             runtime,
             child,

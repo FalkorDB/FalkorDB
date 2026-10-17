@@ -73,8 +73,7 @@ impl<'a> UnwindOp<'a> {
         // limit (or one at/over a full batch) we pack a whole `BATCH_SIZE`; a
         // tighter limit caps each batch so the first `emit_lazy` returns just
         // enough rows (clamped to at least 1, since `LIMIT 0` still runs the op).
-        let mut emitter = BatchedResultEmitter::with_binding(name.id);
-        emitter.apply_record_cap(record_cap);
+        let emitter = BatchedResultEmitter::with_binding(name.id, record_cap);
         Self {
             runtime,
             child,

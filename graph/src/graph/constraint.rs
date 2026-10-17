@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::entity_type::EntityType;
 
 /// Type of constraint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConstraintType {
     Unique,
     Mandatory,
@@ -23,7 +23,7 @@ impl std::fmt::Display for ConstraintType {
 }
 
 /// Status of a constraint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstraintStatus {
     UnderConstruction,
     Operational,
@@ -47,7 +47,7 @@ impl std::fmt::Display for ConstraintStatus {
 #[derive(Clone, Debug)]
 pub struct Constraint {
     /// Process-unique identifier. Stable across `Vec::swap_remove`, used by
-    /// async validation to refer to a constraint after releasing the read lock.
+    /// background validation to refer to a constraint after releasing the read lock.
     pub id: u64,
     pub ct: ConstraintType,
     pub entity_type: EntityType,
