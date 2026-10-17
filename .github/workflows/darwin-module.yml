@@ -47,7 +47,7 @@ jobs:
       - name: Verify fork-safety properties
         run: |
           set -euo pipefail
-          MODULE=$(ls bin/macos-*-release/falkordb.so) || { echo "FAIL: no module built"; exit 1; }
+          MODULE="$(pwd)/$(ls bin/macos-*-release/falkordb.so)" || { echo "FAIL: no module built"; exit 1; }
           echo "module: $MODULE"
           DATA="$(mktemp -d)"
           ./redis-8.2.3/src/redis-server --port 55901 --bind 127.0.0.1 \
