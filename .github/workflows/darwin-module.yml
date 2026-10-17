@@ -1,0 +1,93 @@
+name: darwin-module
+
+# Builds the darwin-arm64 falkordb module from this fork and proves the
+# fork-safety properties live: no module forks under attribute-index
+# churn, async-delete defaults off, GRAPH.COPY refuses. The module
+# artifact is attached for downstream consumption (the exocortex
+# standalone runtime).
+on:
+  push:
+    branches: ["darwin-no-fork-gc*"]
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build toolchain
+        run: |
+          brew install make cmake automake autoconf libtool peg redis
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Build dependencies
+        run: |
+          make deps OSX_MIN_SDK_VER=14.0 \
+            ACLOCAL_PATH="$(brew --prefix libtool)/share/aclocal:$(brew --prefix)/share/aclocal" \
+            CXXFLAGS="-Wno-error=vla-cxx-extension"
+
+      - name: Build module
+        run: |
+          make OSX_MIN_SDK_VER=14.0 -j"$(sysctl -n hw.ncpu)" \
+            ACLOCAL_PATH="$(brew --prefix libtool)/share/aclocal:$(brew --prefix)/share/aclocal" \
+            CXXFLAGS="-Wno-error=vla-cxx-extension"
+
+      - name: Build Redis 8.2.3 (test server)
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            -o redis.tar.gz https://github.com/redis/redis/archive/refs/tags/8.2.3.tar.gz
+          tar xzf redis.tar.gz
+          (cd redis-8.2.3 && make redis-server -j"$(sysctl -n hw.ncpu)" >/dev/null)
+
+      - name: Verify fork-safety properties
+        run: |
+          set -euo pipefail
+          MODULE="$(pwd)/bin/macos-*-release/falkordb.so"
+          DATA="$(mktemp -d)"
+          DYLD_LIBRARY_PATH="$(brew --prefix libtool)/lib" \
+            ./redis-8.2.3/src/redis-server --port 55901 --bind 127.0.0.1 \
+            --save '' --appendonly no --dir "$DATA" --loadmodule "$MODULE" \
+            > "$DATA/store.log" 2>&1 &
+          STORE=$!
+          trap 'kill -9 $STORE 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            redis-cli -p 55901 PING >/dev/null 2>&1 && break
+            sleep 1
+          done
+          redis-cli -p 55901 PING
+
+          # Property 1: async-delete defaults OFF on darwin.
+          AD=$(redis-cli -p 55901 GRAPH.CONFIG GET ASYNC_DELETE | tail -1)
+          [ "$AD" = "0" ] || { echo "FAIL: ASYNC_DELETE defaults to $AD"; exit 1; }
+
+          # Property 2: GRAPH.COPY refuses cleanly.
+          redis-cli -p 55901 GRAPH.QUERY v "CREATE (:A {v:'seed'})" >/dev/null
+          redis-cli -p 55901 GRAPH.COPY v vcopy 2>&1 | grep -q \
+            'disabled on darwin' || { echo "FAIL: GRAPH.COPY did not refuse"; exit 1; }
+
+          # Property 3: no module forks through indexed garbage churn
+          # (the stock module forks here: GC timer over >=100 deleted docs).
+          redis-cli -p 55901 GRAPH.QUERY v "CREATE INDEX FOR (n:A) ON (n.v)" >/dev/null
+          Q="CREATE "; for i in $(seq 1 200); do Q="$Q(:A {v:'i$i'}),"; done
+          redis-cli -p 55901 GRAPH.QUERY v "${Q%,}" >/dev/null
+          redis-cli -p 55901 GRAPH.QUERY v "MATCH (n:A) DELETE n" >/dev/null
+          sleep 75
+          FORKS=$(redis-cli -p 55901 INFO stats | tr -d '\r' | awk -F: '/total_forks/{print $2}')
+          [ "$FORKS" = "0" ] || { echo "FAIL: total_forks=$FORKS"; exit 1; }
+          redis-cli -p 55901 PING
+          echo "all fork-safety properties hold"
+
+      - name: Attach module artifact
+        run: |
+          mkdir -p dist
+          cp bin/macos-*-release/falkordb.so dist/
+          (cd dist && shasum -a 256 falkordb.so > falkordb.so.sha256)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: falkordb-darwin-arm64
+          path: dist/*
