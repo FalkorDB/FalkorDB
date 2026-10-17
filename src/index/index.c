@@ -229,9 +229,19 @@ void Index_ConstructStructure
 	// RediSearch_IndexOptionsSetGetValueCallback(idx_options, _getNodeAttribute, gc);
 
 	#ifndef MEMCHECK
+	#if !defined(__APPLE__)
 	// enable GC, every 30 seconds gc will check if there's garbage
 	// if there are over 100 docs to remove GC will perform clean up
 	RediSearch_IndexOptionsSetGCPolicy(idx_options, GC_POLICY_FORK);
+	#else
+	// macOS: the fork-based GC timer calls RedisModule_Fork from the main
+	// thread while module worker threads are parked; fork() corrupts the
+	// parked workers' pthread state and the kernel traps the server with
+	// SIGILL (one-to-two store deaths per boot window observed downstream).
+	// Run without the background GC on darwin: removed docs leave
+	// un-reclaimed buffers in the attribute indexes, a bounded memory cost,
+	// not a crash.
+	#endif
 	#endif
 
 	RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
