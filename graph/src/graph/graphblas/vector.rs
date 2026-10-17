@@ -40,7 +40,11 @@ use std::{
     ptr::{addr_of_mut, null_mut},
 };
 
-use crate::graph::graphblas::{GrB_UINT64, GrB_Vector_clear, GrB_Vector_setElement_UINT64};
+use crate::graph::graphblas::{
+    GrB_PLUS_MONOID_UINT64, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new,
+    GrB_Scalar_setElement_BOOL, GrB_UINT64, GrB_Vector_clear, GrB_Vector_reduce_UINT64,
+    GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
+};
 
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
@@ -134,6 +138,36 @@ impl Vector<bool> {
             let info = GrB_Vector_wait(self.v, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    /// An indicator vector of size `nrows` with an entry at each of
+    /// `indices`, which must be ascending, distinct and below `nrows`.
+    ///
+    /// One `GxB_Vector_build_Scalar`: no values array, an iso vector, and no
+    /// pending tuples to sort the way a `set` per index leaves them.
+    #[must_use]
+    pub fn from_sorted_indices(
+        nrows: u64,
+        indices: &[u64],
+    ) -> Self {
+        debug_assert!(indices.windows(2).all(|w| w[0] < w[1]));
+        debug_assert!(indices.last().is_none_or(|&i| i < nrows));
+        let v = Self::new(nrows);
+        if indices.is_empty() {
+            return v;
+        }
+        unsafe {
+            let mut scalar: GrB_Scalar = null_mut();
+            let mut info = GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_setElement_BOOL(scalar, true);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GxB_Vector_build_Scalar(v.v, indices.as_ptr(), scalar, indices.len() as u64);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_free(&raw mut scalar);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        v
     }
 
     #[must_use]
@@ -448,6 +482,28 @@ impl Vector<u64> {
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
+    }
+
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
+    /// The sum of the stored values (`PLUS` monoid; 0 when empty).
+    #[must_use]
+    pub fn sum(&self) -> u64 {
+        let mut sum = 0u64;
+        unsafe {
+            let info = GrB_Vector_reduce_UINT64(
+                &raw mut sum,
+                null_mut(),
+                GrB_PLUS_MONOID_UINT64,
+                self.v,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        sum
     }
 }
 

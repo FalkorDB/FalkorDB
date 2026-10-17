@@ -143,6 +143,11 @@ def mountable_mkdtemp(*args, **kwargs):
     via _spawn_falkordb's bind-mount logic. Local dev gets plain mkdtemp."""
     if os.getenv("FALKORDB_TEST_IMAGE") and "dir" not in kwargs:
         kwargs["dir"] = _ci_tmpdir()
+        path = tempfile.mkdtemp(*args, **kwargs)
+        # mkdtemp makes it 0700, owned by this process; the image's
+        # redis-server runs as `falkordb` and could not use it.
+        os.chmod(path, 0o777)
+        return path
     return tempfile.mkdtemp(*args, **kwargs)
 
 
@@ -242,7 +247,10 @@ def _log_mount_args(alias):
     if not ws:
         return [], None
     log_dir = os.path.join(ws, "redis-logs", alias)
-    os.makedirs(log_dir, mode=0o777, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    # makedirs' mode is masked by the umask, so set it outright: redis-server
+    # runs as `falkordb` in the image and opens its --logfile here.
+    os.chmod(log_dir, 0o777)
     host_path, covered = _host_path_for(log_dir)
     if not covered:
         return [], None
