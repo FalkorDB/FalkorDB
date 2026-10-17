@@ -41,11 +41,32 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
     parser::ast::{ExprIR, Variable},
+    runtime::runtime::GetVariables,
     tree,
 };
 
 use super::super::{IR, subtree_contains};
-use super::{collect_expr_variables, collect_subtree_variables};
+
+// The binder allocates variable IDs independently in each scope. In particular,
+// an OPTIONAL MATCH after WITH can reuse an ID from the preceding MATCH. Treating
+// those variables as identical can push a predicate below the traversal that
+// binds it, where the still-unbound value makes the predicate evaluate to null.
+fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<(u32, u32)> {
+    expr.root()
+        .walk::<Bfs>()
+        .filter_map(|expr| match expr {
+            ExprIR::Variable(var) => Some((var.id, var.scope_id)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<(u32, u32)> {
+    node.get_variables()
+        .into_iter()
+        .map(|var| (var.id, var.scope_id))
+        .collect()
+}
 
 /// Variables a filter hoisted directly above `node` is allowed to reference,
 /// for the env-resetting operators only.
@@ -56,13 +77,13 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// enclosing `Apply` propagates through `Argument`. Returns `None` for
 /// operators that pass their input environment through unchanged, where the
 /// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<(u32, u32)>> {
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
-                .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .map(|(v, _)| (v.id, v.scope_id))
+                .chain(copies.iter().map(|(v, _)| (v.id, v.scope_id)))
                 .collect(),
         ),
         IR::Aggregate {
@@ -70,8 +91,8 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
         } => Some(
             names
                 .iter()
-                .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .map(|v| (v.id, v.scope_id))
+                .chain(projections.iter().map(|(v, _)| (v.id, v.scope_id)))
                 .collect(),
         ),
         _ => None,
