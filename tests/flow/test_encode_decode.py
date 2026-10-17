@@ -488,6 +488,28 @@ class test_encode_decode(FlowTestsBase):
         for name in names:
             self.db.select_graph(name).delete()
 
+    def test_19_index_on_attribute_named_like_a_field_prefix(self):
+        # The RDB carries an index field's bare attribute name, so a name that
+        # happens to start with `range:` or `vector:` must come back verbatim
+        # rather than being read as a RediSearch field prefix (issue #3239).
+        self.graph.query("CREATE (:L {`range:x`: 1, `vector:v`: vecf32([1.0, 2.0])})")
+        create_node_range_index(self.graph, "L", "`range:x`", sync=True)
+        create_node_vector_index(self.graph, "L", "`vector:v`", dim=2, sync=True)
+
+        query = "CALL db.indexes() YIELD properties RETURN properties"
+        self.env.assertEqual(sorted(self.graph.query(query).result_set[0][0]),
+                             ["range:x", "vector:v"])
+
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        self.env.assertEqual(sorted(self.graph.query(query).result_set[0][0]),
+                             ["range:x", "vector:v"])
+
+        # and the reloaded index still serves the attribute it was built on
+        query = "MATCH (n:L) WHERE n.`range:x` = 1 RETURN count(n)"
+        self.env.assertContains("Index Scan", str(self.graph.explain(query)))
+        self.env.assertEqual(self.graph.query(query).result_set, [[1]])
+
 
 class test_encode_decode_rename(FlowTestsBase):
     # Its own env: the test restarts the server to read its RDB back, and it
