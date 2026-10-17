@@ -1,0 +1,152 @@
+# expr_semantics: what scalar expressions evaluate to, per row and per column
+
+This project models how the engine evaluates scalar expressions. It proves two things:
+
+- the columnar evaluator (`VectorEval`), which Filter, Project and Aggregate actually run, gives the same answer as the per-row evaluator (`ExprEval::eval_node`);
+- the per-row evaluator follows openCypher's three-valued logic.
+
+It also pins down, with counterexamples, the places where the per-row evaluator departs from openCypher or from C FalkorDB.
+
+User-facing behaviour that depends on it:
+
+- `WHERE` predicates: comparisons, `AND`, `OR`, `NOT`, `XOR`, `IN`;
+- arithmetic in `RETURN`, `WITH` and `SET`, including integer overflow;
+- `CASE` expressions;
+- `^`, `sign()`, `toInteger()`, `coalesce()`;
+- `UNWIND range(…)`;
+- `shortestPath`, whose bidirectional BFS lives in `runtime/eval.rs`.
+
+The Rust is mostly in `graph/src/runtime/eval.rs`, `vector_expr.rs`, `vectorized.rs` and `value.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorExprSemantics.lean`](FalkorExprSemantics.lean). This README explains *what* is proven and *why it matters*.
+
+## The questions this project answers
+
+**1. Does the columnar path give the same answer as the per-row path?**
+
+Yes, for every lane this project models:
+
+- **comparison kernels:** the `Int` kernel, the `f64` kernel, mixed `Int`/`Float` promotion, the flipped-constant form (`5 < n.x` run as `n.x > 5`) and the generic lane (`vec_cmp_int`, `vec_cmp_float`, `vec_cmp_int_flip`, `vec_cmp_float_flip`, `vec_cmp_generic`);
+- **whole-column comparison:** `compare_columns`, over all its arms (`compareColumns_agrees`);
+- **arithmetic:** the same values row for row, and an error exactly when, and with exactly the message, the per-row evaluation errors (`arith_agrees`);
+- **`AND`/`OR` with row narrowing:** the per-row short-circuit fold on every row (`andOr_agrees`);
+- **`CASE`:** each `WHEN`, `THEN` and `ELSE` runs for exactly the rows the per-row path runs it for (`case_agrees`, `case_match_agrees`). So `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END` can't divide by zero on either path.
+
+Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row.
+
+**2. Is the logic openCypher's three-valued logic?**
+
+Yes:
+
+- `AND`, `OR` and `XOR` are Kleene logic (`and_kleene`, `or_kleene`, `xor_kleene`);
+- De Morgan holds (`deMorgan_and`, `deMorgan_or`);
+- `x IN list` is Kleene "any" of `x = element` for scalars (`contains_is_kleene_any`), so `1 IN [2, null]` is `null` and not `false`;
+- `<>` is exactly `NOT (=)` (`neq_eq_not_eq`), since #2917.
+
+**3. What does integer arithmetic do at the edges?**
+
+`i64` arithmetic wraps, as in a Rust release build. It equals mathematical arithmetic whenever the result is in range (`add_exact`, `div_exact`). At the edges:
+
+- `i64::MIN / -1` wraps to `MIN` (`min_div_neg_one`);
+- `i64::MIN % -1` is `0` (`min_rem_neg_one`);
+- `i64::MAX + 1` wraps silently (`max_add_one`), as C does;
+- unary minus is *checked* but binary minus *wraps*: `-x` errors on `i64::MIN`, while `0 - x` returns `i64::MIN` (`neg_vs_sub_zero`).
+
+**4. Can `shortestPath` panic while it reconstructs the path?**
+
+No. `bfs_sound` proves that whenever the bidirectional BFS meets, the `expect("BFS parent chain broken")` calls never fire. The reconstructed node sequence starts at the source, ends at the destination, and every step follows an edge the search used. That the path is the *shortest* one is argued in the source comment, not proven here.
+
+## The headline theorems
+
+| Theorem | In plain words | File |
+|---|---|---|
+| `compareColumns_agrees` | `compare_columns` equals the per-row comparison, whichever lane it takes | `FalkorExprSemantics.lean` |
+| `vec_cmp_generic`, `vec_cmp_int`, `vec_cmp_float` (+ `_flip`) | Each comparison kernel answers what `eval_node` answers | `FalkorExprSemantics.lean` |
+| `arith_agrees` | Columnar `+ - * / %` equals `Value` arithmetic, values and errors | `FalkorExprSemantics.lean` |
+| `andOr_agrees` | Columnar `AND`/`OR` with row narrowing is the per-row short-circuit fold | `FalkorExprSemantics.lean` |
+| `case_agrees`, `case_match_agrees` | Columnar `CASE` evaluates the same arms on the same rows | `FalkorExprSemantics.lean` |
+| `neq_eq_not_eq` | `<>` is `NOT (=)` for every pair of values (#2917) | `FalkorExprSemantics.lean` |
+| `contains_is_kleene_any`, `and_kleene`, `or_kleene`, `xor_kleene` | `IN`, `AND`, `OR`, `XOR` are three-valued logic | `FalkorExprSemantics.lean` |
+| `add_exact`, `neg_vs_sub_zero` | Wrapping arithmetic is exact in range; `-x` and `0 - x` differ only at `i64::MIN` | `FalkorExprSemantics.lean` |
+| `sign_float_is_int` | `sign()` of a Float is an Integer in {-1, 0, 1} (#2907) | `FalkorExprSemantics.lean` |
+| `rangeIter_ok_up` | The lazy `UNWIND range()` iterator equals the eager `range()` when the step past the end is representable | `FalkorExprSemantics.lean` |
+| `bfs_sound` | `shortestPath`'s BFS never hits its parent-chain panic and returns a real walk from source to destination | `BFS.lean` |
+| `evalOperand_eq`, `evalBatch_eq_perRow` | The inline leaf path and the bulk property path equal the full per-row evaluator | `Eval.lean`, `EvalMore.lean` |
+
+### How `andOr_agrees` is proved
+
+1. **Model the values.** `V F` is the scalar `Value`: Null, Bool, Int, Float (with abstract `f64`) and String. Anything else is out of scope here.
+2. **Model the per-row path.** `scalarAndOr` is the `And`/`Or` arm of `eval_compound`: fold the children left to right, stop at the first child that decides the result, and return the first error.
+3. **Model the columnar path.** `vecAndOr` is `VectorEval::eval_and_or`. It evaluates each child over the rows still *live* (not yet decided) and narrows the live set after each child. Rust keeps a `result`/`nulls`/`live` triple, which the model keeps per row as `RowSt`, advanced by `stepRow`.
+4. **Swap the loops.** The per-row path loops rows then children; the columnar path loops children then rows. `fold_omap_comm` proves the two orders give the same per-row state whenever each step only looks at its own row. `rowFold_scalar` then shows that one row's state at the end is `scalarAndOr` on that row.
+5. **The one hypothesis.** A child's columnar evaluation over the live rows is assumed to equal its per-row evaluation mapped over them. That is the induction hypothesis for the enclosing expression tree, and it is literally what `eval_per_row` does. `case_agrees` follows the same pattern with `WHEN`/`THEN`/`ELSE` phases.
+
+`f64` is abstract (`FloatModel`), so these proofs hold for *any* `partial_cmp` and any float arithmetic: both paths call the same primitive. The one assumption is that Rust's `f64` `<`, `<=`, `==`, `!=`, `>`, `>=` read `partial_cmp` the IEEE way, which `PartialOrd for f64` documents.
+
+## Bugs found
+
+Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDINGS.md), wave 1).
+
+| # | Theorem (counterexample) | What it means | Status |
+|---|---|---|---|
+| 1 | `pow_drops_error`, `pow_constant_true` | `^` drops an operand's error: `2 ^ (1/0)` returns `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folds to `true` and the Filter is deleted: every row comes back although `x ^ true` is `null`. `pow_agrees_without_errors` shows that error dropping is the only difference | **Open**: issue #2902, PR #2904 not merged (`eval.rs` still uses `flat_map` at 0f45a8685) |
+| 2 | `rangeIter_wraps`, `rangeIter_panics` | `UNWIND range(i64::MAX - 1, i64::MAX)` yields `MAX-1, MAX, MIN, MIN+1, …` and never stops in release, and panics on overflow in debug. The eager `range()` gives the two elements | **Open**: issue #2894, PR #2899 not merged |
+| 3 | `pre2907_sign_float_is_float` | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
+| 4 | `int_float_eq_not_transitive` | Whenever two distinct integers round to the same `f64`, `=` stops being transitive: `2^53+1 = 2^53.0` and `2^53 = 2^53.0`, yet `2^53+1 <> 2^53` | Harmless: C promotes the same way (Neo4j compares exactly). `ORDER BY` no longer depends on it since #2912 (see `value_order`) |
+| — | `toInteger_float_vs_string` | `toInteger(1e30)` saturates to `i64::MAX`, while `toInteger('1e30')` returns `null` | Noted difference, not filed |
+
+**CONDITIONAL rows.** Four rows are covered but not proven outright, because each rests on a hypothesis about other Rust code:
+
+- `NeighborIter::new` and `new_reversed` assume the graph laws: the adjacency matrix is the union of the relation matrices, and `matrix_t` is the transpose.
+- `eval_batch` and `try_eval_batch_property` assume `BatchLaws`: the bulk `materialize_node_property_values` equals `get_node_attribute` per id. That is `runtime_core`'s `materialize_eq`, which is itself CONDITIONAL.
+
+## Files
+
+| File | What's in it |
+|---|---|
+| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bugs 1–4 |
+| `Eval.lean` | `ExprEval` entry points and fast paths: `eval`, `eval_operand`, variable resolution, constants and parameters |
+| `EvalMore.lean` | Batch evaluation (`eval_batch`), `classify_join_keys`, UNWIND iteration, compiled regex, map projection |
+| `BFS.lean` | `NeighborIter` and the bidirectional BFS behind `shortestPath`; `bfs_sound` |
+| `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
+
+Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN`/`I64MAX`, `wrap_id`) come from [`../core`](../core) through a Lake path dependency.
+
+## Coverage
+
+`COVERAGE.tsv` has 92 rows: 30 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs` and `eliminate_true_filters.rs`.
+
+| Bucket | Rows |
+|---|---|
+| PROVEN | 44 |
+| CONDITIONAL | 4 |
+| MODELLED | 15 |
+| NOT COVERED | 29 |
+
+- **MODELLED:** helpers the proofs use but don't state a theorem about, for example `compare_value` (scalar subset), `compare_floats`, `ExprColumn::get`, `range` (used as the spec of `rangeIter_ok_up`) and `eval_per_row` (taken as the induction hypothesis). `eval_compound` is MODELLED because only its `And`/`Or`/`Xor`/`Negate`/`Pow`/`In`/comparison arms are modelled; the list, map and comprehension arms are not.
+- **NOT COVERED:** the `VectorEval` dispatcher and its column accessors (`eval`, `eval_variable`, `property_values`, `eval_has_labels`, `negate_bools`, `CmpOp::from_expr_ir`), which are proven in `columnar`; the math functions `abs`, `ceil`, `floor`, `round`, `sqrt`, `log`, `exp` and the nondeterministic `rand` and `randomUUID`, several of which are proven in `value_math`; and the list functions `eval_quantifier` and `get_elements`, since lists are out of scope here.
+
+`bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
+
+## What the model does not cover
+
+- **Value types.** Lists, maps, temporal values, points and vectors are out of scope; they appear as `V.other` or not at all.
+- **Floats.** `f64` is abstract. Nothing here depends on IEEE rounding.
+- **Null bitmaps.** A typed column's null bitmap is an `Option` per row. Rust keeps a placeholder (0 or 0.0) in null rows and masks it afterwards. The wrapping ops can't panic on a placeholder, and the division gate skips null rows, so the two behave the same.
+- **Error text.** Agreement is on success versus error, not on which row's message is reported.
+- **BFS minimality.** `bfs_sound` proves that the path is a real walk, not that it is a shortest one.
+- **Matrix reads.** Matrix rows in `BFS.lean` are abstract `Nat → List Nat`; the GraphBLAS reads are the FFI boundary.
+
+## Build and check
+
+```bash
+cd proofs/expr_semantics && lake build    # this project
+bash proofs/lean_ci.sh expr_semantics     # build + no sorry/admit/native_decide/unmarked axiom
+bash proofs/coverage.sh                   # repo-wide coverage report
+```
+
+**When you change `eval.rs`, `vector_expr.rs`, `vectorized.rs` or the `Value` operators in `value.rs`:**
+
+1. Find the function in `COVERAGE.tsv`.
+2. Update its Lean model to match.
+3. Re-run the build.
+
+If an agreement theorem stops holding, the columnar and per-row paths now disagree on some input, and the failing goal shows which one. When #2904 or #2899 merges, turn `pow_drops_error` or `rangeIter_wraps` into a correctness theorem and keep the counterexample under a `pre<PR>_` name.
