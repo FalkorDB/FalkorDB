@@ -1,3 +1,4 @@
+import time
 from common import *
 
 GRAPH_ID = "betweenness"
@@ -456,4 +457,44 @@ class testBetweenness(FlowTestsBase):
         self.env.assertEqual(len(scores), n)
         for i in range(n):
             self.env.assertEqual(scores[i], i * (n - 1 - i))
+
+    def create_cycle(self, n):
+        # directed cycle 0 -> 1 -> ... -> n-1 -> 0
+        # every source adds (n - 1) * (n - 2) / 2 to the sum of scores,
+        # so the sum counts the distinct sources used
+        self.graph.query("""UNWIND range(0, $n - 1) AS i
+                            MERGE (a:N {name: i})
+                            MERGE (b:N {name: (i + 1) % $n})
+                            CREATE (a)-[:R]->(b)""", {'n': n})
+        return (n - 1) * (n - 2) / 2
+
+    def test_betweenness_sampling_size_is_honored(self):
+        """A sample smaller than the graph uses exactly samplingSize distinct sources."""
+
+        per_source = self.create_cycle(40)
+
+        for config, sources in [({'samplingSize': 20, 'samplingSeed': 7}, 20),
+                                ({'samplingSize': 39, 'samplingSeed': 1}, 39),
+                                ({}, 32)]:
+            result = self.graph.query("""CALL algo.betweenness($config)
+                                         YIELD node, score
+                                         RETURN sum(score)""", {'config': config})
+            self.env.assertEqual(result.result_set[0][0], sources * per_source)
+
+    def test_betweenness_default_seed_is_time_based(self):
+        """Without samplingSeed, the sampled sources change between runs."""
+
+        self.create_cycle(40)
+
+        runs = []
+        for _ in range(3):
+            result = self.graph.query("""CALL algo.betweenness()
+                                         YIELD node, score
+                                         RETURN node.name, score
+                                         ORDER BY node.name""")
+            runs.append(result.result_set)
+            # the seed has a one-second resolution, as in C
+            time.sleep(1.1)
+
+        self.env.assertTrue(runs[0] != runs[1] or runs[1] != runs[2])
 

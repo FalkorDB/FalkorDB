@@ -88,6 +88,7 @@ use std::collections::BinaryHeap;
 use std::mem::swap;
 use std::ptr::null_mut;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thin_vec::{ThinVec, thin_vec};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -993,17 +994,21 @@ fn register_betweenness(funcs: &mut Functions) {
                 } else if sampling_size >= n_nodes {
                     (0..n_nodes as u64).collect()
                 } else {
-                    let actual_samples = sampling_size;
-                    let mut srcs = Vec::with_capacity(actual_samples);
-                    let mut rng = sampling_seed;
+                    // As C does, a missing or zero seed is replaced by the current time
+                    let mut rng = if sampling_seed == 0 {
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(1, |d| d.as_secs())
+                    } else {
+                        sampling_seed
+                    };
+                    // Draw until `sampling_size` distinct sources; a repeated draw is
+                    // retried, so the sample is never smaller than requested
+                    let mut srcs = Vec::with_capacity(sampling_size);
                     let mut used = FxHashSet::default();
-                    for i in 0..actual_samples {
-                        let idx = if sampling_seed == 0 {
-                            i % n_nodes
-                        } else {
-                            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
-                            (rng as usize >> 33) % n_nodes
-                        };
+                    while srcs.len() < sampling_size {
+                        rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                        let idx = (rng as usize >> 33) % n_nodes;
                         if used.insert(idx) {
                             srcs.push(idx as u64);
                         }
