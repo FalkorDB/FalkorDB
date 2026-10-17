@@ -2,7 +2,7 @@
 # Optimizer rewrites: which passes preserve the query result, and which do not
 
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
-(origin/main `8743953a8`), except `select_scan_node.rs`, `utilize_index.rs` and
+(origin/main `0f45a8685`), except `select_scan_node.rs`, `utilize_index.rs` and
 `utilize_node_by_id.rs`'s #2390 changes (another agent's). Each pass is judged against a reference semantics of the IR:
 rows are association lists (`Basic.Row`), expressions follow `eval.rs`
 (three-valued, errors short-circuit, `AND` exactly as `eval.rs:674`), `Filter`
@@ -21,9 +21,12 @@ Each file's header maps its definitions to Rust `file:line`.
 Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
 references, count extraction, fusion preconditions, Project/Aggregate outputs),
 `Sequence` (`optimize` sequencing, the tree rebuilds, edge-filter absorption).
-Build: `lake build` — 116 theorems, no `sorry`/`admit`/`axiom`. Every row of
-COVERAGE.tsv is PROVEN. Rust source: origin/main `8743953a8` (re-targeted across #2390,
-d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan).
+`AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
+AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
+Build: `lake build` — 133 theorems, no `sorry`/`admit`/`axiom`. Every row of
+COVERAGE.tsv is PROVEN or CONDITIONAL. Rust source: origin/main `0f45a8685` (re-targeted across #2390,
+d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
+#3335: filters rebuilt with `and_of`).
 
 ## Proven (plain English)
 
@@ -200,3 +203,4 @@ import FalkorOptimizer.Passes
 import FalkorOptimizer.Helpers
 import FalkorOptimizer.Sequence
 import FalkorOptimizer.CallBoundary
+import FalkorOptimizer.AndOf

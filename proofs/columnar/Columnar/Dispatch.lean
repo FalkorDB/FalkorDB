@@ -11,7 +11,7 @@ the tree walk around them:
 | --- | --- |
 | `Kind`, `Node` | the `ExprIR` variants `eval` inspects, with children |
 | `fromExprIR` | `CmpOp::from_expr_ir` (vectorized.rs:70) |
-| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs:211-271) — arms in source order, guards included |
+| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs:211-270) — arms in source order, guards included; since #3335 (b8321be81) `Paren` has no arm of its own (the binder removes every `Paren`) and falls to `eval_per_row` |
 | `evalValues` | `eval_values` (:286) |
 | `propertyValues` | `property_values` (:357) |
 | `hasLabels` | `eval_has_labels` (:642) |
@@ -138,10 +138,6 @@ noncomputable def eval : Node Val → List Nat → Except String C
          | some col => .ok col
          | none => A.perRow n rows)
        | _ => A.perRow n rows)
-    | .paren =>
-      (match cs with
-       | [c] => sub c rows
-       | _ => A.perRow n rows)
     | .and => A.andOr sub n rows false
     | .or => A.andOr sub n rows true
     | .not =>
@@ -193,7 +189,6 @@ structure Lawful : Prop where
   var : ∀ id cs rows, Sound S (.mk (.var id) cs) rows (A.evalVariable id rows)
   prop : ∀ attr c rows col, A.evalProperty attr c rows = some col → Sound S (.mk (.prop attr) [c]) rows col
   perRow : ∀ n rows col, A.perRow n rows = .ok col → Sound S n rows col
-  paren : ∀ c r, S.rowEval (.mk .paren [c]) r = S.rowEval c r
   andOr : ∀ ev n rows b col, SubSound S n ev → A.andOr ev n rows b = .ok col → Sound S n rows col
   negate : ∀ c rows x col, Sound S c rows x → A.negate x rows.length = .ok col → Sound S (.mk .not [c]) rows col
   arith : ∀ k l r rows x y col, isArith k → Sound S l rows x → Sound S r rows y →
@@ -241,13 +236,6 @@ theorem eval_sound (L : Lawful A S) : ∀ (n : Node Val) (rows : List Nat) (col 
         · rename_i hp; simp only [Except.ok.injEq] at h; rw [← h]; exact L.prop attr _ rows _ hp
         · exact L.perRow _ rows col h
       · exact L.perRow _ rows col h
-    | paren =>
-      simp only at h
-      split at h
-      · rename_i c
-        have hs := sub_sound c (by simp [Node.cs]) rows col h
-        intro i hi; rw [L.paren]; exact hs i hi
-      · exact L.perRow _ rows col h
     | and => exact L.andOr _ _ rows false col sub_sound h
     | or => exact L.andOr _ _ rows true col sub_sound h
     | not =>
@@ -267,7 +255,7 @@ theorem eval_sound (L : Lawful A S) : ∀ (n : Node Val) (rows : List Nat) (col 
           · exact L.func _ _ rows col sub_sound h
         · exact L.func _ _ rows col sub_sound h
       · exact L.perRow _ rows col h
-    | list | distinct | other _ | add | sub | mul | div | modulo | eq | neq | lt | le | gt | ge =>
+    | paren | list | distinct | other _ | add | sub | mul | div | modulo | eq | neq | lt | le | gt | ge =>
       simp only at h
       split at h
       · rename_i l r

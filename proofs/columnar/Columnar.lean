@@ -16,7 +16,7 @@ import Columnar.CallBoundary
 
 Lean 4 model of `runtime/batch.rs`, `runtime/vectorized.rs`,
 `runtime/vector_expr.rs`, `runtime/row.rs` and
-`runtime/ops/batched_result_emitter.rs`. 179 theorems, no `sorry` / `admit` /
+`runtime/ops/batched_result_emitter.rs`. 260 theorems, no `sorry` / `admit` /
 `axiom`. `f64` is abstract (`FloatModel`); the one IEEE fact used —
 `partial_cmp` antisymmetry — is a class field (hypothesis). Per-module
 Lean↔Rust tables are in each file's header; per-function buckets in
@@ -127,6 +127,10 @@ proofs/ops_aggregate.
   `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
 ## Wave 6 (`Dispatch`)
+Re-checked at origin/main `0f45a8685`: #3335 (`b8321be81`) removed `VectorEval::eval`'s
+`Paren` arm (the binder now strips every `Paren`), so `Dispatch.eval` routes `.paren` to the
+catch-all `eval_per_row` and `Lawful` lost its `paren` field; `eval_sound` is unchanged.
+COVERAGE.tsv `vector_expr.rs` lines re-cited to `0f45a8685`.
 `VectorEval::eval` dispatch PROVEN: **`eval_sound`** — for every expression tree, given
 each arm's lane theorem (stated as `Lawful`), any column `eval` returns equals the per-row
 evaluator row by row; guards route each shape to exactly one arm (`eval_cmp`).

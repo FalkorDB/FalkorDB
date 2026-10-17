@@ -6,8 +6,10 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-395 theorems. Rust source: origin/main `8743953a8` (re-targeted across #2390, d2c42e032
-"plan an inline property map once"). Rust repros: `cargo test -p graph --test lean_planner_build`
+483 theorems. Rust source: origin/main `0f45a8685` (re-targeted across #2390, d2c42e032
+"plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
+`AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
+longer unwraps one, `PatternMode::descend` no longer treats it as a connective). Rust repros: `cargo test -p graph --test lean_planner_build`
 (`bug_*` tests assert the C/openCypher answer and FAIL today).
 
 ## Lean ↔ Rust
@@ -215,6 +217,7 @@ import PlannerBuild.Clauses
 import PlannerBuild.Match
 import PlannerBuild.Expr
 import PlannerBuild.Decomp
+import PlannerBuild.AndOf
 import PlannerBuild.ToPlan
 import PlannerBuild.Filter
 import PlannerBuild.FilterPlan

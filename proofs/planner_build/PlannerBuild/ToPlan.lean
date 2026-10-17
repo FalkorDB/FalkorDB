@@ -1,6 +1,11 @@
-import PlannerBuild.Decomp
+import PlannerBuild.AndOf
 /-
-# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1493-1670)
+# `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1486-1656)
+
+Since #3335 the binder removes every `Paren` (binder.rs:1955-1965), so
+`expr_to_plan` no longer unwraps one: a `Paren` is not a connective here
+(`wfI` admits inline variables only under AND/OR/NOT) and is planned like any
+other scalar. The scalar conjunction is `ExprIR::and_of` (`scalarFilter`).
 
 `FP` is the fragment of the IR these functions build, `run` its runtime
 meaning: every operator filters the rows of child 0 (`input` = the upstream
@@ -53,19 +58,36 @@ def notInl (ι : List (Nat × QG)) : Ex → Option QG
 
 def keysOf (ι : List (Nat × QG)) : List Nat := ι.map Prod.fst
 
-/-- The scalar conjunction of `and_expr_to_plan` (mod.rs:1653-1660). -/
+/-- The scalar conjunction of `and_expr_to_plan` (mod.rs:1643-1647): `Filter(and_of(scalars))`. -/
 def scalarFilter (xs : List Ex) (inp : FP) : FP :=
+  match xs with
+  | [] => inp
+  | xs => .filter (andOf xs) inp
+
+/-- Pre-#3335 shape (`x` alone, else `And(xs)`) — what `and_of` reproduces when no
+scalar conjunct is itself an AND. -/
+def pre3335_scalarFilter (xs : List Ex) (inp : FP) : FP :=
   match xs with
   | [] => inp
   | [x] => .filter x inp
   | xs => .filter (.node .and xs) inp
 
+theorem scalarFilter_eq_pre3335 (xs : List Ex) (inp : FP) (h : ∀ x ∈ xs, x.d ≠ .and) :
+    scalarFilter xs inp = pre3335_scalarFilter xs inp := by
+  have hs : xs.flatMap (spliceOp .and) = xs := by
+    induction xs with
+    | nil => rfl
+    | cons x xs ih =>
+      rw [List.flatMap_cons, spliceOp_other _ _ (h x (by simp)), ih (fun y hy => h y (by simp [hy]))]; rfl
+  match xs, h, hs with
+  | [], _, _ => rfl
+  | [x], h, _ => simp [scalarFilter, pre3335_scalarFilter, andOf, flat_single _ _ _ (h x (by simp))]
+  | a :: b :: rest, _, hs =>
+    simp only [scalarFilter, pre3335_scalarFilter, andOf]; rw [flat_many _ _ _ (by rw [hs]; simp), hs]
+
 mutual
 def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
   | .node d cs, inp =>
-    match d, cs with
-    | .paren, c :: _ => toPlan ι c inp
-    | d, cs =>
       match inlVar ι (.node d cs) with
       | some g => .semi inp (.patSub g)
       | none => match notInl ι (.node d cs) with
@@ -97,7 +119,7 @@ def andFold (ι : List (Nat × QG)) : List Ex → FP → FP
   | c :: cs, p => andFold ι cs (if containsInlineVar (keysOf ι) c then toPlan ι c p else p)
 end
 
-/-- The body of `expr_to_plan` after the `Paren` unwrap (mod.rs:1508-1553). -/
+/-- The body of `expr_to_plan` (mod.rs:1486-1540), by connective. -/
 def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
   match inlVar ι (.node d cs) with
   | some g => .semi inp (.patSub g)
@@ -115,9 +137,9 @@ def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
           | [] => .filter (.node .not []) inp
         | _ => .filter (.node d cs) inp
 
-theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) (h : d ≠ .paren) :
+theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) :
     toPlan ι (.node d cs) inp = toPlanGen ι d cs inp := by
-  cases d <;> (try cases cs) <;> first | rfl | exact absurd rfl h | (simp only [toPlan, toPlanGen]; done)
+  cases d <;> (try cases cs) <;> first | rfl | (simp only [toPlan, toPlanGen]; done)
 
 /-! ## The three-valued counterexample (CONFIRMED bug) -/
 
@@ -146,7 +168,7 @@ def wfI (ι : List (Nat × QG)) : Ex → Bool
     !containsInlineVar (keysOf ι) (.node d cs) || (inlVar ι (.node d cs)).isSome ||
       (notInl ι (.node d cs)).isSome ||
       (match d with
-       | .paren | .not | .or | .and => wfIL ι cs
+       | .not | .or | .and => wfIL ι cs
        | _ => false)
 def wfIL (ι : List (Nat × QG)) : List Ex → Bool
   | [] => true
@@ -257,18 +279,18 @@ theorem run_filter_arg (up : R → List R) (e : Ex) (y : R) :
   simp only [run]; cases h : passes (tv atom sub ι e y) <;> simp [List.filter, h]
 
 omit H2 in
-theorem scalarFilter_correct (up : R → List R) (xs : List Ex) (inp : FP) (r : R) :
+theorem scalarFilter_correct (up : R → List R) (hT : ∀ y, atom tt y = some true)
+    (xs : List Ex) (inp : FP) (r : R) :
     run atom sub ι up (scalarFilter xs inp) r =
       (run atom sub ι up inp r).filter (fun y => xs.all fun x => passes (tv atom sub ι x y)) := by
   match xs with
   | [] =>
     simp only [scalarFilter, List.all_nil]
     exact (List.filter_eq_self.2 (fun _ _ => rfl)).symm
-  | [x] => simp [scalarFilter, run]
-  | x1 :: x2 :: rest =>
-    simp only [scalarFilter, run, tv]
+  | x :: rest =>
+    simp only [scalarFilter, run]
     congr 1; funext y
-    rw [tvL_map, passes_and3, List.all_map]; rfl
+    exact passes_andOf atom sub ι y (hT y) _
 
 omit H2 in
 theorem filter_filter' {α : Type} (l : List α) (p q : α → Bool) :
@@ -361,18 +383,7 @@ theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → w
     run atom sub ι up (toPlan ι e inp) r =
       (run atom sub ι up inp r).filter (fun y => passes (tv atom sub ι e y))
   | .node d cs, inp, r, hs, hw => by
-    by_cases hpar : d = .paren
-    · subst hpar
-      obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
-      have hwc : wfI ι c = true := by
-        cases h3 : containsInlineVar (keysOf ι) (.node .paren [c])
-        · exact wfI_noInl ι c (containsInl_child ι .paren c [c] (by simp) h3)
-        · have := wfI_conn ι .paren [c] rfl rfl rfl h3 hw
-          simpa [wfIL] using this
-      simp only [toPlan]
-      rw [toPlan_correct c inp r hsc hwc]
-      simp only [tv]
-    rw [toPlan_gen ι d cs inp hpar]
+    rw [toPlan_gen ι d cs inp]
     unfold toPlanGen
     cases h1 : inlVar ι (.node d cs) with
     | some g =>
@@ -401,7 +412,8 @@ theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → w
           case and =>
             have hw' := wfI_conn ι .and cs rfl h1 h2 h3 hw
             simp only
-            rw [andFold_correct _ _ r (shapeL_of _ _ rfl hs) hw', scalarFilter_correct, filter_filter']
+            rw [andFold_correct _ _ r (shapeL_of _ _ rfl hs) hw',
+              scalarFilter_correct atom sub ι up (fun y => hTT tt y rfl), filter_filter']
             congr 1; funext y
             rw [and_split atom sub ι H2 hTT cs y]
             simp only [tv, passes_and3, tvL_map, List.all_map]; rfl
@@ -414,9 +426,7 @@ theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → w
             rw [toPlan_correct c .arg y hsc hw']
             simp only [run, tv, passes_not3 atom sub ι H2]
             cases hp : passes (tv atom sub ι c y) <;> simp [List.filter, hp]
-          all_goals first
-            | exact absurd rfl hpar
-            | exact (wfI_nonconn ι _ cs rfl h1 h2 h3 hw).elim
+          all_goals exact (wfI_nonconn ι _ cs rfl h1 h2 h3 hw).elim
 theorem orClass_correct : ∀ (cs : List Ex) (y : R), shapeOKL cs = true → wfIL ι cs = true →
     (anyBr atom sub ι up ((orClass ι cs).1.map (fun _ => false)) (orClass ι cs).1 y ||
       anyBr atom sub ι up ((orClass ι cs).2.map Prod.snd) ((orClass ι cs).2.map Prod.fst) y) =

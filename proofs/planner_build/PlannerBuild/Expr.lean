@@ -215,8 +215,11 @@ end
 inductive Mode | collect | semiApply | exists_
   deriving DecidableEq, Repr
 
+/-- The connectives `PatternMode::descend` keeps SemiApply under (mod.rs:795-806).
+Since #3335 `Paren` is not among them: the binder removes every `Paren`
+(binder.rs:1955-1965), so none reaches the planner. -/
 def isConn : D → Bool
-  | .and | .or | .not | .paren => true
+  | .and | .or | .not => true
   | _ => false
 
 def Mode.descend (m : Mode) (parent : D) : Mode :=
@@ -256,17 +259,143 @@ theorem needs_semi_xor (g : QG) (b : Ex) :
     needsExtraction (.node .xor [.node (.pat g) [], b]) .semiApply = true := by
   simp [needsExtraction, needsExtractionL, Mode.descend, isConn]
 
+/-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs:342-380, #3335)
+
+`flat op operands identity`: an `op` node over `operands`, where an operand whose
+root is `op` itself contributes its children in place (orx_tree `take_out` keeps
+them at the operand's position, in order). A lone operand that is not an `op`
+is returned unchanged (the early return); no operands give the identity
+constant; one operand left after splicing is returned on its own. Semantics in
+`AndOf.lean`. -/
+
+/-- What one operand contributes: its children when its root is `op`, else itself. -/
+def spliceOp (op : D) : Ex → List Ex
+  | .node d cs => if d = op then cs else [.node d cs]
+
+/-- `discriminant(e) == discriminant(op)` (ast.rs:361; `op` is `And` or `Or`, payload-free). -/
+def isOp (op : D) (e : Ex) : Bool := decide (e.d = op)
+
+/-- The tree built after the early return (ast.rs:365-378). -/
+def flatBody (op : D) (identity : Bool) (xs : List Ex) : Ex :=
+  match xs.flatMap (spliceOp op) with
+  | [] => .node (.const (.bool identity)) []
+  | [c] => c
+  | cs => .node op cs
+
+/-- `ExprIR::flat` (ast.rs:355-380). -/
+def flat (op : D) (identity : Bool) (xs : List Ex) : Ex :=
+  match xs with
+  | [x] => if isOp op x then flatBody op identity [x] else x
+  | xs => flatBody op identity xs
+
+/-- `ExprIR::and_of` (ast.rs:342-344). -/
+def andOf (xs : List Ex) : Ex := flat .and true xs
+/-- `ExprIR::or_of` (ast.rs:348-350). -/
+def orOf (xs : List Ex) : Ex := flat .or false xs
+
+/-- The early return is only a shortcut: a lone non-`op` operand splices to itself. -/
+theorem flat_eq_body (op : D) (identity : Bool) (xs : List Ex) :
+    flat op identity xs = flatBody op identity xs := by
+  unfold flat
+  split
+  · rename_i x
+    split
+    · rfl
+    · rename_i h
+      obtain ⟨d, cs⟩ := x
+      have hd : ¬ (d = op) := by intro e; apply h; simp [isOp, Ex.d, e]
+      simp [flatBody, spliceOp, hd]
+  · rfl
+
+theorem flat_nil (op : D) (identity : Bool) :
+    flat op identity [] = .node (.const (.bool identity)) [] := rfl
+
+/-- A lone operand of another kind is returned as it is. -/
+theorem flat_single (op : D) (identity : Bool) (x : Ex) (h : x.d ≠ op) : flat op identity [x] = x := by
+  obtain ⟨d, cs⟩ := x
+  have : ¬ (d = op) := h
+  simp [flat, isOp, Ex.d, this]
+
+/-- A lone operand of the same kind with at least two children is returned as it is. -/
+theorem flat_single_same (op : D) (identity : Bool) (cs : List Ex) (h : 2 ≤ cs.length) :
+    flat op identity [.node op cs] = .node op cs := by
+  match cs, h with
+  | a :: b :: rest, _ => simp [flat, isOp, Ex.d, flatBody, spliceOp]
+
+/-- With at least two operands after splicing, the result is the `op` node over all of them,
+in order. -/
+theorem flat_many (op : D) (identity : Bool) (xs : List Ex) (h : 2 ≤ (xs.flatMap (spliceOp op)).length) :
+    flat op identity xs = .node op (xs.flatMap (spliceOp op)) := by
+  rw [flat_eq_body]; unfold flatBody
+  split
+  · rename_i heq; rw [heq] at h; simp at h
+  · rename_i heq; rw [heq] at h; simp at h
+  · rfl
+
+theorem spliceOp_same (op : D) (cs : List Ex) : spliceOp op (.node op cs) = cs := by
+  simp [spliceOp]
+
+/-- Operands that are not `op` nodes are never spliced (e.g. AND over `OR`/`XOR`/`NOT`). -/
+theorem spliceOp_other (op : D) (x : Ex) (h : x.d ≠ op) : spliceOp op x = [x] := by
+  obtain ⟨d, cs⟩ := x
+  have : ¬ (d = op) := h
+  simp [spliceOp, this]
+
+/-- The Rust unit test `nested_and_is_flattened_in_order` (ast.rs:1489). -/
+theorem andOf_nested_in_order (a b c d e : Ex) (ha : a.d ≠ .and) (hb : b.d ≠ .and) (hc : c.d ≠ .and)
+    (hd : d.d ≠ .and) (he : e.d ≠ .and) :
+    andOf [.node .and [a, b], c, .node .and [d, e]] = .node .and [a, b, c, d, e] := by
+  unfold andOf
+  rw [flat_many] <;>
+    simp only [List.flatMap_cons, List.flatMap_nil, spliceOp_same, spliceOp_other _ _ hc,
+      List.append_nil, List.cons_append, List.nil_append, List.length_cons] <;> omega
+
+/-- `different_operators_are_not_merged` (ast.rs:1507): an OR operand of AND stays a child. -/
+theorem andOf_keeps_or (a b c : Ex) (hc : c.d ≠ .and) :
+    andOf [.node .or [a, b], c] = .node .and [.node .or [a, b], c] := by
+  have ho : spliceOp .and (.node .or [a, b]) = [.node .or [a, b]] := spliceOp_other _ _ (by simp [Ex.d])
+  unfold andOf
+  rw [flat_many] <;>
+    simp only [List.flatMap_cons, List.flatMap_nil, ho, spliceOp_other _ _ hc,
+      List.append_nil, List.cons_append, List.nil_append, List.length_cons] <;> omega
+
 /-! ## `inline_attrs_to_filter` (mod.rs:543-571) and `has_labels_filter` (mod.rs:696-709) -/
 
 /-- `alias.k = value` -/
 def attrEq (alias : V) (kv : String × Ex) : Ex :=
   .node .eq [.node (.prop kv.1) [Ex.v alias], kv.2]
 
+/-- Since #3335: `None` for no attributes, else `ExprIR::and_of` of the equalities. -/
 def inlineAttrsToFilter (alias : V) (attrs : List (String × Ex)) : Option Ex :=
   match attrs.map (attrEq alias) with
   | [] => none
-  | [f] => some f
-  | fs => some (.node .and fs)
+  | fs => some (andOf fs)
+
+/-- `and_of` changes nothing here: an equality is never an AND, so this is the
+pre-#3335 `f` / `And(fs)` split. -/
+theorem inlineAttrsToFilter_eq (alias : V) (attrs : List (String × Ex)) :
+    inlineAttrsToFilter alias attrs =
+      match attrs.map (attrEq alias) with
+      | [] => none
+      | [f] => some f
+      | fs => some (.node .and fs) := by
+  unfold inlineAttrsToFilter
+  have hs : ∀ l : List (String × Ex), (l.map (attrEq alias)).flatMap (spliceOp .and) = l.map (attrEq alias) := by
+    intro l; induction l with
+    | nil => rfl
+    | cons a l ih => simp [attrEq, spliceOp] at ih ⊢; exact ih
+  match h : attrs.map (attrEq alias) with
+  | [] => rfl
+  | [f] =>
+    have : f.d ≠ .and := by
+      have : f ∈ attrs.map (attrEq alias) := by simp [h]
+      obtain ⟨a, -, rfl⟩ := List.mem_map.1 this; simp [attrEq, Ex.d]
+    simp [andOf, flat_single _ _ _ this]
+  | f :: g :: rest =>
+    have h2 := hs attrs; rw [h] at h2
+    simp only [andOf]; rw [flat_many]
+    · rw [h2]
+    · rw [h2]; simp
 
 /-- The filter's conjuncts are exactly the per-attribute equalities, in map order. -/
 def conjuncts : Ex → List Ex
@@ -275,14 +404,14 @@ def conjuncts : Ex → List Ex
 
 theorem inlineAttrsToFilter_none (alias : V) (attrs : List (String × Ex)) :
     inlineAttrsToFilter alias attrs = none ↔ attrs = [] := by
-  unfold inlineAttrsToFilter
+  rw [inlineAttrsToFilter_eq]
   cases attrs with
   | nil => simp
   | cons a as => cases as <;> simp
 
 theorem inlineAttrsToFilter_conj (alias : V) (attrs : List (String × Ex)) (f : Ex)
     (h : inlineAttrsToFilter alias attrs = some f) : conjuncts f = attrs.map (attrEq alias) := by
-  unfold inlineAttrsToFilter at h
+  rw [inlineAttrsToFilter_eq] at h
   match attrs, h with
   | [a], h => cases h; rfl
   | a :: b :: rest, h => cases h; rfl

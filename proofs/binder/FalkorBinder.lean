@@ -4,8 +4,10 @@
 A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
-most on `propext`, `Quot.sound`, `Classical.choice`. 153 theorems. Rust source: origin/main `8743953a8`
-(binder.rs unchanged since `2363723ac`; planner/mod.rs cites re-targeted across #2390).
+most on `propext`, `Quot.sound`, `Classical.choice`. 181 theorems. Rust source: origin/main `0f45a8685`
+(binder.rs re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR
+bind flat via `and_of`/`or_of` — `bind_andOr_paren`, `flatB_assoc`; planner/mod.rs cites
+re-targeted across #2390).
 
 ## The one invariant that matters
 

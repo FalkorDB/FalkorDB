@@ -7,10 +7,11 @@ Faithful to the token layout; the index/constraint structures keep only what is 
 abstracted as `simCode`), weights are `f64` bit patterns (`one` = `1.0`).
 
 Findings proven here:
-* `field_prefix_lost` — an index on an attribute whose own name starts with `range:`
-  (range index) or `vector:` (vector index) comes back on a *different* attribute: the
-  encoder writes the bare attribute name (`:383`) but the decoder still strips the
-  RediSearch prefix (`:642-646`). Confirmed live (see `REPORT` in `RedisLayer.lean`).
+* `pre3252_field_prefix_lost` (history; **fixed by #3252**, cfe6e7945) — an index on an
+  attribute whose own name starts with `range:` (range index) or `vector:` (vector index)
+  came back on a *different* attribute: the encoder writes the bare attribute name (`:383`)
+  but the decoder stripped the RediSearch prefix (cab3cf192 `:642-646`). Confirmed live then.
+  Now the name is used verbatim: `field_name_kept`, and `decField_encField` round-trips it.
 * `cons_unknown_prop` — a constraint property missing from the attribute table is
   written as attribute id 0 (`:457-460`, `unwrap_or(0)`), i.e. reloads naming attribute 0.
 -/
@@ -72,7 +73,8 @@ def stripPrefix (p s : Bytes) : Bytes := if p.isPrefixOf s then s.drop p.length 
 def RANGE_ : Bytes := "range:".toUTF8.toList.map (·.toNat)
 def VECTOR_ : Bytes := "vector:".toUTF8.toList.map (·.toNat)
 
-/-- `decode_index_field` (`:621-699`), returning the attribute and the decoded field. -/
+/-- `decode_index_field` (`:621-696`) since #3252 (cfe6e7945): the attribute is the decoded
+name verbatim (C does the same), whatever its type. -/
 def decField : Dec (Bytes × Fld) :=
   Dec.bind rdB fun nb => Dec.bind rdU fun ft => Dec.bind rdD fun w =>
   Dec.bind rdU fun ns => Dec.bind rdB fun pb =>
@@ -80,10 +82,7 @@ def decField : Dec (Bytes × Fld) :=
   let isVec := ft &&& VECTOR ≠ 0
   let isFt := ft &&& FULLTEXT ≠ 0
   let ty := if isFt then Ty.fulltext else if isVec then Ty.vector else Ty.range
-  let attr := match ty with
-    | .range => stripPrefix RANGE_ name
-    | .vector => stripPrefix VECTOR_ name
-    | .fulltext => name
+  let attr := name
   if isVec then
     Dec.bind rdU fun dim => Dec.bind rdU fun m => Dec.bind rdU fun efc =>
     Dec.bind rdU fun efr => Dec.bind rdU fun sc =>
@@ -106,8 +105,12 @@ def normField (f : Fld) : Fld :=
               some (simName (simCode v.sim))⟩⟩
     | none => ⟨.vector, none, none, none, none⟩   -- see `vector_without_opts`
 
-/-- The attribute name the decoder recovers. -/
-def attrBack (attr : Bytes) (ty : Ty) : Bytes :=
+/-- The attribute name the decoder recovers: the encoded one (#3252). -/
+def attrBack (attr : Bytes) (_ty : Ty) : Bytes := attr
+
+/-- The attribute name the decoder recovered before #3252 (cab3cf192 `:642-646`): the
+RediSearch prefix stripped from a range / vector field. -/
+def pre3252_attrBack (attr : Bytes) (ty : Ty) : Bytes :=
   match ty with
   | .range => stripPrefix RANGE_ attr
   | .vector => stripPrefix VECTOR_ attr
@@ -133,16 +136,22 @@ theorem decField_encField (attr : Bytes) (f : Fld) (ha : U.valid attr)
       simp [decField, encField, Dec.bind, rdB, rdU, rdD, pure', fieldType, attrBack, normField,
         strip_nullTerm U attr ha, VECTOR, FULLTEXT]
 
-/-- **Finding**: an attribute literally named `range:<a>` (range index) is reloaded as
-`<a>`. -/
-theorem field_prefix_lost (a : Bytes) :
-    attrBack (RANGE_ ++ a) .range = a := by
-  simp [attrBack, stripPrefix]
+/-- **History (W4-redis-2, fixed by #3252)**: an attribute literally named `range:<a>`
+(range index) was reloaded as `<a>`. -/
+theorem pre3252_field_prefix_lost (a : Bytes) :
+    pre3252_attrBack (RANGE_ ++ a) .range = a := by
+  simp [pre3252_attrBack, stripPrefix]
 
-/-- …whereas every other name survives. -/
-theorem attrBack_plain (attr : Bytes) (ty : Ty) (h1 : ¬ RANGE_.isPrefixOf attr)
-    (h2 : ¬ VECTOR_.isPrefixOf attr) : attrBack attr ty = attr := by
-  cases ty <;> simp [attrBack, stripPrefix, h1, h2]
+/-- …whereas every other name survived. -/
+theorem pre3252_attrBack_plain (attr : Bytes) (ty : Ty) (h1 : ¬ RANGE_.isPrefixOf attr)
+    (h2 : ¬ VECTOR_.isPrefixOf attr) : pre3252_attrBack attr ty = attr := by
+  cases ty <;> simp [pre3252_attrBack, stripPrefix, h1, h2]
+
+/-- **`field_name_kept`** (#3252): every attribute name survives the reload, `range:x`
+and `vector:x` included — `decField_encField` returns exactly the encoded name. -/
+theorem field_name_kept (attr : Bytes) (ty : Ty) : attrBack attr ty = attr := rfl
+
+theorem field_prefix_kept (a : Bytes) : attrBack (RANGE_ ++ a) .range = RANGE_ ++ a := rfl
 
 /-- A vector field without `VectorIndexOptions` writes no option words (`:405-406`), yet
 the decoder reads five (`:648-653`): the stream desynchronises. Such a field is not built by

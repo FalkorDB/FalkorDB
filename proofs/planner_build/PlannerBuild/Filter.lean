@@ -202,14 +202,6 @@ theorem collect_wf (ι : List (Nat × QG)) : ∀ (st : CSt) ce (e : Ex), shapeOK
         have ih := collect_wf ι st false c hsc hnc hfc (good_collectL_head ι st false c [] hg)
         refine ⟨?_, by simp [shapeOK, shapeOKL, ih.2]⟩
         simp [wfI, wfIL, ih.1]
-    case paren =>
-      obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
-      have hnc := needs_conn .paren [c] rfl hn
-      simp only [needsExtractionL, Bool.or_false] at hnc
-      have hfc := (fresh_cons ι c [] (fresh_varIds ι _ _ hf)).1
-      simp only [collect, collectL] at hg ⊢
-      have ih := collect_wf ι st false c hsc hnc hfc (good_collectL_head ι st false c [] hg)
-      exact ⟨by simp [wfI, wfIL, ih.1], by simp [shapeOK, shapeOKL, ih.2]⟩
     case and =>
       simp only [collect] at hg ⊢
       have ih := collectL_wf ι st ce cs (shapeL_of _ _ rfl hs) (needs_conn .and cs rfl hn)

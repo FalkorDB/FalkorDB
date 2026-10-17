@@ -77,22 +77,22 @@ graph/src/runtime/vector_expr.rs	ExprColumn::is_null	150	NOT COVERED	bitmap plum
 graph/src/runtime/vector_expr.rs	union_nulls	168	MODELLED	laneRow isNull flag = union
 graph/src/runtime/vector_expr.rs	VectorEval::new	202	NOT COVERED	constructor
 graph/src/runtime/vector_expr.rs	VectorEval::eval	211	NOT COVERED	dispatch over ExprIR
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	286	NOT COVERED	property/variable fast paths
-graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	310	NOT COVERED	column gather
-graph/src/runtime/vector_expr.rs	VectorEval::eval_property	334	NOT COVERED	bulk attribute fetch
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	357	NOT COVERED	bulk attribute fetch
-graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	392	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
-graph/src/runtime/vector_expr.rs	VectorEval::eval_case	475	NOT COVERED	narrowing like AND/OR; not modelled
-graph/src/runtime/vector_expr.rs	VectorEval::eval_function	555	NOT COVERED	scalar folding; not modelled
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	642	NOT COVERED	label matrix (GraphBLAS)
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	706	MODELLED	VExpr.rowEval is the per-row reference
-graph/src/runtime/vector_expr.rs	compare_columns	731	NOT COVERED	f64/compare_value lanes (prior wave: value_order)
-graph/src/runtime/vector_expr.rs	compare_i64_pairs	795	NOT COVERED	elementwise i64 compare
-graph/src/runtime/vector_expr.rs	compare_f64_pairs	818	NOT COVERED	f64
-graph/src/runtime/vector_expr.rs	mask_out_nulls	840	NOT COVERED	bitmap plumbing
-graph/src/runtime/vector_expr.rs	negate_bools	854	NOT COVERED	trivial 3VL NOT
-graph/src/runtime/vector_expr.rs	arithmetic	878	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
-graph/src/runtime/vector_expr.rs	int_lane	953	PROVEN	VExpr.intLane
-graph/src/runtime/vector_expr.rs	float_lane	965	NOT COVERED	f64
-graph/src/runtime/vector_expr.rs	float_operand	980	NOT COVERED	trivial predicate
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	NOT COVERED	property/variable fast paths
+graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	309	NOT COVERED	column gather
+graph/src/runtime/vector_expr.rs	VectorEval::eval_property	333	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	356	NOT COVERED	bulk attribute fetch
+graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	391	PROVEN	VExpr.colEval: colEval_eq, colEval_rows, rowEval_short
+graph/src/runtime/vector_expr.rs	VectorEval::eval_case	474	NOT COVERED	narrowing like AND/OR; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_function	554	NOT COVERED	scalar folding; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	641	NOT COVERED	label matrix (GraphBLAS)
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	705	MODELLED	VExpr.rowEval is the per-row reference
+graph/src/runtime/vector_expr.rs	compare_columns	730	NOT COVERED	f64/compare_value lanes (prior wave: value_order)
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	794	NOT COVERED	elementwise i64 compare
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	817	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	mask_out_nulls	839	NOT COVERED	bitmap plumbing
+graph/src/runtime/vector_expr.rs	negate_bools	853	NOT COVERED	trivial 3VL NOT
+graph/src/runtime/vector_expr.rs	arithmetic	877	PROVEN	VExpr.intLane: intLane_eq (int lane); float/generic lanes not modelled
+graph/src/runtime/vector_expr.rs	int_lane	952	PROVEN	VExpr.intLane
+graph/src/runtime/vector_expr.rs	float_lane	964	NOT COVERED	f64
+graph/src/runtime/vector_expr.rs	float_operand	979	NOT COVERED	trivial predicate
 graph/src/runtime/value.rs	Point::new	110	PROVEN	SpatialFns.Point.new: Point.new_fields

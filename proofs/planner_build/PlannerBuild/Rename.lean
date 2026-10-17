@@ -100,7 +100,7 @@ variable {R : Type} (atom : Ex → R → Option Bool) (sub : QG → R → List R
 theorem inlineAttrs_passes (ι : List (Nat × QG)) (alias : V) (attrs : List (String × Ex)) (f : Ex)
     (h : inlineAttrsToFilter alias attrs = some f) (y : R) :
     passes (tv atom sub ι f y) = attrs.all (fun kv => passes (atom (attrEq alias kv) y)) := by
-  unfold inlineAttrsToFilter at h
+  rw [inlineAttrsToFilter_eq] at h
   have heq : ∀ kv, tv atom sub ι (attrEq alias kv) y = atom (attrEq alias kv) y := by
     intro kv; simp only [attrEq, tv]
   match attrs, h with

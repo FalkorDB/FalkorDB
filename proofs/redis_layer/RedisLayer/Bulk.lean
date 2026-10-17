@@ -419,15 +419,19 @@ def resolve : List (List Nat) → List (List Nat) → List Nat
   | _, [] => []
   | d, n :: ns => let (d', i) := getOrCreate d n; i :: resolve d' ns
 
-/-- **Divergence (confirmed live).** A header naming `p` twice resolves both columns to
-attribute id 0, and the record's span stores `(0, v₁), (0, v₂)`: `properties(n)` then
-shows `{p: 1, p: 3, q: 2}`, `n.p` reads 3, `MATCH (n {p:3})` misses it and
-`REMOVE n.p` drops both. C keeps one `p` (the last). -/
+/-- A header naming `p` twice resolves both columns to attribute id 0. Before #3063 the
+record's span then stored `(0, v₁), (0, v₂)` (**divergence, confirmed live**:
+`properties(n)` showed `{p: 1, p: 3, q: 2}`, `n.p` read 3; C keeps one `p`, `n.p` = 1).
+Since #3063 (`0f45a8685`) `import_attrs_resolved` keeps the first column only (proofs/
+pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`). -/
 theorem duplicate_header_ids : resolve [] [[112], [113], [112]] = [0, 1, 0] := by decide
 
 /-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs:598`, `:609-610`).
-A record with 65536 non-null properties gets `len = 0`: every property is silently
-dropped (confirmed live via `GRAPH.BULK`, `size(keys(n)) = 0`; 65537 keeps 1). -/
+Before #3063 a record with 65536 non-null properties got `len = 0`: every property was
+silently dropped (confirmed live via `GRAPH.BULK`, `size(keys(n)) = 0`; 65537 kept 1).
+The cast is unchanged, but since #3063 (`0f45a8685`) the span `GRAPH.BULK` hands to
+`set_span` is deduplicated and free of `ATTRIBUTE_ID_NONE`, hence ≤ 65,535 entries
+(proofs/pending_commit `Content.normResolved_fits`). -/
 def slotLen (n : Nat) : Nat := n % 65536
 
 theorem slot_len_truncates : slotLen 65536 = 0 ∧ slotLen 65537 = 1 ∧ slotLen 65535 = 65535 := by

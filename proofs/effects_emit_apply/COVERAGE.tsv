@@ -32,6 +32,6 @@ graph/src/effects/v3/apply.rs	check_attr_shape	707	PROVEN	ApplyHelpers.checkAttr
 graph/src/effects/v3/apply.rs	attr_map	751	PROVEN	ApplyHelpers.attrMap: attrMap_row
 graph/src/effects/v3/apply.rs	index_options	794	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
 graph/src/effects/v3/apply.rs	single_index_label	825	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
-graph/src/runtime/pending.rs	effects_count	1665	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
+graph/src/runtime/pending.rs	effects_count	1804	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
 graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	108	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
 graph/src/effects/v3/emit.rs	wire_index_options	2087	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec

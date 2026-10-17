@@ -6,7 +6,9 @@ import FalkorBinder.Resolve
 | --- | --- |
 | `NE` / `BE` | raw `ExprIR<Arc<String>>` / bound `ExprIR<Variable>` trees (the variants the binder treats specially) |
 | `reserve` | `fresh_var` + insert under `_quant_{s}_{id}` / `_lc_…` / `_reduce_acc_…` / `_reduce_iter_…` (binder.rs:1762-1765, 1796-1799, 1838-1844) |
-| `bindNode`, `bindL` | `bind_expr_node` binder.rs:1746-2141 |
+| `bindNode`, `bindL` | `bind_expr_node` binder.rs:1746-2153 |
+| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs:1955-1965 (#3335): `(x)` binds to `x`'s tree |
+| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs:2137-2144, ast.rs:342-380 (#3335) |
 | `bindExpr`, `bindExprLocals` | `bind_expr` binder.rs:1725-1730, `bind_expr_with_locals` binder.rs:1732-1739 |
 | `bindSetItems` | `bind_set_items` binder.rs:1700-1723 |
 | `selfRef` | `check_unbound_self_referential` binder.rs:1682-1698 |
@@ -21,6 +23,14 @@ table covering; only pattern cleanup can break it — `comprehension_cleanup_bre
 `bind_iterable_outer` (a comprehension's list is bound before its variable),
 `loop_var_shadows`, `reduce_same_name`, `prop_on_path`, `exists_pattern`,
 `func_arg_mismatch`, `bindExpr_eq`, `bindSetItems_*`, `selfRef_iff`.
+
+#3335: `bind_paren` (`(x)` binds exactly like `x`: same tree, same state, same
+errors — so no bound tree holds a `Paren`, which `BE` has no constructor for),
+`prop_on_paren_path` (the `(p).prop` rejection now comes from that, not from a
+look-through in the `Property` arm), `bind_andOr_paren` / `flatB_assoc` (a
+parenthesised run of the same connective binds flat: `(a AND b) AND c` gives
+the bound tree of `a AND b AND c`), `flatB_other` (a different connective is a
+single operand).
 -/
 namespace FalkorBinder
 
@@ -33,6 +43,11 @@ inductive NE
   | patComp (vars : List Name) (cs : List NE)
   | prop (k : Name) (cs : List NE)
   | func (name : Name) (argTys : List Ty) (cs : List NE)
+  /-- `(…)`: one child (the parser's grouping) -/
+  | paren (cs : List NE)
+  /-- `AND` (`isOr = false`) / `OR` (`isOr = true`) -/
+  | andOr (isOr : Bool) (cs : List NE)
+  /-- every other payload (not `Paren`, `And`, `Or`) -/
   | other (tag : Nat) (cs : List NE)
 
 inductive BE
@@ -44,6 +59,9 @@ inductive BE
   | patComp (vs : List Var) (cs : List BE)
   | prop (k : Name) (cs : List BE)
   | func (name : Name) (cs : List BE)
+  | andOr (isOr : Bool) (cs : List BE)
+  /-- `Constant(Bool(b))` -/
+  | bool (b : Bool)
   | other (tag : Nat) (cs : List BE)
 
 /-- What the binder reads of its own state while binding an expression. -/
@@ -84,6 +102,25 @@ def cleanup (outer : List Name) (e : Env) : Env := e.retain fun k => outer.conta
 def firstVar : List BE → Option Var
   | BE.var v :: _ => some v
   | _ => none
+
+/-- What one bound operand contributes to `flat`: its children when it is the same connective. -/
+def spliceB (o : Bool) : BE → List BE
+  | .andOr o' cs => if o' = o then cs else [.andOr o' cs]
+  | b => [b]
+
+/-- `ExprIR::flat` (ast.rs:355-380) on bound operands: a lone operand of another
+kind is returned as is; else same-connective operands are spliced in place;
+none left gives the identity (`true` for AND, `false` for OR), one is returned alone. -/
+def flatB (o : Bool) (bs : List BE) : BE :=
+  let body := match bs.flatMap (spliceB o) with
+    | [] => .bool (!o)
+    | [c] => c
+    | cs => .andOr o cs
+  match bs with
+  | [b] => match b with
+    | .andOr o' _ => if o' = o then body else b
+    | _ => b
+  | _ => body
 
 mutual
 def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
@@ -144,6 +181,14 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
           | .var v => !C.compat v.ty tb.1
           | _ => false) then .error "Type mismatch"
       else .ok (.func name bs, st1)
+  | .paren cs => match bindL st locals cs with
+    | .error e => .error e
+    | .ok (bs, st1) => match bs.getLast? with
+      | some b => .ok (b, st1)
+      | none => .error "Empty parenthesised expression"
+  | .andOr o cs => match bindL st locals cs with
+    | .error e => .error e
+    | .ok (bs, st1) => .ok (flatB o bs, st1)
   | .other t cs => match bindL st locals cs with
     | .error e => .error e
     | .ok (bs, st1) => .ok (.other t bs, st1)
@@ -221,6 +266,104 @@ theorem func_arg_mismatch (st : St) (locals : List Env) (name n : Name) (t : Ty)
     (hh : name ≠ "hasLabels") : bindNode C st locals (.func name [t] [.var n]) = .error "Type mismatch" := by
   simp [bindNode, bindL, hr, hc, hn, hh]
 
+/-! ## #3335: parentheses and AND/OR flattening -/
+
+/-- **`(x)` binds exactly like `x`** (binder.rs:1955-1965): same bound tree, same
+state, same errors. -/
+theorem bind_paren (st : St) (locals : List Env) (c : NE) :
+    bindNode C st locals (.paren [c]) = bindNode C st locals c := by
+  simp only [bindNode, bindL]
+  cases bindNode C st locals c with
+  | error e => rfl
+  | ok p => rfl
+
+/-- `(p).prop` on a named path is still rejected — the child binds to the path
+variable itself, so the `Property` arm's first-child test sees it (the
+pre-#3335 look-through of a `Paren` child is no longer needed). -/
+theorem prop_on_paren_path (st : St) (locals : List Env) (k : Name) (n : Name) (v : Var) (st1 : St)
+    (hr : resolve st locals n = .ok (st1, v)) (hp : v.ty = .path) (hv : (v.scope, v.id) ∉ C.varlen) :
+    ∃ e, bindNode C st locals (.prop k [.paren [.var n]]) = .error e := by
+  simp [bindNode, bindL, hr, firstVar, hp, hv]
+
+/-- The early return of `flat` is a shortcut for the general body. -/
+theorem flatB_eq_body (o : Bool) (bs : List BE) :
+    flatB o bs = match bs.flatMap (spliceB o) with
+      | [] => .bool (!o)
+      | [c] => c
+      | cs => .andOr o cs := by
+  unfold flatB
+  match bs with
+  | [] => rfl
+  | [b] =>
+    cases b with
+    | andOr o' cs =>
+      by_cases h : o' = o
+      · simp [h]
+      · simp [h, spliceB]
+    | _ => rfl
+  | _ :: _ :: _ => rfl
+
+theorem spliceB_same (o : Bool) (cs : List BE) : spliceB o (.andOr o cs) = cs := by simp [spliceB]
+
+/-- AND under OR (and OR under AND) is never spliced: it stays one operand. -/
+theorem spliceB_other (o : Bool) (cs : List BE) : spliceB o (.andOr (!o) cs) = [.andOr (!o) cs] := by
+  cases o <;> simp [spliceB]
+
+/-- With two or more operands after splicing, the result is the flat node. -/
+theorem flatB_many (o : Bool) (bs : List BE) (h : 2 ≤ (bs.flatMap (spliceB o)).length) :
+    flatB o bs = .andOr o (bs.flatMap (spliceB o)) := by
+  rw [flatB_eq_body]
+  generalize bs.flatMap (spliceB o) = l at h ⊢
+  match l, h with
+  | _ :: _ :: _, _ => rfl
+
+/-- Associativity: a flat run nested as the first operand joins its parent. -/
+theorem flatB_assoc (o : Bool) (xs ys : List BE) (h : 2 ≤ (xs.flatMap (spliceB o)).length) :
+    flatB o (flatB o xs :: ys) = flatB o (xs ++ ys) := by
+  rw [flatB_many o xs h, flatB_eq_body, flatB_eq_body, List.flatMap_cons, spliceB_same,
+    List.flatMap_append]
+
+theorem bindL_append (locals : List Env) (xs ys : List NE) : ∀ st : St,
+    bindL C st locals (xs ++ ys) =
+      match bindL C st locals xs with
+      | .error e => .error e
+      | .ok (bs, st1) => match bindL C st1 locals ys with
+        | .error e => .error e
+        | .ok (bs2, st2) => .ok (bs ++ bs2, st2) := by
+  induction xs with
+  | nil => intro st; simp only [List.nil_append, bindL]; cases bindL C st locals ys <;> rfl
+  | cons x xs ih =>
+    intro st
+    simp only [List.cons_append, bindL]
+    rcases bindNode C st locals x with e | ⟨b, s1⟩
+    · rfl
+    · simp only [ih]
+      rcases bindL C s1 locals xs with e | ⟨bs, s2⟩
+      · rfl
+      · simp only
+        rcases bindL C s2 locals ys with e | ⟨bs2, s3⟩
+        · rfl
+        · rfl
+
+/-- **A parenthesised run of the same connective binds flat**: `(a AND b) AND c`
+binds to the tree of `a AND b AND c` (likewise OR), whenever the grouped operands
+leave at least two after splicing (always, for the parser's two-operand
+connectives). Filters are then split into all their conjuncts (#3331, #3187). -/
+theorem bind_andOr_paren (st : St) (locals : List Env) (o : Bool) (xs ys : List NE)
+    (h : ∀ bs st1, bindL C st locals xs = .ok (bs, st1) → 2 ≤ (bs.flatMap (spliceB o)).length) :
+    bindNode C st locals (.andOr o (.paren [.andOr o xs] :: ys)) =
+      bindNode C st locals (.andOr o (xs ++ ys)) := by
+  simp only [bindNode, bindL, bindL_append]
+  cases hx : bindL C st locals xs with
+  | error e => rfl
+  | ok p =>
+    simp only [List.getLast?_singleton]
+    cases bindL C p.2 locals ys with
+    | error e => rfl
+    | ok q =>
+      simp only
+      rw [flatB_assoc o p.1 q.1 (h p.1 p.2 hx)]
+
 /-! ## Reservations keep the table covering -/
 
 /-- The reserved key is new whenever the table covers its ids: it carries the
@@ -238,7 +381,8 @@ mutual
 def patFree : NE → Bool
   | .pattern _ | .patComp _ _ => false
   | .var _ => true
-  | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .prop _ cs | .func _ _ cs | .other _ cs => patFreeL cs
+  | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .prop _ cs | .func _ _ cs | .paren cs | .andOr _ cs
+  | .other _ cs => patFreeL cs
 def patFreeL : List NE → Bool
   | [] => true
   | c :: cs => patFree c && patFreeL cs
@@ -344,6 +488,25 @@ theorem bindNode_covers (hk : KeysFresh C) : ∀ (st : St) (locals : List Env) (
       · split at h
         · simp at h
         · simp at h; rw [← h.2]; exact c1
+  | st, locals, .paren cs, hc, hp, b, st', h => by
+    simp only [patFree] at hp
+    simp only [bindNode] at h
+    cases h1 : bindL C st locals cs with
+    | error e => rw [h1] at h; simp at h
+    | ok p =>
+      rw [h1] at h; simp only at h
+      have c1 := bindL_covers hk st locals cs hc hp p.1 p.2 h1
+      split at h
+      · simp at h; rw [← h.2]; exact c1
+      · simp at h
+  | st, locals, .andOr o cs, hc, hp, b, st', h => by
+    simp only [patFree] at hp
+    simp only [bindNode] at h
+    cases h1 : bindL C st locals cs with
+    | error e => rw [h1] at h; simp at h
+    | ok p =>
+      rw [h1] at h; simp at h; obtain ⟨-, rfl⟩ := h
+      exact bindL_covers hk st locals cs hc hp p.1 p.2 h1
   | st, locals, .other t cs, hc, hp, b, st', h => by
     simp only [patFree] at hp
     simp only [bindNode] at h
@@ -462,7 +625,8 @@ def selfRef (a : Name) : NE → Bool
   | .prop _ (.var n :: _) => n == a
   | .prop _ cs => selfRefL a cs
   | .var _ | .pattern _ => false
-  | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .patComp _ cs | .func _ _ cs | .other _ cs => selfRefL a cs
+  | .quant _ cs | .listComp _ cs | .reduce _ _ cs | .patComp _ cs | .func _ _ cs | .paren cs | .andOr _ cs
+  | .other _ cs => selfRefL a cs
 def selfRefL (a : Name) : List NE → Bool
   | [] => false
   | c :: cs => selfRef a c || selfRefL a cs

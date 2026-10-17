@@ -1,6 +1,6 @@
 import GraphQueries.Queries
 /-
-# Edge creation and deletion; the stale type-matrix width (CONFIRMED BUG)
+# Edge creation and deletion; the stale type-matrix width (CONFIRMED BUG, fixed by #3277)
 
 | here | there (graph.rs) |
 | --- | --- |
@@ -85,8 +85,8 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
         obtain ⟨tn0, -, rfl⟩ := htn
         simp [het]
 
-/-- **BUG (graph.rs:1251 + :2947).** When `relationship_type_matrix` is
-narrower than the type table — exactly what `get_type_id_mut` leaves behind —
+/-- When `relationship_type_matrix` is
+narrower than the type table — exactly what `get_type_id_mut` left behind before #3277 —
 the bulk type-matrix removal is a no-op: a deleted edge keeps its type. -/
 theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
     (out : List (Nat × Nat × Nat × Nat))
@@ -100,22 +100,35 @@ theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
     · cases h
     · cases h; simp [setRelIds, Mat.removeMask, Ne.symm hw]
 
-/-- End to end: register a fresh type through `get_type_id_mut`
+/-- **History (W4-graph-1 / #3244, fixed by #3277).** End to end on the old model:
+register a fresh type through `get_type_id_mut`
 (`GRAPH.CONSTRAINT CREATE … RELATIONSHIP <new type>`, or a replica applying
 a schema record), then `DELETE` an existing edge: its old type stays in the
 type matrix. When the id is reused by an edge of a later type `t2 > t`,
 `get_relationship_type_id` (first entry of the row) still answers `t` —
 live repro: `type(r)` returns the deleted edge's type. -/
-theorem stale_type_after_registration (O : IdSpaceOps) (g : G V) (snew : String) (e t : Nat)
+theorem pre3277_stale_type_after_registration (O : IdSpaceOps) (g : G V) (snew : String) (e t : Nat)
     (hn : snew ∉ g.types) (hw : g.relType.nc = g.types.length)
     (ht : g.relType.get e t = true) (r : G V) (out : List (Nat × Nat × Nat × Nat))
-    (h : deleteRels O (getTypeIdMut g snew).1 [e] = .ok (r, out)) :
+    (h : deleteRels O (pre3277_getTypeIdMut g snew).1 [e] = .ok (r, out)) :
     r.relType.get e t = true := by
-  have hs := getTypeIdMut_stale_width g snew hn hw
+  have hs := pre3277_getTypeIdMut_stale_width g snew hn hw
   rw [deleteRels_stale O _ _ _ _ h (Nat.ne_of_lt hs)]
-  have hk : (getTypeIdMut g snew).1.relType = g.relType := by
-    simp [getTypeIdMut, (idx_none g.types snew).2 hn]
+  have hk : (pre3277_getTypeIdMut g snew).1.relType = g.relType := by
+    simp [pre3277_getTypeIdMut, (idx_none g.types snew).2 hn]
   rw [hk]; exact ht
+
+/-- **`type_cleared_after_registration`** (#3277 fixed): registering a type through
+`get_type_id_mut` (constraint creation, a replica's schema record) no longer narrows
+`relationship_type_matrix`, so a later `DELETE` of an edge clears its type entry. -/
+theorem type_cleared_after_registration (O : IdSpaceOps) (hC : IdSpaceContract O) (chunk : Nat)
+    (hc : 0 < chunk) (g : G V) (snew : String)
+    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length)
+    (rels : List Nat) (r : G V) (out : List (Nat × Nat × Nat × Nat))
+    (h : deleteRels O (getTypeIdMut chunk hc g snew).1 rels = .ok (r, out))
+    (e t s d : Nat) (hm : (e, t, s, d) ∈ out) :
+    r.relType.get e t = false :=
+  (deleteRels_clears O hC _ rels r out h (getTypeIdMut_width chunk hc g snew hw) e t s d hm).1
 
 theorem relTypeId_two (g : G V) (e t t2 : Nat) (h : g.relType.row e = [(e, t), (e, t2)]) :
     relTypeId g e = some t := by simp [relTypeId, h]

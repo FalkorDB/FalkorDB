@@ -397,7 +397,7 @@ mutual
 /-- **Completeness.** In whatever mode, the rewritten expression needs no more
 extraction: no pattern comprehension is left, and an existential pattern is
 left only where `collect_patterns_and_rebuild` will turn it into a
-semi-join (SemiApply mode, under AND/OR/NOT/paren). -/
+semi-join (SemiApply mode, under AND/OR/NOT; a Paren never reaches the planner since #3335). -/
 theorem extract_clean (sc : Nat) : ∀ (st : PSt) acc m (e : Ex), pcOK e = true →
     needsExtraction (extract sc st acc m e).1 m = false
   | st, acc, m, .node d cs, hp => by

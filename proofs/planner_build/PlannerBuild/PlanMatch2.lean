@@ -544,8 +544,7 @@ def planMatch (st : MSt) (fv : List Nat) (comps : List Comp) (pf : Option (MP â†
     | none => res
   let res := match x.2.2.1 with
     | [] => res
-    | [f] => .filter f res
-    | fs => .filter (.node .and fs) res
+    | fs => .filter (andOf fs) res   -- `ExprIR::and_of(bound_filters)` (#3335)
   (res, x.2.1)
 
 /-- One component: its plan; several: a CartesianProduct of them in order
@@ -554,8 +553,7 @@ theorem planMatch_join (st : MSt) (fv : List Nat) (c : Comp) :
     (planMatch st fv [c] none).1 =
       match (planComp st fv [] c).2.2.1 with
       | [] => (planComp st fv [] c).1
-      | [f] => .filter f (planComp st fv [] c).1
-      | fs => .filter (.node .and fs) (planComp st fv [] c).1 := by
+      | fs => .filter (andOf fs) (planComp st fv [] c).1 := by
   simp [planMatch]
 
 theorem planMatch_cp (st : MSt) (fv : List Nat) (c1 c2 : Comp)

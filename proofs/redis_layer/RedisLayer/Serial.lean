@@ -12,7 +12,7 @@ of which we use only that it is the identity on valid UTF-8 (every Rust `String`
 | `nullTerm`, `strip`       | `null_terminated` `:139,:244`, `strip_null_terminator` `:252` (and the inline copy in `Header::decode` `:166-170`) |
 | `encH`, `decH`            | `Header::encode` `:135-161`, `Header::decode` `:164-199` |
 | `fromGraph`               | `Header::from_graph` `:212-232` |
-| `encField`, `decField`    | field loop of `encode_schema_index_block` `:382-421`, `decode_index_field` `:621-699` |
+| `encField`, `decField`    | field loop of `encode_schema_index_block` `:382-421`, `decode_index_field` `:621-696` |
 | `encIdx`, `encCons`       | `encode_schema_index_block` `:337-422`, `encode_constraint_block` `:439-464` |
 | `decEntry`                | `decode_schema_entry` `:529-619` |
 | `encSchema`, `decSchema`  | `Schema::encode` `:260-331`, `Schema::decode` `:466-527` |

@@ -77,37 +77,37 @@ graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	C.Graph Var.fmt_anon, Var.fmt_n
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	C.Graph Var.eq_spec (by id only)
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	C.Graph Var.hash_eq (equal variables hash alike)
 graph/src/parser/ast.rs	Variable::as_str	134	PROVEN	C.Graph Var.asStr_spec
-graph/src/parser/ast.rs	ExprIR::fmt	331	PROVEN	C.Fmt fmtOp, fmtOp_var/fmtOp_param/fmtOp_prop
-graph/src/parser/ast.rs	QuantifierType::fmt	425	PROVEN	C.Fmt fmtQuant_spec
-graph/src/parser/ast.rs	SupportAggregation::is_aggregation	442	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	446	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	457	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	QueryNode::fmt	482	PROVEN	C.Fmt fmtNode_nolabel
-graph/src/parser/ast.rs	QueryNode::new	495	PROVEN	C.Graph QNode.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	543	PROVEN	C.Fmt fmtRel_untyped_undirected
-graph/src/parser/ast.rs	QueryRelationship::new	571	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	608	PROVEN	C.Graph QPath.new_spec
-graph/src/parser/ast.rs	QueryGraph::default	631	PROVEN	C.Graph QG.default_spec
-graph/src/parser/ast.rs	QueryGraph::fmt	644	PROVEN	C.Fmt fmtGraph_empty
-graph/src/parser/ast.rs	merge_attr_maps	667	PROVEN	C.Graph mergeAttrs_kids, mergeAttrs_map
-graph/src/parser/ast.rs	QueryGraph::add_node	685	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
-graph/src/parser/ast.rs	QueryGraph::merge_node	705	PROVEN	C.Graph QG.mergeNode_spec, QG.mergeNode_rels, extendSet_mem
-graph/src/parser/ast.rs	QueryGraph::replace_node	723	PROVEN	C.Graph QG.replaceNode_spec
-graph/src/parser/ast.rs	QueryGraph::add_relationship	733	PROVEN	C.Graph QG.addRel_spec, QG.addRel_distinct
-graph/src/parser/ast.rs	QueryGraph::add_path	749	PROVEN	C.Graph QG.addPath_spec
-graph/src/parser/ast.rs	QueryGraph::variables	761	PROVEN	C.Graph QG.variables_length
-graph/src/parser/ast.rs	QueryGraph::nodes	770	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::nodes_mut	774	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships	779	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships_mut	783	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::paths	788	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::filter_visited	795	PROVEN	C.Components filterVisited_nodes
-graph/src/parser/ast.rs	QueryGraph::connected_components	823	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
-graph/src/parser/ast.rs	QueryGraph::dfs	844	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
-graph/src/parser/ast.rs	SetItem::fmt	897	PROVEN	C.Fmt fmtSetItem_attr
-graph/src/parser/ast.rs	QueryIR::fmt	1042	PROVEN	C.Fmt fmtIR_return
-graph/src/parser/ast.rs	QueryIR::validate	1151	PROVEN	C.IR validate; vClause_simple; call_skips_rest_validation (BUG)
-graph/src/parser/ast.rs	QueryIR::inner_validate	1157	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, match_last_after_call_accepted (BUG)
-graph/src/parser/ast.rs	validate_set_items	1329	PROVEN	C.IR vSetItems_np
-graph/src/parser/ast.rs	validate_inlined_properties	1348	PROVEN	C.IR vInlined (used in vClause_simple)
-graph/src/parser/ast.rs	QueryIR::return_column_names	1370	PROVEN	C.IR returnCols_last_return, colsL_append_return
+graph/src/parser/ast.rs	ExprIR::fmt	386	PROVEN	C.Fmt fmtOp, fmtOp_var/fmtOp_param/fmtOp_prop
+graph/src/parser/ast.rs	QuantifierType::fmt	480	PROVEN	C.Fmt fmtQuant_spec
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	497	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	501	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	512	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	QueryNode::fmt	537	PROVEN	C.Fmt fmtNode_nolabel
+graph/src/parser/ast.rs	QueryNode::new	550	PROVEN	C.Graph QNode.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	598	PROVEN	C.Fmt fmtRel_untyped_undirected
+graph/src/parser/ast.rs	QueryRelationship::new	626	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
+graph/src/parser/ast.rs	QueryPath::new	663	PROVEN	C.Graph QPath.new_spec
+graph/src/parser/ast.rs	QueryGraph::default	686	PROVEN	C.Graph QG.default_spec
+graph/src/parser/ast.rs	QueryGraph::fmt	699	PROVEN	C.Fmt fmtGraph_empty
+graph/src/parser/ast.rs	merge_attr_maps	722	PROVEN	C.Graph mergeAttrs_kids, mergeAttrs_map
+graph/src/parser/ast.rs	QueryGraph::add_node	740	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
+graph/src/parser/ast.rs	QueryGraph::merge_node	760	PROVEN	C.Graph QG.mergeNode_spec, QG.mergeNode_rels, extendSet_mem
+graph/src/parser/ast.rs	QueryGraph::replace_node	778	PROVEN	C.Graph QG.replaceNode_spec
+graph/src/parser/ast.rs	QueryGraph::add_relationship	788	PROVEN	C.Graph QG.addRel_spec, QG.addRel_distinct
+graph/src/parser/ast.rs	QueryGraph::add_path	804	PROVEN	C.Graph QG.addPath_spec
+graph/src/parser/ast.rs	QueryGraph::variables	816	PROVEN	C.Graph QG.variables_length
+graph/src/parser/ast.rs	QueryGraph::nodes	825	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::nodes_mut	829	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships	834	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships_mut	838	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::paths	843	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::filter_visited	850	PROVEN	C.Components filterVisited_nodes
+graph/src/parser/ast.rs	QueryGraph::connected_components	878	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
+graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
+graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	C.Fmt fmtSetItem_attr
+graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	C.Fmt fmtIR_return
+graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; call_skips_rest_validation (BUG)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, match_last_after_call_accepted (BUG)
+graph/src/parser/ast.rs	validate_set_items	1384	PROVEN	C.IR vSetItems_np
+graph/src/parser/ast.rs	validate_inlined_properties	1403	PROVEN	C.IR vInlined (used in vClause_simple)
+graph/src/parser/ast.rs	QueryIR::return_column_names	1425	PROVEN	C.IR returnCols_last_return, colsL_append_return

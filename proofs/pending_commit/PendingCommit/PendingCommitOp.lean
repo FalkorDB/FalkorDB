@@ -7,13 +7,18 @@ import PendingCommit.Labels
   staged label sets, then "created ⇒ no committed label", then the matrix; when
   created nodes carry no committed labels (fresh ids; reclaimed ids carry
   tombstones) that is exactly `Labels.overlay`, the query's own view.
-* `scan_ok` — the `seen` map scan of a UNIQUE check (:1375-1395, :1466-1486):
-  passes iff no two distinct entities with a full composite key share it.
-* `checkNode_spec`, `checkEdge_spec` — `check_node_constraint` (:1334) /
-  `check_edge_constraint` (:1404): MANDATORY passes iff every affected member
+* `scan_ok` — the `seen` map scan of a UNIQUE check as it was before #3334
+  (cab3cf192 :1375-1395, :1466-1486): passes iff no two distinct entities with a full
+  composite key share it.
+* `checkNode_spec`, `checkEdge_spec` — `check_node_constraint` /
+  `check_edge_constraint` before #3334: MANDATORY passes iff every affected member
   has every property; UNIQUE iff, when some affected member participates, the
   label's (type's) scan passes. Membership of an edge created in this batch
-  comes from `created_rel_types`.
+  comes from `created_rel_types`. **Since #3334 (4ace60ec7)** UNIQUE goes through
+  `unique_violated` (index lookup per member): `UniqueIndex.lean`, whose
+  `uniqueViolated_agrees` shows it equals this label-scan spec under the
+  constraint's pre-commit invariant; `check` stays as that reference spec, and
+  `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.
 * `affected_spec`, `enforce_spec` — `enforce_constraints` (:1237): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
   query fails iff some *operational* constraint's check fails.

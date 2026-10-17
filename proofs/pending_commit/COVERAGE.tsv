@@ -25,27 +25,27 @@ graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels), removeOp_no_dup_push
-graph/src/graph/graph.rs	node_id_bound	1607	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	relationship_id_bound	1613	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	create_nodes	1646	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	set_nodes_attributes	1761	PROVEN	via insert_attrs: Span.mergeSpan_correct
-graph/src/graph/graph.rs	import_node_attrs	1798	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	import_node_attrs_resolved	1846	MODELLED	bulk path, no null filter
-graph/src/graph/graph.rs	import_relationship_attrs	1955	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	set_relationships_attributes	2760	PROVEN	via insert_attrs: Span.mergeSpan_correct
-graph/src/graph/graph.rs	set_node_labels_product	2041	AXIOMATISED	GraphBLAS assign as set product
-graph/src/graph/graph.rs	set_nodes_labels_bulk	2120	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
-graph/src/graph/graph.rs	remove_nodes_labels	2166	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
-graph/src/graph/graph.rs	delete_nodes	2200	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2594	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2853	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	2988	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	get_or_create_node_attr_id	1879	NOT COVERED	name interning
-graph/src/graph/graph.rs	get_or_create_rel_attr_id	1948	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3799	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3822	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	3834	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	3910	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	node_id_bound	1609	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	relationship_id_bound	1615	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	create_nodes	1648	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	set_nodes_attributes	1763	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	import_node_attrs	1800	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	import_node_attrs_resolved	1848	MODELLED	bulk path, no null filter
+graph/src/graph/graph.rs	import_relationship_attrs	1957	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	set_relationships_attributes	2762	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_node_labels_product	2043	AXIOMATISED	GraphBLAS assign as set product
+graph/src/graph/graph.rs	set_nodes_labels_bulk	2122	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	remove_nodes_labels	2168	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	delete_nodes	2202	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
+graph/src/graph/graph.rs	create_relationships_bulk	2596	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2855	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	2990	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1881	NOT COVERED	name interning
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	1950	NOT COVERED	name interning
+graph/src/graph/graph.rs	commit_index	3801	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	3824	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	3836	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	3912	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors
@@ -107,73 +107,75 @@ graph/src/graph/attribute_store.rs	remove_all	1246	PROVEN	Content.removeAll_spec
 graph/src/graph/attribute_store.rs	insert_attrs_rows	1266	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
 graph/src/graph/attribute_store.rs	insert_attrs	1315	PROVEN	Content.insertAttrs_spec
 graph/src/graph/attribute_store.rs	import_attrs	1351	PROVEN	Content.importAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs_resolved	1379	PROVEN	Content.importResolved_spec, resolved_duplicate
-graph/src/graph/attribute_store.rs	structural_memory_usage	1398	PROVEN	Content.structural_partition
-graph/src/graph/attribute_store.rs	encode_with_range	1409	PROVEN	Content.encode_spec, encode_decode_roundtrip
-graph/src/graph/attribute_store.rs	decode	1450	PROVEN	Content.decode_unimplemented
-graph/src/graph/attribute_store.rs	decode_with_count	1460	PROVEN	Content.decode_spec, encode_decode_roundtrip
-graph/src/runtime/pending.rs	flatten_label_map	51	PROVEN	PA.flatten_spec
-graph/src/runtime/pending.rs	is_valid_property	69	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
-graph/src/runtime/pending.rs	validate_list_property	98	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest; history pre3339_isValid_any_depth (#3339 b080a44c1); save/load: value_math stored_roundtrip
-graph/src/runtime/pending.rs	validate_property	115	PROVEN	PA.validateProperty: validate_depth, validate_nest, validate_spec
-graph/src/runtime/pending.rs	validate_node_property	124	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec
-graph/src/runtime/pending.rs	validate_relationship_property	129	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec
-graph/src/runtime/pending.rs	lookup_sorted	134	PROVEN	PA.lookupSorted_eq
-graph/src/runtime/pending.rs	is_empty	275	PROVEN	PD.isEmpty_spec
-graph/src/runtime/pending.rs	absorb	287	PROVEN	PD.absorb_spec
-graph/src/runtime/pending.rs	merge	313	PROVEN	PD.absorb_spec (merge = absorb.1)
-graph/src/runtime/pending.rs	ids_by_slot	333	PROVEN	PD.ids_spec
-graph/src/runtime/pending.rs	commit	359	PROVEN	PD.commitDocs_spec (graph index writers uninterpreted)
-graph/src/runtime/pending.rs	default	373	PROVEN	PD.new_spec
-graph/src/runtime/pending.rs	new	380	PROVEN	PD.new_spec
-graph/src/runtime/pending.rs	set_schema_baseline	410	PROVEN	PD.accessors_spec
-graph/src/runtime/pending.rs	created_nodes	421	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	set_node_attributes	432	PROVEN	PS.setAttrs_spec
-graph/src/runtime/pending.rs	set_node_attribute	459	PROVEN	PS.setAttr_spec (+PA.rustUpsert_eq, Props.stage_sorted_lastWrite)
-graph/src/runtime/pending.rs	clear_node_attributes	479	PROVEN	PS.clearA_spec
-graph/src/runtime/pending.rs	has_node_attrs	489	PROVEN	PS.hasA_spec
-graph/src/runtime/pending.rs	has_relationship_attrs	495	PROVEN	PS.hasA_spec
-graph/src/runtime/pending.rs	get_node_attribute	500	PROVEN	PS.getA_spec, Props.read_your_writes_existing
-graph/src/runtime/pending.rs	update_node_attrs	518	PROVEN	PS.updA_spec
-graph/src/runtime/pending.rs	stage_node_labels	547	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
-graph/src/runtime/pending.rs	set_node_labels	564	PROVEN	Labels.stage
-graph/src/runtime/pending.rs	set_nodes_labels	572	PROVEN	Labels.stage per id
-graph/src/runtime/pending.rs	remove_node_labels	585	PROVEN	Labels.removeLabels_closed, overlay_eq_ref
-graph/src/runtime/pending.rs	node_has_label	611	PROVEN	Labels.nodeHas_eq_ref
-graph/src/runtime/pending.rs	update_node_labels	640	PROVEN	Labels.overlay_eq_ref
-graph/src/runtime/pending.rs	deleted_node	658	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	delete_pending_node	674	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
-graph/src/runtime/pending.rs	remove_pending_relationships_for_node	725	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
-graph/src/runtime/pending.rs	created_relationship	785	PROVEN	PS.createdRel_spec
-graph/src/runtime/pending.rs	set_relationship_attributes	802	PROVEN	PS.setAttrs_spec
-graph/src/runtime/pending.rs	set_relationship_attribute	828	PROVEN	PS.setAttr_spec
-graph/src/runtime/pending.rs	get_relationship_attribute	849	PROVEN	PS.getA_spec
-graph/src/runtime/pending.rs	update_relationship_attrs	867	PROVEN	PS.updA_spec
-graph/src/runtime/pending.rs	deleted_relationship	891	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	deleted_relationships_bulk	898	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_relationship_type	908	PROVEN	PS.sets_spec, createdRel_spec
-graph/src/runtime/pending.rs	is_node_created	916	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_pending_nodes_with_labels	926	PROVEN	PS.pendingWithLabels_spec
-graph/src/runtime/pending.rs	nodes_with_pending_label_removes	946	PROVEN	PS.withLabelRemoves_spec
-graph/src/runtime/pending.rs	is_relationship_created	964	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_created_relationship_endpoints	973	PROVEN	PS.createdEndpoints_spec
-graph/src/runtime/pending.rs	has_deleted_nodes	986	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	has_deleted_relationships	991	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	has_created_relationships	996	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	is_node_deleted	1001	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	deleted_nodes	1010	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	is_relationship_deleted	1015	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	pending_indegree	1025	PROVEN	PS.pendingDeg_spec
-graph/src/runtime/pending.rs	pending_outdegree	1049	PROVEN	PS.pendingDeg_spec
-graph/src/runtime/pending.rs	pending_deleted_indegree	1074	PROVEN	PS.deletedDeg_some, deletedDeg_none, deg_panics_on_pending_deleted (#2769)
-graph/src/runtime/pending.rs	pending_deleted_outdegree	1096	PROVEN	PS.deletedDeg_some, deletedDeg_none
-graph/src/runtime/pending.rs	commit	1114	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
-graph/src/runtime/pending.rs	enforce_constraints	1271	PROVEN	PC.enforce_spec, affected_spec
-graph/src/runtime/pending.rs	constraint_node_has_label	1344	PROVEN	PC.constraintHas_eq
-graph/src/runtime/pending.rs	check_node_constraint	1368	PROVEN	PC.check_spec, checkNode_spec, scan_ok
-graph/src/runtime/pending.rs	check_edge_constraint	1438	PROVEN	PC.check_spec, edgeMember_spec, scan_ok
-graph/src/runtime/pending.rs	take_deferred_indexes	1512	PROVEN	PD.commitDeferred_spec (takeDeferred)
-graph/src/runtime/pending.rs	resync_published_indexes	1530	PROVEN	PD.resync_spec
-graph/src/runtime/pending.rs	commit_deferred_indexes	1585	PROVEN	PD.commitDeferred_spec
-graph/src/runtime/pending.rs	effects_count	1699	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
-graph/src/runtime/pending.rs	end_segment	1626	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
+graph/src/graph/attribute_store.rs	import_attrs_resolved	1388	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed; history pre3063_importResolved_spec, pre3063_resolved_duplicate
+graph/src/graph/attribute_store.rs	structural_memory_usage	1414	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	encode_with_range	1425	PROVEN	Content.encode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	decode	1466	PROVEN	Content.decode_unimplemented
+graph/src/graph/attribute_store.rs	decode_with_count	1476	PROVEN	Content.decode_spec, encode_decode_roundtrip
+graph/src/runtime/pending.rs	flatten_label_map	55	PROVEN	PA.flatten_spec
+graph/src/runtime/pending.rs	is_valid_property	73	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
+graph/src/runtime/pending.rs	validate_list_property	102	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest; history pre3339_isValid_any_depth (#3339 b080a44c1); save/load: value_math stored_roundtrip
+graph/src/runtime/pending.rs	validate_property	119	PROVEN	PA.validateProperty: validate_depth, validate_nest, validate_spec
+graph/src/runtime/pending.rs	validate_node_property	128	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec
+graph/src/runtime/pending.rs	validate_relationship_property	133	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec
+graph/src/runtime/pending.rs	lookup_sorted	138	PROVEN	PA.lookupSorted_eq
+graph/src/runtime/pending.rs	is_value_valid_for_index_lookup	153	PROVEN	UQ.exactLookup: exactLookup_spec (Int iff !int_loses_f64_precision — index_layer intLosesPrecision; Float iff not NaN; Bool; non-empty String; else false)
+graph/src/runtime/pending.rs	unique_violated	178	PROVEN	UQ.uniqueViolated/gather: uniqueViolated_spec (violated iff two members share a full key or a member key is carried by a live candidate outside `affected`, given its own lookup/scan argument contract), gather_none, gather_some, uniqueViolated_agrees (= old label-scan spec under the pre-commit invariant), filterMap_nodup_iff
+graph/src/runtime/pending.rs	is_empty	389	PROVEN	PD.isEmpty_spec
+graph/src/runtime/pending.rs	absorb	401	PROVEN	PD.absorb_spec
+graph/src/runtime/pending.rs	merge	427	PROVEN	PD.absorb_spec (merge = absorb.1)
+graph/src/runtime/pending.rs	ids_by_slot	447	PROVEN	PD.ids_spec
+graph/src/runtime/pending.rs	commit	473	PROVEN	PD.commitDocs_spec (graph index writers uninterpreted)
+graph/src/runtime/pending.rs	default	487	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	new	494	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	set_schema_baseline	524	PROVEN	PD.accessors_spec
+graph/src/runtime/pending.rs	created_nodes	535	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	set_node_attributes	546	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_node_attribute	573	PROVEN	PS.setAttr_spec (+PA.rustUpsert_eq, Props.stage_sorted_lastWrite)
+graph/src/runtime/pending.rs	clear_node_attributes	593	PROVEN	PS.clearA_spec
+graph/src/runtime/pending.rs	has_node_attrs	603	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	has_relationship_attrs	609	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	get_node_attribute	614	PROVEN	PS.getA_spec, Props.read_your_writes_existing
+graph/src/runtime/pending.rs	update_node_attrs	632	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	stage_node_labels	661	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
+graph/src/runtime/pending.rs	set_node_labels	678	PROVEN	Labels.stage
+graph/src/runtime/pending.rs	set_nodes_labels	686	PROVEN	Labels.stage per id
+graph/src/runtime/pending.rs	remove_node_labels	699	PROVEN	Labels.removeLabels_closed, overlay_eq_ref
+graph/src/runtime/pending.rs	node_has_label	725	PROVEN	Labels.nodeHas_eq_ref
+graph/src/runtime/pending.rs	update_node_labels	754	PROVEN	Labels.overlay_eq_ref
+graph/src/runtime/pending.rs	deleted_node	772	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	delete_pending_node	788	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
+graph/src/runtime/pending.rs	remove_pending_relationships_for_node	839	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
+graph/src/runtime/pending.rs	created_relationship	899	PROVEN	PS.createdRel_spec
+graph/src/runtime/pending.rs	set_relationship_attributes	916	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_relationship_attribute	942	PROVEN	PS.setAttr_spec
+graph/src/runtime/pending.rs	get_relationship_attribute	963	PROVEN	PS.getA_spec
+graph/src/runtime/pending.rs	update_relationship_attrs	981	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	deleted_relationship	1005	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_relationships_bulk	1012	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_relationship_type	1022	PROVEN	PS.sets_spec, createdRel_spec
+graph/src/runtime/pending.rs	is_node_created	1030	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_pending_nodes_with_labels	1040	PROVEN	PS.pendingWithLabels_spec
+graph/src/runtime/pending.rs	nodes_with_pending_label_removes	1060	PROVEN	PS.withLabelRemoves_spec
+graph/src/runtime/pending.rs	is_relationship_created	1078	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_created_relationship_endpoints	1087	PROVEN	PS.createdEndpoints_spec
+graph/src/runtime/pending.rs	has_deleted_nodes	1100	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_deleted_relationships	1105	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_created_relationships	1110	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_node_deleted	1115	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_nodes	1124	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_relationship_deleted	1129	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	pending_indegree	1139	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_outdegree	1163	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_deleted_indegree	1188	PROVEN	PS.deletedDeg_some, deletedDeg_none, deg_panics_on_pending_deleted (#2769)
+graph/src/runtime/pending.rs	pending_deleted_outdegree	1210	PROVEN	PS.deletedDeg_some, deletedDeg_none
+graph/src/runtime/pending.rs	commit	1228	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
+graph/src/runtime/pending.rs	enforce_constraints	1385	PROVEN	PC.enforce_spec, affected_spec
+graph/src/runtime/pending.rs	constraint_node_has_label	1458	PROVEN	PC.constraintHas_eq
+graph/src/runtime/pending.rs	check_node_constraint	1482	CONDITIONAL	UQ.checkNode2 (#3334): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_nodes returns every live label member not written by this commit whose key values all pass is_value_valid_for_index_lookup (RediSearch Equal/And exact, index lags only this Commit), and the label matrix lists every live member; history PC.check/scan_ok
+graph/src/runtime/pending.rs	check_edge_constraint	1546	CONDITIONAL	UQ.checkEdge2 (#3334; membership PC.edgeMember_spec): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees, checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_edges returns every live edge of the type not written by this commit whose key values pass is_value_valid_for_index_lookup, and the tensor lists every live edge of the type; history PC.check/scan_ok
+graph/src/runtime/pending.rs	take_deferred_indexes	1617	PROVEN	PD.commitDeferred_spec (takeDeferred)
+graph/src/runtime/pending.rs	resync_published_indexes	1635	PROVEN	PD.resync_spec
+graph/src/runtime/pending.rs	commit_deferred_indexes	1690	PROVEN	PD.commitDeferred_spec
+graph/src/runtime/pending.rs	effects_count	1804	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
+graph/src/runtime/pending.rs	end_segment	1731	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err

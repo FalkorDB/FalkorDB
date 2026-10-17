@@ -38,161 +38,162 @@ graph/src/graph/graph.rs	get_type_id	1200	PROVEN	Schema.getTypeIdMut_spec, Acces
 graph/src/graph/graph.rs	node_has_label	1212	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	node_has_label_id	1226	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	edge_has_type	1238	PROVEN	Schema.edgeHasType_iff
-graph/src/graph/graph.rs	get_type_id_mut	1251	PROVEN	Schema.getTypeIdMut_spec, getTypeIdMut_stale_width (BUG), Delete.stale_type_after_registration
-graph/src/graph/graph.rs	get_plan	1273	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
-graph/src/graph/graph.rs	get_label_matrix	1344	PROVEN	Schema.labelNodeCount_eq (getLabelMat)
-graph/src/graph/graph.rs	get_label_matrix_mut	1352	PROVEN	Schema.getLabelMatMut_spec
-graph/src/graph/graph.rs	get_relationship_matrix_mut	1365	PROVEN	Schema.getRelMatMut_spec
-graph/src/graph/graph.rs	get_relationship_matrix	1391	PROVEN	Queries.allEdges_unknown, srcDestRels_mem (getRelMat)
-graph/src/graph/graph.rs	get_node_attribute_id	1406	PROVEN	Accessors.getNodeAttribute_spec (getGlobalAttributeId)
-graph/src/graph/graph.rs	node_attribute_count	1414	PROVEN	Accessors.propertyKeyCount_eq
-graph/src/graph/graph.rs	get_relationship_attribute_id	1419	PROVEN	Accessors.getRelAttribute_spec
-graph/src/graph/graph.rs	get_global_attribute_id	1432	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	node_id_bound	1607	PROVEN	Ids.maxNodeId_lt, returnNode_bound || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	relationship_id_bound	1613	PROVEN	Ids.maxRelId_lt, returnRel_bound || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	create_nodes	1646	PROVEN	Ids.markNodesLive_spec, createNodes_refused, createNodes_ok (IdSpaceContract hypothesis) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	max_node_id	1683	PROVEN	Ids.maxNodeId_lt
-graph/src/graph/graph.rs	max_relationship_id	1688	PROVEN	Ids.maxRelId_lt
-graph/src/graph/graph.rs	set_nodes_attributes_rows_of_labels	1724	PROVEN	Attrs.rowsOfLabels_mem
-graph/src/graph/graph.rs	set_nodes_attributes	1761	PROVEN	see proofs/pending_commit Span.mergeSpan_correct
-graph/src/graph/graph.rs	import_node_attrs	1798	PROVEN	see proofs/pending_commit Props.read_your_writes_new
-graph/src/graph/graph.rs	import_node_attrs_resolved	1846	PROVEN	Attrs.importResolvedTrack (rowsOfLabels_mem per node), store import = pending_commit
-graph/src/graph/graph.rs	get_or_create_node_attr_id	1879	PROVEN	Attrs.getOrCreate_spec, getOrCreate_cap
-graph/src/graph/graph.rs	get_node_attr_id	1888	PROVEN	Attrs.getAttrIdU16_eq
-graph/src/graph/graph.rs	node_attr_name	1897	PROVEN	Attrs.attrName_getAttrId
-graph/src/graph/graph.rs	get_rel_attr_id	1906	PROVEN	Attrs.getAttrIdU16_eq
-graph/src/graph/graph.rs	rel_attr_name	1915	PROVEN	Attrs.attrName_getAttrId
-graph/src/graph/graph.rs	import_relationship_attrs_resolved	1928	PROVEN	Attrs.track_eq_ofType
-graph/src/graph/graph.rs	get_or_create_rel_attr_id	1948	PROVEN	Attrs.getOrCreate_spec
-graph/src/graph/graph.rs	import_relationship_attrs	1955	PROVEN	see proofs/pending_commit Props.read_your_writes_new
-graph/src/graph/graph.rs	track_edge_index_updates_of_type	1981	PROVEN	Attrs.track_eq_ofType, trackOfType_noindex
-graph/src/graph/graph.rs	track_edge_index_updates	2006	PROVEN	Attrs.track_eq_ofType
-graph/src/graph/graph.rs	set_node_labels_product	2041	PROVEN	Labels.setLabelsProduct_spec
-graph/src/graph/graph.rs	set_nodes_labels_bulk	2120	PROVEN	Labels.setLabelsBulk_spec
-graph/src/graph/graph.rs	remove_nodes_labels	2166	PROVEN	Labels.removeLabels_spec
-graph/src/graph/graph.rs	delete_nodes	2200	PROVEN	Labels.deleteNodes_spec, deleteNodes_refused, deleteNodes_ids || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	get_node_relationships	2290	PROVEN	Queries.nodeRels_selfloop_twice (BUG via UDF getNeighbors)
-graph/src/graph/graph.rs	relationship_matrices_iter	2364	PROVEN	Queries.inDeg_eq (relMs iteration)
-graph/src/graph/graph.rs	get_node_relationships_by_type	2372	PROVEN	Queries.byType_both_once, byType_out, byType_in
-graph/src/graph/graph.rs	get_node_indegree	2414	PROVEN	Queries.inDeg_eq
-graph/src/graph/graph.rs	get_node_indegree_by_type	2426	PROVEN	Queries.inDegByType_eq
-graph/src/graph/graph.rs	get_node_outdegree	2440	PROVEN	Queries.outDeg_eq
-graph/src/graph/graph.rs	get_node_outdegree_by_type	2452	PROVEN	Queries.outDegByType_eq
-graph/src/graph/graph.rs	get_nodes	2465	PROVEN	Queries.getNodesAll_mem, getNodesAll_empty, getNodesMany_mem, getNodesMany_missing
-graph/src/graph/graph.rs	get_node_label_ids	2530	PROVEN	Queries.nodeLabelIds_mem
-graph/src/graph/graph.rs	get_node_labels	2539	PROVEN	Queries.nodeLabelNames_mem
-graph/src/graph/graph.rs	get_node_attribute	2548	PROVEN	Accessors.getNodeAttribute_spec
-graph/src/graph/graph.rs	get_node_attribute_by_idx	2560	PROVEN	Accessors.getNodeAttribute_spec (byIdx)
-graph/src/graph/graph.rs	get_node_attributes_by_idx	2571	PROVEN	Accessors.getNodeAttributesByIdx_spec
-graph/src/graph/graph.rs	create_relationships_bulk	2594	PROVEN	Delete.createRelsBulk_endpoints (no Nodup hypothesis), createRelsBulk_ragged, createRelsBulk_dup, foldl_set_get
-graph/src/graph/graph.rs	flush_for_bulk	2687	AXIOMATISED	GraphBLAS fold_latched; logical content unchanged (proofs/versioned_matrix fold theorems)
-graph/src/graph/graph.rs	fold_oversized_deltas	2712	AXIOMATISED	GraphBLAS fold_oversized + GrB_wait; logical content unchanged (proofs/versioned_matrix)
-graph/src/graph/graph.rs	wait_all	2733	AXIOMATISED	GrB_Matrix_wait on every matrix (pthread_atfork)
-graph/src/graph/graph.rs	is_synced	2751	PROVEN	Index.isSynced_iff
-graph/src/graph/graph.rs	set_relationships_attributes	2760	PROVEN	see proofs/pending_commit Span.mergeSpan_correct; Attrs.track_eq_ofType
-graph/src/graph/graph.rs	set_relationships_attributes_of_type	2786	PROVEN	Attrs.track_eq_ofType
-graph/src/graph/graph.rs	is_node_deleted	2803	PROVEN	Ids.isNodeDeleted_return || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	deleted_nodes_count	2811	PROVEN	Accessors.deletedCounts
-graph/src/graph/graph.rs	deleted_nodes	2816	PROVEN	Accessors.deletedCounts
-graph/src/graph/graph.rs	deleted_relationships_count	2821	PROVEN	Accessors.deletedCounts
-graph/src/graph/graph.rs	deleted_relationships	2826	PROVEN	Accessors.deletedCounts
-graph/src/graph/graph.rs	label_matrices	2831	PROVEN	Labels.LabCons (labelMs projection)
-graph/src/graph/graph.rs	adjacency_matrix	2836	PROVEN	Queries.adjMatrix (adj projection)
-graph/src/graph/graph.rs	relationship_tensors	2841	PROVEN	Queries.inDeg_eq (relMs projection)
-graph/src/graph/graph.rs	is_relationship_deleted	2846	PROVEN	Accessors.isRelDeleted_return; Delete.deleteRels_clears || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	delete_relationships	2853	PROVEN	Delete.deleteRels_clears, deleteRels_adj, deleteRels_refused, deleteRels_stale (BUG) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	delete_implicit_edges	2988	PROVEN	Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	get_src_dest_relationships	3171	PROVEN	Queries.srcDestRels_mem
-graph/src/graph/graph.rs	build_relationship_matrix_unrestricted	3195	PROVEN	Queries.relMatUnrestricted_mem, relMatUnrestricted_none
-graph/src/graph/graph.rs	resolve_label_ids	3229	PROVEN	Queries.resolveLabelIds_none
-graph/src/graph/graph.rs	build_relationship_matrix	3239	PROVEN	Queries.relMatrix_mem
-graph/src/graph/graph.rs	get_relationships	3307	PROVEN	Queries.getRelationships_all
-graph/src/graph/graph.rs	get_relationship_type_id	3323	PROVEN	Queries.relTypeId_unique, Delete.relTypeId_two
-graph/src/graph/graph.rs	endpoints_for_edge	3339	PROVEN	Queries.relEndpoints_eq, Delete.createRelsBulk_endpoints
-graph/src/graph/graph.rs	clear_edge_endpoint	3348	PROVEN	see proofs/endpoint_index get_clear; Delete.deleteRels_clears || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	get_relationship_endpoints	3357	PROVEN	Queries.relEndpoints_eq (panic = none)
-graph/src/graph/graph.rs	relationship_type_matrix_iter	3371	PROVEN	Queries.relTypeIter_mem
-graph/src/graph/graph.rs	get_relationship_attribute	3380	PROVEN	Accessors.getRelAttribute_spec
-graph/src/graph/graph.rs	get_relationship_attribute_by_idx	3393	PROVEN	Accessors.getRelAttribute_spec (byIdx)
-graph/src/graph/graph.rs	relationship_attrs	3407	PROVEN	Accessors (relAttrs projection) getRelAttribute_spec
-graph/src/graph/graph.rs	get_relationship_attributes_by_idx	3414	PROVEN	Accessors.getRelAttributesByIdx_spec
-graph/src/graph/graph.rs	resize_node_matrices	3427	PROVEN	Schema.resize_post (resizeNodeMs)
-graph/src/graph/graph.rs	resize_relationship_matrices	3439	PROVEN	Schema.resize_post (resizeRelMs)
-graph/src/graph/graph.rs	resize	3444	PROVEN	Schema.resize_post, resize_keeps
-graph/src/graph/graph.rs	attr_by_name	3474	PROVEN	Attrs.attrByName_spec
-graph/src/graph/graph.rs	attr_names	3485	PROVEN	Attrs.attrNames_length
-graph/src/graph/graph.rs	attr_pairs	3496	PROVEN	Attrs.attrPairs_names
-graph/src/graph/graph.rs	get_node_attrs	3508	PROVEN	Accessors.getNodeAttrs_eq
-graph/src/graph/graph.rs	get_node_all_attrs	3516	PROVEN	Accessors.getNodeAttrs_eq
-graph/src/graph/graph.rs	get_node_all_attrs_by_id	3523	PROVEN	Accessors.getNodeAttrCount_eq
-graph/src/graph/graph.rs	get_node_attr_count	3532	PROVEN	Accessors.getNodeAttrCount_eq
-graph/src/graph/graph.rs	get_relationship_attrs	3539	PROVEN	Accessors.getRelAttrs_eq
-graph/src/graph/graph.rs	get_relationship_all_attrs	3547	PROVEN	Accessors.getRelAttrs_eq
-graph/src/graph/graph.rs	get_relationship_all_attrs_by_id	3554	PROVEN	Accessors.getRelAttrCount_eq
-graph/src/graph/graph.rs	get_relationship_attr_count	3563	PROVEN	Accessors.getRelAttrCount_eq
-graph/src/graph/graph.rs	create_index	3570	PROVEN	Index.createIndex_node_spec
-graph/src/graph/graph.rs	create_index_sync	3617	PROVEN	Index.createIndex_node_spec (same state effect, no spawn)
-graph/src/graph/graph.rs	populate_indexes_sync	3661	PROVEN	Index.syncDocs_mem
-graph/src/graph/graph.rs	index_locks	3758	AXIOMATISED	clones of the indexers' parking_lot mutexes
-graph/src/graph/graph.rs	commit_index_docs	3785	PROVEN	Index.commitIndexDocs: commitIndexDocs_skip, commitIndexDocs_native_first, commitIndexDocs_empty (apply_index_writes = native index, proofs/index_layer; commit_index/commit_edge_index = commitDocs/commitEdgeDocs)
-graph/src/graph/graph.rs	commit_index	3799	PROVEN	Index.commitDocs_noop, commitDocs_every_id (takes lock, = commit_index_kind)
-graph/src/graph/graph.rs	commit_index_locked	3812	PROVEN	Index.commitDocs_every_id
-graph/src/graph/graph.rs	commit_edge_index	3822	PROVEN	Index.commitEdgeDocs_mem (takes lock)
-graph/src/graph/graph.rs	commit_edge_index_locked	3834	PROVEN	Index.commitEdgeDocs_mem
-graph/src/graph/graph.rs	commit_index_kind	3910	PROVEN	Index.commitDocs_noop, commitDocs_every_id
-graph/src/graph/graph.rs	drop_index	3964	PROVEN	Index.dropIndex_protects, Constraints.drop_blocked
-graph/src/graph/graph.rs	is_indexed	4050	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
-graph/src/graph/graph.rs	get_indexed_nodes	4059	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
-graph/src/graph/graph.rs	is_edge_indexed	4112	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
-graph/src/graph/graph.rs	get_indexed_edges	4121	AXIOMATISED	RediSearch Indexer::query_edges delegation
-graph/src/graph/graph.rs	get_all_edges	4136	PROVEN	Queries.allEdges_unknown
-graph/src/graph/graph.rs	fulltext_query_nodes	4149	AXIOMATISED	RediSearch fulltext_query delegation
-graph/src/graph/graph.rs	fulltext_query_edges	4164	AXIOMATISED	RediSearch fulltext_query_edges delegation
-graph/src/graph/graph.rs	vector_query_nodes	4188	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
-graph/src/graph/graph.rs	vector_query_edges	4248	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
-graph/src/graph/graph.rs	index_info	4301	PROVEN	Index.indexInfo_length
-graph/src/graph/graph.rs	constraints	4317	PROVEN	Constraints.two_phase_eq (constraints projection)
-graph/src/graph/graph.rs	constraints_mut	4321	PROVEN	Constraints.upsert_twice (constraints_mut projection)
-graph/src/graph/graph.rs	create_constraint	4334	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
-graph/src/graph/graph.rs	add_constraint_raw	4388	PROVEN	Accessors.addRaw_spec
-graph/src/graph/graph.rs	upsert_constraint_raw	4404	PROVEN	Constraints.upsert_twice
-graph/src/graph/graph.rs	get_constraint_entity_count	4426	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
-graph/src/graph/graph.rs	validate_constraint	4438	PROVEN	Constraints.validate / two_phase_eq
-graph/src/graph/graph.rs	validate_pending_constraints	4449	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	compute_pending_constraint_results	4478	PROVEN	Constraints.lookup_compute, two_phase_eq
-graph/src/graph/graph.rs	apply_constraint_validation_results	4490	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	validate_mandatory_constraint	4509	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4549	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4605	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	drop_constraint	4623	PROVEN	Constraints.dropC_length, swapRemove_length
-graph/src/graph/graph.rs	has_supporting_index	4646	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4665	PROVEN	Constraints.drop_blocked
-graph/src/graph/graph.rs	cancel_indexing	4684	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
-graph/src/graph/graph.rs	set_indexer_graph	4696	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
-graph/src/graph/graph.rs	build_adjacency_matrix	4708	PROVEN	Queries.adjMatrix_single
-graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	4736	PROVEN	Queries.symAdj_symm
-graph/src/graph/graph.rs	memory_usage_report	4752	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
-graph/src/graph/graph.rs	estimate_entity_attr_size	4917	PROVEN	Accessors.estimateSize_eq
-graph/src/graph/graph.rs	encode_payload	4926	PROVEN	Index.encodeOp_nodes
-graph/src/graph/graph.rs	get_node_attribute_names	4983	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	get_relationship_attribute_names	4989	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	add_node_attribute_name	4995	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	add_rel_attribute_name	5007	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	build_global_attrs	5023	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_type_id_mut	1251	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration; history pre3277_getTypeIdMut_stale_width, Delete.pre3277_stale_type_after_registration (W4-graph-1, confirmed live then)
+graph/src/graph/graph.rs	register_relationship_type	1274	PROVEN	Schema.registerRelType: registerRelType_width (relationship_type_matrix stays relationship_cap × |types|), getTypeIdMut_spec, getRelMatMut_new; Delete.type_cleared_after_registration
+graph/src/graph/graph.rs	get_plan	1285	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
+graph/src/graph/graph.rs	get_label_matrix	1356	PROVEN	Schema.labelNodeCount_eq (getLabelMat)
+graph/src/graph/graph.rs	get_label_matrix_mut	1364	PROVEN	Schema.getLabelMatMut_spec
+graph/src/graph/graph.rs	get_relationship_matrix_mut	1377	PROVEN	Schema.getRelMatMut_spec, getRelMatMut_new (new type = registerRelType)
+graph/src/graph/graph.rs	get_relationship_matrix	1393	PROVEN	Queries.allEdges_unknown, srcDestRels_mem (getRelMat)
+graph/src/graph/graph.rs	get_node_attribute_id	1408	PROVEN	Accessors.getNodeAttribute_spec (getGlobalAttributeId)
+graph/src/graph/graph.rs	node_attribute_count	1416	PROVEN	Accessors.propertyKeyCount_eq
+graph/src/graph/graph.rs	get_relationship_attribute_id	1421	PROVEN	Accessors.getRelAttribute_spec
+graph/src/graph/graph.rs	get_global_attribute_id	1434	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	node_id_bound	1609	PROVEN	Ids.maxNodeId_lt, returnNode_bound || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	relationship_id_bound	1615	PROVEN	Ids.maxRelId_lt, returnRel_bound || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	create_nodes	1648	PROVEN	Ids.markNodesLive_spec, createNodes_refused, createNodes_ok (IdSpaceContract hypothesis) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	max_node_id	1685	PROVEN	Ids.maxNodeId_lt
+graph/src/graph/graph.rs	max_relationship_id	1690	PROVEN	Ids.maxRelId_lt
+graph/src/graph/graph.rs	set_nodes_attributes_rows_of_labels	1726	PROVEN	Attrs.rowsOfLabels_mem
+graph/src/graph/graph.rs	set_nodes_attributes	1763	PROVEN	see proofs/pending_commit Span.mergeSpan_correct
+graph/src/graph/graph.rs	import_node_attrs	1800	PROVEN	see proofs/pending_commit Props.read_your_writes_new
+graph/src/graph/graph.rs	import_node_attrs_resolved	1848	PROVEN	Attrs.importResolvedTrack (rowsOfLabels_mem per node), store import = pending_commit
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1881	PROVEN	Attrs.getOrCreate_spec, getOrCreate_cap
+graph/src/graph/graph.rs	get_node_attr_id	1890	PROVEN	Attrs.getAttrIdU16_eq
+graph/src/graph/graph.rs	node_attr_name	1899	PROVEN	Attrs.attrName_getAttrId
+graph/src/graph/graph.rs	get_rel_attr_id	1908	PROVEN	Attrs.getAttrIdU16_eq
+graph/src/graph/graph.rs	rel_attr_name	1917	PROVEN	Attrs.attrName_getAttrId
+graph/src/graph/graph.rs	import_relationship_attrs_resolved	1930	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	1950	PROVEN	Attrs.getOrCreate_spec
+graph/src/graph/graph.rs	import_relationship_attrs	1957	PROVEN	see proofs/pending_commit Props.read_your_writes_new
+graph/src/graph/graph.rs	track_edge_index_updates_of_type	1983	PROVEN	Attrs.track_eq_ofType, trackOfType_noindex
+graph/src/graph/graph.rs	track_edge_index_updates	2008	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	set_node_labels_product	2043	PROVEN	Labels.setLabelsProduct_spec
+graph/src/graph/graph.rs	set_nodes_labels_bulk	2122	PROVEN	Labels.setLabelsBulk_spec
+graph/src/graph/graph.rs	remove_nodes_labels	2168	PROVEN	Labels.removeLabels_spec
+graph/src/graph/graph.rs	delete_nodes	2202	PROVEN	Labels.deleteNodes_spec, deleteNodes_refused, deleteNodes_ids || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	get_node_relationships	2292	PROVEN	Queries.nodeRels_selfloop_twice (BUG via UDF getNeighbors)
+graph/src/graph/graph.rs	relationship_matrices_iter	2366	PROVEN	Queries.inDeg_eq (relMs iteration)
+graph/src/graph/graph.rs	get_node_relationships_by_type	2374	PROVEN	Queries.byType_both_once, byType_out, byType_in
+graph/src/graph/graph.rs	get_node_indegree	2416	PROVEN	Queries.inDeg_eq
+graph/src/graph/graph.rs	get_node_indegree_by_type	2428	PROVEN	Queries.inDegByType_eq
+graph/src/graph/graph.rs	get_node_outdegree	2442	PROVEN	Queries.outDeg_eq
+graph/src/graph/graph.rs	get_node_outdegree_by_type	2454	PROVEN	Queries.outDegByType_eq
+graph/src/graph/graph.rs	get_nodes	2467	PROVEN	Queries.getNodesAll_mem, getNodesAll_empty, getNodesMany_mem, getNodesMany_missing
+graph/src/graph/graph.rs	get_node_label_ids	2532	PROVEN	Queries.nodeLabelIds_mem
+graph/src/graph/graph.rs	get_node_labels	2541	PROVEN	Queries.nodeLabelNames_mem
+graph/src/graph/graph.rs	get_node_attribute	2550	PROVEN	Accessors.getNodeAttribute_spec
+graph/src/graph/graph.rs	get_node_attribute_by_idx	2562	PROVEN	Accessors.getNodeAttribute_spec (byIdx)
+graph/src/graph/graph.rs	get_node_attributes_by_idx	2573	PROVEN	Accessors.getNodeAttributesByIdx_spec
+graph/src/graph/graph.rs	create_relationships_bulk	2596	PROVEN	Delete.createRelsBulk_endpoints (no Nodup hypothesis), createRelsBulk_ragged, createRelsBulk_dup, foldl_set_get
+graph/src/graph/graph.rs	flush_for_bulk	2689	AXIOMATISED	GraphBLAS fold_latched; logical content unchanged (proofs/versioned_matrix fold theorems)
+graph/src/graph/graph.rs	fold_oversized_deltas	2714	AXIOMATISED	GraphBLAS fold_oversized + GrB_wait; logical content unchanged (proofs/versioned_matrix)
+graph/src/graph/graph.rs	wait_all	2735	AXIOMATISED	GrB_Matrix_wait on every matrix (pthread_atfork)
+graph/src/graph/graph.rs	is_synced	2753	PROVEN	Index.isSynced_iff
+graph/src/graph/graph.rs	set_relationships_attributes	2762	PROVEN	see proofs/pending_commit Span.mergeSpan_correct; Attrs.track_eq_ofType
+graph/src/graph/graph.rs	set_relationships_attributes_of_type	2788	PROVEN	Attrs.track_eq_ofType
+graph/src/graph/graph.rs	is_node_deleted	2805	PROVEN	Ids.isNodeDeleted_return || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	deleted_nodes_count	2813	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_nodes	2818	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_relationships_count	2823	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	deleted_relationships	2828	PROVEN	Accessors.deletedCounts
+graph/src/graph/graph.rs	label_matrices	2833	PROVEN	Labels.LabCons (labelMs projection)
+graph/src/graph/graph.rs	adjacency_matrix	2838	PROVEN	Queries.adjMatrix (adj projection)
+graph/src/graph/graph.rs	relationship_tensors	2843	PROVEN	Queries.inDeg_eq (relMs projection)
+graph/src/graph/graph.rs	is_relationship_deleted	2848	PROVEN	Accessors.isRelDeleted_return; Delete.deleteRels_clears || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	delete_relationships	2855	PROVEN	Delete.deleteRels_clears, deleteRels_adj, deleteRels_refused, deleteRels_stale (BUG) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	delete_implicit_edges	2990	PROVEN	Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	get_src_dest_relationships	3173	PROVEN	Queries.srcDestRels_mem
+graph/src/graph/graph.rs	build_relationship_matrix_unrestricted	3197	PROVEN	Queries.relMatUnrestricted_mem, relMatUnrestricted_none
+graph/src/graph/graph.rs	resolve_label_ids	3231	PROVEN	Queries.resolveLabelIds_none
+graph/src/graph/graph.rs	build_relationship_matrix	3241	PROVEN	Queries.relMatrix_mem
+graph/src/graph/graph.rs	get_relationships	3309	PROVEN	Queries.getRelationships_all
+graph/src/graph/graph.rs	get_relationship_type_id	3325	PROVEN	Queries.relTypeId_unique, Delete.relTypeId_two
+graph/src/graph/graph.rs	endpoints_for_edge	3341	PROVEN	Queries.relEndpoints_eq, Delete.createRelsBulk_endpoints
+graph/src/graph/graph.rs	clear_edge_endpoint	3350	PROVEN	see proofs/endpoint_index get_clear; Delete.deleteRels_clears || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	get_relationship_endpoints	3359	PROVEN	Queries.relEndpoints_eq (panic = none)
+graph/src/graph/graph.rs	relationship_type_matrix_iter	3373	PROVEN	Queries.relTypeIter_mem
+graph/src/graph/graph.rs	get_relationship_attribute	3382	PROVEN	Accessors.getRelAttribute_spec
+graph/src/graph/graph.rs	get_relationship_attribute_by_idx	3395	PROVEN	Accessors.getRelAttribute_spec (byIdx)
+graph/src/graph/graph.rs	relationship_attrs	3409	PROVEN	Accessors (relAttrs projection) getRelAttribute_spec
+graph/src/graph/graph.rs	get_relationship_attributes_by_idx	3416	PROVEN	Accessors.getRelAttributesByIdx_spec
+graph/src/graph/graph.rs	resize_node_matrices	3429	PROVEN	Schema.resize_post (resizeNodeMs)
+graph/src/graph/graph.rs	resize_relationship_matrices	3441	PROVEN	Schema.resize_post (resizeRelMs)
+graph/src/graph/graph.rs	resize	3446	PROVEN	Schema.resize_post, resize_keeps
+graph/src/graph/graph.rs	attr_by_name	3476	PROVEN	Attrs.attrByName_spec
+graph/src/graph/graph.rs	attr_names	3487	PROVEN	Attrs.attrNames_length
+graph/src/graph/graph.rs	attr_pairs	3498	PROVEN	Attrs.attrPairs_names
+graph/src/graph/graph.rs	get_node_attrs	3510	PROVEN	Accessors.getNodeAttrs_eq
+graph/src/graph/graph.rs	get_node_all_attrs	3518	PROVEN	Accessors.getNodeAttrs_eq
+graph/src/graph/graph.rs	get_node_all_attrs_by_id	3525	PROVEN	Accessors.getNodeAttrCount_eq
+graph/src/graph/graph.rs	get_node_attr_count	3534	PROVEN	Accessors.getNodeAttrCount_eq
+graph/src/graph/graph.rs	get_relationship_attrs	3541	PROVEN	Accessors.getRelAttrs_eq
+graph/src/graph/graph.rs	get_relationship_all_attrs	3549	PROVEN	Accessors.getRelAttrs_eq
+graph/src/graph/graph.rs	get_relationship_all_attrs_by_id	3556	PROVEN	Accessors.getRelAttrCount_eq
+graph/src/graph/graph.rs	get_relationship_attr_count	3565	PROVEN	Accessors.getRelAttrCount_eq
+graph/src/graph/graph.rs	create_index	3572	PROVEN	Index.createIndex_node_spec
+graph/src/graph/graph.rs	create_index_sync	3619	PROVEN	Index.createIndex_node_spec (same state effect, no spawn)
+graph/src/graph/graph.rs	populate_indexes_sync	3663	PROVEN	Index.syncDocs_mem
+graph/src/graph/graph.rs	index_locks	3760	AXIOMATISED	clones of the indexers' parking_lot mutexes
+graph/src/graph/graph.rs	commit_index_docs	3787	PROVEN	Index.commitIndexDocs: commitIndexDocs_skip, commitIndexDocs_native_first, commitIndexDocs_empty (apply_index_writes = native index, proofs/index_layer; commit_index/commit_edge_index = commitDocs/commitEdgeDocs)
+graph/src/graph/graph.rs	commit_index	3801	PROVEN	Index.commitDocs_noop, commitDocs_every_id (takes lock, = commit_index_kind)
+graph/src/graph/graph.rs	commit_index_locked	3814	PROVEN	Index.commitDocs_every_id
+graph/src/graph/graph.rs	commit_edge_index	3824	PROVEN	Index.commitEdgeDocs_mem (takes lock)
+graph/src/graph/graph.rs	commit_edge_index_locked	3836	PROVEN	Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_index_kind	3912	PROVEN	Index.commitDocs_noop, commitDocs_every_id
+graph/src/graph/graph.rs	drop_index	3966	PROVEN	Index.dropIndex_protects, Constraints.drop_blocked
+graph/src/graph/graph.rs	is_indexed	4052	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	get_indexed_nodes	4061	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
+graph/src/graph/graph.rs	is_edge_indexed	4114	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation
+graph/src/graph/graph.rs	get_indexed_edges	4123	AXIOMATISED	RediSearch Indexer::query_edges delegation
+graph/src/graph/graph.rs	get_all_edges	4138	PROVEN	Queries.allEdges_unknown
+graph/src/graph/graph.rs	fulltext_query_nodes	4151	AXIOMATISED	RediSearch fulltext_query delegation
+graph/src/graph/graph.rs	fulltext_query_edges	4166	AXIOMATISED	RediSearch fulltext_query_edges delegation
+graph/src/graph/graph.rs	vector_query_nodes	4190	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	vector_query_edges	4250	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
+graph/src/graph/graph.rs	index_info	4303	PROVEN	Index.indexInfo_length
+graph/src/graph/graph.rs	constraints	4319	PROVEN	Constraints.two_phase_eq (constraints projection)
+graph/src/graph/graph.rs	constraints_mut	4323	PROVEN	Constraints.upsert_twice (constraints_mut projection)
+graph/src/graph/graph.rs	create_constraint	4336	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
+graph/src/graph/graph.rs	add_constraint_raw	4390	PROVEN	Accessors.addRaw_spec
+graph/src/graph/graph.rs	upsert_constraint_raw	4406	PROVEN	Constraints.upsert_twice
+graph/src/graph/graph.rs	get_constraint_entity_count	4428	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
+graph/src/graph/graph.rs	validate_constraint	4440	PROVEN	Constraints.validate / two_phase_eq
+graph/src/graph/graph.rs	validate_pending_constraints	4451	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	compute_pending_constraint_results	4480	PROVEN	Constraints.lookup_compute, two_phase_eq
+graph/src/graph/graph.rs	apply_constraint_validation_results	4492	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	validate_mandatory_constraint	4511	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4551	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4607	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	drop_constraint	4625	PROVEN	Constraints.dropC_length, swapRemove_length
+graph/src/graph/graph.rs	has_supporting_index	4648	PROVEN	Constraints.hasSupporting_nil
+graph/src/graph/graph.rs	constraint_depends_on_index	4667	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	cancel_indexing	4686	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
+graph/src/graph/graph.rs	set_indexer_graph	4698	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
+graph/src/graph/graph.rs	build_adjacency_matrix	4710	PROVEN	Queries.adjMatrix_single
+graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	4738	PROVEN	Queries.symAdj_symm
+graph/src/graph/graph.rs	memory_usage_report	4754	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
+graph/src/graph/graph.rs	estimate_entity_attr_size	4919	PROVEN	Accessors.estimateSize_eq
+graph/src/graph/graph.rs	encode_payload	4928	PROVEN	Index.encodeOp_nodes
+graph/src/graph/graph.rs	get_node_attribute_names	4985	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_relationship_attribute_names	4991	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	add_node_attribute_name	4997	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	add_rel_attribute_name	5009	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	build_global_attrs	5025	PROVEN	Accessors.node_rel_same_id
 graph/src/graph/constraint.rs	fmt	14	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	fmt	34	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	new	60	PROVEN	Constraints.cnew_fresh
 graph/src/graph/constraint.rs	matches	79	PROVEN	Constraints.cmatches_iff, cmatches_order_sensitive (BUG vs C)
 graph/src/graph/graph.rs	node	330	PROVEN	Accessors.nodeOpErrorKind_spec
 graph/src/graph/graph.rs	relationship	339	PROVEN	Accessors.nodeOpErrorKind_spec
-graph/src/graph/graph.rs	cancel_node_id	1449	PROVEN	Ids.returnNode_bound, isNodeDeleted_return, cancelNodeId_err (IdSpaceContract hypothesis) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	cancel_relationship_id	1462	PROVEN	Ids.returnRel_bound, cancelRelId_err; Accessors.isRelDeleted_return || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	open_id_batches	1492	PROVEN	Ids.rollIdBatches_spec (open half) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	roll_id_batches	1511	PROVEN	Ids.rollIdBatches_spec, rollIdBatches_refused || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	validate	1529	PROVEN	Ids.validateGraph: validate_ok_iff (verify_id_batches then verify_created_relationships, #3022)
-graph/src/graph/graph.rs	verify_created_relationships	1546	PROVEN	Ids.verifyCreatedRels/liveB/offends: liveB_iff, skip_iff, offends_iff, verifyCreatedRels_spec (accepts iff every created, unfreed relationship ends at two live nodes, #3022)
-graph/src/graph/graph.rs	verify_id_batches	1579	PROVEN	Ids.verifyIdBatches: verifyIdBatches_ok_iff, validate_ok_iff, rollIdBatches_spec, rollIdBatches_refused || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
-graph/src/graph/graph.rs	node_id_space	1593	PROVEN	Ids.openNodeSpace_eq
-graph/src/graph/graph.rs	relationship_id_space	1599	PROVEN	Ids.openRelSpace_eq
-graph/src/graph/graph.rs	grow_for_nodes	1665	PROVEN	Ids.growForNodes_spec
-graph/src/graph/graph.rs	first_node_with_relationships	2321	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)
+graph/src/graph/graph.rs	cancel_node_id	1451	PROVEN	Ids.returnNode_bound, isNodeDeleted_return, cancelNodeId_err (IdSpaceContract hypothesis) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	cancel_relationship_id	1464	PROVEN	Ids.returnRel_bound, cancelRelId_err; Accessors.isRelDeleted_return || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	open_id_batches	1494	PROVEN	Ids.rollIdBatches_spec (open half) || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	roll_id_batches	1513	PROVEN	Ids.rollIdBatches_spec, rollIdBatches_refused || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	validate	1531	PROVEN	Ids.validateGraph: validate_ok_iff (verify_id_batches then verify_created_relationships, #3022)
+graph/src/graph/graph.rs	verify_created_relationships	1548	PROVEN	Ids.verifyCreatedRels/liveB/offends: liveB_iff, skip_iff, offends_iff, verifyCreatedRels_spec (accepts iff every created, unfreed relationship ends at two live nodes, #3022)
+graph/src/graph/graph.rs	verify_id_batches	1581	PROVEN	Ids.verifyIdBatches: verifyIdBatches_ok_iff, validate_ok_iff, rollIdBatches_spec, rollIdBatches_refused || IdSpaceContract discharged: IdRust.rustIdOps_contract (instances in IdRustUse)
+graph/src/graph/graph.rs	node_id_space	1595	PROVEN	Ids.openNodeSpace_eq
+graph/src/graph/graph.rs	relationship_id_space	1601	PROVEN	Ids.openRelSpace_eq
+graph/src/graph/graph.rs	grow_for_nodes	1667	PROVEN	Ids.growForNodes_spec
+graph/src/graph/graph.rs	first_node_with_relationships	2323	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved)

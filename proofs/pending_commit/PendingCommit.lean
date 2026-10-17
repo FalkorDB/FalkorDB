@@ -4,11 +4,31 @@
 A Lean model of how a FalkorDB-rs write query stages mutations in
 `runtime::pending::Pending`, reads them back, and applies them at `Commit`; of
 the attribute store they land in; and of the deleted-entity snapshots later
-clauses read through. 322 theorems, no `sorry`/`admit`/`axiom`. Coverage per
-Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66)
-and `pending.rs` (63 non-test) is PROVEN. Repros: `graph/tests/lean_pending_commit.rs`
+clauses read through. 363 theorems, no `sorry`/`admit`/`axiom`. Coverage per
+Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66) is PROVEN;
+of `pending.rs` (67 non-test) 65 are PROVEN and `check_node_constraint` /
+`check_edge_constraint` are CONDITIONAL on the supporting index's completeness (#3334). Repros: `graph/tests/lean_pending_commit.rs`
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
-Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `b080a44c1`.
+Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `0f45a8685`.
+
+## Re-target to 0f45a8685 (from cab3cf192)
+
+* **#3334 (`4ace60ec7`, fixes #3330)** — UNIQUE constraints are enforced by an index lookup
+  per member (`unique_violated`, pending.rs:178; `is_value_valid_for_index_lookup` :153)
+  instead of a label scan per member. `UniqueIndex.lean`: `uniqueViolated_spec` (violated
+  iff two members share a full key or a member's key is carried by a live candidate outside
+  the affected set), `uniqueViolated_agrees` (equals the old label-scan verdict `PC.check`
+  under the constraint's pre-commit invariant), `checkUnique_spec`, `checkMandatory_eq_old`,
+  `exactLookup_spec`. The comparison with a specification needs the index contract the Rust
+  doc states (hypotheses `hIdx`/`hScan`: the index lags only this `Commit`, the scan lists
+  every live member), hence CONDITIONAL rows for the two check functions.
+* **#3063 (`0f45a8685`, #2539)** — `import_attrs_resolved` sorts stably, `dedup_by_key`s and
+  drops a trailing `ATTRIBUTE_ID_NONE`. `StoreApi`: `normResolved_sorted`,
+  `normResolved_fits` (≤ 65,535 entries, so `set_span`'s `n as u16` is exact for any bulk
+  header), `normResolved_get` (the *first* column of a repeated id wins, as C),
+  `importResolved_spec` (no length precondition any more), `importResolved_reads`,
+  `resolved_duplicate_fixed`; history `pre3063_importResolved_spec`,
+  `pre3063_resolved_duplicate`.
 #3339 (b080a44c1): property validation bounds list nesting at `MAX_VALUE_NESTING` = 4096 —
 `PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`, history
 `PA.pre3339_isValid_any_depth`; the save/load consequence is value_math `stored_roundtrip`.
@@ -119,7 +139,7 @@ Wave-4 findings:
   deduplicates ids; `setSpan_cast_exact` shows strictly ascending ids below
   `ATTRIBUTE_ID_NONE` always fit. Not reproduced (needs a 65,536-column bulk
   payload).
-* `resolved_duplicate` — `import_attrs_resolved` keeps duplicate ids
+* `pre3063_resolved_duplicate` (**fixed by #3063**: `resolved_duplicate_fixed`) — `import_attrs_resolved` kept duplicate ids
   (`GRAPH.BULK` header repeating a column name): two entries for one id are
   stored, reads return the second (binary search), `attr_count` says 2. C
   stores duplicates too (`AttributeSet_AddNoClone` only asserts in debug); not
@@ -208,9 +228,10 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
   only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
   the master's bin; the replica's boundary is then one lower. By hand this
   self-heals on the next create; not run against a replica.
-* `import_attrs_resolved` / `decode_with_count` do not filter nulls resp.
-  deduplicate attribute ids before `set_span`, which assumes a strictly sorted
-  null-free span; reachable only via GRAPH.BULK / a malformed RDB.
+* `decode_with_count` does not deduplicate attribute ids before `set_span`, which
+  assumes a strictly sorted null-free span; reachable only via a malformed RDB.
+  (`import_attrs_resolved` deduplicates since #3063; its GRAPH.BULK callers drop
+  `Null` values before calling it, bulk_insert.rs:373.)
 * Deleted-node snapshots take labels from the committed matrix only
   (delete.rs:263, :305), ignoring labels staged in the same query; C returns
   `[]` for any deleted node's labels, so this is a divergence either way.
@@ -255,6 +276,7 @@ import PendingCommit.PendingRels
 import PendingCommit.PendingDeg
 import PendingCommit.PendingDocs
 import PendingCommit.PendingCommitOp
+import PendingCommit.UniqueIndex
 import PendingCommit.PendingCancel
 import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext

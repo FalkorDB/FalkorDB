@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-15): proofs cite `origin/main` @ cab3cf192.
+Current state (2026-10-17): proofs cite `origin/main` @ 0f45a8685.
 There is one Lake project per area under `proofs/<area>/` (36 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -230,9 +230,9 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - writes ignore the per-query TIMEOUT (`graph_core.rs:911`);
   - loose TIMEOUT/version/arity parsing;
   - GRAPH.CONFIG accepts invalid values (**fixed by #3021, 30b4fb7dc; closes #3020**);
-  - a GRAPH.BULK header can name a property twice;
+  - a GRAPH.BULK header can name a property twice (**fixed by #3063, 0f45a8685**: the first column wins);
   - several output-format differences;
-  - likely root cause of #2539 (`attribute_store.rs:598` `as u16`).
+  - likely root cause of #2539 (`attribute_store.rs:598` `as u16`) (**bulk side fixed by #3063, 0f45a8685**).
 - **Parser**:
   - a slice bound that fails to parse is silently replaced by 0 or MAX;
   - `NOT NOT x` is parsed as `x`;
@@ -260,7 +260,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 
 ## Wave 4: confirmed bugs (documented only — no issues/PRs until the open PRs are handled)
 
-- **W4-graph-1** — a deleted edge keeps its old type. `get_type_id_mut` (`graph.rs:1167`) adds a type without resizing `relationship_type_matrix`, so the removal in `delete_relationships` / `delete_implicit_edges` (`:2615`, `:2724`) silently does nothing in release (only a `debug_assert` catches the dimension mismatch). Repro: create an `A` edge, `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`, delete the edge, create a `C` edge (reuses the id), `type(r)` → Rust `A`, C `C`. The replica's schema-apply (`effects/v3/apply.rs:536`) has the same path. Fix: `self.resize()` in `get_type_id_mut`. Test `lean_graph_queries::deleted_edge_type_survives_type_registration`.
+- **W4-graph-1** (**fixed by #3277, 13e849935; closes #3244**; `pre3277_stale_type_after_registration`, now `type_cleared_after_registration`) — a deleted edge keeps its old type. `get_type_id_mut` (`graph.rs:1167`) adds a type without resizing `relationship_type_matrix`, so the removal in `delete_relationships` / `delete_implicit_edges` (`:2615`, `:2724`) silently does nothing in release (only a `debug_assert` catches the dimension mismatch). Repro: create an `A` edge, `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`, delete the edge, create a `C` edge (reuses the id), `type(r)` → Rust `A`, C `C`. The replica's schema-apply (`effects/v3/apply.rs:536`) has the same path. Fix: `self.resize()` in `get_type_id_mut`. Test `lean_graph_queries::deleted_edge_type_survives_type_registration`.
 - **W4-graph-2** — `get_node_relationships` (`graph.rs:2056`) reports a self-loop twice; seen through UDF `getNeighbors` (count 2 vs C 1). Probably the same as #3083 (PR #3084 fixes the UDF side) — check whether #3084 fixes it at this source.
 - **W4-graph-3** — constraint matching depends on property order (`constraint.rs:79`): `UNIQUE NODE L (a,b)` then `(b,a)` creates both; C says "Constraint already exists".
 - Minor: `CREATE INDEX` on a new label also reports "Labels added: 1" (C does not).
@@ -280,9 +280,9 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-parse-4** (minor) — `SET (n.x) = 5` (`cypher.rs:3249-3263`) and `[:A:B]` (`:2966-2976`) are accepted; C gives a syntax error.
 - **W4-parse-5 (crash)** — 2000 chained `UNWIND [1] AS xN` clauses crash the server in planning or execution (parse, validate and bind succeed up to 8000); C runs 5000.
 - **#2769 re-confirmed (crash)** — `pending_deleted_*degree` (`pending.rs:1088`, `:1110`) asks the committed graph for the endpoints of an edge created and deleted in the same batch, which panics at `graph.rs:3009`. `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b), a.o = outdegree(a) RETURN b.d, a.o` kills the server; C returns `0|0`. Lean `deg_panics_on_pending_deleted`.
-- Lean-only, not confirmed live: `set_span` stores `n as u16` (`attribute_store.rs:597`, `:608`), so 65,536+ entries per entity wrap (GRAPH.BULK or a malformed RDB only; PR #3063 filters the bulk side). A GRAPH.BULK header with a repeated column stores two entries for one id (PR #3026 dedups that).
+- Lean-only, not confirmed live: `set_span` stores `n as u16` (`attribute_store.rs:597`, `:608`), so 65,536+ entries per entity wrap (GRAPH.BULK or a malformed RDB only; #3063 now filters the bulk side: `normResolved_fits`). A GRAPH.BULK header with a repeated column stored two entries for one id (fixed by #3063: `resolved_duplicate_fixed`, history `pre3063_resolved_duplicate`).
 - **W4-redis-1 (crash)** — the slow log cuts the query at byte 2048 regardless of character boundaries (`src/slow_log.rs:49` `entry_hash`, and `truncate` at `:31`). A query over 2048 bytes that takes more than 10 ms, with a multi-byte character spanning byte 2048, kills the server; C answers normally. Lean `SlowLog.entry_hash_panics`.
-- **W4-redis-2** — an index on an attribute literally named `range:x` (or `vector:…`) comes back as an index on `x` after `DEBUG RELOAD` (`serializers/mod.rs:642-646`); C keeps `[range:x]`.
+- **W4-redis-2** (**fixed by #3252, cfe6e7945; closes #3239**; `pre3252_field_prefix_lost`, now `field_name_kept`) — an index on an attribute literally named `range:x` (or `vector:…`) comes back as an index on `x` after `DEBUG RELOAD` (`serializers/mod.rs:642-646`); C keeps `[range:x]`.
 - **W4-redis-3** — module-load arguments differ from C (redismodule-rs: case-sensitive names, booleans compared to `== "yes"`). `CMD_INFO YES` → 0 (C 1); `CMD_INFO garbage` loads (C refuses); `cache_size 10` and `ASYNC_DELETE yes` are ignored.
 - W4-redis-4 (minor) — GRAPH.BULK reply says "relations created"; C says "edges created".
 - #2537, wider: any truncated GRAPH.RESTORE payload calls `LoadStringBuffer(NULL)`, not only an empty one (PR #2996 may cover it; check).
@@ -306,6 +306,11 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-17 on main (now 0f45a8685): #3252 (index on an attribute named `range:x` survives reload; closes #3239), #3335 (a parenthesised WHERE uses the index and NodeByIdSeek again; closes #3187, #3331), #3334 (UNIQUE enforced by index lookup; closes #3330), #3277 (deleted edge loses its type after a type registration; closes #3244), #3063 (bulk spans never overflow `Slot::len`; closes #2539, whose CREATE-error half, rejecting the query with C's error, remains open in substance). Proofs re-targeted: 36 projects green; 2569 PROVEN + 38 CONDITIONAL of 2608 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: W4-graph-1 (`pre3277_*`; `getTypeIdMut_spec`, `type_cleared_after_registration`); W4-redis-2 (`pre3252_*`; `decField_encField` round-trips every name); bulk span overflow and repeated column (`pre3063_*`; `normResolved_fits`, `normResolved_get`, `resolved_duplicate_fixed`).
+  - #3335: Paren is gone from bound trees. New PROVEN `ExprIR::and_of`/`or_of`/`flat` (`tv_andOf`, `scL_splice`, `flat_passes`); binder `bind_paren` (`(x)` binds exactly like `x`), `bind_andOr_paren`; planner `toPlan_correct` holds unchanged; columnar `eval_sound` holds without its Paren arm.
+  - #3334 (`UniqueIndex.lean`): `uniqueViolated_spec`, and `uniqueViolated_agrees` (equals the old label-scan verdict). `check_node_constraint`/`check_edge_constraint` are now CONDITIONAL on index completeness (the index returns every live member not written by this commit). Worth a flow test: a value escaped by `tag_encode_lower` (space, `_`, `\`) committed earlier, then a duplicate CREATE must still fail.
+  - To check live: the bulk caller drops `Null` values before dedup, so header `p,q,p` with values `(null,2,3)` keeps the second `p` (3); C's answer is unknown.
 - 2026-10-15 on main (now cab3cf192): #2897 (CowBTree BRANCH_MAX >= 4; closes #2893), #3285 (DOC_BYTES limited to readable widths; closes #3238), #3336 (UDF value nesting cap; security advisory GHSA-frmf-ffvc-mxx5). Proofs re-targeted: 37 projects green; 2565 PROVEN + 36 CONDITIONAL of 2602 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W1 #13 bug 2 (`constAssert_rejects_B3`, `remove_spec_asserted`); W7-btree-2 (`readWidth_admitted`, `admitted_fromPairs_roundtrip`); UDF conversion recursion (`fromJs_frames`/`toJs_frames`: at most cap+1 levels for any input, cyclic values included; `fromJs_eq_pre3336`: unchanged at or below the cap; `pre3336_self_array_overflows`).
   - Still present: W7-btree-1 (`remove_batch` one-child branch, PR #3283), which the 13 native_index CONDITIONAL rows rest on.

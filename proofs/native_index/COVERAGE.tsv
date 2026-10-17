@@ -77,9 +77,9 @@ graph/src/index/falkordb/graph_writes.rs	node_label_ids_into	488	PROVEN	nodeLabe
 graph/src/index/falkordb/graph_writes.rs	edge_type	503	PROVEN	edgeType: edgeType_spec
 graph/src/index/falkordb/graph_writes.rs	collect_node_entries	512	PROVEN	collectNodeEntries: collectNodeEntries_spec
 graph/src/index/falkordb/graph_writes.rs	collect_edge_entries	531	PROVEN	collectEdgeEntries: collectEdgeEntries_spec
-graph/src/graph/graph.rs	apply_index_writes	3768	PROVEN	applyIndexWrites: applyIndexWrites_spec, runUnit_spec
-graph/src/graph/graph.rs	commit_index_docs	3785	PROVEN	commitIndexDocs (native part; RediSearch commit_index/commit_edge_index are FFI): commitIndexDocs_native, applyIndexWrites_spec
-graph/src/graph/graph.rs	query_index_numeric_nodes	4073	PROVEN	queryIndexNumericNodes: queryIndexNumericNodes_spec, nodeScan_native_agrees
-graph/src/graph/graph.rs	query_index_numeric_edges	4090	PROVEN	queryIndexNumericEdges: queryIndexNumericEdges_spec, queryIndexNumericEdges_none
+graph/src/graph/graph.rs	apply_index_writes	3770	PROVEN	applyIndexWrites: applyIndexWrites_spec, runUnit_spec
+graph/src/graph/graph.rs	commit_index_docs	3787	PROVEN	commitIndexDocs (native part; RediSearch commit_index/commit_edge_index are FFI): commitIndexDocs_native, applyIndexWrites_spec
+graph/src/graph/graph.rs	query_index_numeric_nodes	4075	PROVEN	queryIndexNumericNodes: queryIndexNumericNodes_spec, nodeScan_native_agrees
+graph/src/graph/graph.rs	query_index_numeric_edges	4092	PROVEN	queryIndexNumericEdges: queryIndexNumericEdges_spec, queryIndexNumericEdges_none
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	293	PROVEN	scanRoute (native hit first, else RediSearch FFI): scanRoute_spec, nodeScan_native_agrees (CowBTree contract for the contents)
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	310	PROVEN	scanRoute: scanRoute_spec, queryIndexNumericEdges_spec (endpoints from the reverse index)

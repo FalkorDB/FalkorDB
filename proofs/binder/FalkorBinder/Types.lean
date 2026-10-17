@@ -4,9 +4,14 @@
 | here | there |
 | --- | --- |
 | `TK`, `CK`, `TE` | `ExprIR` variants (bound), constant value kinds |
-| `mayBool` | `expr_may_return_boolean` binder.rs:2306-2373 |
-| `mayEntity` | `expr_may_return_entity` binder.rs:2375-2445 |
-| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2280-2304 |
+| `mayBool` | `expr_may_return_boolean` binder.rs:2318-2385 |
+| `mayEntity` | `expr_may_return_entity` binder.rs:2387-2457 |
+| `validate` | `validate_boolean_operands` / `_impl` binder.rs:2292-2316 |
+
+`TE` is a *bound* tree, and since #3335 no bound tree holds a `Paren`
+(`BindExpr.bind_paren`; `BE` has no such constructor): both checks now hit
+`unreachable!` on one (binder.rs:2329, 2403), so `TK` has no `paren` and
+`Distinct` is the one transparent wrapper.
 | `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
 
 `mayBool` is used to reject a WHERE / list-comprehension predicate ("Expected
@@ -33,7 +38,7 @@ inductive CK | null | bool | int | float | str | list | map | node | rel | path 
   deriving DecidableEq, Repr
 
 inductive TK
-  | and | or | xor | not | paren | distinct
+  | and | or | xor | not | distinct
   | func (retBool retEntity : Bool)
   | case_
   | list | map | mapProj | negate | length | getElement | getElements | listComp | patComp | nestedPlan
@@ -51,7 +56,7 @@ mutual
 def mayBool : TE → Bool
   | .node k cs => match k with
     | .or | .and | .xor | .not => mayBoolAll cs
-    | .paren | .distinct => match cs with
+    | .distinct => match cs with
       | c :: _ => mayBool c
       | [] => false
     | .func rb _ => rb
@@ -73,7 +78,7 @@ def mayEntity : TE → Bool
     | .var e => e
     | .func _ re => re
     | .case_ => true
-    | .paren | .distinct => match cs with
+    | .distinct => match cs with
       | c :: _ => mayEntity c
       | [] => false
     | .getElement | .prop | .param | .reduce => true
@@ -103,7 +108,7 @@ others). Logical operators need every operand to be able to. -/
 def canBN : TE → Bool
   | .node k cs => match k with
     | .or | .and | .xor | .not => canBNAll cs
-    | .paren | .distinct => match cs with
+    | .distinct => match cs with
       | c :: _ => canBN c
       | [] => false
     | .func rb _ => rb
@@ -141,11 +146,6 @@ theorem mayBool_sound_except : ∀ e, noLossy e = true → canBN e = true → ma
     case or => exact mayBoolAll_sound cs hl hc
     case xor => exact mayBoolAll_sound cs hl hc
     case not => exact mayBoolAll_sound cs hl hc
-    case paren =>
-      match cs, hl, hc with
-      | c :: cs', hl, hc =>
-        simp only [noLossyAll, Bool.and_eq_true] at hl
-        exact mayBool_sound_except c hl.1 hc
     case distinct =>
       match cs, hl, hc with
       | c :: cs', hl, hc =>
@@ -198,7 +198,7 @@ def canEnt : TE → Bool
     | .var e => e
     | .func _ re => re
     | .case_ | .getElement | .prop | .param | .reduce => true
-    | .paren | .distinct => match cs with
+    | .distinct => match cs with
       | c :: _ => canEnt c
       | [] => false
     | .const c => c == .null || c == .node || c == .rel || c == .path
@@ -209,9 +209,6 @@ end
 theorem mayEntity_eq : ∀ e, mayEntity e = canEnt e
   | .node k cs => by
     cases k <;> (try rfl)
-    case paren => cases cs with
-      | nil => rfl
-      | cons c _ => exact mayEntity_eq c
     case distinct => cases cs with
       | nil => rfl
       | cons c _ => exact mayEntity_eq c

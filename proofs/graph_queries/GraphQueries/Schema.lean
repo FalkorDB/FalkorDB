@@ -13,7 +13,7 @@ import GraphQueries.Basic
 | `getLabelId`   | `get_label_id` :1155 |
 | `getLabelIdMut`| `get_label_id_mut` :1135 |
 | `getTypeId`    | `get_type_id` :1162 |
-| `getTypeIdMut` | `get_type_id_mut` :1213 (no `resize` — BUG, see `Delete.lean`) |
+| `getTypeIdMut`, `registerRelType` | `get_type_id_mut` :1251, `register_relationship_type` :1274 (#3277: resizes; `pre3277_getTypeIdMut` did not) |
 | `getRelMatMut` | `get_relationship_matrix_mut` :1340 |
 | `getRelMat`    | `get_relationship_matrix` :1366 |
 | `getLabelMat`/`getLabelMatMut` | :1306 / :1327 |
@@ -311,16 +311,31 @@ def vecInsert {α} (l : List α) (i : Nat) (x : α) : List α := l.take i ++ x :
 theorem vecInsert_end {α} (l : List α) (x : α) : vecInsert l l.length x = l ++ [x] := by
   simp [vecInsert]
 
-/-- `get_type_id_mut` (:1251). Note: no `self.resize()`. -/
-def getTypeIdMut (g : G V) (s : String) : G V × Nat :=
+/-- `get_type_id_mut` before #3277 (cab3cf192 :1251): no `self.resize()` — the
+history of W4-graph-1 / #3244. -/
+def pre3277_getTypeIdMut (g : G V) (s : String) : G V × Nat :=
   match idx g.types s with
   | some p => (g, p)
   | none =>
     let types := g.types ++ [s]
     ({ g with types := types, relMs := vecInsert g.relMs (types.length - 1) [] }, types.length - 1)
 
-/-- `get_relationship_matrix_mut` (:1365): registers like `get_type_id_mut`
-but then **resizes**, as its own comment requires. Returns the type index. -/
+/-- `register_relationship_type` (:1274, #3277): push the name, insert its tensor, then
+`self.resize()` — every registration path goes through it. -/
+def registerRelType (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
+  let types := g.types ++ [s]
+  (resize chunk hc { g with types := types, relMs := vecInsert g.relMs (types.length - 1) [] },
+   types.length - 1)
+
+/-- `get_type_id_mut` (:1251) since #3277: an existing type's position, else
+`register_relationship_type`. -/
+def getTypeIdMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
+  match idx g.types s with
+  | some p => (g, p)
+  | none => registerRelType chunk hc g s
+
+/-- `get_relationship_matrix_mut` (:1377): a new type goes through
+`register_relationship_type` (`getRelMatMut_new`), which resizes. Returns the type index. -/
 def getRelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) : G V × Nat :=
   let g1 := if s ∈ g.types then g else
     resize chunk hc { g with types := g.types ++ [s],
@@ -332,10 +347,25 @@ def getRelMat (g : G V) (s : String) : Option Ten :=
 
 def TInv (g : G V) : Prop := g.relMs.length = g.types.length
 
-theorem getTypeIdMut_spec (g : G V) (s : String) (h : TInv g) :
-    let r := getTypeIdMut g s
+theorem getTypeIdMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (h : TInv g) :
+    let r := getTypeIdMut chunk hc g s
     TInv r.1 ∧ r.1.types[r.2]? = some s ∧ getTypeId r.1 s = some r.2 := by
   simp only [getTypeIdMut, getTypeId]
+  cases hs : idx g.types s with
+  | some p => exact ⟨h, idx_get _ _ _ hs, by simpa using hs⟩
+  | none =>
+    obtain ⟨-, -, -, k4, k5⟩ := resize_keeps chunk hc
+      ({ g with types := g.types ++ [s], relMs := vecInsert g.relMs ((g.types ++ [s]).length - 1) [] } : G V)
+    simp only at k4 k5
+    simp only [registerRelType, k4, k5, TInv] at h ⊢
+    simp only [List.length_append, List.length_singleton, Nat.add_sub_cancel]
+    rw [← h, vecInsert_end, idx_append, hs]; simp [h]
+
+/-- `pre3277_getTypeIdMut_spec`: the old registration kept the table invariant too. -/
+theorem pre3277_getTypeIdMut_spec (g : G V) (s : String) (h : TInv g) :
+    let r := pre3277_getTypeIdMut g s
+    TInv r.1 ∧ r.1.types[r.2]? = some s ∧ getTypeId r.1 s = some r.2 := by
+  simp only [pre3277_getTypeIdMut, getTypeId]
   cases hs : idx g.types s with
   | some p => exact ⟨h, idx_get _ _ _ hs, by simpa using hs⟩
   | none =>
@@ -349,8 +379,8 @@ theorem idx_some (l : List String) (s : String) (h : s ∈ l) : ∃ i, idx l s =
   | some i => exact ⟨i, rfl⟩
 
 /-- A *new* type gets its tensor and a widened `relationship_type_matrix`;
-an already-registered one is returned as is — including one registered by
-`get_type_id_mut`, whose stale width is then never repaired. -/
+an already-registered one is returned as is (before #3277 that included one
+registered by the old `get_type_id_mut`, whose stale width was never repaired). -/
 theorem getRelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (h : TInv g) :
     let r := getRelMatMut chunk hc g s
     TInv r.1 ∧ r.1.types[r.2]? = some s ∧
@@ -372,13 +402,39 @@ theorem getRelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) 
     simp only [List.length_append, List.length_singleton, Nat.pred_eq_sub_one, Nat.add_sub_cancel]
     rw [← h, vecInsert_end]; simp
 
-/-- The two registration paths disagree on `relationship_type_matrix`'s
-width: `get_relationship_matrix_mut` widens it, `get_type_id_mut` does not. -/
-theorem getTypeIdMut_stale_width (g : G V) (s : String)
+/-- **History (#3277).** The two registration paths used to disagree on
+`relationship_type_matrix`'s width: `get_relationship_matrix_mut` widened it, the old
+`get_type_id_mut` did not. -/
+theorem pre3277_getTypeIdMut_stale_width (g : G V) (s : String)
     (hn : s ∉ g.types) (hw : g.relType.nc = g.types.length) :
-    (getTypeIdMut g s).1.relType.nc < (getTypeIdMut g s).1.types.length := by
+    (pre3277_getTypeIdMut g s).1.relType.nc < (pre3277_getTypeIdMut g s).1.types.length := by
   have := (idx_none g.types s).2 hn
-  simp [getTypeIdMut, this, hw]
+  simp [pre3277_getTypeIdMut, this, hw]
+
+/-- `registerRelType` keeps `relationship_type_matrix` exactly `relationship_cap × |types|`. -/
+theorem registerRelType_width (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String)
+    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length) :
+    let r := (registerRelType chunk hc g s).1
+    r.relType.nr = r.relCap ∧ r.relType.nc = r.types.length := by
+  simp only [registerRelType, resize]
+  (repeat' split) <;> simp_all [resizeNodeMs, resizeRelMs, Mat.resize] <;> omega
+
+/-- **`getTypeIdMut_width`** (#3277 fixed): whatever `get_type_id_mut` registers,
+`relationship_type_matrix` stays `relationship_cap × |types|`, so later edge deletes
+build a mask of the matrix's own shape. -/
+theorem getTypeIdMut_width (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String)
+    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length) :
+    let r := (getTypeIdMut chunk hc g s).1
+    r.relType.nr = r.relCap ∧ r.relType.nc = r.types.length := by
+  simp only [getTypeIdMut]
+  split
+  · exact hw
+  · exact registerRelType_width chunk hc g s hw
+
+/-- `get_relationship_matrix_mut` registers a new type through `register_relationship_type`. -/
+theorem getRelMatMut_new (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (hn : s ∉ g.types) :
+    (getRelMatMut chunk hc g s).1 = (registerRelType chunk hc g s).1 := by
+  simp [getRelMatMut, registerRelType, hn, Nat.pred_eq_sub_one]
 
 def getLabelMat (g : G V) (s : String) : Option Mat := (getLabelId g s).bind (g.labelMs[·]?)
 

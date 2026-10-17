@@ -83,8 +83,8 @@ src/serializers/mod.rs	encode_schema_index_block	337	PROVEN	Serial.encIdx: decId
 src/serializers/mod.rs	encode_constraint_block	439	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
 src/serializers/mod.rs	Schema::decode	467	PROVEN	Serial.decSchema: decSchema_encSchema
 src/serializers/mod.rs	decode_schema_entry	529	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField: decField_encField; field_prefix_lost (BUG: attr named range:x/vector:x reloads as x, confirmed live)
-src/serializers/mod.rs	Schema::from_graph	702	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField (#3252: name used verbatim): decField_encField (every attribute name round-trips), field_name_kept, field_prefix_kept; history pre3252_field_prefix_lost (W4-redis-2: attr named range:x/vector:x reloaded as x, confirmed live then)
+src/serializers/mod.rs	Schema::from_graph	699	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	format_value_to_string	36	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits
 src/reply.rs	reply_with_str	102	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
 src/reply.rs	format_g	112	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
@@ -230,13 +230,13 @@ src/commands/bulk_insert.rs	read_u64_ne	58	PROVEN	Bulk.readNe (w = 8; from_ne_by
 src/commands/bulk_insert.rs	read_i64_ne	70	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
 src/commands/bulk_insert.rs	read_f64_ne	82	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
 src/commands/bulk_insert.rs	read_property	94	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
-src/commands/bulk_insert.rs	parse_header	182	PROVEN	Bulk.resolve: duplicate_header_ids (divergence); header byte parse via cstr
+src/commands/bulk_insert.rs	parse_header	182	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
 src/commands/bulk_insert.rs	discard_created_graph	223	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
 src/commands/bulk_insert.rs	HeldArgs::hold	264	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
 src/commands/bulk_insert.rs	HeldArgs::replicate	291	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
 src/commands/bulk_insert.rs	HeldArgs::drop	307	AXIOMATISED	RM_FreeString under hold_gil
 src/commands/bulk_insert.rs	maybe_yield	326	PROVEN	Commands.maybeYield: maybeYield_null
-src/commands/bulk_insert.rs	process_node_token	332	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); slot_len_truncates
+src/commands/bulk_insert.rs	process_node_token	332	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
 src/commands/bulk_insert.rs	process_edge_token	416	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop)
 src/commands/bulk_insert.rs	bulk_insert_sync	502	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
 src/commands/bulk_insert.rs	bulk_insert_sync_yield	546	PROVEN	Commands.processTokens true: sync_is_yield_without_yields

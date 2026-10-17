@@ -73,16 +73,26 @@ no longer needs a Nodup hypothesis),
 (node×label matrix and label diagonals stay consistent), `labelPass_total`,
 `two_phase_eq`, `upsert_twice`, `cmatches_iff`.
 
+**Re-targeted to origin/main `0f45a8685`** (from `cab3cf192`): #3277 (`13e849935`) adds
+`register_relationship_type` (:1274), which `get_type_id_mut` and
+`get_relationship_matrix_mut` both call, so every type registration resizes —
+`Schema.registerRelType`, `registerRelType_width`, `getTypeIdMut_width`,
+`getRelMatMut_new`, `Delete.type_cleared_after_registration` (bug 1 below fixed);
+the old model is kept as `pre3277_getTypeIdMut` with `pre3277_getTypeIdMut_stale_width`
+and `Delete.pre3277_stale_type_after_registration`. COVERAGE.tsv lines re-cited to
+`0f45a8685`. 230 theorems.
+
 ## CONFIRMED bugs (Rust vs C, live) — all three re-checked live at 2c874022a: still present
 (the code each one cites is unchanged at fe619ac5f; #2911 touched only `grow_cap`)
-1. **Deleted edge keeps its type after a type is registered without resize**
+1. **FIXED by #3277 (`13e849935`, closes #3244).** **Deleted edge keeps its type after a type is registered without resize**
    (graph.rs:1251 `get_type_id_mut` has no `self.resize()`; :2947/:2834
    mask `relationship_cap × |types|` vs narrower type matrix → eWiseMult
    `GrB_DIMENSION_MISMATCH`, only `debug_assert`ed). `CREATE (:N{i:1})-[:A]->(:N{i:2})`;
    `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`;
    `MATCH ()-[r:A]->() DELETE r`; `MATCH (a{i:1}),(b{i:2}) CREATE (a)-[:C]->(b)`;
    `MATCH ()-[r]->() RETURN type(r)` → Rust `A`, C `C`. Same via replica
-   schema apply (effects/v3/apply.rs:559). Lean: `stale_type_after_registration`.
+   schema apply (effects/v3/apply.rs:559). Lean: `pre3277_stale_type_after_registration`;
+   now `type_cleared_after_registration`.
    Test `deleted_edge_type_survives_type_registration` (debug: panics
    GrB_DIMENSION_MISMATCH). Fix: call `self.resize()` in `get_type_id_mut`.
    (2c874022a: Rust `A`, C `C`.)

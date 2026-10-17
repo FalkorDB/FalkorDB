@@ -272,6 +272,21 @@ theorem needs_other (d : D) (cs : List Ex) (hd : isConn d = false) (hp : isPat d
   rw [← needsExtractionL_exists]
   cases d <;> simp_all [needsExtraction, isConn, isPat]
 
+mutual
+/-- A mode never needs more extraction than `Exists` (where every pattern needs it). -/
+theorem needs_of_exists : ∀ (e : Ex) (m : Mode), needsExtraction e .exists_ = false →
+    needsExtraction e m = false
+  | .node d cs, m, h => by
+    have hd : Mode.exists_.descend d = .exists_ := by simp [Mode.descend]
+    cases d <;> simp_all [needsExtraction] <;> exact needsL_of_exists cs _ h
+theorem needsL_of_exists : ∀ (l : List Ex) (m : Mode), needsExtractionL l .exists_ = false →
+    needsExtractionL l m = false
+  | [], _, _ => rfl
+  | c :: cs, m, h => by
+    simp only [needsExtractionL, Bool.or_eq_false_iff] at h ⊢
+    exact ⟨needs_of_exists c m h.1, needsL_of_exists cs m h.2⟩
+end
+
 theorem shape_one (d : D) (cs : List Ex) (hd : d = .not ∨ d = .paren) (h : shapeOK (.node d cs) = true) :
     ∃ c, cs = [c] ∧ shapeOK c = true := by
   rcases hd with rfl | rfl <;>
@@ -287,7 +302,7 @@ variable (ι : List (Nat × QG)) (r : R)
 
 /-- Case of a non-connective, non-pattern node: nothing below it changes. -/
 theorem collect_other (st : CSt) (d : D) (cs : List Ex) (hd : isConn d = false) (hp : isPat d = false)
-    (hn : needsExtraction (.node d cs) .semiApply = false) (hf : Fresh ι (varIds (.node d cs))) :
+    (hpar : d ≠ .paren) (hn : needsExtraction (.node d cs) .semiApply = false) (hf : Fresh ι (varIds (.node d cs))) :
     collectL st false cs = (cs, st) ∧ tv atom sub ι (.node d cs) r = tv atom sub [] (.node d cs) r := by
   refine ⟨collectL_noPat st false cs (needs_other d cs hd hp hn), ?_⟩
   cases d <;> simp_all [isConn, isPat, tv]
@@ -327,9 +342,13 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
         refine ⟨?_, ih.2⟩
         simp [tv, ih.1]
     case paren =>
+      -- not a connective since #3335 (the binder removes it): its child is read in `Exists`
+      -- mode, which is no weaker than `SemiApply`.
       obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
-      have hnc := needs_conn .paren [c] rfl hn
-      simp only [needsExtractionL, Bool.or_false] at hnc
+      have hnc : needsExtraction c .semiApply = false := by
+        have h0 : Mode.semiApply.descend .paren = .exists_ := by simp [Mode.descend, isConn]
+        simp only [needsExtraction, h0, needsExtractionL, Bool.or_false] at hn
+        exact needs_of_exists c _ hn
       have hfc := (fresh_cons ι c [] (fresh_varIds ι _ _ hf)).1
       simp only [collect, collectL] at hg ⊢
       have ih := collect_value st c hsc hnc hfc (good_collectL_head ι st false c [] hg)
@@ -346,7 +365,7 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
       exact ⟨by simp [tv, ih.1], ih.2⟩
     all_goals
       first
-      | (have ho := collect_other atom sub ι r st _ cs rfl rfl hn hf
+      | (have ho := collect_other atom sub ι r st _ cs rfl rfl (by simp) hn hf
          simp only [collect, ho.1]
          exact ⟨ho.2, by trivial⟩)
 theorem collectL_value : ∀ (st : CSt) (l : List Ex), shapeOKL l = true →

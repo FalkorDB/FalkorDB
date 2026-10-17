@@ -100,8 +100,11 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    `pre3021_jsheap_tiny_accepted`. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
    `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `set_pairs_complete`,
    `dotless_i_not_folded`, `asyncDelete_default_matches_C`, `getOne_unknown_text`.
-4. GRAPH.BULK header naming a property twice (`p,q,p`): Rust stores both span entries
+4. GRAPH.BULK header naming a property twice (`p,q,p`): Rust stored both span entries
    (`properties(n)` = `{p: 1, p: 3, q: 2}`, `n.p` = 3); C keeps one (`n.p` = 1).
+   **Fixed by #3063 (`0f45a8685`)**: `import_attrs_resolved` sorts stably, dedups by id
+   (first column wins, as C) and drops `ATTRIBUTE_ID_NONE` — proven in proofs/pending_commit
+   (`Content.normResolved_get`, `resolved_duplicate_fixed`).
 5. Verbose format: top-level point `point({latitude: 1.000000, …})` (C: no space after
    `:`), NaN in lists `NaN` (C `nan`), a node deleted in the same query keeps its labels
    (C `[]`), and `CREATE (a:A) DELETE a` reports no `Nodes created/deleted` stats.
@@ -112,7 +115,9 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    `cons_edge_refused`) and `+1`/`01` counts (`cons_count_noncanonical`, `string2ll`), as C.
 
 Also seen / root cause for known issues: `Slot.len = n as u16` (`attribute_store.rs:598`,
-`:609`) is why 65536 properties vanish (#2539; 65537 keeps one, `slot_len_truncates`);
+`:609`) is why 65536 properties vanished (#2539; 65537 keeps one, `slot_len_truncates`) —
+no longer reachable from GRAPH.BULK since #3063 (`0f45a8685`): the resolved span has at most
+65,535 entries (proofs/pending_commit `Content.normResolved_fits`);
 GRAPH.RESTORE `""` SIGSEGV (#2537); createNodeIndex arity (#2540); Labels-added (#2655).
 C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts twice.
 
@@ -162,9 +167,11 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
    `prefix` (`:32`, `floor_char_boundary(2048)`): `SlowLog.hashInput_total`,
    `truncate_total` (no panic for any string), `prefix_le`/`prefix_isPrefix`/
    `prefix_boundary`/`prefix_longest` (longest char-boundary prefix ≤ 2048 bytes).
-9. Index on an attribute literally named `range:x` (or `vector:x`) is rebuilt on `x` after
-   RDB reload (`serializers/mod.rs:642-646`, `SerialSchema.field_prefix_lost`): Rust
-   `db.indexes()` → `[x]`, plan loses the index scan; C keeps `[range:x]`.
+9. **FIXED by #3252 (`cfe6e7945`)**: an index on an attribute literally named `range:x` (or
+   `vector:x`) was rebuilt on `x` after RDB reload (cab3cf192 `serializers/mod.rs:642-646`,
+   `SerialSchema.pre3252_field_prefix_lost`): Rust `db.indexes()` → `[x]`, C `[range:x]`.
+   Now `decode_index_field` keeps the name verbatim (`field_name_kept`; `decField_encField`
+   round-trips every name).
 10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
     ignores (0), C 1 (FIXED by #3328: `ModuleInit.pre3328_bool_yes_case`, `pre3328_table_name_case`, `pre3328_load_missing`; now `LoadArgs.fixed3328_counterexamples`; cause:

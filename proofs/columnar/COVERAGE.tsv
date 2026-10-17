@@ -79,25 +79,25 @@ graph/src/runtime/vector_expr.rs	constant_nullness	139	PROVEN	VExpr constNull_sp
 graph/src/runtime/vector_expr.rs	is_null	150	PROVEN	VExpr EC.isNull_eq
 graph/src/runtime/vector_expr.rs	union_nulls	168	PROVEN	VExpr unionNulls_exact, unionNulls_values_inexact (harmless corner), unionNulls_length
 graph/src/runtime/vector_expr.rs	VectorEval::new	202	PROVEN	Dispatch VectorEval.new: new_runtime
-graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	Dispatch eval: eval_sound (every tree; arms = lane theorems), eval_cmp, eval_param_missing
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	286	PROVEN	Dispatch evalValues: evalValues_sound
-graph/src/runtime/vector_expr.rs	eval_variable	310	PROVEN	Lanes evalVariable_agree, evalVariable_beyond
-graph/src/runtime/vector_expr.rs	eval_property	334	PROVEN	Column classifyExact_exact (fetch itself: runtime, not modelled)
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	357	PROVEN	Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff (bulk materialize = per-row read, Store.Lawful)
-graph/src/runtime/vector_expr.rs	eval_and_or	392	PROVEN	proofs/functions_temporal VExpr.colEval_eq
-graph/src/runtime/vector_expr.rs	eval_case	475	PROVEN	Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value (total sub-exprs; error order may differ)
-graph/src/runtime/vector_expr.rs	eval_function	555	PROVEN	Lanes foldCall_agree
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	642	PROVEN	Dispatch hasLabels: hasLabels_sound (incl. unregistered-label shortcut), hasLabels_typecheck_first
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	706	PROVEN	Dispatch perRow: perRow_spec, perRow_error (first row error)
-graph/src/runtime/vector_expr.rs	compare_columns	731	PROVEN	VExpr compareColumns_agree, typedLane_agree
-graph/src/runtime/vector_expr.rs	compare_i64_pairs	795	PROVEN	VExpr kernelI_get (pairs case of typedLane_agree)
-graph/src/runtime/vector_expr.rs	compare_f64_pairs	818	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
-graph/src/runtime/vector_expr.rs	mask_out_nulls	840	PROVEN	VExpr maskOut_get
-graph/src/runtime/vector_expr.rs	negate_bools	854	PROVEN	Lanes negate_agree
-graph/src/runtime/vector_expr.rs	arithmetic	878	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree)
-graph/src/runtime/vector_expr.rs	int_lane	953	PROVEN	Arith intLane_spec
-graph/src/runtime/vector_expr.rs	float_lane	965	PROVEN	Arith floatLane_spec
-graph/src/runtime/vector_expr.rs	float_operand	980	PROVEN	Arith floatStage_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	Dispatch eval: eval_sound (every tree; arms = lane theorems; #3335: Paren has no arm, falls to eval_per_row), eval_cmp, eval_param_missing
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	PROVEN	Dispatch evalValues: evalValues_sound
+graph/src/runtime/vector_expr.rs	eval_variable	309	PROVEN	Lanes evalVariable_agree, evalVariable_beyond
+graph/src/runtime/vector_expr.rs	eval_property	333	PROVEN	Column classifyExact_exact (fetch itself: runtime, not modelled)
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	356	PROVEN	Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff (bulk materialize = per-row read, Store.Lawful)
+graph/src/runtime/vector_expr.rs	eval_and_or	391	PROVEN	proofs/functions_temporal VExpr.colEval_eq
+graph/src/runtime/vector_expr.rs	eval_case	474	PROVEN	Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value (total sub-exprs; error order may differ)
+graph/src/runtime/vector_expr.rs	eval_function	554	PROVEN	Lanes foldCall_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	641	PROVEN	Dispatch hasLabels: hasLabels_sound (incl. unregistered-label shortcut), hasLabels_typecheck_first
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	705	PROVEN	Dispatch perRow: perRow_spec, perRow_error (first row error)
+graph/src/runtime/vector_expr.rs	compare_columns	730	PROVEN	VExpr compareColumns_agree, typedLane_agree
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	794	PROVEN	VExpr kernelI_get (pairs case of typedLane_agree)
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	817	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
+graph/src/runtime/vector_expr.rs	mask_out_nulls	839	PROVEN	VExpr maskOut_get
+graph/src/runtime/vector_expr.rs	negate_bools	853	PROVEN	Lanes negate_agree
+graph/src/runtime/vector_expr.rs	arithmetic	877	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree)
+graph/src/runtime/vector_expr.rs	int_lane	952	PROVEN	Arith intLane_spec
+graph/src/runtime/vector_expr.rs	float_lane	964	PROVEN	Arith floatLane_spec
+graph/src/runtime/vector_expr.rs	float_operand	979	PROVEN	Arith floatStage_agree
 graph/src/runtime/row.rs	value_at	47	MODELLED	trait decl (Row.get / viewAt)
 graph/src/runtime/row.rs	to_owned_row	56	MODELLED	trait decl
 graph/src/runtime/row.rs	new	76	MODELLED	Row.empty
