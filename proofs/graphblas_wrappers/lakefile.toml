@@ -1,0 +1,5 @@
+name = "falkor-graphblas-wrappers"
+defaultTargets = ["GraphblasWrappers"]
+
+[[lean_lib]]
+name = "GraphblasWrappers"

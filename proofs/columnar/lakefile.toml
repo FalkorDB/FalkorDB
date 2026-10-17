@@ -1,0 +1,5 @@
+name = "falkor-columnar"
+defaultTargets = ["Columnar"]
+
+[[lean_lib]]
+name = "Columnar"

@@ -1,0 +1,75 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/bitset.rs	BitSet::set	31	PROVEN	BitSet.set: test_set, wf_set, wordAt_set
+graph/src/runtime/bitset.rs	BitSet::test	49	PROVEN	BitSet.test: test_eq_wordAt, test_empty
+graph/src/runtime/bitset.rs	BitSet::union	63	PROVEN	BitSet.union: test_union, wf_union
+graph/src/runtime/bitset.rs	BitSet::clear	76	PROVEN	BitSet.clear: test_clear, wf_clear
+graph/src/runtime/bitset.rs	BitSet::is_empty	94	PROVEN	BitSet.isEmpty: isEmpty_iff
+graph/src/runtime/ordermap.rs	OrderMap::default	33	PROVEN	emptyM: getL_emptyM, emptyM_nodup, isEmptyM_emptyM
+graph/src/runtime/ordermap.rs	OrderMap::with_capacity	42	PROVEN	withCapacity: withCapacity_eq
+graph/src/runtime/ordermap.rs	OrderMap::from_vec	49	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
+graph/src/runtime/ordermap.rs	OrderMap::from_unique_keys	57	PROVEN	fromUniqueKeys: fromUniqueKeys_eq_fromList, foldl_insert_unique
+graph/src/runtime/ordermap.rs	OrderMap::reserve_exact	69	PROVEN	reserveExact: reserveExact_eq, getL_reserveExact
+graph/src/runtime/ordermap.rs	OrderMap::insert	76	PROVEN	insertL: insertL_returns, insertL_nodup, getL_insertL, keys_insertL
+graph/src/runtime/ordermap.rs	OrderMap::remove	91	PROVEN	posL/removeL: removeL_returns, removeL_nodup, getL_removeL, removeL_eq_eraseIdx
+graph/src/runtime/ordermap.rs	OrderMap::get	102	PROVEN	getL: getL_of_mem, mem_of_getL, getL_none_of
+graph/src/runtime/ordermap.rs	OrderMap::iter	114	PROVEN	iterM: iterM_eq, iterM_insert_fresh
+graph/src/runtime/ordermap.rs	OrderMap::len	119	PROVEN	lenM: lenM_insertL, lenM_removeL
+graph/src/runtime/ordermap.rs	OrderMap::is_empty	124	PROVEN	isEmptyM: isEmptyM_iff
+graph/src/runtime/ordermap.rs	OrderMap::keys	128	PROVEN	keysM: keysM_eq, keysM_insertL
+graph/src/runtime/ordermap.rs	OrderMap::values	132	PROVEN	valuesM: keysM_zip_valuesM, length_valuesM, valuesM_insertL_fresh
+graph/src/runtime/ordermap.rs	OrderMap::get_str	140	PROVEN	getL (String keys): getL_of_mem, getL_insertL
+graph/src/runtime/ordermap.rs	OrderMap::hash	158	PROVEN	hashInput: hash_consistent, eq_of_perm_pairwise
+graph/src/runtime/ordermap.rs	OrderMap::eq	170	PROVEN	eqM: eqM_iff_perm, eqM_symm
+graph/src/runtime/ordermap.rs	OrderMap::from_iter	184	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
+graph/src/runtime/ordermap.rs	OrderMap::index	200	PROVEN	indexM: indexM_eq, indexM_ok_iff, indexM_panics_iff
+graph/src/runtime/ordermap.rs	OrderMap::into_iter	212	PROVEN	intoIterM: intoIterM_eq
+graph/src/runtime/ordermap.rs	OrderMap::extend	218	PROVEN	fromList (repeated insertL): fromList_nodup, getL_fromList_snoc
+graph/src/runtime/orderset.rs	OrderSet::default	27	PROVEN	emptyS: containsS_emptyS, emptyS_nodup
+graph/src/runtime/orderset.rs	OrderSet::from_vec	34	PROVEN	fromVec: fromVec_eq, fromVec_eq_fromListS
+graph/src/runtime/orderset.rs	OrderSet::insert	38	PROVEN	insertS: containsS_insertS, insertS_nodup, indexOf_insertS
+graph/src/runtime/orderset.rs	OrderSet::remove	52	PROVEN	removeS: containsS_removeS, removeS_nodup, removeS_sublist, indexOf_removeS
+graph/src/runtime/orderset.rs	OrderSet::iter	61	PROVEN	iterS: iterS_eq, iterS_insert_fresh
+graph/src/runtime/orderset.rs	OrderSet::len	66	PROVEN	lenS: lenS_insertS, lenS_removeS
+graph/src/runtime/orderset.rs	OrderSet::is_empty	71	PROVEN	isEmptyS: isEmptyS_iff
+graph/src/runtime/orderset.rs	OrderSet::contains	75	PROVEN	containsS: containsS_eq_any
+graph/src/runtime/orderset.rs	OrderSet::extend	87	PROVEN	fromListS (repeated insertS): fromListS_nodup
+graph/src/runtime/orderset.rs	OrderSet::clear	96	PROVEN	clearS: clearS_eq, containsS_clearS, lenS_clearS
+graph/src/runtime/orderset.rs	OrderSet::get_index_of	100	PROVEN	indexOf: indexOf_spec, indexOf_insertS, indexOf_removeS
+graph/src/runtime/orderset.rs	OrderSet::get	113	PROVEN	getS: getS_eq, getS_indexOf, getS_none_iff
+graph/src/runtime/orderset.rs	OrderSet::from_iter	122	PROVEN	fromListS: fromListS_nodup
+graph/src/runtime/orderset.rs	OrderSet::index	132	PROVEN	indexS: indexS_ok_iff, indexS_panics_iff
+graph/src/runtime/orderset.rs	OrderSet::into_iter	144	PROVEN	intoIterS: intoIterS_eq
+graph/src/runtime/string_pool.rs	StringPool::new	18	PROVEN	empty Pool: wf_empty
+graph/src/runtime/string_pool.rs	StringPool::intern	28	PROVEN	intern: intern_isInterned, intern_idem, intern_injective, reintern_fresh, wf_intern
+graph/src/runtime/string_pool.rs	StringPool::is_interned	42	PROVEN	isInterned: intern_isInterned, prune_keeps_held
+graph/src/runtime/string_pool.rs	StringPool::stats	52	PROVEN	prune (retain strong_count > 1): prune_keeps_held, wf_prune; counting part not modelled
+graph/src/runtime/string_pool.rs	global	66	PROVEN	globalPool: globalPool_spec
+graph/src/runtime/row.rs	RowView::value_at	47	PROVEN	RowView.Lawful, rowView_lawful (trait contract; Row impl = getById)
+graph/src/runtime/row.rs	RowView::to_owned_row	56	PROVEN	RowView.Lawful, rowView_lawful, toOwnedRow_eq
+graph/src/runtime/row.rs	Row::new	76	PROVEN	Row.new: new_spec
+graph/src/runtime/row.rs	Row::with_capacity	82	PROVEN	withCapacity: withCapacity_eq
+graph/src/runtime/row.rs	Row::from_raw	92	PROVEN	fromRaw: fromRaw_spec
+graph/src/runtime/row.rs	Row::insert	104	PROVEN	insertById: getById_insertById, isBound_insertById, length_insertById
+graph/src/runtime/row.rs	Row::insert_by_id	113	PROVEN	insertById: getById_insertById, isBound_insertById, length_insertById
+graph/src/runtime/row.rs	Row::get_by_id	128	PROVEN	getById: getById_insertById, getById_unbind
+graph/src/runtime/row.rs	Row::get	138	PROVEN	getById: getById_insertById, getById_unbind
+graph/src/runtime/row.rs	Row::take	147	PROVEN	take: take_returns, take_leaves_null, take_keeps_bound
+graph/src/runtime/row.rs	Row::unbind	160	PROVEN	unbind: isBound_unbind, getById_unbind
+graph/src/runtime/row.rs	Row::len	169	PROVEN	lenR: lenR_new, getById_none_iff, length_insertById
+graph/src/runtime/row.rs	Row::is_empty	175	PROVEN	isEmptyR: isEmptyR_iff
+graph/src/runtime/row.rs	Row::has_bindings	181	PROVEN	hasBindings: hasBindings_iff, hasBindings_new
+graph/src/runtime/row.rs	Row::clone_with	187	PROVEN	cloneWith: cloneWith_get
+graph/src/runtime/row.rs	Row::is_bound_by_id	199	PROVEN	isBound: isBound_insertById, isBound_unbind
+graph/src/runtime/row.rs	Row::merge	209	PROVEN	merge: mergeFrom_preserve, mergeFrom_get, merge_get_bound
+graph/src/runtime/row.rs	Row::unbind_by_id	222	PROVEN	unbind: isBound_unbind, getById_unbind
+graph/src/runtime/row.rs	Row::value_at	231	PROVEN	getById: getById_insertById
+graph/src/runtime/row.rs	Row::to_owned_row	238	PROVEN	toOwnedRow: toOwnedRow_eq
+graph/src/runtime/row.rs	Row::hash	244	PROVEN	hashed (key/value sequence fed to the hasher): hashed_pad; hasher abstract
+graph/src/identifier_limits.rs	validate_identifier_len	26	PROVEN	validate: validate_ok_iff
+graph/src/identifier_limits.rs	is_identifier_too_long	42	PROVEN	isTooLong: isTooLong_of_validate
+graph/src/narrow_int.rs	width_for	19	PROVEN	widthFor: widthFor_fits, widthFor_minimal, widthFor_mono, narrow_lossless
+graph/src/graph/cow.rs	Cow::new	50	PROVEN	cowNew: cowNew_spec
+graph/src/graph/cow.rs	Cow::new_version	55	PROVEN	newVersion: newVersion_isolated, newVersion_read
+graph/src/graph/cow.rs	Cow::replace	66	PROVEN	replace: step_frame
+graph/src/graph/cow.rs	Cow::deref	78	PROVEN	read: newVersion_read
+graph/src/graph/cow.rs	Cow::deref_mut	84	PROVEN	derefMut/write: step_frame, siblings_isolated

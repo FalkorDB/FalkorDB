@@ -1,0 +1,5 @@
+name = "falkor-id-list"
+defaultTargets = ["FalkorIdList"]
+
+[[lean_lib]]
+name = "FalkorIdList"
