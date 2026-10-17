@@ -1383,6 +1383,44 @@ def test_aggregation():
     assert_result_set_equal_no_order(res, [[1, 7.0, 6.0], [2, 7.0, 6.0]])
 
 
+def test_aggregation_with_more_keys_than_bound_variables():
+    # Aggregation outputs and accumulators are numbered per scope. Once the
+    # grouping keys outnumber the variables bound before the projection, an
+    # output used to land on a later aggregation's accumulator: the sum came
+    # back as the count, and avg (a list accumulator) panicked the server.
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), sum(x), min(x), max(x)"
+    )
+    assert res.result_set == [["a", "b", 3, 6, 1, 3]]
+
+    res = query("UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), avg(x)")
+    assert res.result_set == [["a", "b", 3, 2.0]]
+
+    # per-row path: the aggregation is not the root of its expression
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x) + 0, sum(x) + 0"
+    )
+    assert res.result_set == [["a", "b", 3, 6]]
+
+    res = query(
+        "UNWIND [1, 2, 3] AS x WITH 'a' AS k1, 'b' AS k2, count(x) AS c, sum(x) AS s RETURN k1, k2, c, s"
+    )
+    assert res.result_set == [["a", "b", 3, 6]]
+
+    query(
+        "CREATE (:P {country: 'IN', city: 'Pune', age: 30}), (:P {country: 'IN', city: 'Pune', age: 40}), (:P {country: 'US', city: 'NYC', age: 50})",
+        write=True,
+    )
+    res = query(
+        "MATCH (n:P) RETURN n.country, n.city, count(n), sum(n.age), avg(n.age), min(n.age), max(n.age)",
+        compare_results=False,
+    )
+    assert_result_set_equal_no_order(
+        res,
+        [["IN", "Pune", 2, 70, 35.0, 30, 40], ["US", "NYC", 1, 50, 50.0, 50, 50]],
+    )
+
+
 @given(st.lists(st.integers(-10, 10)))
 def test_avg_integers(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
