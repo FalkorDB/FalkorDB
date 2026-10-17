@@ -88,23 +88,25 @@ use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
 use utilize_node_by_id::utilize_node_by_id;
 
-/// Collects all variable IDs referenced in an expression tree.
-pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
+/// Collects the `(id, scope_id)` identities referenced in an expression tree.
+/// IDs can be reused across WITH scopes, so an ID alone cannot prove that a
+/// variable is bound by a subtree inspected by an optimizer pass.
+pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<(u32, u32)> {
     let mut vars = HashSet::new();
     for idx in expr.root().indices::<Bfs>() {
         if let ExprIR::Variable(var) = expr.node(idx).data() {
-            vars.insert(var.id);
+            vars.insert((var.id, var.scope_id));
         }
     }
     vars
 }
 
-/// Collects all variable IDs provided by a plan subtree.
-pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+/// Collects all `(id, scope_id)` identities provided by a plan subtree.
+pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<(u32, u32)> {
     use crate::runtime::runtime::GetVariables;
     let mut vars = HashSet::new();
     for var in node.get_variables() {
-        vars.insert(var.id);
+        vars.insert((var.id, var.scope_id));
     }
     vars
 }

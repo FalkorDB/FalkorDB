@@ -1822,7 +1822,7 @@ impl Planner {
         let mut vec = vec![];
         // Variables the WHERE predicate constrains. Used below to order the
         // hops of a component so constrained endpoints are reached first.
-        let filter_vars: HashSet<u32> = filter
+        let filter_vars: HashSet<(u32, u32)> = filter
             .as_ref()
             .map(|f| collect_expr_variables(f))
             .unwrap_or_default();
@@ -1884,7 +1884,8 @@ impl Planner {
                 // the filters land.
                 let unfiltered = if has_bound == 0 {
                     i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id)
+                        n.attrs.root().num_children() > 0
+                            || filter_vars.contains(&(n.alias.id, n.alias.scope_id))
                     }))
                 } else {
                     0

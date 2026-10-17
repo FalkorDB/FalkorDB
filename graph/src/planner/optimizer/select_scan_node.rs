@@ -976,9 +976,9 @@ pub(super) fn select_scan_node(
         // Order greedily instead: repeatedly take a hop with an endpoint
         // already bound, orient it to start from that endpoint, and mark its
         // other end bound. The chain is left alone if no such order exists.
-        let initial_bound: HashSet<u32> = {
+        let initial_bound: HashSet<(u32, u32)> = {
             let mut b = HashSet::new();
-            b.insert(best_node.alias.id);
+            b.insert((best_node.alias.id, best_node.alias.scope_id));
             if let Some(child) = &existing_child {
                 b.extend(collect_subtree_variables(&child.root()));
             }
@@ -1018,8 +1018,8 @@ pub(super) fn select_scan_node(
                 .iter()
                 .enumerate()
                 .filter_map(|(i, (rel, ..))| {
-                    let from_bound = bound.contains(&rel.from.alias.id);
-                    let to_bound = bound.contains(&rel.to.alias.id);
+                    let from_bound = bound.contains(&(rel.from.alias.id, rel.from.alias.scope_id));
+                    let to_bound = bound.contains(&(rel.to.alias.id, rel.to.alias.scope_id));
                     if !from_bound && !to_bound {
                         return None;
                     }
@@ -1048,14 +1048,15 @@ pub(super) fn select_scan_node(
             // Storage direction when `from` is bound (no transpose needed);
             // otherwise start from `to` and let the runtime walk the
             // relationship matrix backwards.
-            let (new_rel, transposed) = if bound.contains(&rel.from.alias.id) {
-                (rel, false)
-            } else {
-                let swapped = swap_relationship(&rel, rel.to.clone(), rel.from.clone());
-                (swapped, true)
-            };
-            bound.insert(new_rel.to.alias.id);
-            bound.insert(new_rel.alias.id);
+            let (new_rel, transposed) =
+                if bound.contains(&(rel.from.alias.id, rel.from.alias.scope_id)) {
+                    (rel, false)
+                } else {
+                    let swapped = swap_relationship(&rel, rel.to.clone(), rel.from.clone());
+                    (swapped, true)
+                };
+            bound.insert((new_rel.to.alias.id, new_rel.to.alias.scope_id));
+            bound.insert((new_rel.alias.id, new_rel.alias.scope_id));
             ordered.push((new_rel, emit, edges, transposed));
         }
 
@@ -1182,7 +1183,7 @@ pub(super) fn select_scan_node(
             // Inter-CT filters are keyed by the variables they read rather than
             // by their old chain position, so each one lands as soon as its
             // inputs are bound — "as early as possible" survives reordering.
-            let mut pending_filters: Vec<(HashSet<u32>, DynTree<IR>)> = inter_ct_filters
+            let mut pending_filters: Vec<(HashSet<(u32, u32)>, DynTree<IR>)> = inter_ct_filters
                 .into_iter()
                 .map(|(_, filter_tree)| {
                     let vars = match filter_tree.root().data() {
@@ -1201,8 +1202,8 @@ pub(super) fn select_scan_node(
             if orderable {
                 let mut placed_bound = initial_bound;
                 for (rel, emit, edges, transposed) in ordered {
-                    let dest_alias = rel.to.alias.id;
-                    let edge_alias = rel.alias.id;
+                    let dest_alias = (rel.to.alias.id, rel.to.alias.scope_id);
+                    let edge_alias = (rel.alias.id, rel.alias.scope_id);
                     subtree = tree!(
                         IR::CondTraverse {
                             relationship: rel,
