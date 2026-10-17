@@ -544,6 +544,15 @@ int Graph_Copy
 		return RedisModule_WrongArity(ctx);
 	}
 
+#ifdef __APPLE__
+	// GRAPH.COPY encodes the graph from a forked child (RedisModule_Fork);
+	// fork() while module worker threads are parked corrupts their pthread
+	// state on macOS and the kernel traps the server with SIGILL — refuse
+	// rather than crash the server
+	return RedisModule_ReplyWithError(ctx,
+			"ERR GRAPH.COPY is disabled on darwin: the module's fork is unsafe on macOS");
+#endif
+
 	// block the client
 	RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
 			NULL, 0);
