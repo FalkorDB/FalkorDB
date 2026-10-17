@@ -259,3 +259,22 @@ class testNodeByIDFlow(FlowTestsBase):
         except Exception as e:
             self.env.assertFalse("query crashed")
 
+
+    def test_parenthesised_id_predicates(self):
+        # #3187: parentheses around an id() predicate still seek by id.
+        queries = [
+            ("MATCH (n) WHERE (ID(n) = 3) RETURN n.id", [[3]], 1),
+            ("MATCH (n) WHERE ((ID(n) = 3)) RETURN n.id", [[3]], 1),
+            ("MATCH (n) WHERE (ID(n) > 7) RETURN n.id ORDER BY n.id", [[8], [9]], 1),
+            ("MATCH (a), (b) WHERE ((ID(a) = 1) AND (ID(b) = 2)) RETURN a.id, b.id",
+             [[1, 2]], 2),
+            ("MATCH (a), (b) WHERE (ID(a) = $a AND ID(b) = $b) RETURN a.id, b.id",
+             [[1, 2]], 2),
+        ]
+        for q, expected, seeks in queries:
+            params = {'a': 1, 'b': 2}
+            plan = str(self.graph.explain(q, params))
+            self.env.assertEqual(plan.count("NodeByIdSeek"), seeks, message=q)
+            self.env.assertNotContains("All Node Scan", plan, message=q)
+            self.env.assertNotContains("Filter", plan, message=q)
+            self.env.assertEqual(self.graph.query(q, params).result_set, expected, message=q)

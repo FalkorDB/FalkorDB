@@ -26,21 +26,29 @@
 
 use std::{cell::RefCell, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
-use crate::graph::id_space::IdSpace;
 
 use crate::{
     entity_type::EntityType,
     graph::{
         constraint::{ConstraintStatus, ConstraintType},
-        graph::{Graph, LabelId, NodeId, RelationshipId},
+        graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
     },
-    runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
+    index::{
+        Index,
+        indexer::{IndexQuery, IndexType},
+    },
+    runtime::{
+        ordermap::OrderMap,
+        orderset::OrderSet,
+        runtime::QueryStatistics,
+        value::{MAX_VALUE_NESTING, Value},
+    },
 };
 
 /// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
@@ -60,6 +68,8 @@ fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
+/// Whether a non-list value is a valid property: a primitive, or NULL when
+/// `allow_null`. Lists are checked by [`validate_list_property`].
 fn is_valid_property(
     value: &Value,
     allow_null: bool,
@@ -76,25 +86,52 @@ fn is_valid_property(
         | Value::Date(_)
         | Value::Time(_)
         | Value::Duration(_) => true,
-        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
+    }
+}
+
+/// Checks a list property: elements are primitives or lists, nested at most
+/// [`MAX_VALUE_NESTING`] deep. `depth` is the nesting of `items` itself (a
+/// top-level list is depth 1).
+///
+/// Lists can be built arbitrarily deep at runtime (e.g. `reduce(a = 1, i IN
+/// range(1, n) | [a])`), so this cannot be caught when the query is parsed.
+/// The bound is what lets every stored value be saved and loaded back: the
+/// RDB decoder refuses anything deeper. The walk is recursive, but stops at
+/// the bound, so it cannot itself run too deep.
+fn validate_list_property(
+    items: &[Value],
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(format!(
+            "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+        ));
+    }
+    items.iter().try_for_each(|v| match v {
+        Value::List(inner) => validate_list_property(inner, depth + 1),
+        v if is_valid_property(v, false) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
+    })
+}
+
+/// Checks a property value: a primitive, NULL, or a list of primitives.
+fn validate_property(value: &Value) -> Result<(), String> {
+    match value {
+        Value::List(items) => validate_list_property(items, 1),
+        v if is_valid_property(v, true) => Ok(()),
+        _ => Err(INVALID_PROPERTY_MSG.into()),
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value, true) {
-        return Err(INVALID_PROPERTY_MSG.into());
-    }
-    Ok(())
+    validate_property(value)
 }
 
 /// Binary-search a sorted `(attr_id, Value)` slice.
@@ -106,6 +143,116 @@ fn lookup_sorted(
         .binary_search_by_key(&attr_id, |(k, _)| *k)
         .ok()
         .map(|pos| &attrs[pos].1)
+}
+
+/// Whether the supporting index's exact match on `value` returns every entity
+/// whose composite-key component equals it. Other values (large integers the
+/// index stores rounded, NaN, the empty string, and any type it does not index)
+/// are checked by a scan instead. A string containing NUL is fine: the tag
+/// encoding escapes it to `_00` on both the write and the query path.
+fn is_value_valid_for_index_lookup(value: &Value) -> bool {
+    match value {
+        Value::Int(i) => !Index::int_loses_f64_precision(*i),
+        Value::Float(f) => !f.is_nan(),
+        Value::Bool(_) => true,
+        Value::String(s) => !s.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether a unique constraint is violated by this commit, given `members`: the
+/// affected entities (a subset of `affected`) carrying the constrained label or
+/// type.
+///
+/// Like C's `EnforceUniqueEntity`, each member's values are looked up in the
+/// constraint's supporting index, so the cost is per member, not per entity in
+/// the label. The index lags only this commit (each `Commit` publishes its
+/// documents before the next runs), so a candidate it returns is re-verified
+/// against the graph, and members are compared among themselves. Without an
+/// operational index, or for a value it cannot match exactly, the label is
+/// scanned once for the whole set instead.
+///
+/// `is_candidate` tells whether an entity the index or scan returned is still a
+/// live member of the label or type.
+#[allow(clippy::too_many_arguments)]
+fn unique_violated<Id, L, S>(
+    properties: &[Arc<String>],
+    members: impl Iterator<Item = Id>,
+    affected: &RoaringTreemap,
+    attr: impl Fn(Id, &Arc<String>) -> Option<Value>,
+    is_candidate: impl Fn(Id) -> bool,
+    indexed: bool,
+    lookup: impl Fn(IndexQuery<Value>) -> L,
+    scan: impl FnOnce() -> S,
+) -> bool
+where
+    Id: Copy + Into<u64>,
+    L: Iterator<Item = Id>,
+    S: Iterator<Item = Id>,
+{
+    let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut lookups = Vec::new();
+    let mut use_index = indexed;
+    for id in members {
+        // A NULL or absent constrained property: the entity does not participate.
+        let Some(values) = properties
+            .iter()
+            .map(|prop| attr(id, prop).filter(|v| !matches!(v, Value::Null)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let mut it = values.iter();
+        let key = Graph::build_composite_key(properties, |_| it.next().cloned());
+        if !keys.insert(key) {
+            // Two entities written in this commit share a key. That is a
+            // violation whatever the index or the rest of the label holds, so
+            // there is nothing left to look up or scan.
+            return true;
+        }
+        if use_index {
+            if values.iter().all(is_value_valid_for_index_lookup) {
+                lookups.push(values);
+            } else {
+                // One value the index cannot match exactly sends the whole set
+                // to a single scan, so the lookups gathered so far are unused.
+                use_index = false;
+                lookups = Vec::new();
+            }
+        }
+    }
+    if keys.is_empty() {
+        return false;
+    }
+
+    // Members are already compared among themselves above.
+    let collides = |other: Id| {
+        !affected.contains(other.into())
+            && is_candidate(other)
+            && keys.contains(&Graph::build_composite_key(properties, |prop| {
+                attr(other, prop)
+            }))
+    };
+    if use_index {
+        lookups.into_iter().any(|values| {
+            let mut eqs = properties
+                .iter()
+                .zip(values)
+                .map(|(key, value)| IndexQuery::Equal {
+                    key: key.clone(),
+                    value,
+                })
+                .collect::<Vec<_>>();
+            let query = if eqs.len() == 1 {
+                eqs.pop().unwrap()
+            } else {
+                IndexQuery::And(eqs)
+            };
+            lookup(query).any(collides)
+        })
+    } else {
+        scan().any(collides)
+    }
 }
 
 /// A relationship whose id was handed out and then taken back, because the node
@@ -134,35 +281,24 @@ pub(crate) struct CancelledRelationship {
 /// now is `effects_v3_emit::digest`, whose return type says precisely what
 /// replication makes of this.
 pub struct Pending {
-    /// Nodes created in this transaction
+    /// Nodes created in this transaction, and what the allocator must not
+    /// reissue: reserved, still destined for `create_nodes` at commit, and so
+    /// not yet recorded anywhere the id space can see.
+    ///
+    /// Cancelled ids are deliberately *not* here — `IdSpace::cancel` records
+    /// them and `IdSpace::reserve` excludes what it has recorded, so passing
+    /// them again would count one id twice and leave a gap the batch never
+    /// fills.
     pub(crate) created_nodes: RoaringTreemap,
-    /// Where the node id space ended when this batch opened.
-    ///
-    /// The one thing about the batch's id space that cannot be recovered later,
-    /// which is why it is the only thing kept. Everything else an allocator
-    /// needs is already here — `created_nodes` and `cancelled_nodes` between
-    /// them are exactly the ids this batch has been handed — and the space
-    /// itself is built where it is used, as `GRAPH.BULK` and the effects path
-    /// already do.
-    ///
-    /// Not recoverable because a cancelled *reclaimed* id does not move the
-    /// graph's boundary: it was already in the recycle bin, so returning it is
-    /// a no-op there. Measured — a batch that opened at boundary 13 and
-    /// cancelled one id still reports 13, so subtracting the cancellation lands
-    /// at 12 and judges every created id as already live.
-    pub(crate) node_entry: u64,
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
-    /// The same for relationships.
-    pub(crate) rel_entry: u64,
-    /// Every relationship id this batch has been handed, cancelled included.
+    /// The relationship ids this batch has reserved and not yet cancelled — the
+    /// mirror of `created_nodes`.
     ///
-    /// The node side needs no such field: `created_nodes` is already a set and
-    /// `cancelled_nodes` is the rest of the answer. Relationships are kept in a
-    /// map keyed by id and a vector of cancellation records, and neither can be
-    /// differenced against the recycle bin without being walked, so one set is
-    /// the cheapest honest representation rather than a second copy.
+    /// A set of its own because the created relationships are kept as a map
+    /// keyed by id and a vector of cancellation records, neither of which can be
+    /// differenced against the free set without being walked.
     pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
     pub(crate) deleted_nodes: RoaringTreemap,
@@ -185,7 +321,7 @@ pub struct Pending {
     /// sees.
     ///
     /// `delete_pending_node` unwinds such a node out of `created_nodes` and
-    /// `return_node_id` hands its id straight back to the recycle bin, so the
+    /// `cancel_node_id` hands its id straight back to the recycle bin, so the
     /// master's id space acquires a hole that no create and no delete
     /// describes. Replicating nothing for it left the replica's id space one
     /// short, and its next allocation after a promotion landed on a live node.
@@ -203,7 +339,7 @@ pub struct Pending {
     /// Relationships cascaded away by a cancelled node, in the same commit.
     ///
     /// Their ids were reserved and returned exactly as a cancelled node's is —
-    /// `return_relationship_id` puts them in the recycle bin — so a buffer that
+    /// `cancel_relationship_id` puts them in the recycle bin — so a buffer that
     /// says nothing about them leaves the replica's relationship id space with a
     /// hole, and `IdSpace::verify` refuses the whole payload.
     pub(crate) cancelled_relationships: Vec<CancelledRelationship>,
@@ -230,7 +366,7 @@ pub struct Pending {
     /// all of its `Commit`s, so a later failure can resync them against committed
     /// state (see [`Self::resync_published_indexes`]).
     ///
-    /// Deliberately **not** reset by [`Self::clear`], which runs after every
+    /// Deliberately **not** reset by [`Self::end_segment`], which runs after every
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
     published: IndexDocs,
@@ -244,33 +380,7 @@ pub struct Pending {
     pub(crate) schema_rel_attr_count: usize,
 }
 
-/// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
-/// -> (src, dst) }`.
-///
-/// The endpoints ride along because they are captured at deletion time — the
-/// edge is gone from the tensor by the time the 24-byte RediSearch key has to
-/// be rebuilt, so they cannot be looked up again.
-pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
-
-/// The index documents a unit of work produced, in both directions and for
-/// both entity kinds.
-///
-/// One type rather than four parallel maps, and used for both the per-commit
-/// set and the deferred one it folds into. They have to stay in
-/// correspondence — a document added to the wrong half is a stale RediSearch
-/// entry that nothing later notices — and four loose fields on `Pending` made
-/// that the caller's job at every site.
-#[derive(Default)]
-pub struct IndexDocs {
-    /// Node documents to add, keyed by label id.
-    pub node_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Node documents to remove, keyed by label id.
-    pub node_removes: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add, keyed by relationship type id.
-    pub edge_adds: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove — see [`EdgeDocRemovals`].
-    pub edge_removes: EdgeDocRemovals,
-}
+pub use crate::index::index_docs::{EdgeDocRemovals, IndexDocs};
 
 impl IndexDocs {
     /// True when nothing was produced, so a caller can skip the work of
@@ -292,6 +402,13 @@ impl IndexDocs {
         &mut self,
         other: &mut Self,
     ) {
+        // The native index's changes are applied to the private version before a commit's
+        // documents are folded for publishing; anything still here would be dropped.
+        #[cfg(feature = "index-falkordb")]
+        debug_assert!(
+            other.native.is_empty(),
+            "native index writes must be applied before the documents are folded"
+        );
         for (slot, ids) in other.node_adds.drain() {
             *self.node_adds.entry(slot).or_default() |= ids;
         }
@@ -377,10 +494,8 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
-            node_entry: 0,
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
-            rel_entry: 0,
             taken_relationship_ids: RoaringTreemap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
@@ -415,48 +530,6 @@ impl Pending {
         self.schema_rel_type_count = graph.get_types().len();
         self.schema_node_attr_count = graph.get_node_attribute_names().len();
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
-    }
-
-    /// A fresh id space for this batch's node ids.
-    ///
-    /// Built on demand from the boundary at [`Self::node_entry`], the way every
-    /// other caller builds one. Nothing is kept between uses because nothing
-    /// needs to be.
-    #[must_use]
-    pub fn node_id_space(&self) -> IdSpace {
-        IdSpace::at(self.node_entry)
-    }
-
-    /// The same for relationships.
-    #[must_use]
-    pub fn rel_id_space(&self) -> IdSpace {
-        IdSpace::at(self.rel_entry)
-    }
-
-    /// The node ids this batch has been handed, as the disjoint sets it already
-    /// keeps them in. [`IdSpace::reserve`] must not reissue any of them.
-    #[must_use]
-    pub const fn issued_nodes(&self) -> [&RoaringTreemap; 2] {
-        [&self.created_nodes, &self.cancelled_nodes]
-    }
-
-    /// The same for relationships, which are kept as one set.
-    #[must_use]
-    pub const fn issued_relationships(&self) -> [&RoaringTreemap; 1] {
-        [&self.taken_relationship_ids]
-    }
-
-    /// Record where the id space stands, for the batch that starts now.
-    ///
-    /// Paired with [`Self::clear`] at every commit and called once when the
-    /// query's `Pending` is built, because the boundary moves as commits land.
-    pub fn open_id_boundaries(
-        &mut self,
-        g: &AtomicRefCell<Graph>,
-    ) {
-        let graph = g.borrow();
-        self.node_entry = graph.node_id_bound();
-        self.rel_entry = graph.relationship_id_bound();
     }
 
     pub fn created_nodes(
@@ -707,20 +780,29 @@ impl Pending {
     /// and also mark any pending-created relationships connected to it for deletion.
     /// Returns (label_ids, attrs, connected_pending_rels) — the relationships carry
     /// their type and staged attrs so callers can snapshot them for later reads.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn delete_pending_node(
         &mut self,
         id: NodeId,
-    ) -> (
-        OrderSet<LabelId>,
-        Vec<(u16, Value)>,
-        Vec<(
-            RelationshipId,
-            NodeId,
-            NodeId,
-            Arc<String>,
-            Option<Vec<(u16, Value)>>,
-        )>,
-    ) {
+        g: &mut Graph,
+    ) -> Result<
+        (
+            OrderSet<LabelId>,
+            Vec<(u16, Value)>,
+            Vec<(
+                RelationshipId,
+                NodeId,
+                NodeId,
+                Arc<String>,
+                Option<Vec<(u16, Value)>>,
+            )>,
+        ),
+        NodeOpError,
+    > {
         self.created_nodes.remove(id.into());
         // Collect pending labels
         let mut label_ids = OrderSet::default();
@@ -734,29 +816,40 @@ impl Pending {
             .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
             .unwrap_or_default();
 
-        let rels = self.remove_pending_relationships_for_node(id);
+        let rels = self.remove_pending_relationships_for_node(id, g)?;
 
         // The one durable record that this id was ever handed out. Everything
         // above has just erased it from the structures the graph commits.
         self.cancelled_nodes.insert(id.into());
+        // And the graph's half, paired here for the same reason.
+        g.cancel_node_id(id)?;
 
-        (label_ids, attrs, rels)
+        Ok((label_ids, attrs, rels))
     }
 
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
     /// `new_relationships_attrs` and `deleted_relationships` entries for
     /// each removed relationship so that `commit()` has no stale state.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn remove_pending_relationships_for_node(
         &mut self,
         id: NodeId,
-    ) -> Vec<(
-        RelationshipId,
-        NodeId,
-        NodeId,
-        Arc<String>,
-        Option<Vec<(u16, Value)>>,
-    )> {
+        g: &mut Graph,
+    ) -> Result<
+        Vec<(
+            RelationshipId,
+            NodeId,
+            NodeId,
+            Arc<String>,
+            Option<Vec<(u16, Value)>>,
+        )>,
+        NodeOpError,
+    > {
         let mut rels = Vec::new();
         for (type_name, entries) in &self.created_rels_by_type {
             for &(rel_id, from, to) in entries {
@@ -782,6 +875,13 @@ impl Pending {
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
+            // Handed over to the id space, which records the cancellation as it
+            // returns the id to the free set. Leaving it here too would have the
+            // allocator count it twice.
+            self.taken_relationship_ids.remove(rel_id.into());
+            // The graph's half of the same event. Paired here so a caller cannot
+            // unwind the pending side and leave the id unreturned.
+            g.cancel_relationship_id(rel_id)?;
             // The one durable record that this id was ever handed out, the same
             // role `cancelled_nodes` plays for the node above.
             self.cancelled_relationships.push(CancelledRelationship {
@@ -793,7 +893,7 @@ impl Pending {
             result.push((rel_id, from, to, type_name, attrs));
         }
 
-        result
+        Ok(result)
     }
 
     pub fn created_relationship(
@@ -1130,17 +1230,10 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
-        // One space per kind for the whole commit, opened from the boundary
-        // this batch started at. Creates record into it and the deletes below
-        // are judged against it — the write path used to pass `None` there and
-        // skip the check, which is the same gap on delete that this PR closed
-        // on create.
-        let mut node_space = self.node_id_space();
-        let mut rel_space = self.rel_id_space();
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut()
-                .create_nodes(&self.created_nodes, &mut node_space)
+                .create_nodes(&self.created_nodes)
                 .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
@@ -1155,7 +1248,7 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids, &mut rel_space)
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids)
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -1168,18 +1261,14 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut().set_nodes_labels_bulk(
-                &rows,
-                &cols,
-                &mut self.index_docs.node_adds,
-                all_new,
-            );
+            g.borrow_mut()
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_docs.node_removes);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -1187,15 +1276,13 @@ impl Pending {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_docs.node_adds,
+                    &mut self.index_docs,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                let (nremoved, nset) = g.set_nodes_attributes(
-                    &self.existing_nodes_attrs,
-                    &mut self.index_docs.node_adds,
-                )?;
+                let (nremoved, nset) =
+                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_docs)?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -1206,16 +1293,14 @@ impl Pending {
         {
             let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g.import_relationship_attrs(
-                    &self.new_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
-                );
+                let nset = g
+                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_docs.edge_adds,
+                    &mut self.index_docs,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -1226,11 +1311,7 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(
-                    &self.deleted_nodes,
-                    &mut self.index_docs.node_removes,
-                    &node_space,
-                )
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
@@ -1245,7 +1326,7 @@ impl Pending {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
                 &self.deleted_nodes,
                 &explicit_rels,
-                &mut self.index_docs.edge_removes,
+                &mut self.index_docs,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
@@ -1269,11 +1350,7 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(
-                    &explicit_rels,
-                    &mut self.index_docs.edge_removes,
-                    &rel_space,
-                )
+                .delete_relationships(&explicit_rels, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
@@ -1282,6 +1359,12 @@ impl Pending {
                 .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
+        // The native index, once for the whole `Commit`. Before the constraint checks, which is
+        // where each write call used to leave it, so nothing that runs after the writes sees the
+        // index in a different state than before. SETs run before DELETEs above, so one batch can
+        // hold an entry's add and then its remove; `apply` keeps only the last.
+        g.borrow_mut().apply_index_writes(&mut self.index_docs);
+
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has
         // the mutations from this transaction (writes apply immediately to
@@ -1408,15 +1491,13 @@ impl Pending {
             return Ok(());
         };
         let label_id = usize::from(label_id) as u64;
+        let members = affected_node_ids
+            .iter()
+            .filter(|&node_id| self.constraint_node_has_label(g, node_id, label_id));
 
-        for node_id in affected_node_ids {
-            // Check if this node has the constrained label
-            if !self.constraint_node_has_label(g, node_id, label_id) {
-                continue;
-            }
-
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for node_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_node_attribute(node_id.into(), prop)
@@ -1428,38 +1509,34 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_node_attribute(node_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        // a constrained property is NULL or absent, so this node
-                        // does not participate in the constraint
-                        continue;
-                    }
-
-                    // Build a set of all existing keys for this label in one pass
-                    if let Some(lm) = g.get_label_matrix(label) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (other_id, _) in lm.iter(0, u64::MAX) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_node_attribute(other_id.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this node does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_id
-                            {
-                                return Err(format!(
-                                    "unique constraint violation on node of type {label}"
-                                ));
-                            }
-                            seen.insert(other_key, other_id);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(NodeId::from),
+                    affected_node_ids,
+                    |node_id: NodeId, prop| g.get_node_attribute(node_id, prop),
+                    |node_id| {
+                        let node_id = u64::from(node_id);
+                        !self.deleted_nodes.contains(node_id)
+                            && self.constraint_node_has_label(g, node_id, label_id)
+                    },
+                    constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range)),
+                    |query| g.get_indexed_nodes(label, query),
+                    || {
+                        g.get_label_matrix(label).into_iter().flat_map(|lm| {
+                            lm.iter(0, u64::MAX)
+                                .map(|(node_id, _)| NodeId::from(node_id))
+                        })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation on node of type {label}"
+                    ));
                 }
             }
         }
@@ -1473,23 +1550,21 @@ impl Pending {
         affected_edge_ids: &RoaringTreemap,
     ) -> Result<(), String> {
         let type_name = &constraint.label;
-
-        for edge_id in affected_edge_ids {
+        let members = affected_edge_ids.iter().filter(|&edge_id| {
             // Edges created this transaction resolve their type from
             // Pending's reverse index — no relationship-matrix read, which
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            let has_type = match self.created_rel_types.get(&edge_id.into()) {
+            match self.created_rel_types.get(&edge_id.into()) {
                 Some(created_type) => created_type.as_str() == type_name.as_str(),
                 None => g.edge_has_type(edge_id.into(), type_name),
-            };
-            if !has_type {
-                continue;
             }
+        });
 
-            match constraint.ct {
-                ConstraintType::Mandatory => {
+        match constraint.ct {
+            ConstraintType::Mandatory => {
+                for edge_id in members {
                     for prop in &constraint.properties {
                         let has_prop = g
                             .get_relationship_attribute(edge_id.into(), prop)
@@ -1501,38 +1576,37 @@ impl Pending {
                         }
                     }
                 }
-                ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
-                        g.get_relationship_attribute(edge_id.into(), prop)
-                    });
-                    if key.is_empty() {
-                        // a constrained property is NULL or absent, so this edge
-                        // does not participate in the constraint
-                        continue;
-                    }
-
-                    // Build a set of all existing keys for this type in one pass
-                    if let Some(tensor) = g.get_relationship_matrix(type_name) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_relationship_attribute(other_eid.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this edge does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_eid
-                            {
-                                return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {type_name}"
-                                ));
-                            }
-                            seen.insert(other_key, other_eid);
-                        }
-                    }
+            }
+            ConstraintType::Unique => {
+                let violated = unique_violated(
+                    &constraint.properties,
+                    members.map(RelationshipId::from),
+                    affected_edge_ids,
+                    |edge_id: RelationshipId, prop| g.get_relationship_attribute(edge_id, prop),
+                    // Both the index and the tensor hold edges of this type
+                    // only, and a type never changes.
+                    |edge_id| !self.deleted_relationships.contains(edge_id.into()),
+                    constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range)),
+                    |query| {
+                        g.get_indexed_edges(type_name, query)
+                            .map(|(_, _, edge_id)| edge_id)
+                    },
+                    || {
+                        g.get_relationship_matrix(type_name)
+                            .into_iter()
+                            .flat_map(|t| {
+                                t.iter(0, u64::MAX, false)
+                                    .map(|(_, _, edge_id)| RelationshipId::from(edge_id))
+                            })
+                    },
+                );
+                if violated {
+                    return Err(format!(
+                        "unique constraint violation, on edge of relationship-type {type_name}"
+                    ));
                 }
             }
         }
@@ -1626,12 +1700,38 @@ impl Pending {
         deferred.commit(g);
     }
 
-    /// Clear all pending mutation state.
+    /// End the segment: discard its accumulated mutations and roll the graph's
+    /// id batches over to where the commit just left the boundary.
+    ///
+    /// One call because they are one event, and because splitting them was
+    /// silent: a batch left unopened does not fail, it just stops reclaiming ids
+    /// across the boundary, so `CREATE (n) DELETE n WITH 1 AS x CREATE (m)`
+    /// allocates id 1 where it should allocate 0 — measured, with the whole flow
+    /// suite passing. Against a C primary that is a divergence in id-reuse
+    /// order, which costs a full resync per delete-then-create cycle.
+    ///
+    /// Fused, forgetting this also forgets to discard the segment's mutations,
+    /// so the next commit re-creates live ids and the query dies with `node 0 is
+    /// already live below the boundary 0`. That covers every segment that
+    /// created something which survived, and **not** one whose only content was
+    /// a cancellation — nothing to re-create, so nothing collides. Both
+    /// measured. That last case cannot be closed from here: a batch that never
+    /// rolled over is indistinguishable from a longer one, and
+    /// [`IdSpace::verify`] passes on either. Catching it needs a notion of "a
+    /// segment happened" that the id space does not have.
     ///
     /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
     /// has to undo the documents *all* of this query's `Commit`s published, not just
     /// the last one's.
-    pub fn clear(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`] if an id space already contradicts itself;
+    /// opening a batch over it would re-anchor on the bad value and hide it.
+    pub fn end_segment(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) -> Result<(), NodeOpError> {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background
         // thread and let it pay the deallocation cost.
@@ -1681,6 +1781,22 @@ impl Pending {
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
+        #[cfg(feature = "index-falkordb")]
+        self.index_docs.native.clear();
+
+        // Close this segment's batch and open the next at the boundary the
+        // commit just left. Closing is where the batch's shape is owed —
+        // `taken` must fill the range from the entry boundary upward — and it is
+        // asked here rather than earlier because it is legitimately false
+        // partway through: a segment creates, cancels and deletes in whatever
+        // order the query says.
+        //
+        // This is the one check on this path that can fail a user's query rather
+        // than a replica's buffer. It fires only on an id space this engine has
+        // already corrupted, and failing is the cheaper outcome: the query holds
+        // a private MVCC version, so the damage is discarded rather than
+        // published and then replicated.
+        g.borrow_mut().roll_id_batches()
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.
@@ -1861,5 +1977,65 @@ mod label_effect_tests {
             records(&pending, &g),
             vec![labelled(true, &[m]), labelled(false, &[l])]
         );
+    }
+}
+
+#[cfg(test)]
+mod property_nesting_tests {
+    use super::{INVALID_PROPERTY_MSG, validate_node_property, validate_relationship_property};
+    use crate::runtime::value::{MAX_VALUE_NESTING, Value};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// Validation is recursive, so it runs on the query pool's stack size.
+    fn on_worker_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_property_at_the_cap_is_valid() {
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            assert_eq!(validate_node_property(&v), Ok(()));
+            assert_eq!(validate_relationship_property(&v), Ok(()));
+        });
+    }
+
+    #[test]
+    fn a_property_past_the_cap_is_refused() {
+        // Every stored value has to load back, and the RDB decoder refuses
+        // anything deeper than the cap.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING + 1);
+            let expected = Err(format!(
+                "Property values can only be nested up to {MAX_VALUE_NESTING} levels deep"
+            ));
+            assert_eq!(validate_node_property(&v), expected);
+            assert_eq!(validate_relationship_property(&v), expected);
+        });
+    }
+
+    #[test]
+    fn non_primitive_elements_keep_their_error() {
+        let v = Value::List(Arc::new(thin_vec![Value::Map(Arc::default())]));
+        assert_eq!(validate_node_property(&v), Err(INVALID_PROPERTY_MSG.into()));
+        assert_eq!(
+            validate_node_property(&Value::List(Arc::new(thin_vec![Value::Null]))),
+            Err(INVALID_PROPERTY_MSG.into())
+        );
+        assert_eq!(validate_node_property(&Value::Null), Ok(()));
     }
 }
