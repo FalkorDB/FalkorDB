@@ -520,6 +520,7 @@ dependencies = [
  "ahash",
  "arc-swap",
  "atomic_refcell",
+ "bytemuck",
  "chrono",
  "crc32fast",
  "crossfire",
