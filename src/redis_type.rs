@@ -819,20 +819,64 @@ const fn uuid_fields(
     ]
 }
 
-/// Two calls 1 ns apart must not share a name. Checked at compile time because
-/// this crate's unit tests cannot run outside Redis: its global allocator is
-/// Redis's.
+/// Names must stay distinct, checked at compile time because this crate's unit
+/// tests cannot run outside Redis: its global allocator is Redis's.
+///
+/// Consecutive calls can share a clock reading, so the invariant the fix relies
+/// on is the counter's: the last field must be a bijection of `seq` modulo 2^48.
+/// It is checked by recovering `seq` from that field (`f5 - add` times the
+/// multiplier's inverse) at several clock readings, including counters past
+/// 2^47; an even multiplier, a narrower mask or mixing the clock back in all
+/// break the round trip.
 const _: () = {
-    let x = uuid_fields(4, 2);
-    let y = uuid_fields(5, 3);
-    let mut i = 0;
-    let mut same = true;
-    while i < 5 {
-        same &= x[i] == y[i];
-        i += 1;
+    const fn same_fields(
+        a: [u64; 5],
+        b: [u64; 5],
+    ) -> bool {
+        let mut i = 0;
+        let mut same = true;
+        while i < 5 {
+            same &= a[i] == b[i];
+            i += 1;
+        }
+        same
     }
+    const MASK: u64 = 0xFFFF_FFFF_FFFF;
+    // The counter field is `seq * MUL + ADD` (mod 2^48): MUL and ADD read back
+    // from `uuid_fields` itself, so the check follows the code.
+    let add = uuid_fields(0, 0)[4];
+    let mul = uuid_fields(0, 1)[4].wrapping_sub(add) & MASK;
+    // Inverse of `mul` modulo 2^64 by Newton's iteration; only exists if odd.
+    let mut inv = mul;
+    let mut k = 0;
+    while k < 6 {
+        inv = inv.wrapping_mul(2u64.wrapping_sub(mul.wrapping_mul(inv)));
+        k += 1;
+    }
+    let clocks = [0u64, 4, 5, 1_700_000_000_000_000_000, u64::MAX];
+    let seqs = [0u64, 1, 2, 3, 1 << 20, (1 << 47) + 1, MASK];
+    let mut c = 0;
+    while c < clocks.len() {
+        let mut s = 0;
+        while s < seqs.len() {
+            let f5 = uuid_fields(clocks[c], seqs[s])[4];
+            assert!(
+                f5.wrapping_sub(add).wrapping_mul(inv) & MASK == seqs[s],
+                "the counter field is not a bijection of seq modulo 2^48"
+            );
+            s += 1;
+        }
+        c += 1;
+    }
+    let t = 1_700_000_000_000_000_000u64;
     assert!(
-        !same,
+        !same_fields(uuid_fields(t, 0), uuid_fields(t, 1))
+            && !same_fields(uuid_fields(t, 1), uuid_fields(t, 2)),
+        "virtual key names collide for consecutive seq at one clock reading"
+    );
+    // The reported regression pair still differs.
+    assert!(
+        !same_fields(uuid_fields(4, 2), uuid_fields(5, 3)),
         "virtual key names collide for (t=4, seq=2) and (t=5, seq=3)"
     );
 };
