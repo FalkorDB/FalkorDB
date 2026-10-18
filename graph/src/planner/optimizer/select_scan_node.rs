@@ -98,12 +98,12 @@ use super::{collect_expr_variables, collect_subtree_variables};
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filtered_vars: &FilteredVars,
-    bound_vars: &HashSet<u32>,
+    bound_vars: &HashSet<(u32, u32)>,
     graph: &Graph,
 ) -> (u32, bool, u64) {
     let key = (node.alias.id, node.alias.scope_id);
     let mut score = 0u32;
-    if bound_vars.contains(&node.alias.id) {
+    if bound_vars.contains(&key) {
         score += 3;
     }
     // Inline attrs (e.g. `{name: 'Nicolas Cage'}`) are lowered to Filters by
@@ -386,49 +386,47 @@ fn swap_relationship(
     Arc::new(swapped)
 }
 
-/// Collects output variable alias IDs from an IR node.
+/// Collects output variable `(id, scope_id)` identities from an IR node.
 /// Used to detect which variables a child operator provides.
-fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
+fn collect_output_aliases(ir: &IR) -> HashSet<(u32, u32)> {
     let mut aliases = HashSet::new();
     match ir {
         IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
-            aliases.insert(n.alias.id);
+            aliases.insert((n.alias.id, n.alias.scope_id));
         }
         IR::NodeByIndexScan { node, .. }
         | IR::NodeByLabelAndIdScan { node, .. }
         | IR::NodeByIdSeek { node, .. } => {
-            aliases.insert(node.alias.id);
+            aliases.insert((node.alias.id, node.alias.scope_id));
         }
         IR::NodeByFulltextScan { node, score, .. } => {
-            aliases.insert(node.id);
+            aliases.insert((node.id, node.scope_id));
             if let Some(s) = score {
-                aliases.insert(s.id);
+                aliases.insert((s.id, s.scope_id));
             }
         }
         IR::Project { exprs, copies } => {
             for (var, _) in exprs {
-                aliases.insert(var.id);
+                aliases.insert((var.id, var.scope_id));
             }
             for (var, _) in copies {
-                aliases.insert(var.id);
+                aliases.insert((var.id, var.scope_id));
             }
         }
         IR::Aggregate { names, .. } => {
             for var in names {
-                aliases.insert(var.id);
+                aliases.insert((var.id, var.scope_id));
             }
         }
         IR::Unwind { var, .. } => {
-            aliases.insert(var.id);
+            aliases.insert((var.id, var.scope_id));
         }
         // Argument with known bound vars: the incoming rows bind exactly
         // these variables. `Argument(None)` stays opaque (conservative).
-        // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
-        // a preference heuristic that never decides plan validity. The
-        // scope-sensitive decision — whether the Argument is transparent —
-        // compares full pairs.
+        // Keep the scope here too: endpoint scoring must not prefer an unbound
+        // endpoint just because an outer variable happens to reuse its ID.
         IR::Argument(Some(vars)) => {
-            aliases.extend(vars.iter().map(|(id, _)| *id));
+            aliases.extend(vars.iter().copied());
         }
         _ => {}
     }
@@ -1353,4 +1351,80 @@ pub(super) fn select_scan_node(
     }
 
     select_var_len_scan_node(optimized_plan, graph);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::runtime::functions::Type;
+
+    #[test]
+    fn endpoint_selection_keeps_bound_variable_scopes() {
+        ensure_init();
+        let graph = Graph::new(16, 16, 0, 0, "endpoint_scope");
+        for (bindings, expected_from, expected_transposed) in [
+            // The outer (0,0) must not make the unbound endpoint (0,1) win
+            // the tie over the endpoint (1,1) that is actually bound.
+            (vec![(0, 0), (1, 1)], 1, true),
+            // A genuinely bound (0,1) still keeps the original direction.
+            (vec![(0, 1)], 0, false),
+        ] {
+            let variable = |id| Variable {
+                name: None,
+                id,
+                scope_id: 1,
+                ty: Type::Any,
+            };
+            let node = |id| {
+                Arc::new(QueryNode::<Arc<String>, _>::new(
+                    variable(id),
+                    Default::default(),
+                    Arc::new(DynTree::new(ExprIR::Map)),
+                ))
+            };
+            let relationship = Arc::new(QueryRelationship::new(
+                variable(2),
+                Vec::new(),
+                Arc::new(DynTree::new(ExprIR::Map)),
+                node(0),
+                node(1),
+                false,
+                None,
+                None,
+            ));
+            let mut plan = tree!(
+                IR::CondTraverse {
+                    relationship,
+                    emit_relationship: false,
+                    sibling_edges: Vec::new(),
+                    transposed: false,
+                    chain: Vec::new(),
+                    optional: false,
+                    bind_relationship: true,
+                },
+                tree!(IR::Argument(Some(bindings.clone())))
+            );
+            select_scan_node(&mut plan, &graph);
+
+            let root = plan.root();
+            let IR::CondTraverse {
+                relationship,
+                transposed,
+                ..
+            } = root.data()
+            else {
+                panic!("expected a traversal");
+            };
+            assert_eq!(
+                (relationship.from.alias.id, relationship.from.alias.scope_id),
+                (expected_from, 1)
+            );
+            assert_eq!(*transposed, expected_transposed);
+            let IR::Argument(Some(kept)) = root.child(0).data() else {
+                panic!("the bound input must be preserved");
+            };
+            assert_eq!(*kept, bindings);
+        }
+    }
 }
