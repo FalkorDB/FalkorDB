@@ -910,6 +910,12 @@ static void _Config_SetToDefaults(void)
 #ifdef MEMCHECK
 	// disable async delete during memcheck
 	config.async_delete = false;
+#elif defined(__APPLE__)
+	// the async-delete worker forks (RedisModule_Fork); fork() while module
+	// worker threads are parked corrupts their pthread state on macOS and
+	// the kernel traps the server with SIGILL — run graph deletions
+	// synchronously on darwin
+	config.async_delete = false;
 #else
 	// always perform async delete when no checking for memory issues
 	config.async_delete = true;
