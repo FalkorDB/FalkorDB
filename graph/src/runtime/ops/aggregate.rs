@@ -43,6 +43,7 @@ use crate::runtime::{
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -82,8 +83,11 @@ type GroupKeyVec = SmallVec<[Value; 1]>;
 
 /// A composite grouping key — a vector of evaluated key values.
 ///
-/// Uses `Value::hash` for bucket placement and `Value::eq` for collision
-/// resolution, eliminating the silent-merge bug of raw `u64` hash keys.
+/// Uses `Value::hash` for bucket placement and [`Value::sort_cmp`] equality for
+/// collision resolution, eliminating the silent-merge bug of raw `u64` hash
+/// keys. Grouping needs an equivalence, which `Value::eq` is not: NaN is not
+/// equal to itself there, so every NaN key would open its own group (C puts
+/// them in one).
 struct GroupKey(GroupKeyVec);
 
 impl PartialEq for GroupKey {
@@ -91,7 +95,12 @@ impl PartialEq for GroupKey {
         &self,
         other: &Self,
     ) -> bool {
-        self.0 == other.0
+        self.0.len() == other.0.len()
+            && self
+                .0
+                .iter()
+                .zip(other.0.iter())
+                .all(|(a, b)| a.sort_cmp(b) == Ordering::Equal)
     }
 }
 
