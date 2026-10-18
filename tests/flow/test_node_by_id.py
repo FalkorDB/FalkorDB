@@ -4,11 +4,13 @@ GRAPH_ID = "node_by_id"
 
 class testNodeByIDFlow(FlowTestsBase):
     def __init__(self):
+        """Initialize the flow environment and its populated reference graph."""
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
+        """Create reference nodes whose id property matches their internal ID."""
         # Create entities
         self.graph.query("UNWIND range(0, 9) AS i CREATE (n:person {id:i})")
 
@@ -17,6 +19,7 @@ class testNodeByIDFlow(FlowTestsBase):
         self.graph.query(query)
 
     def test_id_seek_on_empty_graph(self):
+        """Check ID seeks before creation, with live nodes, and after deletion."""
         # #3353: max_node_id() is zero even before any node has been allocated.
         graph = self.db.select_graph(GRAPH_ID + "_empty")
         cases = [
@@ -51,6 +54,29 @@ class testNodeByIDFlow(FlowTestsBase):
                                          message=f"{setup}: {query}")
                     self.env.assertEqual(graph.ro_query(query).result_set, expected,
                                          message=f"{setup}: {query} (read-only)")
+        finally:
+            graph.delete()
+
+    def test_id_seek_validates_ids_on_empty_graph(self):
+        """Reject noninteger ID parameters even when no nodes can match."""
+        graph = self.db.select_graph(GRAPH_ID + "_invalid_ids")
+        try:
+            for setup in ["RETURN 1", "CREATE ()", "MATCH (n) DELETE n"]:
+                graph.query(setup)
+                for op in ["=", ">", ">=", "<", "<="]:
+                    query = f"MATCH (n) WHERE ID(n) {op} $id RETURN ID(n)"
+                    for invalid_id in ["invalid", 0.5]:
+                        params = {'id': invalid_id}
+                        self.env.assertContains("NodeByIdSeek", str(graph.explain(query, params)),
+                                                message=query)
+                        for execute in [graph.query, graph.ro_query]:
+                            try:
+                                execute(query, params)
+                            except ResponseError as e:
+                                self.env.assertEqual(str(e), "Node ID must be an integer")
+                            else:
+                                self.env.assertTrue(False,
+                                                    message=f"{setup}: {query}, id={invalid_id!r}")
         finally:
             graph.delete()
 
