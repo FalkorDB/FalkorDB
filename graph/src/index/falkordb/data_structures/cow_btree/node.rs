@@ -160,7 +160,7 @@ fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYT
     while children.len() > 1 && i < children.len() {
         if children[i].is_underfull() {
             let len = children.len();
-            let left = if i + 1 < len { i } else { i - 1 };
+            let left = if (i + 1) < len { i } else { i - 1 };
             let _ = combine_with_sibling(children, seps, i);
             // A merge leaves one node at `left`; a borrow leaves two, at `left` and `left + 1`.
             let produced = if children.len() < len { 1 } else { 2 };

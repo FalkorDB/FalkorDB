@@ -1653,7 +1653,8 @@ fn remove_batch_never_leaves_a_single_child_branch() {
 }
 
 /// The same shape across fan-outs and every contiguous drain window (all `lo..hi` pairs): after `remove_batch` the tree is
-/// well-formed, and a follow-up `remove` + `insert_batch` keeps it so with the right contents.
+/// well-formed, a snapshot taken before it is unchanged, and a follow-up `remove` + `insert_batch` keeps
+/// the tree well-formed with the right contents.
 #[test]
 fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
     fn sweep<const L: usize, const B: usize>(n: u64) {
@@ -1661,8 +1662,17 @@ fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
         for lo in 0..n {
             for hi in lo + 1..=n {
                 let mut t = CowBTree::<L, B>::from_sorted(&all);
+                // A snapshot sharing every page: the repair must only touch pages this write
+                // made, never one the snapshot can still see.
+                let snapshot = t.clone();
                 t.remove_batch(&all[lo as usize..hi as usize]);
                 check_invariants(&t, true);
+                assert_eq!(
+                    tree_pairs(&snapshot),
+                    all,
+                    "remove_batch changed a shared page"
+                );
+                check_invariants(&snapshot, true);
                 let mut expected: Vec<(u64, u64)> = all
                     .iter()
                     .copied()
