@@ -18,14 +18,13 @@
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::effects::DecodeError;
 use crate::effects::v3::{self as v3, EffectEncode, Record, emit::for_each_record, open_payload};
 use crate::graph::graph::Graph;
 use crate::graph::graphblas::test_init::ensure_init;
-use crate::graph::id_space::IdSpace;
+use crate::index::index_docs::IndexDocs;
 use crate::runtime::pending::Pending;
 
 // ── graphs ──
@@ -64,14 +63,8 @@ pub(crate) fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(
-            &Arc::new(type_name.to_owned()),
-            &[0],
-            &[1],
-            &[id],
-            &mut IdSpace::at(0),
-        )
-        .expect("no batch, nothing to refuse");
+        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .expect("a fixture's own ids, nothing to refuse");
 }
 
 /// One live node, labelled.
@@ -82,9 +75,7 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    graph
-        .create_nodes(&ids, &mut IdSpace::at(0))
-        .expect("fixture ids are fresh");
+    graph.create_nodes(&ids).expect("fixture ids are fresh");
     let mut rows = Vec::new();
     let mut cols = Vec::new();
     for name in labels {
@@ -92,8 +83,9 @@ pub(crate) fn live_node(
         cols.push(graph.get_label_id_mut(name).0 as u64);
     }
     if !rows.is_empty() {
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         graph.set_nodes_labels_bulk(&rows, &cols, &mut docs, true);
+        graph.apply_index_writes(&mut docs);
     }
 }
 

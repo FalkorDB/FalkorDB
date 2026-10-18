@@ -291,7 +291,17 @@ impl VarLenIter<'_> {
                             None,
                         ) {
                             Ok(Value::Bool(true)) => {}
-                            Ok(_) => continue,
+                            Ok(Value::Bool(false) | Value::Null) => continue,
+                            // As `FilterOp` answers it: a predicate that is
+                            // neither boolean nor null is a type error, not a
+                            // quiet rejection.
+                            Ok(value) => {
+                                *self.error.borrow_mut() = Some(format!(
+                                    "Type mismatch: expected Boolean but was {}",
+                                    value.name()
+                                ));
+                                return;
+                            }
                             Err(e) => {
                                 *self.error.borrow_mut() = Some(e);
                                 return;

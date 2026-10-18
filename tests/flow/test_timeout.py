@@ -211,6 +211,25 @@ class testQueryTimeout():
         # revert timeout_default to 10
         self.db.config_set("TIMEOUT_DEFAULT", 10)
 
+    def test07b_write_honours_query_timeout(self):
+        # with TIMEOUT_MAX set, the per-query TIMEOUT applies to writes too
+        # and a write that runs out of time is rolled back (as in C)
+        self.db.config_set("TIMEOUT_DEFAULT", 0)
+        self.db.config_set("TIMEOUT_MAX", 100000)
+        g = self.db.select_graph("write_query_timeout")
+        try:
+            g.query("UNWIND range(1, 300000) AS x CREATE (:T {v: x})", timeout=1)
+            self.env.assertTrue(False)
+        except ResponseError as error:
+            self.env.assertContains("Query timed out", str(error))
+
+        res = g.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # restore this env's TIMEOUT_MAX 10 / TIMEOUT_DEFAULT 10
+        self.db.config_set("TIMEOUT_MAX", 10)
+        self.db.config_set("TIMEOUT_DEFAULT", 10)
+
     def test08_enforce_timeout_configuration(self):
         read_q = "RETURN 1"
         write_q = "CREATE ()"

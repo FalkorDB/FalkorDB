@@ -45,7 +45,7 @@ jobs:
       - name: Check if specific file changed
         id: check
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qE "^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.github/workflows/build-toolchain\.yml)$"; then
+          if git diff --name-only HEAD~1 HEAD | grep -qE "^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"; then
             echo "changed=true"
             echo "changed=true" >> $GITHUB_OUTPUT
           else
@@ -71,7 +71,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -115,7 +115,7 @@ jobs:
       matrix:
         repo: [falkordb, falkordb-server]
     steps:
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -199,24 +199,24 @@ jobs:
           # Snapshot coverage here, before the e2e/TCK suites run below, so
           # cargo test's own profraw can be reported as its own Codecov flag
           # (unit-tests) instead of being indistinguishable from e2e coverage.
-          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
           lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./codecov-unit.txt
           flags: unit-tests
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   build-coverage:
@@ -267,8 +267,8 @@ jobs:
         run: |
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
-          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload flow logs on failure
         if: failure()
@@ -279,6 +279,6 @@ jobs:
             tests/flow/logs/
           if-no-files-found: ignore
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
