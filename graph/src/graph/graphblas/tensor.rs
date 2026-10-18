@@ -806,24 +806,34 @@ impl Tensor {
         emptied
     }
 
+    #[must_use]
+    pub fn nrows(&self) -> u64 {
+        self.m.nrows()
+    }
+
+    #[must_use]
+    pub fn ncols(&self) -> u64 {
+        self.m.ncols()
+    }
+
+    /// Grow to at least `nrows x ncols`. Never shrinks: a smaller target keeps
+    /// the current dimension, so no entry is ever dropped. That keeps `me`,
+    /// which is keyed by pair rather than sized by node count, consistent with
+    /// the layers without having to be pruned (#3246).
     pub fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     ) {
-        if nrows < self.m.nrows() || ncols < self.m.ncols() {
-            // Shrinking can drop entries; keep the straightforward path.
-            self.flush();
-            // GrB_Matrix_resize waits internally, so `m` holds no real pending
-            // work afterwards — waiting here would rebuild the freed hyper hash
-            // on every capacity grow (measured 1.4-5.7x write regressions).
-            self.m.resize(nrows, ncols);
-            // A resize moves no entries between layers, so the delta counters
-            // stand (a shrink that drops entries only adds to the drift
-            // `resync` bounds).
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
-            self.mt.resize(ncols, nrows);
+        debug_assert!(
+            nrows >= self.m.nrows() && ncols >= self.m.ncols(),
+            "Tensor::resize never shrinks ({}x{} -> {nrows}x{ncols})",
+            self.m.nrows(),
+            self.m.ncols(),
+        );
+        let nrows = nrows.max(self.m.nrows());
+        let ncols = ncols.max(self.m.ncols());
+        if nrows == self.m.nrows() && ncols == self.m.ncols() {
             return;
         }
         // Growing: the base is always COW-shared with the committed snapshot,
@@ -1304,6 +1314,19 @@ impl Tensor {
         transpose: bool,
     ) -> Iter<'_> {
         Iter::new(self, min_row, max_row, transpose)
+    }
+
+    /// How many `(src, dst)` pairs end at one of `dsts`: the selected rows of
+    /// the backward adjacency `mt`, counted in one bulk product whose cost
+    /// follows `dsts` rather than the tensor (see
+    /// [`VersionedMatrix::count_in_rows`]). Pairs, not edges: a multi-edge pair
+    /// counts once. `dsts` must be as long as the tensor is wide.
+    #[must_use]
+    pub fn count_pairs_into(
+        &self,
+        dsts: &Vector<bool>,
+    ) -> u64 {
+        self.mt.count_in_rows(dsts)
     }
 
     /// How many pairs are multi-edge, computed from `me` rather than tracked.
@@ -1999,6 +2022,53 @@ mod tests {
         t.wait_fwd();
         // And a read must still see the data.
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
+    }
+
+    /// `resize` never shrinks, so it can never cut a multi-edge pair off from
+    /// its `me` ids (#3246). Release builds keep the current size; debug
+    /// builds assert, so a new caller that tries to shrink is caught in tests.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn resize_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        // (0, 1) and (5, 6) are multi pairs, (1, 2) a single one.
+        t.set_all_from_slices(
+            &[0, 0, 1, 5, 5, 5],
+            &[1, 1, 2, 6, 6, 6],
+            &[10, 11, 12, 20, 21, 22],
+        );
+        t.flush();
+        t.wait();
+
+        t.resize(4, 4);
+        t.wait();
+
+        assert_eq!((t.nrows(), t.ncols()), (8, 8), "resize shrank the tensor");
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                (0, 1, 10),
+                (0, 1, 11),
+                (1, 2, 12),
+                (5, 6, 20),
+                (5, 6, 21),
+                (5, 6, 22)
+            ],
+        );
+        assert_eq!(t.edge_count(), 6);
+        assert_eq!(t.multi_pairs(), 2);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Tensor::resize never shrinks")]
+    fn resize_asserts_it_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        t.resize(4, 4);
     }
 
     /// Deleting everything must not leave the base *and* a base-sized `dm`
