@@ -75,7 +75,7 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
-use super::vector::Vector;
+use super::vector::{Untyped, Vector};
 use super::{
     GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
     GrB_DESC_RC, GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC,
@@ -443,9 +443,9 @@ impl OwnedContainer {
 
     /// Put `v` in the component slot `slot`, freeing what was there
     /// (`GxB_Container_new` fills every slot with an empty vector).
-    unsafe fn replace(
+    unsafe fn replace<T>(
         slot: &mut GrB_Vector,
-        v: Vector<bool>,
+        v: Vector<T>,
     ) {
         unsafe {
             let info = GrB_Vector_free(slot);
@@ -484,7 +484,11 @@ impl<T> Decode<19> for Matrix<T> {
             .iter()
             .any(|&f| i64::from(f) == i64::from(header.format))
         {
-            return Err(format!("container has unknown format {}", header.format));
+            return Err(format!(
+                "container has unknown format {}; expected one of {GxB_HYPERSPARSE} \
+                 (hypersparse), {GxB_SPARSE} (sparse), {GxB_BITMAP} (bitmap), {GxB_FULL} (full)",
+                header.format
+            ));
         }
 
         let container = OwnedContainer::new()?;
@@ -506,11 +510,11 @@ impl<T> Decode<19> for Matrix<T> {
             (*c).jumbled = header.jumbled;
 
             // Read and load 5 vectors: x, h, p, i, b
-            OwnedContainer::replace(&mut (*c).x, Vector::<bool>::decode(r)?);
-            OwnedContainer::replace(&mut (*c).h, Vector::<bool>::decode(r)?);
-            OwnedContainer::replace(&mut (*c).p, Vector::<bool>::decode(r)?);
-            OwnedContainer::replace(&mut (*c).i, Vector::<bool>::decode(r)?);
-            OwnedContainer::replace(&mut (*c).b, Vector::<bool>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).x, Vector::<Untyped>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).h, Vector::<Untyped>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).p, Vector::<Untyped>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).i, Vector::<Untyped>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).b, Vector::<Untyped>::decode(r)?);
 
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
@@ -569,11 +573,11 @@ impl<T> Encode<19> for Matrix<T> {
             w.write_buffer(container_bytes);
 
             // Write 5 vectors: x, h, p, i, b
-            ManuallyDrop::new(Vector::<bool>::from((*container).x)).encode(w);
-            ManuallyDrop::new(Vector::<bool>::from((*container).h)).encode(w);
-            ManuallyDrop::new(Vector::<bool>::from((*container).p)).encode(w);
-            ManuallyDrop::new(Vector::<bool>::from((*container).i)).encode(w);
-            ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
+            ManuallyDrop::new(Vector::<Untyped>::from((*container).x)).encode(w);
+            ManuallyDrop::new(Vector::<Untyped>::from((*container).h)).encode(w);
+            ManuallyDrop::new(Vector::<Untyped>::from((*container).p)).encode(w);
+            ManuallyDrop::new(Vector::<Untyped>::from((*container).i)).encode(w);
+            ManuallyDrop::new(Vector::<Untyped>::from((*container).b)).encode(w);
 
             let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1964,67 +1968,7 @@ mod tests {
         );
     }
 
-    /// Replays an encoder's calls to a decoder, in order.
-    #[derive(Default, Clone)]
-    struct Tape(std::collections::VecDeque<Op>);
-
-    #[derive(Clone)]
-    enum Op {
-        U(u64),
-        S(i64),
-        B(Vec<u8>),
-    }
-
-    impl super::Writer for Tape {
-        fn write_unsigned(
-            &mut self,
-            v: u64,
-        ) {
-            self.0.push_back(Op::U(v));
-        }
-        fn write_signed(
-            &mut self,
-            v: i64,
-        ) {
-            self.0.push_back(Op::S(v));
-        }
-        fn write_double(
-            &mut self,
-            _: f64,
-        ) {
-            unreachable!("matrices write no doubles")
-        }
-        fn write_buffer(
-            &mut self,
-            d: &[u8],
-        ) {
-            self.0.push_back(Op::B(d.to_vec()));
-        }
-    }
-
-    impl super::Reader for Tape {
-        fn read_unsigned(&mut self) -> Result<u64, String> {
-            match self.0.pop_front() {
-                Some(Op::U(v)) => Ok(v),
-                _ => Err("tape: expected unsigned".to_string()),
-            }
-        }
-        fn read_signed(&mut self) -> Result<i64, String> {
-            match self.0.pop_front() {
-                Some(Op::S(v)) => Ok(v),
-                _ => Err("tape: expected signed".to_string()),
-            }
-        }
-        fn read_double(&mut self) -> Result<f64, String> {
-            Err("tape: no doubles".to_string())
-        }
-        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
-            match self.0.pop_front() {
-                Some(Op::B(v)) => Ok(v),
-                _ => Err("tape: expected buffer".to_string()),
-            }
-        }
-    }
+    use super::super::serialization::{Tape, TapeOp};
 
     fn encoded() -> Tape {
         let mut m = Matrix::<bool>::new(8, 8);
@@ -2049,15 +1993,19 @@ mod tests {
         assert_eq!(back.get(1, 2), Some(true));
         assert_eq!(back.get(3, 4), Some(true));
 
-        // container header plus the first component only
+        // a payload cut short, whatever the components' encoding looks like:
+        // the container header alone, and everything but the last call
         let mut cut = encoded();
-        cut.0.truncate(1 + 5);
+        cut.ops.truncate(1);
+        assert!(Matrix::<bool>::decode(&mut cut).is_err());
+        let mut cut = encoded();
+        cut.ops.pop_back();
         assert!(Matrix::<bool>::decode(&mut cut).is_err());
 
         // a sparsity format that does not exist: GraphBLAS would load it
         // unchecked
         let mut bad = encoded();
-        if let Some(Op::B(header)) = bad.0.front_mut() {
+        if let Some(TapeOp::Buffer(header)) = bad.ops.front_mut() {
             let at = std::mem::offset_of!(GxB_Container_struct, format);
             header[at..at + 4].copy_from_slice(&99i32.to_ne_bytes());
         }
@@ -2068,7 +2016,7 @@ mod tests {
 
         // fewer rows than the stored entries need: GraphBLAS's own check
         let mut bad = encoded();
-        if let Some(Op::B(header)) = bad.0.front_mut() {
+        if let Some(TapeOp::Buffer(header)) = bad.ops.front_mut() {
             let at = std::mem::offset_of!(GxB_Container_struct, nrows);
             header[at..at + 8].copy_from_slice(&1u64.to_ne_bytes());
         }

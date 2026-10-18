@@ -2733,77 +2733,12 @@ mod sort_cmp_tests {
 #[cfg(test)]
 mod nesting_tests {
     use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
-    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, si_type};
-    use std::{collections::VecDeque, sync::Arc};
+    use crate::graph::graphblas::serialization::{Decode, Encode, Tape, Writer, si_type};
+    use std::sync::Arc;
     use thin_vec::thin_vec;
 
     /// The query pool's worker stack: Rust's default for a spawned thread.
     const WORKER_STACK: usize = 2 << 20;
-
-    #[derive(Debug)]
-    enum Op {
-        Unsigned(u64),
-        Signed(i64),
-        Double(f64),
-        Buffer(Vec<u8>),
-    }
-
-    #[derive(Default)]
-    struct Tape(VecDeque<Op>);
-
-    impl Writer for Tape {
-        fn write_unsigned(
-            &mut self,
-            val: u64,
-        ) {
-            self.0.push_back(Op::Unsigned(val));
-        }
-        fn write_signed(
-            &mut self,
-            val: i64,
-        ) {
-            self.0.push_back(Op::Signed(val));
-        }
-        fn write_double(
-            &mut self,
-            val: f64,
-        ) {
-            self.0.push_back(Op::Double(val));
-        }
-        fn write_buffer(
-            &mut self,
-            data: &[u8],
-        ) {
-            self.0.push_back(Op::Buffer(data.to_vec()));
-        }
-    }
-
-    impl Reader for Tape {
-        fn read_unsigned(&mut self) -> Result<u64, String> {
-            match self.0.pop_front() {
-                Some(Op::Unsigned(v)) => Ok(v),
-                other => Err(format!("tape: expected unsigned, got {other:?}")),
-            }
-        }
-        fn read_signed(&mut self) -> Result<i64, String> {
-            match self.0.pop_front() {
-                Some(Op::Signed(v)) => Ok(v),
-                other => Err(format!("tape: expected signed, got {other:?}")),
-            }
-        }
-        fn read_double(&mut self) -> Result<f64, String> {
-            match self.0.pop_front() {
-                Some(Op::Double(v)) => Ok(v),
-                other => Err(format!("tape: expected double, got {other:?}")),
-            }
-        }
-        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
-            match self.0.pop_front() {
-                Some(Op::Buffer(v)) => Ok(v),
-                other => Err(format!("tape: expected buffer, got {other:?}")),
-            }
-        }
-    }
 
     /// `[[...[1]...]]` with `depth` lists, built without recursion.
     fn nested(depth: usize) -> Value {
@@ -2850,7 +2785,7 @@ mod nesting_tests {
         on_worker_stack(|| {
             let mut t = nested_tape(MAX_VALUE_NESTING);
             let v = Value::decode(&mut t).expect("a value at the cap decodes");
-            assert!(t.0.is_empty());
+            assert!(t.ops.is_empty());
             assert_eq!(list_depth(&v), MAX_VALUE_NESTING);
             drop(v);
         });
@@ -2884,7 +2819,7 @@ mod nesting_tests {
             let mut t = Tape::default();
             v.encode(&mut t);
             let back = Value::decode(&mut t).expect("what was saved loads back");
-            assert!(t.0.is_empty());
+            assert!(t.ops.is_empty());
             assert_eq!(back, v);
             drop(back);
             drop(v);
