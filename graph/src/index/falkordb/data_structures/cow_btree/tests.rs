@@ -1686,3 +1686,25 @@ fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
     sweep::<2, 8>(200);
     sweep::<4, 4>(160);
 }
+
+/// `DOC_BYTES` is gated by `is_read_width`, so it must accept exactly the widths `read_width` can load —
+/// and reject 3/5/6/7, which used to pass a `1..=8` assert and made `CowBTree::<256, 256, 3>` panic on
+/// its second insert (`read_width` fell through to its 8-byte arm). Every accepted width round-trips.
+#[test]
+fn doc_bytes_accepts_exactly_the_readable_widths() {
+    let accepted: Vec<usize> = (0..=16).filter(|&w| is_read_width(w)).collect();
+    assert_eq!(accepted, vec![1, 2, 4, 8]);
+    let bytes = 0x0807_0605_0403_0201u64.to_le_bytes();
+    for w in accepted {
+        let mask = if w == 8 {
+            u64::MAX
+        } else {
+            (1u64 << (8 * w)) - 1
+        };
+        assert_eq!(
+            read_width(&bytes, 0, w),
+            0x0807_0605_0403_0201 & mask,
+            "width {w}"
+        );
+    }
+}

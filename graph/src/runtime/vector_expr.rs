@@ -230,7 +230,6 @@ impl<'a> VectorEval<'a> {
                     None => self.eval_per_row(node, batch, rows),
                 }
             }
-            ExprIR::Paren if node.num_children() == 1 => self.eval(&node.child(0), batch, rows),
             ExprIR::And => self.eval_and_or(node, batch, rows, false),
             ExprIR::Or => self.eval_and_or(node, batch, rows, true),
             ExprIR::Not if node.num_children() == 1 => {
