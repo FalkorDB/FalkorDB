@@ -11,6 +11,22 @@ class testPagerank(FlowTestsBase):
     def tearDown(self):
         self.graph.delete()
 
+    def test_pagerank_single_node_label_projection(self):
+        """A singleton projection retains all rank with or without a self-loop."""
+        self.graph.query("CREATE (:Other), (:Node {id: 'selected'}), (:Other)")
+        query = """CALL algo.pageRank('Node', null)
+                   YIELD node, score RETURN node.id, score"""
+        result = self.graph.query(query).result_set
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'selected')
+        self.env.assertAlmostEqual(result[0][1], 1.0, delta=0.0001)
+
+        self.graph.query("MATCH (n:Node) CREATE (n)-[:LINK]->(n)")
+        result = self.graph.query(query).result_set
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'selected')
+        self.env.assertAlmostEqual(result[0][1], 1.0, delta=0.0001)
+
     def test_invalid_invocation(self):
         invalid_queries = [
 

@@ -32,6 +32,16 @@ class testWCC(FlowTestsBase):
     def tearDown(self):
         self.graph.delete()
 
+    def test_wcc_single_node_label_projection(self):
+        """A singleton projection works with no edges and with a self-loop."""
+        self.graph.query("CREATE (:Other), (:Node {id: 'selected'}), (:Other)")
+        query = """CALL algo.WCC({nodeLabels: ['Node']})
+                   YIELD node, componentId RETURN node, componentId"""
+        self.env.assertEqual(get_components(self.graph.query(query)), [['selected']])
+
+        self.graph.query("MATCH (n:Node) CREATE (n)-[:LINK]->(n)")
+        self.env.assertEqual(get_components(self.graph.query(query)), [['selected']])
+
     def test_invalid_invocation(self):
         invalid_queries = [
                 """CALL algo.WCC({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter

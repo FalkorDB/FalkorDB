@@ -529,6 +529,9 @@ unsafe fn build_bool_pattern(
     };
 
     debug_assert_eq!(rows.len(), cols.len());
+    // LAGraph requires row-major adjacency, but GraphBLAS creates 1-by-1
+    // matrices by column. Set the orientation even when the pattern is empty.
+    set_matrix_row_major(m);
     if rows.is_empty() {
         return;
     }
@@ -543,6 +546,23 @@ unsafe fn build_bool_pattern(
         rows.len() as GrB_Index,
     );
     GrB_Scalar_free(&raw mut scalar);
+}
+
+/// Set the storage orientation required by LAGraph, including for 1-by-1 matrices.
+///
+/// # Safety
+/// `m` must be a valid matrix handle.
+unsafe fn set_matrix_row_major(m: crate::graph::graphblas::GrB_Matrix) {
+    use crate::graph::graphblas::{
+        GrB_Info, GrB_Matrix_set_INT32, GrB_Orientation, GxB_Option_Field,
+    };
+
+    let info = GrB_Matrix_set_INT32(
+        m,
+        GrB_Orientation::GrB_ROWMAJOR as i32,
+        GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT as _,
+    );
+    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 }
 
 /// Build compact adjacency directly from relationship tensors.
@@ -757,6 +777,11 @@ fn register_pagerank(funcs: &mut Functions) {
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                // LAGraph creates the transpose with GraphBLAS's default
+                // orientation, which is column-major for a singleton graph.
+                if !(*lag_g).AT.is_null() {
+                    set_matrix_row_major((*lag_g).AT);
+                }
                 lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Run PageRank
