@@ -8,6 +8,7 @@
 #include "RG.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
+#include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
 #include "../../util/dict.h"
 #include "../../util/strutil.h"
@@ -370,6 +371,19 @@ SIValue AR_RANGE(SIValue *argv, int argc, void *private_data) {
 	uint64_t size = 0;
 	if((end >= start && interval > 0) || (end <= start && interval < 0)) {
 		size = 1 + (end - start) / interval;
+	}
+
+	// fail cooperatively before allocating a list that would exceed the query
+	// memory capacity. range() with constant arguments is constant-folded at
+	// plan-construction time, a phase with no exception handler installed; the
+	// allocator's guard cannot unwind there, so a huge literal list (e.g.
+	// range(1, 50000000)) would otherwise be allocated and OOM the process.
+	// at execution time this raise unwinds via ExecutionPlan_Execute's handler;
+	// at fold time it is a no-op that sets the error and returns NULL, letting
+	// plan construction bail out cleanly at its next cooperative check.
+	if(rm_would_exceed_mem_capacity(size * sizeof(SIValue))) {
+		ErrorCtx_RaiseRuntimeException(EMSG_QUERY_MEM_CONSUMPTION);
+		return SI_NullVal();
 	}
 
 	SIValue array = SI_Array(size);

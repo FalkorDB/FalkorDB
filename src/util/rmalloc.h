@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include "../redismodule.h"
 
 #ifdef REDIS_MODULE_TARGET /* Set this when compiling your code as a module */
@@ -17,6 +18,13 @@ void rm_set_mem_capacity(int64_t cap);
 
 // reset thread memory consumption counter to 0 (no memory consumed)
 void rm_reset_n_alloced();
+
+// returns true if a query memory capacity is configured and allocating
+// 'n_bytes' more on the current thread would exceed it
+// lets callers that are about to make a single large allocation (e.g. building
+// a list literal while constant-folding) fail cooperatively BEFORE requesting
+// the memory, rather than relying on the allocator's post/pre-allocation guard
+bool rm_would_exceed_mem_capacity(size_t n_bytes);
 
 static inline void *rm_malloc(size_t n) {
 	return RedisModule_Alloc(n);
