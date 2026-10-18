@@ -938,3 +938,30 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
 
+
+    def test20_back_to_back_index_creation_populates_every_field(self):
+        # Each CREATE INDEX on a label spawns a population job with the label's
+        # field set at that moment, and an older job yields to a newer one. The
+        # yield used to fire for whichever job checked first, so when the newer
+        # job yielded, the older one finished without the field just added and
+        # the index reported OPERATIONAL with that field empty. The race is
+        # timing dependent, hence the rounds.
+        graph = self.db.select_graph("back_to_back_index_creation")
+        n = 300_000
+        props = ['a', 'b', 'c']
+
+        for _ in range(5):
+            if "back_to_back_index_creation" in self.db.list_graphs():
+                graph.delete()
+            graph.query("UNWIND range(1, $n) AS x CREATE (:L {a: x, b: x, c: x})",
+                        {'n': n})
+            for p in props:
+                graph.create_node_range_index('L', p)
+            wait_for_indices_to_sync(graph)
+
+            for p in props:
+                q = f"MATCH (n:L) WHERE n.{p} > 0 RETURN count(n)"
+                plan = str(graph.explain(q))
+                self.env.assertIn("Node By Index Scan", plan)
+                self.env.assertEqual(graph.query(q).result_set, [[n]],
+                                     message=f"field {p} is not fully indexed")

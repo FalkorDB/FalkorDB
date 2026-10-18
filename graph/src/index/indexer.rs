@@ -76,6 +76,8 @@ pub enum IndexOptions {
 pub struct PopulationTicket {
     label: Arc<String>,
     generation_id: u64,
+    /// Acquisition order among all tickets for `label`.
+    seq: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -612,10 +614,11 @@ impl Indexer {
         let index = self.index.load();
         let index = index.get(label)?;
         let generation_id = index.id();
-        index.increment_pending_for_generation(generation_id);
+        let seq = index.increment_pending_for_generation(generation_id);
         Some(PopulationTicket {
             label: label.clone(),
             generation_id,
+            seq,
         })
     }
 
@@ -631,12 +634,13 @@ impl Indexer {
         let index = index.get(label)?;
         let generation_id = index.id();
         let fields = index.fields().clone();
-        index.increment_pending_for_generation(generation_id);
+        let seq = index.increment_pending_for_generation(generation_id);
         Some(PopulationSnapshot {
             fields,
             ticket: PopulationTicket {
                 label: label.clone(),
                 generation_id,
+                seq,
             },
         })
     }
@@ -651,12 +655,13 @@ impl Indexer {
             .iter()
             .map(|(label, index)| {
                 let generation_id = index.id();
-                index.increment_pending_for_generation(generation_id);
+                let seq = index.increment_pending_for_generation(generation_id);
                 PopulationSnapshot {
                     fields: index.fields().clone(),
                     ticket: PopulationTicket {
                         label: label.clone(),
                         generation_id,
+                        seq,
                     },
                 }
             })
@@ -689,15 +694,24 @@ impl Indexer {
             .is_some_and(|index| index.id() == ticket.generation_id())
     }
 
-    /// Return pending count for the ticket's generation.
+    /// Returns true if a later population job for the ticket's label has
+    /// taken a ticket since, and so captured a newer field set: that job
+    /// covers everything this one would, and this one should yield to it.
+    ///
+    /// Not "another ticket is pending": that is true for both of two
+    /// overlapping jobs, and whichever checked first used to yield. When it
+    /// was the newer one, the older job finished with the stale field set and
+    /// the newly added field was never populated, though the index reported
+    /// itself operational.
     #[must_use]
-    pub fn ticket_pending_changes(
+    pub fn is_ticket_superseded(
         &self,
         ticket: &PopulationTicket,
-    ) -> i32 {
-        self.index.load().get(ticket.label()).map_or(0, |index| {
-            index.pending_count_for_generation(ticket.generation_id())
-        })
+    ) -> bool {
+        self.index
+            .load()
+            .get(ticket.label())
+            .is_some_and(|index| !index.is_latest_ticket(ticket.seq))
     }
 
     #[must_use]

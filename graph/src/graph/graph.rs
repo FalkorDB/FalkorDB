@@ -574,7 +574,9 @@ fn populate_index_batch(
                     return;
                 }
 
-                if indexer.is_cancelled() || indexer.ticket_pending_changes(&ticket) > 1 {
+                // A later CREATE INDEX on this label spawned a job with a newer
+                // field set, which repopulates from cursor 0; leave it to that one.
+                if indexer.is_cancelled() || indexer.is_ticket_superseded(&ticket) {
                     indexer.release_population_ticket(&ticket);
                     return;
                 }

@@ -907,6 +907,10 @@ struct PendingSlots {
     current_pending: i32,
     /// Pending tickets for older generations aggregated together.
     stale_pending: i32,
+    /// Sequence number of the most recently acquired ticket, across
+    /// generations. A population job whose ticket is older than this has
+    /// been superseded by one that captured a newer field set.
+    latest_ticket: u64,
 }
 
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
@@ -1023,6 +1027,7 @@ impl Default for Index {
                 current_generation: id,
                 current_pending: 0,
                 stale_pending: 0,
+                latest_ticket: 0,
             })),
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
@@ -2106,22 +2111,30 @@ impl Index {
 
     // --- pending_changes ---
 
-    /// Increment pending counter for a specific generation and return its
-    /// previous value.
+    /// Increment pending counter for a specific generation and return the
+    /// new ticket's sequence number (see [`Self::is_latest_ticket`]).
     pub fn increment_pending_for_generation(
         &self,
         generation_id: u64,
-    ) -> i32 {
+    ) -> u64 {
         let mut slots = self.pending_slots.lock();
         if generation_id == slots.current_generation {
-            let prev = slots.current_pending;
             slots.current_pending += 1;
-            prev
         } else {
-            let prev = slots.stale_pending;
             slots.stale_pending += 1;
-            prev
         }
+        slots.latest_ticket += 1;
+        slots.latest_ticket
+    }
+
+    /// Whether `seq` is the most recently acquired ticket, i.e. no later
+    /// population job has captured a newer field set.
+    #[must_use]
+    pub fn is_latest_ticket(
+        &self,
+        seq: u64,
+    ) -> bool {
+        self.pending_slots.lock().latest_ticket == seq
     }
 
     /// Decrement pending counter for a specific generation only if > 0.
@@ -2143,20 +2156,6 @@ impl Index {
                 slots.stale_pending -= 1;
             }
             prev
-        }
-    }
-
-    /// Get pending changes count for a specific generation.
-    #[must_use]
-    pub fn pending_count_for_generation(
-        &self,
-        generation_id: u64,
-    ) -> i32 {
-        let slots = self.pending_slots.lock();
-        if generation_id == slots.current_generation {
-            slots.current_pending
-        } else {
-            slots.stale_pending
         }
     }
 
