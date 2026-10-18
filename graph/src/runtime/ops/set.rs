@@ -217,6 +217,7 @@ impl Runtime<'_> {
                                         }
                                         let attrs = self.get_node_attrs(tid);
                                         if *replace {
+                                            self.pending.borrow_mut().clear_node_attributes(id);
                                             let keys: Vec<Arc<String>> =
                                                 self.g.borrow().get_node_attrs(id).collect();
                                             for key in keys {
@@ -235,6 +236,7 @@ impl Runtime<'_> {
                                     Value::Relationship(rel) => {
                                         let attrs = self.get_relationship_attrs(rel);
                                         if *replace {
+                                            self.pending.borrow_mut().clear_node_attributes(id);
                                             let keys: Vec<Arc<String>> =
                                                 self.g.borrow().get_node_attrs(id).collect();
                                             for key in keys {
@@ -283,6 +285,9 @@ impl Runtime<'_> {
                                 match run_expr {
                                     Value::Map(map) => {
                                         if *replace {
+                                            self.pending
+                                                .borrow_mut()
+                                                .clear_relationship_attributes(target_rel);
                                             let keys: Vec<Arc<String>> = self
                                                 .g
                                                 .borrow()
@@ -319,6 +324,9 @@ impl Runtime<'_> {
                                     Value::Node(sid) => {
                                         let attrs = self.get_node_attrs(sid);
                                         if *replace {
+                                            self.pending
+                                                .borrow_mut()
+                                                .clear_relationship_attributes(target_rel);
                                             let keys: Vec<Arc<String>> = self
                                                 .g
                                                 .borrow()
@@ -350,6 +358,9 @@ impl Runtime<'_> {
                                         }
                                         let attrs = self.get_relationship_attrs(source_rel);
                                         if *replace {
+                                            self.pending
+                                                .borrow_mut()
+                                                .clear_relationship_attributes(target_rel);
                                             let keys: Vec<Arc<String>> = self
                                                 .g
                                                 .borrow()
