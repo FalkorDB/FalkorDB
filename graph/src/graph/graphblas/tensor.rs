@@ -1601,10 +1601,7 @@ impl Decode<19> for Tensor {
         // `edge_count` and iteration rely on. So every tensor entry must land
         // on a marker (checked per entry below), and every marker must get
         // ids (checked at the end by counting `me`'s pairs).
-        let markers = m
-            .iter(0, u64::MAX)
-            .filter(|&(_, _, v)| v == MULTI_EDGE)
-            .count() as u64;
+        let markers = m.count_value_eq(MULTI_EDGE);
 
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
@@ -2522,17 +2519,6 @@ mod tests {
         assert_eq!(back.multi_pairs(), t.multi_pairs());
     }
 
-    /// The id blob of a multi-edge pair, as `encode` writes it.
-    fn id_blob(ids: &[u64]) -> TapeOp {
-        let mut v = Vector::<bool>::new(GrB_INDEX_MAX);
-        for &id in ids {
-            v.set(id, true);
-        }
-        let mut tape = Tape::default();
-        v.encode_blob(&mut tape);
-        tape.ops.pop_front().expect("encode_blob wrote nothing")
-    }
-
     /// A tensor section entry for a pair the forward matrix does not mark as
     /// multi-edge used to decode into an `me` row, after which `edge_count`
     /// (and so the next save) panicked and iteration yielded a phantom edge.
@@ -2540,7 +2526,10 @@ mod tests {
     fn decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge() {
         ensure_init();
         // (7, 9) absent from the forward matrix, then (1, 2) holding a
-        // single edge: neither may take ids from the tensor section.
+        // single edge: neither may take ids (here, id 3) from the tensor
+        // section.
+        let mut ids = Vector::<bool>::new(GrB_INDEX_MAX);
+        ids.set(3, true);
         for (src, dst) in [(7, 9), (1, 2)] {
             let mut t = Tensor::new(16, 16);
             t.set_all_from_slices(&[1], &[2], &[5]);
@@ -2551,15 +2540,13 @@ mod tests {
             // single-edge graph: ..., total edges, multi pair count 0, TDP 0
             tape.ops.pop_back();
             tape.ops.pop_back();
-            for op in [
-                TapeOp::Unsigned(1),
-                TapeOp::Unsigned(src),
-                TapeOp::Unsigned(dst),
-                id_blob(&[3]),
-                TapeOp::Unsigned(0),
-            ] {
-                tape.ops.push_back(op);
+            // TM: one pair, (src, dst) with the ids blob, as `encode` writes
+            // it; then an empty TDP.
+            for v in [1, src, dst] {
+                tape.ops.push_back(TapeOp::Unsigned(v));
             }
+            ids.encode_blob(&mut tape);
+            tape.ops.push_back(TapeOp::Unsigned(0));
             let err = Tensor::decode(&mut tape)
                 .err()
                 .unwrap_or_else(|| panic!("ids for ({src}, {dst}) accepted"));
