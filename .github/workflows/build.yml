@@ -270,7 +270,7 @@ jobs:
       - name: Restore dependency caches (Docker)
         if: matrix.platform.use_docker
         id: restore-deps
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -290,7 +290,7 @@ jobs:
       - name: Restore dependency cache (macOS)
         if: matrix.platform.os == 'macos'
         id: restore-deps-macos
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -318,7 +318,7 @@ jobs:
 
       - name: Save dependency cache (macOS)
         if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -424,7 +424,7 @@ jobs:
 
       - name: Save dependency cache (Docker)
         if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
