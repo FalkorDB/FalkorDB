@@ -1641,9 +1641,9 @@ fn remove_batch_never_leaves_a_single_child_branch() {
     let pairs: Vec<(u64, u64)> = (0..96u64).map(|d| (d, 0)).collect();
     let mut t = CowBTree::<2, 4>::from_sorted(&pairs);
     t.remove_batch(&(33..64u64).map(|d| (d, 0)).collect::<Vec<_>>());
-    check_invariants(&t, false);
+    check_invariants(&t, true);
     assert!(t.remove(32, 0));
-    check_invariants(&t, false);
+    check_invariants(&t, true);
     t.insert_batch(&[(0, 1), (95, 1)]);
     check_invariants(&t, false);
     let mut expected: Vec<(u64, u64)> = (0..32u64).chain(64..96).map(|d| (d, 0)).collect();
@@ -1662,7 +1662,7 @@ fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
             for hi in lo + 1..=n {
                 let mut t = CowBTree::<L, B>::from_sorted(&all);
                 t.remove_batch(&all[lo as usize..hi as usize]);
-                check_invariants(&t, false);
+                check_invariants(&t, true);
                 let mut expected: Vec<(u64, u64)> = all
                     .iter()
                     .copied()
@@ -1671,7 +1671,7 @@ fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
                 if let Some(&(k, d)) = expected.get(expected.len() / 2) {
                     assert!(t.remove(k, d));
                     expected.retain(|&p| p != (k, d));
-                    check_invariants(&t, false);
+                    check_invariants(&t, true);
                 }
                 t.insert_batch(&[(0, 1), (n, 1)]);
                 check_invariants(&t, false);
