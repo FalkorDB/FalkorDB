@@ -1311,6 +1311,10 @@ impl<'a> Runtime<'a> {
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
+        // max_node_id() is zero on a fresh graph, but ID 0 does not exist yet.
+        if self.g.borrow().node_count() == 0 {
+            return Ok(None);
+        }
         let mut min = 0u64;
         let mut max = self.g.borrow().max_node_id();
         for (expr, op) in filter {
