@@ -925,12 +925,11 @@ mod tests {
         let indexer = Indexer::default();
         let label = Arc::new(String::from("V"));
         let index = Arc::new(Index::default());
-        let generation = index.id();
-        index.increment_pending_for_generation(generation);
-        index.increment_pending_for_generation(generation);
         indexer
             .index
-            .store(Arc::new(HashMap::from([(label.clone(), index.clone())])));
+            .store(Arc::new(HashMap::from([(label.clone(), index)])));
+        let first = indexer.acquire_population_ticket(&label).unwrap();
+        let second = indexer.acquire_population_ticket(&label).unwrap();
 
         let query = || indexer.vector_query(&label, "e", Arc::new(thin_vec![1.0, 1.0]), 3);
         let expected = "Invalid arguments for procedure 'db.idx.vector.queryNodes'";
@@ -938,12 +937,19 @@ mod tests {
         // No background worker is needed: hold population tickets so the
         // check cannot race with an index becoming operational.
         assert!(matches!(query(), Err(error) if error == expected));
-        index.try_decrement_pending_for_generation(generation);
+        indexer.release_population_ticket(&first);
         assert!(matches!(query(), Err(error) if error == expected));
 
         // Once every ticket completes, queries may reach the index again.
         // This unit fixture has no RediSearch spec, so it yields no rows.
-        index.try_decrement_pending_for_generation(generation);
+        indexer.release_population_ticket(&second);
         assert_eq!(query().unwrap().count(), 0);
+
+        // A NUL field is rejected by Index::vector_query itself, proving
+        // that the operational path delegates rather than returning early.
+        assert!(matches!(
+            indexer.vector_query(&label, "e\0", Arc::new(thin_vec![1.0, 1.0]), 3),
+            Err(error) if error.contains("nul byte")
+        ));
     }
 }
