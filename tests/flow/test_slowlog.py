@@ -316,3 +316,38 @@ class testSlowLog():
         queries = [entry[2] for entry in entries]
         self.env.assertContains (q0, queries)
         self.env.assertContains (q1, queries)
+
+    def test07_truncate_on_char_boundary(self):
+        # A query or parameter longer than the slowlog's 2048-byte cap, with a
+        # multi-byte character straddling byte 2048, used to panic the server
+        # (the cut landed inside the character, #3233). C stores the first
+        # 2048 bytes even if that splits the character; we keep whole
+        # characters, so the stored text stays valid UTF-8.
+        STR_MAX_LEN = 2048
+        body = "UNWIND range(1, 2000000) AS x WITH x WHERE x < 0 RETURN count(x)"
+
+        # make sure the graph key exists, so RESET works when run on its own
+        self.graph.query("RETURN 1")
+
+        for c in ['é', '€', '😀']:
+            self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
+
+            # query text: `c` occupies bytes 2047.. of the query
+            head = f"{body} AS n, '"
+            query = head + 'a' * (STR_MAX_LEN - 1 - len(head)) + c + "'"
+            self.graph.query(query)
+
+            # parameters: `c` occupies bytes 2047.. of the CYPHER prefix
+            head = "CYPHER p='"
+            params = head + 'b' * (STR_MAX_LEN - 1 - len(head)) + c + "'"
+            self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID,
+                                           f"{params} {body}")
+
+            # server survived and logged both, cut before the character
+            self.env.assertTrue(self.redis_con.ping())
+            entries = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
+            self.env.assertEqual(len(entries), 2)
+
+            logged = {e[2]: e[4] for e in entries}
+            self.env.assertContains(query[:STR_MAX_LEN - 1] + "...", logged)
+            self.env.assertEqual(logged[body], params[:STR_MAX_LEN - 1] + "...")

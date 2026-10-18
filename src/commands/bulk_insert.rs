@@ -9,13 +9,13 @@ use crate::{
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
-    runtime::value::Value,
+    index::index_docs::IndexDocs,
+    runtime::value::{MAX_VALUE_NESTING, Value, value_nesting_error},
     threadpool::spawn,
 };
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
-use rustc_hash::FxHashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -98,9 +98,9 @@ fn read_property(
     // Parse a possibly-nested value without recursion: `BI_ARRAY` elements are
     // expanded onto an explicit work stack instead of recursive calls, so
     // arbitrarily deep attacker-supplied `GRAPH.BULKINSERT` data cannot overflow
-    // the call stack (an uncatchable abort) and arrays of any depth are
-    // supported. Each frame holds a partially-built array and how many elements
-    // it still expects.
+    // the call stack (an uncatchable abort). Depth is still capped at
+    // `MAX_VALUE_NESTING`, as everywhere a value enters. Each frame holds a
+    // partially-built array and how many elements it still expects.
     let mut stack: Vec<(thin_vec::ThinVec<Value>, usize)> = Vec::new();
 
     loop {
@@ -126,6 +126,12 @@ fn read_property(
                 BI_LONG => Value::Int(read_i64_ne(data, idx)?),
                 BI_STRING => Value::String(Arc::new(read_cstring(data, idx)?.to_string())),
                 BI_ARRAY => {
+                    // Iterative here, but the value it builds is walked
+                    // recursively everywhere else (drop, save, replies), so
+                    // depth is bounded like every other way a value enters.
+                    if stack.len() >= MAX_VALUE_NESTING {
+                        return Err(value_nesting_error());
+                    }
                     let len = read_i64_ne(data, idx)?;
                     if len < 0 {
                         return Err(format!("negative array length in bulk data: {len}"));
@@ -323,43 +329,13 @@ unsafe fn maybe_yield(raw_ctx: *mut raw::RedisModuleCtx) {
     }
 }
 
-/// Index documents collected while processing bulk tokens.
-///
-/// RediSearch is not versioned, so anything published into it cannot be undone by the
-/// MVCC rollback that a later failing token triggers. Accumulate across the whole insert
-/// and publish once, on the success path only — otherwise a batch that fails midway
-/// leaves documents behind for entities that were never committed (and whose ids may be
-/// handed to different entities later).
-#[derive(Default)]
-struct BulkIndexDocs {
-    nodes: FxHashMap<u64, RoaringTreemap>,
-    edges: FxHashMap<u64, RoaringTreemap>,
-}
-
-impl BulkIndexDocs {
-    /// Publish into the indexes. Call only once every token has succeeded, and while
-    /// `g` is still the un-published fork — a committed version may be borrowed by
-    /// concurrent readers.
-    fn publish(
-        &mut self,
-        g: &mut Graph,
-    ) {
-        if !self.nodes.is_empty() {
-            g.commit_index(&mut self.nodes, &mut FxHashMap::default());
-        }
-        if !self.edges.is_empty() {
-            g.commit_edge_index(&mut self.edges, &mut FxHashMap::default());
-        }
-    }
-}
-
 fn process_node_token(
     g: &mut Graph,
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (labels, prop_names) = parse_header(data, &mut idx, "Label name")?;
@@ -414,21 +390,25 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, docs, true);
     unsafe { maybe_yield(raw_ctx) };
 
     // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
-    // insert-wide accumulator that `BulkIndexDocs::publish` flushes once every token has
-    // succeeded. Nothing else on this path would: GRAPH.BULK does not run the post-load
-    // `populate_indexes_sync` rebuild (that is the RDB / replica path).
+    // insert-wide `docs` that are published once every token has succeeded. Nothing else on
+    // this path would: GRAPH.BULK does not run the post-load `populate_indexes_sync` rebuild
+    // (that is the RDB / replica path).
     //
     // `set_nodes_labels_bulk` above also collects, but only for nodes that already have
     // attributes — none do at this point — so it contributes nothing here and the two do
     // not double up.
     if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.nodes);
+        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, docs);
         unsafe { maybe_yield(raw_ctx) };
     }
+    // The native index's changes go into the fork once per token, not with the insert-wide
+    // RediSearch documents: holding every token's entries until the whole insert finished would
+    // grow with the insert, for one batched tree op per column saved per token.
+    g.apply_index_writes(docs);
 
     Ok(())
 }
@@ -439,7 +419,7 @@ fn process_edge_token(
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (type_names, prop_names) = parse_header(data, &mut idx, "Relationship type")?;
@@ -502,7 +482,8 @@ fn process_edge_token(
 
     if !resolved_rel_attrs.is_empty() {
         // Same as the node path: collect now, publish once the whole insert has succeeded.
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.edges);
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, docs);
+        g.apply_index_writes(docs);
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -510,6 +491,14 @@ fn process_edge_token(
 }
 
 /// Process bulk insert on a background thread (no yield needed — main thread handles PING).
+///
+/// `docs` collects the index documents for the whole insert; the caller publishes them once, on
+/// the success path only. RediSearch is not versioned, so anything published into it cannot be
+/// undone by the MVCC rollback that a later failing token triggers — a batch that published as it
+/// went and failed midway would leave documents behind for entities that were never committed
+/// (and whose ids may be handed to different entities later). Bulk only ever adds, so it fills
+/// only `node_adds` and `edge_adds`, plus the native index's changes, which each token applies to
+/// the fork as soon as it is done.
 fn bulk_insert_sync(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -517,7 +506,7 @@ fn bulk_insert_sync(
     edge_count: usize,
     node_token_count: usize,
     rel_token_count: usize,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     // A bulk command has no `Pending`, so the whole command is one batch: opened
     // with this write version, checked when it is published.
@@ -552,7 +541,8 @@ fn bulk_insert_sync(
     Ok(())
 }
 
-/// Process bulk insert synchronously with periodic yield for PING handling.
+/// Process bulk insert synchronously with periodic yield for PING handling. `docs` as in
+/// [`bulk_insert_sync`].
 fn bulk_insert_sync_yield(
     g: &mut Graph,
     tokens: &[&[u8]],
@@ -561,7 +551,7 @@ fn bulk_insert_sync_yield(
     node_token_count: usize,
     rel_token_count: usize,
     raw_ctx: *mut raw::RedisModuleCtx,
-    docs: &mut BulkIndexDocs,
+    docs: &mut IndexDocs,
 ) -> Result<(), String> {
     // A bulk command has no `Pending`, so the whole command is one batch: opened
     // with this write version, checked when it is published.
@@ -809,7 +799,7 @@ pub fn graph_bulk_insert(
                 "ERR another write is in progress, retry the query".to_string(),
             ));
         };
-        let mut docs = BulkIndexDocs::default();
+        let mut docs = IndexDocs::default();
         let result = {
             let mut g = g_arc.borrow_mut();
             bulk_insert_sync_yield(
@@ -832,9 +822,9 @@ pub fn graph_bulk_insert(
         // The version is validated *before* the documents are published, and
         // then again by `commit`. The documents go to RediSearch, which is not
         // MVCC and has no version to throw away: once published they survive a
-        // rolled-back fork, and `BulkIndexDocs` cannot take them back — the edge
-        // side of `commit_edge_index` wants src and dst per removed edge, which
-        // this type does not keep. Asking first costs one walk of a roaring
+        // rolled-back fork, and bulk cannot take them back — removing an edge's
+        // document wants its src and dst (`IndexDocs::edge_removes`), which bulk
+        // does not collect. Asking first costs one walk of a roaring
         // bitmap on a path that has just parsed a whole payload, and is the only
         // ordering where a refusal leaves nothing behind.
         //
@@ -843,7 +833,7 @@ pub fn graph_bulk_insert(
         // hold the same graph, where this `borrow_mut` would panic.
         let result = result.and_then(|()| {
             g_arc.borrow().validate().map_err(|e| e.to_string())?;
-            docs.publish(&mut g_arc.borrow_mut());
+            g_arc.borrow_mut().commit_index_docs(&mut docs);
             tg.graph.commit(g_arc).map_err(|e| e.to_string())
         });
         return match result {
@@ -905,18 +895,19 @@ pub fn graph_bulk_insert(
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             // Build, commit and replicate under one session, which releases its locks
             // when this block ends — before the client is unblocked below.
-            let result: Result<(), String> = 'phase: {
+            // A loop only to run the insert again if an inline writer commits while
+            // phase 1 builds (see the escalation below); every other path breaks.
+            let result: Result<(), String> = 'phase: loop {
                 let session = QuerySession::begin_with(&graph, facts);
-                // Phase 1: build the new version as a reader, GIL-free. What we take
-                // here is the MVCC *write slot* — the single-writer marker on
-                // `MvccGraph`, not a lock — so if another writer holds it, fail with a
-                // retryable error rather than blocking.
-                let Some(g_arc) = session.with_graph(|tg| tg.graph.write()) else {
+                // Phase 1: build the new version as a reader, GIL-free, into a private
+                // fork. The MVCC write slot is claimed only when phase 2 escalates, so
+                // an inline writer is never refused because this insert is building.
+                let Ok(g_arc) = session.write_version() else {
                     break 'phase Err(
                         "ERR another write is in progress, retry the query".to_string()
                     );
                 };
-                let mut docs = BulkIndexDocs::default();
+                let mut docs = IndexDocs::default();
                 let inserted = {
                     let mut g = g_arc.borrow_mut();
                     let tokens: Vec<&[u8]> =
@@ -932,17 +923,20 @@ pub fn graph_bulk_insert(
                     )
                 };
                 if let Err(e) = inserted {
-                    session.with_graph(|tg| tg.graph.rollback());
+                    session.release_slot();
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
                 if let Err(e) = session.upgrade_to_write() {
-                    // Release the MVCC slot from phase 1 — only commit()/rollback()
-                    // clear it, so skipping this leaves the graph permanently
-                    // unwritable.
-                    session.with_graph(|tg| tg.graph.rollback());
+                    // Drop the phase 1 fork (and the slot, if it was claimed).
+                    session.release_slot();
+                    // An inline writer committed while phase 1 built: nothing was
+                    // published, so build again on top of its version.
+                    if session.is_stale() {
+                        continue 'phase;
+                    }
                     break 'phase Err(e.to_string());
                 }
                 // Publish the index documents inside the writer scope, matching
@@ -962,10 +956,10 @@ pub fn graph_bulk_insert(
                 // published here outlives the fork that `commit` would refuse,
                 // and nothing can take it back.
                 if let Err(e) = g_arc.borrow().validate() {
-                    session.with_graph(|tg| tg.graph.rollback());
+                    session.release_slot();
                     break 'phase Err(e.to_string());
                 }
-                docs.publish(&mut g_arc.borrow_mut());
+                g_arc.borrow_mut().commit_index_docs(&mut docs);
                 if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write")
@@ -1003,7 +997,7 @@ pub fn graph_bulk_insert(
                 // is a string this closure owns a reference to, and the session holds
                 // the GIL.
                 unsafe { held.replicate(ts_ctx) };
-                Ok(())
+                break 'phase Ok(());
             };
             match result {
                 Ok(()) => {
