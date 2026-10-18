@@ -5,10 +5,12 @@ GRAPH_ID = "pagerank"
 
 class testPagerank(FlowTestsBase):
     def __init__(self):
+        """Initialize the test environment and PageRank graph handle."""
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
+        """Delete the graph so each test starts with an empty dataset."""
         self.graph.delete()
 
     def test_pagerank_single_node_label_projection(self):
@@ -28,6 +30,7 @@ class testPagerank(FlowTestsBase):
         self.env.assertAlmostEqual(result[0][1], 1.0, delta=0.0001)
 
     def test_invalid_invocation(self):
+        """Exercise malformed PageRank arguments and unsupported yield fields."""
         invalid_queries = [
 
             # array relationship type

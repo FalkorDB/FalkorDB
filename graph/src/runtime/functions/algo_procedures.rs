@@ -719,6 +719,7 @@ pub fn register(funcs: &mut Functions) {
 
 // ── algo.pageRank ───────────────────────────────────────────────────────
 
+/// Register PageRank with optional node-label and relationship-type filters.
 fn register_pagerank(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.pageRank",
         args: [Type::Any, Type::Any],
