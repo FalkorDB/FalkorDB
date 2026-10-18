@@ -56,6 +56,12 @@ impl<K: PartialEq, V> OrderMap<K, V> {
     ///
     /// Uniqueness is checked in debug builds only. A duplicate key in release
     /// makes `==` asymmetric and leaves the key reachable after `remove`.
+    /// The check is left out of release on purpose: this builds the property
+    /// map of every node or relationship whose attributes are read, and every
+    /// LOAD CSV row, and a pairwise check there measured 1.2x to 5x slower
+    /// for 4 to 32 keys. Every caller passes keys unique by construction:
+    /// attribute-store pairs (one entry per attribute id, and ids map to
+    /// distinct names) and CSV headers deduplicated once per file.
     #[must_use]
     pub fn from_unique_keys(pairs: impl IntoIterator<Item = (K, V)>) -> Self
     where
