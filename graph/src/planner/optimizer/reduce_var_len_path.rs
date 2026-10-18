@@ -22,7 +22,7 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::ir_references_variable;
+use super::references::ir_references_variable;
 
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
