@@ -564,7 +564,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         if let Node::Branch(branch_arc) = self
             && branch_arc.children.iter().any(Node::is_underfull)
         {
-            let branch = make_private(branch_arc);
+            // Every node passed here is one `combine` just built (`Arc::new`), so it is not shared
+            // and `make_mut` mutates in place; unlike `make_private` it still clones if that ever
+            // stops holding, so the committed version stays immutable either way.
+            let branch = Arc::make_mut(branch_arc);
             merge_underfull(&mut branch.children, &mut branch.seps);
         }
     }

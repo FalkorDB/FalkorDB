@@ -1652,14 +1652,14 @@ fn remove_batch_never_leaves_a_single_child_branch() {
     assert_eq!(tree_pairs(&t), expected);
 }
 
-/// The same shape across fan-outs and every contiguous drain window: after `remove_batch` the tree is
+/// The same shape across fan-outs and every contiguous drain window (all `lo..hi` pairs): after `remove_batch` the tree is
 /// well-formed, and a follow-up `remove` + `insert_batch` keeps it so with the right contents.
 #[test]
 fn remove_batch_keeps_the_tree_well_formed_for_any_window() {
     fn sweep<const L: usize, const B: usize>(n: u64) {
         let all: Vec<(u64, u64)> = (0..n).map(|d| (d, 0)).collect();
-        for lo in (0..n).step_by(3) {
-            for hi in (lo + 1..=n).step_by(5) {
+        for lo in 0..n {
+            for hi in lo + 1..=n {
                 let mut t = CowBTree::<L, B>::from_sorted(&all);
                 t.remove_batch(&all[lo as usize..hi as usize]);
                 check_invariants(&t, false);
