@@ -806,41 +806,34 @@ impl Tensor {
         emptied
     }
 
+    #[must_use]
+    pub fn nrows(&self) -> u64 {
+        self.m.nrows()
+    }
+
+    #[must_use]
+    pub fn ncols(&self) -> u64 {
+        self.m.ncols()
+    }
+
+    /// Grow to at least `nrows x ncols`. Never shrinks: a smaller target keeps
+    /// the current dimension, so no entry is ever dropped. That keeps `me`,
+    /// which is keyed by pair rather than sized by node count, consistent with
+    /// the layers without having to be pruned (#3246).
     pub fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     ) {
-        if nrows < self.m.nrows() || ncols < self.m.ncols() {
-            // Shrinking can drop entries; keep the straightforward path.
-            self.flush();
-            // GrB_Matrix_resize waits internally, so `m` holds no real pending
-            // work afterwards — waiting here would rebuild the freed hyper hash
-            // on every capacity grow (measured 1.4-5.7x write regressions).
-            self.m.resize(nrows, ncols);
-            // A resize moves no entries between layers, so the delta counters
-            // stand (a shrink that drops entries only adds to the drift
-            // `resync` bounds).
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
-            self.mt.resize(ncols, nrows);
-            // `me` is keyed by pair, not sized by node count, so the resizes
-            // above never reach it: drop the ids of every pair they cut off, or
-            // those ids outlive the pair's sentinel as edges no forward entry
-            // leads to.
-            let orphans: Vec<(MeBlock, u64, u64)> = self
-                .me
-                .iter()
-                .flat_map(|(block, me)| {
-                    me.iter(0, GrB_INDEX_MAX).filter_map(move |(key, id)| {
-                        let (src, dst) = compound_key_inverse(*block, key);
-                        (src >= nrows || dst >= ncols).then_some((*block, key, id))
-                    })
-                })
-                .collect();
-            for (block, key, id) in orphans {
-                self.me_block_mut(block).remove(key, id);
-            }
+        debug_assert!(
+            nrows >= self.m.nrows() && ncols >= self.m.ncols(),
+            "Tensor::resize never shrinks ({}x{} -> {nrows}x{ncols})",
+            self.m.nrows(),
+            self.m.ncols(),
+        );
+        let nrows = nrows.max(self.m.nrows());
+        let ncols = ncols.max(self.m.ncols());
+        if nrows == self.m.nrows() && ncols == self.m.ncols() {
             return;
         }
         // Growing: the base is always COW-shared with the committed snapshot,
@@ -2018,13 +2011,12 @@ mod tests {
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
     }
 
-    /// A shrink drops the forward entries of every pair it cuts off, and has to
-    /// drop their `me` ids with them. `me` is keyed by pair rather than sized by
-    /// node count, so resizing the layers does not reach it: before the fix the
-    /// cut-off multi pair's ids survived as edges `iter_edges` still listed and
-    /// `edge_count` still counted, with no forward entry leading to them.
+    /// `resize` never shrinks, so it can never cut a multi-edge pair off from
+    /// its `me` ids (#3246). Release builds keep the current size; debug
+    /// builds assert, so a new caller that tries to shrink is caught in tests.
     #[test]
-    fn shrinking_drops_the_multi_edge_ids_of_pairs_it_cuts_off() {
+    #[cfg(not(debug_assertions))]
+    fn resize_never_shrinks() {
         ensure_init();
         let mut t = Tensor::new(8, 8);
         // (0, 1) and (5, 6) are multi pairs, (1, 2) a single one.
@@ -2035,20 +2027,35 @@ mod tests {
         );
         t.flush();
         t.wait();
-        assert_eq!(t.edge_count(), 6);
 
         t.resize(4, 4);
         t.wait();
 
+        assert_eq!((t.nrows(), t.ncols()), (8, 8), "resize shrank the tensor");
         let mut edges: Vec<_> = t.iter_edges().collect();
         edges.sort_unstable();
         assert_eq!(
             edges,
-            vec![(0, 1, 10), (0, 1, 11), (1, 2, 12)],
-            "a pair outside the shrunk tensor kept its multi-edge ids"
+            vec![
+                (0, 1, 10),
+                (0, 1, 11),
+                (1, 2, 12),
+                (5, 6, 20),
+                (5, 6, 21),
+                (5, 6, 22)
+            ],
         );
-        assert_eq!(t.edge_count(), 3, "edge count after the shrink");
-        assert_eq!(t.multi_pairs(), 1, "only (0, 1) is still a multi pair");
+        assert_eq!(t.edge_count(), 6);
+        assert_eq!(t.multi_pairs(), 2);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Tensor::resize never shrinks")]
+    fn resize_asserts_it_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        t.resize(4, 4);
     }
 
     /// Deleting everything must not leave the base *and* a base-sized `dm`
