@@ -14,6 +14,8 @@ jobs:
   build-and-verify:
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -91,3 +93,22 @@ jobs:
         with:
           name: falkordb-darwin-arm64
           path: dist/*
+
+      # Downstream consumers (the exocortex standalone runtime) pin this
+      # module by the sha256 recorded beside it; a rolling release tag per
+      # branch gives them a stable, public, fetchable URL.
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            darwin-no-fork-gc) TAG=darwin-runtime-4.16 ;;
+            darwin-no-fork-gc-4.18) TAG=darwin-runtime-4.18 ;;
+            *) echo "no rolling tag for branch ${GITHUB_REF_NAME}"; exit 0 ;;
+          esac
+          COMMIT="$(git rev-parse HEAD)"
+          gh release create "$TAG" \
+            --title "$TAG rolling build" \
+            --notes "Rolling darwin-arm64 module built from $COMMIT. All three fork-safety properties asserted live in the build. Source (SSPL-1.0): https://github.com/gregorydickson/FalkorDB/tree/$COMMIT" \
+            --latest=false 2>/dev/null || true
+          gh release upload "$TAG" dist/falkordb.so dist/falkordb.so.sha256 --clobber
