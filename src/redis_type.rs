@@ -40,7 +40,7 @@
 //!                        Redis invokes `free` callback -> graph_free()
 //! ```
 
-use crate::config::CONFIGURATION_VKEY_MAX_ENTITY_COUNT;
+use crate::config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_VKEY_MAX_ENTITY_COUNT};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_graph};
 use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
@@ -56,14 +56,21 @@ use redis_module::raw::{
     save_unsigned,
 };
 use redis_module::{
-    REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
+    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
 };
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
 
-/// Default cache size used when loading from RDB (no Redis context available).
-const DEFAULT_CACHE_SIZE: usize = 25;
+/// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
+///
+/// Load callbacks run on the main thread, so the module's GIL-guarded config can
+/// be read through the context Redis attaches to the IO handle.
+unsafe fn io_cache_size(rdb: *mut RedisModuleIO) -> usize {
+    let ctx = unsafe { raw::RedisModule_GetContextFromIO.unwrap()(rdb) };
+    let context = Context::new(ctx);
+    *CONFIGURATION_CACHE_SIZE.lock(&context) as usize
+}
 
 // ---------------------------------------------------------------------------
 // graphdata rdb_load / rdb_save
@@ -94,7 +101,7 @@ unsafe extern "C" fn graph_rdb_load(
     // Get the key name for looking up finalized graphs.
     let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
         Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(*graph);
@@ -138,7 +145,7 @@ unsafe extern "C" fn graph_rdb_load(
 
             // Graph not yet finalized - more keys still need to load.
             // Return a placeholder that will be replaced later.
-            let tg = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__placeholder__");
+            let tg = ThreadedGraph::new(unsafe { io_cache_size(rdb) }, "__placeholder__");
             let arc = Arc::new(RwLock::new(tg));
 
             // Store an Arc clone keyed by graph name for later finalization.
@@ -421,7 +428,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
         let mut vkey_state = VKEY_STATE.lock();
         vkey_state.clear();
 
-        let context = redis_module::Context::new(ctx);
+        let context = Context::new(ctx);
         let vkey_max = *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(&context);
 
         for (graph_name, graph_ref) in &graphs {
@@ -931,7 +938,7 @@ unsafe extern "C" fn graphmeta_rdb_load(
     _encver: i32,
 ) -> *mut c_void {
     let key_name = unsafe { io_key_name(rdb) };
-    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, unsafe { io_cache_size(rdb) }) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()
