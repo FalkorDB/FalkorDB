@@ -187,8 +187,9 @@ pub enum CchError {
     /// A weight was negative, infinite or NaN: weights must be finite and `>= 0`.
     #[error("a weight is negative, infinite or NaN")]
     InvalidWeight,
-    /// A bug, not bad input: the ordering backend failed on a well-formed graph, or
-    /// returned something other than a permutation. The message says which.
+    /// A bug, not bad input: the ordering backend failed on a well-formed graph or
+    /// returned something other than a permutation, or `customize` was handed weights for
+    /// a different graph than the hierarchy was built for. The message says which.
     #[error("internal CCH error: {0}")]
     Internal(&'static str),
 }
@@ -234,15 +235,15 @@ impl Cch {
 
     /// Cheapest weight and node sequence. Mapping node pairs to edge ids is the caller's job.
     ///
-    /// # Panics
-    /// Always — unimplemented until #3210. Nothing calls it yet.
+    /// `None` when `dst` is unreachable from `src`, or when either is not a node of this
+    /// hierarchy. `src == dst` is the single-node path of weight `0.0`.
     #[must_use]
     pub fn query(
         &self,
-        _src: u32,
-        _dst: u32,
+        src: u32,
+        dst: u32,
     ) -> Option<(f64, Vec<u32>)> {
-        unimplemented!("query, #3210")
+        query::query(self, src, dst)
     }
 
     #[must_use]
@@ -250,8 +251,9 @@ impl Cch {
         self.node_count_impl()
     }
 
-    /// Heap bytes held by this hierarchy, structural arrays included — so two versions
-    /// sharing one [`Topology`] each report its bytes.
+    /// Bytes held by this hierarchy: the struct itself, the shared [`Topology`], and the
+    /// four weight arrays. Two versions sharing one
+    /// `Topology` each report its bytes.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.memory_usage_impl()
