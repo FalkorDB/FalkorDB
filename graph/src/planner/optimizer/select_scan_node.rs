@@ -308,37 +308,33 @@ fn in_merge_match_branch(
 
 /// Returns true if the subtree rooted at `idx` is a planner-added scan: zero
 /// or more single-child `Filter` / `IncludePending` wrappers terminating in an
-/// `AllNodeScan` or `NodeByLabelScan` — the exact shape [`make_scan_subtree`]
-/// (plus `IncludePending` wrapping) produces. A `Filter` wrapping an
+/// `AllNodeScan` or `NodeByLabelScan` for the expected scoped alias — the exact
+/// shape [`make_scan_subtree`] (plus `IncludePending` wrapping) produces.
+/// A scan for a different scoped alias must be preserved as an input.
+/// A `Filter` wrapping an
 /// outer-context operator (e.g. `ExpandInto`, another traversal) must NOT
 /// match: pruning it would drop part of the query.
 fn is_planner_scan_subtree(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
+    alias: &Variable,
 ) -> bool {
-    let mut node = plan.node(idx);
-    loop {
-        match node.data() {
-            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } => return true,
-            IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
-                node = node.child(0);
-            }
-            _ => return false,
-        }
-    }
+    planner_scan_alias(plan, idx) == Some((alias.id, alias.scope_id))
 }
 
-/// Returns the alias id of the scan at the bottom of a planner-added scan
+/// Returns the scoped alias identity of the scan at the bottom of a planner-added scan
 /// subtree (the shape [`is_planner_scan_subtree`] accepts), or `None` when
 /// `idx` does not root such a subtree.
 fn planner_scan_alias(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     let mut node = plan.node(idx);
     loop {
         match node.data() {
-            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => return Some(n.alias.id),
+            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
+                return Some((n.alias.id, n.alias.scope_id));
+            }
             IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
                 node = node.child(0);
             }
@@ -541,7 +537,8 @@ fn select_var_len_scan_node(
         if *expand_into
             || relationship.bidirectional
             || relationship.all_shortest_paths != AllShortestPaths::No
-            || relationship.from.alias.id == relationship.to.alias.id
+            || (relationship.from.alias.id, relationship.from.alias.scope_id)
+                == (relationship.to.alias.id, relationship.to.alias.scope_id)
         {
             continue;
         }
@@ -550,7 +547,9 @@ fn select_var_len_scan_node(
             continue;
         }
         let child_idx = node.child(0).idx();
-        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.id) {
+        if planner_scan_alias(optimized_plan, child_idx)
+            != Some((relationship.from.alias.id, relationship.from.alias.scope_id))
+        {
             continue;
         }
         let from = relationship.from.clone();
@@ -733,7 +732,11 @@ pub(super) fn select_scan_node(
         // Detect if the child is a planner-added scan (not an outer-context op).
         let has_planner_scan = !is_leaf && {
             let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
-            is_planner_scan_subtree(optimized_plan, child_idx)
+            let IR::CondTraverse { relationship, .. } = optimized_plan.node(bottom_idx).data()
+            else {
+                unreachable!();
+            };
+            is_planner_scan_subtree(optimized_plan, child_idx, &relationship.from.alias)
         };
         // Treat CTs with planner-added scans like leaf CTs for scan selection.
         let effectively_leaf = is_leaf || has_planner_scan;
@@ -774,18 +777,15 @@ pub(super) fn select_scan_node(
         // Only consider vars as "bound" if they come from an outer context
         // (Project, Aggregate, Argument, etc.), NOT from scan children
         // added by the planner — those just provide starting nodes.
-        let bound_vars = if is_leaf {
+        let bound_vars = if is_leaf || has_planner_scan {
             HashSet::new()
         } else {
             let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
             let child_data = optimized_plan.node(child_idx).data();
-            match child_data {
-                IR::AllNodeScan(_)
-                | IR::NodeByLabelScan { .. }
-                | IR::NodeByIndexScan { .. }
-                | IR::NodeByLabelAndIdScan { .. }
-                | IR::Filter(_) => HashSet::new(),
-                _ => collect_output_aliases(child_data),
+            if let Some(alias) = planner_scan_alias(optimized_plan, child_idx) {
+                HashSet::from([alias])
+            } else {
+                collect_output_aliases(child_data)
             }
         };
 
@@ -807,16 +807,18 @@ pub(super) fn select_scan_node(
         // chain_position 0 = bottom, higher = closer to root.
         let mut candidates: Vec<(Arc<QueryNode<Arc<String>, Variable>>, usize, bool)> = vec![];
 
-        // Track which alias IDs we've already seen to avoid duplicates
+        // Deduplicate scoped aliases: numeric IDs can repeat across scopes.
         // (a node that is the `to` of one CT and `from` of the next).
         let mut seen_aliases = HashSet::new();
 
         for (pos, &ct_idx) in chain.iter().enumerate() {
             if let IR::CondTraverse { relationship, .. } = optimized_plan.node(ct_idx).data() {
-                if seen_aliases.insert(relationship.from.alias.id) {
+                if seen_aliases
+                    .insert((relationship.from.alias.id, relationship.from.alias.scope_id))
+                {
                     candidates.push((relationship.from.clone(), pos, true));
                 }
-                if seen_aliases.insert(relationship.to.alias.id) {
+                if seen_aliases.insert((relationship.to.alias.id, relationship.to.alias.scope_id)) {
                     candidates.push((relationship.to.clone(), pos, false));
                 }
             }
@@ -946,7 +948,7 @@ pub(super) fn select_scan_node(
             None
         } else {
             let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
-            let child_is_planner_scan = is_planner_scan_subtree(optimized_plan, child_idx);
+            let child_is_planner_scan = has_planner_scan;
             if child_is_planner_scan || arg_transparent {
                 preserved_argument = if arg_transparent {
                     Some(make_argument())
@@ -1099,7 +1101,7 @@ pub(super) fn select_scan_node(
                     (false, None, vec![])
                 } else {
                     let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                    let is_scan = is_planner_scan_subtree(optimized_plan, child_idx);
+                    let is_scan = has_planner_scan;
                     let arg = if arg_transparent {
                         Some(make_argument())
                     } else if is_scan {
@@ -1359,72 +1361,181 @@ mod tests {
     use crate::graph::graphblas::test_init::ensure_init;
     use crate::runtime::functions::Type;
 
+    fn node(key: (u32, u32)) -> Arc<QueryNode<Arc<String>, Variable>> {
+        Arc::new(QueryNode::new(
+            Variable {
+                name: None,
+                id: key.0,
+                scope_id: key.1,
+                ty: Type::Any,
+            },
+            Default::default(),
+            Arc::new(DynTree::new(ExprIR::Map)),
+        ))
+    }
+
+    fn traversal(
+        from: (u32, u32),
+        to: (u32, u32),
+        variable_length: bool,
+    ) -> IR {
+        let relationship = Arc::new(QueryRelationship::new(
+            node((2, 1)).alias.clone(),
+            Vec::new(),
+            Arc::new(DynTree::new(ExprIR::Map)),
+            node(from),
+            node(to),
+            false,
+            variable_length.then_some(1),
+            variable_length.then_some(3),
+        ));
+        if variable_length {
+            IR::CondVarLenTraverse {
+                relationship,
+                edge_filter: None,
+                emit_path: false,
+                path_var: None,
+                expand_into: false,
+            }
+        } else {
+            IR::CondTraverse {
+                relationship,
+                emit_relationship: false,
+                sibling_edges: Vec::new(),
+                transposed: false,
+                chain: Vec::new(),
+                optional: false,
+                bind_relationship: true,
+            }
+        }
+    }
+
+    fn filter(key: (u32, u32)) -> IR {
+        let var = node(key).alias.clone();
+        IR::Filter(Arc::new(tree!(
+            ExprIR::Eq,
+            tree!(ExprIR::Variable(var.clone())),
+            tree!(ExprIR::Variable(var))
+        )))
+    }
+
+    fn optimize(mut plan: DynTree<IR>) -> DynTree<IR> {
+        ensure_init();
+        let graph = Graph::new(16, 16, 0, 0, "scan_scope");
+        select_scan_node(&mut plan, &graph);
+        plan
+    }
+
+    fn assert_bound_endpoint(
+        from: (u32, u32),
+        to: (u32, u32),
+        bindings: Vec<(u32, u32)>,
+        expected: (u32, u32),
+    ) {
+        let plan = optimize(tree!(
+            traversal(from, to, false),
+            tree!(IR::Argument(Some(bindings.clone())))
+        ));
+        let root = plan.root();
+        let IR::CondTraverse {
+            relationship,
+            transposed,
+            ..
+        } = root.data()
+        else {
+            panic!("expected a traversal");
+        };
+        assert_eq!(
+            (relationship.from.alias.id, relationship.from.alias.scope_id),
+            expected
+        );
+        assert_eq!(*transposed, expected != from);
+        let IR::Argument(Some(kept)) = root.child(0).data() else {
+            panic!("the bound input must be preserved");
+        };
+        assert_eq!(*kept, bindings);
+    }
+
+    fn scan_input(key: (u32, u32)) -> DynTree<IR> {
+        tree!(
+            IR::AllNodeScan(node(key)),
+            tree!(IR::Argument(Some(vec![(9, 9)])))
+        )
+    }
+
+    fn assert_scan_input(
+        plan: &DynTree<IR>,
+        expected: (u32, u32),
+        filters: usize,
+    ) {
+        let scans: Vec<_> = plan
+            .root()
+            .walk::<Bfs>()
+            .filter_map(|ir| match ir {
+                IR::AllNodeScan(n) => Some((n.alias.id, n.alias.scope_id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(scans, vec![expected]);
+        let arguments: Vec<_> = plan
+            .root()
+            .walk::<Bfs>()
+            .filter_map(|ir| match ir {
+                IR::Argument(vars) => Some(vars.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arguments, vec![Some(vec![(9, 9)])]);
+        assert_eq!(
+            plan.root()
+                .walk::<Bfs>()
+                .filter(|ir| matches!(ir, IR::Filter(_)))
+                .count(),
+            filters
+        );
+    }
+
     #[test]
     fn endpoint_selection_keeps_bound_variable_scopes() {
-        ensure_init();
-        let graph = Graph::new(16, 16, 0, 0, "endpoint_scope");
-        for (bindings, expected_from, expected_transposed) in [
-            // The outer (0,0) must not make the unbound endpoint (0,1) win
-            // the tie over the endpoint (1,1) that is actually bound.
-            (vec![(0, 0), (1, 1)], 1, true),
-            // A genuinely bound (0,1) still keeps the original direction.
-            (vec![(0, 1)], 0, false),
-        ] {
-            let variable = |id| Variable {
-                name: None,
-                id,
-                scope_id: 1,
-                ty: Type::Any,
-            };
-            let node = |id| {
-                Arc::new(QueryNode::<Arc<String>, _>::new(
-                    variable(id),
-                    Default::default(),
-                    Arc::new(DynTree::new(ExprIR::Map)),
-                ))
-            };
-            let relationship = Arc::new(QueryRelationship::new(
-                variable(2),
-                Vec::new(),
-                Arc::new(DynTree::new(ExprIR::Map)),
-                node(0),
-                node(1),
-                false,
-                None,
-                None,
-            ));
-            let mut plan = tree!(
-                IR::CondTraverse {
-                    relationship,
-                    emit_relationship: false,
-                    sibling_edges: Vec::new(),
-                    transposed: false,
-                    chain: Vec::new(),
-                    optional: false,
-                    bind_relationship: true,
-                },
-                tree!(IR::Argument(Some(bindings.clone())))
-            );
-            select_scan_node(&mut plan, &graph);
+        assert_bound_endpoint((0, 1), (1, 1), vec![(0, 0), (1, 1)], (1, 1));
+        assert_bound_endpoint((0, 1), (1, 1), vec![(0, 1)], (0, 1));
+    }
 
-            let root = plan.root();
-            let IR::CondTraverse {
-                relationship,
-                transposed,
-                ..
-            } = root.data()
-            else {
-                panic!("expected a traversal");
-            };
-            assert_eq!(
-                (relationship.from.alias.id, relationship.from.alias.scope_id),
-                (expected_from, 1)
-            );
-            assert_eq!(*transposed, expected_transposed);
-            let IR::Argument(Some(kept)) = root.child(0).data() else {
-                panic!("the bound input must be preserved");
-            };
-            assert_eq!(*kept, bindings);
+    #[test]
+    fn candidate_deduplication_keeps_different_scopes() {
+        assert_bound_endpoint((0, 0), (0, 1), vec![(0, 1)], (0, 1));
+        assert_bound_endpoint((0, 0), (0, 0), vec![(0, 0)], (0, 0));
+    }
+
+    #[test]
+    fn planner_scan_replacement_requires_the_scoped_alias() {
+        for variable_length in [false, true] {
+            for (scan_scope, wrapped, expected) in
+                [(0, false, (0, 0)), (0, true, (0, 0)), (1, false, (1, 1))]
+            {
+                let scan = scan_input((0, scan_scope));
+                let input = if wrapped {
+                    tree!(filter((0, scan_scope)), scan)
+                } else {
+                    scan
+                };
+                let plan = optimize(tree!(
+                    filter((1, 1)),
+                    tree!(traversal((0, 1), (1, 1), variable_length), input)
+                ));
+                assert_scan_input(&plan, expected, if wrapped { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn var_len_self_loop_requires_the_scoped_alias() {
+        for to_scope in [0, 1] {
+            let plan = optimize(tree!(
+                filter((0, to_scope)),
+                tree!(traversal((0, 0), (0, to_scope), true), scan_input((0, 0)))
+            ));
+            assert_scan_input(&plan, (0, to_scope), 1);
         }
     }
 }
