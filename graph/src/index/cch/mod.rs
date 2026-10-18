@@ -21,6 +21,8 @@ pub mod index;
 pub mod input;
 pub mod order;
 pub mod query;
+#[cfg(test)]
+pub(crate) mod testkit;
 
 use std::sync::Arc;
 
