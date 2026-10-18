@@ -1028,3 +1028,35 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[1]])
         res = graph.query("MATCH ()-[e:R]->() RETURN e.p, properties(e)")
         self.env.assertEqual(res.result_set, [[5, {'p': 5}]])
+
+    def test16_large_header_repeating_every_property(self):
+        # A header naming each of N properties twice. Per record, the first non-null of
+        # the two columns wins, so the "already set" check must reset between records.
+        graphname = "bulk_dup_props_large"
+        n = 5000
+
+        def long(v):
+            return struct.pack("=Bq", 4, v)
+        null = struct.pack("=B", 0)
+
+        names = b"".join(b"p%d\0" % i for i in range(n))
+        header = b"L\0" + struct.pack("=I", 2 * n) + names + names
+        # record 0: first copy set on even i, null on odd -> p_i = i (even), 1000000 + i (odd)
+        rec0 = (b"".join(long(i) if i % 2 == 0 else null for i in range(n)) +
+                b"".join(long(1000000 + i) for i in range(n)))
+        # record 1: first copy null on even, set on odd -> mirrored
+        rec1 = (b"".join(null if i % 2 == 0 else long(i) for i in range(n)) +
+                b"".join(long(1000000 + i) for i in range(n)))
+
+        self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", 2, 0, 1, 0,
+                                header + rec0 + rec1)
+        graph = self.db.select_graph(graphname)
+
+        res = graph.query("MATCH (n:L) RETURN properties(n) ORDER BY id(n)")
+        p0, p1 = res.result_set[0][0], res.result_set[1][0]
+        self.env.assertEqual(len(p0), n)
+        self.env.assertEqual(len(p1), n)
+        self.env.assertEqual(p0, {f"p{i}": i if i % 2 == 0 else 1000000 + i for i in range(n)})
+        self.env.assertEqual(p1, {f"p{i}": 1000000 + i if i % 2 == 0 else i for i in range(n)})
+        res = graph.query("MATCH (n:L) RETURN n.p1, n.p2 ORDER BY id(n)")
+        self.env.assertEqual(res.result_set, [[1000001, 2], [1, 1000002]])

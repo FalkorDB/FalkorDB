@@ -16,6 +16,7 @@ use graph::{
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -174,35 +175,65 @@ fn read_property(
     }
 }
 
-/// Whether a token header names some property more than once.
-fn has_duplicates(attr_ids: &[u16]) -> bool {
-    attr_ids
-        .iter()
-        .enumerate()
-        .any(|(i, a)| attr_ids[..i].contains(a))
+/// A token header's property columns, sanitized once per token.
+///
+/// A header may name a property twice (`p,q,p`). An entity must still hold one entry per
+/// attribute, and the first non-null value in header order wins: this is what C reads
+/// back (its loader appends both, and every lookup returns the first).
+///
+/// Building this is one pass over the header with a hash map from attribute to slot, so a
+/// header with `P` columns costs `O(P)`. The header cannot be deduplicated outright by
+/// dropping repeated columns: a null in the first column lets a later one supply the value,
+/// so the check is per record, against a per-slot stamp, `O(1)` per column.
+struct PropColumns {
+    /// Per header column: its attribute and the slot of that attribute.
+    cols: Vec<(u16, usize)>,
+    /// `filled[slot] == record` once the current record holds a value for that slot.
+    filled: Vec<usize>,
+    /// Stamp of the current record; starts at 1 so a fresh `filled` (all 0) is empty.
+    record: usize,
 }
 
-/// Reads one record's properties, one value per header column, dropping nulls.
-///
-/// A header may name a property twice (`p,q,p`); the first non-null value wins, so an
-/// entity never holds two entries for one attribute. This is what C reads back: its
-/// loader appends both, and every lookup returns the first. `has_dups` (from
-/// [`has_duplicates`]) keeps the check off the common path.
-fn read_record_attrs(
-    data: &[u8],
-    idx: &mut usize,
-    attr_ids: &[u16],
-    has_dups: bool,
-) -> Result<Vec<(u16, Value)>, String> {
-    let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
-    for &attr_id in attr_ids {
-        let val = read_property(data, idx)?;
-        if matches!(val, Value::Null) || (has_dups && entries.iter().any(|(a, _)| *a == attr_id)) {
-            continue;
+impl PropColumns {
+    fn new(attr_ids: &[u16]) -> Self {
+        let mut slots: HashMap<u16, usize> = HashMap::with_capacity(attr_ids.len());
+        let cols: Vec<(u16, usize)> = attr_ids
+            .iter()
+            .map(|&attr_id| {
+                let next = slots.len();
+                (attr_id, *slots.entry(attr_id).or_insert(next))
+            })
+            .collect();
+        Self {
+            cols,
+            filled: vec![0; slots.len()],
+            record: 0,
         }
-        entries.push((attr_id, val));
     }
-    Ok(entries)
+
+    const fn is_empty(&self) -> bool {
+        self.cols.is_empty()
+    }
+
+    /// Reads one record's properties, one value per header column, dropping nulls and
+    /// any column whose attribute already has a value in this record.
+    fn read_record(
+        &mut self,
+        data: &[u8],
+        idx: &mut usize,
+    ) -> Result<Vec<(u16, Value)>, String> {
+        self.record += 1;
+        let mut entries: Vec<(u16, Value)> = Vec::with_capacity(self.cols.len());
+        for &(attr_id, slot) in &self.cols {
+            let val = read_property(data, idx)?;
+            if matches!(val, Value::Null) || self.filled[slot] == self.record {
+                continue;
+            }
+            self.filled[slot] = self.record;
+            entries.push((attr_id, val));
+        }
+        Ok(entries)
+    }
 }
 
 /// Parse header: label names (colon-separated) + property names
@@ -379,7 +410,7 @@ fn process_node_token(
         .iter()
         .map(|name| g.get_or_create_node_attr_id(name))
         .collect();
-    let has_dups = has_duplicates(&attr_ids);
+    let mut columns = PropColumns::new(&attr_ids);
 
     // Collect all node data first, then insert at the end
     let mut nodes_bitmap = RoaringTreemap::new();
@@ -401,8 +432,8 @@ fn process_node_token(
             label_cols.push(lid.0 as u64);
         }
 
-        if !attr_ids.is_empty() {
-            let entries = read_record_attrs(data, &mut idx, &attr_ids, has_dups)?;
+        if !columns.is_empty() {
+            let entries = columns.read_record(data, &mut idx)?;
             if !entries.is_empty() {
                 resolved_attrs.push((raw_id, entries));
             }
@@ -463,7 +494,7 @@ fn process_edge_token(
         .iter()
         .map(|name| g.get_or_create_rel_attr_id(name))
         .collect();
-    let has_dups = has_duplicates(&attr_ids);
+    let mut columns = PropColumns::new(&attr_ids);
 
     // Collect all edge data first, then bulk-insert at the end
     let mut srcs: Vec<u64> = Vec::new();
@@ -485,8 +516,8 @@ fn process_edge_token(
         dsts.push(dst_id);
         edge_ids.push(rel_id.into());
 
-        if !attr_ids.is_empty() {
-            let entries = read_record_attrs(data, &mut idx, &attr_ids, has_dups)?;
+        if !columns.is_empty() {
+            let entries = columns.read_record(data, &mut idx)?;
             if !entries.is_empty() {
                 resolved_rel_attrs.push((rel_id.into(), entries));
             }
