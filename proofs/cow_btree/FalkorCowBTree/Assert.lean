@@ -38,7 +38,7 @@ def Cfg.ofAssert (L B D : Nat) (h : constAssert L B D = true) : Cfg :=
   ⟨L, B, by simp only [constAssert, Bool.and_eq_true, decide_eq_true_eq] at h; exact ⟨h.1.1.1, h.1.1.2⟩,
     by have := constAssert_B4 h; omega⟩
 
-/-- **#2897: under the assert, a single-child branch is flagged under-full** (`node.rs:197`), so its
+/-- **#2897: under the assert, a single-child branch is flagged under-full** (`node.rs:212`), so its
     parent repairs it. -/
 theorem asserted_single_child_underfull (c : Cfg) (D : Nat) (h : constAssert c.L c.B D = true) (n : Node) :
     branchUnderfull c [n] = true := by

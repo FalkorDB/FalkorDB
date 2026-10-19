@@ -4,7 +4,7 @@ import EndpointPaged.Arc
 
 Companion to `FalkorEndpointIndex` (which treats a tier as its flat slot list and
 proves the page arithmetic of `Paged::at` / `ensure_pages`). This file closes the rest
-of `graph/src/graph/endpoint_index.rs` (origin/main `3fec7d7c9`, worktree):
+of `graph/src/graph/endpoint_index.rs` (origin/main `1d15bf713`; the `TierOps for Paged` lines below moved +3 there, :735-764):
 
 | here | there |
 | --- | --- |

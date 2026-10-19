@@ -81,16 +81,16 @@ All four were reproduced in Rust and against a live server (see [`../FINDINGS.md
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-effects-1 | `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Open**: the gate at `commit.rs:107-108` is unchanged on 0f45a8685; no issue or PR yet |
+| W2-effects-1 | `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`, `cancelled_edge_attr_dropped` | A write that only registers a name or only cancels entities ships nothing. The next payload is refused (full resync; AOF load exits), or the replica silently misses an attribute name. 134 of 200 random seeds diverge | **Open**: the gate at `commit.rs:107-108` is unchanged on 1d15bf713; no issue or PR yet |
 | W2-effects-2 | `pre3022_update_dead_breaks_wf`, `pre3022_update_dead_not_wf`, `pre3022_setlabels_dead_not_wf` | `UPDATE_NODE`/`UPDATE_EDGE`/`SET_LABELS`/`REMOVE_LABELS` on a dead id were accepted; the next node to recycle the id inherited the property or label | Fixed by #3022 (`wf_updateNode_live`, `wf_setLabels_live`, `apply_wf`) |
 | W2-effects-3 | `pre3022_delete_endpoint_not_wf` | `DELETE_NODE` of a node with edges was accepted; the edge dangled and the next node with that id inherited it | Fixed by #3022 (`wf_deleteNode`, `apply_wf`) |
+| #3247 | `pre3298_repeated_id_applies` | A `CREATE_NODE` naming the same id twice (`[2, 3, 2]`) applied: the id set created one node where the record named two, and the repeated id's row had no node of its own | Fixed by #3298 (`2bb51088b`): `createNode_repeat_refused`, `createNode_ok_nodup`, `a_repeated_node_id_in_one_create_is_refused` |
 | W2-effects-4 | none (the model has no indexes) | A refused buffer's `CREATE_INDEX` is not rolled back, because the `Indexer` is shared by `Arc` across versions | **Open** (PR #3235) |
 
 #2924 (`CREATE_EDGE` between non-live ids) was fixed by the same PR #3022, and `apply_wf` covers it: `edge_to_dead_refused` replays the Rust test.
 
-Two smaller observations, not filed:
+One smaller observation, not filed:
 
-- A duplicate id inside one `CREATE_NODE` (`[0,0]`) is silently de-duplicated to one node. A duplicate edge id inside one `CREATE_EDGE` is refused since #2846.
 - An `example` in `Emit.lean`: `gather_rows`' merge drops a cell if the staged attributes are not sorted. The emitter always sorts them, so this only shows the sort is load-bearing.
 
 ## Files

@@ -15,20 +15,18 @@ entry list and each operation *is* its proven content spec. `enc`/`keyOf`/`docOf
 | --- | --- | --- |
 | `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:223`) | cow_btree `insert_spec` (= `sins`) |
 | `tRemove` | `CowBTree::remove` (`:260`) | cow_btree `remove_spec` (= `List.erase`) |
-| `tInsertBatch` | `CowBTree::insert_batch` (`:241`) | index_layer `Leaf.insertBatch_contents` (= union) |
-| `tRemoveBatch` | `CowBTree::remove_batch` (`:286`) | cow_btree `removeBatchTree_spec` (= `List.filter`) |
+| `tInsertBatch` | `CowBTree::insert_batch` (`:241`) | cow_btree `insertBatch_wf`, index_layer `Leaf.insertBatch_contents` (= union) |
+| `tRemoveBatch` | `CowBTree::remove_batch` (`:286`) | cow_btree `removeBatchTree_wf` (= `List.filter`) |
 | `tRange` | `CowBTree::range` / `point` (`:314`, `:324`) | cow_btree `range_spec`, `rangeDocs_spec` |
-| `tFromSorted` | `CowBTree::from_sorted` (`:190`) | index_layer (contents = input) |
+| `tFromSorted` | `CowBTree::from_sorted` (`:190`) | cow_btree `fromSorted_wf`, index_layer (contents = input) |
 
-**The hypothesis this rests on** (so the numeric-index rows that read through the tree are
-CONDITIONAL): those specs are proven under cow_btree's `TreeWF`, which `remove_batch` does *not*
-preserve (cow_btree Bug 3 = FINDINGS W7-btree-1, `rb_remove_batch_not_wf`; fix pending in PR #3283,
-still open at cab3cf192). `remove_spec`'s other premise, `BRANCH_MAX >= 4`, is discharged since #2897
-(7b60f28db) by the const assert (cow_btree `remove_spec_asserted`). Since #3307 `remove_batch` has a production
-caller (`FalkorDbIndex::apply_writes` → `remove_encoded`). A bounded search over the cow_btree model
-(`LEAF_MAX = 2, BRANCH_MAX = 4` and `3, 5`; 300+200 seeds × 30-40 alternating `remove_batch` /
-`insert_batch` steps on 40-130 entries) found no content, range or empty-page divergence on the
-batch-only paths production uses; Bug 3's panic needs a single-key `remove`, which only tests call.
+**The hypothesis these specs need, discharged.** They are proven under cow_btree's `TreeWF`. Before
+#3283 `remove_batch` did not preserve it (cow_btree Bug 3 = FINDINGS W7-btree-1, now
+`pre3283_rb_remove_batch_not_wf`), so the numeric-index rows that read through the tree were
+CONDITIONAL. #3283 (799968a8b) fixed it, and cow_btree now proves every tree the API can build is
+well-formed (`Reachable_wf_asserted`, from `removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`,
+`insert_spec`, `remove_spec`; `BRANCH_MAX >= 4` is the const assert). `Contract.lean` proves each
+operation equals its model above on every such tree, so those rows are PROVEN.
 -/
 
 namespace NI

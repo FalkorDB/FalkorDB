@@ -11,7 +11,7 @@ now refuse a record naming an entity this replica does not hold live:
 | --- | --- |
 | `needLive` | `require_live` (`:634`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
 | `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2321`; its Rust is proved against this spec in `proofs/graph_queries`) |
-| `applyRec .createNode` | `CreateNode` arm (`:203`) — `create_nodes` refuses a live id |
+| `applyRec .createNode` | `CreateNode` arm (`:209`) — since #3298 a repeated id is refused (`nodes.len() != ids.count()`, `:222`), then `create_nodes` refuses a live id |
 | `applyRec .createEdge` | `CreateEdge` arm (`:254`) — `require_live((src ∪ dst) − released)` (`:279-280`), then `create_relationships_bulk` refuses a live or repeated id |
 | `applyRec .updateNode` | `UpdateNode` arm (`:308`) — `require_live` (`:314`) |
 | `applyRec .updateEdge` | `UpdateEdge` arm (`:328`) — `require_live` (`:334`) |
@@ -84,6 +84,8 @@ def upd {α} (ids : List Nat) (f : Nat → α) (v : Nat → α) : Nat → α :=
 
 def applyRec (g : G) : Rec → Except AErr G
   | .createNode ids lbls => do
+    -- #3298 (`apply.rs:222`): the id set must be as long as the id list
+    if !ids.Nodup then .error (.graph "bulk node create got repeated ids; an id names one node") else
     needDead g.nlive .node ids
     pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
   | .createEdge es => do
@@ -199,6 +201,7 @@ theorem applyRec_binv (g g' : G) (r : Rec) (hi : BInv g) (h : applyRec g r = .ok
   cases r with
   | createNode ids lbls =>
     simp only [applyRec, bind, Except.bind] at h
+    split at h; · cases h
     split at h; · cases h
     rename_i hd; cases h
     refine ⟨fun i hi' => ?_, hi.edead, hi.nodup, fun e he => ?_⟩
@@ -427,5 +430,45 @@ theorem delete_with_edges_refused :
 /-- `deleting_the_edges_first_lets_the_node_go` (what the primary ships for `DETACH DELETE`). -/
 theorem detach_delete_applies :
     okDangling (applyAll s0 [.deleteEdge [0], .deleteNode [0, 1]]) = some none := by decide
+
+/-! ## #3298: a repeated id in one `CREATE_NODE` (#3247) -/
+
+/-- The `CREATE_NODE` arm before #3298: the id list was folded into a set for the
+id space, with no check that the two agree. Every other arm is unchanged. -/
+def pre3298_applyRec (g : G) : Rec → Except AErr G
+  | .createNode ids lbls => do
+    needDead g.nlive .node ids
+    pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
+  | r => applyRec g r
+
+/-- **History (#3247): a record naming three nodes with ids `[2, 3, 2]` applied**,
+and only two nodes exist afterwards — the set created one node where the record
+named two, and the row the second `2` carried had no node of its own. -/
+theorem pre3298_repeated_id_applies :
+    (match pre3298_applyRec s0 (.createNode [2, 3, 2] []) with
+     | .ok g => g.nlive 2 && g.nlive 3 | .error _ => false) = true ∧
+    ¬ [2, 3, 2].Nodup := by
+  decide
+
+/-- **On main a repeated id is refused**, whatever the graph. -/
+theorem createNode_repeat_refused (g : G) (ids lbls : List Nat) (h : ¬ ids.Nodup) :
+    applyRec g (.createNode ids lbls) =
+      .error (.graph "bulk node create got repeated ids; an id names one node") := by
+  simp [applyRec, h]
+
+/-- Equivalently: a `CREATE_NODE` that applies names each node once, so the id
+list and the set the id space is told describe the same nodes. -/
+theorem createNode_ok_nodup {g g' : G} {ids lbls : List Nat}
+    (h : applyRec g (.createNode ids lbls) = .ok g') : ids.Nodup := by
+  by_cases hn : ids.Nodup
+  · exact hn
+  · rw [createNode_repeat_refused g ids lbls hn] at h
+    cases h
+
+/-- `a_repeated_node_id_in_one_create_is_refused` (`apply.rs` test, #3247). -/
+theorem a_repeated_node_id_in_one_create_is_refused :
+    errOf (applyRec s0 (.createNode [2, 3, 2] [])) =
+      some (.graph "bulk node create got repeated ids; an id names one node") := by
+  decide
 
 end FalkorEA.Live

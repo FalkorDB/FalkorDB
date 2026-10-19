@@ -9,7 +9,12 @@ Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66) is
 of `pending.rs` (67 non-test) 65 are PROVEN and `check_node_constraint` /
 `check_edge_constraint` are CONDITIONAL on the supporting index's completeness (#3334). Repros: `graph/tests/lean_pending_commit.rs`
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
-Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `0f45a8685`.
+Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `1d15bf713`.
+
+## Re-target to 1d15bf713 (from 0f45a8685)
+
+No function this project models changed: #3250 touches only `rebuild_derived_matrices`
+(graph.rs:976), which shifts the graph.rs rows below it by 14 lines; COVERAGE.tsv re-cited.
 
 ## Re-target to 0f45a8685 (from cab3cf192)
 

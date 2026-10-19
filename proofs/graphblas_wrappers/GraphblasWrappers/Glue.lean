@@ -7,12 +7,13 @@
 | `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs:267, impls :271 bool, :279 u64) |
 | `newMatrix`       | `MatrixType::new_matrix` (:290, impls :297, :306) |
 | `Desc`/`descOf`   | `enum Descriptor` (:224) / `From<Descriptor> for GrB_Descriptor` (:315) |
-| `encodeM`         | `Encode<19> for Matrix` (:510) |
+| `encodeM`/`scrub` | `Encode<19> for Matrix` (:510), header pointers nulled (:527-543, #3097) |
+| `pre3097_encodeM` | the same before #3097 (raw header bytes) |
 | `MatH.inner`/`isSynced` | `inner` (:721) / `is_synced` (:833) |
 | `sparsityName`    | `sparsity_status` (:1103) |
 | `posB`/`posU`     | `IterExtract::pos` (:1562, impls :1579 bool, :1599 u64) |
 | `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs:82, :91) / `ptr` (:174) |
-| `vIterNew`        | `vector::Iter::new` (vector.rs:599) |
+| `vIterNew`        | `vector::Iter::new` (vector.rs:603) |
 
 The GraphBLAS constants are named by their C meaning (`GrB_DESC_RC` =
 replace + complemented mask, …); that naming is the C API spec, here a
@@ -144,19 +145,42 @@ theorem posU_agrees (r c v : Nat) : posU (r, c, v) = posB (r, c) := rfl
 `encode` unloads the matrix into a fresh `GxB_Container`, writes the container
 struct bytes then the five component vectors `x, h, p, i, b`, and loads the
 container back. The C spec relied on (`GxB_unload`/`GxB_load` are inverse, and
-leave/restore the matrix contents) is the hypothesis `UnloadLoad`. -/
+leave/restore the matrix contents) is the hypothesis `UnloadLoad`.
+
+Since #3097 (matrix.rs:527-543) the header is written from a copy whose
+pointer fields (`p, h, b, i, x, vector_future[11], Y, matrix_future[15],
+void_future[16]`) are nulled, so a DUMP / GRAPH.COPY / RDB payload carries no
+heap address of this process. A header is a list of fields, each a pointer or
+a scalar; `scrub` nulls the pointers. -/
+
+/-- One container header field: `ptr = true` for a pointer field. -/
+structure HField where
+  ptr : Bool
+  val : Nat
+deriving DecidableEq
+
+/-- matrix.rs:532-541: copy the header, null every pointer field. -/
+def scrub (hd : List HField) : List HField :=
+  hd.map fun f => if f.ptr then ⟨true, 0⟩ else f
 
 structure Container (α : Type) where
-  hdr : List Nat
+  hdr : List HField
   x : α
   h : α
   p : α
   i : α
   b : α
 
-inductive Tok (α : Type) | bytes (l : List Nat) | vec (v : α)
+inductive Tok (α : Type) | bytes (l : List HField) | vec (v : α)
 
+/-- `Encode<19> for Matrix` on main (1d15bf713). -/
 def encodeM {M α : Type} (unload : M → Container α) (load : Container α → M) (m : M) :
+    List (Tok α) × M :=
+  let c := unload m
+  ([.bytes (scrub c.hdr), .vec c.x, .vec c.h, .vec c.p, .vec c.i, .vec c.b], load c)
+
+/-- Before #3097 (0f45a8685 matrix.rs:527-529): the raw header bytes. -/
+def pre3097_encodeM {M α : Type} (unload : M → Container α) (load : Container α → M) (m : M) :
     List (Tok α) × M :=
   let c := unload m
   ([.bytes c.hdr, .vec c.x, .vec c.h, .vec c.p, .vec c.i, .vec c.b], load c)
@@ -164,19 +188,67 @@ def encodeM {M α : Type} (unload : M → Container α) (load : Container α →
 def UnloadLoad {M α : Type} (unload : M → Container α) (load : Container α → M) : Prop :=
   ∀ m, load (unload m) = m
 
+/-- C-side contract the decode relies on (data, not an axiom):
+`Matrix::decode` (matrix.rs:430) re-populates `x,h,p,i,b` from the payload
+and nulls `Y`, and `GxB_load_Matrix_from_Container` reads no other pointer
+field (the `*_future` arrays are reserved), so the loaded matrix does not
+depend on the pointer fields of the header. -/
+def PtrBlind {M α : Type} (load : Container α → M) : Prop :=
+  ∀ c : Container α, load { c with hdr := scrub c.hdr } = load c
+
 theorem encodeM_spec {M α : Type} (unload : M → Container α) (load : Container α → M)
     (h : UnloadLoad unload load) (m : M) :
     (encodeM unload load m).2 = m ∧ (encodeM unload load m).1.length = 6 := ⟨h m, rfl⟩
+
+theorem scrub_ptr (hd : List HField) : ∀ f ∈ scrub hd, f.ptr = true → f.val = 0 := by
+  intro f hf hp
+  simp only [scrub, List.mem_map] at hf
+  obtain ⟨g, _, rfl⟩ := hf
+  by_cases hg : g.ptr = true
+  · simp [hg]
+  · simp [hg] at hp
+
+/-- Scalar fields (dims, sparsity, flags, ...) are written unchanged. -/
+theorem scrub_scalars (hd : List HField) :
+    (scrub hd).filter (fun f => !f.ptr) = hd.filter (fun f => !f.ptr) := by
+  induction hd with
+  | nil => rfl
+  | cons f t ih =>
+    by_cases hf : f.ptr = true
+    · simp [scrub, hf] at ih ⊢; exact ih
+    · simp [scrub, hf] at ih ⊢; exact ih
+
+theorem scrub_length (hd : List HField) : (scrub hd).length = hd.length := by simp [scrub]
+
+/-- **#3097.** Whatever the matrix, every pointer field of the header written
+into the payload is null: no heap address leaves the process. -/
+theorem encodeM_no_heap_addresses {M α : Type} (unload : M → Container α)
+    (load : Container α → M) (m : M) :
+    ∀ hd, Tok.bytes hd ∈ (encodeM unload load m).1 → ∀ f ∈ hd, f.ptr = true → f.val = 0 := by
+  intro hd hmem
+  simp only [encodeM, List.mem_cons, Tok.bytes.injEq, reduceCtorEq, List.mem_nil_iff,
+    or_false] at hmem
+  subst hmem; exact scrub_ptr _
+
+/-- History: before #3097 a pointer field's value (a heap address) reached the payload. -/
+theorem pre3097_encode_leaks_heap_address :
+    ∃ (c : Container Unit), Tok.bytes c.hdr ∈ (pre3097_encodeM (fun _ : Unit => c) (fun _ => ()) ()).1 ∧
+      ∃ f ∈ c.hdr, f.ptr = true ∧ f.val ≠ 0 :=
+  ⟨⟨[⟨true, 0x7f00dead0000⟩], (), (), (), (), ()⟩, by simp [pre3097_encodeM], ⟨true, 0x7f00dead0000⟩,
+    by simp, rfl, by decide⟩
 
 /-- A decoder that reads the six tokens back in order recovers the container. -/
 def decodeC {α : Type} : List (Tok α) → Option (Container α)
   | [.bytes hd, .vec x, .vec h, .vec p, .vec i, .vec b] => some ⟨hd, x, h, p, i, b⟩
   | _ => none
 
+/-- The round trip still holds with the scrubbed header, given `PtrBlind`. -/
 theorem decodeC_encodeM {M α : Type} (unload : M → Container α) (load : Container α → M)
-    (h : UnloadLoad unload load) (m : M) :
+    (h : UnloadLoad unload load) (hb : PtrBlind load) (m : M) :
     (decodeC (encodeM unload load m).1).map load = some m := by
-  simp [encodeM, decodeC, h m]
+  have := hb (unload m)
+  simp only [encodeM, decodeC, Option.map_some]
+  rw [this, h m]
 
 /-! ## `Vector` handle and `Iter::new` -/
 
@@ -187,7 +259,7 @@ def vecFrom (h : Nat) : VecH := ⟨h⟩
 def VecH.ptr (x : VecH) : Nat := x.v
 theorem ptr_vecFrom (h : Nat) : (vecFrom h).ptr = h := rfl
 
-/-- `Iter::new` (vector.rs:599): attach, `GxB_Vector_Iterator_seek(0)`;
+/-- `Iter::new` (vector.rs:603): attach, `GxB_Vector_Iterator_seek(0)`;
 `depleted` iff the seek reported `GxB_EXHAUSTED`, which per the GraphBLAS
 spec happens iff the vector has no entry at position ≥ 0, i.e. is empty. -/
 def vIterNew (entries : List Nat) (seekExhausted : Bool) : List Nat × Bool := (entries, seekExhausted)

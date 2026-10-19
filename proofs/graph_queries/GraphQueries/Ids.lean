@@ -522,6 +522,84 @@ theorem rebuildRelType_complete (g : G V) (h : TInv g) (t e s d : Nat) (ht : t <
     simp [hin, he, ht]
     exact ⟨t, by unfold TInv at h; omega, s, d, e, hm, rfl, rfl⟩
 
+/-! ### Node half of `rebuild_derived_matrices` (#3250, `2eacf0ece`; issue #3246)
+
+Decoded matrices keep the saving server's `node_cap` (up to 25% past the highest id
+under `grow_cap`), while `restore` sets `node_cap` from that id. Since #3250 the rebuild
+takes `node_cap.max(saved)` before `resize_node_matrices`, so a load never shrinks a
+node matrix. Tensor dimensions are not modelled on `Ten`; the tensor half
+(`Tensor::resize` never shrinks) is proven in `versioned_matrix`. -/
+
+def maxL : List Nat → Nat
+  | [] => 0
+  | x :: xs => max x (maxL xs)
+
+theorem le_maxL : ∀ {l : List Nat} {x : Nat}, x ∈ l → x ≤ maxL l
+  | _ :: _, _, .head _ => Nat.le_max_left _ _
+  | y :: ys, x, .tail _ h => by have := le_maxL h; simp [maxL]; omega
+
+/-- `saved` (:982-992): the largest node dimension of the decoded matrices. -/
+def savedDim (g : G V) : Nat :=
+  maxL (g.adj.nr :: g.adj.nc :: g.nodeLabels.nr :: g.labelMs.map (·.nr))
+
+/-- `self.node_cap = self.node_cap.max(saved); self.resize_node_matrices()`. -/
+def rebuildNodeMs (g : G V) : G V := resizeNodeMs { g with nodeCap := max g.nodeCap (savedDim g) }
+
+/-- Before #3250: `resize_node_matrices` straight to `restore`'s `node_cap`. -/
+def pre3250_rebuildNodeMs (g : G V) : G V := resizeNodeMs g
+
+/-- **A load never shrinks a node matrix** (#3250): the node cap only grows, and
+the adjacency matrix, `node_labels` and every label matrix end at least as large as
+they were decoded. -/
+theorem rebuild_never_shrinks (g : G V) :
+    let r := rebuildNodeMs g
+    g.nodeCap ≤ r.nodeCap ∧ g.adj.nr ≤ r.adj.nr ∧ g.adj.nc ≤ r.adj.nc ∧
+    g.nodeLabels.nr ≤ r.nodeLabels.nr ∧ (∀ m ∈ g.labelMs, m.nr ≤ r.nodeCap) ∧
+    ∀ m ∈ r.labelMs, m.nr = r.nodeCap := by
+  have h1 : g.adj.nr ≤ savedDim g := le_maxL (by simp)
+  have h2 : g.adj.nc ≤ savedDim g := le_maxL (by simp)
+  have h3 : g.nodeLabels.nr ≤ savedDim g := le_maxL (by simp)
+  have h4 : ∀ m ∈ g.labelMs, m.nr ≤ savedDim g := fun m hm =>
+    le_maxL (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+      (List.mem_map_of_mem hm))))
+  simp only [rebuildNodeMs, resizeNodeMs, Mat.resize]
+  refine ⟨by omega, by omega, by omega, by omega, fun m hm => by have := h4 m hm; omega, ?_⟩
+  intro m hm
+  simp only [List.mem_map] at hm
+  obtain ⟨m', _, rfl⟩ := hm
+  rfl
+
+/-- …and keeps every entry a decoded matrix held in its own bounds: no node, edge
+or label pair is cut off by the load. -/
+theorem rebuild_keeps_entries (g : G V) :
+    (∀ p ∈ g.adj.ents, p.1 < g.adj.nr → p.2 < g.adj.nc → p ∈ (rebuildNodeMs g).adj.ents) ∧
+    (∀ p ∈ g.nodeLabels.ents, p.1 < g.nodeLabels.nr → p.2 < g.labelMs.length →
+      p ∈ (rebuildNodeMs g).nodeLabels.ents) ∧
+    (∀ k (hk : k < g.labelMs.length), ∀ p ∈ (g.labelMs[k]).ents, p.1 < (g.labelMs[k]).nr →
+      p.2 < (g.labelMs[k]).nr → p ∈ ((rebuildNodeMs g).labelMs[k]'(by simp [rebuildNodeMs, resizeNodeMs, hk])).ents) := by
+  have h1 : g.adj.nr ≤ savedDim g := le_maxL (by simp)
+  have h2 : g.adj.nc ≤ savedDim g := le_maxL (by simp)
+  have h3 : g.nodeLabels.nr ≤ savedDim g := le_maxL (by simp)
+  refine ⟨fun p hp a b => ?_, fun p hp a b => ?_, fun k hk p hp a b => ?_⟩
+  · simp only [rebuildNodeMs, resizeNodeMs, Mat.resize, List.mem_filter]
+    exact ⟨hp, by simp; omega⟩
+  · simp only [rebuildNodeMs, resizeNodeMs, Mat.resize, List.mem_filter]
+    exact ⟨hp, by simp; omega⟩
+  · have h4 : (g.labelMs[k]).nr ≤ savedDim g :=
+      le_maxL (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+        (List.mem_map_of_mem (List.getElem_mem hk)))))
+    simp only [rebuildNodeMs, resizeNodeMs, List.getElem_map, Mat.resize, List.mem_filter]
+    exact ⟨hp, by simp; omega⟩
+
+/-- **History (#3246): before #3250 a load shrank a node matrix whose saved size
+was past `restore`'s `node_cap`, and dropped every entry beyond it.** -/
+theorem pre3250_rebuild_shrinks (g : G V) (h : g.nodeCap < g.adj.nr) :
+    (pre3250_rebuildNodeMs g).adj.nr < g.adj.nr ∧
+    ∀ p ∈ g.adj.ents, g.nodeCap ≤ p.1 → p ∉ (pre3250_rebuildNodeMs g).adj.ents := by
+  simp only [pre3250_rebuildNodeMs, resizeNodeMs, Mat.resize, List.mem_filter]
+  refine ⟨h, fun p _ hp hm => ?_⟩
+  have := hm.2; simp at this; omega
+
 /-- `trim_attr_stores` (:1000): arena slop only — the logical stores are unchanged. -/
 def trimAttrStores (g : G V) : G V := g
 theorem trimAttrStores_id (g : G V) : trimAttrStores g = g := rfl

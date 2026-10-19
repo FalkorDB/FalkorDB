@@ -236,6 +236,17 @@ W5-idx-2 no-options shape; fixed by #3087.
   `docBytesAssert_vs_pre3285`: the asserts differ on exactly 3/5/6/7), and
   `asserted_fromSorted_contents` (`from_sorted` under the full const assert `constAssert`).
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
+
+## Re-target to 1d15bf713 (#3283 and the rest of the 0f45a8685..1d15bf713 range)
+- Only `cow_btree/node.rs` changed among the files this project models: #3283 (799968a8b) rewrites
+  `merge_underfull` and adds `Node::merge_underfull_below` (both proven in `proofs/cow_btree`,
+  `BatchWF.lean`). `pack_branches` (:56), `build_root` (:90) and `make_private` are unchanged;
+  `make_private` moved :565 → :595 (COVERAGE updated). `index/mod.rs`, `indexer.rs` and the leaf files
+  are untouched, so every theorem and bug status above stands.
+- `proofs/cow_btree` now also proves that `from_sorted`, `insert_batch` and `remove_batch` build
+  well-formed trees (`fromSorted_wf`, `insertBatch_wf`, `removeBatchTree_wf`), which this project's
+  tree-level contents theorems (`Leaf.fromSorted_contents`, `Leaf.insertBatch_contents`) complement.
+- Still present: bugs 1-4, 7, 8, 10, 12, 13.
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

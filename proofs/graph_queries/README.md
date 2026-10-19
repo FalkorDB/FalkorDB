@@ -38,6 +38,10 @@ No. `growCap_le_max` proves `grow_cap` never exceeds `GrB_INDEX_MAX`, `growCap_g
 
 `setLabelsProduct_spec`, `setLabelsBulk_spec`, `removeLabels_spec` and `deleteNodes_spec` prove the node×label matrix and the per-label diagonals stay in agreement (`LabCons`) through every label write and node delete. A deleted node keeps no label and no attributes.
 
+**5b. Does a load keep the matrices it decodes?**
+
+Yes, since #3250. `rebuild_derived_matrices` now takes `node_cap = max(node_cap, saved)` before resizing: `rebuild_never_shrinks` proves no node matrix ends smaller than decoded, and `rebuild_keeps_entries` that every in-bounds entry survives. Before, `pre3250_rebuild_shrinks`: a decoded matrix larger than `restore`'s `node_cap` was cut down and lost every entry past it.
+
 **6. Is each relationship reported once?**
 
 `byType_both_once` proves `get_node_relationships_by_type(.., Both)` lists every incident edge exactly once, self-loops included. `get_node_relationships` does not: `nodeRels_selfloop_twice` proves it lists a self-loop twice (open, see below).
@@ -84,6 +88,7 @@ Each bug was reproduced against a live server and compared with C before it was 
 | W4-graph-1 | `pre3277_stale_type_after_registration`, `pre3277_getTypeIdMut_stale_width` | A deleted edge kept its type after a constraint or replica registered a new type; a reused id then showed the old type in `type(r)` (Rust `A`, C `C`) | Fixed by #3277 (closes #3244; `type_cleared_after_registration`) |
 | W4-graph-2 | `nodeRels_selfloop_twice` | `get_node_relationships` lists a self-loop twice; UDF `node.getNeighbors` counts it twice (Rust 2, C 1) | **Open** (last re-checked live at 2c874022a; FINDINGS notes it may be the same as #3083) |
 | W4-graph-3 | `cmatches_order_sensitive` | `UNIQUE NODE L (a,b)` then `(b,a)` creates both; C says "Constraint already exists" | **Open** |
+| #3246 | `pre3250_rebuild_shrinks` | A load resized every node matrix to `restore`'s `node_cap` (from the highest id), below the saving server's grown size, dropping entries past it; for tensors this was where `me` kept ids of cut-off pairs | Fixed by #3250 (`2eacf0ece`): `rebuild_never_shrinks`, `rebuild_keeps_entries` |
 | #2892 | — (old step kept as `oldStepWrapped`) | `GRAPH.EFFECT` ids near 2^61 asserted in `GrB_Matrix_new`; `u64::MAX - 1` wrapped `grow_cap` and hung | Fixed by #2911 (`growCap_le_max`) |
 
 Also recorded, not a bug in this project's sense: `CREATE INDEX` on a new label reports `Labels added: 1` in Rust but not in C, because the label is interned before the indexer can refuse.

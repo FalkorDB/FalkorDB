@@ -15,7 +15,7 @@ graph/src/graph/graphblas/serialization.rs	from_u64	146	MODELLED	payload directo
 graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
 graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
 graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip
+graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; history pre2996_count_wraps (count 2^61 matched an empty buffer)
 src/redis_type.rs	io_cache_size	69	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	84	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
 src/redis_type.rs	graph_rdb_load	97	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1; pre3262_cache_size_ignored kept)
@@ -36,11 +36,13 @@ src/redis_type.rs	delete_stale_virtual_keys	625	PROVEN	RedisType.deleteStaleVirt
 src/redis_type.rs	scan_keys_by_type	642	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
 src/redis_type.rs	finalize_pending_graphs	729	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
 src/redis_type.rs	install_graph	764	PROVEN	RedisType.finalizePending (install arm): load_main_first
-src/redis_type.rs	uuid_v4	790	PROVEN	RedisType.uuid: uuid_injective, uuid_same_clock_distinct, uuid_collision_iff, uuid_collision_example (uniqueness rests on the clock)
-src/redis_type.rs	graphmeta_rdb_load	858	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
-src/redis_type.rs	graphmeta_rdb_save	881	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
-src/redis_type.rs	graphmeta_free	893	PROVEN	RedisType.metaFree: metaFree_spec
-src/redis_type.rs	graphmeta_aux_load	903	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
+src/redis_type.rs	uuid_v4	790	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj); history pre3286_uuid_injective, pre3286_uuid_collision_iff, pre3286_uuid_collision_example
+src/redis_type.rs	uuid_fields	812	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
+src/redis_type.rs	same_fields	839	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
+src/redis_type.rs	graphmeta_rdb_load	936	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
+src/redis_type.rs	graphmeta_rdb_save	959	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
+src/redis_type.rs	graphmeta_free	971	PROVEN	RedisType.metaFree: metaFree_spec
+src/redis_type.rs	graphmeta_aux_load	981	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
 graph/src/graph/mvcc_graph.rs	new	89	NOT COVERED	constructor
 graph/src/graph/mvcc_graph.rs	from_graph	104	MODELLED	RDB load path, live
 graph/src/graph/mvcc_graph.rs	read	112	NOT COVERED	Arc clone
@@ -48,11 +50,11 @@ graph/src/graph/mvcc_graph.rs	write	119	NOT COVERED	CAS; concurrency not modelle
 graph/src/graph/mvcc_graph.rs	commit	186	NOT COVERED	schema_version bump/concurrency not modelled
 graph/src/graph/mvcc_graph.rs	rollback	268	NOT COVERED	atomic store
 graph/src/graph/mvcc_graph.rs	drop	274	NOT COVERED	cancel indexing
-graph/src/graph/graph.rs	rebuild_derived_matrices	976	AXIOMATISED	GraphBLAS transpose/set
-graph/src/graph/graph.rs	create_constraint	4336	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4511	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4551	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4607	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	rebuild_derived_matrices	976	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
+graph/src/graph/graph.rs	create_constraint	4350	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4525	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4565	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4621	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip

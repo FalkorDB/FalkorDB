@@ -38,7 +38,7 @@ endpoints no longer fit.
 | `Ix.set`                        | `set` (:642) — the three `match self.locate(slot)` arms |
 | `Ix.clear`                      | `clear` (:692) |
 | `Ix.prepare`                    | `prepare` (:520) — `reserve_exact` has no semantic effect and is dropped |
-| `Ix.prepareTiers`               | `prepare_tiers` (:605) |
+| `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:605), its clamp (:610-614, #2905) |
 | `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2582-2593`, `prepare` then `set` per edge), `delete_relationships` (`graph.rs:2844`) and `delete_implicit_edges` (`graph.rs:2991`) via `clear_edge_endpoint`, `Graph::restore` (`graph.rs:904-909`, `prepare_tiers` then `set`) |
 
 ## What is proved (all without `sorry`; see `#print axioms` at the end)
@@ -59,6 +59,10 @@ endpoints no longer fit.
   and not both `u64::MAX`, `get` after the run equals the reference map.
 * `restore_agrees` — the restore path (`prepare_tiers` then `set` of every edge)
   yields exactly the edge set, whatever tier boundaries it is given.
+* `clampStarts_mono`, `clampStarts_ordered` — #2905 (`1d15bf713`, origin/main this
+  project is checked against): `prepare_tiers` clamps its starts monotone, so no tier
+  size underflows; a no-op on restore's ordered starts. History
+  `pre2905_unordered_underflows`.
 * `paged_at`, `ensurePages_spec` — `pages[i / P][i % P]` addresses the flat list
   under the page-shape invariant, and `ensure_pages` keeps the shape, only
   appends `EMPTY` slots and covers the requested length.
@@ -230,14 +234,52 @@ def prepare (ix : Ix) (maxEdgeId maxEndpoint : Nat) : Ix :=
   let want := needed - below
   ix.withTier rank (growTo rank want)
 
+/-- The tier starts `prepare_tiers` uses (:610-614, #2905): clamped monotone,
+`s1 = starts[0].min(len)`, `s2 = starts[1].clamp(s1, len)`,
+`s3 = starts[2].clamp(s2, len)`. (`x.clamp(lo, hi)` with `lo ≤ hi` is
+`min (max x lo) hi`.) -/
+def clampStarts (s1 s2 s3 len : Nat) : Nat × Nat × Nat :=
+  let a1 := min s1 len
+  let a2 := min (max s2 a1) len
+  let a3 := min (max s3 a2) len
+  (a1, a2, a3)
+
 /-- `prepare_tiers`: one `with_tier(rank, grow_to(n))` per non-empty tier. -/
 def prepareTiers (ix : Ix) (s1 s2 s3 len : Nat) : Ix :=
-  let s1 := min s1 len
-  let s2 := min s2 len
-  let s3 := min s3 len
+  let c := clampStarts s1 s2 s3 len
+  let s1 := c.1
+  let s2 := c.2.1
+  let s3 := c.2.2
   let step (ix : Ix) (rn : Nat × Nat) : Ix :=
     if rn.2 = 0 then ix else ix.withTier rn.1 (growTo rn.1 rn.2)
   [(0, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)].foldl step ix
+
+/-- **#2905: the clamped starts are monotone and within `len`**, whatever the caller
+passes, so none of `s2 - s1`, `s3 - s2`, `len - s3` underflows (each is the true
+`usize` difference) and the four tier sizes sum to exactly `len`. -/
+theorem clampStarts_mono (s1 s2 s3 len : Nat) :
+    let c := clampStarts s1 s2 s3 len
+    c.1 ≤ c.2.1 ∧ c.2.1 ≤ c.2.2 ∧ c.2.2 ≤ len ∧
+    c.1 + (c.2.1 - c.1) + (c.2.2 - c.2.1) + (len - c.2.2) = len := by
+  simp only [clampStarts]; omega
+
+/-- Already-ordered starts (what `Graph::restore` passes, its own clamp at
+graph.rs:898-902) are left unchanged: the clamp is a no-op on the restore path. -/
+theorem clampStarts_ordered {s1 s2 s3 len : Nat} (h : s1 ≤ s2 ∧ s2 ≤ s3 ∧ s3 ≤ len) :
+    clampStarts s1 s2 s3 len = (s1, s2, s3) := by
+  simp only [clampStarts, Prod.mk.injEq]; omega
+
+/-- History (#2903): before #2905 the starts were only `min(len)`-clamped, and the
+`debug_assert!(s1 <= s2 && s2 <= s3)` was all that stood between unordered starts and
+`s2 - s1` underflowing (a debug panic; a wrapped `usize` reservation in release).
+The Rust test's `[10, 5, 0]` with `len = 20` underflows by 5. -/
+def pre2905_starts (s1 s2 s3 len : Nat) : Nat × Nat × Nat := (min s1 len, min s2 len, min s3 len)
+
+theorem pre2905_unordered_underflows :
+    let c := pre2905_starts 10 5 0 20
+    c.2.1 < c.1 ∧ (c.2.1 + 2 ^ 64 - c.1) % 2 ^ 64 = 2 ^ 64 - 5 ∧
+    clampStarts 10 5 0 20 = (10, 10, 10) := by
+  decide
 
 end Ix
 

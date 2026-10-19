@@ -5,27 +5,29 @@ import FalkorCowBTree.Bugs
 
 * `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the new sweep (last child takes the
   rest) loses nothing; in particular `(u64::MAX, u64::MAX)` now reaches the last child (Bug 1 fixed).
-* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs:487-499`) is `List.filter`.
-* `combine_with_sibling` (`cws`), `merge_underfull`, `strip_empty`, `Node::is_underfull`,
-  `Branch::is_underfull`, `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws`
-  (the single-key repair is exactly one `combine_with_sibling` step).
-* `removeBatch_content`, `removeBatchTree_spec` (headline) — on a well-formed tree and a sorted batch,
-  `CowBTree::remove_batch` leaves exactly the entries not in the batch, in order.
+* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs:502-514`) is `List.filter`.
+* `combine_with_sibling` (`cws`), `strip_empty`, `Node::is_underfull`, `Branch::is_underfull`,
+  `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws` (the single-key repair is
+  exactly one `combine_with_sibling` step). Unchanged by #3283.
+* HISTORY: `pre3283_mergeUnderfull`, `pre3283_removeBatch`, `pre3283_removeBatchTree` are `merge_underfull`
+  / `remove_batch` before #3283 (799968a8b), with their content theorems `pre3283_mergeUnderfull_content`,
+  `pre3283_removeBatch_content`, `pre3283_removeBatchTree_spec` (contents were right; the shape was not:
+  `BugsBatch.lean`). The current model and its `TreeWF` proof are in `BatchWF.lean`.
 -/
 
 namespace CowBTree
 
 /-! ## Model -/
 
-/-- `Node::is_underfull` (`node.rs:546`), reporting through `Branch::is_underfull` (`node.rs:197`). -/
+/-- `Node::is_underfull` (`node.rs:576`), reporting through `Branch::is_underfull` (`node.rs:212`). -/
 def isUnderfull (c : Cfg) : Node → Bool
   | .leaf es => decide (es.length < c.L / 2)
   | .branch _ cs => decide (cs.length < c.B / 2)
 
-/-- `Branch::is_underfull` (`node.rs:197`): `children.len() < BRANCH_MAX / 2`. -/
+/-- `Branch::is_underfull` (`node.rs:212`): `children.len() < BRANCH_MAX / 2`. -/
 def branchUnderfull (c : Cfg) (cs : List Node) : Bool := decide (cs.length < c.B / 2)
 
-/-- `Node::is_empty_node` (`node.rs:555`): a leaf with `count() == 0`. -/
+/-- `Node::is_empty_node` (`node.rs:585`): a leaf with `count() == 0`. -/
 def isEmptyNode : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
@@ -94,13 +96,13 @@ theorem cws_measure (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1
       simp only [Bool.false_eq_true, and_false, ↓reduceIte]
       omega
 
-/-- `merge_underfull` (`node.rs:148-160`): left to right, repair every under-full child with
+/-- HISTORY: `merge_underfull` before #3283 (`node.rs:148-160` at 0f45a8685): left to right, repair every under-full child with
     `combine_with_sibling` (re-checking the index it returns) while more than one child remains. -/
-def mergeUnderfull (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
+def pre3283_mergeUnderfull (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hc : 1 < cs.length ∧ i < cs.length then
     if hu : isUnderfull c (cs.getD i default) = true then                       -- line 154
-      mergeUnderfull c (cws c seps cs i).1 (cws c seps cs i).2.1 (cws c seps cs i).2.2  -- line 155
-    else mergeUnderfull c seps cs (i + 1)                                        -- line 157
+      pre3283_mergeUnderfull c (cws c seps cs i).1 (cws c seps cs i).2.1 (cws c seps cs i).2.2  -- line 155
+    else pre3283_mergeUnderfull c seps cs (i + 1)                                        -- line 157
   else (seps, cs)
 termination_by 3 * cs.length - 2 * i + (if i < cs.length ∧ isUnderfull c (cs.getD i default) = true then 1 else 0)
 decreasing_by
@@ -110,7 +112,7 @@ decreasing_by
   · simp only [hc.2, hu, and_false, ↓reduceIte, Bool.false_eq_true]
     split <;> omega
 
-/-- `strip_empty` (`node.rs:165-180`): drop every empty child, and with it the near separator
+/-- `strip_empty` (`node.rs:180-195`): drop every empty child, and with it the near separator
     (`seps[i]`, or the trailing one for the last child). -/
 def stripEmpty (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hi : i < cs.length then
@@ -124,7 +126,7 @@ decreasing_by
   · simp only [delAt, List.length_append, List.length_take, List.length_drop]; omega
   · omega
 
-/-- The leaf arm of `Node::remove_batch` (`node.rs:487-499`): the survivor merge-walk. `bs` is the
+/-- The leaf arm of `Node::remove_batch` (`node.rs:502-514`): the survivor merge-walk. `bs` is the
     unconsumed batch suffix (`batch[bi..]`), which persists across entries. -/
 def subtract : List E → List E → List E
   | [], _ => []
@@ -133,23 +135,23 @@ def subtract : List E → List E → List E
     if bs'.head? = some p then subtract ps bs'                         -- lines 495-497
     else p :: subtract ps bs'                                          -- line 498
 
-/-- `Node::remove_batch` (`node.rs:483-538`). Untouched children are shared (`p.2 = []`, line 523). -/
-def removeBatch (c : Cfg) : Nat → Node → List E → Node
+/-- HISTORY: `Node::remove_batch` before #3283 (`node.rs:483-538` at 0f45a8685). Untouched children are shared (`p.2 = []`, line 523). -/
+def pre3283_removeBatch (c : Cfg) : Nat → Node → List E → Node
   | _, .leaf es, batch => .leaf (subtract es batch)                   -- line 500 (`Leaf::from_pairs`)
   | 0, n@(.branch _ _), _ => n                                        -- unreachable (uniform height)
   | h + 1, .branch seps cs, batch =>
     let kids := (route seps cs batch).map
-      (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)    -- lines 509-526
+      (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2)    -- lines 509-526
     let st := stripEmpty seps kids 0                                  -- line 529
     if st.2 = [] then .leaf []                                        -- lines 530-532
     else
-      let mu := mergeUnderfull c st.1 st.2 0                          -- line 534
+      let mu := pre3283_mergeUnderfull c st.1 st.2 0                          -- line 534
       .branch mu.1 mu.2                                               -- line 535
 
-/-- `CowBTree::remove_batch` (`mod.rs:286-309`). `none` is the `assert!` panic on unsorted input. -/
-def removeBatchTree (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Option (Node × Nat) :=
+/-- HISTORY: `CowBTree::remove_batch` before #3283 (`mod.rs:286-309`). `none` is the `assert!` panic on unsorted input. -/
+def pre3283_removeBatchTree (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Option (Node × Nat) :=
   if batch = [] then some (root, h)                                    -- lines 273-275
-  else if batch.Pairwise (· ≤ ·) then some (collapse h (removeBatch c h root batch))  -- lines 278-291
+  else if batch.Pairwise (· ≤ ·) then some (collapse h (pre3283_removeBatch c h root batch))  -- lines 278-291
   else none                                                            -- line 278 (assert)
 
 /-! ## The routing sweep (fix of Bug 1) -/
@@ -260,7 +262,7 @@ theorem subtract_eq : ∀ (es bs : List E), Sorted es → SortedLe bs →
 
 /-! ## `Branch::rebalance` is one `combine_with_sibling` step -/
 
-/-- The #2278 refactor of `Branch::rebalance` (`node.rs:204-218`) into `combine_with_sibling` keeps it
+/-- The #2278 refactor of `Branch::rebalance` (`node.rs:219-233`) into `combine_with_sibling` keeps it
     the same function: the old model `rebalance` is the new code's first two components. -/
 theorem rebalance_eq_cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) :
     rebalance c seps cs ci = if cs.length < 2 then (seps, cs) else ((cws c seps cs ci).1, (cws c seps cs ci).2.1) := by
@@ -401,25 +403,25 @@ theorem cws_content (c : Cfg) (h : Nat) (seps : List E) (cs : List Node) (i : Na
     split <;> rfl
 
 /-- **`merge_underfull` keeps the children's entries and their shape.** -/
-theorem mergeUnderfull_content (c : Cfg) (h : Nat) : ∀ (seps : List E) (cs : List Node) (i : Nat),
+theorem pre3283_mergeUnderfull_content (c : Cfg) (h : Nat) : ∀ (seps : List E) (cs : List Node) (i : Nat),
     (∀ k ∈ cs, Shape h k) →
-    (∀ k ∈ (mergeUnderfull c seps cs i).2, Shape h k) ∧
-      ((mergeUnderfull c seps cs i).2.map (toList h)).flatten = (cs.map (toList h)).flatten := by
+    (∀ k ∈ (pre3283_mergeUnderfull c seps cs i).2, Shape h k) ∧
+      ((pre3283_mergeUnderfull c seps cs i).2.map (toList h)).flatten = (cs.map (toList h)).flatten := by
   intro seps cs i
-  induction seps, cs, i using mergeUnderfull.induct c with
+  induction seps, cs, i using pre3283_mergeUnderfull.induct c with
   | case1 seps cs i hc hu ih =>
     intro hs
-    rw [mergeUnderfull, dif_pos hc, dif_pos hu]
+    rw [pre3283_mergeUnderfull, dif_pos hc, dif_pos hu]
     obtain ⟨hs', hf⟩ := cws_content c h seps cs i hc.1 hc.2 hs
     obtain ⟨r1, r2⟩ := ih hs'
     exact ⟨r1, r2.trans hf⟩
   | case2 seps cs i hc hu ih =>
     intro hs
-    rw [mergeUnderfull, dif_pos hc, dif_neg hu]
+    rw [pre3283_mergeUnderfull, dif_pos hc, dif_neg hu]
     exact ih hs
   | case3 seps cs i hc =>
     intro hs
-    rw [mergeUnderfull, dif_neg hc]
+    rw [pre3283_mergeUnderfull, dif_neg hc]
     exact ⟨hs, rfl⟩
 
 theorem isEmptyNode_toList (h : Nat) (k : Node) (he : isEmptyNode k = true) : toList h k = [] := by
@@ -557,25 +559,25 @@ theorem route_content (h : Nat) (P : Nat → Nat → Node → Prop) (g : Node �
     · next h0 => exact hg _ _ n _ hk.1 hsl h0 (fun e he => hlo e ((List.takeWhile_sublist _).subset he))
 
 /-- `remove_batch` returns a node of the same height, or (for a fully drained subtree) an empty leaf. -/
-theorem removeBatch_shape (c : Cfg) : ∀ (h : Nat) (n : Node) (batch : List E), Shape h n →
-    Shape h (removeBatch c h n batch) ∨ removeBatch c h n batch = .leaf []
+theorem pre3283_removeBatch_shape (c : Cfg) : ∀ (h : Nat) (n : Node) (batch : List E), Shape h n →
+    Shape h (pre3283_removeBatch c h n batch) ∨ pre3283_removeBatch c h n batch = .leaf []
   | 0, .leaf es, batch, _ => Or.inl trivial
   | h + 1, .branch seps cs, batch, hs => by
-    simp only [removeBatch]
+    simp only [pre3283_removeBatch]
     have hkids : ∀ k ∈ (route seps cs batch).map
-        (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2), Shape h k ∨ k = .leaf [] := by
+        (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2), Shape h k ∨ k = .leaf [] := by
       intro k hk
       obtain ⟨p, hp, rfl⟩ := List.mem_map.1 hk
       have hp1 : p.1 ∈ cs := by rw [← route_fst seps cs batch]; exact List.mem_map_of_mem hp
       split
       · exact Or.inl (hs _ hp1)
-      · exact removeBatch_shape c h p.1 p.2 (hs _ hp1)
+      · exact pre3283_removeBatch_shape c h p.1 p.2 (hs _ hp1)
     obtain ⟨_, hst⟩ := stripEmpty_content h seps
-      ((route seps cs batch).map (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)) 0
+      ((route seps cs batch).map (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2)) 0
     split
     · exact Or.inr rfl
     · left
-      apply (mergeUnderfull_content c h _ _ 0 _).1
+      apply (pre3283_mergeUnderfull_content c h _ _ 0 _).1
       intro k hk
       rcases hst k hk with hk' | ⟨hk', hne⟩
       · simp at hk'
@@ -585,24 +587,24 @@ theorem removeBatch_shape (c : Cfg) : ∀ (h : Nat) (n : Node) (batch : List E),
   | 0, .branch _ _, _, hs => by simp [Shape] at hs
   | _ + 1, .leaf _, _, hs => by simp [Shape] at hs
 
-/-- **Content of `Node::remove_batch` (`node.rs:483`)**: on a well-formed subtree and a sorted batch
+/-- **Content of `Node::remove_batch` before #3283 (`node.rs:483` at 0f45a8685)**: on a well-formed subtree and a sorted batch
     whose entries are at or above the subtree's lower bound, the result holds exactly the entries
     not in the batch, in order. -/
-theorem removeBatch_content (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi : Nat) (batch : List E),
+theorem pre3283_removeBatch_content (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi : Nat) (batch : List E),
     WFb c r h n lo hi → SortedLe batch → (∀ e ∈ batch, lo ≤ e) →
-    toList h (removeBatch c h n batch) = (toList h n).filter (fun e => decide (e ∉ batch))
+    toList h (pre3283_removeBatch c h n batch) = (toList h n).filter (fun e => decide (e ∉ batch))
   | 0, _, .leaf es, _, _, batch, hw, hb, _ => by
-    simp only [removeBatch, toList]
+    simp only [pre3283_removeBatch, toList]
     exact subtract_eq es batch hw.2.1 hb
   | h + 1, r, .branch seps cs, lo, hi, batch, hw, hb, hlo => by
     obtain ⟨_, _, _, hk⟩ := hw
     have hP : ∀ a b n, WFb c false h n a b → a < b ∧ ∀ e ∈ toList h n, a ≤ e ∧ e < b :=
       fun a b n hp => ⟨WFb_lt hp, (WFb_sb hp).2⟩
     have hrc := route_content h (fun a b n => WFb c false h n a b)
-      (fun n sl => toList h (removeBatch c h n sl)) hP
-      (fun a b n sl hp hs _ hge => removeBatch_content c h false n a b sl hp hs hge) batch hk hb hlo
+      (fun n sl => toList h (pre3283_removeBatch c h n sl)) hP
+      (fun a b n sl hp hs _ hge => pre3283_removeBatch_content c h false n a b sl hp hs hge) batch hk hb hlo
     have hkflat : (((route seps cs batch).map
-        (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)).map (toList h)).flatten =
+        (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2)).map (toList h)).flatten =
         (cs.map (fun n => (toList h n).filter (fun e => decide (e ∉ batch)))).flatten := by
       rw [← hrc, List.map_map]
       congr 1
@@ -614,8 +616,8 @@ theorem removeBatch_content (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo 
         ((cs.map (toList h)).flatten).filter (fun e => decide (e ∉ batch)) := by
       rw [List.filter_flatten, List.map_map]; rfl
     obtain ⟨hst1, hst2⟩ := stripEmpty_content h seps
-      ((route seps cs batch).map (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)) 0
-    simp only [removeBatch, toList]
+      ((route seps cs batch).map (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2)) 0
+    simp only [pre3283_removeBatch, toList]
     split
     · next h0 =>
       rw [h0] at hst1
@@ -624,7 +626,7 @@ theorem removeBatch_content (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo 
     · next h0 =>
       simp only [toList]
       have hshape : ∀ k ∈ (stripEmpty seps ((route seps cs batch).map
-          (fun (p : Node × List E) => if p.2 = [] then p.1 else removeBatch c h p.1 p.2)) 0).2, Shape h k := by
+          (fun (p : Node × List E) => if p.2 = [] then p.1 else pre3283_removeBatch c h p.1 p.2)) 0).2, Shape h k := by
         intro k hkk
         rcases hst2 k hkk with hk' | ⟨hk', hne⟩
         · simp at hk'
@@ -635,12 +637,12 @@ theorem removeBatch_content (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo 
             exact WFb_shape hpw
           split
           · exact hs1
-          · rcases removeBatch_shape c h p.1 p.2 hs1 with h1 | h1
+          · rcases pre3283_removeBatch_shape c h p.1 p.2 hs1 with h1 | h1
             · exact h1
             · rename_i hne'
               simp only [hne', ↓reduceIte] at hne
               rw [h1] at hne; simp [isEmptyNode] at hne
-      rw [(mergeUnderfull_content c h _ _ 0 hshape).2, hst1, hkflat, hfil]
+      rw [(pre3283_mergeUnderfull_content c h _ _ 0 hshape).2, hst1, hkflat, hfil]
   | 0, _, .branch _ _, _, _, _, hw, _, _ => by simp [WFb] at hw
   | _ + 1, _, .leaf _, _, _, _, hw, _, _ => by simp [WFb] at hw
 
@@ -652,28 +654,29 @@ theorem collapse_toList : ∀ (h : Nat) (n : Node), toList (collapse h n).2 (col
   | _ + 1, .branch _ [] => rfl
   | _ + 1, .branch _ (_ :: _ :: _) => rfl
 
-/-- **`CowBTree::remove_batch` (`mod.rs:286`), headline**: on a well-formed tree and a batch sorted as
+/-- HISTORY (pre-#3283 headline; the current one is `removeBatchTree_spec` / `removeBatchTree_wf` in
+    `BatchWF.lean`). **`CowBTree::remove_batch` (`mod.rs:286`)**: on a well-formed tree and a batch sorted as
     the `assert!` demands, it does not panic, and the tree afterwards holds exactly the entries not in
     the batch — the reference `List.filter` — still strictly sorted. -/
-theorem removeBatchTree_spec (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hw : TreeWF c h t)
+theorem pre3283_removeBatchTree_spec (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hw : TreeWF c h t)
     (hb : SortedLe batch) :
-    ∃ t' h', removeBatchTree c h t batch = some (t', h') ∧
+    ∃ t' h', pre3283_removeBatchTree c h t batch = some (t', h') ∧
       toList h' t' = (toList h t).filter (fun e => decide (e ∉ batch)) ∧ Sorted (toList h' t') := by
   have hs := TreeWF_sorted hw
-  unfold removeBatchTree
+  unfold pre3283_removeBatchTree
   by_cases h0 : batch = []
   · subst h0
     refine ⟨t, h, by simp, (List.filter_eq_self.2 (by simp)).symm, hs⟩
   · simp only [h0, ↓reduceIte, hb]
     refine ⟨_, _, rfl, ?_, ?_⟩
     · rw [collapse_toList]
-      exact removeBatch_content c h true t 0 HI batch hw hb (fun _ _ => Nat.zero_le _)
-    · rw [collapse_toList, removeBatch_content c h true t 0 HI batch hw hb (fun _ _ => Nat.zero_le _)]
+      exact pre3283_removeBatch_content c h true t 0 HI batch hw hb (fun _ _ => Nat.zero_le _)
+    · rw [collapse_toList, pre3283_removeBatch_content c h true t 0 HI batch hw hb (fun _ _ => Nat.zero_le _)]
       exact Sorted.sublist (List.filter_sublist) hs
 
-/-- An unsorted batch is the `assert!` panic (`mod.rs:295`). -/
-theorem removeBatchTree_unsorted (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hne : batch ≠ [])
-    (hb : ¬ SortedLe batch) : removeBatchTree c h t batch = none := by
-  unfold removeBatchTree; simp [hne, hb]
+/-- HISTORY: an unsorted batch is the `assert!` panic (`mod.rs:295`). -/
+theorem pre3283_removeBatchTree_unsorted (c : Cfg) (h : Nat) (t : Node) (batch : List E) (hne : batch ≠ [])
+    (hb : ¬ SortedLe batch) : pre3283_removeBatchTree c h t batch = none := by
+  unfold pre3283_removeBatchTree; simp [hne, hb]
 
 end CowBTree

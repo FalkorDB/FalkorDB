@@ -15,14 +15,22 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
 - `TensorBlocks`/`TensorOps`/`TensorResize` whole-tensor model: me blocks,
                widening, multi_pairs, degrees (no `unreachable!`), fold/dup/wait,
                encode's MSB values, `Iter::new/seek`.
-- **Bug (API-level, confirmed):** `Tensor::resize` shrink never trims `me`
-  (tensor.rs:814-828): `shrink_orphans_me`; repro
+- **W4-matrix-1, fixed by #3250 (history):** `Tensor::resize` shrink never trimmed `me`
+  (0f45a8685 tensor.rs:814-828): `pre3250_shrink_orphans_me`; repro then
   `cargo test -p graph --test lean_versioned_matrix tensor_shrink_keeps_orphan_me_rows`
   → after shrink `iter_edges` = [(0,0,3),(5,5,1),(5,5,2)], `edge_count` = 2
   (expected [(0,0,3)], 1); after grow + re-add (5,5,9): `get` = [9] but
   `iter_edges` also yields 1,2 and `edge_count` = 3 (expected 2). Not reachable
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
-  `node_cap` ≥ every node id (`shrink_safe` proves that case correct).
+  `node_cap` ≥ every node id (`pre3250_shrink_safe` proved that case correct).
+
+Re-target to main 1d15bf713 (#3250, #2905): `Tensor::resize` (tensor.rs:823) never
+shrinks; `resizeT` clamps to `max` and keeps every pair state and `me` row:
+`resizeT_eq`, `resizeT_edges` (no entry dropped), `resizeT_allInv`, `resizeT_blkInv`,
+`resizeT_hasMultiEdge`, `resizeT_dims`; new accessors `Tensor::nrows`/`ncols`
+(`nrowsT_resizeT`). `Cow` gained a debug-only `branched` flag (#2905); the release
+model here is unchanged, the debug model is in `runtime_ds` (`CowModel.dbg_*`).
+`old_write_leaks_into_new_version` stays as the documented release-build contract.
 
 Re-target to e8f8a3017 (#3022): `CountRows` — `VersionedMatrix::count_in_rows` is exact
 (`vmCountInRows_spec`: `|m| + |dp| − |dm|` over the selected rows = the effective entries

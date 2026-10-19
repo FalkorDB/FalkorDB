@@ -114,9 +114,13 @@ Headline theorems:
   load order, the registered `Arc` and the key's value coincide and hold the finished graph;
   no virtual key is registered; placeholders are dropped.
 * `aux_roundtrip` — UDF libraries round-trip through the aux fields (one NUL stripped).
-* `uuid_injective`, `uuid_same_clock_distinct`, `uuid_collision_iff` — virtual-key names are
-  unique iff `t₁ ⊕ s₁ ≠ t₂ ⊕ s₂`; `uuid_collision_example` (counters 2,3 at clocks 4,5 ns
-  collide), so uniqueness rests on the clock (not reproduced live; theoretical).
+* `uuid_counter_distinct`, `counter_field_bijective`, `uuid_regression_pair_distinct` — since
+  #3286 virtual-key names differ whenever their counters differ mod 2^48, whatever the clock;
+  `vkeyName_uuid_counter`, `names_vname_inj` (discharges `Names.vname_inj`), `const_check_holds`
+  (`same_fields`: the Rust compile-time check holds for every clock). History:
+  `pre3286_uuid_injective`, `pre3286_uuid_collision_iff`, `pre3286_uuid_collision_example`.
+* `countCheck_in_bounds`, `countCheck_own` — #2996's deleted-id count check; history
+  `pre2996_count_wraps`.
 
 Confirmed live (Rust release build of origin/main vs C `bin/macos-arm64v8-release/falkordb.so`,
 ports 18910/18911, `CACHE_SIZE 1`):
@@ -130,6 +134,17 @@ ports 18910/18911, `CACHE_SIZE 1`):
    `-BufferedReader: need 8 bytes …` instead (`readBytes` errs). C crashes on both.
    Re-checked at 2c874022a: **still present** (Rust SIGSEGV in `RM_LoadStringBuffer` via
    `BufferedReader::ensure_available`; C also dies).
+
+## Re-target to origin/main 1d15bf713 (from 0f45a8685)
+* **#3286 (`bf11a2774`)** — `uuid_v4` prints `uuid_fields(t, seq)`: clock and counter in
+  separate fields. `Uuid.lean` models `uuidFields`/`uuid` anew; the old `t ^ seq` model and
+  its theorems are kept as `pre3286_*` history. Bug 6 fixed.
+* **#2996 (`d99861124`)** — `RoaringTreemap::decode_with_count` refuses a count whose byte
+  length overflows (`Layout.countCheck`). Bug 5 (#2537, `RM_LoadStringBuffer`) is in
+  `buffered_io.rs`, which #2996 does not touch: still open.
+* **#3250** — `rebuild_derived_matrices` now takes `node_cap = max(node_cap, saved dims)`;
+  its row stays AXIOMATISED here (GraphBLAS) and is proven in `graph_queries`
+  (`rebuild_never_shrinks`).
 
 ## Re-target to 2c874022a (#3161 virtual keys as `graphmeta`, #2846 IdSpace)
 * `save_key_slice` (redis_type.rs:210) is `saveKeySlice`; `graph_rdb_save` (:185) is

@@ -68,7 +68,8 @@ Yes:
 
 **6. Are virtual-key names unique?**
 
-Only as long as the clock moves. `uuid_v4` mixes the wall clock with a counter: `a = nanos ^ seq`. Two calls give the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (`uuid_collision_iff`). Two calls that read the same clock value never collide (`uuid_same_clock_distinct`). But counters 2 and 3 at clocks 4 ns and 5 ns do collide (`uuid_collision_example`). This is theoretical and was not reproduced.
+- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (`pre3286_uuid_collision_iff`); counters 2 and 3 at clocks 4 ns and 5 ns collided (`pre3286_uuid_collision_example`), and the second virtual key replaced the first one's slice.
+- **On main, yes, within a process.** `uuid_fields` keeps the clock in the first three fields and `seq × odd constant + c` in the last two. `counter_field_bijective` proves the last field is a bijection of `seq` modulo 2^48, and `uuid_counter_distinct` that two calls whose counters differ mod 2^48 never share a name, whatever the clock reads. `vkeyName_uuid_counter` lifts this to the full key names, and `names_vname_inj` discharges the `vname_inj` part of the naming assumption the SAVE theorems take (`VKeys.Names`).
 
 **7. Do UNIQUE constraints agree with C?**
 
@@ -95,7 +96,8 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `save_main`, `save_vkey`, `deleteVKeys_spec`, `onPersistence_spec` | SAVE writes the graph key plus K − 1 virtual keys and deletes them afterwards; BGSAVE never splits | `RedisType/VKeys.lean`, `RedisType/AuxData.lean` |
 | `load_main_first`, `load_main_last` | Whatever the load order, the registered graph is the finished graph | `RedisType/Load.lean` |
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |
-| `uuid_collision_iff` | Virtual-key names collide exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` | `RedisType/Uuid.lean` |
+| `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock (#3286) | `RedisType/Uuid.lean` |
+| `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims (#2996) | `Layout.lean` |
 | `rust_C_unique_disagree`, `constraint_creation_diverges` | Rust's UNIQUE key and C's disagree; creating a constraint over violating data diverges | `Constraint.lean` |
 
 ### How `load_encode` is proved
@@ -117,7 +119,8 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 | 3 | `enforcement_is_quadratic` | UNIQUE enforcement rebuilt a key map over the whole label for every affected node: `UNWIND range(1,8000) … CREATE` took 212 s (C 2.4 s) | Fixed by #3334 (closes #3330), modelled in [`../pending_commit`](../pending_commit) (`uniqueViolated_spec`). This project's theorem still describes the old scan |
 | 4 | `pre3262_cache_size_ignored` | RDB-loaded graphs ignored `CACHE_SIZE` and used 25 (W5-rdb-1) | Fixed by #3262 (`cache_size_on_load`) |
 | 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
-| 6 | `uuid_collision_example` | Two virtual-key names can collide if the clock and counter line up; a collision would lose a virtual key | Theoretical, not reproduced |
+| 6 | `pre3286_uuid_collision_example` | Two virtual-key names could collide if the clock and counter lined up; a collision lost a virtual key's slice | Fixed by #3286 (`bf11a2774`): `uuid_counter_distinct`, `uuid_regression_pair_distinct` |
+| 7 | `pre2996_count_wraps` | A payload claiming `2^61` deleted ids passed the length check with an empty buffer (`count * 8` wrapped) and indexed past it | Fixed by #2996 (`d99861124`, closes #2994): `countCheck_in_bounds`. #2996 does not touch the reader, so bug 5 is unaffected |
 
 Recorded but not bugs:
 
@@ -155,11 +158,11 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 68 rows: `redis_type.rs` (25), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
+`COVERAGE.tsv` has 70 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), the encoder and decoder (7 each), `mvcc_graph.rs` (7), `graph.rs` (5).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 45 |
+| PROVEN | 47 |
 | MODELLED | 2 |
 | NOT COVERED | 10 |
 | AXIOMATISED | 11 |

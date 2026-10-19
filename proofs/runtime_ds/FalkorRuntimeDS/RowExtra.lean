@@ -11,7 +11,7 @@ import FalkorRuntimeDS.Cow
 | `lenR` / `isEmptyR`| `Row::len` / `Row::is_empty` (row.rs:169, :175) |
 | `hasBindings`      | `Row::has_bindings` (row.rs:181) |
 | `toOwnedRow`       | `impl RowView for Row :: to_owned_row` (row.rs:238) — `self.clone()` |
-| `cowNew`           | `Cow::new` (cow.rs:50) |
+| `cowNew`           | `Cow::new` (cow.rs:84) |
 | `globalPool`       | `string_pool::global` (string_pool.rs:66) — `OnceLock::get_or_init` |
 -/
 namespace FalkorRuntimeDS.RowModel
@@ -90,7 +90,7 @@ theorem hasBindings_new : hasBindings (Row.new : Row β) = false := rfl
 end FalkorRuntimeDS.RowModel
 
 namespace FalkorRuntimeDS.CowModel
-/-- cow.rs:50 — `Self { inner, dup: false }`: no pending duplication. -/
+/-- cow.rs:84 — `Self { inner, dup: false, .. }` (plus a fresh debug-only `branched` flag): no pending duplication. -/
 def cowNew (h : Nat) : Cow := { h, dup := false }
 /-- `Cow::new` builds an unshared handle: reads see `inner`, the first `deref_mut`
 neither allocates nor moves. -/

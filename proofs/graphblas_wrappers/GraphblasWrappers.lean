@@ -4,6 +4,7 @@
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
+Re-targeted to main 1d15bf713 (#2996, #3097, #3250 merged).
 
 ## Lean ↔ Rust
 
@@ -12,11 +13,12 @@ the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
 | `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:388, `Iter::drop` :1618 (`Arc::get_mut` then Arc drop) |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1699, `Iter::next` :1732 |
-| `Codes.decodeBlob`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:253` `Vector<u64>::decode`, `:345` `Vector<bool>::decode` |
-| `Decode.edgeCount`, `Wf` | `Tensor::edge_count` tensor.rs:1221; invariant unchecked by `Tensor::decode` :1543 |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` :701, `Tensor::resize` :809, `tensor::Iter::next` :1740, `vector::Iter::next` |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:774 (#3022) |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1713, `Iter::next` :1732 |
+| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` (`pre2996_*`: before #2996) |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; invariant unchecked by `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
+| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:715, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1763, `vector::Iter::next` |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:510, header pointers nulled :527-543 (#3097) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:788 (#3022) |
 
 ## Theorems (all proved, no sorry)
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
@@ -24,11 +26,18 @@ the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
 `sequential_frees_once`, `single_owner_frees_once`, `dup_independent_ownership`;
 `drainL_eq_filter`, `drain_seek_eq_spec` (row iterator = in-range entries,
 row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
-`decodeBlob_is_dos`, `decodeU64_is_dos`, `assertPanic_deserialize_dos`,
-`decodeBool_safe`, `decodeBool_never_dies`, `hardened_vs_blob_on_invalid_object`;
+`decodeBlob_never_dies`, `decodeU64_never_dies`, `decodeBlob_safe_on_reachable`,
+`decodeBlob_rejects_invalid_object`, `hardened_eq_blob` (#2996 fix; history
+`pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos`,
+`pre2996_hardened_vs_blob_on_invalid_object`), `assertPanic_deserialize_dos`,
+`decodeBool_safe`, `decodeBool_never_dies`; `checkLayers_ok_iff`,
+`checkLayers_merge_in_bounds` (history `pre2996_accepts_out_of_bounds_delta`);
+`encodeM_no_heap_addresses`, `scrub_scalars`, `decodeC_encodeM` (#3097; history
+`pre3097_encode_leaks_heap_address`);
 `edgeCount_no_panic`, `edgeCount_value`, `orphan_row_breaks_wf`,
-`orphan_row_panics`, `more_me_rows_than_pattern_panics`; `grown_rejects_shrink`,
-`resize_grow_iff_grownOk`, `vecDrain_eq`, `iterExpand_eq_flatMap`,
+`orphan_row_panics`, `more_me_rows_than_pattern_panics` (still open on main);
+`grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250;
+history `pre3250_resize_grow_iff_grownOk`), `vecDrain_eq`, `iterExpand_eq_flatMap`,
 `iterExpand_length`, `iterExpand_all_single`; plus GrbInfo helper lemmas.
 #3022 (`Bulk.lean`): `fromSortedIndices_spec`, `VecU.sum_spec`, **`countInRows_spec`**
 (`GrB_mxv` over `PLUS_PAIR` with `DESC_T0`, then a `PLUS` reduce, counts exactly the stored
@@ -36,16 +45,19 @@ entries in the selected rows — the double-counting argument over columns), `co
 `countInRows_fromSorted`. The four C calls are the hypothesis `BulkSpec`, not axioms.
 
 ## Confirmed bugs (repros: `graph/tests/lean_graphblas_wrappers.rs`)
-1. **Crafted `GRAPH.RESTORE` kills the server.** `Vector::<bool>::decode_blob`
-   (vector.rs:222) `assert_eq!`s `GxB_Vector_deserialize`, which returns
+1. **Crafted `GRAPH.RESTORE` kills the server — FIXED by #2996 on main
+   1d15bf713** (both wrappers now return `Err`; `decodeBlob_never_dies`; the
+   text below is the pre-#2996 state, `pre2996_*`). `Vector::<bool>::decode_blob`
+   (then vector.rs:222) `assert_eq!`s `GxB_Vector_deserialize`, which returns
    `GrB_INVALID_OBJECT` on a corrupt blob; reached from `Tensor::decode`
-   (tensor.rs:1599) per multi-edge pair. Tests `bug_decode_blob_panics_on_corrupt_blob`,
+   (tensor.rs:1622) per multi-edge pair. Tests `bug_decode_blob_panics_on_corrupt_blob`,
    `bug_tensor_decode_panics_on_corrupt_multi_edge_blob`. Live: genuine COPY
    payload from AOF, one id blob truncated to 8 bytes → release server exits,
    log "FalkorDB panic: … vector.rs:222:13 … GxB_Vector_deserialize failed:
-   GrB_INVALID_OBJECT". Same shape: `Vector<u64>::decode` (vector.rs:253). Fix:
+   GrB_INVALID_OBJECT". Same shape: `Vector<u64>::decode` (vector.rs:256). Fix:
    return `Err` like `Vector<bool>::decode` does. (C not comparable: different payload format.)
-2. **`Tensor::decode` accepts an `me` row with no forward pair**; `edge_count`
+2. **`Tensor::decode` accepts an `me` row with no forward pair** (still open on
+   main 1d15bf713); `edge_count`
    then panics ("multi exceeds the effective pattern … |m|=0 multi=1 |me|=1"),
    and `Tensor::encode` calls `edge_count`, so the restored graph can't be saved.
    `iter_edges` yields a phantom edge (7,9,3). Test
@@ -70,8 +82,9 @@ entries in the selected rows — the double-counting argument over columns), `co
    0,3,6,…). Latent (only in-scope use is Tensor::decode). Same class as #2898.
 
 ## Suspicions / notes
-- Matrix `Encode` writes the raw 608-byte `GxB_Container` including live heap
-  addresses (seen in a GRAPH.COPY payload: p/h/b/i/x = 0x104b92000 …): ASLR
+- (FIXED by #3097 on main: the header pointers are now written as null,
+  `encodeM_no_heap_addresses`.) Matrix `Encode` wrote the raw 608-byte
+  `GxB_Container` including live heap addresses (seen in a GRAPH.COPY payload: p/h/b/i/x = 0x104b92000 …): ASLR
   disclosure via DUMP/COPY payloads. `Decode` also copies `header_arena` from the
   payload; probe `probe_matrix_decode_forged_header_arena` shows no effect with
   arenas off (GraphBLAS 10.5 default).

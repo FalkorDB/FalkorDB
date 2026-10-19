@@ -39,6 +39,8 @@ No. `raiseTo_spec` proves `raise_to` changes no answer: live pairs, tombstones a
 
 `restore_agrees` proves `Graph::restore`'s path (`prepare_tiers` with any tier boundaries, then `set` for every edge) gives exactly the restored edge set.
 
+Since #2905 `prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes. Before #2905 only a `debug_assert!` guarded the order (`pre2905_unordered_underflows`: the Rust test's `[10, 5, 0]` would subtract 10 from 5). `restore` never passed such starts, so this was an unchecked contract rather than a reachable bug.
+
 **4. Does `DETACH DELETE` leave stale endpoints?**
 
 No. `mem_collect` proves `delete_implicit_edges`' per-type collection is exactly "incident to a deleted node and not deleted explicitly", and `collect_nodup` that it lists no id twice. `detach_delete_index` proves that after clearing them, those edges read as absent and every other edge reads as before.
@@ -81,7 +83,7 @@ Tiers are split into pages held by `Arc`s, so a new MVCC version shares pages un
 
 ## Bugs found
 
-None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers.
+None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers. The unchecked `prepare_tiers` order contract (#2903) was hardened by #2905; the history is `pre2905_unordered_underflows`.
 
 There are no CONDITIONAL rows.
 

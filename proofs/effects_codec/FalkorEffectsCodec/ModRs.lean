@@ -114,8 +114,8 @@ theorem indexTypeOf_mixed : (indexTypeOf 0x11).toOption = none ∧ (indexTypeOf 
 
 /-- `seal` (`v3/mod.rs`) — `sealBuf` (`seal` is a Lean keyword): `maybe_compress(buf, compression_min_bytes())`. -/
 def sealBuf (Z : Codec) (setting : Int) (buf : Bytes) : Bytes := (maybeCompress Z buf (compressionMinBytes setting)).1
-theorem seal_transparent (Z : Codec) (hZ : CodecOK Z) (v : Int) (body : Bytes) (h : body.length < 2 ^ 32) :
+theorem seal_transparent (Z : Codec) (hZ : CodecOK Z) (v : Int) (body : Bytes) :
     openPayload Z (sealBuf Z v (newBuffer ++ body)) = .ok (body, []) :=
-  openPayload_maybeCompress Z hZ body _ h
+  openPayload_maybeCompress Z hZ body _
 
 end FalkorCodec

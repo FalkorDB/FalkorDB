@@ -73,7 +73,13 @@ no longer needs a Nodup hypothesis),
 (node×label matrix and label diagonals stay consistent), `labelPass_total`,
 `two_phase_eq`, `upsert_twice`, `cmatches_iff`.
 
-**Re-targeted to origin/main `0f45a8685`** (from `cab3cf192`): #3277 (`13e849935`) adds
+**Re-targeted to origin/main `1d15bf713`** (from `0f45a8685`): #3250 (`2eacf0ece`, #3246)
+makes `rebuild_derived_matrices` take `node_cap.max(saved)` before resizing — new
+`Ids.rebuildNodeMs`, `rebuild_never_shrinks`, `rebuild_keeps_entries`; history
+`pre3250_rebuildNodeMs`, `pre3250_rebuild_shrinks`. COVERAGE.tsv lines re-cited (+14 past
+graph.rs:974). 234 theorems.
+
+**Previously re-targeted to origin/main `0f45a8685`** (from `cab3cf192`): #3277 (`13e849935`) adds
 `register_relationship_type` (:1274), which `get_type_id_mut` and
 `get_relationship_matrix_mut` both call, so every type registration resizes —
 `Schema.registerRelType`, `registerRelType_width`, `getTypeIdMut_width`,

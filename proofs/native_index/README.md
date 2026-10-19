@@ -69,13 +69,13 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 3. **Model the values and the filter.** `Value` has `Int`, `Float`, `Bool`, the four temporals, `String`, `Null` and `other` for the rest. `compareValue` is `compare_value`, and `cmpPred` is the filter's comparison operators.
 4. **Prove each comparison agrees with the keys** (`filter_iff_key`), splitting on the data variant: floats by `encodeF64_cmp`, ints by `int_cmp_agrees`, and every other variant is unindexed and never passes a numeric comparison.
 5. **Prove the range bounds are exact** (`range_keys`). `encodeF64_bounds` proves every real key is strictly between 0 and `u64::MAX`, so the `checked_add`/`checked_sub` in the exclusive-bound steps never fire.
-6. **Combine with the tree contents.** The tree is its sorted entry list, and `range` returns the entries between the two keys. That is where the CONDITIONAL hypothesis enters (below).
+6. **Combine with the tree contents.** The tree is its sorted entry list, and `range` returns the entries between the two keys. `Contract.lean` proves each tree operation is exactly that list model, for every tree the index can hold (below).
 
 The hypotheses on `range_agrees`:
 
 - **No `Bool` data** (`NotBool`). A `Bool` shares a key with `0`/`1` (`bool_divergence`). This matches C and the RediSearch path, and is pinned in a Rust test.
 - **A guarded bound** (`GoodBound`): a non-NaN float, or an int with `|b| < 2⁵²`. The planner only routes such bounds to the index, except for `i64::MIN`.
-- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, which `remove_batch` does not preserve on main. This is why 13 rows are CONDITIONAL.
+- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and since #3283 every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so this is no longer a hypothesis: `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
 
 ## Bugs found
 
@@ -86,7 +86,7 @@ The hypotheses on `range_agrees`:
 
 Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejects 2⁵³, whose collision with 2⁵³+1 is real.
 
-**CONDITIONAL rows.** 13 `numeric.rs` and `falkordb_index.rs` rows read through the tree, and the tree's content specs come from [`../cow_btree`](../cow_btree) under its invariant `TreeWF`. `cow_btree` Bug 3 (W7-btree-1) shows `remove_batch` can break `TreeWF`, and since #3307 `remove_batch` runs in production (`apply_writes` → `remove_encoded`). The fix is PR #3283, still open. A bounded model search over the batch-only sequences production uses found no wrong content, range result or empty page; the panic in Bug 3 needs a single-key `remove`, which only tests call. When PR #3283 lands and `TreeWF` is proven for `remove_batch`, these rows become PROVEN.
+**Formerly CONDITIONAL rows.** 13 `numeric.rs` and `falkordb_index.rs` rows read through the tree, whose content specs come from [`../cow_btree`](../cow_btree) under its invariant `TreeWF`. `cow_btree` Bug 3 (W7-btree-1) showed `remove_batch` could break `TreeWF`, and since #3307 `remove_batch` runs in production (`apply_writes` → `remove_encoded`). #3283 (799968a8b) fixed it; `cow_btree` proves `remove_batch`, `insert_batch` and `from_sorted` keep or build well-formed trees (`removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`, together `Reachable_wf_asserted`), and `Contract.lean` here connects each operation to its model. These rows are now PROVEN.
 
 ## Files
 
@@ -96,7 +96,8 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `IntF.lean` | `i as f64` (`magBits`, `i64ToF64`), exact and monotone below 2⁵³ |
 | `Value.lean` | `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, the guard `intLosesPrecision`; `guard_sound`, `int_cmp_agrees` |
 | `Agree.lean` | `filter_iff_key`; counterexamples `bool_divergence`, `i64min_hole`, `p53_collision` |
-| `Tree.lean` | The `CowBTree` contract as its contents (`tInsert`, `tRemoveBatch`, `tRange`, …); the CONDITIONAL hypothesis is documented here |
+| `Tree.lean` | The `CowBTree` contract as its contents (`tInsert`, `tRemoveBatch`, `tRange`, …) |
+| `Contract.lean` | The contract discharged: on every reachable tree each `CowBTree` operation (the `cow_btree` model) equals its `Tree.lean` model (`contract_*`) |
 | `Numeric.lean` | `NumericIndex`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, per-write contents specs |
 | `Index.lean` | `HashMap` as an association list, `IndexColumn`, `ColumnEntry.ready`, `FalkorDbIndex` |
 | `Pending.lean` | Staged writes (`IndexWrite`, `IndexChanges`, `PendingIndexWrites`), `lastWriteWins`, `applyColumn_eq_sequential` |
@@ -112,15 +113,14 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 70 |
-| CONDITIONAL | 13 |
+| PROVEN | 83 |
 
-- **CONDITIONAL:** every `NumericIndex` function that reads or writes the tree (`from_entries`, `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`) and `FalkorDbIndex::apply` / `apply_writes`. They rest on the `cow_btree` content contract described above.
+- The 13 rows that read or write the tree (`from_entries`, `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
 - Three PROVEN rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under a caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
 
 ## What the model does not cover
 
-- **The tree itself.** The tree is its sorted content list; the tree code is proven in `cow_btree` and `index_layer`, under the CONDITIONAL hypothesis above.
+- **The tree itself.** The tree is its sorted content list; the tree code is proven in `cow_btree` (including that every reachable tree is well-formed) and `index_layer` (the leaf bytes).
 - **Caller uniqueness.** The `*_hit` theorems assume each node's written attribute ids are unique. Created nodes' `new_labels` and bulk/replica record labels are taken to be the node's labels, which is the Rust's own premise (documented in `graph_writes.rs`).
 - **The graph's own stores.** How the graph mutates its attribute store, label matrices and `remove_all` is modelled in other projects; here each per-entry outcome is stated against the graph *before* the write.
 - **`HashMap` order.** Iteration order is arbitrary, so theorems about a whole map are stated per key. The `bulk`, `rows` and `product` paths have exact staged-ops theorems (`*_changes`); their per-entry outcome follows from `lastOp_ops` as for the other paths.

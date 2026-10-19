@@ -22,6 +22,7 @@ Here ↔ there:
 | `distribute`               | `build_multi_key_payloads` entity loop (encoder/mod.rs:129-153) |
 | `PEntry`                   | `PayloadEntry {state,count,offset}` (serialization.rs:166) |
 | `roaringRT`                | `RoaringTreemap` encode∘decode (serialization.rs:172,194) |
+| `expectedLen`, `countCheck` | `RoaringTreemap::decode_with_count`'s checks (serialization.rs:216-235, #2996) |
 | `decodeSpanFilter`         | `AttributeStore::decode_with_count` filter (attribute_store.rs:1476-1487) |
 -/
 
@@ -50,6 +51,55 @@ def encodedByteLen (ids : List UInt64) : Nat := ids.length * 8
 
 theorem encoded_len_mult8 (ids : List UInt64) : encodedByteLen ids % 8 = 0 := by
   simp [encodedByteLen, Nat.mul_mod_left]
+
+/-! ### The count check (`decode_with_count`, serialization.rs:216-244; #2996)
+
+`count` comes from the payload. Since #2996 (`d99861124`) the expected byte length is
+`usize::try_from(count).ok().and_then(|c| c.checked_mul(8))`, refusing a count whose
+byte length overflows a 64-bit `usize`; the loop then reads `bytes[i*8..(i+1)*8]`
+for `i < count`. Before, `count as usize * 8` wrapped (release), so `count = 2^61`
+expected `0` bytes, matched an empty buffer and indexed past its end. -/
+
+def USIZE : Nat := 2 ^ 64
+
+/-- The expected length, or `None` = the "out of range" refusal. -/
+def expectedLen (count : Nat) : Option Nat :=
+  if count < USIZE ∧ count * 8 < USIZE then some (count * 8) else none
+
+/-- `decode_with_count` gets past both checks. -/
+def countCheck (count bytesLen : Nat) : Bool :=
+  match expectedLen count with
+  | some n => n == bytesLen
+  | none => false
+
+/-- **Every slice the loop takes is in bounds**: once the checks pass, `(i+1)*8 ≤ len`
+for every `i < count`. -/
+theorem countCheck_in_bounds {count len : Nat} (h : countCheck count len = true) :
+    ∀ i < count, (i + 1) * 8 ≤ len := by
+  unfold countCheck expectedLen at h
+  split at h
+  · rename_i n hn
+    split at hn
+    · cases hn; simp at h; intro i hi; omega
+    · cases hn
+  · cases h
+
+/-- …and the decoder never rejects its own encoder's output (any list in memory is
+shorter than `2^61` ids). -/
+theorem countCheck_own (ids : List UInt64) (h : ids.length * 8 < USIZE) :
+    countCheck ids.length (encodedByteLen ids) = true := by
+  have h1 : ids.length < USIZE := by unfold USIZE at *; omega
+  unfold countCheck expectedLen encodedByteLen
+  simp [h1, h]
+
+/-- Before #2996: `count as usize * 8`, wrapping. -/
+def pre2996_expectedLen (count : Nat) : Nat := count % USIZE * 8 % USIZE
+
+/-- **History (#2996): a count of `2^61` passed the length check on an empty buffer**
+and the loop then read `bytes[0..8]` of it. -/
+theorem pre2996_count_wraps :
+    pre2996_expectedLen (2 ^ 61) = 0 ∧ ¬ (1 * 8 ≤ 0) ∧ countCheck (2 ^ 61) 0 = false := by
+  decide
 
 /-! ## `build_multi_key_payloads`: the entity slices partition the stream
 

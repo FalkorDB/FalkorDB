@@ -7,12 +7,20 @@ import FalkorEffectsCodec.Prim
 | `Val`              | `runtime::value::Value` (`graph/src/runtime/value.rs:180`) — floats as their bit patterns, `i64` as its two's-complement bits |
 | `T_*`              | `serialization::si_type` (`graph/src/graph/graphblas/serialization.rs:108-121`) |
 | `encV` / `encL`    | `impl EffectEncode<3> for Value` (`value.rs:33-125`) |
-| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs:195`) |
-| `readOne`          | `read_one` (`value.rs:197-265`) |
+| `Step`             | `read_one`'s `Option<Value>`: `None` = a frame was pushed (`value.rs:210`) |
+| `readOne`          | `read_one` (`value.rs:212-284`); its `owed` argument is the `&mut usize` |
 | `Frame`            | `enum Frame::List { items, left }` (`value.rs:132`) |
-| `deliver`          | the inner `loop` of `decode` (`value.rs:173-188`) |
-| `loop`             | the outer `loop` of `decode` (`value.rs:164-189`), with fuel |
-| `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:161`) |
+| `deliver`          | the inner `loop` of `decode` (`value.rs:182-200`) |
+| `loop`             | the outer `loop` of `decode` (`value.rs:173-201`), with fuel; `owed` is `decode`'s `owed` |
+| `owedOf`           | the invariant the `owed` comment states: the sum of `left - 1` over the stack |
+| `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:168`) |
+
+**#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
+the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
+children the open frames still need after this one. Before, it checked `n` alone and
+every level of `[[[…` could claim the whole remainder (`pre3267_*` below: the
+reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
+capacities one decode reserves sum to at most `remaining / 4`.
 | `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
 
 Floats: `f64::to_le_bytes`/`from_le_bytes` are the identity on the bit pattern
@@ -149,8 +157,11 @@ def readN : Nat → R α → R (List α)
 /-- The smallest a value can encode to (`value.rs:17`). -/
 def MIN_VALUE_BYTES : Nat := 4
 
-/-- `read_one` (`value.rs:197-265`), arm for arm and in the same order. -/
-def readOne (utf8 : Bytes → Bool) : R Step := do
+/-- `read_one` (`value.rs:212-284`), arm for arm and in the same order. `owed` is
+read only by the array arm; its update `*owed += n - 1` is done by `loop` on
+`.opened n`. `n + owed` cannot overflow the Rust `u64`: `n < 2^32`, and `owed` only
+grows past a guard that bounds it by `remaining / 4`. -/
+def readOne (utf8 : Bytes → Bool) (owed : Nat) : R Step := do
   let t ← u32
   if t = T_NULL then pure (.value .null)
   else if t = T_BOOL then do let b ← u8; pure (.value (.bool (b ≠ 0)))
@@ -160,7 +171,8 @@ def readOne (utf8 : Bytes → Bool) : R Step := do
     let s ← rString utf8; pure (.value (.str s))
   else if t = T_ARRAY then do
     let n ← u32
-    let n ← guardCount n MIN_VALUE_BYTES
+    -- `r.guard_count(n + *owed as u64, MIN_VALUE_BYTES)?` — the result is dropped
+    let _ ← guardCount (n + owed) MIN_VALUE_BYTES
     if n = 0 then pure (.value (.list []))
     -- `ThinVec::with_capacity(n)`, `Frame::List { left: n }`
     else pure (.opened n)
@@ -198,20 +210,28 @@ def deliver : Val → List Frame → Deliv
     else if f.left - 1 > 0 then .more (⟨f.items ++ [v], f.left - 1⟩ :: st)
     else deliver (.list (f.items ++ [v])) st
 
-/-- The outer loop (`value.rs:164-189`). -/
-def loop (utf8 : Bytes → Bool) : Nat → List Frame → R Val
-  | 0, _ => fun _ => .error .outOfFuel
-  | fuel + 1, st => fun r =>
-    match readOne utf8 r with
+/-- The outer loop (`value.rs:173-201`). `owed` is `decode`'s counter: `read_one`
+adds `n - 1` when it opens a frame of `n`, and the inner loop subtracts one when
+a frame takes a child and still waits for more (`owed -= 1`, `value.rs:192`) — an
+underflow there would be a debug panic, modelled as `panic`, and `loop_noPanic`
+proves it cannot happen. -/
+def loop (utf8 : Bytes → Bool) : Nat → List Frame → Nat → R Val
+  | 0, _, _ => fun _ => .error .outOfFuel
+  | fuel + 1, st, owed => fun r =>
+    match readOne utf8 owed r with
     | .error e => .error e
-    | .ok (.opened n, r') => loop utf8 fuel (⟨[], n⟩ :: st) r'
+    | .ok (.opened n, r') => loop utf8 fuel (⟨[], n⟩ :: st) (owed + (n - 1)) r'
     | .ok (.value v, r') =>
       match deliver v st with
       | .done v => .ok (v, r')
-      | .more st' => loop utf8 fuel st' r'
+      | .more st' => if owed = 0 then .error .panic else loop utf8 fuel st' (owed - 1) r'
       | .panic => .error .panic
 
-def decodeV (utf8 : Bytes → Bool) : R Val := fun r => loop utf8 (r.length + 1) [] r
+def decodeV (utf8 : Bytes → Bool) : R Val := fun r => loop utf8 (r.length + 1) [] 0 r
+
+/-- What `owed` is meant to be: the children the open frames still need beyond
+the one being read now. -/
+def owedOf (st : List Frame) : Nat := (st.map (fun f => f.left - 1)).sum
 
 /-! ## Encoder facts -/
 
@@ -313,26 +333,26 @@ theorem readN_f32s (xs : List (BitVec 32)) (rest : Bytes) :
     rfl
 
 /-- What the outer loop does with a finished value, by the inner loop's verdict. -/
-def cont (utf8 : Bytes → Bool) : Deliv → Nat → R Val
-  | .done v, _ => fun r => .ok (v, r)
-  | .more st, fuel => loop utf8 fuel st
-  | .panic, _ => fun _ => .error .panic
+def cont (utf8 : Bytes → Bool) : Deliv → Nat → Nat → R Val
+  | .done v, _, _ => fun r => .ok (v, r)
+  | .more st, fuel, owed => fun r => if owed = 0 then .error .panic else loop utf8 fuel st (owed - 1) r
+  | .panic, _, _ => fun _ => .error .panic
 
-theorem loop_value {utf8 fuel st r v r'} (h : readOne utf8 r = .ok (.value v, r')) :
-    loop utf8 (fuel + 1) st r = cont utf8 (deliver v st) fuel r' := by
+theorem loop_value {utf8 fuel st owed r v r'} (h : readOne utf8 owed r = .ok (.value v, r')) :
+    loop utf8 (fuel + 1) st owed r = cont utf8 (deliver v st) fuel owed r' := by
   simp only [loop, h]
   cases deliver v st <;> rfl
 
-theorem loop_opened {utf8 fuel st r n r'} (h : readOne utf8 r = .ok (.opened n, r')) :
-    loop utf8 (fuel + 1) st r = loop utf8 fuel (⟨[], n⟩ :: st) r' := by
+theorem loop_opened {utf8 fuel st owed r n r'} (h : readOne utf8 owed r = .ok (.opened n, r')) :
+    loop utf8 (fuel + 1) st owed r = loop utf8 fuel (⟨[], n⟩ :: st) (owed + (n - 1)) r' := by
   simp only [loop, h]
 
 attribute [local simp] u32_w32 u8_w8 i64_w64 f32_w32
 
 /-- Every scalar arm of `readOne` reads back exactly what `encV` wrote. -/
-theorem readOne_scalar (utf8 I : Bytes → Bool) (v : Val) (bs rest : Bytes)
+theorem readOne_scalar (utf8 I : Bytes → Bool) (owed : Nat) (v : Val) (bs rest : Bytes)
     (h : encV I v = .ok bs) (hw : WF utf8 v) (hl : ∀ xs, v ≠ .list xs) :
-    readOne utf8 (bs ++ rest) = .ok (.value v, rest) := by
+    readOne utf8 owed (bs ++ rest) = .ok (.value v, rest) := by
   cases v with
   | list xs => exact absurd rfl (hl xs)
   | null => simp [encV] at h; subst h; simp [readOne, T_NULL]
@@ -384,25 +404,27 @@ theorem readOne_scalar (utf8 I : Bytes → Bool) (v : Val) (bs rest : Bytes)
       T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION]
 
 /-- The list arm: an empty list is a value; a non-empty one opens a frame of
-exactly its length and leaves the elements unread. -/
-theorem readOne_list (utf8 : Bytes → Bool) (xs : List Val) (b rest : Bytes)
-    (hlt : xs.length < 2 ^ 32) (hb : 4 * xs.length ≤ b.length) :
-    readOne utf8 (w32 T_ARRAY ++ w32 xs.length ++ b ++ rest) =
+exactly its length and leaves the elements unread. The guard passes because the
+children's bytes (`b`) and the `owed` siblings' bytes (in `rest`) are disjoint. -/
+theorem readOne_list (utf8 : Bytes → Bool) (owed : Nat) (xs : List Val) (b rest : Bytes)
+    (hlt : xs.length < 2 ^ 32) (hb : 4 * xs.length ≤ b.length) (hr : 4 * owed ≤ rest.length) :
+    readOne utf8 owed (w32 T_ARRAY ++ w32 xs.length ++ b ++ rest) =
       if xs.length = 0 then .ok (.value (.list []), b ++ rest)
       else .ok (.opened xs.length, b ++ rest) := by
-  have hg : guardCount xs.length MIN_VALUE_BYTES (b ++ rest) = .ok (xs.length, b ++ rest) := by
+  have hg : guardCount (xs.length + owed) MIN_VALUE_BYTES (b ++ rest) =
+      .ok (xs.length + owed, b ++ rest) := by
     simp [guardCount, MIN_VALUE_BYTES]; omega
   simp only [List.append_assoc]
   simp [readOne, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_ISTRING, T_ARRAY, hlt, hg]
   split <;> rfl
 
 theorem scalar_step (utf8 I : Bytes → Bool) (v : Val) (bs : Bytes) (h : encV I v = .ok bs)
-    (hw : WF utf8 v) (hl : ∀ xs, v ≠ .list xs) (fuel : Nat) (st : List Frame) (rest : Bytes)
-    (hf : cnt v ≤ fuel) :
-    loop utf8 fuel st (bs ++ rest) = cont utf8 (deliver v st) (fuel - cnt v) rest := by
+    (hw : WF utf8 v) (hl : ∀ xs, v ≠ .list xs) (fuel : Nat) (st : List Frame) (owed : Nat)
+    (rest : Bytes) (hf : cnt v ≤ fuel) :
+    loop utf8 fuel st owed (bs ++ rest) = cont utf8 (deliver v st) (fuel - cnt v) owed rest := by
   have hc : cnt v = 1 := by cases v <;> simp [cnt] <;> exact absurd rfl (hl _)
   obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by omega⟩
-  rw [loop_value (readOne_scalar utf8 I v bs rest h hw hl), hc]
+  rw [loop_value (readOne_scalar utf8 I owed v bs rest h hw hl), hc]
   rfl
 
 theorem encL_nil {I : Bytes → Bool} {b : Bytes} (h : encL I [] = .ok b) : b = [] := by
@@ -431,16 +453,18 @@ theorem encV_list {I : Bytes → Bool} {xs : List Val} {bs : Bytes} (h : encV I 
 
 mutual
 /-- **The value roundtrip, generalised over whatever the decoder is in the
-middle of.** Decoding `encV v` on top of any stack of open frames consumes
-exactly those bytes and hands exactly `v` to the innermost frame. -/
+middle of.** Decoding `encV v` on top of any stack of open frames, with `owed`
+siblings still to come in `rest`, consumes exactly those bytes and hands exactly
+`v` to the innermost frame. -/
 theorem loop_enc (utf8 I : Bytes → Bool) : ∀ (v : Val) (bs : Bytes), encV I v = .ok bs →
-    WF utf8 v → ∀ (fuel : Nat) (st : List Frame) (rest : Bytes), cnt v ≤ fuel →
-    loop utf8 fuel st (bs ++ rest) = cont utf8 (deliver v st) (fuel - cnt v) rest
-  | .list xs, bs, h, hw, fuel, st, rest, hf => by
+    WF utf8 v → ∀ (fuel : Nat) (st : List Frame) (owed : Nat) (rest : Bytes), cnt v ≤ fuel →
+    4 * owed ≤ rest.length →
+    loop utf8 fuel st owed (bs ++ rest) = cont utf8 (deliver v st) (fuel - cnt v) owed rest
+  | .list xs, bs, h, hw, fuel, st, owed, rest, hf, ho => by
     obtain ⟨hlt, b, hb, rfl⟩ := encV_list h
     have hlen := (encL_len I xs b hb).2
     obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by simp [cnt] at hf; omega⟩
-    have hr := readOne_list utf8 xs b rest hlt hlen
+    have hr := readOne_list utf8 owed xs b rest hlt hlen ho
     cases xs with
     | nil =>
       simp only [List.length_nil, ite_true] at hr ⊢
@@ -449,68 +473,73 @@ theorem loop_enc (utf8 I : Bytes → Bool) : ∀ (v : Val) (bs : Bytes), encV I 
     | cons x xs' =>
       simp only [List.length_cons, Nat.add_one_ne_zero, ite_false] at hr ⊢
       rw [loop_opened hr]
-      have := loopL_enc utf8 I (x :: xs') b hb hw (by simp) [] f st rest
-        (by simp only [cnt] at hf; omega)
+      have := loopL_enc utf8 I (x :: xs') b hb hw (by simp) [] f st owed rest
+        (by simp only [cnt] at hf; omega) ho
       simp only [List.length_cons] at this
       rw [this]
       simp only [List.nil_append, cnt]
       congr 1
       omega
-  | .null, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .bool _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .int _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .float _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .str _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .map _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .node _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .rel _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .path _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .vecf32 _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .point _ _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .datetime _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .date _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .time _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
-  | .duration _, bs, h, hw, fuel, st, rest, hf =>
-    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st rest hf
+  | .null, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .bool _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .int _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .float _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .str _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .map _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .node _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .rel _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .path _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .vecf32 _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .point _ _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .datetime _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .date _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .time _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
+  | .duration _, bs, h, hw, fuel, st, owed, rest, hf, _ =>
+    scalar_step utf8 I _ bs h hw (by intro _ h; cases h) fuel st owed rest hf
 
 /-- The frame half: the children of a non-empty list, read on top of the frame
-that is waiting for them, close that frame into exactly the list. -/
+that is waiting for them (which owes `xs.length - 1` beyond the one being read),
+close that frame into exactly the list. -/
 theorem loopL_enc (utf8 I : Bytes → Bool) : ∀ (xs : List Val) (bs : Bytes), encL I xs = .ok bs →
-    WFL utf8 xs → xs ≠ [] → ∀ (items : List Val) (fuel : Nat) (st : List Frame) (rest : Bytes),
-    cntL xs ≤ fuel →
-    loop utf8 fuel (⟨items, xs.length⟩ :: st) (bs ++ rest) =
-      cont utf8 (deliver (.list (items ++ xs)) st) (fuel - cntL xs) rest
-  | [], _, _, _, hne, _, _, _, _, _ => absurd rfl hne
-  | x :: xs', bs, h, hw, _, items, fuel, st, rest, hf => by
+    WFL utf8 xs → xs ≠ [] → ∀ (items : List Val) (fuel : Nat) (st : List Frame) (owed : Nat)
+    (rest : Bytes), cntL xs ≤ fuel → 4 * owed ≤ rest.length →
+    loop utf8 fuel (⟨items, xs.length⟩ :: st) (owed + (xs.length - 1)) (bs ++ rest) =
+      cont utf8 (deliver (.list (items ++ xs)) st) (fuel - cntL xs) owed rest
+  | [], _, _, _, hne, _, _, _, _, _, _, _ => absurd rfl hne
+  | x :: xs', bs, h, hw, _, items, fuel, st, owed, rest, hf, ho => by
     obtain ⟨a, b', ha, hb', rfl⟩ := encL_cons h
     simp only [WFL] at hw
     simp only [cntL] at hf
-    rw [List.append_assoc, loop_enc utf8 I x a ha hw.1 fuel _ (b' ++ rest) (by omega)]
-    simp only [List.length_cons, deliver, Nat.add_one_ne_zero, ite_false, Nat.add_sub_cancel]
+    have hb'l := (encL_len I xs' b' hb').2
+    rw [List.append_assoc, List.length_cons, Nat.add_sub_cancel,
+      loop_enc utf8 I x a ha hw.1 fuel _ (owed + xs'.length) (b' ++ rest) (by omega)
+        (by simp only [List.length_append]; omega)]
+    simp only [deliver, Nat.add_one_ne_zero, ite_false, Nat.add_sub_cancel]
     cases xs' with
     | nil =>
       rw [encL_nil hb']
       simp [cntL]
     | cons y ys =>
-      simp only [List.length_cons, Nat.zero_lt_succ, ite_true, cont]
+      simp only [List.length_cons, Nat.zero_lt_succ, ite_true, cont, gt_iff_lt]
+      simp only [show ¬(owed + (ys.length + 1) = 0) by omega, ↓reduceIte]
       have := loopL_enc utf8 I (y :: ys) b' hb' hw.2 (by simp) (items ++ [x]) (fuel - cnt x) st
-        rest (by simp only [cntL] at hf ⊢; omega)
-      simp only [List.length_cons] at this
-      rw [this]
+        owed rest (by simp only [cntL] at hf ⊢; omega) ho
+      simp only [List.length_cons, Nat.add_sub_cancel] at this
+      rw [show owed + (ys.length + 1) - 1 = owed + ys.length by omega, this]
       simp only [List.append_assoc, List.singleton_append, cntL]
       congr 1
       omega
@@ -519,13 +548,14 @@ end
 /-- **`read(write(v)) = v`**, for every value `encV` accepts: the decoder
 consumes exactly the encoding, returns exactly `v` — bit-for-bit, since every
 float is its bit pattern — and leaves `rest` untouched, so the next field
-parses from the right offset. -/
+parses from the right offset. Still true with #3267's tighter guard: an honest
+encoding always has the bytes every open frame owes. -/
 theorem decodeV_encV (utf8 I : Bytes → Bool) (v : Val) (bs rest : Bytes)
     (h : encV I v = .ok bs) (hw : WF utf8 v) :
     decodeV utf8 (bs ++ rest) = .ok (v, rest) := by
   have hl := encV_len I v bs h
   unfold decodeV
-  rw [loop_enc utf8 I v bs h hw _ [] rest (by simp; omega)]
+  rw [loop_enc utf8 I v bs h hw _ [] 0 rest (by simp; omega) (by simp)]
   simp [deliver, cont]
 
 /-! ## Hostile input: no panic, no over-read, the fuel never runs out -/
@@ -546,7 +576,7 @@ theorem f32_noPanic : NoPanic f32 := bind_noPanic (rdU_noPanic 4) (fun _ => pure
 theorem i64_noPanic : NoPanic i64 := bind_noPanic (rdU_noPanic 8) (fun _ => pure_noPanic _)
 
 /-- Everything after `read_one`'s tag, as one function of the tag. -/
-def readBody (utf8 : Bytes → Bool) (t : Nat) : R Step :=
+def readBody (utf8 : Bytes → Bool) (owed t : Nat) : R Step :=
   if t = T_NULL then pure (.value .null)
   else if t = T_BOOL then do let b ← u8; pure (.value (.bool (b ≠ 0)))
   else if t = T_INT64 then do let x ← i64; pure (.value (.int x))
@@ -555,7 +585,7 @@ def readBody (utf8 : Bytes → Bool) (t : Nat) : R Step :=
     let s ← rString utf8; pure (.value (.str s))
   else if t = T_ARRAY then do
     let n ← u32
-    let n ← guardCount n MIN_VALUE_BYTES
+    let _ ← guardCount (n + owed) MIN_VALUE_BYTES
     if n = 0 then pure (.value (.list []))
     else pure (.opened n)
   else if t = T_MAP then fail (.badValueType T_MAP)
@@ -572,7 +602,7 @@ def readBody (utf8 : Bytes → Bool) (t : Nat) : R Step :=
   else if t = T_DURATION then do let x ← i64; pure (.value (.duration x))
   else fail (.badValueType t)
 
-theorem readOne_eq (utf8 : Bytes → Bool) : readOne utf8 = (u32 >>= readBody utf8) := rfl
+theorem readOne_eq (utf8 : Bytes → Bool) (owed : Nat) : readOne utf8 owed = (u32 >>= readBody utf8 owed) := rfl
 
 /-- The three hostile-input properties at once: only consumes a prefix, never
 panics, never reports running out of fuel (the reader has no fuel of its own). -/
@@ -607,7 +637,7 @@ theorem good_readN {m : R α} (hm : Good m) : ∀ n, Good (readN n m)
 theorem good_f32 : Good f32 := good_bind (good_rdU 4) (fun _ => good_pure _)
 theorem good_i64 : Good i64 := good_bind (good_rdU 8) (fun _ => good_pure _)
 
-theorem good_readBody (utf8 : Bytes → Bool) (t : Nat) : Good (readBody utf8 t) := by
+theorem good_readBody (utf8 : Bytes → Bool) (owed t : Nat) : Good (readBody utf8 owed t) := by
   have gv : ∀ {α} (m : R α) (k : α → Val), Good m → Good (m >>= fun x => pure (Step.value (k x))) :=
     fun m k hm => good_bind hm (fun _ => good_pure _)
   unfold readBody
@@ -622,40 +652,42 @@ theorem good_readBody (utf8 : Bytes → Bool) (t : Nat) : Good (readBody utf8 t)
   · exact good_bind (good_rdU 4) (fun _ => good_bind (good_guard _ _)
       (fun _ => good_bind (good_readN good_f32 _) (fun _ => good_pure _)))
 
-theorem good_readOne (utf8 : Bytes → Bool) : Good (readOne utf8) := by
-  rw [readOne_eq]; exact good_bind (good_rdU 4) (good_readBody utf8)
+theorem good_readOne (utf8 : Bytes → Bool) (owed : Nat) : Good (readOne utf8 owed) := by
+  rw [readOne_eq]; exact good_bind (good_rdU 4) (good_readBody utf8 owed)
 
 /-- `read_one` consumes at least its 4-byte tag, and only ever a prefix. -/
-theorem readOne_progress {utf8 : Bytes → Bool} {r : Bytes} {s : Step} {r' : Bytes}
-    (h : readOne utf8 r = .ok (s, r')) : ∃ pre, r = pre ++ r' ∧ 4 ≤ pre.length := by
+theorem readOne_progress {utf8 : Bytes → Bool} {owed : Nat} {r : Bytes} {s : Step} {r' : Bytes}
+    (h : readOne utf8 owed r = .ok (s, r')) : ∃ pre, r = pre ++ r' ∧ 4 ≤ pre.length := by
   rw [readOne_eq] at h
   simp only [bind_apply, u32, rdU, take] at h
   by_cases hl : r.length < 4
   · simp [hl] at h
   · simp only [hl, ite_false, pure_apply] at h
-    obtain ⟨p, hp⟩ := (good_readBody utf8 _).1 _ _ _ h
+    obtain ⟨p, hp⟩ := (good_readBody utf8 owed _).1 _ _ _ h
     refine ⟨r.take 4 ++ p, ?_, ?_⟩
     · rw [List.append_assoc, ← hp, List.take_append_drop]
     · simp; omega
 
 /-- Where `readBody` can end: a `Step.opened n` only ever comes from the array
-arm, after `guard_count` has accepted `n`. -/
-def OpenedOk (s : Step) (r' : Bytes) : Prop := ∀ n, s = .opened n → 1 ≤ n ∧ 4 * n ≤ r'.length
+arm, after `guard_count` has accepted `n` together with the `owed` siblings. -/
+def OpenedOk (owed : Nat) (s : Step) (r' : Bytes) : Prop :=
+  ∀ n, s = .opened n → 1 ≤ n ∧ 4 * (n + owed) ≤ r'.length
 
-def Ends (m : R Step) : Prop := ∀ r s r', m r = .ok (s, r') → OpenedOk s r'
+def Ends (owed : Nat) (m : R Step) : Prop := ∀ r s r', m r = .ok (s, r') → OpenedOk owed s r'
 
-theorem ends_value {α} (m : R α) (k : α → Val) : Ends (m >>= fun x => pure (Step.value (k x))) := by
+theorem ends_value {α} (owed : Nat) (m : R α) (k : α → Val) :
+    Ends owed (m >>= fun x => pure (Step.value (k x))) := by
   intro r s r' h; simp only [bind_apply] at h; split at h
   · cases h
   · simp at h; intro n hn; rw [← h.1] at hn; cases hn
-theorem ends_fail (e : DErr) : Ends (fail e) := by intro r s r' h; cases h
-theorem ends_pure_value (v : Val) : Ends (pure (Step.value v)) := by
+theorem ends_fail (owed : Nat) (e : DErr) : Ends owed (fail e) := by intro r s r' h; cases h
+theorem ends_pure_value (owed : Nat) (v : Val) : Ends owed (pure (Step.value v)) := by
   intro r s r' h; cases h; intro n hn; cases hn
-theorem ends_ite {c : Prop} [Decidable c] {m₁ m₂ : R Step} (h₁ : Ends m₁) (h₂ : Ends m₂) :
-    Ends (if c then m₁ else m₂) := by split <;> assumption
-theorem ends_array :
-    Ends (do let n ← u32; let n ← guardCount n MIN_VALUE_BYTES
-             if n = 0 then pure (Step.value (.list [])) else pure (Step.opened n)) := by
+theorem ends_ite {owed : Nat} {c : Prop} [Decidable c] {m₁ m₂ : R Step} (h₁ : Ends owed m₁)
+    (h₂ : Ends owed m₂) : Ends owed (if c then m₁ else m₂) := by split <;> assumption
+theorem ends_array (owed : Nat) :
+    Ends owed (do let n ← u32; let _ ← guardCount (n + owed) MIN_VALUE_BYTES
+                  if n = 0 then pure (Step.value (.list [])) else pure (Step.opened n)) := by
   intro r s r' h
   simp only [bind_apply] at h
   split at h
@@ -663,18 +695,18 @@ theorem ends_array :
   · split at h
     · cases h
     · rename_i c r2 hg
-      obtain ⟨rfl, rfl, hb⟩ := guardCount_bound hg
+      obtain ⟨_, rfl, hb⟩ := guardCount_bound hg
       split at h
       · cases h; intro n hn; cases hn
       · cases h; intro n hn; cases hn; simp [MIN_VALUE_BYTES] at hb; constructor <;> omega
 
-theorem ends_readBody (utf8 : Bytes → Bool) (t : Nat) : Ends (readBody utf8 t) := by
+theorem ends_readBody (utf8 : Bytes → Bool) (owed t : Nat) : Ends owed (readBody utf8 owed t) := by
   unfold readBody
-  refine ends_ite (ends_pure_value _) (ends_ite (ends_value _ _) (ends_ite (ends_value _ _)
-    (ends_ite (ends_value _ _) (ends_ite (ends_value _ _) (ends_ite ends_array
-    (ends_ite (ends_fail _) (ends_ite ?_ (ends_ite ?_
-    (ends_ite (ends_value _ _) (ends_ite (ends_value _ _) (ends_ite (ends_value _ _)
-    (ends_ite (ends_value _ _) (ends_fail _)))))))))))))
+  refine ends_ite (ends_pure_value _ _) (ends_ite (ends_value _ _ _) (ends_ite (ends_value _ _ _)
+    (ends_ite (ends_value _ _ _) (ends_ite (ends_value _ _ _) (ends_ite (ends_array _)
+    (ends_ite (ends_fail _ _) (ends_ite ?_ (ends_ite ?_
+    (ends_ite (ends_value _ _ _) (ends_ite (ends_value _ _ _) (ends_ite (ends_value _ _ _)
+    (ends_ite (ends_value _ _ _) (ends_fail _ _)))))))))))))
   · intro r s r' h
     simp only [bind_apply] at h
     split at h
@@ -693,21 +725,24 @@ theorem ends_readBody (utf8 : Bytes → Bool) (t : Nat) : Ends (readBody utf8 t)
         · simp at h; intro n hn; rw [← h.1] at hn; cases hn
 
 /-- A frame is only opened for a count that is non-zero and that the bytes
-still unread could hold at four bytes per child: this is the bound on each
-`ThinVec::with_capacity(n)` (`value.rs:227`). -/
-theorem readOne_opened_bound {utf8 : Bytes → Bool} {r : Bytes} {n : Nat} {r' : Bytes}
-    (h : readOne utf8 r = .ok (.opened n, r')) : 1 ≤ n ∧ 4 * n ≤ r'.length := by
+still unread could hold at four bytes per child *together with* the `owed`
+siblings: this is the bound on each `ThinVec::with_capacity(n)` (`value.rs:245`). -/
+theorem readOne_opened_bound {utf8 : Bytes → Bool} {owed : Nat} {r : Bytes} {n : Nat} {r' : Bytes}
+    (h : readOne utf8 owed r = .ok (.opened n, r')) : 1 ≤ n ∧ 4 * (n + owed) ≤ r'.length := by
   rw [readOne_eq] at h
   simp only [bind_apply] at h
   split at h
   · cases h
-  · exact ends_readBody utf8 _ _ _ _ h n rfl
+  · exact ends_readBody utf8 owed _ _ _ _ h n rfl
 
 /-- Every open frame is waiting on at least one child. -/
 def FramesOk (st : List Frame) : Prop := ∀ f ∈ st, 1 ≤ f.left
 
+/-- The inner loop never underflows `left`, and when it hands back a stack that
+still waits (`.more`), exactly one owed child has just been supplied: that is
+why `owed -= 1` there never underflows. -/
 theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
-    deliver v st ≠ .panic ∧ ∀ st', deliver v st = .more st' → FramesOk st'
+    deliver v st ≠ .panic ∧ ∀ st', deliver v st = .more st' → FramesOk st' ∧ owedOf st' + 1 = owedOf st
   | v, [], _ => by simp [deliver]
   | v, f :: st, h => by
     have hf : 1 ≤ f.left := h f (by simp)
@@ -715,73 +750,93 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
     simp only [deliver]
     rw [if_neg (by omega)]
     split
-    · refine ⟨by simp, ?_⟩
+    · rename_i hgt
+      refine ⟨by simp, ?_⟩
       intro st' he; cases he
-      intro g hg; simp at hg
-      rcases hg with rfl | hg
-      · simp; omega
-      · exact hst g hg
-    · exact deliver_ok _ st hst
+      refine ⟨?_, ?_⟩
+      · intro g hg; simp at hg
+        rcases hg with rfl | hg
+        · simp; omega
+        · exact hst g hg
+      · simp only [owedOf, List.map_cons, List.sum_cons]; omega
+    · rename_i hle
+      obtain ⟨h1, h2⟩ := deliver_ok _ st hst
+      refine ⟨h1, fun st' he => ?_⟩
+      obtain ⟨h3, h4⟩ := h2 st' he
+      refine ⟨h3, ?_⟩
+      simp only [owedOf, List.map_cons, List.sum_cons] at h4 ⊢
+      omega
 
-/-- **The decoder never panics**, on any input whatsoever — including the
-`*left -= 1` of `value.rs:178`, which would underflow on a frame of zero. -/
+/-- **The decoder never panics**, on any input whatsoever — neither the
+`*left -= 1` of `value.rs:190`, which would underflow on a frame of zero, nor
+#3267's `owed -= 1` (`value.rs:192`): `owed` is always `owedOf` the stack. -/
 theorem loop_noPanic (utf8 : Bytes → Bool) :
-    ∀ fuel st r, FramesOk st → loop utf8 fuel st r ≠ .error .panic
-  | 0, _, _, _ => by simp [loop]
-  | fuel + 1, st, r, hst => by
+    ∀ fuel st owed r, FramesOk st → owed = owedOf st → loop utf8 fuel st owed r ≠ .error .panic
+  | 0, _, _, _, _, _ => by simp [loop]
+  | fuel + 1, st, owed, r, hst, ho => by
     simp only [loop]
     split
-    · rename_i e he; intro h; cases h; exact (good_readOne utf8).2.1 r he
+    · rename_i e he; intro h; cases h; exact (good_readOne utf8 owed).2.1 r he
     · rename_i n r' hr
-      apply loop_noPanic utf8 fuel _ r'
-      intro f hf; simp at hf
-      rcases hf with rfl | hf
-      · exact (readOne_opened_bound hr).1
-      · exact hst f hf
+      have hn := (readOne_opened_bound hr).1
+      apply loop_noPanic utf8 fuel _ _ r'
+      · intro f hf; simp at hf
+        rcases hf with rfl | hf
+        · exact hn
+        · exact hst f hf
+      · simp only [owedOf, List.map_cons, List.sum_cons] at ho ⊢; omega
     · rename_i v r' _
       obtain ⟨hp, hm⟩ := deliver_ok v st hst
       split
       · simp
-      · rename_i st' hd; exact loop_noPanic utf8 fuel st' r' (hm st' hd)
+      · rename_i st' hd
+        obtain ⟨h1, h2⟩ := hm st' hd
+        simp only [show ¬(owed = 0) by omega, ↓reduceIte]
+        exact loop_noPanic utf8 fuel st' _ r' h1 (by omega)
       · rename_i hd; exact absurd hd hp
 
 /-- **The fuel is never what stops the decoder**: four bytes per turn, so
 `remaining / 4 + 1` turns always suffice. -/
 theorem loop_fuel_enough (utf8 : Bytes → Bool) :
-    ∀ fuel st r, r.length < 4 * fuel → loop utf8 fuel st r ≠ .error .outOfFuel
-  | 0, _, r, h => by simp at h
-  | fuel + 1, st, r, h => by
+    ∀ fuel st owed r, r.length < 4 * fuel → loop utf8 fuel st owed r ≠ .error .outOfFuel
+  | 0, _, _, r, h => by simp at h
+  | fuel + 1, st, owed, r, h => by
     simp only [loop]
     split
-    · rename_i e he; intro hh; cases hh; exact (good_readOne utf8).2.2 r he
+    · rename_i e he; intro hh; cases hh; exact (good_readOne utf8 owed).2.2 r he
     · rename_i n r' hr
       obtain ⟨p, rfl, hp⟩ := readOne_progress hr
-      exact loop_fuel_enough utf8 fuel _ r' (by simp at h; omega)
+      exact loop_fuel_enough utf8 fuel _ _ r' (by simp at h; omega)
     · rename_i v r' hr
       obtain ⟨p, rfl, hp⟩ := readOne_progress hr
       split
       · simp
-      · rename_i st' _; exact loop_fuel_enough utf8 fuel st' r' (by simp at h; omega)
+      · rename_i st' _
+        split
+        · simp
+        · exact loop_fuel_enough utf8 fuel st' _ r' (by simp at h; omega)
       · simp
 
 /-- `loop` only consumes. -/
 theorem loop_consumes (utf8 : Bytes → Bool) :
-    ∀ fuel st r v r', loop utf8 fuel st r = .ok (v, r') → ∃ pre, r = pre ++ r'
-  | 0, _, _, _, _, h => by simp [loop] at h
-  | fuel + 1, st, r, v, r', h => by
+    ∀ fuel st owed r v r', loop utf8 fuel st owed r = .ok (v, r') → ∃ pre, r = pre ++ r'
+  | 0, _, _, _, _, _, h => by simp [loop] at h
+  | fuel + 1, st, owed, r, v, r', h => by
     simp only [loop] at h
     split at h
     · cases h
     · rename_i n r1 hr
       obtain ⟨p, rfl, _⟩ := readOne_progress hr
-      obtain ⟨q, rfl⟩ := loop_consumes utf8 fuel _ _ _ _ h
+      obtain ⟨q, rfl⟩ := loop_consumes utf8 fuel _ _ _ _ _ h
       exact ⟨p ++ q, by simp⟩
     · rename_i w r1 hr
       obtain ⟨p, rfl, _⟩ := readOne_progress hr
       split at h
       · cases h; exact ⟨p, rfl⟩
-      · obtain ⟨q, rfl⟩ := loop_consumes utf8 fuel _ _ _ _ h
-        exact ⟨p ++ q, by simp⟩
+      · split at h
+        · cases h
+        · obtain ⟨q, rfl⟩ := loop_consumes utf8 fuel _ _ _ _ _ h
+          exact ⟨p ++ q, by simp⟩
       · cases h
 
 /-- **`Value::decode` on hostile bytes**: whatever `r` is, it neither panics nor
@@ -789,9 +844,9 @@ over-reads, and the modelling fuel is never the reason it stops. -/
 theorem decodeV_safe (utf8 : Bytes → Bool) (r : Bytes) :
     decodeV utf8 r ≠ .error .panic ∧ decodeV utf8 r ≠ .error .outOfFuel ∧
     ∀ v r', decodeV utf8 r = .ok (v, r') → ∃ pre, r = pre ++ r' :=
-  ⟨loop_noPanic utf8 _ [] r (by simp [FramesOk]),
-   loop_fuel_enough utf8 _ [] r (by omega),
-   fun v r' h => loop_consumes utf8 _ [] r v r' h⟩
+  ⟨loop_noPanic utf8 _ [] 0 r (by simp [FramesOk]) (by simp [owedOf]),
+   loop_fuel_enough utf8 _ [] 0 r (by omega),
+   fun v r' h => loop_consumes utf8 _ [] 0 r v r' h⟩
 
 /-! ## What the primary can hand the encoder -/
 
@@ -895,37 +950,112 @@ theorem nest_decodes (utf8 : Bytes → Bool) (d : Nat) :
   simpa using this
 
 /-- The capacities `loop` asks for, turn by turn: `n` for every
-`Frame::List` it pushes (`ThinVec::with_capacity(n)`, `value.rs:227`). A
-mirror of `loop` that records instead of building, for the `#guard`s below. -/
-def capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Bytes → List Nat
-  | 0, _, _ => []
-  | fuel + 1, st, r =>
-    match readOne utf8 r with
+`Frame::List` it pushes (`ThinVec::with_capacity(n)`, `value.rs:245`). A
+mirror of `loop` that records instead of building. -/
+def capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Nat → Bytes → List Nat
+  | 0, _, _, _ => []
+  | fuel + 1, st, owed, r =>
+    match readOne utf8 owed r with
     | .error _ => []
-    | .ok (.opened n, r') => n :: capTrace utf8 fuel (⟨[], n⟩ :: st) r'
+    | .ok (.opened n, r') => n :: capTrace utf8 fuel (⟨[], n⟩ :: st) (owed + (n - 1)) r'
     | .ok (.value v, r') =>
       match deliver v st with
-      | .more st' => capTrace utf8 fuel st' r'
+      | .more st' => if owed = 0 then [] else capTrace utf8 fuel st' (owed - 1) r'
       | _ => []
 
+/-- **#3267: the reservations are linear in the input.** Whatever the bytes, the
+capacities one decode reserves sum to at most a quarter of what is left once the
+`owed` siblings are set aside: each claim is checked against the bytes no
+ancestor has already claimed. -/
+theorem capTrace_linear (utf8 : Bytes → Bool) :
+    ∀ fuel st owed r, 4 * (capTrace utf8 fuel st owed r).sum ≤ r.length - 4 * owed
+  | 0, _, _, _ => by simp [capTrace]
+  | fuel + 1, st, owed, r => by
+    simp only [capTrace]
+    split
+    · simp
+    · rename_i n r' hr
+      obtain ⟨hn, hb⟩ := readOne_opened_bound hr
+      obtain ⟨p, rfl, hp⟩ := readOne_progress hr
+      have ih := capTrace_linear utf8 fuel (⟨[], n⟩ :: st) (owed + (n - 1)) r'
+      simp only [List.sum_cons, List.length_append]
+      omega
+    · rename_i v r' hr
+      obtain ⟨p, rfl, hp⟩ := readOne_progress hr
+      split
+      · rename_i st' _
+        split
+        · simp
+        · have ih := capTrace_linear utf8 fuel st' (owed - 1) r'
+          simp only [List.length_append]
+          omega
+      · simp
+
+/-- From the start of a value: at most `remaining / 4` elements reserved in all. -/
+theorem decode_reserves_linear (utf8 : Bytes → Bool) (r : Bytes) :
+    4 * (capTrace utf8 (r.length + 1) [] 0 r).sum ≤ r.length := by
+  have := capTrace_linear utf8 (r.length + 1) [] 0 r
+  omega
+
 /-- `k` nested arrays, each claiming as many children as the bytes after it
-could hold at four bytes each — the most `guard_count` lets through. -/
+could hold at four bytes each — the most a per-level `guard_count` lets through
+(the Rust test `nested_lists_cannot_each_claim_the_whole_remaining_buffer`). -/
 def hostile (k : Nat) : Bytes :=
   (List.range k).flatMap fun i => w32 T_ARRAY ++ w32 (2 * (k - i - 1))
 
 #guard (hostile 100).length = 800
 
-def hostileCaps (k : Nat) : Nat := (capTrace (fun _ => true) (8 * k + 1) [] (hostile k)).sum
+/-! ### Before #3267: the per-level guard (history) -/
 
--- …so the *sum* of the capacities is quadratic in the input:
--- `k (k - 1)` elements from `8 k` bytes. At 16 bytes per `Value` (the Rust
--- `size_of`), 8 KB of input reserves ~16 MB, 1 MB reserves ~256 GB.
-#guard hostileCaps 10 = 90
-#guard hostileCaps 100 = 9900
-#guard hostileCaps 1000 = 999000
--- The decode still fails — the claims are never met — but the reservations
--- have all been made by then.
-#guard match decodeV (fun _ => true) (hostile 100) with | .error (.eof _ _) => true | _ => false
+/-- `read_one`'s array arm before #3267: `guard_count(n, MIN_VALUE_BYTES)`, the
+claim checked against the remainder alone. Every other arm is unchanged. -/
+def pre3267_readOne (utf8 : Bytes → Bool) : R Step := do
+  let t ← u32
+  if t = T_ARRAY then do
+    let n ← u32
+    let n ← guardCount n MIN_VALUE_BYTES
+    if n = 0 then pure (.value (.list [])) else pure (.opened n)
+  else readBody utf8 0 t
+
+/-- `capTrace` over the pre-#3267 decoder (no `owed`). -/
+def pre3267_capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Bytes → List Nat
+  | 0, _, _ => []
+  | fuel + 1, st, r =>
+    match pre3267_readOne utf8 r with
+    | .error _ => []
+    | .ok (.opened n, r') => n :: pre3267_capTrace utf8 fuel (⟨[], n⟩ :: st) r'
+    | .ok (.value v, r') =>
+      match deliver v st with
+      | .more st' => pre3267_capTrace utf8 fuel st' r'
+      | _ => []
+
+def pre3267_hostileCaps (k : Nat) : Nat := (pre3267_capTrace (fun _ => true) (8 * k + 1) [] (hostile k)).sum
+
+/-- **Before #3267 the reservations were quadratic**: 80 bytes of `hostile 10`
+reserved 90 elements, past the 20 a linear bound allows. -/
+theorem pre3267_hostile_quadratic : pre3267_hostileCaps 10 = 90 := by decide
+
+-- …`k (k - 1)` elements from `8 k` bytes. At 16 bytes per `Value` (the Rust
+-- `size_of`), 1 MB of input reserved ~256 GB; the Rust test measured 2.3 GB RSS.
+#guard pre3267_hostileCaps 100 = 9900
+#guard pre3267_hostileCaps 1000 = 999000
+
+/-! ### On main: refused at the second level -/
+
+def hostileCaps (k : Nat) : Nat := (capTrace (fun _ => true) (8 * k + 1) [] 0 (hostile k)).sum
+
+/-- The first level's claim passes; the second level's children and the first
+level's remaining siblings cannot both fit, so it is refused up front. -/
+theorem hostile_refused_second_level :
+    capTrace (fun _ => true) 81 [] 0 (hostile 10) = [18] ∧
+    (match decodeV (fun _ => true) (hostile 10) with
+     | .error e => e == .implausible 33 64 | .ok _ => false) = true := by
+  decide
+
+#guard capTrace (fun _ => true) 8001 [] 0 (hostile 1000) = [1998]
+-- `ImplausibleCount` with 16 bytes consumed, as the Rust test asserts.
+#guard match decodeV (fun _ => true) (hostile 1000) with
+  | .error (.implausible _ rem) => rem == 8000 - 16 | _ => false
 
 -- Bit-exact floats: NaN payloads and signed zero go through untouched, because
 -- a float *is* its bit pattern on this wire.

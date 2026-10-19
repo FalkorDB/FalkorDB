@@ -7,12 +7,12 @@ and returns the old one, keeping its slot.
 
 | here | there |
 | --- | --- |
-| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs:22); `from_vec` (orderset.rs:34) is the identity |
-| `insertS`       | `OrderSet::insert` (orderset.rs:38) |
-| `removeS`       | `OrderSet::remove` (orderset.rs:52) — `position` then `Vec::remove` |
-| `containsS`     | `OrderSet::contains` (orderset.rs:75) |
-| `indexOf`       | `OrderSet::get_index_of` (orderset.rs:100) |
-| `fromListS`     | `FromIterator` (orderset.rs:121), `extend` (orderset.rs:87) |
+| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs:22); `from_vec` (orderset.rs:42) drops later duplicates since #2905 (`OrderSetExtra.fromVec`) |
+| `insertS`       | `OrderSet::insert` (orderset.rs:54) |
+| `removeS`       | `OrderSet::remove` (orderset.rs:68) — `position` then `Vec::remove` |
+| `containsS`     | `OrderSet::contains` (orderset.rs:91) |
+| `indexOf`       | `OrderSet::get_index_of` (orderset.rs:116) |
+| `fromListS`     | `FromIterator` (orderset.rs:137), `extend` (orderset.rs:103) |
 | `List` `=`      | `#[derive(PartialEq)]` (orderset.rs:21) — order-*sensitive* |
 
 There is no `swap_remove` in either `OrderSet` or `OrderMap`: every removal is
@@ -26,22 +26,22 @@ variable {α : Type}
 section Defs
 variable [BEq α]
 
-/-- orderset.rs:38 -/
+/-- orderset.rs:54 -/
 def insertS : List α → α → List α × Option α
   | [], x => ([x], none)
   | v :: t, x => if v == x then (x :: t, some v) else let r := insertS t x; (v :: r.1, r.2)
 
-/-- orderset.rs:52 -/
+/-- orderset.rs:68 -/
 def removeS : List α → α → List α
   | [], _ => []
   | v :: t, x => if v == x then t else v :: removeS t x
 
-/-- orderset.rs:75 -/
+/-- orderset.rs:91 -/
 def containsS : List α → α → Bool
   | [], _ => false
   | v :: t, x => if v == x then true else containsS t x
 
-/-- orderset.rs:100 -/
+/-- orderset.rs:116 -/
 def indexOf : List α → α → Option Nat
   | [], _ => none
   | v :: t, x => if v == x then some 0 else (indexOf t x).map (· + 1)
@@ -236,11 +236,12 @@ end Props
 
 /-! ## Counterexamples
 
-* `from_vec` does not deduplicate (orderset.rs:34). With a duplicate, `remove`
-  leaves the element in: `containsS_removeS` needs `Nodup`.
-  (Rust: `graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`.)
-  The one in-tree caller (`reorder_labels.rs:41`) passes a permutation of an
-  existing `OrderSet`, so it is `Nodup` and safe.
+* `containsS_removeS` needs `Nodup`: with a duplicate, `remove` drops only the
+  first copy. Before #2905 `from_vec` did not deduplicate, so it could build
+  such a set (`OrderSetExtra.pre2905_fromVec_dup_survives_remove`; Rust then:
+  `graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`). Since #2905
+  it drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
+  `containsS_removeS_fromVec`), so every constructor yields a `Nodup` list.
 * The derived `PartialEq` is list equality, so `{a, b} ≠ {b, a}` — unlike
   `OrderMap`, whose `==` ignores order (`OrderMapModel.eqM_iff_perm`). -/
 

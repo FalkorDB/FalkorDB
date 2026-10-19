@@ -14,16 +14,15 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 **1. Can a crafted `GRAPH.RESTORE` payload crash the server?**
 
-**Yes, today.** Every GraphBLAS call returns a status code. A wrapper either `assert_eq!`s it (a panic, which in the module is a process exit), `debug_assert_eq!`s it (ignored in release), or returns it as an `Err`.
+**Not through a corrupt id blob any more: #2996 fixed it.** Every GraphBLAS call returns a status code. A wrapper either `assert_eq!`s it (a panic, which in the module is a process exit), `debug_assert_eq!`s it (ignored in release), or returns it as an `Err`.
 
-- `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` `assert_eq!` on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on a corrupt blob.
-- `decodeBlob_is_dos`, `decodeU64_is_dos` and `assertPanic_deserialize_dos` prove that the error is reachable and kills the process.
-- `Vector::<bool>::decode` already does it right: `decodeBool_safe` and `decodeBool_never_dies` prove no blob can crash through it.
-- `hardened_vs_blob_on_invalid_object` puts the two side by side: the same code is an error in one wrapper and a crash in the other. The fix is to make `decode_blob` propagate like `decode`.
+- Before #2996, `Vector::<bool>::decode_blob` and `Vector::<u64>::decode` `assert_eq!`ed on `GxB_Vector_deserialize`, which returns `GrB_INVALID_OBJECT` on a corrupt blob. `pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos` and `assertPanic_deserialize_dos` prove that the error was reachable and killed the process.
+- On main both return the code as an `Err`, and pass the expected type so a blob of the wrong type is refused too. `decodeBlob_never_dies`, `decodeU64_never_dies` and `decodeBlob_safe_on_reachable` prove no code can crash through them; `hardened_eq_blob` says `decode_blob` now behaves exactly like the already-hardened `Vector::<bool>::decode` (`decodeBool_safe`, `decodeBool_never_dies`).
+- #2996 also made `Tensor::decode` refuse delta layers whose size differs from the base: `checkLayers_merge_in_bounds` proves an accepted payload only merges entries inside the base (`pre2996_accepts_out_of_bounds_delta` is the old behaviour).
 
 **2. Can a decoded tensor break its own invariant?**
 
-**Yes.** `Tensor::decode` does not check that a pair with an `me` row is marked as a multi-edge.
+**Yes, still on main.** `Tensor::decode` does not check that a pair with an `me` row is marked as a multi-edge.
 
 - `edgeCount_no_panic` and `edgeCount_value` prove `edge_count` cannot underflow while the invariant `Wf` holds.
 - `orphan_row_breaks_wf` and `orphan_row_panics` show the exact state a crafted payload produces, in which `edge_count` panics.
@@ -59,8 +58,10 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 
 | Theorem | In plain words | File |
 |---|---|---|
-| `decodeBlob_is_dos`, `decodeU64_is_dos`, `assertPanic_deserialize_dos` | A corrupt blob reaches an `assert_eq!` and kills the server | `Codes.lean` |
-| `decodeBool_safe`, `hardened_vs_blob_on_invalid_object` | The hardened decoder turns the same code into an error | `Codes.lean` |
+| `decodeBlob_never_dies`, `decodeU64_never_dies` | Since #2996 no status code from a corrupt blob kills the server | `Codes.lean` |
+| `pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos` | History: before #2996 a corrupt blob reached an `assert_eq!` and killed the server | `Codes.lean` |
+| `checkLayers_merge_in_bounds` | `Tensor::decode` only merges delta entries inside the base (#2996) | `Decode.lean` |
+| `encodeM_no_heap_addresses` | The encoded container header carries no heap address (#3097) | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
 | `orphan_row_panics`, `more_me_rows_than_pattern_panics` | A decoded tensor with an orphan `me` row makes `edge_count` panic | `Decode.lean` |
 | `never_double_free`, `race_leaks` | Two concurrent drops never double-free but can leak | `Own.lean` |
@@ -68,7 +69,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
 | `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `Bulk.lean` |
 | `fromSortedIndices_spec` | `from_sorted_indices` builds exactly the indicator vector of its input | `Bulk.lean` |
-| `grown_rejects_shrink`, `iterExpand_eq_flatMap` | `grown` refuses a shrink; the tensor iterator expands each pair to its edge ids | `Misc.lean` |
+| `grown_rejects_shrink`, `resize_clamp_grownOk`, `iterExpand_eq_flatMap` | `grown` refuses a shrink, and `Tensor::resize`'s clamped dims (#3250) always pass that check; the tensor iterator expands each pair to its edge ids | `Misc.lean` |
 
 ### How `countInRows_spec` is proved
 
@@ -88,11 +89,11 @@ The bug theorems are smaller. `Disposition.run` models what each style of status
 
 ## Bugs found
 
-The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). The code each bug cites is unchanged on main (0f45a8685).
+The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main 1d15bf713.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `decodeBlob_is_dos`, `decodeU64_is_dos` | A corrupt multi-edge blob in `GRAPH.RESTORE`, an RDB or a full sync hits `assert_eq!` on `GxB_Vector_deserialize` and the server exits (confirmed live with a truncated COPY payload) | **Open** |
+| 1 | `pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos` | A corrupt multi-edge blob in `GRAPH.RESTORE`, an RDB or a full sync hit `assert_eq!` on `GxB_Vector_deserialize` and the server exited (confirmed live with a truncated COPY payload) | **Fixed by #2996** (`decodeBlob_never_dies`) |
 | 2 | `orphan_row_panics`, `orphan_row_breaks_wf` | `Tensor::decode` accepts an `me` row with no forward pair. `iter_edges` then yields a phantom edge, `edge_count` panics, and the restored graph cannot be saved | **Open** |
 | 3 | — (Rust test only) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
 | 4 | `race_leaks` | Two `Matrix` clones dropped concurrently can both see a count of 2, so the GraphBLAS matrix is never freed (19 of 200,000 pairs leaked in the test) | **Open** (`never_double_free`: a leak, never a double free) |
@@ -100,7 +101,7 @@ The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md
 
 Also noted, not confirmed:
 
-- `Matrix` encode writes the raw `GxB_Container`, live heap addresses included, into DUMP and COPY payloads.
+- `Matrix` encode wrote the raw `GxB_Container`, live heap addresses included, into DUMP and COPY payloads. **Fixed by #3097**: `encodeM_no_heap_addresses` (history `pre3097_encode_leaks_heap_address`). `Matrix::decode` still copies the payload's `*_future` pointer arrays into the live container unchecked; it relies on GraphBLAS never reading them (`PtrBlind`).
 - Every mutating call is only `debug_assert`ed, so a GraphBLAS failure there is silently ignored in release.
 
 There are no CONDITIONAL rows.
@@ -113,10 +114,10 @@ There are no CONDITIONAL rows.
 | `Index.lean` | `GrB_Index` casts, `GB_NMAX`, `ME_DIM`; the #2892 boundary |
 | `Own.lean` | The `Arc<GrB_Matrix>` drop protocol as a small-step machine over every two-owner interleaving |
 | `RowIter.lean` | `matrix::Iter` `seek`/`next` over a row range |
-| `Codes.lean` | Each deserialize wrapper's disposition; bug 1 |
-| `Decode.lean` | `edge_count`'s checked arithmetic and the decode gap; bug 2 |
+| `Codes.lean` | Each deserialize wrapper's disposition; bug 1 and its #2996 fix |
+| `Decode.lean` | `edge_count`'s checked arithmetic and the decode gap (bug 2); the #2996 layer-size check |
 | `Misc.lean` | `grown`/`resize` policy, `vector::Iter`, the multi-edge `Iter` expansion |
-| `Glue.lean` | Operator/type selection, the descriptor table, accessors, encode round trip |
+| `Glue.lean` | Operator/type selection, the descriptor table, accessors, encode round trip, the #3097 header scrub |
 | `Serial.lean` | `EncodeState::from_u64` and the `Encode`/`Decode` trait contract |
 | `Bulk.lean` | `from_sorted_indices`, `Vector::<u64>::sum`/`ptr`, `count_in_rows` (#3022) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

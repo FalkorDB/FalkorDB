@@ -126,7 +126,7 @@ theorem childIndex_le (ss : List E) (x : E) : childIndex ss x ≤ ss.length := b
   | nil => simp [childIndex_nil]
   | cons s ss ih => rw [childIndex_cons]; split <;> simp <;> omega
 
-/-- **Routing** (`Branch::child_index`, `node.rs:186`). An `x` within the chain's bounds goes to a
+/-- **Routing** (`Branch::child_index`, `node.rs:201`). An `x` within the chain's bounds goes to a
     child whose own bounds contain it; replacing that child by any chain over the same bounds keeps
     the whole chain valid (the one-hole context used by insert and remove). -/
 theorem COK_route :
@@ -158,7 +158,7 @@ theorem COK_route :
       simp only [List.take_zero, List.nil_append, List.drop_zero, List.drop_succ_cons]
       exact (COK_append (COK_len hm)).2 ⟨hm, h.2⟩
 
-/-- Cutting a chain at child `m` (used by every branch split: `node.rs:347-350`, `:405-410`). -/
+/-- Cutting a chain at child `m` (used by every branch split: `node.rs:362-365`, `:420-425`). -/
 theorem COK_split {lo hi : Nat} {ss : List E} {ns : List Node} (h : COK P lo ss ns hi)
     (m : Nat) (hm0 : 0 < m) (hm : m < ns.length) :
     ∃ (hs : m - 1 < ss.length),

@@ -25,27 +25,27 @@ graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels), removeOp_no_dup_push
-graph/src/graph/graph.rs	node_id_bound	1609	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	relationship_id_bound	1615	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	create_nodes	1648	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
-graph/src/graph/graph.rs	set_nodes_attributes	1763	PROVEN	via insert_attrs: Span.mergeSpan_correct
-graph/src/graph/graph.rs	import_node_attrs	1800	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	import_node_attrs_resolved	1848	MODELLED	bulk path, no null filter
-graph/src/graph/graph.rs	import_relationship_attrs	1957	PROVEN	via import_attrs: Props.read_your_writes_new
-graph/src/graph/graph.rs	set_relationships_attributes	2762	PROVEN	via insert_attrs: Span.mergeSpan_correct
-graph/src/graph/graph.rs	set_node_labels_product	2043	AXIOMATISED	GraphBLAS assign as set product
-graph/src/graph/graph.rs	set_nodes_labels_bulk	2122	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
-graph/src/graph/graph.rs	remove_nodes_labels	2168	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
-graph/src/graph/graph.rs	delete_nodes	2202	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
-graph/src/graph/graph.rs	create_relationships_bulk	2596	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_relationships	2855	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	delete_implicit_edges	2990	NOT COVERED	tensor (proofs/versioned_matrix)
-graph/src/graph/graph.rs	get_or_create_node_attr_id	1881	NOT COVERED	name interning
-graph/src/graph/graph.rs	get_or_create_rel_attr_id	1950	NOT COVERED	name interning
-graph/src/graph/graph.rs	commit_index	3801	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index	3824	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_edge_index_locked	3836	NOT COVERED	RediSearch index boundary
-graph/src/graph/graph.rs	commit_index_kind	3912	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	node_id_bound	1623	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	relationship_id_bound	1629	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	create_nodes	1662	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	set_nodes_attributes	1777	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	import_node_attrs	1814	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	import_node_attrs_resolved	1862	MODELLED	bulk path, no null filter
+graph/src/graph/graph.rs	import_relationship_attrs	1971	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	set_relationships_attributes	2776	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_node_labels_product	2057	AXIOMATISED	GraphBLAS assign as set product
+graph/src/graph/graph.rs	set_nodes_labels_bulk	2136	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	remove_nodes_labels	2182	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	delete_nodes	2216	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
+graph/src/graph/graph.rs	create_relationships_bulk	2610	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2869	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	3004	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1895	NOT COVERED	name interning
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	1964	NOT COVERED	name interning
+graph/src/graph/graph.rs	commit_index	3815	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	3838	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	3850	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	3926	NOT COVERED	RediSearch index boundary
 graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
 graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
 graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors

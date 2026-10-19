@@ -69,7 +69,7 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 0f45a8685: the header's last re-target (cab3cf192) lists bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 1d15bf713: the header's re-targets (cab3cf192, 1d15bf713) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|

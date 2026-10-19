@@ -10,9 +10,9 @@ GraphBLAS-spec meaning); the Rust around them is proved.
 | here | there |
 | --- | --- |
 | `fromSortedIndices` | `Vector::<bool>::from_sorted_indices` (vector.rs:149-171): `Self::new(nrows)`, early return on empty, else one `GxB_Vector_build_Scalar` of an iso `true` scalar |
-| `VecU.ptr`          | `Vector::<u64>::ptr` (vector.rs:488) |
-| `VecU.sum`          | `Vector::<u64>::sum` (vector.rs:494): `let mut sum = 0; GrB_Vector_reduce_UINT64(&sum, NULL, PLUS_MONOID, v, NULL)` |
-| `countInRows`       | `Matrix::count_in_rows` (matrix.rs:774-792): `w = Vector::<u64>::new(ncols)`, `GrB_mxv(w, NULL, NULL, PLUS_PAIR_UINT64, A, rows, DESC_T0)`, `w.sum()` |
+| `VecU.ptr`          | `Vector::<u64>::ptr` (vector.rs:492) |
+| `VecU.sum`          | `Vector::<u64>::sum` (vector.rs:498): `let mut sum = 0; GrB_Vector_reduce_UINT64(&sum, NULL, PLUS_MONOID, v, NULL)` |
+| `countInRows`       | `Matrix::count_in_rows` (matrix.rs:788-806): `w = Vector::<u64>::new(ncols)`, `GrB_mxv(w, NULL, NULL, PLUS_PAIR_UINT64, A, rows, DESC_T0)`, `w.sum()` |
 
 `BulkSpec` (GraphBLAS user guide): `GxB_Vector_build_Scalar` into an empty vector
 stores exactly the given (distinct, in-range) indices; `GrB_mxv` with `DESC_T0`
@@ -74,17 +74,17 @@ theorem fromSortedIndices_spec (G : BulkSpec) (nrows : Nat) (indices : List Nat)
   · rename_i h; rw [List.isEmpty_iff.mp h]
   · exact G.build_spec nrows indices hs hb
 
-/-- `Vector::<u64>::ptr` (vector.rs:488): the handle. -/
+/-- `Vector::<u64>::ptr` (vector.rs:492): the handle. -/
 def VecU.ptr (w : VecU) : Nat := w.handle
 theorem VecU.ptr_eq (w : VecU) : w.ptr = w.handle := rfl
 
-/-- `Vector::<u64>::sum` (vector.rs:494). -/
+/-- `Vector::<u64>::sum` (vector.rs:498). -/
 def VecU.sum (G : BulkSpec) (w : VecU) : Nat := G.reduce w
 
 theorem VecU.sum_spec (G : BulkSpec) (w : VecU) : w.sum G = ((List.range w.n).map w.val).sum :=
   G.reduce_spec w
 
-/-- `Matrix::count_in_rows` (matrix.rs:774). -/
+/-- `Matrix::count_in_rows` (matrix.rs:788). -/
 def countInRows (G : BulkSpec) (A : MatC) (rows : VecB) : Nat := (G.mxvT A rows).sum G
 
 theorem sum_map_add' (l : List Nat) (f g : Nat → Nat) :

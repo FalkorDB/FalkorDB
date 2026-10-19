@@ -1,9 +1,13 @@
 import FalkorCowBTree.Extract
+import FalkorCowBTree.BatchWF
+import FalkorCowBTree.Assert
 
 /-!
-# Bug 3 (NEW with #2278): `remove_batch` leaves a single-child non-root branch, at any `BRANCH_MAX`
+# Bug 3 (W7-btree-1, introduced by #2278, FIXED by #3283 799968a8b): `remove_batch` left a single-child
+# non-root branch, at any `BRANCH_MAX`
 
-`Node::remove_batch` (`node.rs:483-538`) repairs under-full children with `merge_underfull`, one level
+HISTORY (the `pre3283_*` theorems, on the pre-#3283 model `pre3283_removeBatchTree` in `Batch.lean`).
+`Node::remove_batch` (`node.rs:483-538` before #3283) repaired under-full children with `merge_underfull`, one level
 at a time. A branch `X` that ends with one child is flagged under-full (`1 < BRANCH_MAX / 2` for
 `BRANCH_MAX >= 4`) — but only its parent `P` can repair it, and if `P` itself ends with `X` as its
 *only* child, `P`'s `merge_underfull` loop does not run (`children.len() > 1`, `node.rs:153`). `P` is
@@ -28,11 +32,13 @@ assert!(t.remove(32, 0));      // leaves an empty non-root leaf (`leaves()` list
 t.insert_batch(&[(0, 1), (95, 1)]);   // panics: "range end index 8 out of range for slice of length 0"
 ```
 
-Suggested fix: after `combine` merges two branches in the batch path, re-run `merge_underfull` over the
-merged node's children (or never return a one-child branch below the root: hand its lone child to the
-parent's merge).
+The fix (#3283, issue #3237) is the first suggestion made here: after each `combine` in `merge_underfull`,
+`merge_underfull_below` re-runs the repair over the produced node's children. The Rust test
+`remove_batch_never_leaves_a_single_child_branch` (`tests.rs:1640`) is the repro above.
 
-The theorems below replay the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`.
+The `pre3283_*` theorems replay the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`;
+`rb_remove_batch_fixed`, `rb_remove_batch_fixed_wf`, `rb_then_remove_fixed` replay the same input on
+main, and `removeBatchTree_wf_asserted` is the general statement (`BatchWF.lean`: `removeBatchTree_wf`).
 -/
 
 namespace CowBTree
@@ -50,21 +56,21 @@ def rb12 : Node :=
 theorem rb12_wf : TreeWF c24 3 rb12 := by
   simp [TreeWF, WFb, COK, Sorted, HI, W, c24, rb12, lf]
 
-/-- `remove_batch([5, 6, 7])`: the middle subtree keeps only `4`, under the branch `.branch [] [lf 4]`. -/
+/-- Before #3283, `remove_batch([5, 6, 7])`: the middle subtree keeps only `4`, under the branch `.branch [] [lf 4]`. -/
 def rb12b : Node :=
   .branch [4] [.branch [2] [.branch [1] [lf 0, lf 1], .branch [3] [lf 2, lf 3]],
                .branch [8, 10] [.branch [] [lf 4], .branch [9] [lf 8, lf 9], .branch [11] [lf 10, lf 11]]]
 
-theorem rb_remove_batch : removeBatchTree c24 3 rb12 [5, 6, 7] = some (rb12b, 3) := by
-  simp (config := {decide := true}) [removeBatchTree, removeBatch, route, subtract, stripEmpty, mergeUnderfull,
+theorem pre3283_rb_remove_batch : pre3283_removeBatchTree c24 3 rb12 [5, 6, 7] = some (rb12b, 3) := by
+  simp (config := {decide := true}) [pre3283_removeBatchTree, pre3283_removeBatch, route, subtract, stripEmpty, pre3283_mergeUnderfull,
     cws, combine, delAt, setAt, collapse, rb12, rb12b, lf, c24]
 
 /-- ...which is not a well-formed tree: a non-root branch with one child. -/
-theorem rb_remove_batch_not_wf : ¬ TreeWF c24 3 rb12b := by
+theorem pre3283_rb_remove_batch_not_wf : ¬ TreeWF c24 3 rb12b := by
   simp [TreeWF, WFb, COK, rb12b, lf]
 
-/-- The contents are still right (`removeBatchTree_spec`): only the shape is broken. -/
-theorem rb_remove_batch_content : toList 3 rb12b = [0, 1, 2, 3, 4, 8, 9, 10, 11] := by
+/-- The contents are still right (`pre3283_removeBatchTree_spec`): only the shape is broken. -/
+theorem pre3283_rb_remove_batch_content : toList 3 rb12b = [0, 1, 2, 3, 4, 8, 9, 10, 11] := by
   simp [toList, rb12b, lf]
 
 /-- One single-key `remove(4)` then leaves an empty non-root leaf as the leftmost page of the root's
@@ -73,11 +79,36 @@ def rb12c : Node :=
   .branch [4] [.branch [2] [.branch [1] [lf 0, lf 1], .branch [3] [lf 2, lf 3]],
                .branch [10] [.branch [8, 9] [.leaf [], lf 8, lf 9], .branch [11] [lf 10, lf 11]]]
 
-theorem rb_then_remove : remove c24 3 rb12b 4 = (rb12c, 3) := by rfl
+theorem pre3283_rb_then_remove : remove c24 3 rb12b 4 = (rb12c, 3) := by rfl
 
 /-- ...so `Node::min` of that child — computed by `pack_branches` for every non-first child whenever
     `insert_batch` repacks the root — is the out-of-bounds panic. -/
-theorem rb_min_panics : minOpt 2 (.branch [10] [.branch [8, 9] [.leaf [], lf 8, lf 9], .branch [11] [lf 10, lf 11]]) = none := by
+theorem pre3283_rb_min_panics : minOpt 2 (.branch [10] [.branch [8, 9] [.leaf [], lf 8, lf 9], .branch [11] [lf 10, lf 11]]) = none := by
   rfl
+
+/-! ## On main (#3283) -/
+
+/-- The same `remove_batch([5, 6, 7])` on main: the result is a well-formed tree with the same contents
+    (`#eval` shows the lone leaf `4` merged into the next subtree, `.branch [8, 9] [lf 4, lf 8, lf 9]`). -/
+theorem rb_remove_batch_fixed : ∃ t' h', removeBatchTree c24 3 rb12 [5, 6, 7] = some (t', h') ∧
+    TreeWF c24 h' t' ∧ toList h' t' = [0, 1, 2, 3, 4, 8, 9, 10, 11] := by
+  obtain ⟨t', h', he, hw, ht⟩ := removeBatchTree_wf c24 (by decide) 3 rb12 [5, 6, 7] rb12_wf (by decide)
+  exact ⟨t', h', he, hw, by rw [ht]; decide⟩
+
+/-- ...so a follow-up single-key `remove` (of any entry) keeps it well-formed: no empty page, no
+    `Node::min` panic (contrast `pre3283_rb_then_remove`, `pre3283_rb_min_panics`). -/
+theorem rb_then_remove_fixed (x : E) (hx : x < HI) : ∃ t' h', removeBatchTree c24 3 rb12 [5, 6, 7] = some (t', h') ∧
+    TreeWF c24 (remove c24 h' t' x).2 (remove c24 h' t' x).1 := by
+  obtain ⟨t', h', he, hw, _⟩ := rb_remove_batch_fixed
+  exact ⟨t', h', he, (remove_spec c24 (by decide) h' t' x hw hx).1⟩
+
+/-- **W7-btree-1 fixed, on every configuration the const assert admits**: `remove_batch` keeps
+    `TreeWF` and leaves exactly the entries not in the batch (`removeBatchTree_wf`, `4 ≤ BRANCH_MAX`
+    discharged by the assert). -/
+theorem removeBatchTree_wf_asserted (c : Cfg) (D : Nat) (ha : constAssert c.L c.B D = true) (h : Nat) (t : Node)
+    (batch : List E) (hw : TreeWF c h t) (hb : SortedLe batch) :
+    ∃ t' h', removeBatchTree c h t batch = some (t', h') ∧ TreeWF c h' t' ∧
+      toList h' t' = (toList h t).filter (fun e => decide (e ∉ batch)) :=
+  removeBatchTree_wf c (constAssert_B4 ha) h t batch hw hb
 
 end CowBTree

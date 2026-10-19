@@ -7,7 +7,7 @@ The contract that makes remove work is the **underflow flag**: `remove_one` retu
 `Some(false)` only if the returned node is again a *full* well-formed non-root node; with
 `Some(true)` the node may be *weak* (an empty leaf, or a branch with a single child) and the parent
 must repair it (`rebalance`). The flag is computed as `count < LEAF_MAX / 2` for a leaf and
-`children < BRANCH_MAX / 2` for a branch (`node.rs:197`, reported at `:473`). A weak branch has one child, so the
+`children < BRANCH_MAX / 2` for a branch (`node.rs:212`, reported at `:488`). A weak branch has one child, so the
 contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands since
 #2897 (`mod.rs:152-155`; `Assert.remove_spec_asserted`). Before it the assert only demanded 3; `Bugs.lean`
 shows the contract (and the tree) breaking there (`pre2897_b3_*`).
@@ -206,7 +206,7 @@ def CombPost (c : Cfg) (h : Nat) (a b : Node) (m1 m2 : Nat) : Combined → Prop
   | .one m => WFb c false h m m1 m2 ∧ toList h m = toList h a ++ toList h b
   | .two l s r => WFb c false h l m1 s ∧ WFb c false h r s m2 ∧ toList h l ++ toList h r = toList h a ++ toList h b
 
-/-- **`Node::combine` (`node.rs:369`)** on an underflowed node and a full sibling (either order). -/
+/-- **`Node::combine` (`node.rs:384`)** on an underflowed node and a full sibling (either order). -/
 theorem combine_spec (c : Cfg) : ∀ (h : Nat) (a b : Node) (m1 sep m2 : Nat),
     Weak c h a m1 sep → Weak c h b sep m2 → (WFb c false h a m1 sep ∨ WFb c false h b sep m2) →
     CombPost c h a b m1 m2 (combine c a sep b)
@@ -306,7 +306,7 @@ theorem flat_setAt_last (f : Node → List E) (cs : List Node) (j : Nat) (hi : j
       ((cs.take j).map f).flatten ++ f (cs.getD j default) ++ f x ++ ((cs.drop (j + 2)).map f).flatten := by
   rw [setAt_window_last cs j hi x default, flat_window f cs j hi]
 
-/-- **`Branch::rebalance` (`node.rs:204`)**: after child `i` came back weak (`c'`), combining it with a
+/-- **`Branch::rebalance` (`node.rs:219`)**: after child `i` came back weak (`c'`), combining it with a
     sibling yields a chain of full children over the same bounds and the same entries, one child
     shorter (merge) or the same length (borrow). -/
 theorem rebalance_spec (c : Cfg) (h : Nat) {lo hi : Nat} {seps : List E} {cs : List Node} (i : Nat) (c' : Node)
@@ -378,7 +378,7 @@ theorem rebalance_spec (c : Cfg) (h : Nat) {lo hi : Nat} {seps : List E} {cs : L
 
 /-! ## `Node::remove_one` -/
 
-/-- **Shape of `Node::remove_one` (`node.rs:456`)**: the returned node is weak, and full whenever the
+/-- **Shape of `Node::remove_one` (`node.rs:471`)**: the returned node is weak, and full whenever the
     underflow flag is clear. Needs `BRANCH_MAX >= 4` (see the module doc and `Bugs.lean`). -/
 theorem removeOne_shape (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x : Nat) (n' : Node) (u : Bool),
     WFb c r h n lo hi → removeOne c h n x = some (n', u) →

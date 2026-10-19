@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-17): proofs cite `origin/main` @ 0f45a8685.
+Current state (2026-10-19): proofs cite `origin/main` @ 1d15bf713.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -76,7 +76,7 @@ Most AXIOMATISED rows are bindgen `extern` declarations (GraphBLAS, LAGraph, Red
 | 12 | Parallel edges collapse when the edge or path variable is read outside the traverse's ancestors | #2896 | #2918 |
 | 13 | CowBTree `insert_batch` drops `(MAX,MAX)`; `BRANCH_MAX = 3` breaks `remove` | #2893 | #2897 |
 | 14 | The `versioned_matrix::Iter` lifetime (needs a design choice) | #2898 | — |
-| 15 | Unchecked contracts (`Cow`, `OrderSet`, `OrderMap`, `prepare_tiers`) | #2903 | #2905 |
+| 15 | Unchecked contracts (`Cow`, `OrderSet`, `OrderMap`, `prepare_tiers`) | #2903 | #2905 (merged) |
 
 Filed later, with no PR yet:
 
@@ -200,7 +200,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W3-conc-1**: the server hangs permanently once more than about 1024 queries are queued. The main thread holds the GIL and does a blocking send into the full pool queue (`threadpool.rs:59,96`, `graph_core.rs:1052`). C finishes 3000/3000. Lean: `pool_deadlock_reachable`; the fix is proven in `fixed_never_stuck`.
 - **W3-parser-1**: the shortestPath filter-skip loop never ends at EOF (`cypher.rs:1819-1845`). `RETURN shortestPath((a)-[{` spins a worker forever, and a handful of these block all graph queries.
 - **W3-planner-1**: the previous MATCH's WHERE is dropped when the next MATCH traverses from its variable (stitching at `planner/mod.rs:2710`, pruned by `select_scan_node.rs:239`). `… DELETE b` then deletes data that C does not.
-- **W3-gb-1**: a corrupt blob in GRAPH.RESTORE or an RDB panics the server via an `assert_eq!` on `GxB_Vector_deserialize` (`vector.rs:188`, `:219`; `tensor.rs:1586`).
+- **W3-gb-1**: a corrupt blob in GRAPH.RESTORE or an RDB panics the server via an `assert_eq!` on `GxB_Vector_deserialize` (`vector.rs:188`, `:219`; `tensor.rs:1586`). **Fixed by #2996 (d99861124)**: `decodeBlob_never_dies`, history `pre2996_decodeBlob_is_dos`.
 - **W3-conc-4**: a huge `k` in `db.idx.vector.queryNodes` runs `Vec::with_capacity(k)` and SIGSEGVs (`graph.rs:3744`, `:3799`).
 - **W3-algo-1**: forged `__falkor_type` entity markers in a UDF result are trusted (`type_convert.rs:229-236`). This panics the reply or creates a dangling edge.
 - **W3-algo-2**: SHUTDOWN after a main-thread UDF aborts, because ThreadJsState drop order frees the QuickJS runtime first (`js_context.rs:129-136`).
@@ -225,7 +225,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - `Tensor::decode` accepts an orphan `me` row;
   - `Matrix::decode` leaks 5 blocks per matrix;
   - concurrent Matrix drops leak;
-  - DUMP/COPY payloads may contain heap addresses (unverified).
+  - DUMP/COPY payloads may contain heap addresses (**fixed by #3097, cab41a8c5**: `encodeM_no_heap_addresses`). Unverified follow-up: `Matrix::decode` still copies the header's reserved `*_future` pointer arrays from the payload; safe only if GraphBLAS never reads or frees them.
 - **Redis layer**:
   - writes ignore the per-query TIMEOUT (`graph_core.rs:911`);
   - loose TIMEOUT/version/arity parsing;
@@ -285,7 +285,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-redis-2** (**fixed by #3252, cfe6e7945; closes #3239**; `pre3252_field_prefix_lost`, now `field_name_kept`) — an index on an attribute literally named `range:x` (or `vector:…`) comes back as an index on `x` after `DEBUG RELOAD` (`serializers/mod.rs:642-646`); C keeps `[range:x]`.
 - **W4-redis-3** — module-load arguments differ from C (redismodule-rs: case-sensitive names, booleans compared to `== "yes"`). `CMD_INFO YES` → 0 (C 1); `CMD_INFO garbage` loads (C refuses); `cache_size 10` and `ASYNC_DELETE yes` are ignored.
 - W4-redis-4 (minor) — GRAPH.BULK reply says "relations created"; C says "edges created".
-- #2537, wider: any truncated GRAPH.RESTORE payload calls `LoadStringBuffer(NULL)`, not only an empty one (PR #2996 may cover it; check).
+- #2537, wider: any truncated GRAPH.RESTORE payload calls `LoadStringBuffer(NULL)`, not only an empty one (#2996 does not cover it: it changes no RDB string-buffer path, so this is still open).
 - **W5-proc-1..3** (procedures, live vs C):
   - a lone `CALL db.idx.fulltext.createNodeIndex({label:'W'})` under GRAPH.QUERY fails with a misleading "graph.RO_QUERY is to be executed only on read-only queries" (`procedure_call.rs:67`);
   - `db.idx.fulltext.drop` on a missing index errors (C does nothing);
@@ -298,14 +298,18 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   Repros: a standalone Rust test against origin/main (not committed).
 - **W5-rdb-1** — RDB-loaded graphs ignore `CACHE_SIZE`: `redis_type.rs:64` hard-codes `DEFAULT_CACHE_SIZE = 25` and passes it at `:94` and `:842`. With `CACHE_SIZE 1`, after `DEBUG RELOAD` a q1, q2, q1 sequence reports "Cached execution: 1" (C 0).
 - #2537 refined: a GRAPH.RESTORE payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer` (`decoder/mod.rs:426` → `buffered_io.rs:212`); a cut inside a record errors cleanly. C crashes on both.
-- Theoretical: `uuid_v4` (`redis_type.rs:771`) uses `t ^ seq`, so virtual-key names can collide across calls (counters 2 and 3 at clocks 4 and 5 ns). A collision would lose a virtual key. Not reproduced.
+- Theoretical: `uuid_v4` (`redis_type.rs:771`) uses `t ^ seq`, so virtual-key names can collide across calls (counters 2 and 3 at clocks 4 and 5 ns). A collision would lose a virtual key. Not reproduced. **Fixed by #3286 (bf11a2774)**: graph_persist `counter_field_bijective`, `uuid_counter_distinct`; history `pre3286_uuid_collision_example`.
 - **W5-idx-2** (found while addressing review on PR #3087) — `CREATE VECTOR INDEX FOR (n:L) ON (n.emb)` with no OPTIONS returns an error to the client ("field type 0x0010 and the options block disagree about the vector half"), yet the index is still created, half-built. A node with a vecf32 then drops out of the other indexes on its label. #3087 now guards the drop; the half-created index on error is not fixed (PR #3094, which requires a dimension, may prevent it).
 - **W6-opt-1** (found reviewing PR #2845, pre-existing on main 89d68334a) — filter push-down gives an OPTIONAL MATCH inside a `CALL {}` body the outer query's variable ids, so the filter on `n` is pushed onto a row where that slot is unbound (`push_filters_down.rs:217`, `:238`). `MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id:3}) RETURN n.id AS nid } RETURN x.id, nid` → Rust "Variable n not found", C `[[1,3],[2,3],[3,3]]`; four variants fail the same way. Possibly related to #2728. Lean `pr2845_review: filter_pushed_through_boundary`. A trial fix (match `IR::Apply | IR::Optional(_)` and inherit `branch_output_variables(left)`) makes all five match C, and 166/166 related flow tests pass.
 - **W4-index-1** — a range index on an attribute that already has a fulltext index is never queried correctly. `build_query_node` takes the attribute's first field whatever its type (`index/mod.rs:1386,1411,1459,1471,1529,1590`). After `CREATE FULLTEXT INDEX … ON (n.s)` then `CREATE INDEX … ON (n.s)`, `n.s='foo'`, `n.s > 'c'`, `{s:'bar'}` and `n.s IN [...]` all return `[]` (C returns the rows). Fix: pick the field whose type is `IndexType::Range`. Lean `IndexerM.bug_range_after_fulltext`.
 - Unconfirmed: `create_rs_index` leaks index options on its NUL-byte error path.
-- **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
+- **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds. **Fixed by #3250 (2eacf0ece; closes #3246)**: `Tensor::resize` never shrinks and the RDB load keeps the saved size; `resizeT_edges`, `rebuild_never_shrinks`; history `pre3250_shrink_orphans_me`.
 
 ### Merged
+- 2026-10-19 on main (now 1d15bf713): #3267 (nested list claims bounded; closes #3266), #3298 (repeated CREATE_NODE id refused; closes #3247), #3250 (tensors never shrink; closes #3246), #3278 (no u32-overflowing compressed frame; closes #3276), #3283 (remove_batch never leaves a one-child branch; closes #3237), #3097 (matrix headers without heap addresses), #2996 (corrupt RESTORE/RDB payloads refused, not panicked on), #3286 (virtual-key names cannot collide; closes #3284), #2905 (Cow/OrderSet/OrderMap/prepare_tiers contracts; closes #2903). Proofs re-targeted: 35 projects green; 2589 PROVEN + 25 CONDITIONAL of 2615 non-FFI, non-test fns (99.0% PROVEN); 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: W7-btree-1 (`removeBatchTree_wf`), W4-matrix-1 (`resizeT_edges`), W3-gb-1 decode DoS (`decodeBlob_never_dies`), heap addresses in payloads (`encodeM_no_heap_addresses`), quadratic effects reservation (`capTrace_linear`), u32 frame length (`pre3278_wrapped_frame_unreadable`), repeated CREATE_NODE id, uuid `t ^ seq` collision (`uuid_counter_distinct`), deleted-id count overflow on decode (`countCheck_in_bounds`), `OrderSet` duplicates (`fromVec_nodup`), `prepare_tiers` underflow (`clampStarts_mono`).
+  - **Discharged: the 13 native_index CONDITIONAL rows are PROVEN.** cow_btree now proves `insert_batch`, `from_sorted` and `remove_batch` keep `TreeWF` (`insertBatch_wf`, `fromSorted_wf`, `removeBatchTree_wf`), so every tree the API can build is well-formed (`Reachable_wf_asserted`), and native_index `Contract.lean` shows each Rust tree operation equals its model on reachable trees.
+  - Still present: `Tensor::decode` accepts an orphan `me` row (`orphan_row_panics`; PR #3033 refuses it), the `Matrix::decode` component leak (#3080), the concurrent-drop leak (#3090), `vector::Iter` lifetime (#2898), #2537 (string-buffer path), release `Cow` one-directional isolation and `OrderMap::from_unique_keys` (debug-only on purpose).
 - 2026-10-17 on main (now 0f45a8685): #3252 (index on an attribute named `range:x` survives reload; closes #3239), #3335 (a parenthesised WHERE uses the index and NodeByIdSeek again; closes #3187, #3331), #3334 (UNIQUE enforced by index lookup; closes #3330), #3277 (deleted edge loses its type after a type registration; closes #3244), #3063 (bulk spans never overflow `Slot::len`; closes #2539, whose CREATE-error half, rejecting the query with C's error, remains open in substance). Proofs re-targeted: 36 projects green; 2569 PROVEN + 38 CONDITIONAL of 2608 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W4-graph-1 (`pre3277_*`; `getTypeIdMut_spec`, `type_cleared_after_registration`); W4-redis-2 (`pre3252_*`; `decField_encField` round-trips every name); bulk span overflow and repeated column (`pre3063_*`; `normResolved_fits`, `normResolved_get`, `resolved_duplicate_fixed`).
   - #3335: Paren is gone from bound trees. New PROVEN `ExprIR::and_of`/`or_of`/`flat` (`tv_andOf`, `scL_splice`, `flat_passes`); binder `bind_paren` (`(x)` binds exactly like `x`), `bind_andOr_paren`; planner `toPlan_correct` holds unchanged; columnar `eval_sound` holds without its Paren arm.
@@ -313,7 +317,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - To check live: the bulk caller drops `Null` values before dedup, so header `p,q,p` with values `(null,2,3)` keeps the second `p` (3); C's answer is unknown.
 - 2026-10-15 on main (now cab3cf192): #2897 (CowBTree BRANCH_MAX >= 4; closes #2893), #3285 (DOC_BYTES limited to readable widths; closes #3238), #3336 (UDF value nesting cap; security advisory GHSA-frmf-ffvc-mxx5). Proofs re-targeted: 37 projects green; 2565 PROVEN + 36 CONDITIONAL of 2602 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W1 #13 bug 2 (`constAssert_rejects_B3`, `remove_spec_asserted`); W7-btree-2 (`readWidth_admitted`, `admitted_fromPairs_roundtrip`); UDF conversion recursion (`fromJs_frames`/`toJs_frames`: at most cap+1 levels for any input, cyclic values included; `fromJs_eq_pre3336`: unchanged at or below the cap; `pre3336_self_array_overflows`).
-  - Still present: W7-btree-1 (`remove_batch` one-child branch, PR #3283), which the 13 native_index CONDITIONAL rows rest on.
+  - W7-btree-1 was still present here; fixed later by #3283 (see 2026-10-19).
   - New, model only, not confirmed live (`cap_asymmetry_vecf32`): the two UDF conversion directions count a VecF32 or Path leaf differently, so 1024 lists around a vecf32 pass `value_to_js` but are refused by `js_to_value` on the way back; an identity UDF returns a nesting error for that value (an error, not a crash).
 - 2026-10-14 on main (now b080a44c1): #3014 (bounded queues; closes #3013), #3290 (inline write vs queued write; closes #3093), #3102 (self-loop hop order; closes #2999), #3328 (module-load arguments like C; closes #3268), #3339 (value nesting cap on RDB/RESTORE decode, property writes and bulk insert; security advisory GHSA-mwvh-8fq5-x2j8, also #2722 for stored values). Proofs re-targeted: 37 projects green; 2559 PROVEN + 36 CONDITIONAL of 2596 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W3-conc-1 deadlock (`acquire_bounded`, `release_exactly_once`, `main_never_blocks`); #3093 (`one_commit_per_version`, `claimFork_on_committed`); W4-redis-3 / #3268 (`rust_c_same_accept`, `error_applies_nothing`; checked live against C); planner bug 4 / #2999 (`selfLoops_perm`, `deferred_after_binder`, `eq_reference` to the old loop); unbounded nesting (`decodeValue_refuses_past_cap`, `stored_roundtrip`, bulk `deep_refused`).
@@ -349,7 +353,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - Fixed and re-checked live: W2-index-5 (#3076), W2-index-6 (#3072); the UDF -0.0, constructor-key and vecf32-inf round trips (#3074); the `graph` global at LOAD (#3079); W1 #13 bug 1, `insert_batch` dropping `(MAX,MAX)` (#2278); and from #2390, the per-operator part of #2896 (UNWIND/CREATE/FOREACH/var-length reads) and the earlier `MATCH … WHERE` dropped under a traversal (#2972). W2-rewrites-4 now matches C (most likely fixed by #2845). W4-plan-4 no longer crashes on current builds, but the `parent().unwrap()` at `utilize_node_by_id.rs:106` is still there.
   - Still present: the sibling part of #2896 (CALL body, pattern comprehension), W2-traverse-1/2/3, W2-binder-2 / #2923, W6-opt-1, W4-plan-1/2/3/5, planner_build bugs 1, 2 and 4, W2-scan-1, W1 #13 bug 2 (BRANCH_MAX=3), W3-algo-1/2, W5-udf-1..4. The W3-conc-1 cite is now `graph_core.rs:1002`.
   - New bugs:
-    - **W7-btree-1** (latent; CowBTree has no production caller): `remove_batch` leaves a one-child non-root branch at any BRANCH_MAX ≥ 4; one later `remove` then makes `insert_batch` panic in `Node::min`. Lean `BugsBatch.lean`.
+    - **W7-btree-1** (latent; CowBTree has no production caller): `remove_batch` leaves a one-child non-root branch at any BRANCH_MAX ≥ 4; one later `remove` then makes `insert_batch` panic in `Node::min`. Lean `BugsBatch.lean`. **Fixed by #3283 (799968a8b)**: `removeBatchTree_wf`; history `pre3283_rb_*`.
     - **W7-btree-2** (latent): DOC_BYTES ∈ {3,5,6,7} passes the const assert, but `read_width` handles only 1/2/4/8, so `CowBTree::<256,256,3>` panics on its second insert. Lean `LeafAosD.docBytes3_*`.
     - **W7-scan-1**: `select_var_len_scan_node`'s leaf rewrite prunes a Filter wrapper: `MATCH (a) WHERE a.v=1 MATCH (a)-[*1..2]->(b:B {w:2})` returns an extra row. Predates #2390. Lean `ScanTree.vl_leaf_*`.
 - 2026-10-06 on main (now a9377c636): #2952 (closes #2926, W2-strlist-2), #3021 (closes #3020: GRAPH.CONFIG validation, arity, ASCII name folding, `ASYNC_DELETE` default 1, C's unknown-field text), #2845 (every `CALL {}` body gets an entry projection as a record boundary; closes #2601, #2602), plus #3170 and #2471 (build/tests only). Proofs re-targeted: 35 projects green, 2449/2449 non-FFI fns PROVEN, 0 unlisted. Counterexamples turned into correctness theorems with `pre<PR>_` historical notes: functions_str_list `listRemove_eq_spec` / `removeSpan_wf` (`pre2952_listRemove_end_overflows`); redis_layer `fixed3021_counterexamples`, `vkey_ok_nonneg`, `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `dotless_i_not_folded` (`pre3021_*`); pr2845_review now models main (`pre2845_old_aliases`, `pre2845_bodyOld_empty`, `pre2845_emit_origin_lost_old`), and columnar proves `rows_only` / `has_origins` and the new `start_batch` arm. Still open: W6-opt-1 (push-down through the CALL boundary) and the UNION-branch scope alias (#3027).
@@ -367,7 +371,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 
 ### Re-check against main 2c874022a (2026-10-04, live Rust release build)
 - Still present: #2892 (fix in PR #2911, merge conflict resolved), #2924, W2-effects-1, W2-effects-2, W2-effects-3, W2-effects-4.
-- Fixed on main by #2846 (157d42ec1): a duplicate edge id inside one CREATE_EDGE record is now refused. Still present: a duplicate node id inside one CREATE_NODE (`[0,0]`) is silently de-duplicated.
+- Fixed on main by #2846 (157d42ec1): a duplicate edge id inside one CREATE_EDGE record is now refused. A duplicate node id inside one CREATE_NODE (`[0,0]`) was silently de-duplicated until #3298 (2bb51088b, #3247) made it refused (`createNode_repeat_refused`).
 - id_space is re-proven for the #2846 design (21/21 fns PROVEN, invariant `Inv` preserved by create/cancel/release).
 - Also still present on 2c874022a: #2876/W2-pending-1, W2-pending-2, W2-pending-3, W2-scan-2, W4-graph-1, W4-graph-2, W4-graph-3, W4-fn-1, #2769 (panic now at `graph.rs:3138`), #2776, W5-rdb-1 (#3161 did not touch the cache size), #2537.
 - Fixed by #3161: an RDB saved by Rust across several virtual keys now loads in C with the graph listed in GRAPH.LIST.
@@ -409,14 +413,14 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 12. **`IdList::from_segments`.** → #2919 / PR #2920.
 13. **CowBTree.** → #2893 / PR #2897.
 14. **The versioned-matrix iterator lifetime.** → #2898 (design needed).
-15. **One-directional copy-on-write and unchecked contracts.** → #2903 / PR #2905.
+15. **One-directional copy-on-write and unchecked contracts.** → #2903 / PR #2905 (merged 1d15bf713: `OrderSet` dedups in every build, `prepare_tiers` clamps, `Cow` asserts in debug across clones; release `Cow` and `OrderMap::from_unique_keys` stay unchecked on purpose).
 
 ### Unconfirmed / worth a look
-- A hostile nested `GRAPH.EFFECT` payload makes `Value::decode` reserve memory that grows with the square of the input size before failing.
+- ~~A hostile nested `GRAPH.EFFECT` payload makes `Value::decode` reserve memory quadratic in the input.~~ Fixed by #3267 (eaa65eeba): `capTrace_linear`, `decode_reserves_linear`; history `pre3267_hostile_quadratic`.
 - A duplicate roaring high key in an IdList bitmap: roaring-rs keeps the last partition, and CRoaring may keep the first.
-- A duplicate edge id inside one `CreateEdge` record is only caught by the final count check; a duplicate node id is silently deduplicated.
-- Compressed effect payloads of 4 GiB or more have their length truncated to u32 (`records.rs:1352`).
-- `Tensor::resize` never trims `me` on shrink (`tensor.rs:814-828`).
+- A duplicate edge id inside one `CreateEdge` record is only caught by the final count check; a duplicate node id is refused since #3298.
+- ~~Compressed effect payloads of 4 GiB or more have their length truncated to u32.~~ Fixed by #3278 (dcbd445d1): they ship uncompressed; history `pre3278_wrapped_frame_unreadable`.
+- ~~`Tensor::resize` never trims `me` on shrink.~~ Fixed by #3250: it never shrinks.
 
 ## Not covered / modelling limits
 - f64 arithmetic is abstract (no IEEE reasoning).

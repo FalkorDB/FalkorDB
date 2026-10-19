@@ -42,7 +42,7 @@ The exception is `from_unique_keys`, which checks uniqueness only with a `debug_
 
 **4. Is `OrderSet` a correct set?**
 
-Yes, under the same caveat. `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
+Yes, and since #2905 with no caveat: `from_vec`, the one constructor that could take duplicates, now drops later duplicates in every build (`fromVec_nodup`; first wins, order kept, `fromVec_sublist`), so `remove` after `from_vec` really removes (`containsS_removeS_fromVec`). On a duplicate-free vector, which every in-tree caller passes, it is still the identity (`fromVec_of_nodup`). `insert` never duplicates (`insertS_nodup`), `remove` removes (`containsS_removeS`, given no duplicates), and `get_index_of` shifts by exactly one for every element after a removed one (`indexOf_removeS`). Unlike `OrderMap`, `OrderSet`'s `=` is order-sensitive: it is the derived list equality.
 
 **5. Does string interning give one pointer per string, and keep it stable?**
 
@@ -52,7 +52,13 @@ Yes. `intern_injective` says two different strings never share a pointer. `inter
 
 Yes, in one direction. `newVersion_isolated` proves that after `v2 = v1.new_version()`, no sequence of writes or replaces through `v2` changes what `v1` reads. `siblings_isolated` proves the same for two versions taken from one committed value. This is the property MVCC needs: a read query holding the committed matrix never sees the write query's changes.
 
-The other direction does not hold, by design: writing through `v1` after taking `v2` changes what `v2` sees. MVCC relies on the committed version never being written once a new version exists.
+The other direction does not hold, by design: writing through `v1` (or a clone of it) after taking `v2` changes what `v2` sees (`release_old_write_leaks`, `release_clone_write_leaks`). MVCC relies on the committed version never being written once a new version exists.
+
+Since #2905 debug builds check that rule. `Cow` carries a `branched` flag shared by every clone; `new_version` sets it, and `deref_mut` asserts it is clear. The debug model (`DCow`, `dWrite`, ...) proves:
+
+- `dbg_write_through_branched_source_panics` and `dbg_write_through_clone_panics`: writing an owned version, or any clone of it, after `new_version` panics instead of leaking;
+- `dbg_new_version_write_ok` and `dbg_replace_then_write_ok`: the legitimate writes (through the new version, or after `replace`) never trip the assert;
+- `dbg_agrees_with_release`: whenever the debug build does not panic, it computes exactly what the release build does.
 
 ## The headline theorems
 
@@ -70,6 +76,8 @@ The other direction does not hold, by design: writing through `v1` after taking 
 | `indexM_panics_iff`, `indexS_panics_iff` | `map[&k]` and `set[i]` panic exactly when the key or index is absent | `OrderMapExtra.lean`, `OrderSetExtra.lean` |
 | `intern_injective`, `prune_keeps_held`, `reintern_fresh` | One pointer per string; held strings survive cleanup; no pointer reuse | `StringPool.lean` |
 | `newVersion_isolated` | Writes through a new version never reach the committed one | `Cow.lean` |
+| `dbg_write_through_branched_source_panics`, `dbg_agrees_with_release` | Debug builds refuse the one-directional leak and otherwise match release (#2905) | `Cow.lean` |
+| `fromVec_nodup`, `containsS_removeS_fromVec` | `OrderSet::from_vec` always builds a real set, so `remove` removes (#2905) | `OrderSetExtra.lean` |
 | `widthFor_fits`, `widthFor_minimal`, `narrow_lossless` | `width_for` picks the narrowest of 1/2/4/8 bytes that holds the maximum, and narrowing loses nothing | `NarrowInt.lean` |
 | `validate_ok_iff`, `isTooLong_of_validate` | A name is accepted iff its UTF-8 byte length is ≤ 512, and every rejection is recognised by `is_identifier_too_long` | `IdentifierLimits.lean` |
 
@@ -85,13 +93,13 @@ The only hypothesis is `v1.h < H.next`: `v1`'s handle was allocated before. Ever
 
 ## Bugs found
 
-None of these is reachable from Cypher today. They are contracts the code does not check, filed together as #2903 (PR #2905, not merged).
+None of these is reachable from Cypher today. They are contracts the code did not check, filed together as #2903. PR #2905 is merged (main 1d15bf713); the status column says what it changed.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `example` blocks at the end of `OrderMap.lean` | `OrderMap::from_unique_keys` checks uniqueness only in debug builds. In a release build, a duplicate key gives a map where `a == b` but `b != a`, and where `remove(k)` leaves `k` reachable. The in-tree callers build from stored attributes or from CSV headers deduplicated when the file is opened, so their keys are unique (not proven here) | Latent, #2903 |
-| 2 | `example` blocks at the end of `OrderSet.lean` | `OrderSet::from_vec` does not deduplicate; with a duplicate, `remove` leaves the element in (this is why `containsS_removeS` needs no duplicates). The one caller, `reorder_labels.rs`, passes a permutation of an existing set, so it is safe | Latent, #2903 |
-| 3 | `example` block at the end of `Cow.lean` | Copy-on-write isolation is one-directional: a write through the committed version after `new_version` is seen by the new version. MVCC never does this | Latent, by design, #2903 |
+| 1 | `example` blocks at the end of `OrderMap.lean` | `OrderMap::from_unique_keys` checks uniqueness only in debug builds. In a release build, a duplicate key gives a map where `a == b` but `b != a`, and where `remove(k)` leaves `k` reachable. The in-tree callers build from stored attributes or from CSV headers deduplicated when the file is opened, so their keys are unique (not proven here) | **Latent, documented:** #2905 keeps the check debug-only on purpose (a release check measured 1.2x to 5x slower) and documents the contract |
+| 2 | `pre2905_fromVec_dup_survives_remove` | `OrderSet::from_vec` did not deduplicate; with a duplicate, `remove` left the element in (this is why `containsS_removeS` needs no duplicates) | **Fixed by #2905:** `from_vec` drops later duplicates in every build (`fromVec_nodup`, `containsS_removeS_fromVec`, `fromVec_dup_removed`) |
+| 3 | `release_old_write_leaks`, `release_clone_write_leaks` | Copy-on-write isolation is one-directional: a write through the committed version (or a clone of it) after `new_version` is seen by the new version. MVCC never does this | **Latent, documented:** #2905 documents the contract and debug builds assert it (`dbg_write_through_branched_source_panics`, `dbg_write_through_clone_panics`); release unchanged |
 
 The Rust repros (`orderset_from_vec_duplicates`, `ordermap_from_unique_keys_duplicates`, `cow_isolation`) are in `graph/tests/lean_runtime_ds.rs`, which is kept locally and not committed (see [`../FINDINGS.md`](../FINDINGS.md)).
 
@@ -106,10 +114,10 @@ Also worth knowing, not filed as a bug: the examples after `hashed_pad` in `Row.
 | `BitSet.lean` | `BitSet` with an inline word and overflow words, the well-formedness invariant `WF` (every word < 2⁶⁴), set/test/clear/union/is_empty |
 | `OrderMap.lean` | `OrderMap` as a list of pairs; insert/remove/get, last-write-wins construction, `=` as permutation; the `from_unique_keys` counterexamples |
 | `OrderMapExtra.lean` | Constructors, accessors, `Index` (panics iff absent), `IntoIterator`, and `Hash` (`hash_consistent`) |
-| `OrderSet.lean` | `OrderSet` as a list; insert/remove/contains/`get_index_of`; the `from_vec` counterexamples |
-| `OrderSetExtra.lean` | Constructors, accessors, `clear`, `Index`, `IntoIterator` |
+| `OrderSet.lean` | `OrderSet` as a list; insert/remove/contains/`get_index_of`; why `remove` needs no duplicates |
+| `OrderSetExtra.lean` | Constructors (incl. the deduplicating `from_vec` and its `pre2905_` history), accessors, `clear`, `Index`, `IntoIterator` |
 | `StringPool.lean` | The pool as `(content, pointer)` entries plus a count of outside references; intern, prune, release and the invariant `WF` |
-| `Cow.lean` | `Cow` over a heap of handles; `newVersion_isolated`, `siblings_isolated` and the one-directional counterexample |
+| `Cow.lean` | `Cow` over a heap of handles; `newVersion_isolated`, `siblings_isolated`, the one-directional counterexample, and the #2905 debug `branched` flag |
 | `NarrowInt.lean` | `width_for` and the truncating cast it guards |
 | `IdentifierLimits.lean` | `validate_identifier_len` and `is_identifier_too_long` over UTF-8 byte length |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -118,13 +126,13 @@ The project has no dependencies beyond Lean core.
 
 ## Coverage
 
-`COVERAGE.tsv` has 74 rows, all PROVEN:
+`COVERAGE.tsv` has 75 rows, all PROVEN:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 74 |
+| PROVEN | 75 |
 
-By file: `row.rs` 21, `ordermap.rs` 20, `orderset.rs` 15, `bitset.rs` 5, `cow.rs` 5, `string_pool.rs` 5, `identifier_limits.rs` 2, `narrow_int.rs` 1.
+By file: `row.rs` 21, `ordermap.rs` 20, `orderset.rs` 15, `cow.rs` 6, `bitset.rs` 5, `string_pool.rs` 5, `identifier_limits.rs` 2, `narrow_int.rs` 1.
 
 ## What the model does not cover
 
@@ -132,7 +140,7 @@ By file: `row.rs` 21, `ordermap.rs` 20, `orderset.rs` 15, `bitset.rs` 5, `cow.rs
 - `Hash for Row` and `Hash for OrderMap` are modelled as the sequence fed to the hasher, not the hasher itself. `hash_consistent` proves equal maps feed the same sequence, which is enough for equal hashes.
 - `OrderMap` keys are compared with an abstract `BEq`; theorems that need it assume `EquivBEq` (reflexive, symmetric, transitive), which `Arc<String>` equality satisfies.
 - `StringPool::stats` is modelled only for its pruning; its counting is not. The `Mutex` is not modelled: operations are taken to run one at a time, which the lock guarantees.
-- `Cow` models the handle sharing, not GraphBLAS: `dup()` is "allocate and copy contents".
+- `Cow` models the handle sharing, not GraphBLAS: `dup()` is "allocate and copy contents". The debug `branched` flag's `AtomicBool` is a cell in a second heap; its `Relaxed` ordering is not modelled (operations run one at a time).
 - Capacity, `SmallVec` inline storage and `ThinVec` allocation are invisible in the model; only contents are.
 
 ## Build and check

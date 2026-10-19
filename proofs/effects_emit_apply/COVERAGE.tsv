@@ -18,20 +18,20 @@ graph/src/effects/v3/apply.rs	from	44	PROVEN	ApplyHelpers.ofString: ofString_spe
 graph/src/effects/v3/apply.rs	apply_effects	54	PROVEN	ApplyHelpers.applyEffects (records then g.validate() then g.commit_index_docs, #2846/#3307): applyEffects_ok, applyEffects_validate_refused, validateG_ok (verify_id_batches then verify_created_relationships, #3022) (BUG W2-effects-4: not atomic for CREATE_INDEX, still present at 2c874022a, live repro)
 graph/src/effects/v3/apply.rs	from	103	PROVEN	ApplyHelpers.fromNodeOp (impl From<NodeOpError> for ApplyError, replaces node_op since #2846): fromNodeOp_spec, applyEffects_validate_refused; DanglingRelationship arm (#3022)
 graph/src/effects/v3/apply.rs	id_space_error_map	117	PROVEN	ApplyHelpers.idSpaceErrorMap: idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal (Inconsistent/AlreadyTaken -> Graph), idSpaceErrorMap_divergence_not_graph
-graph/src/effects/v3/apply.rs	apply_record	160	PROVEN	Liveness.applyRec (checked arms since #3022): applyRec_binv, applyAll_binv, wf_of_validate, apply_wf (whole buffer keeps the replica WF), edge_to_dead_refused (#2924), cancelled_pair, updates_on_dead_refused (W2-effects-2), delete_with_edges_refused (W2-effects-3), detach_delete_applies; store writes Apply.wf_createOne/wf_deleteNode/wf_updateNode_live/wf_setLabels_live; historical pre3022_* counterexamples
-graph/src/effects/v3/apply.rs	apply_add_schema	519	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
-graph/src/effects/v3/apply.rs	verify_id	539	PROVEN	ApplyHelpers.verifyId: verifyId_ok
-graph/src/effects/v3/apply.rs	verify_schema	562	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies
-graph/src/effects/v3/apply.rs	verify_attribute	582	PROVEN	ApplyHelpers.verifyAttribute: verifyAttribute_ok
-graph/src/effects/v3/apply.rs	resolved	594	PROVEN	ApplyHelpers.resolved: resolved_ok
-graph/src/effects/v3/apply.rs	resolve_type	616	PROVEN	ApplyHelpers.resolveType: checkedTypeId_ok
-graph/src/effects/v3/apply.rs	require_live	634	PROVEN	ApplyHelpers.requireLive: requireLive_ok, requireLive_notLive; Liveness.needLive: needLive_ok (#3022)
-graph/src/effects/v3/apply.rs	checked_type_id	661	PROVEN	ApplyHelpers.checkedTypeId: checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_label_ids	677	PROVEN	ApplyHelpers.checkedLabelIds: checkedLabelIds_ok
-graph/src/effects/v3/apply.rs	check_attr_shape	707	PROVEN	ApplyHelpers.checkAttrShape: checkAttrShape_ok; Emit.gatherRows_length
-graph/src/effects/v3/apply.rs	attr_map	751	PROVEN	ApplyHelpers.attrMap: attrMap_row
-graph/src/effects/v3/apply.rs	index_options	794	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
-graph/src/effects/v3/apply.rs	single_index_label	825	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
+graph/src/effects/v3/apply.rs	apply_record	160	PROVEN	Liveness.applyRec (checked arms since #3022; CREATE_NODE refuses a repeated id since #3298): applyRec_binv, applyAll_binv, wf_of_validate, apply_wf (whole buffer keeps the replica WF), edge_to_dead_refused (#2924), cancelled_pair, updates_on_dead_refused (W2-effects-2), delete_with_edges_refused (W2-effects-3), detach_delete_applies; store writes Apply.wf_createOne/wf_deleteNode/wf_updateNode_live/wf_setLabels_live; historical pre3022_* counterexamples; #3298 createNode_repeat_refused, createNode_ok_nodup, a_repeated_node_id_in_one_create_is_refused, history pre3298_repeated_id_applies
+graph/src/effects/v3/apply.rs	apply_add_schema	532	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
+graph/src/effects/v3/apply.rs	verify_id	552	PROVEN	ApplyHelpers.verifyId: verifyId_ok
+graph/src/effects/v3/apply.rs	verify_schema	575	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies
+graph/src/effects/v3/apply.rs	verify_attribute	595	PROVEN	ApplyHelpers.verifyAttribute: verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	607	PROVEN	ApplyHelpers.resolved: resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	629	PROVEN	ApplyHelpers.resolveType: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	require_live	647	PROVEN	ApplyHelpers.requireLive: requireLive_ok, requireLive_notLive; Liveness.needLive: needLive_ok (#3022)
+graph/src/effects/v3/apply.rs	checked_type_id	674	PROVEN	ApplyHelpers.checkedTypeId: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	690	PROVEN	ApplyHelpers.checkedLabelIds: checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	720	PROVEN	ApplyHelpers.checkAttrShape: checkAttrShape_ok; Emit.gatherRows_length
+graph/src/effects/v3/apply.rs	attr_map	764	PROVEN	ApplyHelpers.attrMap: attrMap_row
+graph/src/effects/v3/apply.rs	index_options	807	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	838	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
 graph/src/runtime/pending.rs	effects_count	1804	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
 graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	108	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
 graph/src/effects/v3/emit.rs	wire_index_options	2087	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec

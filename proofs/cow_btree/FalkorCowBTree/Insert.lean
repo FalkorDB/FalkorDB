@@ -58,7 +58,7 @@ theorem insertOne_leaf (c : Cfg) (r : Bool) (es : List E) (lo hi x : Nat)
     · have := (bl el hel).1; have := hls el hel; omega
     · have := hrs er her; have := (br er her).2; omega
 
-/-- **`Node::insert_one` (`node.rs:306`)** on a well-formed subtree, for an `x` within its bounds. -/
+/-- **`Node::insert_one` (`node.rs:321`)** on a well-formed subtree, for an `x` within its bounds. -/
 theorem insertOne_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x : Nat),
     WFb c r h n lo hi → lo ≤ x → x < hi → InsPost c r h n lo hi x (insertOne c h n x)
   | 0, r, .leaf es, lo, hi, x, hw, hlo, hhi => insertOne_leaf c r es lo hi x hw hlo hhi

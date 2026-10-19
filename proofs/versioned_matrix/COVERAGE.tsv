@@ -79,47 +79,47 @@ graph/src/graph/graphblas/tensor.rs	Tensor::eff_get	442	PROVEN	effV: addBatch_co
 graph/src/graph/graphblas/tensor.rs	Tensor::get	463	PROVEN	edges: addBatch_correct, removeBatch_correct
 graph/src/graph/graphblas/tensor.rs	Tensor::set_all_from_slices	497	PROVEN	vacant/occupied/writeEntry/addBatch: addBatch_correct, insAll_spec
 graph/src/graph/graphblas/tensor.rs	Tensor::remove_all	629	PROVEN	removeBatch (slow) + removeFast: removeBatch_correct, removeFast_correct
-graph/src/graph/graphblas/tensor.rs	Tensor::resize	809	PROVEN	VMTensorOps.resizeT: resizeT_grow, shrink_safe; BUG shrink_orphans_me (test tensor_shrink_keeps_orphan_me_rows)
-graph/src/graph/graphblas/tensor.rs	Tensor::flush	880	PROVEN	foldP: foldP_correct
-graph/src/graph/graphblas/tensor.rs	Tensor::fold_latched	937	PROVEN	VMTensorOps.foldLatched: foldLatched_correct
-graph/src/graph/graphblas/tensor.rs	Tensor::fold_oversized	955	PROVEN	VMTensorOps.foldOversized: foldOversized_correct, foldOversized_lazy
-graph/src/graph/graphblas/tensor.rs	Tensor::extract	977	PROVEN	VMTensorOps.extract: mem_extract
-graph/src/graph/graphblas/tensor.rs	Tensor::rebuild_backward	998	PROVEN	VMTensorOps.rebuildBackward: rebuildBackward_mt, rebuildBackward_edges, rebuildBackward_inv
-graph/src/graph/graphblas/tensor.rs	Tensor::dup	1009	PROVEN	VMTensorOps.dupT: dupT_spec, dupT_fresh
-graph/src/graph/graphblas/tensor.rs	Tensor::fwd_m	1025	PROVEN	VMTensorOps.fwdM: accessors
-graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dp	1031	PROVEN	VMTensorOps.fwdDp: accessors
-graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dm	1038	PROVEN	VMTensorOps.fwdDm: accessors
-graph/src/graph/graphblas/tensor.rs	Tensor::structural_iter	1045	PROVEN	VMTensorOps.structuralIter: mem_structuralIter
-graph/src/graph/graphblas/tensor.rs	Tensor::fwd_iter	1057	PROVEN	VMTensorOps.fwdIter: mem_fwdIter (+ VMIter.shadow_dp_wins)
-graph/src/graph/graphblas/tensor.rs	Tensor::row_degree	1082	PROVEN	VMTensorOps.rowDegree: rowDegree_eq, degLoop_eq
-graph/src/graph/graphblas/tensor.rs	Tensor::me_degree	1106	PROVEN	VMTensorOps.meDegree: meDegree_cursor_irrelevant, contrib_edges
-graph/src/graph/graphblas/tensor.rs	Tensor::col_degree	1134	PROVEN	VMTensorOps.colDegree: colDegree_eq (unreachable! never hit)
-graph/src/graph/graphblas/tensor.rs	Tensor::matrix_t	1168	PROVEN	VMTensorOps.matrixT: accessors
-graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_block_0	1179	PROVEN	VMTensorOps.block0: block0_is_block0
-graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_all	1186	PROVEN	VMTensorOps.blocksAll: blocksAll_names
-graph/src/graph/graphblas/tensor.rs	Tensor::edge_count	1221	PROVEN	partials/countTerms: count_correct
-graph/src/graph/graphblas/tensor.rs	Tensor::iter_edges	1283	PROVEN	GBW.iterExpand (graphblas_wrappers Misc): iterExpand_eq_flatMap; VMTensorOps.mem_fwdIter
-graph/src/graph/graphblas/tensor.rs	Tensor::iter	1300	PROVEN	VMTensorOps.newTIt: seek_eq_new; GBW Misc.iterExpand_eq_flatMap
-graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs	1362	PROVEN	VMTensorOps.multiPairs: multiPairs_eq
-graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs_in	1370	PROVEN	VMTensorOps.multiPairsIn: multiPairsIn_eq, countRows_groups
-graph/src/graph/graphblas/tensor.rs	Tensor::has_multi_edge	1399	PROVEN	VMTensorOps.hasMultiEdge: hasMultiEdge_iff, me_nonempty_iff_multi
-graph/src/graph/graphblas/tensor.rs	Tensor::wait	1403	PROVEN	VMTensorOps.waitT: waitT_st, waitT_me_synced
-graph/src/graph/graphblas/tensor.rs	Tensor::wait_base	1414	PROVEN	VMTensorOps.waitBase: waitBase_st
-graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1423	PROVEN	VMTensorOps.waitAll: waitAll_synced, waitAll_st
-graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1436	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
-graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1445	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
-graph/src/graph/graphblas/tensor.rs	Tensor::encode	1464	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
-graph/src/graph/graphblas/tensor.rs	Tensor::decode	1543	PROVEN	graphblas_wrappers Decode.orphan_row_panics / more_me_rows_than_pattern_panics
-graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1656	PROVEN	graphblas_wrappers Misc.expand
-graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1663	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
-graph/src/graph/graphblas/tensor.rs	Iter::new	1691	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
-graph/src/graph/graphblas/tensor.rs	Iter::seek	1723	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
-graph/src/graph/graphblas/tensor.rs	Iter::next	1740	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
-graph/src/graph/cow.rs	Cow::new	50	PROVEN	VMCow.cowNew: cowNew_spec
-graph/src/graph/cow.rs	Cow::new_version	55	PROVEN	Cow.newVersion: newVersion_iso
-graph/src/graph/cow.rs	Cow::replace	66	PROVEN	replace: wstep_iso
-graph/src/graph/cow.rs	Cow::deref	78	PROVEN	VMCow.deref: deref_view
-graph/src/graph/cow.rs	Cow::deref_mut	84	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (hazard)
+graph/src/graph/graphblas/tensor.rs	Tensor::resize	823	PROVEN	VMTensorOps.resizeT: resizeT_eq, resizeT_edges, resizeT_allInv, resizeT_blkInv, resizeT_hasMultiEdge, resizeT_dims (#3250 never shrinks, no entry dropped; history pre3250_shrink_orphans_me, pre3250_shrink_safe)
+graph/src/graph/graphblas/tensor.rs	Tensor::flush	890	PROVEN	foldP: foldP_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::fold_latched	947	PROVEN	VMTensorOps.foldLatched: foldLatched_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::fold_oversized	965	PROVEN	VMTensorOps.foldOversized: foldOversized_correct, foldOversized_lazy
+graph/src/graph/graphblas/tensor.rs	Tensor::extract	987	PROVEN	VMTensorOps.extract: mem_extract
+graph/src/graph/graphblas/tensor.rs	Tensor::rebuild_backward	1008	PROVEN	VMTensorOps.rebuildBackward: rebuildBackward_mt, rebuildBackward_edges, rebuildBackward_inv
+graph/src/graph/graphblas/tensor.rs	Tensor::dup	1019	PROVEN	VMTensorOps.dupT: dupT_spec, dupT_fresh
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_m	1035	PROVEN	VMTensorOps.fwdM: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dp	1041	PROVEN	VMTensorOps.fwdDp: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dm	1048	PROVEN	VMTensorOps.fwdDm: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::structural_iter	1055	PROVEN	VMTensorOps.structuralIter: mem_structuralIter
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_iter	1067	PROVEN	VMTensorOps.fwdIter: mem_fwdIter (+ VMIter.shadow_dp_wins)
+graph/src/graph/graphblas/tensor.rs	Tensor::row_degree	1092	PROVEN	VMTensorOps.rowDegree: rowDegree_eq, degLoop_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::me_degree	1116	PROVEN	VMTensorOps.meDegree: meDegree_cursor_irrelevant, contrib_edges
+graph/src/graph/graphblas/tensor.rs	Tensor::col_degree	1144	PROVEN	VMTensorOps.colDegree: colDegree_eq (unreachable! never hit)
+graph/src/graph/graphblas/tensor.rs	Tensor::matrix_t	1178	PROVEN	VMTensorOps.matrixT: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_block_0	1189	PROVEN	VMTensorOps.block0: block0_is_block0
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_all	1196	PROVEN	VMTensorOps.blocksAll: blocksAll_names
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_count	1231	PROVEN	partials/countTerms: count_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::iter_edges	1293	PROVEN	GBW.iterExpand (graphblas_wrappers Misc): iterExpand_eq_flatMap; VMTensorOps.mem_fwdIter
+graph/src/graph/graphblas/tensor.rs	Tensor::iter	1310	PROVEN	VMTensorOps.newTIt: seek_eq_new; GBW Misc.iterExpand_eq_flatMap
+graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs	1372	PROVEN	VMTensorOps.multiPairs: multiPairs_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs_in	1380	PROVEN	VMTensorOps.multiPairsIn: multiPairsIn_eq, countRows_groups
+graph/src/graph/graphblas/tensor.rs	Tensor::has_multi_edge	1409	PROVEN	VMTensorOps.hasMultiEdge: hasMultiEdge_iff, me_nonempty_iff_multi
+graph/src/graph/graphblas/tensor.rs	Tensor::wait	1413	PROVEN	VMTensorOps.waitT: waitT_st, waitT_me_synced
+graph/src/graph/graphblas/tensor.rs	Tensor::wait_base	1424	PROVEN	VMTensorOps.waitBase: waitBase_st
+graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1433	PROVEN	VMTensorOps.waitAll: waitAll_synced, waitAll_st
+graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1446	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
+graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1455	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::encode	1474	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
+graph/src/graph/graphblas/tensor.rs	Tensor::decode	1553	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); STILL OPEN orphan_row_panics / more_me_rows_than_pattern_panics
+graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1679	PROVEN	graphblas_wrappers Misc.expand
+graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1686	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
+graph/src/graph/graphblas/tensor.rs	Iter::new	1714	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Iter::seek	1746	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
+graph/src/graph/graphblas/tensor.rs	Iter::next	1763	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
+graph/src/graph/cow.rs	Cow::new	84	PROVEN	VMCow.cowNew: cowNew_spec
+graph/src/graph/cow.rs	Cow::new_version	97	PROVEN	Cow.newVersion: newVersion_iso
+graph/src/graph/cow.rs	Cow::replace	112	PROVEN	replace: wstep_iso
+graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view
+graph/src/graph/cow.rs	Cow::deref_mut	134	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (release hazard; debug-asserted since #2905, runtime_ds CowModel.dbg_write_through_branched_source_panics)
 graph/src/graph/mvcc_graph.rs	MvccGraph::new	80	PROVEN	VMCow.mvccNew: mvccNew_ready
 graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	95	PROVEN	VMCow.mvccNew: mvccNew_ready
 graph/src/graph/mvcc_graph.rs	MvccGraph::read	103	PROVEN	reader_view_frozen, snapshot_isolation
@@ -128,4 +128,6 @@ graph/src/graph/mvcc_graph.rs	MvccGraph::commit	139	PROVEN	sstep .commit (Graph:
 graph/src/graph/mvcc_graph.rs	MvccGraph::rollback	221	PROVEN	sstep .rollback: snapshot_isolation
 graph/src/graph/mvcc_graph.rs	MvccGraph::drop	227	PROVEN	VMCow.dropG: dropG_spec
 graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::count_in_rows	818	CONDITIONAL	VMCount.vmCountInRows: vmCountInRows_spec (= effective entries (m \ dm) ∪ dp in the selected rows; layer(dm) ≤ layer(m), no u64 underflow; Matrix::count_in_rows spec as hypothesis LayerCount, proved in graphblas_wrappers) (#3022) || CONDITIONAL on LayerCount (Matrix::count_in_rows counts a layer's entries; graphblas_wrappers countInRows_spec, not linked)
-graph/src/graph/graphblas/tensor.rs	Tensor::count_pairs_into	1315	PROVEN	VMCount.countPairsInto: countPairsInto_spec (pairs with dst in the set; positive iff a live pair ends there, under AllInv mt_eff) (#3022)
+graph/src/graph/graphblas/tensor.rs	Tensor::count_pairs_into	1325	PROVEN	VMCount.countPairsInto: countPairsInto_spec (pairs with dst in the set; positive iff a live pair ends there, under AllInv mt_eff) (#3022)
+graph/src/graph/graphblas/tensor.rs	Tensor::nrows	810	PROVEN	VMTensorOps.nrowsT: nrowsT_resizeT (#3250)
+graph/src/graph/graphblas/tensor.rs	Tensor::ncols	815	PROVEN	VMTensorOps.ncolsT: nrowsT_resizeT (#3250)

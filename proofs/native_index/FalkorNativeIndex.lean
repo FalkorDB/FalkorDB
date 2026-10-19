@@ -3,6 +3,7 @@ import FalkorNativeIndex.IntF
 import FalkorNativeIndex.Value
 import FalkorNativeIndex.Agree
 import FalkorNativeIndex.Tree
+import FalkorNativeIndex.Contract
 import FalkorNativeIndex.Numeric
 import FalkorNativeIndex.Index
 import FalkorNativeIndex.Pending
@@ -12,7 +13,7 @@ import FalkorNativeIndex.Ddl
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets origin/main cab3cf192 (only `cow_btree/mod.rs` cites moved since 4a4f2a72f: #2897, #3285): `graph/src/index/falkordb/{encode,numeric,falkordb_index,
+Targets origin/main 1d15bf713 (since cab3cf192 only `graph.rs` moved: `apply_index_writes` :3784, `commit_index_docs` :3801, `query_index_numeric_{nodes,edges}` :4089/:4106; and #3283 fixed the cow_btree invariant this project's tree rows rested on): `graph/src/index/falkordb/{encode,numeric,falkordb_index,
 pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`
 (`apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`, `new_version`'s
 fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
@@ -24,11 +25,12 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 | `IntF.lean`: `roundNat`, `magBits`, `i64ToF64` | `i as f64` (proofs/core `roundNat`, imported) |
 | `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
 | `Tree.lean`: `tInsert`…`tRange` (CowBTree contents; encoding/sorted lemmas imported from cow_btree) | `cow_btree/mod.rs:190-324` |
+| `Contract.lean`: `contract_fromSorted`, `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_range` | `cow_btree/mod.rs:190-324` on every reachable tree |
 | `Numeric.lean`: `NumericIndex.*`, `rangeBounds`, `IndexQuery` | `numeric.rs:39-254` |
 | `Index.lean`: `hmGet`…, `IndexColumn.*`, `ColumnEntry.ready`, `FalkorDbIndex.*` | `falkordb_index.rs:38-355`, `:409-432` |
 | `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `applyColumn`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:364-400` |
 | `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:62-393`, `:438-508` |
-| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries`, `buildColumn`, `createIndex`, `populate`, `indexOnlyWrites`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanRoute`, `newVersion`, `runUnit` | `graph_writes.rs:46-52`, `:404-432`, `:468-552`; `graph.rs:1048-1051`, `:3766-3794`, `:4073-4108`; `node_by_index_scan.rs:306-323`, `edge_by_index_scan.rs:329-349` |
+| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries`, `buildColumn`, `createIndex`, `populate`, `indexOnlyWrites`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanRoute`, `newVersion`, `runUnit` | `graph_writes.rs:46-52`, `:404-432`, `:468-552`; `graph.rs:1062-1065`, `:3780-3808`, `:4087-4122`; `node_by_index_scan.rs:306-323`, `edge_by_index_scan.rs:329-349` |
 
 ## Proven
 - **Encoding** (`Float.lean`, bit-level f64: both zeros, every NaN sign/payload, ±inf):
@@ -74,11 +76,11 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
    behaviour C and the RediSearch path share (measured there); not a regression.
 
 ## Gaps / hypotheses
-- **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its proven content spec
-  (cow_btree / index_layer), which holds under cow_btree's `TreeWF`; `remove_batch` breaks `TreeWF`
-  (cow_btree Bug 3 = W7-btree-1, fix PR #3283 still open at cab3cf192) and now has a production caller (`apply_writes` → `remove_encoded`). A model search
-  of batch-only sequences found no content/range/empty-page failure. Rows that read through the tree
-  are CONDITIONAL on this.
+- **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its content spec. No longer a
+  hypothesis: since #3283 (799968a8b, W7-btree-1 fixed) cow_btree proves every reachable tree is
+  `TreeWF` (`Reachable_wf_asserted`: `from_sorted`, `insert`, `remove`, `insert_batch`, `remove_batch`)
+  and `Contract.lean` proves each op equals its `t*` model there. The 13 tree rows moved from
+  CONDITIONAL to PROVEN.
 - **Caller uniqueness** (`nodeAttrsSet_hit`, `edgeAttrsSetWith_hit`, `newNodeAttrs_hit`): each node's
   written attribute ids are unique — `Pending::set_node_attribute` keeps them sorted/unique,
   `set_node_attributes` only `debug_assert!`s it (CONDITIONAL rows). Created nodes' `new_labels` /

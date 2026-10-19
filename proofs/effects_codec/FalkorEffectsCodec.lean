@@ -17,17 +17,28 @@ Modules (each file's header has its Lean ↔ Rust table):
 * `RecFull`, `RecRT` — **all fourteen `Record` variants**, `write_header`, `check_row_shape`, `Record::encode`, `read_record`;
   `readRecord_encRecord`: every record round-trips whatever follows it (UPDATE_EDGE, ADD_SCHEMA, index and
   constraint DDL included); `checkEndpoints_ok`, `checkIndex_ok`, `writeHeader_spec`, `relType_rt`.
-* `Payload` — `open_payload`, `maybe_compress`, `Records::next`: `openPayload_maybeCompress` (compression is
-  transparent for < 4 GiB of records, zstd/crc32 as the `CodecOK` hypothesis), `maybeCompress_shrinks`,
-  `records_concat`.
+* `Payload` — `open_payload`, `maybe_compress`, `frame_prefix`, `Records::next`: `openPayload_maybeCompress`
+  (compression is transparent for records of any length since #3278, zstd/crc32 as the `CodecOK` hypothesis),
+  `maybeCompress_shrinks`, `framePrefix_none`, `records_concat`.
 * `Format`, `ModRs` — `format.rs` (`describe_spec`, `build_ok`, `fmtReplicate_transparent`), `effects/mod.rs`
   (`describeTop_spec`, `applyTop_spec`, `EffectsBuffer`), `v3/mod.rs` tags/`seal`, `payload.rs`, `announce.rs`,
   `LocalName`.
 
-Gaps: `maybe_compress` writes `plain_len` `as u32`; a payload of ≥ 4 GiB of records would be framed with a
-wrapped length (unreachable in practice; not reproduced). zstd/crc32 are hypotheses (`CodecOK`).
+Re-targeted to origin/main `1d15bf713` (from `0f45a8685`):
+* **#3267 (`eaa65eeba`)** — `Value::decode` bounds a list's width against the whole stack (`owed`).
+  `decodeV`/`readOne`/`loop` now carry `owed`; `decodeV_encV` and `decodeV_safe` re-proved (the
+  `owed -= 1` never underflows: `owed = owedOf st`), new `capTrace_linear`/`decode_reserves_linear`
+  (reservations ≤ remaining / 4), `hostile_refused_second_level`. History: `pre3267_readOne`,
+  `pre3267_capTrace`, `pre3267_hostile_quadratic` (90 elements from 80 bytes).
+* **#3278 (`dcbd445d1`, #3276)** — `maybe_compress` refuses a frame whose lengths overflow `u32`.
+  `openPayload_maybeCompress`, `fmtReplicate_transparent`, `seal_transparent` lose their `< 2^32`
+  hypothesis; new `framePrefix_*`. History: `pre3278_maybeCompress`, `pre3278_openPayload_maybeCompress`,
+  `pre3278_wrapped_frame_unreadable`.
+
+Gaps: zstd/crc32 are hypotheses (`CodecOK`).
 `staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (NOT COVERED, TEST-ONLY).
-Bugs: #2914 (encoder wrote records its reader rejects) — **fixed by #2916 (`2c874022a`)**, now theorems.
+Bugs: #2914 (encoder wrote records its reader rejects) — **fixed by #2916 (`2c874022a`)**, now theorems;
+quadratic list reservation — **fixed by #3267**; ≥ 4 GiB compressed frame — **fixed by #3278**.
 -/
 import FalkorEffectsCodec.Prim
 import FalkorEffectsCodec.Value
@@ -46,3 +57,9 @@ open FalkorCodec in
 #print axioms readAll_concat
 open FalkorCodec in
 #print axioms readRecord_encRecord_wf
+open FalkorCodec in
+#print axioms capTrace_linear
+open FalkorCodec in
+#print axioms openPayload_maybeCompress
+open FalkorCodec in
+#print axioms pre3278_wrapped_frame_unreadable

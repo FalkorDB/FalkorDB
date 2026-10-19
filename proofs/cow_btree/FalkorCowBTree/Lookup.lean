@@ -19,7 +19,7 @@ namespace CowBTree
 
 /-! ## `insert` / `remove` report whether they changed the tree -/
 
-/-- The `inserted` half of `Node::insert_one`'s `(bool, Option<Split>)` (`node.rs:306-364`):
+/-- The `inserted` half of `Node::insert_one`'s `(bool, Option<Split>)` (`node.rs:321-379`):
     `false` iff the leaf found the tuple already present (line 316); a branch forwards its child's. -/
 def insertFlag (c : Cfg) : Nat → Node → E → Bool
   | _, .leaf es, x => (leafInsert c es x).isSome
@@ -116,7 +116,7 @@ theorem isUnderfull_leaf (c : Cfg) (es : List E) : isUnderfull c (.leaf es) = de
 theorem isUnderfull_branch (c : Cfg) (seps : List E) (cs : List Node) :
     isUnderfull c (.branch seps cs) = branchUnderfull c cs := rfl
 
-/-- Since #2278 `Node::remove_one` reports `Some(branch.is_underfull())` (`node.rs:473`), and a leaf's
+/-- Since #2278 `Node::remove_one` reports `Some(branch.is_underfull())` (`node.rs:488`), and a leaf's
     `new_count < LEAF_MAX / 2`: in both arms the flag is exactly `Node::is_underfull` of the node it
     hands back. -/
 theorem removeOne_flag (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : Node) (u : Bool),

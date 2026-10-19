@@ -39,13 +39,13 @@ namespace G
 def labelName (g : G) (l : Nat) : String := g.labels.getD l ""
 def typeName (g : G) (t : Nat) : String := g.types.getD t ""
 def attrName (g : G) (a : Nat) : Option String := g.attrNames[a]?
-/-- `get_node_all_attrs` (`graph.rs:3516`): `(name, value)` of every attribute the node has. -/
+/-- `get_node_all_attrs` (`graph.rs:3532`): `(name, value)` of every attribute the node has. -/
 def nodeAllAttrs (g : G) (id : Nat) : List (String × Value) :=
   (List.range g.attrNames.length).filterMap (fun a =>
     match g.attrNames[a]?, g.nodeAttr id a with
     | some n, some v => some (n, v)
     | _, _ => none)
-/-- `get_relationship_all_attrs` (`graph.rs:3547`). -/
+/-- `get_relationship_all_attrs` (`graph.rs:3563`). -/
 def relAllAttrs (g : G) (id : Nat) : List (String × Value) :=
   (List.range g.attrNames.length).filterMap (fun a =>
     match g.attrNames[a]?, g.relAttr id a with

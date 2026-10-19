@@ -6,14 +6,14 @@ Model of `graph/src/graph/cow.rs` and `graph/src/graph/mvcc_graph.rs`.
 A GraphBLAS handle is a location in a heap `Nat → α` (its contents: for a
 matrix, the coordinate set of `Delta.lean`). `Matrix::clone` shares the
 handle (`Arc<GrB_Matrix>`, `matrix.rs:374`), `Matrix::dup` allocates a fresh
-one (`matrix.rs:1160`). A `Cow` is a handle plus the `dup` flag.
+one (`matrix.rs:1174`). A `Cow` is a handle plus the `dup` flag.
 
 | here | there |
 | --- | --- |
-| `Cow`            | `struct Cow { inner, dup }` (cow.rs:43) |
-| `Cow.newVersion` | `Cow::new_version` (cow.rs:55): shallow clone, `dup = true` |
-| `derefMut`       | `DerefMut for Cow` (cow.rs:84): dup on first write |
-| `replace`        | `Cow::replace` (cow.rs:66): fresh contents, `dup = false` |
+| `Cow`            | `struct Cow { inner, dup }` (cow.rs:60; the debug-only `branched` flag of #2905 is not modelled here, see `runtime_ds` `CowModel.dbg_*`) |
+| `Cow.newVersion` | `Cow::new_version` (cow.rs:97): shallow clone, `dup = true` |
+| `derefMut`       | `DerefMut for Cow` (cow.rs:134): dup on first write |
+| `replace`        | `Cow::replace` (cow.rs:112): fresh contents, `dup = false` |
 | `mutate`         | any `&mut Matrix` write through a `Cow` (`Delta::layer_mut`, `insert`, `erase`, `resize`, ...) |
 | `Version`        | a graph version: every `Cow` it owns (`Graph::new_version` dups every matrix, graph.rs:976) |
 | `Mvcc`           | `MvccGraph` (mvcc_graph.rs:68): committed version + `write` flag |
@@ -288,7 +288,12 @@ that is `MvccGraph::write`/`commit`: the committed graph is only ever read
 every mutation path — `Runtime` for write queries, GRAPH.BULK, index DDL —
 goes through the version returned by `write()`. Reproduced at the API level
 by `cow_is_one_directional_old_version_write_leaks` in
-`graph/tests/lean_versioned_matrix.rs`. -/
+`graph/tests/lean_versioned_matrix.rs`. Status on main (#2905, #2903): the
+contract is now documented on `Cow`, and debug builds assert it in `deref_mut`
+(the `branched` flag, shared by every clone; `runtime_ds`
+`CowModel.dbg_write_through_branched_source_panics`). Release behaviour is
+unchanged, so this release-semantics counterexample still stands as a
+documented latent contract. -/
 theorem old_write_leaks_into_new_version :
     let H : Heap Nat := ⟨fun _ => 0, 1⟩
     let old : Cow := ⟨0, false⟩          -- the owned layer of a version

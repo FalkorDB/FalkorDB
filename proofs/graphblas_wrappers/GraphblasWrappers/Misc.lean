@@ -8,14 +8,17 @@ import GraphblasWrappers.RowIter
 
 namespace GBW
 
-/-! ## `Matrix::grown` (matrix.rs:701) and `resize` (tensor.rs:809)
+/-! ## `Matrix::grown` (matrix.rs:715) and `resize` (tensor.rs:823)
 
-`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:707) — it cannot shrink,
-because `GrB_Matrix_resize` on smaller dims drops entries. `Tensor::resize`
-(tensor.rs:809) branches: shrink takes the flush + straight `resize` path; grow
-re-emits each layer. -/
+`grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:721) — it cannot shrink,
+because `GrB_Matrix_resize` on smaller dims drops entries. Since #3250
+`Tensor::resize` (tensor.rs:823) never shrinks: it clamps each target to
+`max(target, current)` (:834-835) and re-emits each layer with `grown`, whose
+precondition therefore always holds (`resize_clamp_grownOk`). Before #3250 it
+branched: shrink took a flush + straight `resize` path, grow re-emitted each
+layer (`pre3250_resize_grow_iff_grownOk`). -/
 
-/-- The `grown` precondition (matrix.rs:707-710). -/
+/-- The `grown` precondition (matrix.rs:721-724). -/
 def grownOk (r0 c0 nrows ncols : Nat) : Bool := decide (nrows ≥ r0 ∧ ncols ≥ c0)
 
 /-- The assert fires (returns `false`) exactly on a shrink of either dimension —
@@ -25,10 +28,22 @@ theorem grown_rejects_shrink (r0 c0 nrows ncols : Nat) :
   simp only [grownOk, decide_eq_false_iff_not]
   omega
 
-/-- `Tensor::resize`'s shrink test (tensor.rs:809): the `nrows < m.nrows() ||
-ncols < m.ncols()` guard picks the shrink path. Its complement is exactly
-`grownOk`, so the grow path runs precisely when `grown` would accept. -/
-theorem resize_grow_iff_grownOk (r0 c0 nrows ncols : Nat) :
+/-- `Tensor::resize` on main (tensor.rs:834-835): the clamped dims always
+satisfy `grown`'s precondition, so the assert never fires and nothing is
+dropped. -/
+theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
+    grownOk r0 c0 (max nrows r0) (max ncols c0) = true := by
+  simp only [grownOk, decide_eq_true_eq]
+  omega
+
+/-- Main: the clamp never asks for a smaller dimension. -/
+theorem resize_clamp_not_shrink (r0 c0 nrows ncols : Nat) :
+    ¬ (max nrows r0 < r0 ∨ max ncols c0 < c0) := by omega
+
+/-- History (before #3250, 0f45a8685 tensor.rs:809): the `nrows < m.nrows() ||
+ncols < m.ncols()` guard picked the shrink path. Its complement is exactly
+`grownOk`, so the grow path ran precisely when `grown` would accept. -/
+theorem pre3250_resize_grow_iff_grownOk (r0 c0 nrows ncols : Nat) :
     (decide (nrows < r0 ∨ ncols < c0) = false) ↔ grownOk r0 c0 nrows ncols = true := by
   simp only [grownOk, decide_eq_false_iff_not, decide_eq_true_eq]
   omega
@@ -54,7 +69,7 @@ theorem vecDrain_eq (idxs : List Nat) : vecDrain idxs = idxs := by
 theorem vecDrain_count (idxs : List Nat) (x : Nat) :
     (vecDrain idxs).count x = idxs.count x := by rw [vecDrain_eq]
 
-/-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1740) / `EdgeIds`
+/-! ## `Tensor::iter` multi-edge expansion (tensor.rs:1763) / `EdgeIds`
 
 `Iter::next` yields the inline id of a single-edge pair, or every id of a
 `MULTI_EDGE` pair's `me` row (ascending), buffered and drained one at a time
@@ -69,13 +84,13 @@ inductive PairEdges where
   | multi (ids : List Nat)
 deriving Repr
 
-/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs:1653). -/
+/-- Expand one pair to its edge ids — `EdgeIds` (tensor.rs:1676). -/
 def expand : PairEdges → List Nat
   | .single id => [id]
   | .multi ids => ids
 
 /-- `Iter::next` streamed over the base pairs: the inline id, or the buffered
-`me` row, for each pair in turn (tensor.rs:1740-1798). -/
+`me` row, for each pair in turn (tensor.rs:1763-1821). -/
 def iterExpand : List PairEdges → List Nat
   | [] => []
   | p :: rest => expand p ++ iterExpand rest
@@ -96,7 +111,7 @@ theorem iterExpand_length (ps : List PairEdges) :
   | cons p r ih => simp [iterExpand, ih, List.length_append]
 
 /-- A single-edge graph (`me` empty everywhere) iterates as one id per pair —
-the allocation-free common case (tensor.rs:1283 `iter_edges` doc). -/
+the allocation-free common case (tensor.rs:1293 `iter_edges` doc). -/
 theorem iterExpand_all_single (ids : List Nat) :
     iterExpand (ids.map .single) = ids := by
   induction ids with

@@ -5,9 +5,9 @@ import VersionedMatrix.TensorResize
 
 | here | there |
 | --- | --- |
-| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:774`): hypothesis here, proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`) |
+| `LayerCount` | `Matrix::count_in_rows` (`matrix.rs:788`): hypothesis here, proved from `GrB_mxv` + `GrB_Vector_reduce` in `proofs/graphblas_wrappers` (`countInRows_spec`) |
 | `vmCountInRows` | `VersionedMatrix::count_in_rows` (`versioned_matrix.rs:818-834`) |
-| `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs:1315-1320`) = `self.mt.count_in_rows(dsts)` |
+| `countPairsInto` | `Tensor::count_pairs_into` (`tensor.rs:1325-1330`) = `self.mt.count_in_rows(dsts)` |
 
 `count_in_rows` counts per layer and combines `|m| + |dp| − |dm|`; the doc says
 this is exact on a bool matrix because `dm ⊆ m` and `dp ∩ m = ∅`.
@@ -87,7 +87,7 @@ open VMTensor VMTensorOps
 /-- The backward matrix `mt`'s logical keys: `(dst, src)` for every pair whose `mt` bit is set. -/
 def mtKeys (t : TT) : List VMMat.Pair := (t.ps.filter (fun p => (t.st p).mt)).map (fun p => (p.2, p.1))
 
-/-- `count_pairs_into` (tensor.rs:1315): `self.mt.count_in_rows(dsts)`, with
+/-- `count_pairs_into` (tensor.rs:1325): `self.mt.count_in_rows(dsts)`, with
 `count_in_rows` exact on `mt` (`vmCountInRows_spec`). -/
 def countPairsInto (vmCount : List VMMat.Pair → List Nat → Nat) (t : TT) (dsts : List Nat) : Nat :=
   vmCount (mtKeys t) dsts

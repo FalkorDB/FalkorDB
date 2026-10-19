@@ -231,7 +231,7 @@ graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	448	PROVEN	Leaf.
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	474	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	Leaf.buildRoot_contents
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	565	PROVEN	Leaf.makePrivate_cow
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	595	PROVEN	Leaf.makePrivate_cow
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	PROVEN	Leaf.partitionPoint_spec

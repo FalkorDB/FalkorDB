@@ -14,7 +14,7 @@ import VersionedMatrix.Policy
 | `memoryUsage` | :1445 |
 | `flushT`/`foldLatched`/`foldOversized` | :880 / :937 / :955 |
 | `dupT`        | `dup` (:1009) |
-| `resizeT`     | `resize` (:809) |
+| `resizeT`     | `resize` (:823; model in `TensorResize.lean`) |
 | `encVal`/`decVal` | the inline value `encode` (:1464) writes / C's MSB reading of it |
 | `EdgeIds`/`sizeHint` | `enum EdgeIds` (:1648) / `size_hint` (:1663) |
 | `TIt`/`newTIt`/`seekTIt` | `Iter` (:1680) / `Iter::new` (:1691) / `Iter::seek` (:1723) |

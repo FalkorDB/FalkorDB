@@ -4,8 +4,8 @@ import VersionedMatrix.Cow
 
 | here | there |
 | --- | --- |
-| `cowNew`   | `Cow::new` (cow.rs:50): a fresh, owned handle |
-| `deref`    | `Cow::deref` (cow.rs:78) |
+| `cowNew`   | `Cow::new` (cow.rs:84): a fresh, owned handle |
+| `deref`    | `Cow::deref` (cow.rs:128) |
 | `mvccNew`  | `MvccGraph::new` (mvcc_graph.rs:80) / `from_graph` (:95): committed version, no writer |
 | `dropG`    | `impl Drop for MvccGraph` (:201): cancels the committed graph's indexing |
 -/

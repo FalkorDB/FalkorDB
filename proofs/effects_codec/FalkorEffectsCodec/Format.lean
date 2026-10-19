@@ -22,11 +22,11 @@ theorem fmtIsEmpty_iff (body : Bytes) : fmtIsEmpty (fmtNewBuffer ++ body) = true
 `seal` is `maybe_compress(buf, compression_min_bytes())` (`v3/mod.rs`). -/
 def fmtReplicate (Z : Codec) (minBytes : Nat) (buf : Bytes) : Bytes := (maybeCompress Z buf minBytes).1
 
-/-- What the replica receives opens to exactly the records the master built. -/
-theorem fmtReplicate_transparent (Z : Codec) (hZ : CodecOK Z) (m : Nat) (body : Bytes)
-    (h : body.length < 2 ^ 32) :
+/-- What the replica receives opens to exactly the records the master built
+(any length since #3278). -/
+theorem fmtReplicate_transparent (Z : Codec) (hZ : CodecOK Z) (m : Nat) (body : Bytes) :
     openPayload Z (fmtReplicate Z m (fmtNewBuffer ++ body)) = .ok (body, []) :=
-  openPayload_maybeCompress Z hZ body m h
+  openPayload_maybeCompress Z hZ body m
 
 /-- `compression_min_bytes` (`v3/mod.rs`): `usize::try_from(i64).unwrap_or(0)` —
 a negative setting disables compression. -/

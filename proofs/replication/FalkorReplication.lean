@@ -143,6 +143,12 @@ Lean's three standard axioms.
    correspondence to review, clause by clause, against the table above — not
    something the proof can establish.
 
+## Re-checked against origin/main `1d15bf713`
+
+#3298 (`2bb51088b`) makes the `CREATE_NODE` arm refuse a repeated id. `okCreate`
+already required `nodupB ids`, so no theorem changes: the conjunct, stricter than the
+Rust until #3298, is now exactly its check (effects_emit_apply `createNode_repeat_refused`).
+
 ## Checking it
 
     cd proofs/replication && lake build
@@ -713,7 +719,11 @@ def idLimit : Nat := 2 ^ 60 - 1
     Note the two id checks are guarded by the recycle bin: an id that is free
     right now is neither live nor a double claim, which is what tells a genuine
     re-create from a collision. The last conjunct is the `ID_LIMIT` refusal
-    (#2911), which the Rust checks first; a `Bool` conjunction's order is immaterial. -/
+    (#2911), which the Rust checks first; a `Bool` conjunction's order is immaterial.
+    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs:222`,
+    #3298 / `2bb51088b`, issue #3247). Before #3298 the Rust had no such check (the
+    list was folded into a set and one node created for two ids), so this conjunct
+    was stricter than the code; it is now exactly the code's check. -/
 def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : List Val) : Bool :=
   labels.all (fun l => decide (l < σ.labels.length))
   && attrIds.all (fun a => decide (a < σ.attrs.length))

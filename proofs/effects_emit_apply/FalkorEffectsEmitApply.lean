@@ -83,6 +83,16 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   `updates_on_live_apply` (W2-effects-2), `delete_with_edges_refused` /
   `detach_delete_applies` (W2-effects-3).
 
+## Re-target to origin/main `1d15bf713` (from `0f45a8685`)
+
+* **#3298 (`2bb51088b`, issue #3247)** — the `CREATE_NODE` arm refuses an id list with
+  a repeat (`nodes.len() != ids.count()`, `apply.rs:222`). `applyRec .createNode` now
+  checks `ids.Nodup` first; `applyRec_binv`/`apply_wf` re-proved. New
+  `createNode_repeat_refused`, `createNode_ok_nodup`,
+  `a_repeated_node_id_in_one_create_is_refused` (the Rust test, by `decide`). History:
+  `pre3298_applyRec`, `pre3298_repeated_id_applies` (`[2, 3, 2]` applied, one node for
+  two). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
+
 ## Wave 4 additions (`Digests`, `ApplyHelpers`, `EmitDDL`)
 
 * `digestCreatedEdges_perm`/`_keyed`, `mkEdgeRec_shape` — `digest_created_edges` emits exactly the created
@@ -132,8 +142,8 @@ returns `n.v = 7`; 3: `DELETE_NODE` of an edge endpoint accepted, the next
 `DELETE_NODE 99` in one buffer leaves the index). #2924 (CREATE_EDGE between
 non-live ids) also still accepted. A duplicate id inside one `CREATE_EDGE` is now
 refused explicitly (`create_relationships_bulk`, #2846); a duplicate id inside
-one `CREATE_NODE` is still silently de-duplicated (count 2, ids `[0,0]` → OK, one
-node).
+one `CREATE_NODE` was still silently de-duplicated (count 2, ids `[0,0]` → OK, one
+node) — refused since #3298 (`createNode_repeat_refused`).
 
 1. **A write that only registers schema or only cancels entities replicates
    nothing** — `runtime/ops/commit.rs:108` gates `buf.build` on

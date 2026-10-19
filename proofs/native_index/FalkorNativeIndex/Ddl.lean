@@ -3,8 +3,8 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # Index DDL (`graph_writes.rs:395-480`, `:510-552`), the graph's index entry points
-# (`graph.rs:3766-3795`, `:4073-4108`), the scan routing (`node_by_index_scan.rs:306-323`,
-# `edge_by_index_scan.rs:329-349`), and folded-roots MVCC (`graph.rs:441-451`, `:1048-1051`)
+# (`graph.rs:3780-3809`, `:4087-4122`), the scan routing (`node_by_index_scan.rs:306-323`,
+# `edge_by_index_scan.rs:329-349`), and folded-roots MVCC (`graph.rs:441-451`, `:1062-1065`)
 -/
 
 namespace NI
@@ -146,12 +146,12 @@ theorem indexOnlyWrites_spec (v : String) :
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3766-3774`). -/
+/-- `Graph::apply_index_writes` (`graph.rs:3780-3788`). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3783-3794`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs:3797-3808`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -162,11 +162,11 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4073-4082`). -/
+/-- `Graph::query_index_numeric_nodes` (`graph.rs:4087-4096`). -/
 def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (List Nat) :=
   (g.idx.queryNumeric .node label q).map (fun it => it.map id)
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4090-4108`): endpoints from the `edge_id → (src, dst)`
+/-- `Graph::query_index_numeric_edges` (`graph.rs:4104-4122`): endpoints from the `edge_id → (src, dst)`
     reverse index; an id it does not know (a deleted, not reused edge) is skipped. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :
     Option (List (Nat × Nat × Nat)) :=
@@ -224,7 +224,7 @@ theorem nodeScan_native_agrees (g : G) (label key : String) (min max : Option Va
 
 /-! ## Folded-roots MVCC -/
 
-/-- `Graph::new_version` (`graph.rs:1048-1051`): the index is a field of the version and is cloned
+/-- `Graph::new_version` (`graph.rs:1062-1065`): the index is a field of the version and is cloned
     with it (`O(1)` per column: root `Arc` bumps; pages are immutable once built, cow_btree
     `Snapshot.lean`), so as a value the new version's index *is* the old one. -/
 def newVersion (g : G) : G := { g with idx := g.idx }
