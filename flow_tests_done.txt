@@ -25,6 +25,7 @@ tests/flow/test_effects_commit.py
 tests/flow/test_effects_opcodes.py
 tests/flow/test_effects_values.py
 tests/flow/test_effects_commands.py
+tests/flow/test_cch_index.py
 tests/flow/test_effects_ddl.py
 tests/flow/test_effects_shapes.py
 tests/flow/test_effects_topology.py
