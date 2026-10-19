@@ -46,7 +46,7 @@ graph/src/index/mod.rs	try_clone_ref	991	PROVEN	Iter.RC.clone_inv, clone_after_d
 graph/src/index/mod.rs	drop	997	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
 graph/src/index/mod.rs	default	1014	PROVEN	Meta.Idx.default_spec, default_inv
 graph/src/index/mod.rs	id	1040	PROVEN	Meta.Idx.idOf_spec
-graph/src/index/mod.rs	bump_id	1049	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump
+graph/src/index/mod.rs	bump_id	1049	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump; Meta.Idx.bumpId via Ixr.regen (createIndex_regen)
 graph/src/index/mod.rs	clone_for_update	1068	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
@@ -101,41 +101,41 @@ graph/src/index/indexer.rs	field_options	120	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	vector_options	140	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	has_indices	168	PROVEN	Meta.Ixr.hasIndices_iff
 graph/src/index/indexer.rs	memory_usage	173	PROVEN	Meta.Ixr.memoryUsage_spec
-graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG)
-graph/src/index/indexer.rs	drop_index	359	PROVEN	Meta.Ixr.dropIndex_spec, dropAttrs_wf, retain_nonempty
-graph/src/index/indexer.rs	remove	411	PROVEN	Meta.Ixr.remove_spec
-graph/src/index/indexer.rs	has_field_for_label	425	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	is_label_indexed	438	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	is_attr_indexed	453	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	query	467	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	query_edges	481	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	fulltext_query	492	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	fulltext_query_edges	506	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	vector_query	525	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	vector_query_edges	540	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	get_vector_metric	562	PROVEN	Meta.Ixr.getVectorMetric_spec
-graph/src/index/indexer.rs	get_vector_dimension	585	PROVEN	Meta.Ixr.getVectorDimension_spec
-graph/src/index/indexer.rs	acquire_population_ticket	608	PROVEN	Slots.inc; inc_dec_cur, ok_inc
-graph/src/index/indexer.rs	acquire_population_snapshot	626	PROVEN	Slots.inc; inc_dec_cur
-graph/src/index/indexer.rs	acquire_population_snapshots	648	PROVEN	Slots.inc per label; inc_dec_cur
-graph/src/index/indexer.rs	release_population_ticket	670	PROVEN	Slots.dec; inc_dec_cur, inc_dec_stale, dec_stale_keeps_current
-graph/src/index/indexer.rs	is_ticket_current	682	MODELLED	ticket.gen = Slots.gen
-graph/src/index/indexer.rs	ticket_pending_changes	694	PROVEN	Slots.countFor
-graph/src/index/indexer.rs	enabled	704	PROVEN	Slots.countFor s.gen = 0; bump_fresh
-graph/src/index/indexer.rs	commit	714	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
-graph/src/index/indexer.rs	commit_edge	744	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec
-graph/src/index/indexer.rs	get_fields	770	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	get_all_fields	783	PROVEN	Meta.Ixr.getAllFields_spec
-graph/src/index/indexer.rs	index_info	793	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
-graph/src/index/indexer.rs	has_index	821	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	has_indexed_attr	829	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
-graph/src/index/indexer.rs	update_progress	840	PROVEN	Meta.Ixr.updateProgress_spec
-graph/src/index/indexer.rs	write_lock	857	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	cancel	861	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	is_cancelled	869	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	recreate_index	879	PROVEN	Meta.Ixr.recreate_spec
-graph/src/index/indexer.rs	set_graph	901	PROVEN	Meta.Ixr.misc
-graph/src/index/indexer.rs	get_graph	909	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG); #3086 bump: createIndex_regen, createIndex_old_ticket_stale, createIndex_new_entry
+graph/src/index/indexer.rs	drop_index	375	PROVEN	Meta.Ixr.dropIndex_spec, dropAttrs_wf, retain_nonempty
+graph/src/index/indexer.rs	remove	427	PROVEN	Meta.Ixr.remove_spec
+graph/src/index/indexer.rs	has_field_for_label	441	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_label_indexed	454	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	is_attr_indexed	469	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query	483	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	query_edges	497	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	fulltext_query	508	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	fulltext_query_edges	522	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query	541	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query_edges	556	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	get_vector_metric	578	PROVEN	Meta.Ixr.getVectorMetric_spec
+graph/src/index/indexer.rs	get_vector_dimension	601	PROVEN	Meta.Ixr.getVectorDimension_spec
+graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Slots.inc; inc_dec_cur, ok_inc
+graph/src/index/indexer.rs	acquire_population_snapshot	642	PROVEN	Slots.inc; inc_dec_cur
+graph/src/index/indexer.rs	acquire_population_snapshots	664	PROVEN	Slots.inc per label; inc_dec_cur
+graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Slots.dec; inc_dec_cur, inc_dec_stale, dec_stale_keeps_current
+graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Meta.Ixr.isTicketCurrent; createIndex_old_ticket_stale (after #3086 only the new generation is current)
+graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Slots.countFor
+graph/src/index/indexer.rs	enabled	720	PROVEN	Slots.countFor s.gen = 0; bump_fresh
+graph/src/index/indexer.rs	commit	730	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
+graph/src/index/indexer.rs	commit_edge	760	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec
+graph/src/index/indexer.rs	get_fields	786	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	get_all_fields	799	PROVEN	Meta.Ixr.getAllFields_spec
+graph/src/index/indexer.rs	index_info	809	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
+graph/src/index/indexer.rs	has_index	837	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	has_indexed_attr	845	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
+graph/src/index/indexer.rs	update_progress	856	PROVEN	Meta.Ixr.updateProgress_spec
+graph/src/index/indexer.rs	write_lock	873	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	cancel	877	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	is_cancelled	885	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	recreate_index	895	PROVEN	Meta.Ixr.recreate_spec
+graph/src/index/indexer.rs	set_graph	917	PROVEN	Meta.Ixr.misc
+graph/src/index/indexer.rs	get_graph	925	PROVEN	Meta.Ixr.misc
 graph/src/index/redisearch/mod.rs	RediSearch_GetCApiVersion	167	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CreateIndexOptions	226	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_FreeIndexOptions	231	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)

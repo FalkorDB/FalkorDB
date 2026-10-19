@@ -41,7 +41,7 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
 | `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:714` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:608-701` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:624-717` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -246,6 +246,20 @@ W5-idx-2 no-options shape; fixed by #3087.
 - `proofs/cow_btree` now also proves that `from_sorted`, `insert_batch` and `remove_batch` build
   well-formed trees (`fromSorted_wf`, `insertBatch_wf`, `removeBatchTree_wf`), which this project's
   tree-level contents theorems (`Leaf.fromSorted_contents`, `Leaf.insertBatch_contents`) complement.
+- Still present: bugs 1-4, 7, 8, 10, 12, 13.
+
+## Re-target to 73077bb4a (#3086, #3033)
+- `indexer.rs`: #3086 (73077bb4a, issue #3069) adds `bump_id` at the end of `create_index` when the
+  label already had an entry (`indexer.rs:357-359`, after every fallible step); every function from
+  `drop_index` on moved +16 lines (COVERAGE updated). `IndexerM.build` now ends with `regen`
+  (`Env.regenTo` is the next `NEXT_INDEX_ID`). New: `createIndex_regen` (the stored entry has
+  id = generation = `regenTo`, current pending 0, and total pending is conserved: every earlier
+  ticket is now stale, so the old job's release stays balanced), `createIndex_old_ticket_stale`
+  (`is_ticket_current` holds for exactly the new generation; `is_ticket_current` is now PROVEN, was
+  MODELLED), `createIndex_new_entry` (a new label is not bumped). `createIndex_ok` and
+  `bug_range_after_fulltext` re-proved unchanged. The protocol-level consequence (an OPERATIONAL index
+  never misses a field) is `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
+- #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
 -/
 import FalkorIndexLayer.Model

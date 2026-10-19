@@ -8,7 +8,7 @@ User-facing behaviour that depends on it:
 - **No hang.** The server must stay responsive however many queries are queued, and lock ordering must never deadlock.
 - **Inline writes.** A write inside `MULTI`/`EXEC` (or a Lua script) runs on the main thread; it must succeed even while a queued write is in progress.
 - **`GRAPH.DELETE` and `BGSAVE`** while queries run.
-- **Indexes.** `CREATE INDEX` must populate the index, an entity must never drop out of an index because of a bad vector, and `db.idx.vector.queryNodes` must not crash on a huge `k`.
+- **Indexes.** `CREATE INDEX` must populate the index (also a second index on the same label), an entity must never drop out of an index because of a bad vector, and `db.idx.vector.queryNodes` must not crash on a huge `k`.
 
 Each module's header has its Lean↔Rust `file:line` table; the root [`SearchConcurrency.lean`](SearchConcurrency.lean) lists the modules, the theorems and the bugs. This README explains *what* is proven and *why it matters*.
 
@@ -37,7 +37,11 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 
 **4. Is a new index always populated?**
 
-**No, not a second one on the same label.** `second_index_never_populated` replays the ticket protocol and shows that after `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the second index reports OPERATIONAL but is never filled. This is still open (Bug 2 below). `fixed_trace_complete` shows the proposed fix, bumping the generation on every field addition, completes. The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`, `stale_release_isolated`).
+- **Before #3086, not a second one on the same label.** `pre3086_second_index_never_populated` replays the ticket protocol: after `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below).
+- **On main, yes.** `create_index` now bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the interleaving that used to lose `b`.
+- **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
+
+The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`, `stale_release_isolated`).
 
 **5. Can a bad vector remove an entity from its other indexes?**
 
@@ -60,6 +64,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 | `refused_commit_releases_slot` | A commit refused by `Graph::validate` publishes nothing and frees the slot | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
+| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches | `Tickets.lean` |
 | `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
@@ -82,7 +87,7 @@ All reproduced on live servers, Rust against C (scripts in `repro/`).
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 (W3-conc-1) | `pre3014_pool_deadlock_reachable` | Over 1024 queued queries: the main thread, holding the GIL, blocks on the full pool queue while workers wait for the GIL. Permanent hang, `PING` times out; C completes | Fixed by #3014 (issue #3013): `never_stuck_3014`, `acquire_bounded`, `release_exactly_once` |
-| 2 | `second_index_never_populated` | A second index on a label is never populated: `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes, and `n.b < 300000` through the index returns 0 rows (C: 300000). The same mechanism loses entries when writes race population | **Open** (the `ticket_pending_changes > 1` bail is still in `graph.rs` on main). Fix: bump the generation on every field addition (`fixed_trace_complete`) |
+| 2 | `pre3086_second_index_never_populated` | A second index on a label was never populated: `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes, and `n.b < 300000` through the index returned 0 rows (C: 300000). `repro/poprace.py` (writes racing population) was attributed to the same mechanism; it has not been re-run on main | Fixed by #3086 (issue #3069): `main_operational_complete`, `main_lost_order_complete` |
 | 3 (W3-conc-3) | `pre3087_dim_mismatch_dropped_range_entry`, `pre3087_noparams_dropped_range_entry` | A wrong-dimension vector removed the node from every index on its label | Fixed by #3087 (issue #3075): `docSet_vector_sound`, `vector_dim_mismatch_keeps_range_entry` |
 | 4 (W3-conc-4) | `pre3088_huge_k_kills_server` | A huge KNN `k` crashed the server | Fixed by #3088 (issue #3085): `alloc_bounded`, `huge_k_one_row` |
 | 5 | `pre3290_multi_write_refused` | An inline (`MULTI`/`EXEC`) write failed with "another write is in progress" while a queued write was matching. C creates it | Fixed by #3290 (issue #3093): `inline_write_ok`, `one_commit_per_version` |
@@ -98,7 +103,7 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 | `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, #3290's fork-and-claim, delete and fork exclusion |
 | `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the pre-#3014 deadlock and the #3014 model (`never_stuck_3014`) |
 | `Pool.lean` | `threadpool.rs` and #3014's `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
-| `Tickets.lean` | Index population tickets (`Slots`): counter soundness and `second_index_never_populated` |
+| `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) and the historical `pre3086_second_index_never_populated` |
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
 | `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the #3088 `k` clamp: `alloc_bounded`, `candidates_topk` |
 | `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs` |
@@ -128,6 +133,7 @@ No path dependencies.
 - **RediSearch semantics.** Tokenizing, stemming, stopwords, scoring and HNSW recall are a hypothesis structure, not modelled.
 - **The graph inside a version.** `Mvcc` treats a version as a list of opaque writes. The per-graph `RwLock` and the versioned matrices are covered in other projects.
 - **Memory ordering.** Atomics are assumed sequentially consistent; the Rust uses Acquire/Release.
+- **Index population.** `Tickets` models `CREATE INDEX` on one label and the populate jobs. It does not model the write path, `DROP INDEX` with fields remaining (recreate and repopulate), or `populate_indexes_sync`.
 - **Exhaustive checks are bounded.** The `write_loop` hand-off is checked exhaustively for 2 producers only.
 - **The fork child.** Beyond "it sees the committed version", what the child does (GraphBLAS `wait_all`, OpenMP) is not modelled.
 - **Write detection.** How `execute_query` decides a query writes is not modelled.

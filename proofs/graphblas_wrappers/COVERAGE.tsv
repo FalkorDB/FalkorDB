@@ -1,74 +1,75 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/graph/graphblas/matrix.rs	init	117	PROVEN	GrbInfo.propagate_safe: all three init codes mapped to Err (Disposition.propagate)
-graph/src/graph/graphblas/matrix.rs	set_nthreads	192	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	omp_set_num_threads	202	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	burble	206	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	shutdown	217	AXIOMATISED	LAGraph_Finalize; rc ignored (Disposition: ignore)
-graph/src/graph/graphblas/matrix.rs	add_op	267	PROVEN	GBWGlue.addOp: addOp_u64_second, addOp_bool_true
-graph/src/graph/graphblas/matrix.rs	add_op	271	PROVEN	GBWGlue.addOp .bool: addOp_bool_true
-graph/src/graph/graphblas/matrix.rs	add_op	279	PROVEN	GBWGlue.addOp .u64: addOp_u64_second
-graph/src/graph/graphblas/matrix.rs	new_matrix	290	PROVEN	GBWGlue.newMatrix: newMatrix_spec
-graph/src/graph/graphblas/matrix.rs	new_matrix	297	PROVEN	GBWGlue.newMatrix .bool: newMatrix_spec
-graph/src/graph/graphblas/matrix.rs	new_matrix	306	PROVEN	GBWGlue.newMatrix .u64: newMatrix_spec
-graph/src/graph/graphblas/matrix.rs	from	315	PROVEN	GBWGlue.descOf: descOf_injective, descOf_nondefault, descOf_RC, allDesc_complete
-graph/src/graph/graphblas/matrix.rs	clone	375	PROVEN	Own: clone = count+1; never_double_free / race_leaks
-graph/src/graph/graphblas/matrix.rs	drop	389	PROVEN	Own.never_double_free, Own.sequential_frees_once; Own.race_leaks = CONFIRMED leak bug_matrix_concurrent_drop_leaks
-graph/src/graph/graphblas/matrix.rs	pin_sparse	406	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	decode	430	PROVEN	Codes.matrix_decode_internal_new_ok; component decode propagates; CONFIRMED leak bug_matrix_decode_leaks_container_components / _on_error_path
-graph/src/graph/graphblas/matrix.rs	encode	510	PROVEN	GBWGlue.encodeM: encodeM_spec, decodeC_encodeM (UnloadLoad + PtrBlind = GxB load/unload spec), encodeM_no_heap_addresses / scrub_scalars (#3097 header pointers nulled; history pre3097_encode_leaks_heap_address)
-graph/src/graph/graphblas/matrix.rs	into_hyper	573	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	hyper_vector_count	611	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	transpose	648	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	grown	715	PROVEN	Misc.grown_rejects_shrink, Misc.resize_clamp_grownOk
-graph/src/graph/graphblas/matrix.rs	inner	735	PROVEN	GBWGlue.MatH.inner: inner_eq
-graph/src/graph/graphblas/matrix.rs	contains	746	PROVEN	GrbInfo.Disposition.propagate (== SUCCESS -> bool)
-graph/src/graph/graphblas/matrix.rs	intersection_nvals	758	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	count_in_rows	788	PROVEN	GBWBulk.countInRows: countInRows_spec (= entries in the selected rows; GrB_mxv PLUS_PAIR T0 + GrB_Vector_reduce as hypothesis BulkSpec), countInRows_fromSorted, countInRows_pos (#3022)
-graph/src/graph/graphblas/matrix.rs	pending	809	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	wait	826	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	is_synced	847	PROVEN	GBWGlue.MatH.isSynced: isSynced_iff
-graph/src/graph/graphblas/matrix.rs	memory_usage	852	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	clear	927	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	remove_all	935	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	select	946	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	element_wise_add	963	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	element_wise_multiply	987	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	set_pattern	1017	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	lmxm	1041	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	rmxm	1062	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	nrows	1082	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	ncols	1092	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	resize	1101	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	sparsity_status	1117	PROVEN	GBWGlue.sparsityName: sparsityName_known, sparsityName_other
-graph/src/graph/graphblas/matrix.rs	nvals	1137	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	remove	1146	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	print	1158	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	dup	1170	PROVEN	Own.dup_independent_ownership (fresh Arc/Mutex/flag)
-graph/src/graph/graphblas/matrix.rs	dup	1174	PROVEN	Own.dup_independent_ownership (fresh Arc/Mutex/flag)
-graph/src/graph/graphblas/matrix.rs	new	1230	PROVEN	Index.matrixNewOk / create_safe_iff: assert fires iff dim > 2^60 (#2892)
-graph/src/graph/graphblas/matrix.rs	set	1254	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	get	1269	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
-graph/src/graph/graphblas/matrix.rs	iter	1288	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	build	1297	PROVEN	Index.len_cast_lossless (rows.len() as u64)
-graph/src/graph/graphblas/matrix.rs	new	1325	PROVEN	Index.create_safe_iff / create_2pow61_crashes (#2892 boundary)
-graph/src/graph/graphblas/matrix.rs	get	1359	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
-graph/src/graph/graphblas/matrix.rs	set	1375	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	assign_product_true	1399	PROVEN	Index.len_cast_lossless (len() as u64)
-graph/src/graph/graphblas/matrix.rs	build	1428	PROVEN	Index.len_cast_lossless (rows.len() as u64)
-graph/src/graph/graphblas/matrix.rs	delta_lmxm	1464	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	iter	1552	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	extract	1573	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	1576	PROVEN	GBWGlue.posB/posU: posB_eq, posU_eq
-graph/src/graph/graphblas/matrix.rs	extract	1585	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	1593	PROVEN	GBWGlue.posB: posB_eq
-graph/src/graph/graphblas/matrix.rs	extract	1604	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
-graph/src/graph/graphblas/matrix.rs	pos	1613	PROVEN	GBWGlue.posU: posU_eq, posU_agrees
-graph/src/graph/graphblas/matrix.rs	drop	1634	PROVEN	Own.never_double_free (same Arc::get_mut protocol as Matrix::drop)
-graph/src/graph/graphblas/matrix.rs	new	1656	PROVEN	RowIter.drain_seek_eq_spec
-graph/src/graph/graphblas/matrix.rs	detached	1677	PROVEN	RowIter.drain_empty_matrix (depleted, yields nothing)
-graph/src/graph/graphblas/matrix.rs	attach	1688	AXIOMATISED	GxB_Iterator_new (assert, OOM only) + rowIterator_attach (debugAssert)
-graph/src/graph/graphblas/matrix.rs	seek	1713	PROVEN	RowIter.drain_seek_eq_spec (seekRow + NO_VALUE loop)
-graph/src/graph/graphblas/matrix.rs	next	1746	PROVEN	RowIter.drainL_eq_filter / drain_no_duplication; test ok_row_iterator_exactly_once
+graph/src/graph/graphblas/matrix.rs	init	118	PROVEN	GrbInfo.propagate_safe: all three init codes mapped to Err (Disposition.propagate)
+graph/src/graph/graphblas/matrix.rs	set_nthreads	193	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	omp_set_num_threads	203	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	burble	207	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	shutdown	218	AXIOMATISED	LAGraph_Finalize; rc ignored (Disposition: ignore)
+graph/src/graph/graphblas/matrix.rs	add_op	268	PROVEN	GBWGlue.addOp: addOp_u64_second, addOp_bool_true
+graph/src/graph/graphblas/matrix.rs	add_op	272	PROVEN	GBWGlue.addOp .bool: addOp_bool_true
+graph/src/graph/graphblas/matrix.rs	add_op	280	PROVEN	GBWGlue.addOp .u64: addOp_u64_second
+graph/src/graph/graphblas/matrix.rs	new_matrix	291	PROVEN	GBWGlue.newMatrix: newMatrix_spec
+graph/src/graph/graphblas/matrix.rs	new_matrix	298	PROVEN	GBWGlue.newMatrix .bool: newMatrix_spec
+graph/src/graph/graphblas/matrix.rs	new_matrix	307	PROVEN	GBWGlue.newMatrix .u64: newMatrix_spec
+graph/src/graph/graphblas/matrix.rs	from	316	PROVEN	GBWGlue.descOf: descOf_injective, descOf_nondefault, descOf_RC, allDesc_complete
+graph/src/graph/graphblas/matrix.rs	clone	376	PROVEN	Own: clone = count+1; never_double_free / race_leaks
+graph/src/graph/graphblas/matrix.rs	drop	390	PROVEN	Own.never_double_free, Own.sequential_frees_once; Own.race_leaks = CONFIRMED leak bug_matrix_concurrent_drop_leaks
+graph/src/graph/graphblas/matrix.rs	pin_sparse	407	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	decode	431	PROVEN	Codes.matrix_decode_internal_new_ok; component decode propagates; CONFIRMED leak bug_matrix_decode_leaks_container_components / _on_error_path
+graph/src/graph/graphblas/matrix.rs	encode	511	PROVEN	GBWGlue.encodeM: encodeM_spec, decodeC_encodeM (UnloadLoad + PtrBlind = GxB load/unload spec), encodeM_no_heap_addresses / scrub_scalars (#3097 header pointers nulled; history pre3097_encode_leaks_heap_address)
+graph/src/graph/graphblas/matrix.rs	into_hyper	574	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	hyper_vector_count	612	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	transpose	649	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	grown	716	PROVEN	Misc.grown_rejects_shrink, Misc.resize_clamp_grownOk
+graph/src/graph/graphblas/matrix.rs	inner	736	PROVEN	GBWGlue.MatH.inner: inner_eq
+graph/src/graph/graphblas/matrix.rs	contains	747	PROVEN	GrbInfo.Disposition.propagate (== SUCCESS -> bool)
+graph/src/graph/graphblas/matrix.rs	intersection_nvals	759	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	count_in_rows	789	PROVEN	GBWBulk.countInRows: countInRows_spec (= entries in the selected rows; GrB_mxv PLUS_PAIR T0 + GrB_Vector_reduce as hypothesis BulkSpec), countInRows_fromSorted, countInRows_pos (#3022)
+graph/src/graph/graphblas/matrix.rs	pending	810	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	wait	827	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	is_synced	848	PROVEN	GBWGlue.MatH.isSynced: isSynced_iff
+graph/src/graph/graphblas/matrix.rs	memory_usage	853	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	clear	928	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	remove_all	936	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	select	947	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	element_wise_add	964	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	element_wise_multiply	988	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	set_pattern	1018	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	lmxm	1042	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	rmxm	1063	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	nrows	1083	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	ncols	1093	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	resize	1102	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	sparsity_status	1118	PROVEN	GBWGlue.sparsityName: sparsityName_known, sparsityName_other
+graph/src/graph/graphblas/matrix.rs	nvals	1138	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	remove	1147	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	print	1159	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	dup	1171	PROVEN	Own.dup_independent_ownership (fresh Arc/Mutex/flag)
+graph/src/graph/graphblas/matrix.rs	dup	1175	PROVEN	Own.dup_independent_ownership (fresh Arc/Mutex/flag)
+graph/src/graph/graphblas/matrix.rs	count_value_eq	1232	PROVEN	Decode.countValueEq_spec / countValueEq_markers (#3033; GrB_Matrix_select_UINT64 + GrB_VALUEEQ_UINT64 then nvals = number of entries equal to y, C contract as hypothesis SelectValueEqSpec, not an axiom; Info debugAssert)
+graph/src/graph/graphblas/matrix.rs	new	1254	PROVEN	Index.matrixNewOk / create_safe_iff: assert fires iff dim > 2^60 (#2892)
+graph/src/graph/graphblas/matrix.rs	set	1278	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	get	1293	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
+graph/src/graph/graphblas/matrix.rs	iter	1312	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	build	1321	PROVEN	Index.len_cast_lossless (rows.len() as u64)
+graph/src/graph/graphblas/matrix.rs	new	1349	PROVEN	Index.create_safe_iff / create_2pow61_crashes (#2892 boundary)
+graph/src/graph/graphblas/matrix.rs	get	1383	PROVEN	GrbInfo.Disposition.propagate (non-success -> None)
+graph/src/graph/graphblas/matrix.rs	set	1399	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	assign_product_true	1423	PROVEN	Index.len_cast_lossless (len() as u64)
+graph/src/graph/graphblas/matrix.rs	build	1452	PROVEN	Index.len_cast_lossless (rows.len() as u64)
+graph/src/graph/graphblas/matrix.rs	delta_lmxm	1488	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	iter	1576	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	extract	1597	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	1600	PROVEN	GBWGlue.posB/posU: posB_eq, posU_eq
+graph/src/graph/graphblas/matrix.rs	extract	1609	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	1617	PROVEN	GBWGlue.posB: posB_eq
+graph/src/graph/graphblas/matrix.rs	extract	1628	AXIOMATISED	thin wrapper over one GrB/GxB call; C spec axiomatised; Info disposition debugAssert (GrbInfo.Disposition.run: swallowed in release)
+graph/src/graph/graphblas/matrix.rs	pos	1637	PROVEN	GBWGlue.posU: posU_eq, posU_agrees
+graph/src/graph/graphblas/matrix.rs	drop	1658	PROVEN	Own.never_double_free (same Arc::get_mut protocol as Matrix::drop)
+graph/src/graph/graphblas/matrix.rs	new	1680	PROVEN	RowIter.drain_seek_eq_spec
+graph/src/graph/graphblas/matrix.rs	detached	1701	PROVEN	RowIter.drain_empty_matrix (depleted, yields nothing)
+graph/src/graph/graphblas/matrix.rs	attach	1712	AXIOMATISED	GxB_Iterator_new (assert, OOM only) + rowIterator_attach (debugAssert)
+graph/src/graph/graphblas/matrix.rs	seek	1737	PROVEN	RowIter.drain_seek_eq_spec (seekRow + NO_VALUE loop)
+graph/src/graph/graphblas/matrix.rs	next	1770	PROVEN	RowIter.drainL_eq_filter / drain_no_duplication; test ok_row_iterator_exactly_once
 graph/src/graph/graphblas/vector.rs	drop	70	AXIOMATISED	GrB_Vector_free / GxB_Iterator_free, single owner
 graph/src/graph/graphblas/vector.rs	from	82	PROVEN	GBWGlue.vecFrom: ptr_vecFrom
 graph/src/graph/graphblas/vector.rs	from	91	PROVEN	GBWGlue.vecFrom: ptr_vecFrom
@@ -1201,9 +1202,9 @@ graph/src/graph/graphblas/tensor.rs	resize	823	PROVEN	Misc.resize_clamp_grownOk 
 graph/src/graph/graphblas/tensor.rs	edge_count	1231	PROVEN	Decode.edgeCount_no_panic / edgeCount_value (also VM count_correct)
 graph/src/graph/graphblas/tensor.rs	iter_edges	1293	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_all_single
 graph/src/graph/graphblas/tensor.rs	iter	1310	PROVEN	Misc.iterExpand_eq_flatMap
-graph/src/graph/graphblas/tensor.rs	decode	1553	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes; history pre2996_accepts_out_of_bounds_delta); Codes.decodeBlob_never_dies; STILL OPEN: Decode.orphan_row_panics / more_me_rows_than_pattern_panics (orphan me row accepted, bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics)
-graph/src/graph/graphblas/tensor.rs	next	1679	PROVEN	Misc.expand (EdgeIds = inline or me row)
-graph/src/graph/graphblas/tensor.rs	next	1763	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
+graph/src/graph/graphblas/tensor.rs	decode	1553	PROVEN	Decode.checkLayers_ok_iff / checkLayers_merge_in_bounds (#2996 layer sizes; history pre2996_accepts_out_of_bounds_delta); Codes.decodeBlob_never_dies; #3033 promotion completeness: Decode.decodeCheck_ok_iff / decodeCheck_refuses_incomplete / decodeCheck_ok_complete / decodeCheck_ok_edgeCount_no_panic / decodeCheck_accepts_encoded (history pre3033_orphan_row_accepted, pre3033_orphan_row_panics, pre3033_more_me_rows_than_pattern_panics)
+graph/src/graph/graphblas/tensor.rs	next	1699	PROVEN	Misc.expand (EdgeIds = inline or me row)
+graph/src/graph/graphblas/tensor.rs	next	1783	PROVEN	Misc.iterExpand_eq_flatMap / iterExpand_length
 graph/src/graph/graphblas/serialization.rs	encode	34	PROVEN	GBWSerial.Codec (trait contract; instance VMOps.decode_encode): Codec.roundtrip2
 graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	GBWSerial.encodeWithRangeDefault: defaults_panic
 graph/src/graph/graphblas/serialization.rs	decode	64	PROVEN	GBWSerial.Codec (trait contract; instance VMOps.decode_encode): Codec.roundtrip2

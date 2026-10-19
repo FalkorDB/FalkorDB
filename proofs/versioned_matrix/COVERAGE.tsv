@@ -109,24 +109,24 @@ graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1433	PROVEN	VMTensorOps.wai
 graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1446	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
 graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1455	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
 graph/src/graph/graphblas/tensor.rs	Tensor::encode	1474	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
-graph/src/graph/graphblas/tensor.rs	Tensor::decode	1553	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); STILL OPEN orphan_row_panics / more_me_rows_than_pattern_panics
-graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1679	PROVEN	graphblas_wrappers Misc.expand
-graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1686	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
-graph/src/graph/graphblas/tensor.rs	Iter::new	1714	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
-graph/src/graph/graphblas/tensor.rs	Iter::seek	1746	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
-graph/src/graph/graphblas/tensor.rs	Iter::next	1763	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Tensor::decode	1553	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033; history pre3033_orphan_row_panics)
+graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1699	PROVEN	graphblas_wrappers Misc.expand
+graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1706	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
+graph/src/graph/graphblas/tensor.rs	Iter::new	1734	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Iter::seek	1766	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
+graph/src/graph/graphblas/tensor.rs	Iter::next	1783	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
 graph/src/graph/cow.rs	Cow::new	84	PROVEN	VMCow.cowNew: cowNew_spec
 graph/src/graph/cow.rs	Cow::new_version	97	PROVEN	Cow.newVersion: newVersion_iso
 graph/src/graph/cow.rs	Cow::replace	112	PROVEN	replace: wstep_iso
 graph/src/graph/cow.rs	Cow::deref	128	PROVEN	VMCow.deref: deref_view
 graph/src/graph/cow.rs	Cow::deref_mut	134	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (release hazard; debug-asserted since #2905, runtime_ds CowModel.dbg_write_through_branched_source_panics)
-graph/src/graph/mvcc_graph.rs	MvccGraph::new	80	PROVEN	VMCow.mvccNew: mvccNew_ready
-graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	95	PROVEN	VMCow.mvccNew: mvccNew_ready
-graph/src/graph/mvcc_graph.rs	MvccGraph::read	103	PROVEN	reader_view_frozen, snapshot_isolation
-graph/src/graph/mvcc_graph.rs	MvccGraph::write	108	PROVEN	Mvcc.write/sstep .begin: single_writer, newVersion_iso
-graph/src/graph/mvcc_graph.rs	MvccGraph::commit	139	PROVEN	sstep .commit (Graph::validate as `valid`): snapshot_isolation, refused_commit_rolls_back
-graph/src/graph/mvcc_graph.rs	MvccGraph::rollback	221	PROVEN	sstep .rollback: snapshot_isolation
-graph/src/graph/mvcc_graph.rs	MvccGraph::drop	227	PROVEN	VMCow.dropG: dropG_spec
+graph/src/graph/mvcc_graph.rs	MvccGraph::new	89	PROVEN	VMCow.mvccNew: mvccNew_ready
+graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	104	PROVEN	VMCow.mvccNew: mvccNew_ready
+graph/src/graph/mvcc_graph.rs	MvccGraph::read	112	PROVEN	reader_view_frozen, snapshot_isolation
+graph/src/graph/mvcc_graph.rs	MvccGraph::write	119	PROVEN	Mvcc.write/sstep .begin: single_writer, newVersion_iso
+graph/src/graph/mvcc_graph.rs	MvccGraph::commit	186	PROVEN	sstep .commit (Graph::validate as `valid`): snapshot_isolation, refused_commit_rolls_back
+graph/src/graph/mvcc_graph.rs	MvccGraph::rollback	268	PROVEN	sstep .rollback: snapshot_isolation
+graph/src/graph/mvcc_graph.rs	MvccGraph::drop	274	PROVEN	VMCow.dropG: dropG_spec
 graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::count_in_rows	818	CONDITIONAL	VMCount.vmCountInRows: vmCountInRows_spec (= effective entries (m \ dm) ∪ dp in the selected rows; layer(dm) ≤ layer(m), no u64 underflow; Matrix::count_in_rows spec as hypothesis LayerCount, proved in graphblas_wrappers) (#3022) || CONDITIONAL on LayerCount (Matrix::count_in_rows counts a layer's entries; graphblas_wrappers countInRows_spec, not linked)
 graph/src/graph/graphblas/tensor.rs	Tensor::count_pairs_into	1325	PROVEN	VMCount.countPairsInto: countPairsInto_spec (pairs with dst in the set; positive iff a live pair ends there, under AllInv mt_eff) (#3022)
 graph/src/graph/graphblas/tensor.rs	Tensor::nrows	810	PROVEN	VMTensorOps.nrowsT: nrowsT_resizeT (#3250)

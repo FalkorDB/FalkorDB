@@ -22,13 +22,15 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 **2. Can a decoded tensor break its own invariant?**
 
-**Yes, still on main.** `Tensor::decode` does not check that a pair with an `me` row is marked as a multi-edge.
+**Not any more: #3033 fixed it.** Promotion completeness says a pair has an `me` row exactly when its forward value is the `MULTI_EDGE` marker. Before #3033, `Tensor::decode` did not check it.
 
 - `edgeCount_no_panic` and `edgeCount_value` prove `edge_count` cannot underflow while the invariant `Wf` holds.
-- `orphan_row_breaks_wf` and `orphan_row_panics` show the exact state a crafted payload produces, in which `edge_count` panics.
-- `more_me_rows_than_pattern_panics` generalises it: any decoded tensor with more `me` rows than forward pairs panics.
-
-`Tensor::encode` calls `edge_count`, so a graph restored from such a payload can no longer be saved.
+- History: `pre3033_orphan_row_accepted`, `pre3033_orphan_row_breaks_wf` and `pre3033_orphan_row_panics` show the state a crafted payload produced, in which `edge_count` panicked. `pre3033_more_me_rows_than_pattern_panics` generalises it to any decoded tensor with more `me` rows than forward pairs. `Tensor::encode` calls `edge_count`, so a graph restored from such a payload could no longer be saved.
+- Now `decode` counts the markers with `Matrix::<u64>::count_value_eq` (a `GrB_select` with `GrB_VALUEEQ_UINT64`, stated as the hypothesis `SelectValueEqSpec`). It refuses a tensor entry that is not an in-bounds marker, and refuses a marker count that differs from the number of `me` pairs with ids.
+- `decodeCheck_ok_iff` proves decode accepts exactly when every tensor entry is an in-bounds marker and the rows it builds are promotion complete. `decodeCheck_refuses_incomplete` is the direction that matters for safety: every payload that would break the invariant is refused.
+- `decodeCheck_ok_edgeCount_no_panic` proves `edge_count` cannot panic on an accepted tensor.
+- `decodeCheck_accepts_encoded` proves no valid payload is refused: decode accepts every tensor `encode` writes.
+- main's three new tests are `orphan_row_refused`, `single_pair_ids_refused` and `marker_without_ids_refused`.
 
 **3. Is a GraphBLAS matrix freed exactly once?**
 
@@ -63,7 +65,8 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `checkLayers_merge_in_bounds` | `Tensor::decode` only merges delta entries inside the base (#2996) | `Decode.lean` |
 | `encodeM_no_heap_addresses` | The encoded container header carries no heap address (#3097) | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
-| `orphan_row_panics`, `more_me_rows_than_pattern_panics` | A decoded tensor with an orphan `me` row makes `edge_count` panic | `Decode.lean` |
+| `decodeCheck_ok_iff`, `decodeCheck_refuses_incomplete`, `decodeCheck_accepts_encoded` | `Tensor::decode` refuses exactly the payloads that break promotion completeness, and accepts every encoded tensor (#3033) | `Decode.lean` |
+| `pre3033_orphan_row_panics`, `pre3033_more_me_rows_than_pattern_panics` | History: before #3033, a decoded tensor with an orphan `me` row made `edge_count` panic | `Decode.lean` |
 | `never_double_free`, `race_leaks` | Two concurrent drops never double-free but can leak | `Own.lean` |
 | `drain_seek_eq_spec`, `drain_no_duplication` | A row-range scan yields exactly the in-range entries, in order, once | `RowIter.lean` |
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
@@ -89,12 +92,12 @@ The bug theorems are smaller. `Disposition.run` models what each style of status
 
 ## Bugs found
 
-The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main 1d15bf713.
+The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main 73077bb4a.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos` | A corrupt multi-edge blob in `GRAPH.RESTORE`, an RDB or a full sync hit `assert_eq!` on `GxB_Vector_deserialize` and the server exited (confirmed live with a truncated COPY payload) | **Fixed by #2996** (`decodeBlob_never_dies`) |
-| 2 | `orphan_row_panics`, `orphan_row_breaks_wf` | `Tensor::decode` accepts an `me` row with no forward pair. `iter_edges` then yields a phantom edge, `edge_count` panics, and the restored graph cannot be saved | **Open** |
+| 2 | `pre3033_orphan_row_panics`, `pre3033_orphan_row_breaks_wf`, `pre3033_orphan_row_accepted` | `Tensor::decode` accepted an `me` row with no forward pair. `iter_edges` then yielded a phantom edge, `edge_count` panicked, and the restored graph could not be saved | **Fixed by #3033** (`decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`) |
 | 3 | — (Rust test only) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
 | 4 | `race_leaks` | Two `Matrix` clones dropped concurrently can both see a count of 2, so the GraphBLAS matrix is never freed (19 of 200,000 pairs leaked in the test) | **Open** (`never_double_free`: a leak, never a double free) |
 | 5 | — (Rust test only) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
@@ -115,7 +118,7 @@ There are no CONDITIONAL rows.
 | `Own.lean` | The `Arc<GrB_Matrix>` drop protocol as a small-step machine over every two-owner interleaving |
 | `RowIter.lean` | `matrix::Iter` `seek`/`next` over a row range |
 | `Codes.lean` | Each deserialize wrapper's disposition; bug 1 and its #2996 fix |
-| `Decode.lean` | `edge_count`'s checked arithmetic and the decode gap (bug 2); the #2996 layer-size check |
+| `Decode.lean` | `edge_count`'s checked arithmetic; the #2996 layer-size check; `count_value_eq` and the #3033 promotion-completeness check (bug 2 and its fix) |
 | `Misc.lean` | `grown`/`resize` policy, `vector::Iter`, the multi-edge `Iter` expansion |
 | `Glue.lean` | Operator/type selection, the descriptor table, accessors, encode round trip, the #3097 header scrub |
 | `Serial.lean` | `EncodeState::from_u64` and the `Encode`/`Decode` trait contract |
@@ -126,11 +129,11 @@ The lakefile has no path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 1210 rows. Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
+`COVERAGE.tsv` has 1211 rows. Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 64 |
+| PROVEN | 65 |
 | AXIOMATISED | 1146 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:

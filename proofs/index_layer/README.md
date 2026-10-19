@@ -36,7 +36,7 @@ No. `tag_encode_lower` is the only string transformation between Cypher and Redi
 
 **4. Are the population tickets and refcounts safe?**
 
-`ok_inc`, `ok_dec`, `ok_bump` prove the ticket counters stay non-negative. `bump_total` proves recreating an index conserves pending work, and `dec_stale_keeps_current` that a stale worker never touches the new generation. `RC.not_freed` proves no use-after-free of a RediSearch handle while an iterator holds a clone.
+`ok_inc`, `ok_dec`, `ok_bump` prove the ticket counters stay non-negative. `bump_total` proves recreating an index conserves pending work, and `dec_stale_keeps_current` that a stale worker never touches the new generation. Since #3086, adding a field to an existing index also starts a new generation: `createIndex_regen` proves the stored entry has a fresh generation with nothing pending and every earlier ticket still counted as stale, and `createIndex_old_ticket_stale` that only the new generation passes `is_ticket_current`, so a populate job holding the old field list stops at its next batch. That an OPERATIONAL index then has every field populated is proven in [`../search_concurrency`](../search_concurrency) (`main_operational_complete`). `RC.not_freed` proves no use-after-free of a RediSearch handle while an iterator holds a clone.
 
 **5. Do the B⁺-tree leaf pages decode to what was written?**
 
@@ -69,7 +69,7 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 1d15bf713: the header's re-targets (cab3cf192, 1d15bf713) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 73077bb4a: the header's re-targets (cab3cf192, 1d15bf713, 73077bb4a) list bugs 1-4, 7, 8, 10, 12 and 13 as still present, and no later commit touches that code.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
@@ -103,7 +103,7 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `Bugs.lean` | Counterexamples 1-10 and the `pre…`/`fixed…` pairs for the fixed ones |
 | `SetVector.lean` | The vector arm of `Document::set` (#3087): `setVector_sound` |
 | `Meta.lean`, `IndexM.lean` | `Field` and `Index` metadata, the RediSearch spec lifecycle |
-| `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, bug 13 |
+| `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the #3086 generation bump (`createIndex_regen`), bug 13 |
 | `Iter.lean` | Result iterators, RediSearch refcounts (`RC.not_freed`), and the bridges `query_eq_scan_filter`, `queryE_eq_scan_filter`, `fulltextQ_exact`, `vectorQ_sound` |
 | `LeafBytes.lean` | Byte helpers of the leaf pages, `read_width` (`readWidth_admitted`) |
 | `LeafAos.lean`, `LeafAosD.lean` | The AoS page at `DOC_BYTES = 8` and at any width (#2278), bug 14 |
@@ -124,12 +124,10 @@ No path dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 195 |
+| PROVEN | 196 |
 | AXIOMATISED | 83 |
-| MODELLED | 1 |
 
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
-- **MODELLED:** `is_ticket_current`, modelled as `ticket.gen = Slots.gen` with no theorem of its own.
 
 ## What the model does not cover
 

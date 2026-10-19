@@ -4,7 +4,10 @@
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
-Re-targeted to main 1d15bf713 (#2996, #3097, #3250 merged).
+Re-targeted to main 73077bb4a (#3033, #3086; earlier 1d15bf713: #2996, #3097, #3250).
+#3033 adds `Matrix::<u64>::count_value_eq` (matrix.rs:1232; every later matrix.rs
+line +24, earlier ones +1 for the import) and makes `Tensor::decode` enforce
+promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here).
 
 ## Lean ↔ Rust
 
@@ -12,13 +15,15 @@ Re-targeted to main 1d15bf713 (#2996, #3097, #3250 merged).
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:388, `Iter::drop` :1618 (`Arc::get_mut` then Arc drop) |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1713, `Iter::next` :1732 |
+| `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:390, `Iter::drop` :1658 (`Arc::get_mut` then Arc drop) |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1737, `Iter::next` :1770 |
 | `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` (`pre2996_*`: before #2996) |
-| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; invariant unchecked by `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:715, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1763, `vector::Iter::next` |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:510, header pointers nulled :527-543 (#3097) |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:788 (#3022) |
+| `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
+| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1232 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
+| `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
+| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:716, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:511, header pointers nulled :528-544 (#3097) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:789 (#3022) |
 
 ## Theorems (all proved, no sorry)
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
@@ -34,8 +39,16 @@ row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
 `checkLayers_merge_in_bounds` (history `pre2996_accepts_out_of_bounds_delta`);
 `encodeM_no_heap_addresses`, `scrub_scalars`, `decodeC_encodeM` (#3097; history
 `pre3097_encode_leaks_heap_address`);
-`edgeCount_no_panic`, `edgeCount_value`, `orphan_row_breaks_wf`,
-`orphan_row_panics`, `more_me_rows_than_pattern_panics` (still open on main);
+`edgeCount_no_panic`, `edgeCount_value`; #3033: `countValueEq_spec`,
+`countValueEq_markers`, `mget_eq_some_iff`, `tensorLoop_ok_iff`,
+**`decodeCheck_ok_iff`** (decode accepts iff every tensor entry is an in-bounds
+marker pair and the `me` rows are promotion complete),
+`decodeCheck_refuses_incomplete`, `decodeCheck_ok_complete`,
+`decodeCheck_ok_edgeCount_no_panic`, **`decodeCheck_accepts_encoded`**, main's
+tests `orphan_row_refused`, `single_pair_ids_refused`,
+`marker_without_ids_refused` (history `pre3033_orphan_row_accepted`,
+`pre3033_orphan_row_breaks_wf`, `pre3033_orphan_row_panics`,
+`pre3033_more_me_rows_than_pattern_panics`);
 `grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250;
 history `pre3250_resize_grow_iff_grownOk`), `vecDrain_eq`, `iterExpand_eq_flatMap`,
 `iterExpand_length`, `iterExpand_all_single`; plus GrbInfo helper lemmas.
@@ -56,8 +69,9 @@ entries in the selected rows — the double-counting argument over columns), `co
    log "FalkorDB panic: … vector.rs:222:13 … GxB_Vector_deserialize failed:
    GrB_INVALID_OBJECT". Same shape: `Vector<u64>::decode` (vector.rs:256). Fix:
    return `Err` like `Vector<bool>::decode` does. (C not comparable: different payload format.)
-2. **`Tensor::decode` accepts an `me` row with no forward pair** (still open on
-   main 1d15bf713); `edge_count`
+2. **`Tensor::decode` accepted an `me` row with no forward pair — FIXED by
+   #3033 on main 73077bb4a** (`decodeCheck_ok_iff`; text below is the pre-#3033
+   state, `pre3033_*`); `edge_count`
    then panics ("multi exceeds the effective pattern … |m|=0 multi=1 |me|=1"),
    and `Tensor::encode` calls `edge_count`, so the restored graph can't be saved.
    `iter_edges` yields a phantom edge (7,9,3). Test

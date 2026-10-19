@@ -1,5 +1,5 @@
 /-
-# Search layer and concurrency: models, proofs, and five confirmed bugs
+# Search layer and concurrency: models, proofs, and five confirmed bugs (all fixed on main)
 
 Project `proofs/search_concurrency`. Modules:
 
@@ -49,9 +49,16 @@ mutate, commit, rollback, delete, fork):
   `main_never_blocks`, `flood_drains`; historical `pre3014_pool_deadlock_reachable` (BUG 1).
 `Pool` (#3014 `QueueSlot`): `acquire_bounded`, `acquire_full`, `release_exactly_once`,
 `paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
-`Tickets`: `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`,
-`stale_release_isolated`, `second_index_never_populated`, `lucky_order_complete`,
-`fixed_trace_complete`.
+`Tickets` (re-targeted to 73077bb4a, #3086): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
+`operational_iff`, `stale_release_isolated`; on main `create_index` bumps the generation
+whenever the label already has an entry (indexer.rs:357-359): `main_operational_complete`
+(key property: over every interleaving of any number of `CREATE INDEX`es on a label and the
+batches of every populate job, an OPERATIONAL index has every field in every batch, outside
+the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
+`main_lost_order_complete` (the interleaving that lost `b` now completes);
+`store_window_operational_incomplete` (that window is real, see Gaps); historical
+(1d15bf713) `pre3086_second_index_never_populated`, `pre3086_lucky_order_complete`;
+`fixed_trace_complete` (the proposed fix, now shipped).
 `Search` (re-targeted to 8743953a8: #3087 vector guard; #3076 `e20300436` temporals no
 longer indexed — `docSet_temporal_not_indexed`, `docSet_eq_pre3076_off_temporal`, historical
 `pre3076_temporal_in_numeric`): `docSet_vector_sound` (key property: any
@@ -87,13 +94,17 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
    (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
-2. **Second index on a label is never populated** (`graph/src/graph/graph.rs:577`
-   `ticket_pending_changes > 1` bail + `index/indexer.rs:319-331` no `bump_id` for
+2. **FIXED by #3086 (73077bb4a)** — HISTORICAL (#3069, 1d15bf713): **Second index on a
+   label was never populated** (`graph/src/graph/graph.rs:577`
+   `ticket_pending_changes > 1` bail + old `index/indexer.rs:319-331` no `bump_id` for
    non-vector fields). `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes: Rust
    OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
    mechanism loses index entries when writes race population (`repro/poprace.py`:
-   8/8 rounds mismatched on Rust, 0/5 on C). Model: `second_index_never_populated`.
-   Fix: bump the generation on every field addition (`fixed_trace_complete`).
+   8/8 rounds mismatched on Rust, 0/5 on C; not re-run at 73077bb4a, and it creates one
+   index per round, so its cause may differ). Historical model:
+   `pre3086_second_index_never_populated`. Now `create_index` calls `bump_id` when the
+   entry exists (indexer.rs:357-359), so the older job fails `is_ticket_current` and the
+   new one indexes everything: `main_operational_complete`, `main_lost_order_complete`.
 3. **FIXED by #3087 (49f698d22)** — HISTORICAL (fe619ac5f): a vector of the wrong
    dimension (or any vector on a `{dimension:0}` / no-options vector field) removed the
    node from all of its label's indexes (old `mod.rs:723-733` added the blob unchecked;
@@ -153,7 +164,21 @@ claim — the property the Rust test `a_refused_commit_releases_the_write_slot`
 checks) and `valid_commit_publishes`. `commit_and_replicate` treats a refusal as
 `unreachable!` (graph_core.rs:1489).
 
+## Re-target to 73077bb4a (#3086, #3033)
+#3086 (issue #3069) bumps the generation in `create_index` whenever the label already has an entry
+(indexer.rs:357-359), fixing BUG 2. `Tickets` renames the old model and trace to `pre3086_*` and adds
+`store`/`acquire`/`step`/`Reach`, the invariant `MInv` (`inv_create`, `inv_populate`, `inv_batch`,
+`reach_inv`) and `main_operational_complete`. indexer.rs lines from `drop_index` on moved +16
+(COVERAGE updated). #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
+
 ## Gaps
+
+Index population (73077bb4a): between `Indexer::create_index` storing the entry and
+`populate_index` acquiring its ticket (graph.rs:3598-3604, no lock held across them) the
+entry has pending 0, so `is_label_indexed` (indexer.rs:454) reports the new field usable
+while no document has it (`store_window_operational_incomplete`). Unconfirmed live; the
+window is a few instructions. `Tickets` does not model write-path tickets, `drop_index`
+with fields remaining (recreate + populate), or `populate_indexes_sync`.
 
 RediSearch query semantics (tokenizer, stemming, stopword matching, scoring, HNSW
 recall) are hypotheses, not modelled; `Mvcc` abstracts the per-graph RwLock and
@@ -175,7 +200,8 @@ import SearchConcurrency.Knn
 #print axioms SC.Search.doc_always_accepted
 #print axioms SC.Search.other_fields_never_dropped
 #print axioms SC.Search.vector_dim_mismatch_keeps_range_entry
-#print axioms SC.Tickets.second_index_never_populated
+#print axioms SC.Tickets.pre3086_second_index_never_populated
+#print axioms SC.Tickets.main_operational_complete
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk
 #print axioms SC.Mvcc.one_commit_per_version

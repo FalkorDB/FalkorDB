@@ -24,6 +24,15 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
   `node_cap` ≥ every node id (`pre3250_shrink_safe` proved that case correct).
 
+Re-target to main 73077bb4a (#3033, #3086): no model change here. #3033 makes
+`Tensor::decode` (tensor.rs:1553) refuse a payload that breaks promotion
+completeness (`single_me`/`multi_me`); proved in graphblas_wrappers
+(`Decode.decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`). tensor.rs fns after
+decode moved +20 lines; the `mvcc_graph.rs` rows were re-pointed to the post-#3290
+lines (new :89, commit :186, rollback :268, drop :274; #3290's `fork`/`claim` are
+covered by other projects; #3290 left `write`'s semantics and `commit`/`rollback`/`drop`
+unchanged, so `sstep` stands).
+
 Re-target to main 1d15bf713 (#3250, #2905): `Tensor::resize` (tensor.rs:823) never
 shrinks; `resizeT` clamps to `max` and keeps every pair state and `me` row:
 `resizeT_eq`, `resizeT_edges` (no entry dropped), `resizeT_allInv`, `resizeT_blkInv`,

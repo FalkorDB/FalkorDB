@@ -1,7 +1,7 @@
 import FalkorIndexLayer.IndexM
 import FalkorIndexLayer.Proofs
 /-
-# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9)
+# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9; `create_index` re-targeted to 73077bb4a, #3086)
 
 The `ArcSwap<HashMap<label, Arc<Index>>>` is `map : AMap Idx`; a store is a
 functional update (readers see either the old or the new map, which is what
@@ -61,6 +61,7 @@ structure Env where
   fresh : Nat        -- new RS spec handle
   freshId : Nat      -- `NEXT_INDEX_ID` for `Index::default`
   bumpTo : Nat       -- `NEXT_INDEX_ID` for `bump_id`
+  regenTo : Nat      -- `NEXT_INDEX_ID` for `create_index`'s own `bump_id` (#3086)
   lower : String → String
 
 namespace Ixr
@@ -132,7 +133,17 @@ def finish (t : IType) (language : Option String) (stopwords : Option (List Stri
   let x4 := if stopwords.isSome && x3.stopwords.isNone then x3.setStopwords stopwords else x3
   x4.setProgress 0 total
 
-/-- Everything after validation (`indexer.rs:264-350`). -/
+/-- #3086 (73077bb4a, `indexer.rs:357-359`): every field added to an existing
+entry starts a new population generation (`bump_id`), after every fallible step. -/
+def regen (existing : Option Idx) (g : Nat) (x : Idx) : Idx :=
+  if existing.isSome then x.bumpId g else x
+
+theorem regen_fields (ex : Option Idx) (g : Nat) (x : Idx) :
+    (regen ex g x).fields = x.fields ∧ (regen ex g x).spec = x.spec ∧
+    (regen ex g x).progressOf = x.progressOf := by
+  unfold regen; split <;> simp [Idx.bumpId, Idx.progressOf]
+
+/-- Everything after validation (`indexer.rs:264-366`). -/
 def build (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String) (total : Nat)
     (p : Option String × Option (List String) × Option TextOpts × Option VecOpts) : Except String Ixr :=
   let x0 := match I.map.get label with | some x => x.cloneForUpdate | none => Idx.default E.freshId
@@ -140,7 +151,9 @@ def build (E : Env) (I : Ixr) (t : IType) (label : String) (attrs : List String)
   | .error e => .error e
   | .ok (x1, nf) => match specStep E t label p.1 p.2.1 p.2.2.1 x1 nf with
     | .error e => .error e
-    | .ok x2 => .ok { I with map := I.map.upd label (finish t p.1 p.2.1 total x2) }
+    | .ok x2 =>
+      let x3 := regen (I.map.get label) E.regenTo (finish t p.1 p.2.1 total x2)
+      .ok { I with map := I.map.upd label x3 }
 
 theorem finish_fields (t : IType) (l : Option String) (s : Option (List String)) (n : Nat) (x : Idx) :
     (finish t l s n x).fields = x.fields ∧ (finish t l s n x).spec = x.spec ∧
@@ -377,9 +390,10 @@ theorem createIndex_ok (E : Env) (I : Ixr) (t : IType) (l : String) (as : List S
   obtain ⟨hf2, hs2⟩ := specStep_ok _ _ _ _ _ _ _ _ _ hx2
   cases h
   obtain ⟨ff, fs, fp⟩ := finish_fields t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
-  refine ⟨fun l' hl' => by simp [AMap.get_upd, hl'], _, by simp [AMap.get_upd], fun a ha => ?_, fp, ?_⟩
-  · rw [hft_fields x1 _ (ff.trans hf2)]; exact hadd a ha
-  · simp only [Idx.hasRsIndex, fs]; exact hs2
+  obtain ⟨rf, rs, rp⟩ := regen_fields (I.map.get l) E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2)
+  refine ⟨fun l' hl' => by simp [AMap.get_upd, hl'], _, by simp [AMap.get_upd], fun a ha => ?_, rp.trans fp, ?_⟩
+  · rw [hft_fields x1 _ (rf.trans (ff.trans hf2))]; exact hadd a ha
+  · simp only [Idx.hasRsIndex, rs, fs]; exact hs2
 
 /-! ## `drop_index`: never leaves an attribute with an empty field list -/
 
@@ -566,12 +580,128 @@ theorem recreate_spec (E : Env) (I I' : Ixr) (l : String) (h : I.recreate E l = 
     exact ⟨y, by simp [AMap.get_upd], s, by rw [f, Idx.cloneForUpdate_eq], i⟩
   · next hx => cases h; exact ⟨fun _ _ => rfl, fun x h => by rw [h] at hx; cases hx⟩
 
+/-! ## #3086 (73077bb4a): adding a field to an existing entry starts a new generation -/
+
+/-- `is_ticket_current` (`indexer.rs:698`). -/
+def isTicketCurrent (I : Ixr) (tk : Ticket) : Bool :=
+  match I.map.get tk.label with | some x => x.id == tk.gen | none => false
+
+theorem addAttrs_slots (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
+    ∀ (as : List String) (x : Idx) (nf : AMap (List Field)) (y : Idx) (nf' : AMap (List Field)),
+      addAttrs t fo vo x nf as = .ok (y, nf') → y.slots = x.slots ∧ y.id = x.id ∧ y.spec = x.spec
+  | [], x, nf, y, nf', h => by simp [addAttrs] at h; obtain ⟨rfl, -⟩ := h; exact ⟨rfl, rfl, rfl⟩
+  | a :: as, x, nf, y, nf', h => by
+    simp only [addAttrs] at h
+    split at h; · cases h
+    have ih := addAttrs_slots t fo vo as _ _ y nf' h
+    refine ⟨ih.1.trans ?_, ih.2.1.trans ?_, ih.2.2.trans ?_⟩ <;>
+      (split <;> simp [Idx.addFieldToExisting, Idx.insertField] <;> split <;> rfl)
+
+theorem registerFields_id (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tk : Bool) (y : Idx)
+    (h : x.registerFields m fo tk = .ok y) : y.id = x.id := by
+  unfold Idx.registerFields at h; split at h <;> cases h; rfl
+
+/-- The RS step keeps the generation, except a vector field added to an existing
+spec, which recreates it under `bumpTo`. -/
+theorem specStep_slots (E : Env) (t : IType) (label : String) (la : Option String)
+    (st : Option (List String)) (fo : Option TextOpts) (x1 : Idx) (nf : AMap (List Field)) (x2 : Idx)
+    (h : specStep E t label la st fo x1 nf = .ok x2) :
+    (x2.slots = x1.slots ∧ x2.id = x1.id) ∨
+      (x1.hasRsIndex = true ∧ x2.slots = x1.slots.bump E.bumpTo ∧ x2.id = E.bumpTo) := by
+  unfold specStep at h
+  split at h
+  · next hrs =>
+    split at h
+    · obtain ⟨-, -, -, i, sl, -⟩ := Idx.recreateIndex_ok _ _ _ _ _ _ _ h
+      exact Or.inr ⟨hrs, sl, i⟩
+    · obtain ⟨-, -, -, sl, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
+      exact Or.inl ⟨sl, registerFields_id _ _ _ _ _ h⟩
+  · split at h
+    · cases h
+    · next x' hx' =>
+      obtain ⟨-, -, -, -, sl1, i1, -⟩ := Idx.createRsIndex_ok _ _ _ _ _ _ _ hx'
+      obtain ⟨-, -, -, sl2, -⟩ := Idx.registerFields_ok _ _ _ _ _ h
+      exact Or.inl ⟨sl2.trans sl1, (registerFields_id _ _ _ _ _ h).trans i1⟩
+
+theorem finish_slots (t : IType) (l : Option String) (s : Option (List String)) (n : Nat) (x : Idx) :
+    (finish t l s n x).slots = x.slots ∧ (finish t l s n x).id = x.id := by
+  simp only [finish]; repeat' split
+  all_goals simp [Idx.setLanguage, Idx.setStopwords, Idx.setProgress]
+
+/-- **#3086 on main**: `create_index` on a label that already has an entry
+publishes it under the fresh generation `regenTo` with no pending ticket of that
+generation, and every ticket outstanding before (any generation) is still
+counted, now as stale, so the old job's release stays balanced. -/
+theorem createIndex_regen (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
+    (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') :
+    ∃ x, I'.map.get l = some x ∧ x.id = E.regenTo ∧ x.slots.gen = E.regenTo ∧ x.slots.cur = 0 ∧
+      x.slots.cur + x.slots.stale = x0.slots.cur + x0.slots.stale := by
+  unfold createIndex at h
+  simp only at h
+  split at h; · cases h
+  split at h; · cases h
+  unfold build at h
+  simp only [hx0, Idx.cloneForUpdate_eq] at h
+  split at h; · cases h
+  next x1 nf hr1 =>
+  obtain ⟨sl1, -, -⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
+  split at h; · cases h
+  next x2 hx2 =>
+  cases h
+  obtain ⟨sl3, -⟩ := finish_slots t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
+  refine ⟨regen (some x0) E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2),
+    by simp [AMap.get_upd], ?_⟩
+  simp only [regen, Option.isSome_some, ite_true, Idx.bumpId, Slots.bump, sl3, true_and]
+  rcases specStep_slots _ _ _ _ _ _ _ _ _ hx2 with ⟨sl2, -⟩ | ⟨-, sl2, -⟩
+  · rw [sl2, sl1]; omega
+  · rw [sl2, sl1]; simp [Slots.bump]; omega
+
+/-- Hence a populate job of any earlier generation fails `is_ticket_current` at
+its next batch, and the job `populate_index` spawns for `regenTo` passes it. -/
+theorem createIndex_old_ticket_stale (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String)
+    (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x0 : Idx) (hx0 : I.map.get l = some x0)
+    (h : createIndex E I t l as tot o = .ok I') (g : Nat) :
+    I'.isTicketCurrent ⟨l, g⟩ = (g == E.regenTo) := by
+  obtain ⟨x, hx, hid, -⟩ := createIndex_regen E I t l as tot o I' x0 hx0 h
+  simp only [isTicketCurrent, hx, hid]
+  by_cases hg : g = E.regenTo
+  · subst hg; simp only [beq_self_eq_true]
+  · have : E.regenTo ≠ g := fun e => hg e.symm
+    rw [beq_false_of_ne hg, beq_false_of_ne this]
+
+/-- A brand-new entry is not bumped: it keeps `Index::default`'s generation. -/
+theorem createIndex_new_entry (E : Env) (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat)
+    (o : Option IdxOptions) (I' : Ixr) (hx0 : I.map.get l = none)
+    (h : createIndex E I t l as tot o = .ok I') :
+    ∃ x, I'.map.get l = some x ∧ x.id = E.freshId ∧ x.slots = ⟨E.freshId, 0, 0⟩ := by
+  unfold createIndex at h
+  simp only at h
+  split at h; · cases h
+  split at h; · cases h
+  unfold build at h
+  simp only [hx0] at h
+  split at h; · cases h
+  next x1 nf hr1 =>
+  obtain ⟨sl1, i1, sp1⟩ := addAttrs_slots t _ _ as _ [] x1 nf hr1
+  split at h; · cases h
+  next x2 hx2 =>
+  cases h
+  obtain ⟨sl3, i3⟩ := finish_slots t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
+  refine ⟨regen none E.regenTo (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2),
+    by simp [AMap.get_upd], ?_⟩
+  simp only [regen, Option.isSome_none, Bool.false_eq_true, ite_false, sl3, i3]
+  rcases specStep_slots _ _ _ _ _ _ _ _ _ hx2 with ⟨sl2, i2⟩ | ⟨hrs, -, -⟩
+  · rw [sl2, sl1, i2, i1]; exact ⟨rfl, rfl⟩
+  · have : x1.hasRsIndex = false := by simp [Idx.hasRsIndex, sp1, Idx.default]
+    rw [this] at hrs; cases hrs
+
 /-! ## BUG (new): a range index on an attribute that already has a fulltext
 index is never used correctly. `build_query_node` takes the attribute's *first*
 field (`queryField`), which is the fulltext field named `s`, not `range:s`. -/
 
 def E0 : Env := { langOk := fun _ => true, tieredOk := true, fresh := 7, freshId := 1, bumpTo := 100,
-                  lower := id }
+                  regenTo := 101, lower := id }
 def I0 : Ixr := { map := [], cancelled := false, graph := none, lock := 0 }
 
 def scenario : Option (Option Field) :=
