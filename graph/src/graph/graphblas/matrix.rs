@@ -351,6 +351,30 @@ impl From<Descriptor> for GrB_Descriptor {
     }
 }
 
+/// Sole owner of a `GrB_Matrix` handle, freeing it on drop.
+///
+/// Clones of a [`Matrix`] (and its [`Iter`]s) share one of these through an
+/// `Arc`, so the free runs exactly once, when the `Arc`'s own atomic count
+/// reaches zero. Freeing from `Matrix::drop` behind `Arc::get_mut` instead
+/// raced: two clones dropped concurrently could each see the other still
+/// alive, skip the free, and then both decrement — leaking the matrix.
+///
+/// No `Deref`: code reads the raw handle through [`Matrix::inner`] (or
+/// `Iter::matrix`), so call sites never write `**x.m`.
+struct Handle(GrB_Matrix);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe {
+            let info = GrB_Matrix_free(&raw mut self.0);
+            // debug_assert in Drop: panicking while unwinding aborts the
+            // process. A GrB_*_free failure is logically a leak, not
+            // state corruption — surface in debug, swallow in release.
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
 /// A wrapper around a GraphBLAS matrix.
 ///
 /// The type parameter `T` is a compile-time tag for the element type the matrix
@@ -360,7 +384,7 @@ impl From<Descriptor> for GrB_Descriptor {
 /// type-checks intent; it does not change the runtime representation.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
-    m: ManuallyDrop<Arc<GrB_Matrix>>,
+    m: Arc<Handle>,
     lock: Arc<Mutex<()>>,
     /// Set to `true` by every mutating op; `wait()` short-circuits when `false`
     /// to skip the lock + GrB_Matrix_wait FFI under read-heavy contention.
@@ -371,26 +395,6 @@ pub struct Matrix<T> {
 // Manual `Clone` (not derived) so it holds for every `T` without a `T: Clone`
 // bound — the only `T`-dependent field is the ZST `PhantomData<T>`. This keeps
 // generic `Matrix<T>` / `VersionedMatrix<V>` code free of spurious bounds.
-impl<T> Drop for Matrix<T> {
-    fn drop(&mut self) {
-        // SAFETY: `self.m` is not touched again after this.
-        let m = unsafe { ManuallyDrop::take(&mut self.m) };
-        // `Arc::into_inner` decides "last owner" and decrements in one atomic
-        // step, so exactly one of several clones dropped at once frees the
-        // matrix. (`Arc::get_mut` then a decrement was two steps: two clones
-        // dropped together could both skip the free and leak it, #3089.)
-        if let Some(mut m) = Arc::into_inner(m) {
-            unsafe {
-                let info = GrB_Matrix_free(&raw mut m);
-                // debug_assert in Drop: panicking while unwinding aborts the
-                // process. A GrB_*_free failure is logically a leak, not
-                // state corruption — surface in debug, swallow in release.
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            }
-        }
-    }
-}
-
 impl<T> Clone for Matrix<T> {
     fn clone(&self) -> Self {
         Self {
@@ -503,7 +507,7 @@ impl<T> Decode<19> for Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self {
-                m: ManuallyDrop::new(Arc::new(m)),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -671,7 +675,7 @@ impl<T> Matrix<T> {
             let m = m.assume_init();
             pin_sparse(m);
             let transpose = Self {
-                m: ManuallyDrop::new(Arc::new(m)),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(true)),
                 phantom: PhantomData,
@@ -745,8 +749,7 @@ impl<T> Matrix<T> {
     /// The caller must NOT free the returned handle.
     #[must_use]
     pub fn inner(&self) -> GrB_Matrix {
-        // The one place the handle is unwrapped: `ManuallyDrop<Arc<_>>`.
-        **self.m
+        self.m.0
     }
 
     /// Whether an entry is stored at `(i, j)`, for **any** element type — a
@@ -1216,7 +1219,7 @@ impl<T> Dup<Self> for Matrix<T> {
             false
         };
         Self {
-            m: ManuallyDrop::new(Arc::new(unsafe {
+            m: Arc::new(Handle(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_dup(m.as_mut_ptr(), self.inner());
                 assert_eq!(
@@ -1267,7 +1270,7 @@ impl Matrix<u64> {
             let m = m.assume_init();
             pin_sparse(m);
             Self {
-                m: ManuallyDrop::new(Arc::new(m)),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -1362,7 +1365,7 @@ impl Matrix<bool> {
             let m = m.assume_init();
             pin_sparse(m);
             Self {
-                m: ManuallyDrop::new(Arc::new(m)),
+                m: Arc::new(Handle(m)),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -1642,7 +1645,7 @@ impl IterExtract for Uint64Extract {
 }
 
 pub struct Iter<E: IterExtract = BoolExtract> {
-    m: ManuallyDrop<Arc<GrB_Matrix>>,
+    m: Arc<Handle>,
     /// The underlying GraphBLAS iterator.
     inner: GxB_Iterator,
     /// Indicates whether the iterator is depleted.
@@ -1656,18 +1659,13 @@ unsafe impl<E: IterExtract> Send for Iter<E> {}
 unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
 impl<E: IterExtract> Drop for Iter<E> {
-    /// Frees the GraphBLAS iterator, then the matrix if this was the last
-    /// reference (the iterator is attached to it, so it goes first).
+    /// Frees the GraphBLAS iterator when the `Iter` is dropped. The matrix
+    /// is freed by its [`Handle`] if this was the last reference, after the
+    /// iterator attached to it (fields drop after this body).
     fn drop(&mut self) {
         unsafe {
             if !self.inner.is_null() {
                 GxB_Iterator_free(&raw mut self.inner);
-            }
-            // See Matrix::drop. SAFETY: `self.m` is not touched again.
-            if let Some(mut m) = Arc::into_inner(ManuallyDrop::take(&mut self.m)) {
-                let info = GrB_Matrix_free(&raw mut m);
-                // debug_assert: don't panic in Drop (see Matrix::drop above).
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
         }
     }
@@ -1676,7 +1674,7 @@ impl<E: IterExtract> Drop for Iter<E> {
 impl<E: IterExtract> Iter<E> {
     /// The matrix this iterator walks.
     fn matrix(&self) -> GrB_Matrix {
-        **self.m
+        self.m.0
     }
 
     /// Creates a new iterator for traversing all elements in a matrix.
