@@ -49,7 +49,7 @@ on:
           Gate the image vehicle. True in the merge queue, where the published
           image is the thing being gated on. False on a pull request, where the
           artifact vehicle has already run the same suites and publishing an
-          image only exists so release-image.yml can retag one.
+          image only exists so release-tag.yml can retag one.
         required: false
         type: boolean
         default: false
@@ -209,7 +209,7 @@ jobs:
   # Image vehicle only, like everything else that needs the RC image. Every
   # merge still passes through it: a fork pull request skips it, but its
   # merge-queue entry builds the image and scans it. And it scans what ships:
-  # `:edge` (rust-push.yml) and releases (release-image.yml) retag the queue's
+  # `:edge` (rust-push.yml) and releases (release-tag.yml) retag the queue's
   # rc-mg-<sha> image rather than rebuilding it.
   #
   # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
