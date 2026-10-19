@@ -542,7 +542,7 @@ fn build_column(
         g,
         label,
         attr,
-        BuildCursor::start(entity),
+        BuildCursor::new(entity),
         usize::MAX,
         usize::MAX,
         encode_numeric,

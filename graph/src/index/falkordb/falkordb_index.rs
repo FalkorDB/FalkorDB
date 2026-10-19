@@ -173,7 +173,7 @@ pub(crate) enum BuildCursor {
 
 impl BuildCursor {
     /// Where the build of a new `entity` column starts: its first node, or its first pair.
-    pub(crate) fn start(entity: EntityType) -> Self {
+    pub(crate) fn new(entity: EntityType) -> Self {
         match entity {
             EntityType::Node => Self::Node(NodeId::from(0)),
             EntityType::Relationship => Self::Edge {
@@ -421,7 +421,7 @@ impl FalkorDbIndex {
             ColumnEntry::new(
                 IndexColumn::Numeric(NumericIndex::new()),
                 ColumnState::Building {
-                    next: BuildCursor::start(entity),
+                    next: BuildCursor::new(entity),
                 },
             ),
         );
@@ -853,7 +853,7 @@ mod tests {
         let generation = idx.next_building().unwrap().3;
         assert_eq!(
             idx.next_building(),
-            Some((Node, column.clone(), BuildCursor::start(Node), generation))
+            Some((Node, column.clone(), BuildCursor::new(Node), generation))
         );
         assert!(hits(&idx, 10).is_empty(), "empty Building → None");
 

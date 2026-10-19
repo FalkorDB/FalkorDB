@@ -1070,7 +1070,7 @@ fn recreating_a_building_column_restarts_its_build() {
     create_index_on(&mut g, &label, &attr);
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &attr),
-        Some(BuildCursor::start(EntityType::Node)),
+        Some(BuildCursor::new(EntityType::Node)),
         "the re-created column starts over"
     );
 
@@ -1099,7 +1099,7 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
     create_index_on(&mut g, &label, &w);
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &w),
-        Some(BuildCursor::start(EntityType::Node))
+        Some(BuildCursor::new(EntityType::Node))
     );
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &v),
@@ -1502,7 +1502,7 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
     assert_eq!(host.turn(), Turn::Dropped);
     assert_eq!(
         host.cursor(&label, &attr),
-        Some(BuildCursor::start(EntityType::Node))
+        Some(BuildCursor::new(EntityType::Node))
     );
     assert!(host.indexed(&label, &attr).is_empty());
 
@@ -1544,7 +1544,7 @@ fn a_write_that_recreated_the_column_keeps_its_own() {
     assert_eq!(host.finish(fork), Ok(()));
     assert_eq!(
         host.cursor(&label, &attr),
-        Some(BuildCursor::start(EntityType::Node))
+        Some(BuildCursor::new(EntityType::Node))
     );
     assert!(host.indexed(&label, &attr).is_empty());
 
