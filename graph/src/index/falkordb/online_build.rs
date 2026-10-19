@@ -7,16 +7,14 @@
 //! builder reads the graph and how it publishes as a writer. The Redis module's host takes the GIL
 //! and the graph's write lock to publish; an embedded host would take its own lock.
 //!
-//! **A turn neither makes a writer run again nor loses its batch to one.** Holding no lock, it
-//! reads its batch from the published version and merges it into a new version of that one
-//! (`Graph::merge_index_build`). Then it publishes through the host
+//! **A turn never makes a writer run again.** Holding no lock, it takes one build step on a new
+//! version of the published graph (`Graph::step_index_build`). Then it publishes through the host
 //! ([`MvccGraph::commit_index_build`]): if nothing has committed since, that version is published
-//! as it is, so the batch's insert never holds the host's locks; if a writer committed meanwhile,
-//! the batch is merged into a new version of the current one instead, skipping the entities
-//! written since, and that one is published. A writer whose fork the commit makes stale merges the
-//! other way when it claims (`Graph::merge_build_progress`). Only a column dropped or re-created
-//! meanwhile costs a turn its batch. The turn holds the versions a commit leaves behind until the
-//! host lets go of its locks, so freeing them never holds those.
+//! as it is, so the step never holds the host's locks. If a writer committed meanwhile, the step
+//! is taken again, under those locks, on a new version of the writer's, reading the values it
+//! holds, and that one is published. A writer whose fork the commit makes stale merges the other
+//! way when it claims (`Graph::merge_build_progress`). The turn holds the versions a commit leaves
+//! behind until the host lets go of its locks, so freeing them never holds those.
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
 //! starts a build — it has a `Building` column, and the version it replaces has none — which covers
@@ -38,7 +36,8 @@ use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
 
-use super::graph_writes::{BUILD_STEP_EDGES, BUILD_STEP_NODES, read_build_batch};
+use super::graph_writes::{BUILD_STEP_EDGES, BUILD_STEP_NODES};
+use crate::graph::graph::Graph;
 use crate::graph::mvcc_graph::{BuildCommit, MvccGraph};
 
 /// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
@@ -70,9 +69,6 @@ pub(crate) enum Turn {
     Idle,
     /// The step was committed; `more` if a column is still `Building`.
     Committed { more: bool },
-    /// The column the batch was read from was dropped or re-created meanwhile; the batch was
-    /// dropped.
-    Dropped,
     /// The host refused: the graph is gone, or the builder is stopping.
     Gone,
     /// The step panicked, or its version was refused.
@@ -82,8 +78,8 @@ pub(crate) enum Turn {
 /// One build turn on the graph `host` names, with the default batch sizes.
 ///
 /// The builder runs at most one turn per graph at a time. Two at once would still publish nothing
-/// wrong — the later one's commit finds the earlier one's published, and its merge refuses a batch
-/// read before that — but would read the same batch twice.
+/// wrong — the later one's commit finds the earlier one's published, and takes its step again on
+/// it — but would read a batch twice.
 fn run_turn(host: &dyn BuildHost) -> Turn {
     run_turn_within(host, BUILD_STEP_NODES, BUILD_STEP_EDGES)
 }
@@ -94,8 +90,8 @@ pub(crate) fn run_turn_within(
     nodes: usize,
     edges: usize,
 ) -> Turn {
-    // One read for the published version to build on. The rest needs no lock: a published version
-    // never changes, and the batch goes into a new version of it that only this turn holds.
+    // One read for the published version to build on. The step needs no lock: a published version
+    // never changes, and the step goes into a new version of it that only this turn holds.
     let mut published = None;
     if !host.read(&mut |mvcc| published = Some(mvcc.read())) {
         return Turn::Gone;
@@ -103,14 +99,10 @@ pub(crate) fn run_turn_within(
     let Some(published) = published else {
         return Turn::Gone;
     };
-    let Some(mut batch) = read_build_batch(&published.borrow(), nodes, edges) else {
-        return Turn::Idle;
-    };
     let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
     drop(published);
-    if !prepared.borrow_mut().merge_index_build(&mut batch) {
-        // Read from the same version: cannot happen, and harmless if it did.
-        return Turn::Dropped;
+    if !prepared.borrow_mut().step_index_build(nodes, edges) {
+        return Turn::Idle;
     }
     // Whoever stops the builder may hold what publishing needs (the Redis shutdown handler holds
     // the GIL) while it waits for this thread.
@@ -124,11 +116,12 @@ pub(crate) fn run_turn_within(
     let mut replaced = None;
     let published = host.publish(&mut |mvcc| {
         replaced = Some(mvcc.read());
-        turn = match mvcc.commit_index_build(&prepared, &mut batch) {
-            Some(BuildCommit::Prepared | BuildCommit::Merged) => Turn::Committed {
+        let step = |g: &mut Graph| g.step_index_build(nodes, edges);
+        turn = match mvcc.commit_index_build(&prepared, step) {
+            Some(BuildCommit::Prepared | BuildCommit::Redone) => Turn::Committed {
                 more: mvcc.read().borrow().falkordb_index.has_building_columns(),
             },
-            Some(BuildCommit::Dropped) => Turn::Dropped,
+            Some(BuildCommit::Nothing) => Turn::Idle,
             // Writers take the slot only with publish access, so it was free; retried all the
             // same, as a refused version is.
             None => Turn::Failed,
@@ -276,7 +269,7 @@ fn requeue(
     WORK.notify_one();
 }
 
-/// How long a graph waits for its next turn after one that committed or lost: as long as the turn
+/// How long a graph waits for its next turn after one that committed: as long as the turn
 /// took, so a build takes at most half of one worker's time per graph, and the graph's write lock
 /// at most once per that long.
 fn pace(turn: Duration) -> Duration {
@@ -324,7 +317,7 @@ fn work() {
         let turn = catch_unwind(AssertUnwindSafe(|| run_turn(graph.host.as_ref())))
             .unwrap_or(Turn::Failed);
         let again = match turn {
-            Turn::Committed { more: true } | Turn::Dropped => Some(pace(started.elapsed())),
+            Turn::Committed { more: true } => Some(pace(started.elapsed())),
             Turn::Failed => {
                 eprintln!("index build: a build step failed; it will be retried");
                 Some(FAILED_RETRY)

@@ -424,10 +424,10 @@ pub fn create_index(
 // ---- Online build ----
 //
 // A `Building` column is filled by steps. Each reads the next batch of the label's entities, at
-// their values in the version it reads, and adds them to the column. The online builder
-// (`online_build`) reads each step's batch on a snapshot and commits it as a unit of work of its
-// own, merged into whatever version is current by then, so live writes interleave with the steps.
-// See `ColumnState`.
+// their values in a version, and adds them to the column in that same version. The online builder
+// (`online_build`) takes each step on a new version of the published graph and commits it as a
+// unit of work of its own, taking it again on the current version if a writer committed first, so
+// live writes interleave with the steps. See `ColumnState`.
 
 /// Nodes one build step reads, at most: C's populate batch (`src/index/index_construct.c`).
 pub(crate) const BUILD_STEP_NODES: usize = 10_000;
@@ -447,23 +447,19 @@ pub(crate) fn build_step(
     nodes: usize,
     edges: usize,
 ) -> bool {
-    if let Some(mut batch) = read_build_batch(g, nodes, edges) {
-        g.falkordb_index.apply_build(&mut batch);
-    }
+    g.step_index_build(nodes, edges);
     g.falkordb_index.has_building_columns()
 }
 
-/// Read the next build step's batch from `g` without applying it: the first `Building` column's
-/// next `nodes` nodes or `edges` edges, at their values in `g`, encoded and sorted. `None` if no
-/// column is `Building`. The online builder ([`BUILD_STEP_NODES`], [`BUILD_STEP_EDGES`]) reads it
-/// on a snapshot and applies it to whatever version is current when it publishes
-/// ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)).
+/// Read the next build step's batch from `g`: the first `Building` column's next `nodes` nodes or
+/// `edges` edges, at their values in `g`, encoded and sorted. `None` if no column is `Building`.
+/// The step adds it to `g` itself (`Graph::step_index_build`).
 pub(crate) fn read_build_batch(
     g: &Graph,
     nodes: usize,
     edges: usize,
 ) -> Option<BuildBatch> {
-    let (entity, key, from, generation) = g.falkordb_index.next_building()?;
+    let (entity, key, from) = g.falkordb_index.next_building()?;
     let column = g
         .falkordb_index
         .column(entity, &key.0, &key.1)
@@ -474,8 +470,6 @@ pub(crate) fn read_build_batch(
     Some(BuildBatch {
         entity,
         key,
-        generation,
-        read_at: g.falkordb_index.build_commits(),
         tuples,
         next,
     })

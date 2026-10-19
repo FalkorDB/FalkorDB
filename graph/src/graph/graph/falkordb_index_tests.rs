@@ -5,7 +5,7 @@
 use super::{Graph, NodeId};
 use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{BuildCommit, Claim, MvccGraph};
-use crate::index::falkordb::falkordb_index::{BuildBatch, BuildCursor, ColumnState};
+use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::online_build::{self, BuildHost, Turn};
 use crate::index::index_docs::IndexDocs;
@@ -1163,7 +1163,7 @@ impl TestHost {
         for _ in 0..10_000 {
             match self.turn() {
                 Turn::Idle => return,
-                Turn::Committed { .. } | Turn::Dropped => {}
+                Turn::Committed { .. } => {}
                 other => panic!("unexpected turn {other:?}"),
             }
         }
@@ -1391,11 +1391,10 @@ fn a_write_claims_over_build_steps_and_keeps_their_progress() {
     assert_eq!(got, want);
 }
 
-/// A write commits while a build step reads its batch. The step is not dropped: its batch
-/// goes into what the write published, except for the entities the write touched, whose tuples
-/// the write already set right.
+/// A write commits while a build step is taken. The step is not dropped: it is taken again on what
+/// the write published, so it indexes the values the write left.
 #[test]
-fn a_build_step_that_raced_a_write_merges_into_it() {
+fn a_build_step_that_raced_a_write_is_taken_again_on_its_version() {
     let attr = Arc::new("v".to_string());
     let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
 
@@ -1404,17 +1403,17 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
     assert_eq!(
         host.cursor(&label, &attr),
         Some(BuildCursor::Node(NodeId::from(ids[10]))),
-        "the batch was merged, not dropped"
+        "the step was taken again, not dropped"
     );
     let published = host.published();
     let g = published.borrow();
     assert!(
         range_scan(&g, &label, &attr, 4, 4).is_empty(),
-        "the batch read ids[3] at 4 before the write re-valued it"
+        "the first try read ids[3] at 4 before the write re-valued it"
     );
     assert!(
         range_scan(&g, &label, &attr, 6, 6).is_empty(),
-        "the batch read ids[5] before the write deleted it"
+        "the first try read ids[5] before the write deleted it"
     );
     assert_eq!(range_scan(&g, &label, &attr, 1, 3), ids[0..3].to_vec());
     assert_eq!(range_scan(&g, &label, &attr, 103, 103), vec![ids[3]]);
@@ -1425,10 +1424,10 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
     assert_eq!(got, want);
 }
 
-/// Several writers commit while one batch is read: the batch goes into a version that holds all of
-/// their writes, and skips every entity any of them touched.
+/// Several writers commit while one step is taken: the step is taken again on a version that holds
+/// all of their writes.
 #[test]
-fn a_build_step_merges_over_several_writers() {
+fn a_build_step_is_taken_again_over_several_writers() {
     let attr = Arc::new("v".to_string());
     let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
     let (first, second) = (ids.clone(), ids.clone());
@@ -1483,43 +1482,50 @@ fn a_write_between_fork_and_claim_still_makes_it_stale() {
     assert!(host.slot_free(), "a stale claim leaves the slot free");
 }
 
-/// A batch read from a column that a write dropped, or dropped and re-created, while the step ran
-/// is dropped: it belongs to a column that no longer exists. A re-created column builds from the
-/// start.
+/// A step taken on a column that a write dropped, or dropped and re-created, while the step ran
+/// never reaches the column that replaced it: the step is taken again on what the write published.
+/// A re-created column builds from the start, and a dropped one stays dropped.
 #[test]
-fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
+fn a_step_on_a_dropped_or_recreated_column_is_taken_again_on_the_writers_version() {
     let attr = Arc::new("v".to_string());
-    let (host, label, _) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
+    let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
 
     let recreate = {
-        let (label, attr) = (Arc::clone(&label), Arc::clone(&attr));
+        let (label, attr, first) = (Arc::clone(&label), Arc::clone(&attr), ids[0]);
         move |g: &mut Graph| {
             drop_index_on(g, &label, &attr);
             create_index_on(g, &label, &attr);
+            set_attr(g, first, &attr, Value::Int(100));
         }
     };
     host.race_next_turn(recreate);
-    assert_eq!(host.turn(), Turn::Dropped);
+    assert_eq!(host.turn(), Turn::Committed { more: true });
     assert_eq!(
         host.cursor(&label, &attr),
-        Some(BuildCursor::new(EntityType::Node))
+        Some(BuildCursor::Node(NodeId::from(ids[10]))),
+        "the re-created column's first step"
     );
-    assert!(host.indexed(&label, &attr).is_empty());
+    let mut values: Vec<i64> = (1..=25).collect();
+    values[0] = 100;
+    let indexed: Vec<u64> = ids[1..10].iter().copied().chain([ids[0]]).collect();
+    assert_eq!(
+        host.indexed(&label, &attr),
+        indexed,
+        "read from the writer's version: ids[0] at 100"
+    );
 
     host.build_to_end();
-    let values: Vec<i64> = (1..=25).collect();
     let (got, want) = host.against_one_pass(&label, &attr, &values);
     assert_eq!(got, want);
 
-    // On a fresh graph, a column dropped while a step reads it stays dropped.
+    // On a fresh graph, a column dropped while a step is taken stays dropped.
     let (host, label, _) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
     let drop_it = {
         let (label, attr) = (Arc::clone(&label), Arc::clone(&attr));
         move |g: &mut Graph| drop_index_on(g, &label, &attr)
     };
     host.race_next_turn(drop_it);
-    assert_eq!(host.turn(), Turn::Dropped);
-    assert_eq!(host.turn(), Turn::Idle);
+    assert_eq!(host.turn(), Turn::Idle, "nothing left to build");
     assert!(
         host.published()
             .borrow()
@@ -1772,7 +1778,7 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                     });
                     let turn = online_build::run_turn_within(host.as_ref(), 5, 5);
                     assert!(
-                        matches!(turn, Turn::Committed { .. } | Turn::Idle | Turn::Dropped),
+                        matches!(turn, Turn::Committed { .. } | Turn::Idle),
                         "seed {seed}: {turn:?}"
                     );
                     // The write ran, and committed, if the turn reached its commit.
@@ -1904,10 +1910,10 @@ fn the_racing_edge_write(
     }
 }
 
-/// Both merges on an edge column: a queued write forked before a build step and claiming after it
-/// (writer over step), and a write committing while a step reads its batch (step over writer).
+/// Both orders on an edge column: a queued write forked before a build step and claiming after it
+/// (writer over step), and a write committing while a step is taken (step over writer).
 #[test]
-fn both_merges_hold_on_an_edge_column() {
+fn both_orders_hold_on_an_edge_column() {
     let values: Vec<i64> = (1..=30).chain([103, 120, 200]).collect();
 
     let (host, ty, attr, nodes, eids) = edges_building();
@@ -2017,47 +2023,50 @@ fn a_refused_publish_commits_nothing() {
     assert!(host.indexed(&label, &attr).is_empty());
 }
 
-/// What a turn does before it publishes: read a batch of `published` and merge it into a new
-/// version of it, holding no lock.
+/// What a turn does before it publishes: take a build step of at most `nodes` nodes on a new
+/// version of `published`, holding no lock.
 fn prepare_turn(
     published: &AtomicRefCell<Graph>,
     nodes: usize,
-) -> (Arc<AtomicRefCell<Graph>>, BuildBatch) {
-    let mut batch =
-        graph_writes::read_build_batch(&published.borrow(), nodes, nodes).expect("Building");
+) -> Arc<AtomicRefCell<Graph>> {
     let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
-    assert!(prepared.borrow_mut().merge_index_build(&mut batch));
-    (prepared, batch)
+    assert!(prepared.borrow_mut().step_index_build(nodes, nodes));
+    prepared
+}
+
+/// The step a commit takes again if a writer made its prepared version stale.
+fn step_of(nodes: usize) -> impl FnOnce(&mut Graph) -> bool {
+    move |g| g.step_index_build(nodes, nodes)
 }
 
 /// A turn that nothing committed against publishes the version it prepared with no lock held,
-/// so its batch's insert never holds the host's locks; one a writer committed against merges
-/// its batch into the writer's version instead.
+/// so its step never holds the host's locks; one a writer committed against takes its step again
+/// on the writer's version instead, reading the values it holds.
 #[test]
 fn a_turn_publishes_its_prepared_version_only_if_nothing_committed_since() {
     let attr = Arc::new("v".to_string());
     let values: Vec<i64> = (1..=25).collect();
     let (host, label, ids) = TestHost::building(&attr, &values);
 
-    let (prepared, mut batch) = prepare_turn(&host.published(), 10);
-    let commit = host.mvcc.write().commit_index_build(&prepared, &mut batch);
+    let prepared = prepare_turn(&host.published(), 10);
+    let commit = host.mvcc.write().commit_index_build(&prepared, step_of(10));
     assert_eq!(commit, Some(BuildCommit::Prepared));
     assert!(
         Arc::ptr_eq(&host.published(), &prepared),
         "the prepared version itself"
     );
 
-    let (prepared, mut batch) = prepare_turn(&host.published(), 10);
+    let prepared = prepare_turn(&host.published(), 10);
     host.write(|g| set_attr(g, ids[13], &attr, Value::Int(113)));
-    let commit = host.mvcc.write().commit_index_build(&prepared, &mut batch);
-    assert_eq!(commit, Some(BuildCommit::Merged));
+    let commit = host.mvcc.write().commit_index_build(&prepared, step_of(10));
+    assert_eq!(commit, Some(BuildCommit::Redone));
     assert!(
         !Arc::ptr_eq(&host.published(), &prepared),
         "not a version older than the write"
     );
     assert!(
         range_scan(&host.published().borrow(), &label, &attr, 14, 14).is_empty(),
-        "ids[13] holds 113: the merge skips the 14 its batch read"
+        "ids[13] holds 113: the step taken again does not index the 14 the first try read"
     );
 
     host.build_to_end();
@@ -2067,28 +2076,34 @@ fn a_turn_publishes_its_prepared_version_only_if_nothing_committed_since() {
     assert_eq!(got, want);
 }
 
-/// Two turns at once on one graph — which the pool never runs — must not let the second merge a
-/// batch read before the first committed: `touched` covers only writes since the last step, so
-/// the second would re-add what a write changed in between.
+/// Two turns at once on one graph — which the pool never runs — both prepared on one version: the
+/// second's commit finds the first one's published and takes its step again on it, so it indexes
+/// the next batch, at the values a write between them left.
 #[test]
-fn a_second_turn_never_merges_a_batch_read_before_the_first_one_committed() {
+fn a_second_turn_takes_its_step_again_on_the_first_ones_version() {
     let attr = Arc::new("v".to_string());
     let values: Vec<i64> = (1..=25).collect();
     let (host, label, ids) = TestHost::building(&attr, &values);
     let published = host.published();
     let turns = [prepare_turn(&published, 10), prepare_turn(&published, 10)];
+    drop(published);
     host.write(|g| set_attr(g, ids[3], &attr, Value::Int(103)));
     let commits: Vec<_> = turns
-        .into_iter()
-        .map(|(prepared, mut batch)| host.mvcc.write().commit_index_build(&prepared, &mut batch))
+        .iter()
+        .map(|prepared| host.mvcc.write().commit_index_build(prepared, step_of(10)))
         .collect();
     assert_eq!(
         commits,
-        [Some(BuildCommit::Merged), Some(BuildCommit::Dropped)]
+        [Some(BuildCommit::Redone), Some(BuildCommit::Redone)]
+    );
+    assert_eq!(
+        host.cursor(&label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[20]))),
+        "two batches, not the same one twice"
     );
     assert!(
         range_scan(&host.published().borrow(), &label, &attr, 4, 4).is_empty(),
-        "ids[3] holds 103: the second merge must not re-add the 4 its batch read"
+        "ids[3] holds 103: neither step indexes the 4 the first tries read"
     );
     host.build_to_end();
     let mut all = values.clone();
@@ -2125,9 +2140,9 @@ impl BuildHost for FreeingHost {
     }
 }
 
-/// Freeing the version a commit replaces frees every index node the batch copied rather than
+/// Freeing the version a commit replaces frees every index node the step copied rather than
 /// shared, which can take milliseconds: the turn holds it until the host has let go of its locks,
-/// whether the commit published the prepared version or merged the batch into a writer's.
+/// whether the commit published the prepared version or took the step again on a writer's.
 #[test]
 fn a_turn_frees_the_version_its_commit_replaces_after_the_host_lets_go() {
     let attr = Arc::new("v".to_string());

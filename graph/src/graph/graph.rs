@@ -83,7 +83,7 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::{BuildBatch, FalkorDbIndex},
+    falkordb_index::FalkorDbIndex,
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -3790,19 +3790,22 @@ impl Graph {
         )
     }
 
-    /// Merge an index-build batch into this version: the index adds the batch's tuples except
-    /// those of entities written since the last build step, whose tuples the writes set right,
-    /// and moves the column's cursor. `false`, changing nothing, if the batch's column was dropped
-    /// or re-created since it was read, or another build step committed since. The batch is left
-    /// for a later version to merge again ([`MvccGraph::commit_index_build`]).
+    /// One index-build step on this version: read the next batch of its first `Building` column
+    /// at the values this version holds, at most `nodes` nodes or `edges` edges, add it to the
+    /// column and move the column's cursor. `false`, changing nothing, if no column is `Building`.
+    /// The indexer takes it on a new version of the published graph, and again on a new version
+    /// of the current one if a writer committed before it published
+    /// ([`MvccGraph::commit_index_build`]).
     ///
     /// [`MvccGraph::commit_index_build`]: crate::graph::mvcc_graph::MvccGraph::commit_index_build
     #[cfg(feature = "index-falkordb")]
-    pub(crate) fn merge_index_build(
+    pub(crate) fn step_index_build(
         &mut self,
-        batch: &mut BuildBatch,
+        nodes: usize,
+        edges: usize,
     ) -> bool {
-        self.falkordb_index.apply_build(batch)
+        graph_writes::read_build_batch(self, nodes, edges)
+            .is_some_and(|batch| self.falkordb_index.apply_build(batch))
     }
 
     /// For a writer's fork older than `published`: whether it may still commit, because every

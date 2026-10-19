@@ -68,10 +68,7 @@ use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{
-    falkordb_index::BuildBatch,
-    online_build::{self, BuildHost},
-};
+use crate::index::falkordb::online_build::{self, BuildHost};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -87,16 +84,17 @@ pub struct MvccGraph {
     build_host: OnceLock<Arc<dyn BuildHost>>,
 }
 
-/// What [`MvccGraph::commit_index_build`] did with a batch.
+/// What [`MvccGraph::commit_index_build`] published.
 #[cfg(feature = "index-falkordb")]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum BuildCommit {
-    /// The version it was prepared in was still current, and was published.
+    /// The prepared version: nothing had committed since the version it was made from.
     Prepared,
-    /// Something committed since: it was merged into the current version, which was published.
-    Merged,
-    /// Its column was dropped or re-created since it was read: nothing was published.
-    Dropped,
+    /// Something had committed since: the step was taken again on a new version of the current
+    /// one, which was published.
+    Redone,
+    /// Something had committed since, and the current version has nothing left to build: nothing.
+    Nothing,
 }
 
 /// Why [`MvccGraph::claim`] refused a fork.
@@ -252,16 +250,16 @@ impl MvccGraph {
         self.commit_version(new_graph, true)
     }
 
-    /// Commit an index-build batch. `prepared` is a new version of a published one with `batch`
-    /// already merged in, made with no lock held. If that published version is still the current
-    /// one, `prepared` holds every write and is published as it is. If anything has committed
-    /// since, `prepared` holds older data and is not published: the batch is merged into a new
-    /// version of the current one ([`Graph::merge_index_build`]) and that is published instead.
-    /// Either way the commit changes no graph data, so a writer whose fork it makes stale may
-    /// still [`claim`](Self::claim) it.
+    /// Commit an index-build step. `prepared` is a new version of a published one with the step
+    /// already taken (`step`), made with no lock held. If that published version is still the
+    /// current one, `prepared` holds every write and is published as it is. If anything has
+    /// committed since, `prepared` holds older data and is not published: `step` is taken again
+    /// on a new version of the current one, reading the values it holds, and that is published
+    /// instead. Either way the commit changes no graph data, so a writer whose fork it makes stale
+    /// may still [`claim`](Self::claim) it.
     ///
     /// `prepared` is borrowed so that, if it is not published, the caller frees it once it no
-    /// longer holds the host's locks: freeing a version frees what its batch copied.
+    /// longer holds the host's locks: freeing a version frees what its step copied.
     ///
     /// The caller holds what a writer holds to publish, so the write slot is free. `None` if it
     /// was taken all the same, or the version was refused.
@@ -269,7 +267,7 @@ impl MvccGraph {
     pub(crate) fn commit_index_build(
         &mut self,
         prepared: &Arc<AtomicRefCell<Graph>>,
-        batch: &mut BuildBatch,
+        step: impl FnOnce(&mut Graph) -> bool,
     ) -> Option<BuildCommit> {
         if self
             .write
@@ -282,11 +280,11 @@ impl MvccGraph {
             (Arc::clone(prepared), BuildCommit::Prepared)
         } else {
             let current = Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()));
-            if !current.borrow_mut().merge_index_build(batch) {
+            if !step(&mut current.borrow_mut()) {
                 self.rollback();
-                return Some(BuildCommit::Dropped);
+                return Some(BuildCommit::Nothing);
             }
-            (current, BuildCommit::Merged)
+            (current, BuildCommit::Redone)
         };
         self.commit_version(version, false).ok().map(|()| how)
     }
