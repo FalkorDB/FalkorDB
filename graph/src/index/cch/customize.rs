@@ -150,8 +150,9 @@ impl<T: Copy> WeightArr<T> {
         self.values.iter().copied()
     }
 
+    /// Heap bytes of the values. The struct itself is counted by whoever holds it.
     pub(crate) fn memory_usage(&self) -> usize {
-        size_of::<Self>() + self.values.capacity() * size_of::<T>()
+        self.values.capacity() * size_of::<T>()
     }
 }
 
@@ -164,6 +165,7 @@ pub(crate) struct Metric {
 }
 
 impl Metric {
+    /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
     pub(crate) fn memory_usage(&self) -> usize {
         self.up_w.memory_usage()
             + self.dn_w.memory_usage()
@@ -369,13 +371,11 @@ impl Cch {
         Ok(())
     }
 
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn topology(&self) -> &Topology {
         &self.topo
     }
 
     /// Cheapest `lo -> hi` weight of arc `slot`, through strictly lower-ranked nodes only.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn up_weight(
         &self,
         slot: usize,
@@ -384,7 +384,6 @@ impl Cch {
     }
 
     /// Cheapest `hi -> lo` weight of arc `slot`.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn dn_weight(
         &self,
         slot: usize,
@@ -394,7 +393,6 @@ impl Cch {
 
     /// The apex rank `up_weight(slot)` routes through, or `None` if the arc is just its
     /// original edge.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn up_mid(
         &self,
         slot: usize,
@@ -406,7 +404,6 @@ impl Cch {
     }
 
     /// The apex rank `dn_weight(slot)` routes through, or `None`.
-    #[allow(dead_code)] // the query change (#3210) is the first reader
     pub(crate) fn dn_mid(
         &self,
         slot: usize,
@@ -422,6 +419,7 @@ impl Cch {
     }
 
     pub(super) fn memory_usage_impl(&self) -> usize {
+        // `size_of::<Self>()` already covers `Metric`'s four inline headers
         size_of::<Self>() + self.topo.memory_usage() + self.metric.memory_usage()
     }
 }
