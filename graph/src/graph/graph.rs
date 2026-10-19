@@ -83,7 +83,7 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::FalkorDbIndex,
+    falkordb_index::{BuildBatch, FalkorDbIndex},
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -437,8 +437,9 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
     constraints: Vec<Constraint>,
-    /// Version counter: one more than the version this one was made from. A fork that claims the
-    /// write slot over index-build steps is renumbered to follow the version it replaces.
+    /// Version counter: one more than the version this one was made from. A writer's fork that
+    /// claims the write slot over index-build commits is renumbered to follow the published version
+    /// ([`Self::merge_build_progress`]).
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
@@ -446,11 +447,14 @@ pub struct Graph {
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
-    /// `pub(crate)` for `index::falkordb` and `MvccGraph`: `graph_writes` reads it to stage
-    /// changes, `FalkorDbIndex::apply` and the online build's steps update it, and `MvccGraph`
-    /// merges build progress into a writer's fork and drops its change logs on commit.
+    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes and to read
+    /// build batches, and `FalkorDbIndex::apply` updates it.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
+    /// The version of the last writer's commit in this version's history. An index-build commit
+    /// changes no graph data and leaves it as it was ([`Self::prepare_publish`]).
+    #[cfg(feature = "index-falkordb")]
+    last_write_version: u64,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -853,6 +857,8 @@ impl Graph {
             schema_version: 0,
             #[cfg(feature = "index-falkordb")]
             falkordb_index: FalkorDbIndex::new(),
+            #[cfg(feature = "index-falkordb")]
+            last_write_version: version,
         }
     }
 
@@ -968,6 +974,8 @@ impl Graph {
             // populate path rebuilds it.
             #[cfg(feature = "index-falkordb")]
             falkordb_index: FalkorDbIndex::new(),
+            #[cfg(feature = "index-falkordb")]
+            last_write_version: 0,
         }
     }
 
@@ -1066,6 +1074,8 @@ impl Graph {
             schema_version: self.schema_version,
             #[cfg(feature = "index-falkordb")]
             falkordb_index: self.falkordb_index.new_version(),
+            #[cfg(feature = "index-falkordb")]
+            last_write_version: self.last_write_version,
         }
     }
 
@@ -3778,6 +3788,70 @@ impl Graph {
             self.node_indexer.write_lock(),
             self.edge_indexer.write_lock(),
         )
+    }
+
+    /// Merge an index-build batch into this version: the index adds the batch's tuples except
+    /// those of entities written since the last build step, whose tuples the writes set right,
+    /// and moves the column's cursor. `false`, changing nothing, if the batch's column was dropped
+    /// or re-created since it was read, or another build step committed since. The batch is left
+    /// for a later version to merge again ([`MvccGraph::commit_index_build`]).
+    ///
+    /// [`MvccGraph::commit_index_build`]: crate::graph::mvcc_graph::MvccGraph::commit_index_build
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn merge_index_build(
+        &mut self,
+        batch: &mut BuildBatch,
+    ) -> bool {
+        self.falkordb_index.apply_build(batch)
+    }
+
+    /// For a writer's fork older than `published`: whether it may still commit, because every
+    /// version committed since it was made is an index build's, which changed no graph data — so
+    /// what the writer matched still holds. If so, this fork takes their progress, replays its own
+    /// index changes on top ([`FalkorDbIndex::adopt_build_progress`]), and is numbered to follow
+    /// `published`. `false`, changing nothing, if a writer committed since, or the fork was made
+    /// on a graph replaced since (it is ahead of `published`).
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn merge_build_progress(
+        &mut self,
+        published: &Self,
+    ) -> bool {
+        // The fork was made from version `self.version - 1`.
+        if published.last_write_version >= self.version || self.version > published.version {
+            return false;
+        }
+        self.falkordb_index
+            .adopt_build_progress(&published.falkordb_index);
+        self.version = published.version + 1;
+        true
+    }
+
+    /// Whether this version starts an index build: it has a `Building` column, and `replaced`, the
+    /// version it replaces, has none.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub(crate) fn starts_index_build(
+        &self,
+        replaced: &Self,
+    ) -> bool {
+        self.falkordb_index.has_building_columns()
+            && !replaced.falkordb_index.has_building_columns()
+    }
+
+    /// Ready this version to be published: drop its index-change logs, which nobody replays once it
+    /// is published, and record a writer's commit as the history's last write.
+    #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))]
+    pub(crate) fn prepare_publish(
+        &mut self,
+        writer: bool,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        {
+            self.falkordb_index.stop_logging();
+            if writer {
+                self.last_write_version = self.version;
+            }
+        }
     }
 
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.

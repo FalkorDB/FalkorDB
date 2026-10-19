@@ -7,15 +7,15 @@
 //! builder reads the graph and how it publishes as a writer. The Redis module's host takes the GIL
 //! and the graph's write lock to publish; an embedded host would take its own lock.
 //!
-//! **A turn neither makes a writer run again nor loses its batch to one.** It reads its batch on a
-//! private version of the published graph and applies it there, holding no lock. Then it publishes
-//! through the host: it claims the write slot ([`MvccGraph::claim`]) and commits the version as an
-//! index-build step ([`MvccGraph::commit_index_build`]). If a writer committed while the batch was
-//! read, the claim is stale, and the turn applies the batch to a fork of what that writer published
-//! instead, skipping the entities written since
-//! ([`FalkorDbIndex::apply_build`](super::falkordb_index::FalkorDbIndex::apply_build)). A queued
-//! write whose fork the turn makes stale merges the other way when it claims. Only a column dropped
-//! or re-created meanwhile costs a turn its batch.
+//! **A turn neither makes a writer run again nor loses its batch to one.** Holding no lock, it
+//! reads its batch from the published version and merges it into a new version of that one
+//! (`Graph::merge_index_build`). Then it publishes through the host
+//! ([`MvccGraph::commit_index_build`]): if nothing has committed since, that version is published
+//! as it is, so the batch's insert never holds the host's locks; if a writer committed meanwhile,
+//! the batch is merged into a new version of the current one instead, skipping the entities
+//! written since, and that one is published. A writer whose fork the commit makes stale merges the
+//! other way when it claims (`Graph::merge_build_progress`). Only a column dropped or re-created
+//! meanwhile costs a turn its batch.
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
 //! starts a build — it has a `Building` column, and the version it replaces has none — which covers
@@ -37,10 +37,8 @@ use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
 
-use super::falkordb_index::BuildBatch;
 use super::graph_writes::{BUILD_STEP_EDGES, BUILD_STEP_NODES, read_build_batch};
-use crate::graph::graph::Graph;
-use crate::graph::mvcc_graph::{Claim, MvccGraph};
+use crate::graph::mvcc_graph::{BuildCommit, MvccGraph};
 
 /// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
 /// with it through [`MvccGraph::set_build_host`].
@@ -83,8 +81,8 @@ pub(crate) enum Turn {
 /// One build turn on the graph `host` names, with the default batch sizes.
 ///
 /// The builder runs at most one turn per graph at a time. Two at once would still publish nothing
-/// wrong — the later one's claim takes the earlier one's progress instead of its own batch, or its
-/// merge refuses the batch — but would read the same batch twice.
+/// wrong — the later one's commit finds the earlier one's published, and its merge refuses a batch
+/// read before that — but would read the same batch twice.
 fn run_turn(host: &dyn BuildHost) -> Turn {
     run_turn_within(host, BUILD_STEP_NODES, BUILD_STEP_EDGES)
 }
@@ -95,22 +93,24 @@ pub(crate) fn run_turn_within(
     nodes: usize,
     edges: usize,
 ) -> Turn {
-    // One read to see whether there is anything to build and to fork the version to read the
-    // batch on. The step itself needs no lock: it reads and writes only its own version.
-    let mut version = None;
-    if !host.read(&mut |mvcc| {
-        if mvcc.read().borrow().falkordb_index.has_building_columns() {
-            version = Some(mvcc.fork());
-        }
-    }) {
+    // One read for the published version to build on. The rest needs no lock: a published version
+    // never changes, and the batch goes into a new version of it that only this turn holds.
+    let mut published = None;
+    if !host.read(&mut |mvcc| published = Some(mvcc.read())) {
         return Turn::Gone;
     }
-    let Some(version) = version else {
+    let Some(published) = published else {
+        return Turn::Gone;
+    };
+    let Some(mut batch) = read_build_batch(&published.borrow(), nodes, edges) else {
         return Turn::Idle;
     };
-    let Some(batch) = step(&version, nodes, edges) else {
-        return Turn::Idle;
-    };
+    let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
+    drop(published);
+    if !prepared.borrow_mut().merge_index_build(&mut batch) {
+        // Read from the same version: cannot happen, and harmless if it did.
+        return Turn::Dropped;
+    }
     // Whoever stops the builder may hold what publishing needs (the Redis shutdown handler holds
     // the GIL) while it waits for this thread.
     if stopping() {
@@ -118,54 +118,20 @@ pub(crate) fn run_turn_within(
     }
 
     let mut turn = Turn::Gone;
-    let mut version = Some(version);
+    let mut prepared = Some(prepared);
     let published = host.publish(&mut |mvcc| {
-        let version = version.take().expect("published once");
-        turn = match mvcc.claim(&version) {
-            Ok(()) => commit(mvcc, version),
-            // A writer committed while the batch was read: apply the batch to what it published.
-            Err(Claim::Stale) => {
-                let merged = mvcc.fork();
-                if merged.borrow_mut().falkordb_index.apply_build(&batch)
-                    && mvcc.claim(&merged).is_ok()
-                {
-                    commit(mvcc, merged)
-                } else {
-                    Turn::Dropped
-                }
-            }
-            // Writers claim the slot only with publish access, so it is free; retried all the same.
-            Err(Claim::Busy) => Turn::Failed,
+        let prepared = prepared.take().expect("published once");
+        turn = match mvcc.commit_index_build(prepared, &mut batch) {
+            Some(BuildCommit::Prepared | BuildCommit::Merged) => Turn::Committed {
+                more: mvcc.read().borrow().falkordb_index.has_building_columns(),
+            },
+            Some(BuildCommit::Dropped) => Turn::Dropped,
+            // Writers take the slot only with publish access, so it was free; retried all the
+            // same, as a refused version is.
+            None => Turn::Failed,
         };
     });
     if published { turn } else { Turn::Gone }
-}
-
-/// Read one build step's batch on `version` and apply it there. `None` if no column is
-/// `Building`.
-fn step(
-    version: &AtomicRefCell<Graph>,
-    nodes: usize,
-    edges: usize,
-) -> Option<BuildBatch> {
-    let mut g = version.borrow_mut();
-    let batch = read_build_batch(&g, nodes, edges)?;
-    g.falkordb_index.apply_build(&batch);
-    Some(batch)
-}
-
-/// Commit a build step, holding the slot.
-fn commit(
-    mvcc: &mut MvccGraph,
-    version: Arc<AtomicRefCell<Graph>>,
-) -> Turn {
-    let more = version.borrow().falkordb_index.has_building_columns();
-    // A refused version is rolled back by the commit itself; the column stays `Building` and a
-    // later turn retries.
-    match mvcc.commit_index_build(version) {
-        Ok(()) => Turn::Committed { more },
-        Err(_) => Turn::Failed,
-    }
 }
 
 // ---- The worker pool ----

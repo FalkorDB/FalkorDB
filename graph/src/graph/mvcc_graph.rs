@@ -68,7 +68,10 @@ use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::online_build::{self, BuildHost};
+use crate::index::falkordb::{
+    falkordb_index::BuildBatch,
+    online_build::{self, BuildHost},
+};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -79,12 +82,21 @@ pub struct MvccGraph {
     graph: Arc<AtomicRefCell<Graph>>,
     /// Write lock (true = write in progress)
     write: AtomicBool,
-    /// The version of the last commit that changed graph data, as opposed to an index-build step.
-    #[cfg(feature = "index-falkordb")]
-    data_version: u64,
     /// How the online index builder reaches this graph; set by its host.
     #[cfg(feature = "index-falkordb")]
     build_host: OnceLock<Arc<dyn BuildHost>>,
+}
+
+/// What [`MvccGraph::commit_index_build`] did with a batch.
+#[cfg(feature = "index-falkordb")]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildCommit {
+    /// The version it was prepared in was still current, and was published.
+    Prepared,
+    /// Something committed since: it was merged into the current version, which was published.
+    Merged,
+    /// Its column was dropped or re-created since it was read: nothing was published.
+    Dropped,
 }
 
 /// Why [`MvccGraph::claim`] refused a fork.
@@ -115,8 +127,6 @@ impl MvccGraph {
     #[must_use]
     pub fn from_graph(graph: Graph) -> Self {
         Self {
-            #[cfg(feature = "index-falkordb")]
-            data_version: graph.version,
             graph: Arc::new(AtomicRefCell::new(graph)),
             write: AtomicBool::new(false),
             #[cfg(feature = "index-falkordb")]
@@ -160,9 +170,7 @@ impl MvccGraph {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            Some(Arc::new(AtomicRefCell::new(
-                self.graph.borrow().new_version(),
-            )))
+            Some(self.fork())
         } else {
             None
         }
@@ -175,24 +183,17 @@ impl MvccGraph {
     /// it builds into the fork and claims the slot only when it escalates
     /// ([`Self::claim`]), so the slot is only ever held by a thread holding the
     /// per-graph write lock and an inline writer never finds it taken.
-    ///
-    /// The fork records its changes to index columns still being built, until it is claimed, in
-    /// case it has to replay them onto build steps committed meanwhile.
     #[must_use]
     pub fn fork(&self) -> Arc<AtomicRefCell<Graph>> {
-        #[cfg_attr(not(feature = "index-falkordb"), allow(unused_mut))]
-        let mut version = self.graph.borrow().new_version();
-        #[cfg(feature = "index-falkordb")]
-        version.falkordb_index.start_logging();
-        Arc::new(AtomicRefCell::new(version))
+        Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
     }
 
     /// Claim the write slot for a version made by [`Self::fork`].
     ///
-    /// With the `index-falkordb` feature, a fork that is stale only because index-build steps
-    /// committed since it was made is not refused: the steps changed no graph data, so its writes
-    /// still hold, and it takes the steps' progress (`FalkorDbIndex::adopt_build_progress`) and
-    /// becomes the next version.
+    /// With the `index-falkordb` feature, a fork that is stale only because index-build commits
+    /// were made since it was is not refused: they changed no graph data, so what its writer
+    /// matched still holds. The fork takes their progress and becomes the next version
+    /// (`Graph::merge_build_progress`).
     ///
     /// # Errors
     ///
@@ -213,43 +214,18 @@ impl MvccGraph {
         }
         let published = self.graph.borrow();
         if published.version + 1 != fork.borrow().version {
+            // A fork that is borrowed, which no claimant's is, is refused rather than panicked on.
             #[cfg(feature = "index-falkordb")]
-            if self.adopt_build_progress(&published, fork) {
+            if fork
+                .try_borrow_mut()
+                .is_ok_and(|mut fork| fork.merge_build_progress(&published))
+            {
                 return Ok(());
             }
             self.write.store(false, Ordering::Release);
             return Err(Claim::Stale);
         }
-        // Claimed: nothing will replay its changes now.
-        #[cfg(feature = "index-falkordb")]
-        if let Ok(mut fork) = fork.try_borrow_mut() {
-            fork.falkordb_index.stop_logging();
-        }
         Ok(())
-    }
-
-    /// Make a stale `fork` the next version if only index-build steps committed since it was
-    /// made. `false` if a writer committed meanwhile — or if the fork is borrowed, which no
-    /// claimant does, but which this refuses rather than panics on.
-    #[cfg(feature = "index-falkordb")]
-    fn adopt_build_progress(
-        &self,
-        published: &Graph,
-        fork: &AtomicRefCell<Graph>,
-    ) -> bool {
-        let Ok(mut fork) = fork.try_borrow_mut() else {
-            return false;
-        };
-        // The fork was made from version `fork.version - 1`, so a fork of this coordinator is
-        // never ahead of what it published; one that is was made on a coordinator replaced since.
-        if self.data_version >= fork.version || fork.version > published.version {
-            return false;
-        }
-        fork.falkordb_index
-            .adopt_build_progress(&published.falkordb_index);
-        fork.falkordb_index.stop_logging();
-        fork.version = published.version + 1;
-        true
     }
 
     /// Publish `new_graph` as the current version.
@@ -276,25 +252,47 @@ impl MvccGraph {
         self.commit_version(new_graph, true)
     }
 
-    /// [`Self::commit`] for an index-build step, which changes no graph data: a writer whose fork
-    /// it makes stale may still [`claim`](Self::claim) it.
+    /// Commit an index-build batch. `prepared` is a new version of a published one with `batch`
+    /// already merged in, made with no lock held. If that published version is still the current
+    /// one, `prepared` holds every write and is published as it is. If anything has committed
+    /// since, `prepared` holds older data and is dropped: the batch is merged into a new version
+    /// of the current one ([`Graph::merge_index_build`]) and that is published instead. Either
+    /// way the commit changes no graph data, so a writer whose fork it makes stale may still
+    /// [`claim`](Self::claim) it.
     ///
-    /// # Errors
-    ///
-    /// As [`Self::commit`].
+    /// The caller holds what a writer holds to publish, so the write slot is free. `None` if it
+    /// was taken all the same, or the version was refused.
     #[cfg(feature = "index-falkordb")]
     pub(crate) fn commit_index_build(
         &mut self,
-        new_graph: Arc<AtomicRefCell<Graph>>,
-    ) -> Result<(), NodeOpError> {
-        self.commit_version(new_graph, false)
+        prepared: Arc<AtomicRefCell<Graph>>,
+        batch: &mut BuildBatch,
+    ) -> Option<BuildCommit> {
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return None;
+        }
+        let (version, how) = if self.graph.borrow().version + 1 == prepared.borrow().version {
+            (prepared, BuildCommit::Prepared)
+        } else {
+            let current = Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()));
+            if !current.borrow_mut().merge_index_build(batch) {
+                self.rollback();
+                return Some(BuildCommit::Dropped);
+            }
+            (current, BuildCommit::Merged)
+        };
+        self.commit_version(version, false).ok().map(|()| how)
     }
 
-    /// [`Self::commit`]; `data` if the version changes graph data, not only the index.
+    /// [`Self::commit`]; `writer` for a writer's version, `false` for an index build's.
     fn commit_version(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
-        #[cfg_attr(not(feature = "index-falkordb"), allow(unused_variables))] data: bool,
+        writer: bool,
     ) -> Result<(), NodeOpError> {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
 
@@ -342,9 +340,7 @@ impl MvccGraph {
         }
 
         new_graph.borrow_mut().trim_attr_stores();
-        // Nobody replays a published version's index changes.
-        #[cfg(feature = "index-falkordb")]
-        new_graph.borrow_mut().falkordb_index.stop_logging();
+        new_graph.borrow_mut().prepare_publish(writer);
 
         // Fold away any delta that has grown comparable to its base, then
         // materialize every committed base before publishing. The transaction
@@ -377,13 +373,8 @@ impl MvccGraph {
         // no column is `Building`, so a commit made during the build, the builder's own included,
         // queues nothing.
         #[cfg(feature = "index-falkordb")]
-        let starts_build = new_graph.borrow().falkordb_index.has_building_columns()
-            && !self.graph.borrow().falkordb_index.has_building_columns();
+        let starts_build = new_graph.borrow().starts_index_build(&self.graph.borrow());
 
-        #[cfg(feature = "index-falkordb")]
-        if data {
-            self.data_version = new_graph.borrow().version;
-        }
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
         #[cfg(feature = "index-falkordb")]

@@ -448,8 +448,8 @@ pub(crate) fn build_step(
     nodes: usize,
     edges: usize,
 ) -> bool {
-    if let Some(batch) = read_build_batch(g, nodes, edges) {
-        g.falkordb_index.apply_build(&batch);
+    if let Some(mut batch) = read_build_batch(g, nodes, edges) {
+        g.falkordb_index.apply_build(&mut batch);
     }
     g.falkordb_index.has_building_columns()
 }

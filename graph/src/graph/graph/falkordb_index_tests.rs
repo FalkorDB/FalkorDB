@@ -4,8 +4,8 @@
 
 use super::{Graph, NodeId};
 use crate::entity_type::EntityType;
-use crate::graph::mvcc_graph::{Claim, MvccGraph};
-use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
+use crate::graph::mvcc_graph::{BuildCommit, Claim, MvccGraph};
+use crate::index::falkordb::falkordb_index::{BuildBatch, BuildCursor, ColumnState};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::online_build::{self, BuildHost, Turn};
 use crate::index::index_docs::IndexDocs;
@@ -15,6 +15,7 @@ use atomic_refcell::AtomicRefCell;
 use parking_lot::RwLock;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -1113,13 +1114,12 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
 
 // --- The builder: turns, and merging with writers ---
 
-/// A host for driving build turns in a test: a plain lock around the coordinator. `during_step`
-/// runs as a committed write at the start of the next `publish`, the way a write on Redis's main
-/// thread, or a queued write that claimed first, commits while a turn's step runs. `refuse` makes
-/// `publish` refuse, as for a deleted graph.
+/// A host for driving build turns in a test: a plain lock around the coordinator. `racing` holds
+/// writes that each commit, one after another, at the start of the next `publish` — the way writers
+/// commit while a turn reads its batch. `refuse` makes `publish` refuse, as for a deleted graph.
 struct TestHost {
     mvcc: RwLock<MvccGraph>,
-    during_step: Mutex<Option<GraphWrite>>,
+    racing: Mutex<Vec<GraphWrite>>,
     refuse: AtomicBool,
 }
 
@@ -1140,9 +1140,17 @@ impl TestHost {
     fn new(g: Graph) -> Arc<Self> {
         Arc::new(Self {
             mvcc: RwLock::new(MvccGraph::from_graph(g)),
-            during_step: Mutex::new(None),
+            racing: Mutex::new(Vec::new()),
             refuse: AtomicBool::new(false),
         })
+    }
+
+    /// A writer commits `write` while the next turn reads its batch.
+    fn race_next_turn(
+        &self,
+        write: impl FnOnce(&mut Graph) + Send + 'static,
+    ) {
+        self.racing.lock().unwrap().push(Box::new(write));
     }
 
     /// One build turn with batches of 10.
@@ -1269,8 +1277,8 @@ impl BuildHost for TestHost {
         if self.refuse.load(Ordering::Relaxed) {
             return false;
         }
-        let write = self.during_step.lock().unwrap().take();
-        if let Some(write) = write {
+        let racing = std::mem::take(&mut *self.racing.lock().unwrap());
+        for write in racing {
             self.write(write);
         }
         f(&mut self.mvcc.write());
@@ -1391,7 +1399,7 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
     let attr = Arc::new("v".to_string());
     let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
 
-    *host.during_step.lock().unwrap() = Some(Box::new(the_racing_write(&ids, &attr)));
+    host.race_next_turn(the_racing_write(&ids, &attr));
     assert_eq!(host.turn(), Turn::Committed { more: true });
     assert_eq!(
         host.cursor(&label, &attr),
@@ -1414,6 +1422,48 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
 
     host.build_to_end();
     let (got, want) = host.against_one_pass(&label, &attr, &racing_values());
+    assert_eq!(got, want);
+}
+
+/// Several writers commit while one batch is read: the batch goes into a version that holds all of
+/// their writes, and skips every entity any of them touched.
+#[test]
+fn a_build_step_merges_over_several_writers() {
+    let attr = Arc::new("v".to_string());
+    let (host, label, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
+    let (first, second) = (ids.clone(), ids.clone());
+    let (a1, a2) = (Arc::clone(&attr), Arc::clone(&attr));
+    host.race_next_turn(move |g| set_attr(g, first[3], &a1, Value::Int(103)));
+    host.race_next_turn(move |g| {
+        set_attr(g, second[3], &a2, Value::Int(104));
+        delete_node(g, second[5]);
+        set_attr(g, second[8], &a2, Value::Int(108));
+    });
+    assert_eq!(host.turn(), Turn::Committed { more: true });
+
+    let published = host.published();
+    let g = published.borrow();
+    for stale in [4, 6, 9, 103] {
+        assert!(
+            range_scan(&g, &label, &attr, stale, stale).is_empty(),
+            "no tuple at {stale}"
+        );
+    }
+    assert_eq!(range_scan(&g, &label, &attr, 104, 104), vec![ids[3]]);
+    assert_eq!(range_scan(&g, &label, &attr, 108, 108), vec![ids[8]]);
+    assert_eq!(
+        g.get_node_attribute_by_idx(
+            NodeId::from(ids[3]),
+            g.get_node_attribute_id(&attr).expect("v") as u16
+        ),
+        Some(Value::Int(104)),
+        "both writers' data is in the version the batch went into"
+    );
+    drop(g);
+
+    host.build_to_end();
+    let values: Vec<i64> = (1..=25).chain([103, 104, 108]).collect();
+    let (got, want) = host.against_one_pass(&label, &attr, &values);
     assert_eq!(got, want);
 }
 
@@ -1448,7 +1498,7 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
             create_index_on(g, &label, &attr);
         }
     };
-    *host.during_step.lock().unwrap() = Some(Box::new(recreate));
+    host.race_next_turn(recreate);
     assert_eq!(host.turn(), Turn::Dropped);
     assert_eq!(
         host.cursor(&label, &attr),
@@ -1467,7 +1517,7 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
         let (label, attr) = (Arc::clone(&label), Arc::clone(&attr));
         move |g: &mut Graph| drop_index_on(g, &label, &attr)
     };
-    *host.during_step.lock().unwrap() = Some(Box::new(drop_it));
+    host.race_next_turn(drop_it);
     assert_eq!(host.turn(), Turn::Dropped);
     assert_eq!(host.turn(), Turn::Idle);
     assert!(
@@ -1504,11 +1554,78 @@ fn a_write_that_recreated_the_column_keeps_its_own() {
     assert_eq!(got, want);
 }
 
-/// Writes and build steps in random order — queued writes forking, writing and claiming across
-/// steps, writes committing during steps, labels taken off and put back, the index re-created now
-/// and then, on two columns of one label built one after the other — always end with the columns a
-/// one-pass build of the final graph has, and a queued write's claim fails only when graph data
-/// changed under it. Counts how often each merge ran, so a run that never reached one fails.
+/// What a random write did to the graph's data, to replay on a [`Model`] once it commits.
+#[derive(Clone, Debug)]
+enum Change {
+    Delete(u64),
+    Create(u64, Arc<String>, i64),
+    Relabel(u64, bool),
+    Set(u64, Arc<String>, i64),
+}
+
+/// The `:Person` and `:Other` nodes as the committed writes left them: whether each is a
+/// `:Person`, and its `v` and `w`.
+type Model = BTreeMap<u64, (bool, Option<i64>, Option<i64>)>;
+
+fn replay(
+    model: &mut Model,
+    changes: &[Change],
+) {
+    for change in changes {
+        match change {
+            Change::Delete(id) => {
+                model.remove(id);
+            }
+            Change::Create(id, attr, value) => {
+                let value = Some(*value);
+                let (v, w) = if attr.as_str() == "v" {
+                    (value, None)
+                } else {
+                    (None, value)
+                };
+                model.insert(*id, (true, v, w));
+            }
+            Change::Relabel(id, person) => {
+                model.get_mut(id).expect("a live node").0 = *person;
+            }
+            Change::Set(id, attr, value) => {
+                let node = model.get_mut(id).expect("a live node");
+                if attr.as_str() == "v" {
+                    node.1 = Some(*value);
+                } else {
+                    node.2 = Some(*value);
+                }
+            }
+        }
+    }
+}
+
+/// `g`'s `:Person` and `:Other` nodes, as a [`Model`].
+fn model_of(g: &Graph) -> Model {
+    let value = |n: u64, attr: &str| {
+        let idx = g.get_node_attribute_id(&Arc::new(attr.to_string()))?;
+        match g.get_node_attribute_by_idx(NodeId::from(n), idx as u16)? {
+            Value::Int(x) => Some(x),
+            _ => None,
+        }
+    };
+    let mut model = Model::new();
+    for (label, person) in [("Person", true), ("Other", false)] {
+        if let Some(m) = g.get_label_matrix(&Arc::new(label.to_string())) {
+            for (n, _) in m.iter(0, u64::MAX) {
+                model.insert(n, (person, value(n, "v"), value(n, "w")));
+            }
+        }
+    }
+    model
+}
+
+/// Writes and build steps in random order — writers forking, writing and claiming across build
+/// commits, writers committing while a batch is read, labels taken off and put back, the index
+/// re-created now and then, on two columns of one label built one after the other — always end
+/// with the data the committed writes made, and with the columns a one-pass build of it has; and a
+/// writer's claim fails only when another writer committed since its fork. Counts how often each
+/// merge ran, so a run that never reached one fails.
 #[test]
 fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
     use rand::rngs::StdRng;
@@ -1528,8 +1645,17 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
             }
             create_index_on(g, &label, &w);
         });
-        // A queued write in flight, and whether graph data was committed since it forked.
-        let mut queued: Option<(Arc<AtomicRefCell<Graph>>, bool)> = None;
+        let mut model: Model = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let i = i as i64;
+                (id, (true, Some(i % VALUES), Some((i * 7) % VALUES)))
+            })
+            .collect();
+        // A writer in flight: its fork, whether another writer committed since it was made, and
+        // the changes it made so far.
+        let mut queued: Option<(Arc<AtomicRefCell<Graph>>, bool, Vec<Change>)> = None;
         let building = || {
             host.published()
                 .borrow()
@@ -1538,10 +1664,10 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
         };
 
         // A random write: re-value, delete or create a `:Person` node, move one between `:Person`
-        // and `:Other`; rarely, re-create one of the indexes.
+        // and `:Other`; rarely, re-create one of the indexes. Returns what it changed.
         let random_write = {
             let (label, v, w) = (Arc::clone(&label), Arc::clone(&v), Arc::clone(&w));
-            move |g: &mut Graph, rng: &mut StdRng| {
+            move |g: &mut Graph, rng: &mut StdRng| -> Vec<Change> {
                 let members = |g: &Graph, label: &str| -> Vec<u64> {
                     g.get_label_matrix(&Arc::new(label.to_string()))
                         .map(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect())
@@ -1556,12 +1682,17 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                     0 => {
                         drop_index_on(g, &label, attr);
                         create_index_on(g, &label, attr);
+                        vec![]
                     }
                     1..=3 if !people.is_empty() => {
-                        delete_node(g, people[rng.random_range(0..people.len())]);
+                        let id = people[rng.random_range(0..people.len())];
+                        delete_node(g, id);
+                        vec![Change::Delete(id)]
                     }
                     4..=6 => {
-                        add_person(g, attr, rng.random_range(0..VALUES));
+                        let value = rng.random_range(0..VALUES);
+                        let id = add_person(g, attr, value);
+                        vec![Change::Create(id, Arc::clone(attr), value)]
                     }
                     7..=9 if !people.is_empty() => {
                         let id = people[rng.random_range(0..people.len())];
@@ -1572,6 +1703,7 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                             &mut d,
                             false
                         ));
+                        vec![Change::Relabel(id, false)]
                     }
                     10..=12 if !others.is_empty() => {
                         let id = others[rng.random_range(0..others.len())];
@@ -1582,60 +1714,73 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                             &mut d,
                             false
                         ));
+                        vec![Change::Relabel(id, true)]
                     }
                     _ if !people.is_empty() => {
                         let id = people[rng.random_range(0..people.len())];
-                        set_attr(g, id, attr, Value::Int(rng.random_range(0..VALUES)));
+                        let value = rng.random_range(0..VALUES);
+                        set_attr(g, id, attr, Value::Int(value));
+                        vec![Change::Set(id, Arc::clone(attr), value)]
                     }
-                    _ => {}
+                    _ => vec![],
                 }
             }
         };
 
         for _ in 0..300 {
             match rng.random_range(0..6) {
-                0 if queued.is_none() => queued = Some((host.fork(), false)),
+                0 if queued.is_none() => queued = Some((host.fork(), false, vec![])),
                 1 => {
-                    if let Some((fork, _)) = &queued {
-                        random_write(&mut fork.borrow_mut(), &mut rng);
+                    if let Some((fork, _, changes)) = &mut queued {
+                        changes.extend(random_write(&mut fork.borrow_mut(), &mut rng));
                     }
                 }
                 2 => {
-                    if let Some((fork, data_changed)) = queued.take() {
+                    if let Some((fork, data_changed, changes)) = queued.take() {
                         let stale = host.published().borrow().version >= fork.borrow().version;
                         let claim = host.finish(fork);
                         assert_eq!(
                             claim.is_err(),
                             data_changed,
-                            "seed {seed}: a claim fails exactly when data changed under it"
+                            "seed {seed}: a claim fails exactly when another writer committed"
                         );
-                        if stale && claim.is_ok() {
-                            writes_over_steps += 1;
+                        if claim.is_ok() {
+                            replay(&mut model, &changes);
+                            if stale {
+                                writes_over_steps += 1;
+                            }
                         }
                     }
                 }
                 3 => {
                     let mut write_rng = StdRng::seed_from_u64(rng.random());
-                    let write = random_write.clone();
-                    host.write(|g| write(g, &mut write_rng));
-                    if let Some((_, data_changed)) = &mut queued {
+                    let mut changes = vec![];
+                    host.write(|g| changes = random_write(g, &mut write_rng));
+                    replay(&mut model, &changes);
+                    if let Some((_, data_changed, _)) = &mut queued {
                         *data_changed = true;
                     }
                 }
                 4 => {
                     let mut write_rng = StdRng::seed_from_u64(rng.random());
                     let write = random_write.clone();
+                    let changes = Arc::new(Mutex::new(vec![]));
+                    let made = Arc::clone(&changes);
                     let was_building = building();
-                    *host.during_step.lock().unwrap() =
-                        Some(Box::new(move |g: &mut Graph| write(g, &mut write_rng)));
+                    host.race_next_turn(move |g| {
+                        *made.lock().unwrap() = write(g, &mut write_rng);
+                    });
                     let turn = online_build::run_turn_within(host.as_ref(), 5, 5);
                     assert!(
                         matches!(turn, Turn::Committed { .. } | Turn::Idle | Turn::Dropped),
                         "seed {seed}: {turn:?}"
                     );
-                    // An unused write never ran; one that ran is a data commit.
-                    if host.during_step.lock().unwrap().take().is_none() {
-                        if let Some((_, data_changed)) = &mut queued {
+                    // The write ran, and committed, if the turn reached its commit.
+                    let ran = host.racing.lock().unwrap().is_empty();
+                    host.racing.lock().unwrap().clear();
+                    if ran {
+                        replay(&mut model, &changes.lock().unwrap());
+                        if let Some((_, data_changed, _)) = &mut queued {
                             *data_changed = true;
                         }
                         if was_building && matches!(turn, Turn::Committed { .. }) {
@@ -1652,10 +1797,19 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                 }
             }
         }
-        if let Some((fork, data_changed)) = queued.take() {
-            assert_eq!(host.finish(fork).is_err(), data_changed, "seed {seed}");
+        if let Some((fork, data_changed, changes)) = queued.take() {
+            let claim = host.finish(fork);
+            assert_eq!(claim.is_err(), data_changed, "seed {seed}");
+            if claim.is_ok() {
+                replay(&mut model, &changes);
+            }
         }
         host.build_to_end();
+        assert_eq!(
+            model_of(&host.published().borrow()),
+            model,
+            "seed {seed}: the graph holds what the committed writes made"
+        );
         let values: Vec<i64> = (0..VALUES).collect();
         for attr in [&v, &w] {
             let (got, want) = host.against_one_pass(&label, attr, &values);
@@ -1766,19 +1920,18 @@ fn both_merges_hold_on_an_edge_column() {
     assert_eq!(got, want, "writer over step");
 
     let (host, ty, attr, nodes, eids) = edges_building();
-    *host.during_step.lock().unwrap() =
-        Some(Box::new(the_racing_edge_write(&nodes, &eids, &ty, &attr)));
+    host.race_next_turn(the_racing_edge_write(&nodes, &eids, &ty, &attr));
     assert_eq!(host.turn(), Turn::Committed { more: true });
     host.build_to_end();
     let (got, want) = host.against_one_pass_of(EntityType::Relationship, &ty, &attr, &values);
     assert_eq!(got, want, "step over writer");
 }
 
-/// Only a writer's fork keeps a log of its changes to a building column, and only until it claims
-/// the write slot: an inline writer's version keeps none, and a claim — plain or merging over build
-/// steps — drops it.
+/// A version keeps its changes to a building column until it is published: a writer's fork, an
+/// inline writer's version alike. A fork that merges over a build commit replays them there and
+/// keeps none.
 #[test]
-fn only_an_unclaimed_fork_keeps_a_change_log() {
+fn a_version_keeps_its_change_log_until_published() {
     let attr = Arc::new("v".to_string());
     let (host, _, ids) = TestHost::building(&attr, &(1..=25).collect::<Vec<_>>());
     let logged = |version: &Arc<AtomicRefCell<Graph>>| version.borrow().falkordb_index.logged();
@@ -1787,16 +1940,17 @@ fn only_an_unclaimed_fork_keeps_a_change_log() {
         let mvcc = host.mvcc.read();
         let inline = mvcc.write().expect("free");
         set_attr(&mut inline.borrow_mut(), ids[0], &attr, Value::Int(50));
-        assert_eq!(logged(&inline), 0, "an inline writer's version");
+        assert!(logged(&inline) > 0, "an inline writer's version");
         mvcc.rollback();
     }
 
     let fork = host.fork();
     set_attr(&mut fork.borrow_mut(), ids[0], &attr, Value::Int(50));
-    assert!(logged(&fork) > 0, "an unclaimed fork logs");
+    assert!(logged(&fork) > 0, "a writer's fork");
     host.mvcc.read().claim(&fork).expect("not stale");
-    assert_eq!(logged(&fork), 0, "a plain claim drops the log");
+    assert!(logged(&fork) > 0, "kept through a plain claim");
     host.mvcc.write().commit(fork).expect("commits");
+    assert_eq!(logged(&host.published()), 0, "dropped once published");
 
     let fork = host.fork();
     set_attr(&mut fork.borrow_mut(), ids[1], &attr, Value::Int(51));
@@ -1804,8 +1958,8 @@ fn only_an_unclaimed_fork_keeps_a_change_log() {
     host.mvcc
         .read()
         .claim(&fork)
-        .expect("stale only over a build step");
-    assert_eq!(logged(&fork), 0, "a merging claim drops the log");
+        .expect("stale only over a build commit");
+    assert_eq!(logged(&fork), 0, "replayed by the merge");
     host.mvcc.write().commit(fork).expect("commits");
 }
 
@@ -1863,6 +2017,62 @@ fn a_refused_publish_commits_nothing() {
     assert!(host.indexed(&label, &attr).is_empty());
 }
 
+/// What a turn does before it publishes: read a batch of `published` and merge it into a new
+/// version of it, holding no lock.
+fn prepare_turn(
+    published: &AtomicRefCell<Graph>,
+    nodes: usize,
+) -> (Arc<AtomicRefCell<Graph>>, BuildBatch) {
+    let mut batch =
+        graph_writes::read_build_batch(&published.borrow(), nodes, nodes).expect("Building");
+    let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
+    assert!(prepared.borrow_mut().merge_index_build(&mut batch));
+    (prepared, batch)
+}
+
+/// A turn that nothing committed against publishes the version it prepared with no lock held,
+/// so its batch's insert never holds the host's locks; one a writer committed against merges
+/// its batch into the writer's version instead.
+#[test]
+fn a_turn_publishes_its_prepared_version_only_if_nothing_committed_since() {
+    let attr = Arc::new("v".to_string());
+    let values: Vec<i64> = (1..=25).collect();
+    let (host, label, ids) = TestHost::building(&attr, &values);
+
+    let (prepared, mut batch) = prepare_turn(&host.published(), 10);
+    let commit = host
+        .mvcc
+        .write()
+        .commit_index_build(Arc::clone(&prepared), &mut batch);
+    assert_eq!(commit, Some(BuildCommit::Prepared));
+    assert!(
+        Arc::ptr_eq(&host.published(), &prepared),
+        "the prepared version itself"
+    );
+
+    let (prepared, mut batch) = prepare_turn(&host.published(), 10);
+    host.write(|g| set_attr(g, ids[13], &attr, Value::Int(113)));
+    let commit = host
+        .mvcc
+        .write()
+        .commit_index_build(Arc::clone(&prepared), &mut batch);
+    assert_eq!(commit, Some(BuildCommit::Merged));
+    assert!(
+        !Arc::ptr_eq(&host.published(), &prepared),
+        "not a version older than the write"
+    );
+    assert!(
+        range_scan(&host.published().borrow(), &label, &attr, 14, 14).is_empty(),
+        "ids[13] holds 113: the merge skips the 14 its batch read"
+    );
+
+    host.build_to_end();
+    let mut all = values.clone();
+    all.push(113);
+    let (got, want) = host.against_one_pass(&label, &attr, &all);
+    assert_eq!(got, want);
+}
+
 /// Two turns at once on one graph — which the pool never runs — must not let the second merge a
 /// batch read before the first committed: `touched` covers only writes since the last step, so
 /// the second would re-add what a write changed in between.
@@ -1871,24 +2081,17 @@ fn a_second_turn_never_merges_a_batch_read_before_the_first_one_committed() {
     let attr = Arc::new("v".to_string());
     let values: Vec<i64> = (1..=25).collect();
     let (host, label, ids) = TestHost::building(&attr, &values);
-    let read = |version: &Arc<AtomicRefCell<Graph>>| {
-        let mut g = version.borrow_mut();
-        let batch = graph_writes::read_build_batch(&g, 10, 10).expect("a Building column");
-        g.falkordb_index.apply_build(&batch);
-        batch
-    };
-    let (first, second) = (host.fork(), host.fork());
-    let (first_batch, second_batch) = (read(&first), read(&second));
+    let published = host.published();
+    let turns = [prepare_turn(&published, 10), prepare_turn(&published, 10)];
     host.write(|g| set_attr(g, ids[3], &attr, Value::Int(103)));
-    for (version, batch) in [(first, first_batch), (second, second_batch)] {
-        let mut mvcc = host.mvcc.write();
-        assert_eq!(mvcc.claim(&version), Err(Claim::Stale));
-        let merged = mvcc.fork();
-        if merged.borrow_mut().falkordb_index.apply_build(&batch) {
-            mvcc.claim(&merged).expect("the slot is free");
-            mvcc.commit_index_build(merged).expect("commits");
-        }
-    }
+    let commits: Vec<_> = turns
+        .into_iter()
+        .map(|(prepared, mut batch)| host.mvcc.write().commit_index_build(prepared, &mut batch))
+        .collect();
+    assert_eq!(
+        commits,
+        [Some(BuildCommit::Merged), Some(BuildCommit::Dropped)]
+    );
     assert!(
         range_scan(&host.published().borrow(), &label, &attr, 4, 4).is_empty(),
         "ids[3] holds 103: the second merge must not re-add the 4 its batch read"
