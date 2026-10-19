@@ -374,7 +374,7 @@ impl FalkorDbIndex {
     /// Create an empty numeric column for `(entity, label, attr)` in the `Ready`
     /// state, replacing any existing one. Used by RDB load ([`create_unpopulated`](Self::create_unpopulated)),
     /// whose populate replaces it with the built column
-    /// ([`build_numeric_sorted`](Self::build_numeric_sorted)) before any read is served. An edge
+    /// ([`build_numeric`](Self::build_numeric)) before any read is served. An edge
     /// column's docs are `edge_id`s.
     pub fn create_numeric(
         &mut self,
@@ -412,23 +412,24 @@ impl FalkorDbIndex {
         );
     }
 
-    /// Build (or rebuild) the numeric column for `(entity, label, attr)` in the `Ready` state from
-    /// numeric-encoded tuples **sorted ascending and unique**, replacing any existing one — the
-    /// RDB-load populate path. Bottom-up-loads the tuples, which is cheaper than looping
-    /// incremental adds. The caller encodes, so a Range attr holding mixed types indexes only its
+    /// Build (or rebuild) the numeric column for `(entity, label, attr)` from
+    /// `entries` (any order) in the `Ready` state, replacing any existing one — the
+    /// bulk populate path. `NumericIndex::from_entries` bottom-up-loads the sorted
+    /// pairs (cheaper than looping incremental adds). Non-numeric / `NaN` values are
+    /// skipped by the encoder, so a Range attr holding mixed types indexes only its
     /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
-    pub fn build_numeric_sorted(
+    pub fn build_numeric<'a>(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        pairs: &[(u64, u64)],
+        entries: impl IntoIterator<Item = (&'a Value, u64)>,
     ) {
         self.insert_column(
             entity,
             label,
             attr,
-            IndexColumn::Numeric(NumericIndex::from_sorted_tuples(pairs)),
+            IndexColumn::Numeric(NumericIndex::from_entries(entries)),
             ColumnState::Ready,
         );
     }

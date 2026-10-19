@@ -34,7 +34,6 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::encode::encode_numeric;
 use super::falkordb_index::{BuildBatch, BuildCursor};
 use super::pending_writes::IndexChanges;
 
@@ -529,26 +528,21 @@ fn remove_node_under_label(
 
 /// Build the column for `(entity, label, attr)` from the live graph, replacing any existing one.
 ///
-/// One attribute at a time: a column's tuples live only until it is built. Collecting every
-/// attribute first would hold one tuple per entity per attribute at once, multiplying the peak
-/// for no benefit.
+/// One attribute at a time: the `(value, id)` pairs live only until their column is built.
+/// Collecting every attribute first would hold one `Value` per entity per attribute at once,
+/// multiplying the peak for no benefit.
 fn build_column(
     g: &mut Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
 ) {
-    let (pairs, _) = scan(
-        g,
-        label,
-        attr,
-        BuildCursor::new(entity),
-        usize::MAX,
-        usize::MAX,
-        encode_numeric,
-    );
+    let pairs = match entity {
+        EntityType::Node => collect_node_entries(g, label, attr),
+        EntityType::Relationship => collect_edge_entries(g, label, attr),
+    };
     g.falkordb_index
-        .build_numeric_sorted(entity, label, attr, &pairs);
+        .build_numeric(entity, label, attr, pairs.iter().map(|(v, id)| (v, *id)));
 }
 
 /// The node's label ids, reusing `out`'s allocation across nodes.
@@ -577,6 +571,50 @@ fn edge_type(
     id: u64,
 ) -> &Arc<String> {
     &g.get_types()[g.get_relationship_type_id(RelationshipId::from(id)).0]
+}
+
+/// The `(value, node_id)` entries of column `(label, attr)`: every live `label` node that has
+/// `attr`.
+fn collect_node_entries(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Vec<(Value, u64)> {
+    let mut pairs = Vec::new();
+    if let (Some(lm), Some(idx)) = (g.get_label_matrix(label), g.get_node_attribute_id(attr)) {
+        let idx = idx as u16;
+        for (n, _) in lm.iter(0, u64::MAX) {
+            if let Some(value) = g.get_node_attribute_by_idx(NodeId::from(n), idx) {
+                pairs.push((value, n));
+            }
+        }
+    }
+    pairs
+}
+
+/// The `(value, edge_id)` entries of column `(type_name, attr)`: every live edge of that type
+/// that has `attr`.
+fn collect_edge_entries(
+    g: &Graph,
+    type_name: &Arc<String>,
+    attr: &Arc<String>,
+) -> Vec<(Value, u64)> {
+    let Some(idx) = g.get_relationship_attribute_id(attr) else {
+        return Vec::new();
+    };
+    let idx = idx as u16;
+    let edge_ids: Vec<u64> = g
+        .get_relationship_matrix(type_name)
+        .map_or_else(Vec::new, |t| {
+            t.iter(0, u64::MAX, false).map(|(_, _, eid)| eid).collect()
+        });
+    edge_ids
+        .into_iter()
+        .filter_map(|eid| {
+            g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx)
+                .map(|value| (value, eid))
+        })
+        .collect()
 }
 
 /// The tuples of column `(entity, label, attr)` for up to `nodes` `label` nodes, or `edges`
