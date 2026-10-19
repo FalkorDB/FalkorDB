@@ -1,10 +1,7 @@
-//! Customizable Contraction Hierarchies (CCH) path index — contract skeleton.
+//! Customizable Contraction Hierarchies (CCH) path index.
 //!
-//! Everything here is a stub: types and signatures the implementation changes build against.
-//! The engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
-//! the query pipeline never reaches the `unimplemented!()` bodies below. (The public
-//! `Graph` methods in `index.rs` are stubs too, so a caller that invokes them directly
-//! reaches `unimplemented!()`.)
+//! A graph version holds its indexes as `Arc<Cch>`; the `Graph` methods in `index.rs`
+//! create, drop, list and rebuild them.
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
@@ -414,8 +411,8 @@ mod tests {
     /// hierarchy. Drop `cch_indexes` from `Graph::new_version` and this fails on the length;
     /// deep-copy the hierarchy instead of cloning the `Arc` and it fails on `ptr_eq`.
     ///
-    /// Reaches past the (still unimplemented) DDL by pushing onto the field directly, which is
-    /// also why this test is the only thing in the crate that touches `cch_indexes` at all.
+    /// Pushes onto the field directly, so it checks `new_version` alone, independent of
+    /// `create_cch_index` and the graph input.
     #[test]
     fn new_version_shares_the_hierarchy() {
         test_init::ensure_init();
