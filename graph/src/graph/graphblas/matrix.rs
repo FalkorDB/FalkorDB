@@ -1264,11 +1264,11 @@ impl Matrix<u64> {
         let out = Self::new(self.nrows(), self.ncols());
         unsafe {
             let info = GrB_Matrix_select_UINT64(
-                *out.m,
+                out.inner(),
                 null_mut(),
                 null_mut(),
                 GrB_VALUEEQ_UINT64,
-                *self.m,
+                self.inner(),
                 value,
                 null_mut(),
             );
