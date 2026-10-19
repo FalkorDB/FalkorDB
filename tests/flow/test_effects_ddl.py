@@ -111,6 +111,33 @@ class testEffects_01_ConstraintAsEffect(_EffectsBase):
                              [['UNIQUE', 'Dup', ['v'], 'NODE', 'FAILED']])
         self.env.assertEqual(replica_rows, master_rows)
 
+    def test04_a_type_registered_by_a_constraint_does_not_stick_to_deleted_edges(self):
+        # #3244. A constraint on a relationship type nothing uses yet registers
+        # the type — on the primary through the command, on the replica through
+        # ADD_SCHEMA. Registering it used to leave the edge-x-type matrix one
+        # column short, so the next edge delete failed to clear the edge's type
+        # there, and the edge that reused its id read back with the old type.
+        self.set_effects_config()
+        key = "effects_type_width"
+        master  = Graph(self.master,  key)
+        replica = Graph(self.replica, key)
+        master.query("CREATE (:N)-[:A]->(:N)")
+        self.master.execute_command(
+            "GRAPH.CONSTRAINT", "CREATE", key, "MANDATORY", "RELATIONSHIP",
+            "B", "PROPERTIES", 1, "x")
+        master.query("MATCH ()-[r]->() DELETE r")
+        master.query("""MATCH (a), (b) WHERE id(a) = 0 AND id(b) = 1
+                        CREATE (a)-[:C]->(b)""")
+        self.wait_for_replica_offset()
+
+        for g in (master, replica):
+            self.env.assertEqual(
+                g.ro_query("MATCH ()-[r]->() RETURN id(r), type(r)").result_set,
+                [[0, 'C']])
+            self.env.assertEqual(
+                g.ro_query("MATCH ()-[r:A]->() RETURN count(r)").result_set,
+                [[0]])
+
 
 #-----------------------------------------------------------------------------
 # 3. an asynchronously validated constraint is announced twice and converges
