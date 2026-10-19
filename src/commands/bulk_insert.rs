@@ -188,10 +188,9 @@ fn read_property(
 struct PropColumns {
     /// Per header column: its attribute and the slot of that attribute.
     cols: Vec<(u16, usize)>,
-    /// `filled[slot] == record` once the current record holds a value for that slot.
-    filled: Vec<usize>,
-    /// Stamp of the current record; starts at 1 so a fresh `filled` (all 0) is empty.
-    record: usize,
+    /// Whether the current record already holds a value for that slot; cleared at the
+    /// start of every record, since each record is a separate entity.
+    filled: Vec<bool>,
 }
 
 impl PropColumns {
@@ -206,8 +205,7 @@ impl PropColumns {
             .collect();
         Self {
             cols,
-            filled: vec![0; slots.len()],
-            record: 0,
+            filled: vec![false; slots.len()],
         }
     }
 
@@ -222,14 +220,14 @@ impl PropColumns {
         data: &[u8],
         idx: &mut usize,
     ) -> Result<Vec<(u16, Value)>, String> {
-        self.record += 1;
+        self.filled.fill(false);
         let mut entries: Vec<(u16, Value)> = Vec::with_capacity(self.cols.len());
         for &(attr_id, slot) in &self.cols {
             let val = read_property(data, idx)?;
-            if matches!(val, Value::Null) || self.filled[slot] == self.record {
+            if matches!(val, Value::Null) || self.filled[slot] {
                 continue;
             }
-            self.filled[slot] = self.record;
+            self.filled[slot] = true;
             entries.push((attr_id, val));
         }
         Ok(entries)
