@@ -34,12 +34,15 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 **3. Is a GraphBLAS matrix freed exactly once?**
 
-Not quite. `Matrix::drop` checks `Arc::get_mut` (the count is 1) and then drops the `Arc`, as two separate steps. `Own.lean` enumerates every interleaving of two concurrent drops:
+**Yes, since #3090.** `Matrix` and `Iter` now share an `Arc<Handle>`, and `Handle::drop` frees the matrix. An `Arc` drop is one atomic decrement, and the thread that takes the count to zero runs the free, so deciding to free and decrementing happen in the same step. `Own.lean` models this:
 
-- `never_double_free`: no interleaving frees twice;
-- `race_leaks`: one interleaving frees zero times, so the matrix leaks;
-- `sequential_frees_once` and `single_owner_frees_once`: drops that run one after the other free exactly once;
-- `dup_independent_ownership`: `dup` gives a copy that shares nothing.
+- `arc_frees_once`: for any number of owners and any interleaving of clones and drops, the matrix is freed at most once, and it is freed exactly when the last owner is gone. So it is never freed twice and never leaked;
+- `arc_all_drop_frees_once`: `n ≥ 1` owners dropping in any order free it exactly once;
+- `arc_every_interleaving_frees_once`: the six two-owner interleavings, the one that leaked before included, all free exactly once;
+- `iter_frees_iterator_before_matrix`: `Iter::drop` frees its `GxB_Iterator` before its `Arc<Handle>` can free the matrix (`detached_iter_frees_only_matrix` covers a detached iterator);
+- `single_owner_frees_once`, `dup_independent_ownership`: a single owner frees once, and `dup` gives a copy that shares nothing.
+
+History: before #3090, `Matrix::drop` checked `Arc::get_mut` (the count is 1) and then dropped the `Arc`, as two separate steps. `pre3090_race_leaks` shows an interleaving where both owners see a count of 2 and neither frees. `pre3090_never_double_free` and `pre3090_sequential_frees_once` show it was only a leak, and only under concurrency.
 
 **4. Does a row-range scan visit each stored entry once?**
 
@@ -67,7 +70,8 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
 | `decodeCheck_ok_iff`, `decodeCheck_refuses_incomplete`, `decodeCheck_accepts_encoded` | `Tensor::decode` refuses exactly the payloads that break promotion completeness, and accepts every encoded tensor (#3033) | `Decode.lean` |
 | `pre3033_orphan_row_panics`, `pre3033_more_me_rows_than_pattern_panics` | History: before #3033, a decoded tensor with an orphan `me` row made `edge_count` panic | `Decode.lean` |
-| `never_double_free`, `race_leaks` | Two concurrent drops never double-free but can leak | `Own.lean` |
+| `arc_frees_once`, `arc_every_interleaving_frees_once` | Since #3090 the matrix is freed exactly once, under any number of owners and any schedule of drops | `Own.lean` |
+| `pre3090_race_leaks` | History: before #3090, two concurrent drops could leak the matrix | `Own.lean` |
 | `drain_seek_eq_spec`, `drain_no_duplication` | A row-range scan yields exactly the in-range entries, in order, once | `RowIter.lean` |
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
 | `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `Bulk.lean` |
@@ -92,14 +96,14 @@ The bug theorems are smaller. `Disposition.run` models what each style of status
 
 ## Bugs found
 
-The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main 73077bb4a.
+The repros are in `graph/tests/lean_graphblas_wrappers.rs` (see [`../FINDINGS.md`](../FINDINGS.md); bug 1 is W3-gb-1). Status is as of main fb3d516d0.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos` | A corrupt multi-edge blob in `GRAPH.RESTORE`, an RDB or a full sync hit `assert_eq!` on `GxB_Vector_deserialize` and the server exited (confirmed live with a truncated COPY payload) | **Fixed by #2996** (`decodeBlob_never_dies`) |
 | 2 | `pre3033_orphan_row_panics`, `pre3033_orphan_row_breaks_wf`, `pre3033_orphan_row_accepted` | `Tensor::decode` accepted an `me` row with no forward pair. `iter_edges` then yielded a phantom edge, `edge_count` panicked, and the restored graph could not be saved | **Fixed by #3033** (`decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`) |
 | 3 | — (Rust test only) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
-| 4 | `race_leaks` | Two `Matrix` clones dropped concurrently can both see a count of 2, so the GraphBLAS matrix is never freed (19 of 200,000 pairs leaked in the test) | **Open** (`never_double_free`: a leak, never a double free) |
+| 4 | `pre3090_race_leaks` | Two `Matrix` clones dropped concurrently could both see a count of 2, so the GraphBLAS matrix was never freed (19 of 200,000 pairs leaked in the test) | **Fixed by #3090** (`arc_frees_once`, `arc_every_interleaving_frees_once`; main's test `concurrently_dropped_clones_free_the_matrix_once`) |
 | 5 | — (Rust test only) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
 
 Also noted, not confirmed:
@@ -115,7 +119,7 @@ There are no CONDITIONAL rows.
 |---|---|
 | `GrbInfo.lean` | The `GrB_Info` codes and the three dispositions (`assertPanic`, `debugAssert`, `propagate`) |
 | `Index.lean` | `GrB_Index` casts, `GB_NMAX`, `ME_DIM`; the #2892 boundary |
-| `Own.lean` | The `Arc<GrB_Matrix>` drop protocol as a small-step machine over every two-owner interleaving |
+| `Own.lean` | The drop protocol as a small-step machine: main's `Arc<Handle>` for any number of owners, and the pre-#3090 `Arc::get_mut` protocol over every two-owner interleaving |
 | `RowIter.lean` | `matrix::Iter` `seek`/`next` over a row range |
 | `Codes.lean` | Each deserialize wrapper's disposition; bug 1 and its #2996 fix |
 | `Decode.lean` | `edge_count`'s checked arithmetic; the #2996 layer-size check; `count_value_eq` and the #3033 promotion-completeness check (bug 2 and its fix) |
@@ -129,11 +133,11 @@ The lakefile has no path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 1211 rows. Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
+`COVERAGE.tsv` has 1212 rows. Most are bindgen `extern` declarations in `mod.rs` and the LAGraph bindings.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 65 |
+| PROVEN | 66 |
 | AXIOMATISED | 1146 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:
@@ -149,7 +153,7 @@ None of these has Rust logic left to prove.
 
 - GraphBLAS semantics (eWise, mxm, resize, the serialized byte format) are taken from the C documentation, not modelled or checked.
 - The row-iterator model treats "skip empty rows that return `GrB_NO_VALUE`" as "advance to the next stored entry", which the GraphBLAS header documents.
-- The `Own` model covers two owners exhaustively (six interleavings), not *n*. `has_pending` and lock concurrency beyond `drop` are not modelled.
+- The `Own` model of main covers any number of owners; it takes `Arc`'s contract (one atomic decrement, the drop runs on the thread that took the count to zero) from std rather than proving it. The pre-#3090 history covers two owners exhaustively. `has_pending` and lock concurrency beyond `drop` are not modelled.
 - Bugs 3 and 5 have Rust repros but no Lean theorem; the leak and the dangling iterator are outside what the model expresses.
 
 ## Build and check

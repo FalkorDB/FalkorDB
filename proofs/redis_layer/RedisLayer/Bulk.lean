@@ -1,15 +1,18 @@
 /-!
 # `GRAPH.BULK` binary format (`src/commands/bulk_insert.rs`)
 
-* `go` / `attach` — `read_property` (`bulk_insert.rs:94-175`, depth cap since #3339 b080a44c1): the explicit-stack reader.
+* `go` / `attach` — `read_property` (`bulk_insert.rs:95-176`, depth cap since #3339 b080a44c1): the explicit-stack reader.
   `go` is the outer `loop` decoding one type byte, `attach` the inner loop that pushes
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
   `data.length - rest.length`.
-* `cstr` — `read_cstring` (`:30-44`), `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
-  `read_f64_ne` (`:46-92`): every one bounds-checks before indexing (`readNe_ok`).
-* `records` — the record loop of `process_node_token` (`:352-378`).
-* `parseCount` — `parse_count` (`:591-610`).
+* `cstr` — `read_cstring` (`:31-45`), `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
+  `read_f64_ne` (`:47-93`): every one bounds-checks before indexing (`readNe_ok`).
+* `records` — the record loop of `process_node_token` (`:419-440`); each record's values
+  are read by `PropColumns::read_record`, which consumes one value per header column.
+* `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`
+  (`:178-235`, #3026 `fb3d516d0`): one entry per attribute, the first non-null in header order.
+* `parseCount` — `parse_count` (`:647-666`).
 
 `i64::from_ne_bytes`/`to_ne_bytes` and `str::from_utf8` are Rust `core` functions; their
 specification is taken as the hypothesis structure `Codec` (bytes ↔ value, 8 bytes wide;
@@ -301,7 +304,7 @@ theorem enc_len_pos (v : BV) : 1 ≤ (enc C v).length := by
 /-! ## Records of a node token -/
 
 /-- `process_node_token`'s loop: `while idx < data.len()`, read `P` properties per
-record, drop `Null`s (`:398-403`). -/
+record (`read_record`, `:433-438`; which values it keeps is `keepFirst`, below). -/
 def readN : Nat → List Nat → Except BErr (List BV × List Nat)
   | 0, r => .ok ([], r)
   | n + 1, r =>
@@ -345,7 +348,7 @@ theorem encRec_ne_nil (vs : List BV) (hP : vs ≠ []) : encRec C vs ≠ [] := by
 /-- **A node token imports exactly the records it encodes**: for a header with `P ≥ 1`
 properties and a body that is the concatenation of `rs` (each with `P` values), the
 record loop returns `rs`, in order — so with `node_count = rs.length` every record gets
-exactly one reserved id and none is left over (the `node_id_cursor` check at `:385`). -/
+exactly one reserved id and none is left over (the `node_id_cursor` check at `:420`). -/
 theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v)
     (hdep : ∀ vs ∈ rs, ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) (fuel : Nat)
@@ -377,7 +380,7 @@ theorem encRec_len (vs : List BV) : vs.length ≤ (encRec C vs).length := by
     have e : encRec C (v :: vs) = enc C v ++ encRec C vs := by simp [encRec]
     rw [e, List.length_append, List.length_cons]; omega
 
-/-- The `max_records` ceiling (`bulk_insert.rs:627-638`) never rejects an honest
+/-- The `max_records` ceiling (`bulk_insert.rs:683-695`) never rejects an honest
 payload: `P` properties cost at least `P` bytes per record. -/
 theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.length = P) :
     rs.length * P ≤ (rs.flatMap (encRec C)).length := by
@@ -389,7 +392,7 @@ theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.
     have := encRec_len C vs
     rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]; omega
 
-/-! ## `parse_count` (`bulk_insert.rs:591-613`) -/
+/-! ## `parse_count` (`bulk_insert.rs:647-669`) -/
 
 def parseCount (s : List Nat) : Option Nat :=
   if s = [] then none
@@ -414,7 +417,7 @@ def getOrCreate (dict : List (List Nat)) (name : List Nat) : List (List Nat) × 
   | some i => (dict, i)
   | none => if dict.length ≥ 65535 then (dict, 65535) else (dict ++ [name], dict.length)
 
-/-- The attribute ids a header resolves to (`process_node_token`, `:362-365`). -/
+/-- The attribute ids a header resolves to (`process_node_token`, `:406-410`). -/
 def resolve : List (List Nat) → List (List Nat) → List Nat
   | _, [] => []
   | d, n :: ns => let (d', i) := getOrCreate d n; i :: resolve d' ns
@@ -423,7 +426,9 @@ def resolve : List (List Nat) → List (List Nat) → List Nat
 record's span then stored `(0, v₁), (0, v₂)` (**divergence, confirmed live**:
 `properties(n)` showed `{p: 1, p: 3, q: 2}`, `n.p` read 3; C keeps one `p`, `n.p` = 1).
 Since #3063 (`0f45a8685`) `import_attrs_resolved` keeps the first column only (proofs/
-pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`). -/
+pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`), and since #3026
+(`fb3d516d0`) the record itself already holds one entry per attribute
+(`readRecord_enc`, `keepFirst_nodup`; history `pre3026_two_entries_for_one_attr`). -/
 theorem duplicate_header_ids : resolve [] [[112], [113], [112]] = [0, 1, 0] := by decide
 
 /-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs:598`, `:609-610`).
@@ -436,5 +441,357 @@ def slotLen (n : Nat) : Nat := n % 65536
 
 theorem slot_len_truncates : slotLen 65536 = 0 ∧ slotLen 65537 = 1 ∧ slotLen 65535 = 65535 := by
   decide
+
+/-! ## Header columns: `PropColumns` (#3026, `fb3d516d0`, closes #3024)
+
+`PropColumns::new` (`bulk_insert.rs:197-210`) and `PropColumns::read_record` (`:218-234`),
+used by `process_node_token` (`:411`, `:433-438`) and `process_edge_token` (`:495`, `:517-522`).
+Attribute ids are `Nat` (Rust `u16`). The `HashMap<u16, usize>` from attribute to slot is
+modelled by its key list in insertion order: `entry(a).or_insert(slots.len())` gives a new key
+the next index, so a key's slot is its index in that list (`slotOf`). -/
+
+/-- `matches!(val, Value::Null)`. -/
+def BV.isNull : BV → Bool
+  | .null => true
+  | _ => false
+
+/-- One step of `new`'s `map`: `next = slots.len()`, `*slots.entry(a).or_insert(next)`. -/
+def slotOf (ks : List Nat) (a : Nat) : List Nat × Nat :=
+  if a ∈ ks then (ks, ks.idxOf a) else (ks ++ [a], ks.length)
+
+/-- The `map … collect` over `attr_ids`, threading the slot map. -/
+def buildCols : List Nat → List Nat → List Nat × List (Nat × Nat)
+  | ks, [] => (ks, [])
+  | ks, a :: as =>
+    let (ks', s) := slotOf ks a
+    let (kf, cs) := buildCols ks' as
+    (kf, (a, s) :: cs)
+
+structure PropColumns where
+  cols : List (Nat × Nat)
+  filled : List Bool
+
+/-- `PropColumns::new`: `filled = vec![false; slots.len()]`. -/
+def PropColumns.new (ids : List Nat) : PropColumns :=
+  let (ks, cols) := buildCols [] ids
+  ⟨cols, List.replicate ks.length false⟩
+
+/-- `PropColumns::is_empty`: `self.cols.is_empty()`. -/
+def PropColumns.isEmpty (pc : PropColumns) : Bool := pc.cols.isEmpty
+
+/-- The `for &(attr_id, slot) in &self.cols` loop: read one value (`?` propagates the error),
+skip it when it is null or `filled[slot]`, else set `filled[slot]` and push. -/
+def recLoop : List (Nat × Nat) → List Bool → List (Nat × BV) → List Nat →
+    Except BErr (List (Nat × BV) × List Bool × List Nat)
+  | [], filled, acc, r => .ok (acc, filled, r)
+  | (a, s) :: cs, filled, acc, r =>
+    match readProperty C r with
+    | .error e => .error e
+    | .ok (v, r') =>
+      if v.isNull || filled.getD s false then recLoop cs filled acc r'
+      else recLoop cs (filled.set s true) (acc ++ [(a, v)]) r'
+
+/-- `PropColumns::read_record`: `self.filled.fill(false)`, then the loop. Returns the entries,
+the updated columns (`&mut self`) and the remaining bytes (`*idx`). -/
+def PropColumns.readRecord (pc : PropColumns) (r : List Nat) :
+    Except BErr (List (Nat × BV) × PropColumns × List Nat) :=
+  match recLoop C pc.cols (pc.filled.map fun _ => false) [] r with
+  | .error e => .error e
+  | .ok (es, filled, r') => .ok (es, ⟨pc.cols, filled⟩, r')
+
+/-- **Specification**: walk `(attribute, value)` pairs in header order, dropping nulls and any
+attribute already kept in this record (`seen`). -/
+def keepFirst (seen : List Nat) : List (Nat × BV) → List (Nat × BV)
+  | [] => []
+  | (a, v) :: xs =>
+    if v.isNull = true ∨ a ∈ seen then keepFirst seen xs else (a, v) :: keepFirst (a :: seen) xs
+
+/-- The per-column read before #3026: one entry per non-null column. -/
+def plainRead (xs : List (Nat × BV)) : List (Nat × BV) := xs.filter fun p => !p.2.isNull
+
+/-! ### `new` -/
+
+theorem buildCols_spec (ks ids : List Nat) :
+    ∃ t, (buildCols ks ids).1 = ks ++ t ∧ (∀ a ∈ ids, a ∈ (buildCols ks ids).1) ∧
+      (buildCols ks ids).2 = ids.map fun a => (a, (buildCols ks ids).1.idxOf a) := by
+  induction ids generalizing ks with
+  | nil => exact ⟨[], by simp [buildCols]⟩
+  | cons a as ih =>
+    by_cases ha : a ∈ ks
+    · obtain ⟨t, h1, h2, h3⟩ := ih ks
+      have e : buildCols ks (a :: as) = ((buildCols ks as).1, (a, ks.idxOf a) :: (buildCols ks as).2) := by
+        simp [buildCols, slotOf, ha]
+      refine ⟨t, by rw [e]; exact h1, ?_, ?_⟩
+      · intro b hb; rw [e]; simp at hb
+        rcases hb with rfl | hb
+        · rw [h1]; simp [ha]
+        · exact h2 b hb
+      · rw [e, h3, h1]; simp [List.idxOf_append, ha]
+    · obtain ⟨t, h1, h2, h3⟩ := ih (ks ++ [a])
+      have e : buildCols ks (a :: as) =
+          ((buildCols (ks ++ [a]) as).1, (a, ks.length) :: (buildCols (ks ++ [a]) as).2) := by
+        simp [buildCols, slotOf, ha]
+      refine ⟨[a] ++ t, by rw [e, h1]; simp, ?_, ?_⟩
+      · intro b hb; rw [e]; simp at hb
+        rcases hb with rfl | hb
+        · rw [h1]; simp
+        · exact h2 b hb
+      · rw [e, h3, h1]; simp [List.idxOf_append, ha]
+
+/-- The slot map's keys: the distinct attributes in first-occurrence order. -/
+def keys (ids : List Nat) : List Nat := (buildCols [] ids).1
+
+/-- **`new`**: column `i` holds attribute `ids[i]` and that attribute's slot, the slot of an
+attribute is its index among the distinct attributes, and `filled` has one entry per slot. -/
+theorem new_spec (ids : List Nat) :
+    (PropColumns.new ids).cols = ids.map (fun a => (a, (keys ids).idxOf a)) ∧
+    (PropColumns.new ids).filled = List.replicate (keys ids).length false ∧
+    ∀ a ∈ ids, a ∈ keys ids := by
+  obtain ⟨_, _, h2, h3⟩ := buildCols_spec [] ids
+  exact ⟨by simp only [PropColumns.new]; exact h3, rfl, h2⟩
+
+/-- `is_empty` holds exactly when the header names no property (the record loop then reads
+nothing). -/
+theorem new_isEmpty (ids : List Nat) : (PropColumns.new ids).isEmpty = ids.isEmpty := by
+  rw [PropColumns.isEmpty, (new_spec ids).1]; cases ids <;> rfl
+
+/-- Two columns share a slot exactly when they name the same attribute (`filled[slot]` is
+per attribute, and every slot index is in bounds of `filled`). -/
+theorem slot_inj (K : List Nat) (a b : Nat) (ha : a ∈ K) (hb : b ∈ K) :
+    K.idxOf a = K.idxOf b ↔ a = b := by
+  constructor
+  · intro h
+    have e1 := List.getElem_idxOf (List.idxOf_lt_length_of_mem ha)
+    have e2 := List.getElem_idxOf (List.idxOf_lt_length_of_mem hb)
+    simp only [h] at e1; rw [← e1, e2]
+  · rintro rfl; rfl
+
+/-! ### `read_record` -/
+
+theorem getD_set_true (f : List Bool) (i j : Nat) (hi : i < f.length) :
+    (f.set i true).getD j false = (i = j || f.getD j false) := by
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_set]
+  by_cases h : i = j
+  · subst h; simp [hi]
+  · simp [h]
+
+/-- The loop computes `keepFirst`: invariant — for every attribute `a` of the token,
+`filled[slot a]` says whether `a` is in `seen`. -/
+theorem recLoop_keepFirst (K : List Nat) :
+    ∀ (cs : List (Nat × Nat)) (vs : List BV) (filled : List Bool) (seen : List Nat)
+      (acc : List (Nat × BV)) (r : List Nat),
+    (∀ p ∈ cs, p.1 ∈ K ∧ p.2 = K.idxOf p.1) → filled.length = K.length →
+    (∀ a ∈ K, filled.getD (K.idxOf a) false = decide (a ∈ seen)) →
+    vs.length = cs.length → (∀ v ∈ vs, wf C v) → (∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) →
+    ∃ f', f'.length = filled.length ∧
+      recLoop C cs filled acc (encRec C vs ++ r) =
+        .ok (acc ++ keepFirst seen ((cs.map Prod.fst).zip vs), f', r)
+  | [], vs, filled, seen, acc, r, _, _, _, hl, _, _ => by
+    cases vs with
+    | nil => exact ⟨filled, rfl, by simp [recLoop, encRec, keepFirst]⟩
+    | cons _ _ => simp at hl
+  | (a, s) :: cs, [], _, _, _, _, _, _, _, hl, _, _ => by simp at hl
+  | (a, s) :: cs, v :: vs, filled, seen, acc, r, hcs, hfl, hinv, hl, hw, hd => by
+    have ⟨haK, hs⟩ := hcs (a, s) (List.mem_cons_self ..)
+    simp only at haK hs
+    have hcs' : ∀ p ∈ cs, p.1 ∈ K ∧ p.2 = K.idxOf p.1 := fun p hp => hcs p (List.mem_cons_of_mem _ hp)
+    have hl' : vs.length = cs.length := by simpa using hl
+    have hw' := fun x hx => hw x (List.mem_cons_of_mem _ hx)
+    have hd' := fun x hx => hd x (List.mem_cons_of_mem _ hx)
+    have henc : encRec C (v :: vs) ++ r = enc C v ++ (encRec C vs ++ r) := by
+      simp [encRec]
+    rw [henc, recLoop, readProperty_enc C v _ (hw v (List.mem_cons_self ..)) (hd v (List.mem_cons_self ..))]
+    simp only [List.map_cons, List.zip_cons_cons, keepFirst]
+    have hget : filled.getD s false = decide (a ∈ seen) := by rw [hs]; exact hinv a haK
+    by_cases hskip : v.isNull = true ∨ a ∈ seen
+    · have hc : (v.isNull || filled.getD s false) = true := by
+        rw [hget]; rcases hskip with h | h <;> simp [h]
+      rw [if_pos hc, if_pos hskip]
+      exact recLoop_keepFirst K cs vs filled seen acc r hcs' hfl hinv hl' hw' hd'
+    · have hc : ¬ (v.isNull || filled.getD s false) = true := by
+        rw [hget]; simp only [not_or] at hskip; simp [hskip.1, hskip.2]
+      rw [if_neg hc, if_neg hskip]
+      have hlt : s < filled.length := by rw [hfl, hs]; exact List.idxOf_lt_length_of_mem haK
+      have hinv' : ∀ b ∈ K, (filled.set s true).getD (K.idxOf b) false = decide (b ∈ a :: seen) := by
+        intro b hb
+        rw [getD_set_true _ _ _ hlt, hinv b hb, hs]
+        by_cases hab : a = b
+        · subst hab; simp
+        · have hne : K.idxOf a ≠ K.idxOf b := fun e => hab ((slot_inj K a b haK hb).1 e)
+          simp [hne, Ne.symm hab]
+      obtain ⟨f', hf'l, hf'⟩ := recLoop_keepFirst K cs vs (filled.set s true) (a :: seen)
+        (acc ++ [(a, v)]) r hcs' (by simp [hfl]) hinv' hl' hw' hd'
+      refine ⟨f', by simpa using hf'l, ?_⟩
+      rw [hf']; simp
+
+/-- **`read_record` reads the specification**, whatever `filled` the previous record left
+(`fill(false)` resets it): on the encoding of one record whose column values are `vs`, it
+returns `keepFirst [] (ids.zip vs)`, leaves exactly the bytes after the record, and keeps the
+columns and the length of `filled` (so the next record starts from the same state). -/
+theorem readRecord_enc (ids : List Nat) (filled : List Bool)
+    (hf : filled.length = (keys ids).length) (vs : List BV) (r : List Nat)
+    (hl : vs.length = ids.length) (hw : ∀ v ∈ vs, wf C v)
+    (hd : ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) :
+    ∃ pc', pc'.cols = (PropColumns.new ids).cols ∧ pc'.filled.length = (keys ids).length ∧
+      PropColumns.readRecord C ⟨(PropColumns.new ids).cols, filled⟩ (encRec C vs ++ r) =
+        .ok (keepFirst [] (ids.zip vs), pc', r) := by
+  obtain ⟨hcols, -, hmem⟩ := new_spec ids
+  have hcs : ∀ p ∈ (PropColumns.new ids).cols, p.1 ∈ keys ids ∧ p.2 = (keys ids).idxOf p.1 := by
+    intro p hp; rw [hcols] at hp; simp at hp
+    obtain ⟨a, ha, rfl⟩ := hp; exact ⟨hmem a ha, rfl⟩
+  have hfst : (PropColumns.new ids).cols.map Prod.fst = ids := by
+    rw [hcols]; simp [Function.comp_def]
+  obtain ⟨f', hf'l, h⟩ := recLoop_keepFirst C (keys ids) (PropColumns.new ids).cols vs
+    (filled.map fun _ => false) [] [] r hcs (by simp [hf])
+    (by
+      intro a _; rw [List.getD_eq_getElem?_getD, List.getElem?_map]
+      cases filled[(keys ids).idxOf a]? <;> rfl)
+    (by rw [hcols, List.length_map, hl]) hw hd
+  refine ⟨⟨(PropColumns.new ids).cols, f'⟩, rfl, by simp [hf'l, hf], ?_⟩
+  simp only [PropColumns.readRecord, h, hfst, List.nil_append]
+
+/-! ### Properties of the specification -/
+
+theorem keepFirst_fresh (seen : List Nat) (xs : List (Nat × BV)) :
+    ∀ a ∈ (keepFirst seen xs).map Prod.fst, a ∉ seen := by
+  induction xs generalizing seen with
+  | nil => simp [keepFirst]
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [keepFirst]
+    split
+    · exact ih seen
+    · rename_i h
+      intro a ha; simp only [List.map_cons, List.mem_cons] at ha
+      rcases ha with rfl | ha
+      · exact fun hm => h (Or.inr hm)
+      · exact fun hm => ih (b :: seen) a ha (List.mem_cons_of_mem _ hm)
+
+/-- **Each attribute appears at most once per record.** -/
+theorem keepFirst_nodup (seen : List Nat) (xs : List (Nat × BV)) :
+    ((keepFirst seen xs).map Prod.fst).Nodup := by
+  induction xs generalizing seen with
+  | nil => simp [keepFirst]
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [keepFirst]
+    split
+    · exact ih seen
+    · simp only [List.map_cons, List.nodup_cons]
+      exact ⟨fun hm => keepFirst_fresh (b :: seen) xs b hm (List.mem_cons_self ..), ih _⟩
+
+/-- **Header order is kept**: the entries are a subsequence of the columns. -/
+theorem keepFirst_sublist (seen : List Nat) (xs : List (Nat × BV)) :
+    (keepFirst seen xs).Sublist xs := by
+  induction xs generalizing seen with
+  | nil => simp [keepFirst]
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [keepFirst]
+    split
+    · exact (ih seen).cons _
+    · exact (ih _).cons₂ _
+
+/-- **The first non-null value wins**: the entry kept for `a` is the first column naming `a`
+whose value is not null (and there is none exactly when every such column is null). -/
+theorem keepFirst_find (seen : List Nat) (xs : List (Nat × BV)) (a : Nat) (ha : a ∉ seen) :
+    (keepFirst seen xs).find? (fun p => p.1 == a) =
+      xs.find? (fun p => p.1 == a && !p.2.isNull) := by
+  induction xs generalizing seen with
+  | nil => simp [keepFirst]
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [keepFirst]
+    split
+    · rename_i h
+      rw [ih seen ha, List.find?_cons]
+      have : (b == a && !v.isNull) = false := by
+        rcases h with h | h
+        · simp [h]
+        · have : b ≠ a := fun e => ha (e ▸ h)
+          simp [this]
+      rw [this]
+    · rename_i h
+      simp only [not_or] at h
+      rw [List.find?_cons, List.find?_cons]
+      by_cases hba : b = a
+      · subst hba; simp [h.1]
+      · have hf : (b == a) = false := by simp [hba]
+        simp only [hf, Bool.false_and]
+        exact ih (b :: seen) (by simp [Ne.symm hba, ha])
+
+/-- **Without repeated names nothing changes**: the result is the plain per-column read. -/
+theorem keepFirst_nodup_eq (seen : List Nat) (xs : List (Nat × BV))
+    (hnd : (xs.map Prod.fst).Nodup) (hs : ∀ p ∈ xs, p.1 ∉ seen) :
+    keepFirst seen xs = plainRead xs := by
+  induction xs generalizing seen with
+  | nil => rfl
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    have hb : b ∉ seen := hs (b, v) (List.mem_cons_self ..)
+    simp only [keepFirst, plainRead, List.filter_cons]
+    by_cases hv : v.isNull = true
+    · rw [if_pos (Or.inl hv), if_neg (by simp [hv])]
+      exact ih seen hnd.2 (fun p hp => hs p (List.mem_cons_of_mem _ hp))
+    · have hv' : v.isNull = false := by simpa using hv
+      rw [if_neg (by simp [hv', hb]), if_pos (by simp [hv'])]
+      congr 1
+      refine ih (b :: seen) hnd.2 ?_
+      intro p hp hm
+      simp only [List.mem_cons] at hm
+      rcases hm with h | h
+      · exact hnd.1 (h ▸ List.mem_map_of_mem hp)
+      · exact hs p (List.mem_cons_of_mem _ hp) h
+
+theorem keepFirst_plain_of_nodup (ids : List Nat) (vs : List BV) (hl : ids.length ≤ vs.length)
+    (hnd : ids.Nodup) : keepFirst [] (ids.zip vs) = plainRead (ids.zip vs) :=
+  keepFirst_nodup_eq [] _ (by rw [List.map_fst_zip hl]; exact hnd) (by simp)
+
+/-- Dropping the nulls first changes nothing. With `keepFirst_nodup_eq`'s ingredients this
+says `read_record` equals what #3063's `import_attrs_resolved` made of the old per-column
+read (it kept the first entry of each attribute), so #3026 changes no stored entity. -/
+theorem keepFirst_plainRead (seen : List Nat) (xs : List (Nat × BV)) :
+    keepFirst seen (plainRead xs) = keepFirst seen xs := by
+  induction xs generalizing seen with
+  | nil => rfl
+  | cons p xs ih =>
+    obtain ⟨b, v⟩ := p
+    simp only [plainRead] at ih ⊢
+    by_cases hv : v.isNull = true
+    · simp [List.filter_cons, hv, keepFirst, ih]
+    · simp only [List.filter_cons, hv, Bool.not_false, if_true, keepFirst]
+      split <;> simp [ih]
+
+/-- **End to end**: a record of a token whose header names no attribute twice reads exactly
+the per-column non-null values. -/
+theorem readRecord_plain (ids : List Nat) (hnd : ids.Nodup) (filled : List Bool)
+    (hf : filled.length = (keys ids).length) (vs : List BV) (r : List Nat)
+    (hl : vs.length = ids.length) (hw : ∀ v ∈ vs, wf C v)
+    (hd : ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) :
+    ∃ pc', PropColumns.readRecord C ⟨(PropColumns.new ids).cols, filled⟩ (encRec C vs ++ r) =
+        .ok (plainRead (ids.zip vs), pc', r) := by
+  obtain ⟨pc', -, -, h⟩ := readRecord_enc C ids filled hf vs r hl hw hd
+  exact ⟨pc', by rw [h, keepFirst_plain_of_nodup ids vs (by omega) hnd]⟩
+
+/-- Header `p, q, p` (ids `0, 1, 0`), record `1, 2, 3`: one `p`, holding the first value. -/
+theorem repeated_header_first_wins :
+    keepFirst [] ([0, 1, 0].zip [.long 1, .long 2, .long 3]) = [(0, .long 1), (1, .long 2)] := by
+  simp [keepFirst, BV.isNull]
+
+/-- Header `p, p`, record `null, 3`: a null in the first column lets the later one supply the
+value (why the header cannot simply be deduplicated). -/
+theorem repeated_header_null_first :
+    keepFirst [] ([0, 0].zip [.null, .long 3]) = [(0, .long 3)] := by
+  simp [keepFirst, BV.isNull]
+
+/-- Historical (before #3026, `fb3d516d0`): `process_node_token`/`process_edge_token` pushed
+one entry per non-null column, so the record of header `p, q, p` carried two entries for `p`.
+(#3063 already deduplicated it downstream in `import_attrs_resolved`, first entry kept — see
+`keepFirst_plainRead` — so no stored entity changes; #3026 makes the parse itself correct.) -/
+theorem pre3026_two_entries_for_one_attr :
+    (plainRead ([0, 1, 0].zip [.long 1, .long 2, .long 3])).map Prod.fst = [0, 1, 0] ∧
+    ((keepFirst [] ([0, 1, 0].zip [.long 1, .long 2, .long 3])).map Prod.fst) = [0, 1] := by
+  simp [plainRead, keepFirst, BV.isNull]
 
 end RedisLayer.Bulk

@@ -1,12 +1,43 @@
 /-
-# Ownership: `Arc<GrB_Matrix>` drop / dup as a resource-state model
+# Ownership: the `GrB_Matrix` drop protocol as a resource-state model
 
-`Matrix<T>` (matrix.rs:361) owns its GraphBLAS handle behind `Arc<GrB_Matrix>`.
-The wrappers rely on two facts, and this file models the drop protocol as a
-small-step machine and proves both — and exhibits the *race* the protocol does
-not defend against.
+`Matrix<T>` and `Iter<E>` share one GraphBLAS handle. This file models the drop
+protocol as a small-step machine, before and after #3090 (e45be4965, #3089).
 
-`Matrix::drop` (matrix.rs:388-400):
+## Main (since #3090): `Arc<Handle>`
+
+```rust
+struct Handle(GrB_Matrix);                       // matrix.rs:365
+impl Drop for Handle {                           // matrix.rs:368
+    fn drop(&mut self) { GrB_Matrix_free(&raw mut self.0); }
+}
+pub struct Matrix<T> { m: Arc<Handle>, .. }      // no Drop impl
+pub struct Iter<E>   { m: Arc<Handle>, inner: GxB_Iterator, .. }
+impl Drop for Iter<E> {                          // matrix.rs:1689
+    fn drop(&mut self) { if !self.inner.is_null() { GxB_Iterator_free(..) } }
+}   // then the field `m: Arc<Handle>` drops
+```
+
+Dropping a `Matrix` clone (or an `Iter`) is now one `Arc` drop: a single
+atomic `fetch_sub` on the strong count, and the thread whose `fetch_sub`
+returned `1` runs `Handle::drop`. The decision to free and the decrement are
+the *same* atomic step, so there is no window for a second owner to act in
+between. Model: `AEv.release` (and `AEv.clone`, the `fetch_add` of
+`Matrix::clone` / `Iter::detached`), `arcStep`, `liveRun`. The `Arc` contract
+(one atomic decrement; the drop runs on the thread that saw 1) is std's, taken
+as the model's step, not proved.
+
+* `arc_frees_once` — for *any* number of owners and *any* interleaving of
+  clones and drops by live owners, the matrix is freed at most once, and it is
+  freed exactly when the count reaches zero: never a double free, never a leak.
+* `arc_all_drop_frees_once` — `n ≥ 1` owners each dropping once, in whatever
+  order the scheduler picks, free it exactly once.
+* `arc_every_interleaving_frees_once` — the six two-owner interleavings, the
+  one that leaked before #3090 included, all free exactly once now.
+* `iter_frees_iterator_before_matrix` — `Iter::drop` frees its
+  `GxB_Iterator` before its `Arc<Handle>` field can free the matrix.
+
+## Before #3090 (history, `pre3090_*`): `Arc<GrB_Matrix>` + `Arc::get_mut`
 
 ```rust
 if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
@@ -15,17 +46,17 @@ if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
 // then the Arc itself is dropped, decrementing the strong count
 ```
 
-`Arc::get_mut` returns `Some` iff the strong count is 1. So a `Matrix::drop`
-does two things in order: **observe** the count (and free the GraphBLAS matrix
-iff it is 1), then **decrement** (the `Arc`'s own drop). The observe and the
-decrement are two separate atomic operations, and nothing holds a lock across
-them (the `Mutex` in `Matrix` guards `wait`/`dup`, not `drop`). That gap is the
-bug reproduced in `graph/tests/lean_graphblas_wrappers.rs`.
-
-`Iter::drop` (matrix.rs:1632-1646) has the identical `Arc::get_mut` shape.
+`Arc::get_mut` returns `Some` iff the strong count is 1. So a drop did two
+things: **observe** the count (and free iff it is 1), then **decrement**. Two
+separate atomic operations, no lock across them. `pre3090_race_leaks` is the
+leak (test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs leaked);
+main's regression test is `graph/tests/matrix_concurrent_drop.rs`
+`concurrently_dropped_clones_free_the_matrix_once`.
 -/
 
 namespace GBW
+
+/-! ## Pre-#3090 protocol (history) -/
 
 /-- A single atomic event in the life of a two-owner `GrB_Matrix`. `obs o` is
 owner `o`'s `Arc::get_mut` read; `dec o` is owner `o`'s `Arc` drop. -/
@@ -41,8 +72,8 @@ structure St where
   frees : Nat
 deriving DecidableEq, Repr
 
-/-- Step. An `obs` frees iff it observes count `1` (`Arc::get_mut` = `Some`); it
-does not change the count. A `dec` decrements. -/
+/-- Pre-#3090 step. An `obs` frees iff it observes count `1` (`Arc::get_mut` =
+`Some`); it does not change the count. A `dec` decrements. -/
 def step (s : St) : Ev → St
   | .obs _ => { s with frees := if s.count = 1 then s.frees + 1 else s.frees }
   | .dec _ => { s with count := s.count - 1 }
@@ -54,7 +85,7 @@ def start : St := { count := 2, frees := 0 }
 
 /-- A trace is a *valid interleaving of two drops* when each owner observes
 exactly once, decrements exactly once, and observes before it decrements. The
-six such traces (4!/(2·2·… ) with the two ordering constraints) enumerated. -/
+six such traces, enumerated. -/
 def validTraces : List (List Ev) :=
   [ [.obs true,  .dec true,  .obs false, .dec false]   -- fully serial: A then B
   , [.obs false, .dec false, .obs true,  .dec true]    -- fully serial: B then A
@@ -63,46 +94,169 @@ def validTraces : List (List Ev) :=
   , [.obs false, .obs true,  .dec false, .dec true]    -- interleaved
   , [.obs false, .obs true,  .dec true,  .dec false] ] -- interleaved
 
-/-- **No double free.** Every valid interleaving of two concurrent drops frees
-the GraphBLAS matrix at most once — the `Arc::get_mut` guard is enough to rule
-out a double free even under the race. -/
-theorem never_double_free : ∀ t ∈ validTraces, (run start t).frees ≤ 1 := by
+/-- **(pre-#3090) No double free.** Every interleaving of two concurrent drops
+freed the matrix at most once: the old bug was a leak only. -/
+theorem pre3090_never_double_free : ∀ t ∈ validTraces, (run start t).frees ≤ 1 := by
   decide
 
-/-- **The leak.** Some valid interleaving frees the matrix *zero* times: both
-owners run `Arc::get_mut` while the count is still 2, both see `None`, and the
-GraphBLAS matrix is never freed. This is the confirmed bug
-(`bug_matrix_concurrent_drop_leaks`). -/
-theorem race_leaks : ∃ t ∈ validTraces, (run start t).frees = 0 := by
+/-- **(pre-#3090) The leak.** Some interleaving freed the matrix *zero* times:
+both owners ran `Arc::get_mut` while the count was still 2, both saw `None`,
+and the GraphBLAS matrix was never freed (`bug_matrix_concurrent_drop_leaks`).
+Fixed by #3090: `arc_every_interleaving_frees_once`. -/
+theorem pre3090_race_leaks : ∃ t ∈ validTraces, (run start t).frees = 0 := by
   refine ⟨[.obs true, .obs false, .dec true, .dec false], ?_, ?_⟩
   · decide
   · decide
 
-/-- **Sequential correctness.** When a drop is atomic — observe immediately
-followed by that owner's decrement, i.e. the two *serial* traces — the matrix is
-freed exactly once. So the leak is purely a scheduling artefact; a lock across
-observe+decrement (or `Arc::into_inner`) would remove it. -/
-theorem sequential_frees_once :
+/-- **(pre-#3090) Sequential correctness.** The two serial traces freed exactly
+once, so the leak was purely a scheduling artefact. -/
+theorem pre3090_sequential_frees_once :
     (run start [.obs true, .dec true, .obs false, .dec false]).frees = 1 ∧
     (run start [.obs false, .dec false, .obs true, .dec true]).frees = 1 := by
   decide
 
-/-- A single owner (the common non-shared case, and every `Iter::detached`)
-always frees exactly once. -/
+/-! ## Main protocol (#3090): `Arc<Handle>`, free in `Handle::drop` -/
+
+/-- An atomic event on the shared `Arc<Handle>`: `clone` is `Matrix::clone` /
+`Iter::detached` (`Arc::clone`, a `fetch_add`); `release` is the `Arc` drop of a
+`Matrix` or an `Iter` (a `fetch_sub`, running `Handle::drop` iff it returned 1). -/
+inductive AEv where
+  | clone
+  | release
+deriving DecidableEq, Repr
+
+/-- Main's step: the free decision is made by the same atomic step that
+decrements, from the count it observed. -/
+def arcStep (s : St) : AEv → St
+  | .clone   => { s with count := s.count + 1 }
+  | .release => { count := s.count - 1,
+                  frees := if s.count = 1 then s.frees + 1 else s.frees }
+
+/-- Run a trace in which every event is performed by a live owner: an event at
+count `0` is impossible in Rust (nobody holds an `Arc` to clone or drop), and
+returns `none` here. -/
+def liveRun (s : St) : List AEv → Option St
+  | [] => some s
+  | e :: t => if s.count = 0 then none else liveRun (arcStep s e) t
+
+/-- The ownership invariant: either owners remain and nothing was freed, or no
+owner remains and the matrix was freed exactly once. -/
+def Inv (s : St) : Prop := (0 < s.count ∧ s.frees = 0) ∨ (s.count = 0 ∧ s.frees = 1)
+
+theorem arcStep_inv (s : St) (e : AEv) (h : Inv s) (hc : s.count ≠ 0) :
+    Inv (arcStep s e) := by
+  unfold Inv at *
+  cases e <;> simp only [arcStep] <;> (try split) <;> omega
+
+theorem liveRun_inv : ∀ (t : List AEv) (s s' : St),
+    Inv s → liveRun s t = some s' → Inv s'
+  | [], s, s', h, hr => by
+      simp only [liveRun, Option.some.injEq] at hr; exact hr ▸ h
+  | e :: t, s, s', h, hr => by
+      simp only [liveRun] at hr
+      split at hr
+      · cases hr
+      · exact liveRun_inv t _ s' (arcStep_inv s e h ‹_›) hr
+
+/-- **Main: freed exactly once, never leaked, for any `n` and any schedule.**
+Start from `n+1` owners (count `n+1`, nothing freed). After any trace of clones
+and drops by live owners — any interleaving of any number of threads — the
+matrix has been freed at most once, and it has been freed iff no owner remains.
+So no double free, and no leak once every owner has dropped. -/
+theorem arc_frees_once (n : Nat) (t : List AEv) (s' : St)
+    (hr : liveRun { count := n + 1, frees := 0 } t = some s') :
+    s'.frees ≤ 1 ∧ (s'.frees = 1 ↔ s'.count = 0) := by
+  have := liveRun_inv t _ s' (by unfold Inv; simp) hr
+  unfold Inv at this; omega
+
+theorem liveRun_releases (k f : Nat) :
+    liveRun { count := k + 1, frees := f } (List.replicate (k + 1) .release) =
+      some { count := 0, frees := f + 1 } := by
+  induction k generalizing f with
+  | zero => simp [liveRun, List.replicate, arcStep]
+  | succ k ih =>
+      rw [List.replicate_succ]
+      simp only [liveRun, arcStep, Nat.add_one_ne_zero, ↓reduceIte, Nat.add_sub_cancel]
+      exact ih f
+
+/-- **Main: `n ≥ 1` owners all dropping free exactly once.** Each owner's drop
+is one atomic `release`, so every schedule of the `n` concurrent drops is this
+same trace; it reaches count 0 with exactly one free. -/
+theorem arc_all_drop_frees_once (n : Nat) (hn : 0 < n) :
+    liveRun { count := n, frees := 0 } (List.replicate n .release) =
+      some { count := 0, frees := 1 } := by
+  obtain ⟨k, rfl⟩ : ∃ k, n = k + 1 := ⟨n - 1, by omega⟩
+  exact liveRun_releases k 0
+
+/-- Main's reading of a pre-#3090 two-owner trace: the `Arc::get_mut`
+observation is gone (nothing is observed outside the atomic decrement), and
+each `dec` is one atomic `release`. -/
+def arcOfEv : Ev → St → St
+  | .obs _, s => s
+  | .dec _, s => arcStep s .release
+
+def runArc (init : St) (t : List Ev) : St := t.foldl (fun s e => arcOfEv e s) init
+
+/-- **Bug 4 fixed (#3090).** Every one of the six two-owner interleavings —
+including the one `pre3090_race_leaks` exhibits — frees exactly once on main. -/
+theorem arc_every_interleaving_frees_once :
+    ∀ t ∈ validTraces, (runArc start t).frees = 1 := by
+  decide
+
+/-- A single owner (the common non-shared case, and every `Iter` over an
+otherwise unshared matrix) frees exactly once. -/
 theorem single_owner_frees_once :
-    (run { count := 1, frees := 0 } [.obs true, .dec true]).frees = 1 := by decide
+    liveRun { count := 1, frees := 0 } [.release] = some { count := 0, frees := 1 } := by
+  decide
 
-/-! ### `dup` (matrix.rs:1173-1225) — deep copy, fresh ownership
+/-! ### `Iter::drop` (matrix.rs:1689): iterator before matrix
 
-`dup` calls `GrB_Matrix_dup` into a *new* `Arc` with a fresh `Mutex` and a
-fresh `has_pending`. So a dup shares no handle with its source: dropping either
-is a single-owner drop, freed once. Modelled as: the two matrices have distinct
-`Arc` cells, so their drops never interact. -/
+`Iter::drop`'s body frees the `GxB_Iterator` (when attached); the `m:
+Arc<Handle>` field drops after the body (Rust drops fields after `Drop::drop`),
+so the matrix, if this was its last owner, is freed second. -/
 
-/-- After `dup`, source and copy own disjoint cells (distinct `Arc`s). Dropping
-both frees two distinct matrices — no interaction, no shared count. -/
+/-- A freed resource, in the order the frees ran. -/
+inductive Res where
+  | iterator
+  | matrix
+deriving DecidableEq, Repr
+
+/-- `Iter::drop` on an iterator holding one of `s.count` references: free the
+iterator if attached, then release the `Arc<Handle>`. Returns the new state and
+the frees in order. -/
+def iterDrop (attached : Bool) (s : St) : St × List Res :=
+  let body := if attached then [Res.iterator] else []
+  (arcStep s .release, body ++ (if s.count = 1 then [Res.matrix] else []))
+
+/-- **The iterator is freed before the matrix.** An attached `Iter` frees its
+`GxB_Iterator` first, and the matrix only after (and only if it was the last
+owner), so the iterator never outlives the matrix it is attached to. -/
+theorem iter_frees_iterator_before_matrix (s : St) :
+    (iterDrop true s).2 = (if s.count = 1 then [.iterator, .matrix] else [.iterator]) := by
+  unfold iterDrop; by_cases h : s.count = 1 <;> simp [h]
+
+/-- A detached `Iter` (null `inner`) frees no iterator, only its share of the
+matrix. -/
+theorem detached_iter_frees_only_matrix (s : St) :
+    (iterDrop false s).2 = (if s.count = 1 then [.matrix] else []) := by
+  unfold iterDrop; by_cases h : s.count = 1 <;> simp [h]
+
+/-- `Iter::drop` releases exactly one reference, with `arcStep`'s free rule:
+an `Iter` is just another owner in `arc_frees_once`. -/
+theorem iterDrop_state (a : Bool) (s : St) : (iterDrop a s).1 = arcStep s .release := rfl
+
+/-! ### `dup` (matrix.rs:1199-1254) — deep copy, fresh ownership
+
+`dup` calls `GrB_Matrix_dup` into a *new* `Arc<Handle>` with a fresh `Mutex`
+and a fresh `has_pending`. So a dup shares no handle with its source: dropping
+either is a single-owner drop, freed once. -/
+
+/-- After `dup`, source and copy own disjoint `Arc<Handle>` cells (two
+independent counts, each starting at 1). Dropping both frees two distinct
+matrices, once each. -/
 theorem dup_independent_ownership :
-    (run { count := 1, frees := 0 } [.obs true, .dec true]).frees +
-    (run { count := 1, frees := 0 } [.obs false, .dec false]).frees = 2 := by decide
+    ((liveRun { count := 1, frees := 0 } [.release]).map (·.frees)).getD 0 +
+    ((liveRun { count := 1, frees := 0 } [.release]).map (·.frees)).getD 0 = 2 := by
+  decide
 
 end GBW

@@ -4,7 +4,10 @@
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
-Re-targeted to main 73077bb4a (#3033, #3086; earlier 1d15bf713: #2996, #3097, #3250).
+Re-targeted to main fb3d516d0 (#3090 e45be4965, #3026; earlier 73077bb4a: #3033, #3086;
+1d15bf713: #2996, #3097, #3250). #3090 replaces `Matrix::drop`'s `Arc::get_mut`
+free with `Arc<Handle>` + `Handle::drop` (matrix.rs:368; bug 4 fixed; every later
+matrix.rs line +24..+31, see `COVERAGE.tsv`). #3026 touches only `bulk_insert.rs` (not here).
 #3033 adds `Matrix::<u64>::count_value_eq` (matrix.rs:1232; every later matrix.rs
 line +24, earlier ones +1 for the import) and makes `Tensor::decode` enforce
 promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here).
@@ -15,7 +18,8 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.step`/`run`/`validTraces` | `Matrix::drop` matrix.rs:390, `Iter::drop` :1658 (`Arc::get_mut` then Arc drop) |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:368 behind `Arc<Handle>` (`Matrix::clone` :400), `Iter::drop` :1689 then its `Arc<Handle>` field (#3090) |
+| `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop), history `pre3090_*` |
 | `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1737, `Iter::next` :1770 |
 | `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` (`pre2996_*`: before #2996) |
 | `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
@@ -27,8 +31,12 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 
 ## Theorems (all proved, no sorry)
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
-`len_cast_lossless`, `blob_copy_in_bounds`; `never_double_free`, `race_leaks`,
-`sequential_frees_once`, `single_owner_frees_once`, `dup_independent_ownership`;
+`len_cast_lossless`, `blob_copy_in_bounds`; #3090: **`arc_frees_once`** (any n owners,
+any interleaving of clones/drops: freed at most once, and iff the count reaches 0),
+`arc_all_drop_frees_once`, `arc_every_interleaving_frees_once`,
+`iter_frees_iterator_before_matrix`, `detached_iter_frees_only_matrix`, `iterDrop_state`,
+`single_owner_frees_once`, `dup_independent_ownership` (history `pre3090_race_leaks`,
+`pre3090_never_double_free`, `pre3090_sequential_frees_once`);
 `drainL_eq_filter`, `drain_seek_eq_spec` (row iterator = in-range entries,
 row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
 `decodeBlob_never_dies`, `decodeU64_never_dies`, `decodeBlob_safe_on_reachable`,
@@ -84,12 +92,14 @@ entries in the selected rows — the double-counting argument over columns), `co
    `bug_matrix_decode_leaks_container_components` (5.00/call),
    `bug_matrix_decode_leaks_on_error_path` (8.00/call). Fix: free the fresh
    components first (or copy only scalar fields); free on error.
-4. **Concurrent drop of two `Matrix` clones leaks the GrB_Matrix**
-   (matrix.rs:390, same in `Iter::drop` :1622): `Arc::get_mut` then Arc
-   decrement is not atomic. `race_leaks` witness; `never_double_free` shows it's
-   only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
-   leaked. Fix: put the `GrB_Matrix_free` in the Drop of an inner owned type
-   inside the Arc (or `Arc::into_inner`).
+4. **Concurrent drop of two `Matrix` clones leaked the GrB_Matrix — FIXED by
+   #3090 on main e45be4965** (`arc_frees_once`, `arc_every_interleaving_frees_once`;
+   text below is the pre-#3090 state, `pre3090_*`). `Matrix::drop` (then
+   matrix.rs:390, same in `Iter::drop`): `Arc::get_mut` then Arc decrement was
+   not atomic. `pre3090_race_leaks` witness; `pre3090_never_double_free` shows it
+   was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
+   leaked. The fix is the suggested one: the free moved into `Handle::drop`
+   inside the Arc; main's test `concurrently_dropped_clones_free_the_matrix_once`.
 5. **`vector::Iter` has no lifetime** (`fn iter(&self) -> Iter<bool>`): safe
    code can drop the vector and keep iterating freed arrays. Ignored test
    `bug_vector_iter_outlives_vector` (after free it yielded 0,1,2,… instead of
@@ -111,7 +121,8 @@ entries in the selected rows — the double-counting argument over columns), `co
 GraphBLAS semantics (eWise, mxm, resize, serialize bytes) are axioms/unmodelled;
 the row-iterator model folds empty-row `NO_VALUE` skipping into "next stored
 entry" per the header spec; `has_pending`/lock concurrency beyond drop is not
-modelled; `Own` covers two owners exhaustively (6 interleavings), not n.
+modelled; `Own` covers any n owners on main (`Arc`'s atomic-decrement contract
+taken from std), the pre-#3090 history two owners exhaustively.
 -/
 import GraphblasWrappers.GrbInfo
 import GraphblasWrappers.Index

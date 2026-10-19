@@ -65,6 +65,8 @@ No: `ro_never_writes`. An `RO_QUERY` that is not rejected performs no mutation, 
 
 Yes: `readProperty_enc`, `go_encs`, `records_enc`. The bulk reader reads back exactly the property values the loader encoded, and a node token imports exactly its records, in order. `ceiling_sound`: the `max_records` pre-check never rejects an honest payload. Since #3339 nesting deeper than the cap is refused (`deep_refused`).
 
+Since #3026 a header that names a property twice (`p,q,p`) still gives each record one entry per attribute: `readRecord_enc` proves `PropColumns::read_record` returns `keepFirst [] (ids.zip vs)` for every record, whatever the previous record left in `filled`. `keepFirst_nodup`: no attribute appears twice. `keepFirst_find`: the kept value is the first non-null one in header order, so a null in the first `p` column lets the second supply the value (`repeated_header_null_first`). `keepFirst_sublist`: column order is kept. `readRecord_plain`: with no repeated name, the result is the plain per-column read. `keepFirst_plainRead`: the result equals what #3063's `import_attrs_resolved` already kept from the old read, so no stored entity changes.
+
 **7. Is the RDB byte layer lossless?**
 
 Yes:
@@ -88,6 +90,7 @@ Yes:
 | `compact_emits`, `verbose_emits`, `compact_reply`, `bytes_of_emits` | The reply call streams produce exactly the intended reply and RESP bytes | `RespCompact.lean`, `RespVerbose.lean`, `Resp.lean` |
 | `ro_never_writes` | An `RO_QUERY` that runs performs no write | `RoQuery.lean` |
 | `readProperty_enc`, `records_enc`, `ceiling_sound` | `GRAPH.BULK` reads back exactly what was written; the size pre-check is sound | `Bulk.lean` |
+| `readRecord_enc`, `keepFirst_nodup`, `keepFirst_find` | A `GRAPH.BULK` record keeps one entry per attribute: the first non-null value in header order (#3026) | `Bulk.lean` |
 | `writeAll_flatten`, `roundtrip` | The RDB byte layer is lossless for every buffer size and chunk source | `BufferedIO.lean`, `RoundTrip.lean` |
 | `decH_encH`, `decSchema_encSchema` | Graph header and schema blocks round-trip | `Serial.lean`, `SerialProof.lean` |
 | `hashInput_total`, `truncate_total`, `prefix_longest` | Since #3234 the slow log never panics, and keeps the longest prefix of at most 2048 bytes that ends on a character boundary | `SlowLog.lean` |
@@ -111,7 +114,7 @@ All confirmed live against C (`repro_live.py` in this folder, and the scripts na
 | 1 | `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`, `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped` (now theorems) | Query flags: a non-UTF-8 flag dropped `--compact`; malformed timeouts and versions accepted; no arity cap | Fixed by #3010 (closes #3009); `rust_c_agree` |
 | 2 | `pre3000_write_timeout_divergence` | Writes ignored the per-query `TIMEOUT` | Fixed by #3000 (closes #2998); `write_timeout_agrees` |
 | 3 | `pre3021_vkey_negative_accepted`, `pre3021_cmdinfo_extra_spellings`, `pre3021_jsheap_tiny_accepted` | `GRAPH.CONFIG` accepted invalid values, extra arguments, and non-ASCII case folding; `ASYNC_DELETE` reported 0 (C 1) | Fixed by #3021 (closes #3020); `fixed3021_counterexamples` |
-| 4 | none here | A `GRAPH.BULK` header naming a property twice stored both values | Fixed by #3063; proven in `pending_commit` (`resolved_duplicate_fixed`) |
+| 4 | `pre3026_two_entries_for_one_attr` | A `GRAPH.BULK` header naming a property twice stored both values | Fixed at import by #3063 (`pending_commit` `resolved_duplicate_fixed`), and at the parse by #3026 (closes #3024): `readRecord_enc`, `keepFirst_nodup`, `keepFirst_find` |
 | 5 | `slot_len_truncates` | `Slot.len = n as u16`: 65,536 properties on one entity vanish. Root cause of #2539 | Bulk side fixed by #3063 (closes #2539); still reachable only from a malformed RDB |
 | 6 | `memArgs_samples`, `cons_label_refused`, `cons_edge_refused`, `cons_count_noncanonical` (now theorems) | `GRAPH.MEMORY … SAMPLES 0` refused; `GRAPH.CONSTRAINT` accepted `LABEL`/`EDGE` and `+1`/`01` counts | Fixed by #3053 (closes #3052) |
 | 7 | `pre3234_entry_hash_panics`, `pre3234_truncate_panics` | **Crash.** A query over 2048 bytes, slower than 10 ms, with a multi-byte character across byte 2048 panicked the slow log and killed the server (W4-redis-1) | Fixed by #3234 (closes #3233); `truncate_total` |
@@ -138,7 +141,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `Compact.lean` | Compact value encoding and the falkordb-py decoder |
 | `Resp.lean`, `RespCompact.lean`, `RespVerbose.lean` | Reply call streams, postponed lengths, RESP2 bytes; verbose values and statistics |
 | `RoQuery.lean` | The `RO_QUERY` write guard |
-| `Bulk.lean` | The `GRAPH.BULK` binary format: property reader, records, counts, the `as u16` span length |
+| `Bulk.lean` | The `GRAPH.BULK` binary format: property reader, records, header columns (`PropColumns`, #3026), counts, the `as u16` span length |
 | `BufferedIO.lean`, `BufferedReader.lean`, `RoundTrip.lean` | `buffered_io.rs`: the type-tagged byte layer, its readers, the write→read round trip |
 | `Serial.lean`, `SerialSchema.lean`, `SerialEntry.lean`, `SerialProof.lean` | `serializers/mod.rs`: graph header, schema blocks, index fields, constraints, and their round trip |
 | `QuerySession.lean` | The per-query lock and GIL protocol in `query_session.rs` |
@@ -154,11 +157,11 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 
 ## Coverage
 
-`COVERAGE.tsv` has 290 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (19).
+`COVERAGE.tsv` has 293 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (22).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 250 |
+| PROVEN | 253 |
 | AXIOMATISED | 34 |
 | NOT COVERED | 6 |
 

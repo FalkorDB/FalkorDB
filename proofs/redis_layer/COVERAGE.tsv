@@ -224,25 +224,28 @@ src/config.rs	validate_temp_folder	205	PROVEN	LoadArgs.validateTempFolder (FS = 
 src/config.rs	validate_load_only	223	PROVEN	LoadArgs.validateLoadOnly: step_agree, fixed3328_counterexamples, rust_only_names
 src/config.rs	apply_load_arg	252	PROVEN	LoadArgs.applyLoadArg/applied: ok_applies_each_pair, error_applies_nothing
 src/config.rs	apply_module_args	296	PROVEN	LoadArgs.applyModuleArgs: rust_c_same_accept, error_applies_nothing, ok_applies_each_pair, fixed3328_counterexamples, both_refuse; DIVERGENCES leading_space_divergence (confirmed live), rust_only_names
-src/commands/bulk_insert.rs	read_cstring	30	PROVEN	Bulk.cstr: cstr_enc, cstr_len
-src/commands/bulk_insert.rs	read_u32_ne	46	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
-src/commands/bulk_insert.rs	read_u64_ne	58	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
-src/commands/bulk_insert.rs	read_i64_ne	70	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
-src/commands/bulk_insert.rs	read_f64_ne	82	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
-src/commands/bulk_insert.rs	read_property	94	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
-src/commands/bulk_insert.rs	parse_header	182	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
-src/commands/bulk_insert.rs	discard_created_graph	223	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
-src/commands/bulk_insert.rs	HeldArgs::hold	264	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
-src/commands/bulk_insert.rs	HeldArgs::replicate	291	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
-src/commands/bulk_insert.rs	HeldArgs::drop	307	AXIOMATISED	RM_FreeString under hold_gil
-src/commands/bulk_insert.rs	maybe_yield	326	PROVEN	Commands.maybeYield: maybeYield_null
-src/commands/bulk_insert.rs	process_node_token	332	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
-src/commands/bulk_insert.rs	process_edge_token	416	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop)
-src/commands/bulk_insert.rs	bulk_insert_sync	502	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	bulk_insert_sync_yield	546	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	parse_count	597	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
-src/commands/bulk_insert.rs	max_records	633	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
-src/commands/bulk_insert.rs	graph_bulk_insert	647	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_differs (DIVERGENCE: "relations created" vs C "edges created", confirmed live); Bulk.ceiling_sound
+src/commands/bulk_insert.rs	read_cstring	31	PROVEN	Bulk.cstr: cstr_enc, cstr_len
+src/commands/bulk_insert.rs	read_u32_ne	47	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
+src/commands/bulk_insert.rs	read_u64_ne	59	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
+src/commands/bulk_insert.rs	read_i64_ne	71	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
+src/commands/bulk_insert.rs	read_f64_ne	83	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), readNe_enc8 (Codec round trip)
+src/commands/bulk_insert.rs	read_property	95	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
+src/commands/bulk_insert.rs	PropColumns::new	197	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
+src/commands/bulk_insert.rs	PropColumns::is_empty	212	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
+src/commands/bulk_insert.rs	PropColumns::read_record	218	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead; history pre3026_two_entries_for_one_attr (#3026)
+src/commands/bulk_insert.rs	parse_header	242	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); since #3026 the record keeps one entry per attribute (Bulk.keepFirst_nodup); header byte parse via cstr
+src/commands/bulk_insert.rs	discard_created_graph	283	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
+src/commands/bulk_insert.rs	HeldArgs::hold	324	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
+src/commands/bulk_insert.rs	HeldArgs::replicate	351	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
+src/commands/bulk_insert.rs	HeldArgs::drop	367	AXIOMATISED	RM_FreeString under hold_gil
+src/commands/bulk_insert.rs	maybe_yield	386	PROVEN	Commands.maybeYield: maybeYield_null
+src/commands/bulk_insert.rs	process_node_token	392	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); per-record values via PropColumns.readRecord (readRecord_enc, #3026); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
+src/commands/bulk_insert.rs	process_edge_token	471	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop); per-record values via PropColumns.readRecord (readRecord_enc, #3026)
+src/commands/bulk_insert.rs	bulk_insert_sync	552	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	bulk_insert_sync_yield	596	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	parse_count	647	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
+src/commands/bulk_insert.rs	max_records	683	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
+src/commands/bulk_insert.rs	graph_bulk_insert	697	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_differs (DIVERGENCE: "relations created" vs C "edges created", confirmed live); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
 src/commands/config_cmd.rs	validate_config_set	114	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
 src/commands/config_cmd.rs	validate_timeout_cross_constraints	206	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv

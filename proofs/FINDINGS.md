@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-19): proofs cite `origin/main` @ 73077bb4a.
+Current state (2026-10-19): proofs cite `origin/main` @ fb3d516d0.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -225,13 +225,13 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **GraphBLAS**:
   - `Tensor::decode` accepts an orphan `me` row (**fixed by #3033, 96375c238**: `decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`; history `pre3033_orphan_row_panics`); unconfirmed follow-up: decode still accepts a multi-edge pair with exactly one id, or one edge id under two pairs (`edge_count` stays consistent; `PairPlan` assumes >= 2 ids);
   - `Matrix::decode` leaks 5 blocks per matrix;
-  - concurrent Matrix drops leak;
+  - concurrent Matrix drops leak (**fixed by #3090, e45be4965; closes #3089**: `arc_frees_once`, `arc_every_interleaving_frees_once`; history `pre3090_race_leaks`);
   - DUMP/COPY payloads may contain heap addresses (**fixed by #3097, cab41a8c5**: `encodeM_no_heap_addresses`). Unverified follow-up: `Matrix::decode` still copies the header's reserved `*_future` pointer arrays from the payload; safe only if GraphBLAS never reads or frees them.
 - **Redis layer**:
   - writes ignore the per-query TIMEOUT (`graph_core.rs:911`);
   - loose TIMEOUT/version/arity parsing;
   - GRAPH.CONFIG accepts invalid values (**fixed by #3021, 30b4fb7dc; closes #3020**);
-  - a GRAPH.BULK header can name a property twice (**fixed by #3063, 0f45a8685**: the first column wins);
+  - a GRAPH.BULK header can name a property twice (**fixed by #3063, 0f45a8685**: the first column wins; the parse itself keeps one entry per attribute since #3026, fb3d516d0: `keepFirst_nodup`, `keepFirst_find`);
   - several output-format differences;
   - likely root cause of #2539 (`attribute_store.rs:598` `as u16`) (**bulk side fixed by #3063, 0f45a8685**).
 - **Parser**:
@@ -307,13 +307,15 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds. **Fixed by #3250 (2eacf0ece; closes #3246)**: `Tensor::resize` never shrinks and the RDB load keeps the saved size; `resizeT_edges`, `rebuild_never_shrinks`; history `pre3250_shrink_orphans_me`.
 
 ### Merged
+- 2026-10-19 on main (now fb3d516d0): #3090 (a shared GrB_Matrix is freed exactly once; closes #3089), #3026 (GRAPH.BULK keeps one entry per attribute; closes #3024). Proofs re-targeted: 35 projects green; 2594 PROVEN + 25 CONDITIONAL of 2620 non-FFI, non-test fns (99.0%); 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: concurrent-drop leak (`Own.lean`: for any number of owners and any interleaving of clones and drops the matrix is freed exactly once, when the count reaches zero, `arc_frees_once`; `Iter` frees its iterator before the matrix; std's `Arc` contract is assumed, not proven); repeated GRAPH.BULK header column (`PropColumns`: at most one entry per attribute, first non-null wins, column order kept, equal to the plain read when no name repeats; `pre3026_two_entries_for_one_attr`).
 - 2026-10-19 on main (now 73077bb4a): #3033 (tensor decode refuses sections that break promotion completeness; closes #3031), #3086 (a field added while an index populates gets populated; closes #3069). Proofs re-targeted: 35 projects green; 2590 PROVEN + 25 CONDITIONAL of 2616 non-FFI, non-test fns (99.0%); 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: orphan `me` row on decode (`decodeCheck_refuses_incomplete`; every encoded tensor still decodes, `decodeCheck_accepts_encoded`), search_concurrency Bug 2 (#3069) lost population of a second index (`main_operational_complete`, by an invariant over every interleaving of creates and batches).
   - New PROVEN: `Matrix::count_value_eq` (`countValueEq_spec`, under the `GrB_select` VALUEEQ contract), `is_ticket_current` (was MODELLED).
 - 2026-10-19 on main (now 1d15bf713): #3267 (nested list claims bounded; closes #3266), #3298 (repeated CREATE_NODE id refused; closes #3247), #3250 (tensors never shrink; closes #3246), #3278 (no u32-overflowing compressed frame; closes #3276), #3283 (remove_batch never leaves a one-child branch; closes #3237), #3097 (matrix headers without heap addresses), #2996 (corrupt RESTORE/RDB payloads refused, not panicked on), #3286 (virtual-key names cannot collide; closes #3284), #2905 (Cow/OrderSet/OrderMap/prepare_tiers contracts; closes #2903). Proofs re-targeted: 35 projects green; 2589 PROVEN + 25 CONDITIONAL of 2615 non-FFI, non-test fns (99.0% PROVEN); 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W7-btree-1 (`removeBatchTree_wf`), W4-matrix-1 (`resizeT_edges`), W3-gb-1 decode DoS (`decodeBlob_never_dies`), heap addresses in payloads (`encodeM_no_heap_addresses`), quadratic effects reservation (`capTrace_linear`), u32 frame length (`pre3278_wrapped_frame_unreadable`), repeated CREATE_NODE id, uuid `t ^ seq` collision (`uuid_counter_distinct`), deleted-id count overflow on decode (`countCheck_in_bounds`), `OrderSet` duplicates (`fromVec_nodup`), `prepare_tiers` underflow (`clampStarts_mono`).
   - **Discharged: the 13 native_index CONDITIONAL rows are PROVEN.** cow_btree now proves `insert_batch`, `from_sorted` and `remove_batch` keep `TreeWF` (`insertBatch_wf`, `fromSorted_wf`, `removeBatchTree_wf`), so every tree the API can build is well-formed (`Reachable_wf_asserted`), and native_index `Contract.lean` shows each Rust tree operation equals its model on reachable trees.
-  - Still present: the `Matrix::decode` component leak (#3080), the concurrent-drop leak (#3090), `vector::Iter` lifetime (#2898), #2537 (string-buffer path), release `Cow` one-directional isolation and `OrderMap::from_unique_keys` (debug-only on purpose).
+  - Still present: the `Matrix::decode` component leak (#3080), `vector::Iter` lifetime (#2898), #2537 (string-buffer path), release `Cow` one-directional isolation and `OrderMap::from_unique_keys` (debug-only on purpose).
 - 2026-10-17 on main (now 0f45a8685): #3252 (index on an attribute named `range:x` survives reload; closes #3239), #3335 (a parenthesised WHERE uses the index and NodeByIdSeek again; closes #3187, #3331), #3334 (UNIQUE enforced by index lookup; closes #3330), #3277 (deleted edge loses its type after a type registration; closes #3244), #3063 (bulk spans never overflow `Slot::len`; closes #2539, whose CREATE-error half, rejecting the query with C's error, remains open in substance). Proofs re-targeted: 36 projects green; 2569 PROVEN + 38 CONDITIONAL of 2608 non-FFI, non-test fns; 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: W4-graph-1 (`pre3277_*`; `getTypeIdMut_spec`, `type_cleared_after_registration`); W4-redis-2 (`pre3252_*`; `decField_encField` round-trips every name); bulk span overflow and repeated column (`pre3063_*`; `normResolved_fits`, `normResolved_get`, `resolved_duplicate_fixed`).
   - #3335: Paren is gone from bound trees. New PROVEN `ExprIR::and_of`/`or_of`/`flat` (`tv_andOf`, `scL_splice`, `flat_passes`); binder `bind_paren` (`(x)` binds exactly like `x`), `bind_andOr_paren`; planner `toPlan_correct` holds unchanged; columnar `eval_sound` holds without its Paren arm.

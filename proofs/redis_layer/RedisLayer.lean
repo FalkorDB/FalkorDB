@@ -41,10 +41,11 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
 | `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:780-910`) + Commit insertion (`planner/mod.rs:2416`, `:2749`) |
 | `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:597-608`; guards `runtime/eval.rs:936,956` |
-| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:94-169` |
+| `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:95-176` |
 | `Bulk.cstr`             | `read_cstring`, `:31-45` |
-| `Bulk.records/readN`    | `process_node_token` record loop, `:352-378` |
-| `Bulk.parseCount`       | `parse_count`, `:591-610` |
+| `Bulk.records/readN`    | `process_node_token` record loop, `:419-440` |
+| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:178-235` (#3026, `fb3d516d0`) |
+| `Bulk.parseCount`       | `parse_count`, `:647-666` |
 | `Bulk.getOrCreate/slotLen` | `attribute_store.rs:224-238`, `:598-610` |
 
 ## Proven (headline theorems)
@@ -104,7 +105,11 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    (`properties(n)` = `{p: 1, p: 3, q: 2}`, `n.p` = 3); C keeps one (`n.p` = 1).
    **Fixed by #3063 (`0f45a8685`)**: `import_attrs_resolved` sorts stably, dedups by id
    (first column wins, as C) and drops `ATTRIBUTE_ID_NONE` — proven in proofs/pending_commit
-   (`Content.normResolved_get`, `resolved_duplicate_fixed`).
+   (`Content.normResolved_get`, `resolved_duplicate_fixed`). Since #3026 (`fb3d516d0`,
+   issue #3024) the parse itself keeps one entry per attribute, the first non-null in
+   header order: `Bulk.readRecord_enc`, `keepFirst_nodup`, `keepFirst_find`,
+   `keepFirst_plainRead` (agrees with what #3063 kept); history
+   `Bulk.pre3026_two_entries_for_one_attr`.
 5. Verbose format: top-level point `point({latitude: 1.000000, …})` (C: no space after
    `:`), NaN in lists `NaN` (C `nan`), a node deleted in the same query keeps its labels
    (C `[]`), and `CREATE (a:A) DELETE a` reports no `Nodes created/deleted` stats.
@@ -192,6 +197,18 @@ publishing index documents (`bulk_invalid_discards`, `bulk_publish_after_validat
 `commit_and_replicate` panics on a refusal (`commitStepsV_refused`); `WriteAbort`
 gains `WriteSlotBusy`/`Invalid` (`writeAbortMsg_invalid`). The bulk token loops lost
 their `IdSpace` parameter only (`processTokens` unchanged).
+
+## Re-target to fb3d516d0 (#3090, #3026; previously 73077bb4a)
+#3090 touches only `matrix.rs` (proofs/graphblas_wrappers). #3026 adds `PropColumns`
+to `bulk_insert.rs`: `Bulk.PropColumns.new` (`new_spec`: column `i` holds `ids[i]` and the
+index of that attribute among the distinct ones; `slot_inj`: two columns share a slot iff
+they name the same attribute), `Bulk.PropColumns.readRecord` (`readRecord_enc`: whatever
+`filled` the previous record left, one encoded record reads `keepFirst [] (ids.zip vs)` and
+leaves exactly the following bytes). `keepFirst_nodup` (at most one entry per attribute),
+`keepFirst_find` (the kept value is the first non-null in header order),
+`keepFirst_sublist` (header order kept), `keepFirst_plain_of_nodup`/`readRecord_plain` (no
+repeated name → the plain per-column read), `repeated_header_null_first`; history
+`pre3026_two_entries_for_one_attr`.
 
 ## Not covered
 
