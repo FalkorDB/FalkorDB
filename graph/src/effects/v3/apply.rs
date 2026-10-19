@@ -29,7 +29,7 @@ use crate::{
         graph::{Graph, NodeOpError, TypeId},
         id_space::IdSpaceError,
     },
-    index::{IndexType, indexer::IndexOptions},
+    index::{IndexType, cch::CchDirty, indexer::IndexOptions},
     runtime::{pending::IndexDocs, value::Value},
 };
 // Not v3's: applying a payload can fail the same ways whatever version
@@ -71,8 +71,12 @@ pub fn apply_effects(
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
     let mut docs = IndexDocs::default();
+    // What the buffer touched that a CCH index could care about, filled by the same
+    // records that fill `docs` and handed over once at the end. Stays empty (and costs
+    // one `is_empty` check on the graph) when the graph holds no CCH index.
+    let mut cch = CchDirty::default();
     for record in payload.records() {
-        apply_record(g, record?, &mut docs)?;
+        apply_record(g, record?, &mut docs, &mut cch)?;
     }
 
     // Refusing a divergent buffer is this function's contract, and the refusal
@@ -90,6 +94,12 @@ pub fn apply_effects(
     // an UPDATE followed by a DELETE of the same node — and the native apply keeps only each
     // entry's last change.
     g.commit_index_docs(&mut docs);
+
+    // Last, because a CCH index is built from the graph as it now stands. A failure here
+    // means the primary accepted a write it should have refused, so it fails the buffer
+    // like any other apply failure.
+    g.cch_flush(cch)
+        .map_err(|e| ApplyError::Graph(e.to_string()))?;
     Ok(())
 }
 
@@ -161,7 +171,14 @@ fn apply_record(
     g: &mut Graph,
     record: Record,
     docs: &mut IndexDocs,
+    cch: &mut CchDirty,
 ) -> Result<(), ApplyError> {
+    // The same rules the query path applies to a `Commit` (`Pending::record_cch_dirty`):
+    // a node created or deleted dirties every index, a relationship created or deleted
+    // dirties the indexes spanning its type, and an attribute written on an existing
+    // relationship dirties those whose weight it is. A node deleted here has no edges
+    // left to account for: the primary ships each one as its own `DELETE_EDGE`.
+    let track_cch = !g.cch_indexes.is_empty();
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
         // variant itself, so neither kind can be applied as the other.
@@ -213,6 +230,9 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
+            if track_cch {
+                cch.nodes_changed();
+            }
             let nodes = ids.to_roaring();
             // The set is what the id space is told, the list is what the label
             // and attribute writes below walk; a repeated id makes them describe
@@ -269,6 +289,9 @@ fn apply_record(
             rows,
         } => {
             let type_name = resolve_type(g, relation_id)?;
+            if track_cch {
+                cch.rel_type_changed(TypeId(relation_id as usize));
+            }
             // Both endpoints must be live nodes — created before this buffer
             // or by an earlier record in it. The bulk create writes the pairs
             // straight into the tensor, the adjacency matrix and the endpoint
@@ -342,6 +365,13 @@ fn apply_record(
             // `get_relationship_type_id` for every id, which is a delta-matrix
             // `iter` each time.
             let type_id = checked_type_id(g, relation_id)?;
+            if track_cch {
+                for weight in g.cch_weight_attrs() {
+                    if attr_ids.contains(&weight) {
+                        cch.attr_changed(type_id, weight);
+                    }
+                }
+            }
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
@@ -379,6 +409,9 @@ fn apply_record(
             // Borrowed, not consumed: a by-value `into_iter` materialized a
             // `Vec<u64>` first, and a delete-by-label arrives as a consecutive
             // range — the one shape that has no vector to hand over.
+            if track_cch {
+                cch.nodes_changed();
+            }
             let nodes = ids.to_roaring();
             // Liveness first: the relationship check below seeks every id in
             // the tensors, which only hold rows for ids this graph allocated.
@@ -398,7 +431,14 @@ fn apply_record(
             Ok(())
         }
 
-        Record::DeleteEdge { ids, .. } => {
+        Record::DeleteEdge {
+            ids, relation_id, ..
+        } => {
+            // The type the record states, bounds-checked like `UpdateEdge`'s. Read only when
+            // a CCH index is held, so a graph without one refuses exactly what it did before.
+            if track_cch {
+                cch.rel_type_changed(checked_type_id(g, relation_id)?);
+            }
             let edges = ids.to_roaring();
             g.delete_relationships(&edges, docs)?;
             Ok(())
@@ -2379,5 +2419,380 @@ mod tests {
         write_delete(&mut buf, &IdList::from([0, 1]), &[]);
         apply_effects(&mut g, &buf).expect("no edge is left on either node");
         assert_eq!(g.node_count(), 0);
+    }
+
+    // -- CCH maintenance: what a buffer marks dirty, and what that rebuilds --------------
+
+    use crate::index::cch::{Cch, CchIndexDef, CchInput};
+
+    const ROAD: u32 = 0;
+    const FERRY: u32 = 1;
+    const TIME: u16 = 0;
+    const OTHER: u16 = 1;
+
+    fn float_edge_update(
+        ids: &[u64],
+        relation_id: u32,
+        attr: u16,
+        value: f64,
+    ) -> Record {
+        Record::UpdateEdge {
+            ids: ids.iter().copied().collect(),
+            relation_id,
+            attr_ids: vec![attr],
+            rows: ids.iter().map(|_| Value::Float(value)).collect(),
+        }
+    }
+
+    /// Nodes 0..5, `ROAD` edges 0 (0->1) and 1 (1->2) weighing `time`, a `FERRY` edge 2
+    /// (2->3), and a CCH index over `ROAD` weighted by `time`. Node 4 has no edges.
+    fn cch_setup() -> (Graph, CchIndexDef) {
+        let mut g = graph();
+        let mut buf = new_buffer();
+        for (id, name) in [(ROAD, "ROAD"), (FERRY, "FERRY")] {
+            Record::AddRelType {
+                id,
+                name: name.to_owned(),
+            }
+            .encode(&mut buf)
+            .unwrap();
+        }
+        for (id, name) in [(TIME, "time"), (OTHER, "other")] {
+            Record::AddAttribute {
+                id,
+                name: name.to_owned(),
+            }
+            .encode(&mut buf)
+            .unwrap();
+        }
+        Record::AddLabel {
+            id: 0,
+            name: "L".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateNode {
+            ids: IdList::from([0, 1, 2, 3, 4]),
+            labels: vec![],
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateEdge {
+            ids: IdList::from([0, 1]),
+            relation_id: ROAD,
+            src: IdList::from([0, 1]),
+            dst: IdList::from([1, 2]),
+            attr_ids: vec![TIME],
+            rows: vec![Value::Float(1.0), Value::Float(2.0)],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateEdge {
+            ids: IdList::from([2]),
+            relation_id: FERRY,
+            src: IdList::from([2]),
+            dst: IdList::from([3]),
+            attr_ids: vec![TIME, OTHER],
+            rows: vec![Value::Float(1.0), Value::Float(5.0)],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        apply_effects(&mut g, &buf).expect("setup must apply");
+        let mut g = g.new_version();
+        let def = CchIndexDef::new(vec![TypeId(ROAD as usize)], TIME);
+        g.create_cch_index(def.clone()).unwrap();
+        (g, def)
+    }
+
+    /// What applying `record` alone marks, without flushing it.
+    fn dirty_by(
+        g: &mut Graph,
+        record: Record,
+    ) -> CchDirty {
+        let mut docs = IndexDocs::default();
+        let mut cch = CchDirty::default();
+        apply_record(g, record, &mut docs, &mut cch).expect("record must apply");
+        cch
+    }
+
+    fn assert_marks(
+        g: &mut Graph,
+        def: &CchIndexDef,
+        record: Record,
+        dirty: bool,
+        empty: bool,
+        what: &str,
+    ) {
+        let cch = dirty_by(g, record);
+        assert_eq!(cch.touches(def), dirty, "{what}");
+        // A write to another type is noted under that type, which no held index spans: the
+        // flush has nothing to rebuild, but the set is not empty. Everything else that no
+        // index depends on is not noted at all.
+        assert_eq!(cch.is_empty(), empty, "{what}");
+    }
+
+    #[test]
+    fn a_record_marks_the_cch_indexes_it_could_change() {
+        // Relationship records go by the type, and attribute writes by (type, weight).
+        for (what, dirty, empty, record) in [
+            (
+                "an edge of the indexed type created",
+                true,
+                false,
+                Record::CreateEdge {
+                    ids: IdList::from([3]),
+                    relation_id: ROAD,
+                    src: IdList::from([3]),
+                    dst: IdList::from([4]),
+                    attr_ids: vec![],
+                    rows: vec![],
+                },
+            ),
+            (
+                "an edge of another type created",
+                false,
+                false,
+                Record::CreateEdge {
+                    ids: IdList::from([3]),
+                    relation_id: FERRY,
+                    src: IdList::from([3]),
+                    dst: IdList::from([4]),
+                    attr_ids: vec![TIME],
+                    rows: vec![Value::Float(1.0)],
+                },
+            ),
+            (
+                "an edge of the indexed type deleted",
+                true,
+                false,
+                Record::DeleteEdge {
+                    ids: IdList::from([0]),
+                    relation_id: ROAD,
+                    src: IdList::from([0]),
+                    dst: IdList::from([1]),
+                },
+            ),
+            (
+                "an edge of another type deleted",
+                false,
+                false,
+                Record::DeleteEdge {
+                    ids: IdList::from([2]),
+                    relation_id: FERRY,
+                    src: IdList::from([2]),
+                    dst: IdList::from([3]),
+                },
+            ),
+            (
+                "the weight of an indexed edge set",
+                true,
+                false,
+                float_edge_update(&[0], ROAD, TIME, 9.0),
+            ),
+            (
+                "another attribute of an indexed edge set",
+                false,
+                true,
+                float_edge_update(&[0], ROAD, OTHER, 9.0),
+            ),
+            (
+                "the weight attribute of an edge of another type set",
+                false,
+                false,
+                float_edge_update(&[2], FERRY, TIME, 9.0),
+            ),
+            (
+                "a node created",
+                true,
+                false,
+                Record::CreateNode {
+                    ids: IdList::from([5]),
+                    labels: vec![],
+                    attr_ids: vec![],
+                    rows: vec![],
+                },
+            ),
+            (
+                "a node with no edges deleted",
+                true,
+                false,
+                Record::DeleteNode {
+                    ids: IdList::from([4]),
+                    labels: vec![],
+                },
+            ),
+            (
+                "a node attribute set",
+                false,
+                true,
+                Record::UpdateNode {
+                    ids: IdList::from([0]),
+                    labels: vec![],
+                    attr_ids: vec![TIME],
+                    rows: vec![Value::Float(9.0)],
+                },
+            ),
+            (
+                "a label set on a node",
+                false,
+                true,
+                Record::SetLabels {
+                    ids: IdList::from([0]),
+                    labels: vec![0],
+                },
+            ),
+            (
+                "a relationship type registered",
+                false,
+                true,
+                Record::AddRelType {
+                    id: 2,
+                    name: "NEW".to_owned(),
+                },
+            ),
+            (
+                "an attribute registered",
+                false,
+                true,
+                Record::AddAttribute {
+                    id: 2,
+                    name: "new".to_owned(),
+                },
+            ),
+        ] {
+            let (mut g, def) = cch_setup();
+            assert_marks(&mut g, &def, record, dirty, empty, what);
+        }
+    }
+
+    #[test]
+    fn a_graph_with_no_cch_index_marks_nothing() {
+        let (g, _) = cch_setup();
+        let mut g = g.new_version();
+        g.drop_cch_index(&CchIndexDef::new(vec![TypeId(ROAD as usize)], TIME))
+            .unwrap();
+        for record in [
+            float_edge_update(&[0], ROAD, TIME, 9.0),
+            Record::DeleteNode {
+                ids: IdList::from([4]),
+                labels: vec![],
+            },
+        ] {
+            assert!(dirty_by(&mut g, record).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_delete_edge_naming_an_unknown_type_is_refused_when_an_index_is_held() {
+        let (mut g, _) = cch_setup();
+        let mut docs = IndexDocs::default();
+        let err = apply_record(
+            &mut g,
+            Record::DeleteEdge {
+                ids: IdList::from([0]),
+                relation_id: 7,
+                src: IdList::from([0]),
+                dst: IdList::from([1]),
+            },
+            &mut docs,
+            &mut CchDirty::default(),
+        )
+        .expect_err("type 7 does not exist");
+        assert!(
+            matches!(err, ApplyError::IdOutOfRange { id: 7, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The held index answers like one built from the graph as it now stands.
+    fn assert_index_is_current(
+        g: &Graph,
+        def: &CchIndexDef,
+    ) {
+        let held = g.cch_index(def).expect("index is held").cch.clone();
+        let fresh = Cch::build(&CchInput::build(g, def).unwrap()).unwrap();
+        let n = g.node_count() as u32 + 1;
+        for s in 0..n {
+            for t in 0..n {
+                assert_eq!(held.query(s, t), fresh.query(s, t), "({s}, {t})");
+            }
+        }
+    }
+
+    fn held(
+        g: &Graph,
+        def: &CchIndexDef,
+    ) -> Arc<Cch> {
+        g.cch_index(def).expect("index is held").cch.clone()
+    }
+
+    #[test]
+    fn a_buffer_that_touches_no_indexed_type_or_weight_rebuilds_nothing() {
+        let (mut g, def) = cch_setup();
+        let before = held(&g, &def);
+        let mut buf = new_buffer();
+        Record::CreateEdge {
+            ids: IdList::from([3]),
+            relation_id: FERRY,
+            src: IdList::from([3]),
+            dst: IdList::from([4]),
+            attr_ids: vec![TIME],
+            rows: vec![Value::Float(1.0)],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        float_edge_update(&[2], FERRY, TIME, 7.0)
+            .encode(&mut buf)
+            .unwrap();
+        float_edge_update(&[0, 1], ROAD, OTHER, 7.0)
+            .encode(&mut buf)
+            .unwrap();
+        apply_effects(&mut g, &buf).expect("buffer must apply");
+        assert!(
+            Arc::ptr_eq(&before, &held(&g, &def)),
+            "the index was rebuilt"
+        );
+        assert_index_is_current(&g, &def);
+    }
+
+    #[test]
+    fn a_buffer_that_touches_the_weight_rebuilds_and_answers_like_the_graph() {
+        for record in [
+            float_edge_update(&[1], ROAD, TIME, 0.5),
+            Record::CreateEdge {
+                ids: IdList::from([3]),
+                relation_id: ROAD,
+                src: IdList::from([2]),
+                dst: IdList::from([3]),
+                attr_ids: vec![TIME],
+                rows: vec![Value::Float(1.0)],
+            },
+            Record::DeleteEdge {
+                ids: IdList::from([1]),
+                relation_id: ROAD,
+                src: IdList::from([1]),
+                dst: IdList::from([2]),
+            },
+        ] {
+            let (mut g, def) = cch_setup();
+            let before = held(&g, &def);
+            apply_one(&mut g, record).expect("buffer must apply");
+            assert!(
+                !Arc::ptr_eq(&before, &held(&g, &def)),
+                "the index was not rebuilt"
+            );
+            assert_index_is_current(&g, &def);
+        }
+    }
+
+    #[test]
+    fn a_weight_the_index_cannot_hold_fails_the_buffer() {
+        // The primary would have refused it, so the replica diverges like on any apply failure.
+        let (mut g, _) = cch_setup();
+        let err = apply_one(&mut g, float_edge_update(&[0], ROAD, TIME, -1.0))
+            .expect_err("a negative weight cannot be indexed");
+        assert!(err.to_string().contains("could not be updated"), "{err}");
     }
 }
