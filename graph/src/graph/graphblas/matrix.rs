@@ -88,11 +88,11 @@ use super::{
     GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_Vector, GrB_Vector_free, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose,
-    GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_BITMAP, GxB_Container_free,
+    GrB_VALUEEQ_UINT64, GrB_Vector, GrB_Vector_free, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv,
+    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_BITMAP, GxB_Container_free,
     GxB_Container_new, GxB_FULL, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator,
     GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
     GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
@@ -567,9 +567,23 @@ impl<T> Encode<19> for Matrix<T> {
             let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
-            // Write container struct bytes
+            // Write container struct bytes. Its pointer fields are heap
+            // addresses in this process: meaningless to a reader (decode
+            // rebuilds every component), and they would disclose the memory
+            // layout to anyone holding a DUMP / GRAPH.COPY payload or an RDB.
+            // Write them as null.
+            let mut header = std::ptr::read(container);
+            header.p = null_mut();
+            header.h = null_mut();
+            header.b = null_mut();
+            header.i = null_mut();
+            header.x = null_mut();
+            header.vector_future = [null_mut(); 11];
+            header.Y = null_mut();
+            header.matrix_future = [null_mut(); 15];
+            header.void_future = [null_mut(); 16];
             let container_bytes =
-                std::slice::from_raw_parts(container.cast::<u8>(), CONTAINER_STRUCT_SIZE);
+                std::slice::from_raw_parts((&raw const header).cast::<u8>(), CONTAINER_STRUCT_SIZE);
             w.write_buffer(container_bytes);
 
             // Write 5 vectors: x, h, p, i, b
@@ -1254,6 +1268,29 @@ impl<T> Dup<Self> for Matrix<T> {
 }
 
 impl Matrix<u64> {
+    /// How many stored entries equal `value`: `GrB_select` with
+    /// `GrB_VALUEEQ_UINT64` into a scratch matrix, then its `nvals`.
+    #[must_use]
+    pub fn count_value_eq(
+        &self,
+        value: u64,
+    ) -> u64 {
+        let out = Self::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_select_UINT64(
+                *out.m,
+                null_mut(),
+                null_mut(),
+                GrB_VALUEEQ_UINT64,
+                *self.m,
+                value,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        out.nvals()
+    }
+
     /// Create a new UINT64 matrix (for C-compatible tensor encoding and inline
     /// edge-id storage).
     pub fn new(
@@ -2027,5 +2064,39 @@ mod tests {
             err.contains("GxB_load_Matrix_from_Container"),
             "unexpected error: {err}"
         );
+    }
+
+    /// The encoded container header must not carry this process's heap
+    /// addresses (its component pointers) into DUMP / GRAPH.COPY payloads.
+    #[test]
+    fn encode_writes_no_heap_addresses() {
+        use super::super::GxB_Container_struct as C;
+        use std::mem::offset_of;
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.wait();
+        let mut tape = Tape::default();
+        super::Encode::encode(&m, &mut tape);
+        let Some(TapeOp::Buffer(header)) = tape.ops.front() else {
+            panic!("no container header written");
+        };
+        // p..matrix_future are contiguous pointers, void_future runs to the end
+        for (what, range) in [
+            (
+                "vector / matrix pointers",
+                offset_of!(C, p)..offset_of!(C, iso),
+            ),
+            ("void pointers", offset_of!(C, void_future)..size_of::<C>()),
+        ] {
+            assert!(
+                header[range.clone()].iter().all(|&b| b == 0),
+                "{what} written into the payload: {:02x?}",
+                &header[range]
+            );
+        }
+        // encoding unloads and reloads the matrix; it must be intact
+        assert_eq!(m.get(1, 2), Some(true));
     }
 }

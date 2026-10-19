@@ -1559,6 +1559,19 @@ impl Decode<19> for Tensor {
         let fwd_dm = Matrix::<bool>::decode(r)?;
         let nrows = fwd_m.nrows();
         let ncols = fwd_m.ncols();
+        // Encode writes the three layers at one size. A payload that doesn't
+        // would have the merge below write outside `m`.
+        for (layer, dims) in [
+            ("delta-plus", (fwd_dp.nrows(), fwd_dp.ncols())),
+            ("delta-minus", (fwd_dm.nrows(), fwd_dm.ncols())),
+        ] {
+            if dims != (nrows, ncols) {
+                return Err(format!(
+                    "Tensor decode: forward {layer} is {}x{}, base is {nrows}x{ncols}",
+                    dims.0, dims.1
+                ));
+            }
+        }
 
         // Inline representation: `m` is UINT64 inline edge ids with MULTI_EDGE
         // sentinels; `me` holds all ids of multi-edge pairs. The on-disk forward
@@ -1593,6 +1606,15 @@ impl Decode<19> for Tensor {
                 m.set(src, dst, MULTI_EDGE);
             }
         }
+        // Settled before the tensor section is checked against it.
+        m.wait();
+
+        // The payload is untrusted, and promotion completeness — a pair has
+        // `me` ids exactly when its inline value is `MULTI_EDGE` — is what
+        // `edge_count` and iteration rely on. So every tensor entry must land
+        // on a marker (checked per entry below), and every marker must get
+        // ids (checked at the end by counting `me`'s pairs).
+        let markers = m.count_value_eq(MULTI_EDGE);
 
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
@@ -1607,6 +1629,11 @@ impl Decode<19> for Tensor {
                     // the index. Reading the *values* instead collapsed every
                     // pair written by C to the single edge id 1.
                     let v = Vector::<bool>::decode_blob(r)?;
+                    if src >= nrows || dst >= ncols || m.get(src, dst) != Some(MULTI_EDGE) {
+                        return Err(format!(
+                            "Tensor decode: edge ids for ({src}, {dst}), which is not a multi-edge pair"
+                        ));
+                    }
                     // The blob stores endpoints, not row keys, so the on-disk
                     // form says nothing about how they are blocked and needs no
                     // version bump for this change: re-keying happens here.
@@ -1635,9 +1662,15 @@ impl Decode<19> for Tensor {
             }
         }
 
-        // The freshly built base must be materialized: the committed base is
+        let with_ids: u64 = me.iter().map(|(_, b)| Self::multi_pairs_in(b)).sum();
+        if with_ids != markers {
+            return Err(format!(
+                "Tensor decode: {markers} multi-edge pairs but edge ids for {with_ids}"
+            ));
+        }
+
+        // The freshly built base is materialized above: the committed base is
         // never pending inside a transaction (see `wait_fwd`).
-        m.wait();
         // Backward matrix is rebuilt by the caller (`rebuild_backward`) after
         // decode, so leave it empty here.
         Ok(Self {
@@ -2429,6 +2462,116 @@ mod tests {
         assert_eq!(back.get(b + 11, 12).collect::<Vec<_>>(), vec![9999]);
         assert_eq!(back.edge_count(), t.edge_count());
         assert_eq!(back.multi_pairs(), t.multi_pairs());
+    }
+
+    /// A tensor section entry for a pair the forward matrix does not mark as
+    /// multi-edge used to decode into an `me` row, after which `edge_count`
+    /// (and so the next save) panicked and iteration yielded a phantom edge.
+    #[test]
+    fn decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge() {
+        ensure_init();
+        // (7, 9) absent from the forward matrix, then (1, 2) holding a
+        // single edge: neither may take ids (here, id 3) from the tensor
+        // section.
+        let mut ids = Vector::<bool>::new(GrB_INDEX_MAX);
+        ids.set(3, true);
+        for (src, dst) in [(7, 9), (1, 2)] {
+            let mut t = Tensor::new(16, 16);
+            t.set_all_from_slices(&[1], &[2], &[5]);
+            let t = t.dup();
+            t.wait();
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            // single-edge graph: ..., total edges, multi pair count 0, TDP 0
+            tape.ops.pop_back();
+            tape.ops.pop_back();
+            // TM: one pair, (src, dst) with the ids blob, as `encode` writes
+            // it; then an empty TDP.
+            for v in [1, src, dst] {
+                tape.ops.push_back(TapeOp::Unsigned(v));
+            }
+            ids.encode_blob(&mut tape);
+            tape.ops.push_back(TapeOp::Unsigned(0));
+            let err = Tensor::decode(&mut tape)
+                .err()
+                .unwrap_or_else(|| panic!("ids for ({src}, {dst}) accepted"));
+            assert!(
+                err.contains("not a multi-edge pair"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    /// The converse: a pair marked multi-edge whose ids never arrive.
+    #[test]
+    fn decode_rejects_a_multi_edge_pair_without_edge_ids() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1, 3, 3], &[2, 2, 4, 4], &[10, 11, 12, 13]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // Tail: ..., 2 pairs, (src, dst, blob) x2, TDP 0. Drop the second
+        // pair and say there is only one.
+        let n = tape.ops.len();
+        let tdp = tape.ops.pop_back().unwrap();
+        tape.ops.truncate(n - 4);
+        tape.ops.push_back(tdp);
+        let count = tape.ops.len() - 5;
+        tape.ops[count] = TapeOp::Unsigned(1);
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("multi-edge pair without ids accepted");
+        assert!(
+            err.contains("2 multi-edge pairs but edge ids for 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A `GRAPH.RESTORE` payload is untrusted: a corrupt multi-edge id blob has
+    /// to fail the decode, not panic (the module's panic hook exits the server).
+    #[test]
+    fn decode_rejects_a_corrupt_multi_edge_blob() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1], &[2, 2], &[10, 11]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // The id blob is the last buffer on the tape; keep only its header.
+        let last = tape
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, TapeOp::Buffer(_)))
+            .expect("no id blob on the tape");
+        if let TapeOp::Buffer(blob) = &mut tape.ops[last] {
+            blob.truncate(8);
+        }
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("corrupt blob accepted");
+        assert!(
+            err.contains("GxB_Vector_deserialize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The forward delta layers must match the base's size: merging a larger
+    /// delta would write outside the rebuilt forward matrix.
+    #[test]
+    fn decode_rejects_forward_layers_of_different_sizes() {
+        ensure_init();
+        let mut tape = Tape::default();
+        Matrix::<u64>::new(4, 4).encode(&mut tape);
+        Matrix::<u64>::new(8, 8).encode(&mut tape);
+        Matrix::<bool>::new(4, 4).encode(&mut tape);
+        tape.ops.push_back(TapeOp::Unsigned(0));
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("mismatched layers accepted");
+        assert!(err.contains("delta-plus is 8x8"), "unexpected error: {err}");
     }
 
     /// `me` is created with a narrow column space so GraphBLAS stores its
