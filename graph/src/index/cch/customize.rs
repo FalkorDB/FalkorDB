@@ -197,7 +197,7 @@ fn validate(
         || csr.p.len() != n + 1
         || csr.p.first().copied() != Some(0)
         || csr.p.windows(2).any(|pair| pair[0] > pair[1])
-        || csr.p.last().copied() != Some(csr.i.len() as u64)
+        || csr.p.last().map(|&p| p as usize) != Some(csr.i.len())
         || weights.w.len() != csr.i.len()
         || csr.i.iter().any(|&v| v as usize >= n)
     {
