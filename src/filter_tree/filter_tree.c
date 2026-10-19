@@ -239,6 +239,13 @@ FT_Result _applyFilter
 	SIValue *bVal,
 	AST_Operator op
 ) {
+	// equality is tested element-wise, not by ordering
+	if(op == OP_EQUAL || op == OP_NEQUAL) {
+		SIValueEquality eq = SIValue_Equals(*aVal, *bVal);
+		if(eq == SI_EQ_NULL) return FILTER_NULL;
+		return ((eq == SI_EQ_TRUE) == (op == OP_EQUAL)) ? FILTER_PASS : FILTER_FAIL;
+	}
+
 	int disjointOrNull = 0;
 	int rel = SIValue_Compare(*aVal, *bVal, &disjointOrNull);
 	// if there was null comparison, return false

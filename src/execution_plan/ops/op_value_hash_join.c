@@ -59,10 +59,8 @@ static bool _binarySearchLeftmost
 	if(left == array_len) return false;
 
 	x = Record_Get(array[*idx], join_key_idx);
-	// return false if the value wasn't found or evaluated to NULL
-	int disjointOrNull = 0;
-	return (SIValue_Compare(x, v, &disjointOrNull) == 0 &&
-			disjointOrNull != COMPARED_NULL);
+	// return false if the value wasn't found
+	return (SIValue_Compare(x, v, NULL) == 0);
 }
 
 // performs binary search, returns the rightmost index of a match
@@ -93,6 +91,20 @@ static bool _binarySearchRightmost
 	return true;
 }
 
+// a value which isn't equal to itself, e.g. null, NaN or a list or map
+// containing either, can't be equal to any value
+// such values are kept out of the join, they would also break the
+// cache's sort order as NaN compares as 0 to every number
+// testing a value also puts the keys of the maps it holds in order, once,
+// as the cache is built, so the equality test run per candidate finds them
+// sorted and leaves the cached values untouched
+static inline bool _joinable
+(
+	SIValue v
+) {
+	return SIValue_Equals(v, v) == SI_EQ_TRUE;
+}
+
 // retrive the next intersecting record
 // if such exists, otherwise returns NULL
 static Record _get_intersecting_record
@@ -100,16 +112,22 @@ static Record _get_intersecting_record
 	OpValueHashJoin *op
 ) {
 	// no more intersecting records
-	if(op->intersect_idx == -1 ||
-	   op->number_of_intersections == 0) return NULL;
+	if(op->intersect_idx == -1) return NULL;
 
-	Record cr = op->cached_records[op->intersect_idx];
+	// every record which sorts the same as the joined value
+	// must also be equal to it under '='
+	while(op->number_of_intersections > 0) {
+		Record cr = op->cached_records[op->intersect_idx];
 
-	// update intersection trackers
-	op->intersect_idx++;
-	op->number_of_intersections--;
+		// update intersection trackers
+		op->intersect_idx++;
+		op->number_of_intersections--;
 
-	return cr;
+		SIValue x = Record_Get(cr, op->join_value_rec_idx);
+		if(SIValue_Equals(x, op->rhs_value) == SI_EQ_TRUE) return cr;
+	}
+
+	return NULL;
 }
 
 // look up first intersecting cached record CR position
@@ -125,6 +143,8 @@ static bool _set_intersection_idx
 
 	uint leftmost_idx  = 0;
 	uint rightmost_idx = 0;
+
+	if(!_joinable(v)) return false;
 
 	if(!_binarySearchLeftmost(&leftmost_idx, op->cached_records,
 				arr_len(op->cached_records), op->join_value_rec_idx, v)) {
@@ -169,6 +189,22 @@ void _sort_cached_records
 		);
 }
 
+// discards the current right hand side record and its joined value
+static void _discard_rhs
+(
+	OpValueHashJoin *op
+) {
+	SIValue_Free(op->rhs_value);
+	op->rhs_value = SI_NullVal();
+
+	if(op->rhs_rec) {
+		OpBase_DeleteRecord(&op->rhs_rec);
+	}
+
+	op->intersect_idx = -1;
+	op->number_of_intersections = 0;
+}
+
 // caches all records coming from left branch
 void _cache_records
 (
@@ -187,9 +223,10 @@ void _cache_records
 		// evaluate joined expression
 		SIValue v = AR_EXP_Evaluate(op->lhs_exp, r);
 
-		// if the joined value is NULL
-		// it cannot be compared to other values - skip this record
-		if(SIValue_IsNull(v)) {
+		// if the joined value can't be equal to any value
+		// e.g. NULL - skip this record
+		if(!_joinable(v)) {
+			SIValue_Free(v);
 			OpBase_DeleteRecord(&r);
 			continue;
 		}
@@ -245,6 +282,7 @@ OpBase *NewValueHashJoin
 
 	op->lhs_exp       = lhs_exp;
 	op->rhs_exp       = rhs_exp;
+	op->rhs_value     = SI_NullVal();
 	op->intersect_idx = -1;
 
 	// set our Op operations
@@ -283,47 +321,32 @@ static Record ValueHashJoinConsume
 	// return merged record:
 	// L merged with R
 
-	Record l;
-	if(op->number_of_intersections > 0) {
-		while((l = _get_intersecting_record(op))) {
+	while(true) {
+		Record l = _get_intersecting_record(op);
+		if(l != NULL) {
 			// clone cached record before merging rhs
 			Record c = OpBase_CloneRecord(l);
 			Record_DuplicateEntries(c, op->rhs_rec);
 			return c;
 		}
-	}
 
-	// if we're here there are no more
-	// left hand side records which intersect with R
-	// discard R
-	OpBase_DeleteRecord(&op->rhs_rec);
+		// if we're here there are no more
+		// left hand side records which intersect with R
+		// discard R
+		_discard_rhs(op);
 
-	// try to get new right hand side record
-	// which intersect with a left hand side record
-	while(true) {
+		// try to get new right hand side record
+		// which intersect with a left hand side record
 		// pull from right branch
 		op->rhs_rec = OpBase_Consume(right_child);
 		if(!op->rhs_rec) return NULL;
 
 		// get value on which we're intersecting
-		SIValue v = AR_EXP_Evaluate(op->rhs_exp, op->rhs_rec);
+		op->rhs_value = AR_EXP_Evaluate(op->rhs_exp, op->rhs_rec);
 
-		bool found_intersection = _set_intersection_idx(op, v);
-		SIValue_Free(v);
-		// no intersection, discard R
-		if(!found_intersection) {
-			OpBase_DeleteRecord(&op->rhs_rec);
-			continue;
-		}
-
-		// found atleast one intersecting record
-		l = _get_intersecting_record(op);
-
-		// clone cached record before merging rhs
-		Record c = OpBase_CloneRecord(l);
-		Record_DuplicateEntries(c, op->rhs_rec);
-
-		return c;
+		// locate the records which sort the same as the value
+		// _get_intersecting_record returns those equal to it
+		_set_intersection_idx(op, op->rhs_value);
 	}
 }
 
@@ -336,9 +359,7 @@ static OpResult ValueHashJoinReset
 	op->number_of_intersections = 0;
 
 	// clear cached records
-	if(op->rhs_rec) {
-		OpBase_DeleteRecord(&op->rhs_rec);
-	}
+	_discard_rhs(op);
 
 	if(op->cached_records) {
 		uint record_count = arr_len(op->cached_records);
@@ -367,9 +388,7 @@ static inline OpBase *ValueHashJoinClone
 static void ValueHashJoinFree(OpBase *ctx) {
 	OpValueHashJoin *op = (OpValueHashJoin *)ctx;
 	// free cached records
-	if(op->rhs_rec) {
-		OpBase_DeleteRecord(&op->rhs_rec);
-	}
+	_discard_rhs(op);
 
 	if(op->cached_records) {
 		uint record_count = arr_len(op->cached_records);
