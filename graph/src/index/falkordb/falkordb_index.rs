@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use roaring::RoaringTreemap;
 
@@ -188,8 +187,8 @@ impl BuildCursor {
 struct ColumnEntry {
     column: IndexColumn,
     state: ColumnState,
-    /// Which column this is: a new number each time one is created, so a build batch read from
-    /// one column never lands in another created under the same name since.
+    /// Which column this is: the index's count of columns created, so a build batch read from one
+    /// column never lands in another created under the same name since.
     generation: u64,
     /// While `Building`: the entities written since a build step last committed, to any column.
     /// Their tuples in the column are already right, so a step that read them before those writes
@@ -201,29 +200,7 @@ struct ColumnEntry {
     log: Vec<IndexWrite>,
 }
 
-/// Source of [`ColumnEntry::generation`].
-static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
-
 impl ColumnEntry {
-    fn new(
-        column: IndexColumn,
-        state: ColumnState,
-    ) -> Self {
-        Self {
-            column,
-            state,
-            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
-            touched: Arc::default(),
-            log: Vec::new(),
-        }
-    }
-
-    /// A column that already holds all its data and serves reads immediately —
-    /// the synchronous populate path.
-    fn ready(column: IndexColumn) -> Self {
-        Self::new(column, ColumnState::Ready)
-    }
-
     /// This entry in a new version: the column shared copy-on-write, without this version's log.
     fn new_version(&self) -> Self {
         Self {
@@ -273,6 +250,10 @@ pub struct FalkorDbIndex {
     /// was read on or one with the same count, so `touched` — kept since the last step — covers
     /// every write since the batch was read.
     build_commits: u64,
+    /// Columns created in this index's history: the last one's [`ColumnEntry::generation`]. Only
+    /// writers create columns, and they commit one at a time, so along the published versions it
+    /// only grows: no later column gets the generation a batch was read with.
+    columns_created: u64,
     /// Whether this version records its changes to `Building` columns in their logs: a new
     /// version does, until it is published.
     logging: bool,
@@ -300,6 +281,7 @@ impl FalkorDbIndex {
             node_columns: fork(&self.node_columns),
             edge_columns: fork(&self.edge_columns),
             build_commits: self.build_commits,
+            columns_created: self.columns_created,
             logging: true,
         }
     }
@@ -400,9 +382,12 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) {
-        self.columns_mut(entity).insert(
-            (label.clone(), attr.clone()),
-            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::new())),
+        self.insert_column(
+            entity,
+            label,
+            attr,
+            IndexColumn::Numeric(NumericIndex::new()),
+            ColumnState::Ready,
         );
     }
 
@@ -416,14 +401,14 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) {
-        self.columns_mut(entity).insert(
-            (label.clone(), attr.clone()),
-            ColumnEntry::new(
-                IndexColumn::Numeric(NumericIndex::new()),
-                ColumnState::Building {
-                    next: BuildCursor::new(entity),
-                },
-            ),
+        self.insert_column(
+            entity,
+            label,
+            attr,
+            IndexColumn::Numeric(NumericIndex::new()),
+            ColumnState::Building {
+                next: BuildCursor::new(entity),
+            },
         );
     }
 
@@ -439,12 +424,35 @@ impl FalkorDbIndex {
         attr: &Arc<String>,
         pairs: &[(u64, u64)],
     ) {
-        self.columns_mut(entity).insert(
-            (label.clone(), attr.clone()),
-            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::from_sorted_tuples(
-                pairs,
-            ))),
+        self.insert_column(
+            entity,
+            label,
+            attr,
+            IndexColumn::Numeric(NumericIndex::from_sorted_tuples(pairs)),
+            ColumnState::Ready,
         );
+    }
+
+    /// Put `column` at `(entity, label, attr)` in `state`, replacing any column there, as a column
+    /// of a generation of its own.
+    fn insert_column(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        column: IndexColumn,
+        state: ColumnState,
+    ) {
+        self.columns_created += 1;
+        let entry = ColumnEntry {
+            column,
+            state,
+            generation: self.columns_created,
+            touched: Arc::default(),
+            log: Vec::new(),
+        };
+        self.columns_mut(entity)
+            .insert((label.clone(), attr.clone()), entry);
     }
 
     /// Drop the column for `(entity, label, attr)` in `O(1)` — releases the tree `Arc`. DROP INDEX.
