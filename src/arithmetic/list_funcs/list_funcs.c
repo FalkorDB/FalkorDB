@@ -102,6 +102,10 @@ static void _PopulateReduceCtx
 	// map variable name
 	//--------------------------------------------------------------------------
 
+	// variable and/or accumulator may shadow an alias already present in the
+	// outer mapping; in that case raxTryInsert is a no-op and the map size is
+	// unchanged, so re-read the size before each insert to derive a valid index
+
 	intptr_t id = raxSize(record_map);
 	raxTryInsert(record_map, (unsigned char *)ctx->variable,
 				 strlen(ctx->variable), (void *)id, NULL);
@@ -110,7 +114,7 @@ static void _PopulateReduceCtx
 	// map accumulator name
 	//--------------------------------------------------------------------------
 
-	id++;
+	id = raxSize(record_map);
 	raxTryInsert(record_map, (unsigned char *)ctx->accumulator,
 				 strlen(ctx->accumulator), (void *)id, NULL);
 
