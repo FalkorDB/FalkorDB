@@ -806,24 +806,34 @@ impl Tensor {
         emptied
     }
 
+    #[must_use]
+    pub fn nrows(&self) -> u64 {
+        self.m.nrows()
+    }
+
+    #[must_use]
+    pub fn ncols(&self) -> u64 {
+        self.m.ncols()
+    }
+
+    /// Grow to at least `nrows x ncols`. Never shrinks: a smaller target keeps
+    /// the current dimension, so no entry is ever dropped. That keeps `me`,
+    /// which is keyed by pair rather than sized by node count, consistent with
+    /// the layers without having to be pruned (#3246).
     pub fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     ) {
-        if nrows < self.m.nrows() || ncols < self.m.ncols() {
-            // Shrinking can drop entries; keep the straightforward path.
-            self.flush();
-            // GrB_Matrix_resize waits internally, so `m` holds no real pending
-            // work afterwards — waiting here would rebuild the freed hyper hash
-            // on every capacity grow (measured 1.4-5.7x write regressions).
-            self.m.resize(nrows, ncols);
-            // A resize moves no entries between layers, so the delta counters
-            // stand (a shrink that drops entries only adds to the drift
-            // `resync` bounds).
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
-            self.mt.resize(ncols, nrows);
+        debug_assert!(
+            nrows >= self.m.nrows() && ncols >= self.m.ncols(),
+            "Tensor::resize never shrinks ({}x{} -> {nrows}x{ncols})",
+            self.m.nrows(),
+            self.m.ncols(),
+        );
+        let nrows = nrows.max(self.m.nrows());
+        let ncols = ncols.max(self.m.ncols());
+        if nrows == self.m.nrows() && ncols == self.m.ncols() {
             return;
         }
         // Growing: the base is always COW-shared with the committed snapshot,
@@ -1549,6 +1559,19 @@ impl Decode<19> for Tensor {
         let fwd_dm = Matrix::<bool>::decode(r)?;
         let nrows = fwd_m.nrows();
         let ncols = fwd_m.ncols();
+        // Encode writes the three layers at one size. A payload that doesn't
+        // would have the merge below write outside `m`.
+        for (layer, dims) in [
+            ("delta-plus", (fwd_dp.nrows(), fwd_dp.ncols())),
+            ("delta-minus", (fwd_dm.nrows(), fwd_dm.ncols())),
+        ] {
+            if dims != (nrows, ncols) {
+                return Err(format!(
+                    "Tensor decode: forward {layer} is {}x{}, base is {nrows}x{ncols}",
+                    dims.0, dims.1
+                ));
+            }
+        }
 
         // Inline representation: `m` is UINT64 inline edge ids with MULTI_EDGE
         // sentinels; `me` holds all ids of multi-edge pairs. The on-disk forward
@@ -2001,6 +2024,53 @@ mod tests {
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
     }
 
+    /// `resize` never shrinks, so it can never cut a multi-edge pair off from
+    /// its `me` ids (#3246). Release builds keep the current size; debug
+    /// builds assert, so a new caller that tries to shrink is caught in tests.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn resize_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        // (0, 1) and (5, 6) are multi pairs, (1, 2) a single one.
+        t.set_all_from_slices(
+            &[0, 0, 1, 5, 5, 5],
+            &[1, 1, 2, 6, 6, 6],
+            &[10, 11, 12, 20, 21, 22],
+        );
+        t.flush();
+        t.wait();
+
+        t.resize(4, 4);
+        t.wait();
+
+        assert_eq!((t.nrows(), t.ncols()), (8, 8), "resize shrank the tensor");
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(
+            edges,
+            vec![
+                (0, 1, 10),
+                (0, 1, 11),
+                (1, 2, 12),
+                (5, 6, 20),
+                (5, 6, 21),
+                (5, 6, 22)
+            ],
+        );
+        assert_eq!(t.edge_count(), 6);
+        assert_eq!(t.multi_pairs(), 2);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Tensor::resize never shrinks")]
+    fn resize_asserts_it_never_shrinks() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        t.resize(4, 4);
+    }
+
     /// Deleting everything must not leave the base *and* a base-sized `dm`
     /// resident. The fold is latched by the delete, but `flush` only runs on
     /// the next mutation of this same tensor — which for a delete-everything
@@ -2440,6 +2510,51 @@ mod tests {
         assert_eq!(back.get(b + 11, 12).collect::<Vec<_>>(), vec![9999]);
         assert_eq!(back.edge_count(), t.edge_count());
         assert_eq!(back.multi_pairs(), t.multi_pairs());
+    }
+
+    /// A `GRAPH.RESTORE` payload is untrusted: a corrupt multi-edge id blob has
+    /// to fail the decode, not panic (the module's panic hook exits the server).
+    #[test]
+    fn decode_rejects_a_corrupt_multi_edge_blob() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1], &[2, 2], &[10, 11]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // The id blob is the last buffer on the tape; keep only its header.
+        let last = tape
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, TapeOp::Buffer(_)))
+            .expect("no id blob on the tape");
+        if let TapeOp::Buffer(blob) = &mut tape.ops[last] {
+            blob.truncate(8);
+        }
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("corrupt blob accepted");
+        assert!(
+            err.contains("GxB_Vector_deserialize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The forward delta layers must match the base's size: merging a larger
+    /// delta would write outside the rebuilt forward matrix.
+    #[test]
+    fn decode_rejects_forward_layers_of_different_sizes() {
+        ensure_init();
+        let mut tape = Tape::default();
+        Matrix::<u64>::new(4, 4).encode(&mut tape);
+        Matrix::<u64>::new(8, 8).encode(&mut tape);
+        Matrix::<bool>::new(4, 4).encode(&mut tape);
+        tape.ops.push_back(TapeOp::Unsigned(0));
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("mismatched layers accepted");
+        assert!(err.contains("delta-plus is 8x8"), "unexpected error: {err}");
     }
 
     /// `me` is created with a narrow column space so GraphBLAS stores its
