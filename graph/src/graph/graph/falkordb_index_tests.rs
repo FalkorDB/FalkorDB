@@ -2,7 +2,7 @@
 //! and checks the index column it should have changed. The online build's tests drive build
 //! steps between writes, and its turns through `MvccGraph` against writers that fork and claim.
 
-use super::Graph;
+use super::{Graph, NodeId};
 use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{Claim, MvccGraph};
 use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
@@ -787,10 +787,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     assert!(graph_writes::build_step(&mut g, 2, 2));
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &attr),
-        Some(BuildCursor {
-            row: ids[2],
-            col: 0
-        })
+        Some(BuildCursor::Node(NodeId::from(ids[2])))
     );
     assert_eq!(range_scan(&g, &label, &attr, 0, 100), vec![ids[0], ids[1]]);
 
@@ -816,9 +813,10 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     );
 }
 
-/// The edge counterpart: steps stop inside a row, finishing the multi-edge pair they stop in, and
-/// writes land between them behind and ahead of the cursor — including a new edge in the row being
-/// resumed, at a destination the steps have already passed, which only the write path indexes.
+/// The edge counterpart: steps stop inside a source's edges, finishing the multi-edge pair they stop
+/// in, and writes land between them behind and ahead of the cursor — including a new edge of the
+/// source being resumed, at a destination the steps have already passed, which only the write path
+/// indexes.
 #[test]
 fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     ensure_graphblas();
@@ -862,7 +860,10 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     assert!(graph_writes::build_step(&mut g, 2, 2));
     assert_eq!(
         cursor(&g, EntityType::Relationship, &ty, &attr),
-        Some(BuildCursor { row: a, col: c })
+        Some(BuildCursor::Edge {
+            src: NodeId::from(a),
+            dst: NodeId::from(c)
+        })
     );
     let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
     assert_eq!(held(&g), eids[..3].to_vec());
@@ -1068,7 +1069,7 @@ fn recreating_a_building_column_restarts_its_build() {
     create_index_on(&mut g, &label, &attr);
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &attr),
-        Some(BuildCursor::default()),
+        Some(BuildCursor::start(EntityType::Node)),
         "the re-created column starts over"
     );
 
@@ -1092,18 +1093,12 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
     create_index_on(&mut g, &label, &v);
     assert!(graph_writes::build_step(&mut g, 1, 1));
     let v_cursor = cursor(&g, EntityType::Node, &label, &v);
-    assert_eq!(
-        v_cursor,
-        Some(BuildCursor {
-            row: ids[1],
-            col: 0
-        })
-    );
+    assert_eq!(v_cursor, Some(BuildCursor::Node(NodeId::from(ids[1]))));
 
     create_index_on(&mut g, &label, &w);
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &w),
-        Some(BuildCursor::default())
+        Some(BuildCursor::start(EntityType::Node))
     );
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &v),
@@ -1367,10 +1362,7 @@ fn a_write_claims_over_build_steps_and_keeps_their_progress() {
 
     assert_eq!(
         host.cursor(&label, &attr),
-        Some(BuildCursor {
-            row: ids[10],
-            col: 0
-        }),
+        Some(BuildCursor::Node(NodeId::from(ids[10]))),
         "the step's progress survived the write"
     );
     let published = host.published();
@@ -1403,10 +1395,7 @@ fn a_build_step_that_raced_a_write_merges_into_it() {
     assert_eq!(host.turn(), Turn::Committed { more: true });
     assert_eq!(
         host.cursor(&label, &attr),
-        Some(BuildCursor {
-            row: ids[10],
-            col: 0
-        }),
+        Some(BuildCursor::Node(NodeId::from(ids[10]))),
         "the batch was merged, not dropped"
     );
     let published = host.published();
@@ -1461,7 +1450,10 @@ fn a_batch_from_a_dropped_or_recreated_column_is_dropped() {
     };
     *host.during_step.lock().unwrap() = Some(Box::new(recreate));
     assert_eq!(host.turn(), Turn::Dropped);
-    assert_eq!(host.cursor(&label, &attr), Some(BuildCursor::default()));
+    assert_eq!(
+        host.cursor(&label, &attr),
+        Some(BuildCursor::start(EntityType::Node))
+    );
     assert!(host.indexed(&label, &attr).is_empty());
 
     host.build_to_end();
@@ -1500,7 +1492,10 @@ fn a_write_that_recreated_the_column_keeps_its_own() {
     create_index_on(&mut fork.borrow_mut(), &label, &attr);
     assert_eq!(host.turn(), Turn::Committed { more: true });
     assert_eq!(host.finish(fork), Ok(()));
-    assert_eq!(host.cursor(&label, &attr), Some(BuildCursor::default()));
+    assert_eq!(
+        host.cursor(&label, &attr),
+        Some(BuildCursor::start(EntityType::Node))
+    );
     assert!(host.indexed(&label, &attr).is_empty());
 
     host.build_to_end();
@@ -1727,7 +1722,7 @@ fn add_edges(
 
 /// The edge writes a merge has to get right, on the chain [`edges_building`] makes, whose first
 /// build batch is `eids[0..10]`: one edge in the batch re-valued, one in it deleted, one ahead of
-/// it re-valued, and one created in a row the batch covers.
+/// it re-valued, and one created from a source the batch covers.
 fn the_racing_edge_write(
     nodes: &[u64],
     eids: &[u64],

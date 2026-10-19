@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
+use crate::graph::graph::NodeId;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
@@ -160,15 +161,27 @@ pub(crate) enum ColumnState {
 }
 
 /// Where a building column's next step resumes: the first entity no step has indexed yet.
-///
-/// For a node column, `row` is a node id and `col` is unused. For an edge column, `row` is a source
-/// node id and `col` a destination within that row, so a row with more edges than one step reads
-/// can be resumed partway, as C does. A step always finishes the multi-edge pair it stops in, so
-/// every edge before `(row, col)` is indexed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BuildCursor {
-    pub(crate) row: u64,
-    pub(crate) col: u64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BuildCursor {
+    /// A node column's next node.
+    Node(NodeId),
+    /// An edge column's next `(src, dst)` pair, so a source with more edges than one step reads
+    /// can be resumed partway, as C does. A step always finishes the multi-edge pair it stops in,
+    /// so every edge of an earlier pair is indexed.
+    Edge { src: NodeId, dst: NodeId },
+}
+
+impl BuildCursor {
+    /// Where the build of a new `entity` column starts: its first node, or its first pair.
+    pub(crate) fn start(entity: EntityType) -> Self {
+        match entity {
+            EntityType::Node => Self::Node(NodeId::from(0)),
+            EntityType::Relationship => Self::Edge {
+                src: NodeId::from(0),
+                dst: NodeId::from(0),
+            },
+        }
+    }
 }
 
 /// One column's index plus its build state.
@@ -413,7 +426,7 @@ impl FalkorDbIndex {
             ColumnEntry::new(
                 IndexColumn::Numeric(NumericIndex::new()),
                 ColumnState::Building {
-                    next: BuildCursor::default(),
+                    next: BuildCursor::start(entity),
                 },
             ),
         );
@@ -847,7 +860,7 @@ mod tests {
         let generation = idx.next_building().unwrap().3;
         assert_eq!(
             idx.next_building(),
-            Some((Node, column.clone(), BuildCursor::default(), generation))
+            Some((Node, column.clone(), BuildCursor::start(Node), generation))
         );
         assert!(hits(&idx, 10).is_empty(), "empty Building → None");
 
@@ -873,7 +886,7 @@ mod tests {
                 next,
             }
         };
-        let next = BuildCursor { row: 3, col: 0 };
+        let next = BuildCursor::Node(NodeId::from(3));
         assert!(idx.apply_build(&batch(
             vec![(key(30), 2), (key(10), 0), (key(25), 1)],
             Some(next),

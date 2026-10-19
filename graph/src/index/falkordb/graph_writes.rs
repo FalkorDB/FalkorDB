@@ -469,7 +469,7 @@ pub(crate) fn read_build_batch(
         .falkordb_index
         .column(entity, &key.0, &key.1)
         .expect("next_building names an existing column");
-    let (tuples, next) = scan(g, entity, &key.0, &key.1, from, nodes, edges, |value| {
+    let (tuples, next) = scan(g, &key.0, &key.1, from, nodes, edges, |value| {
         column.encode_value(value)
     });
     Some(BuildBatch {
@@ -540,10 +540,9 @@ fn build_column(
 ) {
     let (pairs, _) = scan(
         g,
-        entity,
         label,
         attr,
-        BuildCursor::default(),
+        BuildCursor::start(entity),
         usize::MAX,
         usize::MAX,
         encode_numeric,
@@ -588,10 +587,8 @@ fn edge_type(
 /// Each value is encoded as it is read and dropped straight away, so the scan never holds the
 /// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
 /// Range index) costs nothing past the read.
-#[allow(clippy::too_many_arguments)]
 fn scan(
     g: &Graph,
-    entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     from: BuildCursor,
@@ -600,10 +597,14 @@ fn scan(
     encode: impl Fn(&Value) -> Option<u64>,
 ) -> (Vec<(u64, u64)>, Option<BuildCursor>) {
     let mut tuples = Vec::new();
-    let next = match entity {
-        EntityType::Node => scan_nodes(g, label, attr, from.row, nodes, encode, &mut tuples)
-            .map(|row| BuildCursor { row, col: 0 }),
-        EntityType::Relationship => scan_edges(g, label, attr, from, edges, encode, &mut tuples),
+    let next = match from {
+        BuildCursor::Node(from) => {
+            scan_nodes(g, label, attr, from, nodes, encode, &mut tuples).map(BuildCursor::Node)
+        }
+        BuildCursor::Edge { src, dst } => {
+            scan_edges(g, label, attr, (src, dst), edges, encode, &mut tuples)
+                .map(|(src, dst)| BuildCursor::Edge { src, dst })
+        }
     };
     tuples.sort_unstable();
     tuples.dedup();
@@ -611,25 +612,28 @@ fn scan(
 }
 
 /// Append to `out` the tuples of node column `(label, attr)` for up to `budget` `label` nodes from
-/// node id `from` on, in id order: each node's current `attr` value encoded with `encode`, if the
-/// column indexes it. Unsorted. Returns the node id to resume from, or `None` when no `label` node
-/// is left.
+/// node `from` on, in id order: each node's current `attr` value encoded with `encode`, if the
+/// column indexes it. Unsorted. Returns the node to resume from, or `None` when no `label` node is
+/// left.
 fn scan_nodes(
     g: &Graph,
     label: &Arc<String>,
     attr: &Arc<String>,
-    from: u64,
+    from: NodeId,
     budget: usize,
     encode: impl Fn(&Value) -> Option<u64>,
     out: &mut Vec<(u64, u64)>,
-) -> Option<u64> {
+) -> Option<NodeId> {
     // No such label, or no entity ever had the attribute: nothing to index. A later write that
     // gives one the attribute is indexed by the write path.
     let (Some(lm), Some(idx)) = (g.get_label_matrix(label), g.get_node_attribute_id(attr)) else {
         return None;
     };
     let idx = idx as u16;
-    let mut nodes = lm.iter(from, u64::MAX).map(|(n, _)| n).peekable();
+    let mut nodes = lm
+        .iter(u64::from(from), u64::MAX)
+        .map(|(n, _)| n)
+        .peekable();
     for n in nodes.by_ref().take(budget) {
         if let Some(key) = g
             .get_node_attribute_by_idx(NodeId::from(n), idx)
@@ -638,25 +642,27 @@ fn scan_nodes(
             out.push((key, n));
         }
     }
-    nodes.peek().copied()
+    nodes.peek().copied().map(NodeId::from)
 }
 
-/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from `from` on, in
-/// `(src, dst)` order, plus the rest of the multi-edge pair the batch stops in, so no pair is ever
-/// split between steps. Edges in row `from.row` with a destination below `from.col` are skipped: an
-/// earlier step indexed them. Returns where to resume, or `None` when no edge is left.
+/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from pair `from` on,
+/// in `(src, dst)` order, plus the rest of the multi-edge pair the batch stops in, so no pair is
+/// ever split between steps. Edges of `from`'s source with a destination below `from`'s are
+/// skipped: an earlier step indexed them. Returns the pair to resume from, or `None` when no edge
+/// is left.
 ///
-/// Resuming partway through a row re-walks that row's earlier destinations, as C's populate does,
-/// so a step that resumes inside a very wide row pays for the part of it already done.
+/// Resuming partway through a source's edges re-walks its earlier destinations, as C's populate
+/// does, so a step that resumes inside a source with very many edges pays for the part already
+/// done.
 fn scan_edges(
     g: &Graph,
     label: &Arc<String>,
     attr: &Arc<String>,
-    from: BuildCursor,
+    (from_src, from_dst): (NodeId, NodeId),
     budget: usize,
     encode: impl Fn(&Value) -> Option<u64>,
     out: &mut Vec<(u64, u64)>,
-) -> Option<BuildCursor> {
+) -> Option<(NodeId, NodeId)> {
     let (Some(t), Some(idx)) = (
         g.get_relationship_matrix(label),
         g.get_relationship_attribute_id(attr),
@@ -672,9 +678,10 @@ fn scan_edges(
             out.push((key, eid));
         }
     };
-    let mut edges = t.iter(from.row, u64::MAX, false).peekable();
+    let (from_src, from_dst) = (u64::from(from_src), u64::from(from_dst));
+    let mut edges = t.iter(from_src, u64::MAX, false).peekable();
     while edges
-        .next_if(|&(src, dst, _)| src == from.row && dst < from.col)
+        .next_if(|&(src, dst, _)| src == from_src && dst < from_dst)
         .is_some()
     {}
     let mut read = 0usize;
@@ -688,5 +695,7 @@ fn scan_edges(
             break;
         }
     }
-    edges.peek().map(|&(row, col, _)| BuildCursor { row, col })
+    edges
+        .peek()
+        .map(|&(src, dst, _)| (NodeId::from(src), NodeId::from(dst)))
 }
