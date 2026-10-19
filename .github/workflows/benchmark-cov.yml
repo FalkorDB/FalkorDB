@@ -264,7 +264,7 @@ jobs:
           json.dump(d, open(p, "w"), indent=2)
           PY
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance
           path: provenance.json
@@ -321,7 +321,7 @@ jobs:
           grep -c SKIPPED "measure-$SIDE.log" \
             | sed 's/^/queries the engine skipped: /' || true
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: measure-${{ matrix.side }}
@@ -415,7 +415,7 @@ jobs:
               --module-args THREAD_COUNT --module-args 1 \
               --out "/w/cg-$SIDE-$SHARD.csv"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: callgrind-${{ matrix.side }}-${{ matrix.shard }}
@@ -467,7 +467,7 @@ jobs:
             uv run --project bench --frozen bench coverage
           ' 2>&1 | tee coverage.txt | tail -30
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: coverage
@@ -500,7 +500,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: art
           merge-multiple: true
