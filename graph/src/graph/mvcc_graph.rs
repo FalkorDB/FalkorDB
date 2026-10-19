@@ -255,17 +255,20 @@ impl MvccGraph {
     /// Commit an index-build batch. `prepared` is a new version of a published one with `batch`
     /// already merged in, made with no lock held. If that published version is still the current
     /// one, `prepared` holds every write and is published as it is. If anything has committed
-    /// since, `prepared` holds older data and is dropped: the batch is merged into a new version
-    /// of the current one ([`Graph::merge_index_build`]) and that is published instead. Either
-    /// way the commit changes no graph data, so a writer whose fork it makes stale may still
-    /// [`claim`](Self::claim) it.
+    /// since, `prepared` holds older data and is not published: the batch is merged into a new
+    /// version of the current one ([`Graph::merge_index_build`]) and that is published instead.
+    /// Either way the commit changes no graph data, so a writer whose fork it makes stale may
+    /// still [`claim`](Self::claim) it.
+    ///
+    /// `prepared` is borrowed so that, if it is not published, the caller frees it once it no
+    /// longer holds the host's locks: freeing a version frees what its batch copied.
     ///
     /// The caller holds what a writer holds to publish, so the write slot is free. `None` if it
     /// was taken all the same, or the version was refused.
     #[cfg(feature = "index-falkordb")]
     pub(crate) fn commit_index_build(
         &mut self,
-        prepared: Arc<AtomicRefCell<Graph>>,
+        prepared: &Arc<AtomicRefCell<Graph>>,
         batch: &mut BuildBatch,
     ) -> Option<BuildCommit> {
         if self
@@ -276,7 +279,7 @@ impl MvccGraph {
             return None;
         }
         let (version, how) = if self.graph.borrow().version + 1 == prepared.borrow().version {
-            (prepared, BuildCommit::Prepared)
+            (Arc::clone(prepared), BuildCommit::Prepared)
         } else {
             let current = Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()));
             if !current.borrow_mut().merge_index_build(batch) {

@@ -2040,10 +2040,7 @@ fn a_turn_publishes_its_prepared_version_only_if_nothing_committed_since() {
     let (host, label, ids) = TestHost::building(&attr, &values);
 
     let (prepared, mut batch) = prepare_turn(&host.published(), 10);
-    let commit = host
-        .mvcc
-        .write()
-        .commit_index_build(Arc::clone(&prepared), &mut batch);
+    let commit = host.mvcc.write().commit_index_build(&prepared, &mut batch);
     assert_eq!(commit, Some(BuildCommit::Prepared));
     assert!(
         Arc::ptr_eq(&host.published(), &prepared),
@@ -2052,10 +2049,7 @@ fn a_turn_publishes_its_prepared_version_only_if_nothing_committed_since() {
 
     let (prepared, mut batch) = prepare_turn(&host.published(), 10);
     host.write(|g| set_attr(g, ids[13], &attr, Value::Int(113)));
-    let commit = host
-        .mvcc
-        .write()
-        .commit_index_build(Arc::clone(&prepared), &mut batch);
+    let commit = host.mvcc.write().commit_index_build(&prepared, &mut batch);
     assert_eq!(commit, Some(BuildCommit::Merged));
     assert!(
         !Arc::ptr_eq(&host.published(), &prepared),
@@ -2086,7 +2080,7 @@ fn a_second_turn_never_merges_a_batch_read_before_the_first_one_committed() {
     host.write(|g| set_attr(g, ids[3], &attr, Value::Int(103)));
     let commits: Vec<_> = turns
         .into_iter()
-        .map(|(prepared, mut batch)| host.mvcc.write().commit_index_build(prepared, &mut batch))
+        .map(|(prepared, mut batch)| host.mvcc.write().commit_index_build(&prepared, &mut batch))
         .collect();
     assert_eq!(
         commits,
@@ -2101,6 +2095,66 @@ fn a_second_turn_never_merges_a_batch_read_before_the_first_one_committed() {
     all.push(103);
     let (got, want) = host.against_one_pass(&label, &attr, &all);
     assert_eq!(got, want);
+}
+
+/// A host that records, before its locks are let go, whether the version a commit replaced is
+/// still alive, and keeps a weak handle to it.
+struct FreeingHost {
+    host: Arc<TestHost>,
+    replaced: Mutex<Vec<(Weak<AtomicRefCell<Graph>>, bool)>>,
+}
+
+impl BuildHost for FreeingHost {
+    fn read(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        self.host.read(f)
+    }
+
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&mut MvccGraph),
+    ) -> bool {
+        self.host.publish(&mut |mvcc| {
+            let replaced = Arc::downgrade(&mvcc.read());
+            f(mvcc);
+            let alive = replaced.upgrade().is_some();
+            self.replaced.lock().unwrap().push((replaced, alive));
+        })
+    }
+}
+
+/// Freeing the version a commit replaces frees every index node the batch copied rather than
+/// shared, which can take milliseconds: the turn holds it until the host has let go of its locks,
+/// whether the commit published the prepared version or merged the batch into a writer's.
+#[test]
+fn a_turn_frees_the_version_its_commit_replaces_after_the_host_lets_go() {
+    let attr = Arc::new("v".to_string());
+    let values: Vec<i64> = (1..=25).collect();
+    let (host, _, ids) = TestHost::building(&attr, &values);
+    let freeing = FreeingHost {
+        host: Arc::clone(&host),
+        replaced: Mutex::new(Vec::new()),
+    };
+    assert_eq!(
+        online_build::run_turn_within(&freeing, 10, 10),
+        Turn::Committed { more: true }
+    );
+    host.race_next_turn(the_racing_write(&ids, &attr));
+    assert_eq!(
+        online_build::run_turn_within(&freeing, 10, 10),
+        Turn::Committed { more: true }
+    );
+    let replaced = freeing.replaced.into_inner().unwrap();
+    assert_eq!(replaced.len(), 2);
+    for (n, (version, alive)) in replaced.iter().enumerate() {
+        assert!(alive, "turn {n}: freed under the host's locks");
+        assert!(
+            version.upgrade().is_none(),
+            "turn {n}: freed once the turn ended"
+        );
+    }
 }
 
 /// A fork made on another coordinator — one replaced since — is never claimed, even if this one

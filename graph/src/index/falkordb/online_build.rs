@@ -15,7 +15,8 @@
 //! the batch is merged into a new version of the current one instead, skipping the entities
 //! written since, and that one is published. A writer whose fork the commit makes stale merges the
 //! other way when it claims (`Graph::merge_build_progress`). Only a column dropped or re-created
-//! meanwhile costs a turn its batch.
+//! meanwhile costs a turn its batch. The turn holds the versions a commit leaves behind until the
+//! host lets go of its locks, so freeing them never holds those.
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
 //! starts a build — it has a `Building` column, and the version it replaces has none — which covers
@@ -118,10 +119,12 @@ pub(crate) fn run_turn_within(
     }
 
     let mut turn = Turn::Gone;
-    let mut prepared = Some(prepared);
+    // Held, with `prepared`, until the host has let go of its locks, so that freeing the version
+    // the commit replaces, or `prepared` if a writer made it stale, never happens under them.
+    let mut replaced = None;
     let published = host.publish(&mut |mvcc| {
-        let prepared = prepared.take().expect("published once");
-        turn = match mvcc.commit_index_build(prepared, &mut batch) {
+        replaced = Some(mvcc.read());
+        turn = match mvcc.commit_index_build(&prepared, &mut batch) {
             Some(BuildCommit::Prepared | BuildCommit::Merged) => Turn::Committed {
                 more: mvcc.read().borrow().falkordb_index.has_building_columns(),
             },
