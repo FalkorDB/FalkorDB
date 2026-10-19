@@ -92,15 +92,15 @@ use super::{
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
     GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
     GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
     GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
     GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container,
+    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_kount, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -140,7 +140,7 @@ pub fn init(
         //   * Default — GxB_JIT_RUN: mirror the FalkorDB C module
         //     (src/module.c:106). PreJIT kernels statically linked into
         //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
-        //     graphblas.sh) are used for hot ops; RUN additionally permits
+        //     the native-deps GraphBLAS recipe) are used for hot ops; RUN additionally permits
         //     dlopen of any kernel already present in the on-disk cache,
         //     without any runtime compilation. In the shipped runtime image
         //     the cache is empty and no compiler is installed, so any op
@@ -154,10 +154,10 @@ pub fn init(
         //   * `--features prejit_harvest` — GxB_JIT_ON: full JIT including
         //     compile-on-demand. Selected at build time, never at runtime —
         //     prevents an env-var typo from accidentally enabling JIT in
-        //     a shipped binary. Used exclusively by gen_prejit.sh to
+        //     a shipped binary. Used exclusively by `native-deps prejit` to
         //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
         //     sources we then check in as the next generation of vendored
-        //     PreJIT (see graphblas.sh harvest mode).
+        //     PreJIT (see native-deps/src/prejit.rs).
         #[cfg(feature = "prejit_harvest")]
         let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
         #[cfg(not(feature = "prejit_harvest"))]
@@ -540,9 +540,23 @@ impl<T> Encode<19> for Matrix<T> {
             let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
-            // Write container struct bytes
+            // Write container struct bytes. Its pointer fields are heap
+            // addresses in this process: meaningless to a reader (decode
+            // rebuilds every component), and they would disclose the memory
+            // layout to anyone holding a DUMP / GRAPH.COPY payload or an RDB.
+            // Write them as null.
+            let mut header = std::ptr::read(container);
+            header.p = null_mut();
+            header.h = null_mut();
+            header.b = null_mut();
+            header.i = null_mut();
+            header.x = null_mut();
+            header.vector_future = [null_mut(); 11];
+            header.Y = null_mut();
+            header.matrix_future = [null_mut(); 15];
+            header.void_future = [null_mut(); 16];
             let container_bytes =
-                std::slice::from_raw_parts(container.cast::<u8>(), CONTAINER_STRUCT_SIZE);
+                std::slice::from_raw_parts((&raw const header).cast::<u8>(), CONTAINER_STRUCT_SIZE);
             w.write_buffer(container_bytes);
 
             // Write 5 vectors: x, h, p, i, b
@@ -775,6 +789,36 @@ impl<T> Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         t.nvals()
+    }
+
+    /// How many entries the rows `rows` selects hold: `Σ_{i ∈ rows} |A(i, :)|`.
+    ///
+    /// One `w = Aᵀ·x` over `PLUS_PAIR`, then a `PLUS` reduction of `w`. On a
+    /// by-row matrix GraphBLAS computes the transposed product by pushing each
+    /// selected row into `w`, so the cost follows `rows` and their lengths,
+    /// not the size of the matrix — where `A·x` would visit every row. `PAIR`
+    /// reads only the two patterns, so the element type of `self` does not
+    /// matter. `rows` must be `nrows` long. Call [`Self::wait`] first if
+    /// `self` may have queued mutations.
+    #[must_use]
+    pub fn count_in_rows(
+        &self,
+        rows: &Vector<bool>,
+    ) -> u64 {
+        let w = Vector::<u64>::new(self.ncols());
+        unsafe {
+            let info = GrB_mxv(
+                w.ptr(),
+                null_mut(),
+                null_mut(),
+                GxB_PLUS_PAIR_UINT64,
+                *self.m,
+                rows.ptr(),
+                GrB_DESC_T0,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        w.sum()
     }
 
     #[must_use]
@@ -1906,5 +1950,62 @@ mod tests {
             "iso build should be the cheaper of the two: {} vs {raw_bytes} bytes",
             scalar_built.memory_usage()
         );
+    }
+
+    /// The encoded container header must not carry this process's heap
+    /// addresses (its component pointers) into DUMP / GRAPH.COPY payloads.
+    #[test]
+    fn encode_writes_no_heap_addresses() {
+        use super::super::GxB_Container_struct as C;
+        use std::mem::offset_of;
+
+        struct FirstBuffer(Option<Vec<u8>>);
+        impl super::Writer for FirstBuffer {
+            fn write_unsigned(
+                &mut self,
+                _: u64,
+            ) {
+            }
+            fn write_signed(
+                &mut self,
+                _: i64,
+            ) {
+            }
+            fn write_double(
+                &mut self,
+                _: f64,
+            ) {
+            }
+            fn write_buffer(
+                &mut self,
+                d: &[u8],
+            ) {
+                self.0.get_or_insert_with(|| d.to_vec());
+            }
+        }
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.wait();
+        let mut w = FirstBuffer(None);
+        super::Encode::encode(&m, &mut w);
+        let header = w.0.expect("no container header written");
+        // p..matrix_future are contiguous pointers, void_future runs to the end
+        for (what, range) in [
+            (
+                "vector / matrix pointers",
+                offset_of!(C, p)..offset_of!(C, iso),
+            ),
+            ("void pointers", offset_of!(C, void_future)..size_of::<C>()),
+        ] {
+            assert!(
+                header[range.clone()].iter().all(|&b| b == 0),
+                "{what} written into the payload: {:02x?}",
+                &header[range]
+            );
+        }
+        // encoding unloads and reloads the matrix; it must be intact
+        assert_eq!(m.get(1, 2), Some(true));
     }
 }
