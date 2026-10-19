@@ -36,7 +36,7 @@ class testConfig(FlowTestsBase):
                 ("INDEX_WORKER_THREADS", 0),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
-                ("MAX_QUEUED_QUERIES", 4294967295),
+                ("MAX_QUEUED_QUERIES", 10000),
                 ("QUERY_MEM_CAPACITY", 0),
                 ("DELTA_MAX_PENDING_CHANGES", 10000),
                 ("NODE_CREATION_BUFFER", 16384),
