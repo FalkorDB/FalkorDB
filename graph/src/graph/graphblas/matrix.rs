@@ -55,6 +55,7 @@
 #![allow(clippy::doc_markdown)]
 
 use std::{
+    fmt::Display,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
@@ -75,6 +76,9 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
+use super::csr::copy_out_csr;
+pub use super::csr::{CsrExport, CsrExportError, GrbElem};
+pub use super::settings::{IntegerWidth, Orientation, Sparsity};
 use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
@@ -101,6 +105,37 @@ use super::{
     GxB_rowIterator_kount, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
+use super::{
+    GrB_FP64, GrB_MAX_MONOID_FP64, GrB_MIN_FP64, GrB_MIN_MONOID_FP64, GrB_Matrix_build_FP64,
+    GrB_Matrix_extractElement_FP64, GrB_Matrix_reduce_FP64, GrB_Matrix_select_INT64,
+    GrB_Matrix_setElement_FP64, GrB_Monoid, GrB_OFFDIAG, GrB_ONEB_BOOL, GxB_Matrix_eWiseUnion,
+};
+
+/// Check a `GrB_Info` and panic with the call's text on anything but success.
+/// For calls on data the caller built itself, where a failure is a bug rather
+/// than bad input.
+///
+/// This is the crate's convention for GraphBLAS calls, made explicit: an
+/// unexpected `GrB_Info` is never turned into a `Result` (only module-load
+/// `init` returns one). The wrapper's methods `debug_assert` theirs and a few
+/// assert in release; this always asserts, because a failed call here would
+/// otherwise leave a half-built matrix behind. In the module a panic ends the
+/// server through the panic hook. What can fail here is a bug or out of
+/// memory, never user data: and in the module GraphBLAS allocates through
+/// `RedisModule_Alloc`, which handles out of memory itself before GraphBLAS
+/// sees it.
+macro_rules! grb {
+    ($call:expr) => {{
+        let info = $call;
+        assert_eq!(
+            info,
+            $crate::graph::graphblas::GrB_Info::GrB_SUCCESS,
+            "{}: {info:?}",
+            stringify!($call)
+        );
+    }};
+}
+pub(crate) use grb;
 
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
@@ -281,6 +316,15 @@ impl EWiseAdd for u64 {
     }
 }
 
+/// An `f64` matrix carries path weights, where two weights for the same pair
+/// fold to the cheaper one: `MIN`, the additive operator of the `(min, +)`
+/// semiring.
+impl EWiseAdd for f64 {
+    fn add_op() -> GrB_BinaryOp {
+        unsafe { GrB_MIN_FP64 }
+    }
+}
+
 /// Element types a [`Matrix`] can be constructed for.
 ///
 /// `Matrix::<T>::new` is written per element type because it names a GraphBLAS
@@ -424,6 +468,17 @@ unsafe fn pin_sparse(m: GrB_Matrix) {
         )
     };
     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+}
+
+/// A storage setting as GraphBLAS reported it, typed. A value no variant
+/// stands for is a broken GraphBLAS invariant, not a caller mistake: panic
+/// with the setting's own message.
+fn setting<S>(value: i32) -> S
+where
+    S: TryFrom<i32>,
+    S::Error: Display,
+{
+    S::try_from(value).unwrap_or_else(|e| panic!("{e}"))
 }
 
 impl<T> Decode<19> for Matrix<T> {
@@ -955,6 +1010,23 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// Remove every entry on the main diagonal (`GrB_select` with
+    /// `GrB_OFFDIAG`, whose thunk 0 names the main diagonal), in place.
+    pub fn drop_diagonal(&mut self) {
+        unsafe {
+            grb!(GrB_Matrix_select_INT64(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GrB_OFFDIAG,
+                *self.m,
+                0,
+                null_mut()
+            ));
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// `self<mask> = a ⊕ b`, with `a` and `b` defaulting to `self`.
     ///
     /// The `⊕` comes from the output's element type via [`EWiseAdd`]: pattern
@@ -1115,21 +1187,11 @@ impl<T> Matrix<T> {
     /// path, which needs sparse or hypersparse.
     #[must_use]
     pub fn sparsity_status(&self) -> &'static str {
-        let mut sparsity: i32 = 0;
-        let info = unsafe {
-            GrB_Matrix_get_INT32(
-                *self.m,
-                &raw mut sparsity,
-                GxB_Option_Field::GxB_SPARSITY_STATUS as _,
-            )
-        };
-        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        match sparsity as u32 {
-            GxB_HYPERSPARSE => "hypersparse",
-            GxB_SPARSE => "sparse",
-            GxB_BITMAP => "bitmap",
-            GxB_FULL => "full",
-            _ => "unknown",
+        match self.sparsity() {
+            Sparsity::Hypersparse => "hypersparse",
+            Sparsity::Sparse => "sparse",
+            Sparsity::Bitmap => "bitmap",
+            Sparsity::Full => "full",
         }
     }
 
@@ -1163,6 +1225,253 @@ impl<T> Matrix<T> {
             let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    /// Pin the storage format: `GxB_SPARSITY_CONTROL` allows `sparsity` only.
+    /// GraphBLAS converts the matrix now, `O(nrows + nvals)` if it was stored
+    /// another way, and keeps the format through later operations.
+    ///
+    /// Like every setter here, this mutates the GrB object, so it takes
+    /// `&mut self`: a clone sharing the handle could otherwise be reading
+    /// while the storage converts under it.
+    pub fn set_sparsity(
+        &mut self,
+        sparsity: Sparsity,
+    ) {
+        self.set_i32(sparsity as i32, GxB_Option_Field::GxB_SPARSITY_CONTROL);
+    }
+
+    /// The format the matrix is stored in now (`GxB_SPARSITY_STATUS`).
+    #[must_use]
+    pub fn sparsity(&self) -> Sparsity {
+        setting(self.get_i32(GxB_Option_Field::GxB_SPARSITY_STATUS))
+    }
+
+    /// Store by row or by column. GraphBLAS transposes the storage now if the
+    /// orientation changes.
+    pub fn set_orientation(
+        &mut self,
+        orientation: Orientation,
+    ) {
+        self.set_i32(
+            orientation as i32,
+            GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT,
+        );
+    }
+
+    /// The orientation the matrix is stored in now.
+    #[must_use]
+    pub fn orientation(&self) -> Orientation {
+        setting(self.get_i32(GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT))
+    }
+
+    /// Ask for the integer width of the offsets (`p`). A hint: `Bits64` is
+    /// always honoured, `Bits32` only while the entry count is below `2^32`;
+    /// otherwise GraphBLAS keeps 64 bits and still reports success. Read the
+    /// outcome back with [`Self::offset_width`].
+    pub fn set_offset_width(
+        &mut self,
+        width: IntegerWidth,
+    ) {
+        self.set_i32(width as i32, GxB_Option_Field::GxB_OFFSET_INTEGER_HINT);
+    }
+
+    /// The integer width the offsets (`p`) are stored in now.
+    #[must_use]
+    pub fn offset_width(&self) -> IntegerWidth {
+        setting(self.get_i32(GxB_Option_Field::GxB_OFFSET_INTEGER_BITS))
+    }
+
+    /// Ask for the integer width of the column indices. A hint: `Bits32` is
+    /// honoured only while the column count is at most `2^31`; otherwise
+    /// GraphBLAS keeps 64 bits and still reports success. Read the outcome
+    /// back with [`Self::col_index_width`].
+    pub fn set_col_index_width(
+        &mut self,
+        width: IntegerWidth,
+    ) {
+        self.set_i32(width as i32, GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT);
+    }
+
+    /// The integer width the column indices are stored in now.
+    #[must_use]
+    pub fn col_index_width(&self) -> IntegerWidth {
+        setting(self.get_i32(GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS))
+    }
+
+    /// Ask for the integer width of the row indices; the same caveat as
+    /// [`Self::set_col_index_width`], with the row count.
+    pub fn set_row_index_width(
+        &mut self,
+        width: IntegerWidth,
+    ) {
+        self.set_i32(width as i32, GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT);
+    }
+
+    /// The integer width the row indices are stored in now.
+    #[must_use]
+    pub fn row_index_width(&self) -> IntegerWidth {
+        setting(self.get_i32(GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS))
+    }
+
+    /// `false` expands an iso matrix (one stored value standing for every
+    /// entry) into one value per entry; `true` makes it iso if all its values
+    /// are equal. A one-off conversion, not a control: later operations may
+    /// make the matrix iso again.
+    pub fn set_iso(
+        &mut self,
+        iso: bool,
+    ) {
+        self.set_i32(i32::from(iso), GxB_Option_Field::GxB_ISO);
+    }
+
+    /// Whether the matrix is stored iso now.
+    #[must_use]
+    pub fn is_iso(&self) -> bool {
+        self.get_i32(GxB_Option_Field::GxB_ISO) != 0
+    }
+
+    /// `GrB_Matrix_set_INT32` under the wrapper's lock (setting a field can
+    /// convert the matrix, which must not race `wait()` or `dup()`).
+    fn set_i32(
+        &mut self,
+        value: i32,
+        field: GxB_Option_Field,
+    ) {
+        let _guard = self.lock.lock();
+        unsafe {
+            grb!(GrB_Matrix_set_INT32(*self.m, value, field as _));
+        }
+    }
+
+    fn get_i32(
+        &self,
+        field: GxB_Option_Field,
+    ) -> i32 {
+        let mut value: i32 = 0;
+        unsafe {
+            grb!(GrB_Matrix_get_INT32(*self.m, &raw mut value, field as _));
+        }
+        value
+    }
+
+    /// Row-major CSR export of this matrix's sparsity pattern.
+    ///
+    /// See [`Self::to_csr_f64`] for the valued form and for the preconditions
+    /// and caveats that apply to both; the value type and iso checks do not
+    /// apply here.
+    ///
+    /// # Errors
+    /// [`CsrExportError`] if the matrix is not set up as [`Self::to_csr_f64`]
+    /// describes.
+    pub fn to_csr_pattern<P, I>(&mut self) -> Result<CsrExport<P, I>, CsrExportError>
+    where
+        P: GrbElem + Into<u64>,
+        I: GrbElem + Into<u64>,
+    {
+        self.export_csr(false)
+    }
+
+    /// Row-major CSR export of this matrix's pattern **and** its `FP64`
+    /// values.
+    ///
+    /// GraphBLAS already stores a sparse row-major matrix as CSR, so this is a
+    /// copy out of SuiteSparse's own buffers rather than a conversion: the
+    /// matrix is unloaded into a `GxB_Container`, whose `p`/`i`/`x` vectors are
+    /// in turn unloaded to raw C arrays, copied, and handed straight back. No
+    /// entry is ever visited by Rust code, and no array is cast or re-indexed.
+    ///
+    /// # Preconditions
+    /// The caller sets the matrix up; the export changes no setting and refuses
+    /// anything else, before unloading:
+    /// - stored sparse and row-major ([`Self::set_sparsity`],
+    ///   [`Self::set_orientation`]);
+    /// - offsets as wide as `P` and column indices as wide as `I`, each `u32`
+    ///   or `u64` ([`Self::set_offset_width`], [`Self::set_col_index_width`]; a
+    ///   32-bit hint cannot hold from `2^32` entries or above `2^31` columns,
+    ///   and the export then refuses rather than widens);
+    /// - for values: `FP64`, and not iso ([`Self::set_iso`]);
+    /// - no other `Matrix` sharing this handle.
+    ///
+    /// What it does to `self`: materializes pending work, as [`Self::wait`]
+    /// does, and briefly unloads the matrix. Settings and entries are the same
+    /// afterwards.
+    ///
+    /// # Concurrency
+    /// Between the unload and the reload the underlying `GrB_Matrix` is
+    /// **empty**, so nobody else may be able to see it. `&mut self` means no
+    /// other thread holds this wrapper, so none can `clone()` it mid-export
+    /// (cloning takes no lock); a handle an earlier clone still shares is
+    /// refused. The export also takes the lock `wait()` and `dup()` take.
+    ///
+    /// # Errors
+    /// [`CsrExportError`] naming the first precondition the matrix fails.
+    pub fn to_csr_f64<P, I>(&mut self) -> Result<CsrExport<P, I>, CsrExportError>
+    where
+        P: GrbElem + Into<u64>,
+        I: GrbElem + Into<u64>,
+    {
+        self.export_csr(true)
+    }
+
+    /// Shared body of [`Self::to_csr_pattern`] and [`Self::to_csr_f64`].
+    fn export_csr<P, I>(
+        &mut self,
+        with_values: bool,
+    ) -> Result<CsrExport<P, I>, CsrExportError>
+    where
+        P: GrbElem + Into<u64>,
+        I: GrbElem + Into<u64>,
+    {
+        // Serialize against `wait()` and `dup()`: materializing and
+        // round-tripping through the container both mutate the GrB object even
+        // though the entries do not change.
+        let _guard = self.lock.lock();
+        if Arc::strong_count(&self.m) != 1 {
+            return Err(CsrExportError::SharedHandle);
+        }
+        let m = *self.m;
+
+        unsafe {
+            if with_values {
+                let mut ty: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+                grb!(GxB_Matrix_type(ty.as_mut_ptr(), m));
+                if ty.assume_init() != GrB_FP64 {
+                    return Err(CsrExportError::NotFp64);
+                }
+            }
+
+            // MATERIALIZE flushes pending tuples and zombies and unjumbles each
+            // row — which is what makes the exported column indices ascending
+            // within a row. It changes no setting, and it is a real flush, so
+            // later `wait()` calls can take their cheap path.
+            grb!(GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _));
+            self.has_pending.store(false, Ordering::Release);
+        }
+
+        // The storage is the caller's choice: check it, never set it.
+        let sparsity = self.sparsity();
+        if sparsity != Sparsity::Sparse {
+            return Err(CsrExportError::NotSparse(sparsity));
+        }
+        if self.orientation() != Orientation::RowMajor {
+            return Err(CsrExportError::NotRowMajor);
+        }
+        let offsets = self.offset_width();
+        if offsets != IntegerWidth::of::<P>() {
+            return Err(CsrExportError::OffsetWidth(offsets));
+        }
+        let indices = self.col_index_width();
+        if indices != IntegerWidth::of::<I>() {
+            return Err(CsrExportError::ColIndexWidth(indices));
+        }
+        if with_values && self.is_iso() {
+            return Err(CsrExportError::IsoValues);
+        }
+
+        // SAFETY: `m` is this wrapper's live handle, materialized above, and
+        // the lock and the handle count keep everyone else off it.
+        unsafe { copy_out_csr(m, with_values) }
     }
 }
 
@@ -1321,7 +1630,162 @@ impl Matrix<u64> {
     }
 }
 
+/// `FP64` matrices, e.g. a weight per node pair.
+impl Matrix<f64> {
+    /// Create a new `FP64` matrix.
+    #[must_use]
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_FP64, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let m = m.assume_init();
+            pin_sparse(m);
+            Self {
+                m: Arc::new(m),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    /// Set an `FP64` value at `(i, j)`.
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: f64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_FP64(*self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Build from coordinate arrays into this (empty) matrix. A repeated
+    /// `(row, col)` is a bug in the caller, not something to fold: there is no
+    /// `dup` operator, so GraphBLAS refuses it, and this panics.
+    pub fn build(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[f64],
+    ) {
+        assert!(rows.len() == cols.len() && rows.len() == vals.len());
+        unsafe {
+            grb!(GrB_Matrix_build_FP64(
+                *self.m,
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                rows.len() as u64,
+                null_mut()
+            ));
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// The smallest value, or `+inf` (the monoid's identity) if the matrix is
+    /// empty. `GrB_MIN_FP64` is `fmin`: a NaN entry is skipped, not returned.
+    #[must_use]
+    pub fn min_value(&self) -> f64 {
+        self.reduce_fp64(unsafe { GrB_MIN_MONOID_FP64 })
+    }
+
+    /// The largest value, or `-inf` (the monoid's identity) if the matrix is
+    /// empty. `GrB_MAX_FP64` is `fmax`: a NaN entry is skipped, not returned.
+    #[must_use]
+    pub fn max_value(&self) -> f64 {
+        self.reduce_fp64(unsafe { GrB_MAX_MONOID_FP64 })
+    }
+
+    /// Reduce every entry to one scalar. Allocates nothing: the reduction
+    /// reads the matrix where it is. Pending work is finished first, a
+    /// mutation of the GrB object, so this takes the lock `wait()` takes.
+    fn reduce_fp64(
+        &self,
+        monoid: GrB_Monoid,
+    ) -> f64 {
+        let _guard = self.lock.lock();
+        let mut out = 0.0;
+        unsafe {
+            grb!(GrB_Matrix_reduce_FP64(
+                &raw mut out,
+                null_mut(),
+                monoid,
+                *self.m,
+                null_mut()
+            ));
+        }
+        out
+    }
+
+    /// Value at `(i, j)`, or `None` when the entry is absent.
+    #[must_use]
+    pub fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<f64> {
+        self.wait();
+        unsafe {
+            let mut v: MaybeUninit<f64> = MaybeUninit::uninit();
+            let info = GrB_Matrix_extractElement_FP64(v.as_mut_ptr(), *self.m, i, j);
+            match info {
+                GrB_Info::GrB_SUCCESS => Some(v.assume_init()),
+                GrB_Info::GrB_NO_VALUE => None,
+                _ => panic!("GrB_Matrix_extractElement_FP64 failed: {info:?}"),
+            }
+        }
+    }
+}
+
 impl Matrix<bool> {
+    /// `self = pattern(a) ∪ pattern(b)`, every entry `true`: e.g.
+    /// `pattern_union(&w, &w, Some(Descriptor::T1))` is `w + wᵀ`.
+    ///
+    /// Overwrites `self` (unlike [`Self::set_pattern`], which accumulates
+    /// into it). The values of `a` and `b` are never read: this is
+    /// `GxB_eWiseUnion` with `GrB_ONEB_BOOL`, whose result is `true` whatever
+    /// its inputs, and with `true` standing in for the missing side of an
+    /// entry only one of them has. A plain `eWiseAdd` would instead typecast
+    /// a one-sided entry, so a stored `0` (a weight of `0.0`, an edge id of
+    /// 0) would land as `false`.
+    pub fn pattern_union<TA, TB>(
+        &mut self,
+        a: &Matrix<TA>,
+        b: &Matrix<TB>,
+        descriptor: Option<Descriptor>,
+    ) {
+        unsafe {
+            let mut one: GrB_Scalar = null_mut();
+            grb!(GrB_Scalar_new(&raw mut one, GrB_BOOL));
+            grb!(GrB_Scalar_setElement_BOOL(one, true));
+            grb!(GxB_Matrix_eWiseUnion(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GrB_ONEB_BOOL,
+                *a.m,
+                one,
+                *b.m,
+                one,
+                descriptor.map_or(null_mut(), Into::into)
+            ));
+            grb!(GrB_Scalar_free(&raw mut one));
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     pub fn new(
         nrows: u64,
         ncols: u64,
@@ -1994,5 +2458,93 @@ mod tests {
         }
         // encoding unloads and reloads the matrix; it must be intact
         assert_eq!(m.get(1, 2), Some(true));
+    }
+}
+
+/// The `FP64` and pattern wrappers.
+#[cfg(test)]
+mod weight_tests {
+    use super::{Descriptor, Matrix};
+    use crate::graph::graphblas::test_init;
+
+    #[test]
+    fn drop_diagonal_removes_only_the_diagonal() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(4, 4);
+        for (i, j) in [(0, 0), (0, 1), (1, 1), (2, 1), (3, 3)] {
+            m.set(i, j, 0.0);
+        }
+        m.drop_diagonal();
+        m.wait();
+        assert_eq!(m.nvals(), 2);
+        assert_eq!((m.get(0, 1), m.get(2, 1)), (Some(0.0), Some(0.0)));
+    }
+
+    /// `w + wᵀ` as a pattern: every entry `true` (including where `w` holds
+    /// 0.0, and where only one side has the entry), and `self`'s old entries
+    /// replaced, not accumulated into.
+    #[test]
+    fn pattern_union_is_the_union_all_true_and_overwrites() {
+        test_init::ensure_init();
+        let mut w = Matrix::<f64>::new(3, 3);
+        w.set(0, 1, 0.0);
+        w.set(1, 0, 5.0);
+        w.set(1, 2, 0.0);
+        let mut s = Matrix::<bool>::new(3, 3);
+        s.set(2, 2, true);
+        s.pattern_union(&w, &w, Some(Descriptor::T1));
+        s.wait();
+        let mut got = Vec::new();
+        for i in 0..3 {
+            for j in 0..3 {
+                if let Some(v) = s.get(i, j) {
+                    got.push((i, j, v));
+                }
+            }
+        }
+        assert_eq!(
+            got,
+            vec![(0, 1, true), (1, 0, true), (1, 2, true), (2, 1, true)]
+        );
+        assert!(s.is_iso(), "one stored value, not one per entry");
+    }
+
+    /// The empty matrix gives each monoid's identity, and a NaN is skipped
+    /// (`fmin`/`fmax`): a caller that must find a NaN maps it to a value the
+    /// reduction does see (e.g. `-inf` for `min_value`) first.
+    #[test]
+    fn min_and_max_value_reduce_without_seeing_nan() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(4, 4);
+        assert_eq!(
+            (m.min_value(), m.max_value()),
+            (f64::INFINITY, f64::NEG_INFINITY)
+        );
+        m.set(0, 1, 3.0);
+        m.set(1, 2, -2.0);
+        m.set(2, 3, f64::NAN);
+        assert_eq!((m.min_value(), m.max_value()), (-2.0, 3.0));
+        m.set(3, 0, f64::NEG_INFINITY);
+        assert_eq!(m.min_value(), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn build_places_every_value() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(3, 3);
+        m.build(&[2, 0], &[1, 2], &[7.0, 0.5]);
+        assert_eq!(
+            (m.nvals(), m.get(2, 1), m.get(0, 2)),
+            (2, Some(7.0), Some(0.5))
+        );
+    }
+
+    /// No `dup` operator: a repeated coordinate is a caller bug, refused.
+    #[test]
+    #[should_panic(expected = "GrB_Matrix_build_FP64")]
+    fn build_refuses_a_repeated_coordinate() {
+        test_init::ensure_init();
+        let mut m = Matrix::<f64>::new(3, 3);
+        m.build(&[1, 1], &[2, 2], &[1.0, 2.0]);
     }
 }

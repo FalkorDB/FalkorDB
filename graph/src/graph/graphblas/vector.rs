@@ -46,6 +46,7 @@ use crate::graph::graphblas::{
     GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
 };
 
+use super::matrix::grb;
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
     GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
@@ -56,6 +57,7 @@ use super::{
     GxB_Vector_Iterator_seek, GxB_Vector_deserialize, GxB_Vector_load, GxB_Vector_serialize,
     GxB_Vector_unload,
 };
+use super::{GrB_FP64, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
 
 /// A sparse vector backed by GraphBLAS.
 ///
@@ -102,6 +104,14 @@ impl<T> Vector<T> {
             let info = GrB_Vector_clear(self.v);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    /// The number of stored entries.
+    #[must_use]
+    pub fn nvals(&self) -> u64 {
+        let mut nvals = 0;
+        grb!(unsafe { GrB_Vector_nvals(&raw mut nvals, self.v) });
+        nvals
     }
 }
 
@@ -451,6 +461,43 @@ impl Decode<19> for Vector<bool> {
 
             Ok(Self::from(v))
         }
+    }
+}
+
+/// `FP64` vectors, as a weight per index (e.g. a minimum per row).
+impl Vector<f64> {
+    #[must_use]
+    pub fn new(nrows: u64) -> Self {
+        let mut v: GrB_Vector = null_mut();
+        grb!(unsafe { GrB_Vector_new(&raw mut v, GrB_FP64, nrows) });
+        Self {
+            v,
+            phantom: PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
+    /// Every stored entry as parallel index and value arrays, in index order.
+    #[must_use]
+    pub fn extract_tuples(&self) -> (Vec<u64>, Vec<f64>) {
+        let mut count = self.nvals();
+        let mut keys = vec![0; count as usize];
+        let mut vals = vec![0.0; count as usize];
+        grb!(unsafe {
+            GrB_Vector_extractTuples_FP64(
+                keys.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut count,
+                self.v,
+            )
+        });
+        keys.truncate(count as usize);
+        vals.truncate(count as usize);
+        (keys, vals)
     }
 }
 
@@ -814,5 +861,42 @@ mod decode_tests {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
         }
+    }
+}
+
+#[cfg(test)]
+mod fp64_tests {
+    use super::super::GrB_Vector_setElement_FP64;
+    use super::super::test_init::ensure_init;
+    use super::{Vector, grb};
+
+    /// Every entry, in index order, a stored `0.0` included; absent indices
+    /// are not reported.
+    #[test]
+    fn extract_tuples_returns_every_entry_in_index_order() {
+        ensure_init();
+        let v = Vector::<f64>::new(10);
+        assert_eq!(v.extract_tuples(), (vec![], vec![]));
+        for (i, x) in [(7, 2.5), (1, 0.0), (4, -1.0)] {
+            grb!(unsafe { GrB_Vector_setElement_FP64(v.ptr(), x, i) });
+        }
+        assert_eq!(v.extract_tuples(), (vec![1, 4, 7], vec![0.0, -1.0, 2.5]));
+    }
+
+    /// `nvals` counts stored entries, an explicit `0.0` included, not the
+    /// vector's size.
+    #[test]
+    fn nvals_counts_stored_entries() {
+        ensure_init();
+        let mut v = Vector::<f64>::new(10);
+        assert_eq!(v.nvals(), 0);
+        for (i, x) in [(7, 2.5), (1, 0.0), (4, -1.0)] {
+            grb!(unsafe { GrB_Vector_setElement_FP64(v.ptr(), x, i) });
+        }
+        assert_eq!(v.nvals(), 3);
+        grb!(unsafe { GrB_Vector_setElement_FP64(v.ptr(), 9.0, 7) });
+        assert_eq!(v.nvals(), 3, "overwriting an entry adds none");
+        v.clear();
+        assert_eq!(v.nvals(), 0);
     }
 }

@@ -135,7 +135,8 @@ use super::{
     serialization::{Decode, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{
-        self, Delta, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
+        self, Delta, Effective, VersionedMatrix, delta_dominates_base, should_fold,
+        should_fold_read,
     },
 };
 
@@ -1049,6 +1050,20 @@ impl Tensor {
         &self.dm
     }
 
+    /// The effective forward adjacency `(m ∖ dm) ∪ dp` as one `UINT64`
+    /// matrix, `dp`'s value winning on a pair it shadows: no copy when both
+    /// deltas are empty (see [`Effective`]). A multi-edge pair holds
+    /// [`MULTI_EDGE`] here, as it does in every layer; its ids are in `me`.
+    /// Writable through [`Effective::to_mut`], which copies only a borrowed
+    /// base.
+    #[must_use]
+    pub fn effective_fwd(&self) -> Effective<'_, u64> {
+        self.m.wait();
+        self.dp.wait();
+        self.dm.wait();
+        versioned_matrix::effective(&self.m, &self.dp, &self.dm)
+    }
+
     /// Structure-only `(src, dst)` iterator over the effective forward
     /// adjacency `(m ∖ dm) ∪ dp`, ignoring the stored edge-id values.
     #[must_use]
@@ -1825,6 +1840,125 @@ impl Iterator for Iter<'_> {
 mod tests {
     use super::super::test_init::ensure_init;
     use super::*;
+
+    /// The effective forward matrix is the committed base itself when there
+    /// are no deltas, and `(m ∖ dm) ∪ dp` (with `dp`'s value) when there are,
+    /// checked pair by pair against the tensor's own iterator.
+    #[test]
+    fn effective_fwd_is_the_base_or_the_merge() {
+        ensure_init();
+        const N: u64 = 1_000;
+        let mut t = Tensor::new(2 * N, 2 * N);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.wait();
+        let mut t = t.dup();
+        t.flush();
+        assert!(t.fwd_m().nvals() == N && t.fwd_dp().nvals() == 0);
+        match t.effective_fwd() {
+            Effective::Borrowed(m) => assert_eq!(m.inner(), t.fwd_m().inner()),
+            Effective::Owned(_) => panic!("no deltas, yet a copy"),
+        }
+
+        // Pending: delete ten committed edges, add ten new pairs and a second
+        // edge on one committed pair (which promotes it to MULTI_EDGE).
+        // `(edge_id, src, dst)`.
+        let gone: Vec<(u64, u64, u64)> = (0..10).map(|i| (i * 7, i * 7, i * 7 + 1)).collect();
+        t.remove_all(&gone);
+        let new_srcs: Vec<u64> = (0..10).map(|i| N + i).chain([500]).collect();
+        let new_dsts: Vec<u64> = (0..10).map(|i| N + i + 2).chain([501]).collect();
+        let new_ids: Vec<u64> = (0..11).map(|i| 5 * N + i).collect();
+        t.set_all_from_slices(&new_srcs, &new_dsts, &new_ids);
+        t.wait();
+        assert!(t.fwd_dp().nvals() > 0 && t.fwd_dm().nvals() > 0);
+
+        let eff = t.effective_fwd();
+        assert!(matches!(eff, Effective::Owned(_)));
+        let mut want: FxHashMap<(u64, u64), Vec<u64>> = FxHashMap::default();
+        for (s, d, id) in t.iter_edges() {
+            want.entry((s, d)).or_default().push(id);
+        }
+        assert_eq!(eff.nvals(), want.len() as u64);
+        for ((s, d), ids) in &want {
+            let expect = if ids.len() == 1 { ids[0] } else { MULTI_EDGE };
+            assert_eq!(eff.get(*s, *d), Some(expect), "({s}, {d})");
+        }
+        assert_eq!(eff.get(500, 501), Some(MULTI_EDGE));
+        assert_eq!(eff.get(7, 8), None);
+    }
+
+    /// `to_mut` is the way to a mutable effective matrix, copy on write: a
+    /// borrowed base is copied once, an owned merge never. In both forms,
+    /// writing to, removing from and resizing through it leaves the tensor,
+    /// its next version (which shares the committed base) and a reader's
+    /// clone exactly as they were.
+    #[test]
+    fn effective_fwd_to_mut_never_touches_the_tensor() {
+        ensure_init();
+        fn edges(t: &Tensor) -> Vec<(u64, u64, u64)> {
+            let mut e: Vec<_> = t.iter_edges().collect();
+            e.sort_unstable();
+            e
+        }
+        // Enough edges that `flush` folds them into the committed base.
+        const N: u64 = 1_000;
+        let mut t = Tensor::new(2 * N, 2 * N);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.wait();
+        let mut t = t.dup();
+        t.flush();
+        let reader = t.clone();
+        let next = t.dup();
+        assert!(t.fwd_m().nvals() == N && t.fwd_dp().nvals() == 0);
+        let before = edges(&t);
+
+        let mut eff = next.effective_fwd();
+        assert!(matches!(eff, Effective::Borrowed(_)));
+        let copy = eff.to_mut();
+        assert_ne!(copy.inner(), next.fwd_m().inner(), "a copy, not the base");
+        let copy_handle = copy.inner();
+        copy.set(N + 70, N + 71, 999);
+        copy.remove(0, 1);
+        copy.resize(4 * N, 4 * N);
+        copy.wait();
+        assert!(matches!(eff, Effective::Owned(_)));
+        assert_eq!(eff.to_mut().inner(), copy_handle, "copied once, not twice");
+        assert_eq!((eff.nvals(), eff.nrows()), (N, 4 * N));
+        for v in [&t, &reader, &next] {
+            assert!(edges(v) == before, "a version's edges changed");
+            assert_eq!((v.fwd_m().nvals(), v.fwd_m().nrows()), (N, 2 * N));
+        }
+
+        // With deltas the effective matrix is the merge, owned already:
+        // `to_mut` writes into it without copying.
+        let mut next = next;
+        next.remove_all(&[(0, 0, 1)]);
+        next.set_all_from_slices(&[N + 60], &[N + 61], &[5 * N]);
+        next.wait();
+        let after = edges(&next);
+        let mut eff = next.effective_fwd();
+        let merged_handle = match &eff {
+            Effective::Owned(m) => m.inner(),
+            Effective::Borrowed(_) => panic!("deltas, yet the base"),
+        };
+        let merged = eff.to_mut();
+        assert_eq!(merged.inner(), merged_handle, "no copy of an owned merge");
+        merged.set(0, 1, 7);
+        merged.remove(N + 60, N + 61);
+        merged.wait();
+        assert_eq!(eff.get(0, 1), Some(7));
+        assert!(edges(&next) == after, "the next version's edges changed");
+        assert_eq!(next.effective_fwd().get(0, 1), None);
+        assert_eq!(next.effective_fwd().get(N + 60, N + 61), Some(5 * N));
+        for v in [&t, &reader] {
+            assert!(edges(v) == before, "a version's edges changed");
+        }
+    }
 
     /// Edge id 0 must survive the bool round-trips in the delta layers: the
     /// bulk `remove_all` path derives `dm` from the committed u64 matrix, and
