@@ -85,9 +85,6 @@ pub struct MvccGraph {
     /// How the online index builder reaches this graph; set by its host.
     #[cfg(feature = "index-falkordb")]
     build_host: OnceLock<Arc<dyn BuildHost>>,
-    /// Whether the online index builder has this graph queued or on a worker.
-    #[cfg(feature = "index-falkordb")]
-    build_queued: AtomicBool,
 }
 
 /// Why [`MvccGraph::claim`] refused a fork.
@@ -124,8 +121,6 @@ impl MvccGraph {
             write: AtomicBool::new(false),
             #[cfg(feature = "index-falkordb")]
             build_host: OnceLock::new(),
-            #[cfg(feature = "index-falkordb")]
-            build_queued: AtomicBool::new(false),
         }
     }
 
@@ -135,7 +130,7 @@ impl MvccGraph {
     }
 
     /// Register how the online index builder reaches this graph. Until a host is set, a commit
-    /// that brings in a `Building` column queues nothing. The first host set is kept.
+    /// that starts a build queues nothing. The first host set is kept.
     #[cfg(feature = "index-falkordb")]
     pub fn set_build_host(
         &self,
@@ -144,9 +139,8 @@ impl MvccGraph {
         let _ = self.build_host.set(host);
     }
 
-    /// Take over `old`'s online-build registration — its host, and whether the builder has it
-    /// queued — for a coordinator that replaces `old` in place. Without it, a `CREATE INDEX` on the
-    /// replacement would never be built.
+    /// Take over `old`'s online-build host, for a coordinator that replaces `old` in place.
+    /// Without it, a `CREATE INDEX` on the replacement would never be built.
     #[cfg(feature = "index-falkordb")]
     pub fn inherit_build(
         &self,
@@ -155,19 +149,6 @@ impl MvccGraph {
         if let Some(host) = old.build_host.get() {
             let _ = self.build_host.set(Arc::clone(host));
         }
-        self.build_queued
-            .store(old.build_queued.load(Ordering::Acquire), Ordering::Release);
-    }
-
-    /// The builder found nothing left to build on this graph: take it off the build queue — unless
-    /// the published version has a `Building` column again, from a commit made while it was still
-    /// queued, in which case it stays queued and this returns `true`. The caller holds the host's
-    /// read access, which no commit can overlap.
-    #[cfg(feature = "index-falkordb")]
-    pub(crate) fn requeue_if_building(&self) -> bool {
-        self.build_queued.store(false, Ordering::Release);
-        self.graph.borrow().falkordb_index.has_building_columns()
-            && !self.build_queued.swap(true, Ordering::AcqRel)
     }
 
     /// Claim the write slot and fork a private version to build into, in one
@@ -391,11 +372,13 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
-        // A version with a `Building` column queues this graph for the online index builder, unless
-        // it is queued already — which it is while the builder works on it, so the builder's own
-        // commits queue nothing.
+        // A version that starts a build — it has a `Building` column, and the one it replaces has
+        // none — queues this graph for the online index builder. The builder keeps the graph until
+        // no column is `Building`, so a commit made during the build, the builder's own included,
+        // queues nothing.
         #[cfg(feature = "index-falkordb")]
-        let building = new_graph.borrow().falkordb_index.has_building_columns();
+        let starts_build = new_graph.borrow().falkordb_index.has_building_columns()
+            && !self.graph.borrow().falkordb_index.has_building_columns();
 
         #[cfg(feature = "index-falkordb")]
         if data {
@@ -404,12 +387,8 @@ impl MvccGraph {
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
         #[cfg(feature = "index-falkordb")]
-        if building && !self.build_queued.swap(true, Ordering::AcqRel) {
-            match self.build_host.get() {
-                Some(host) => online_build::enqueue(Arc::clone(host)),
-                // No host to build it: nothing is queued.
-                None => self.build_queued.store(false, Ordering::Release),
-            }
+        if starts_build && let Some(host) = self.build_host.get() {
+            online_build::enqueue(Arc::clone(host));
         }
         Ok(())
     }

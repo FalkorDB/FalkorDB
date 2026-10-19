@@ -1809,27 +1809,47 @@ fn only_an_unclaimed_fork_keeps_a_change_log() {
     host.mvcc.write().commit(fork).expect("commits");
 }
 
-/// When a worker finds a graph's build done, the graph leaves the queue — unless a commit made while
-/// it was still queued brought in another `Building` column, which no commit could queue (the graph
-/// was queued already): then it stays queued, or that column would never be built.
+/// A commit queues its graph for the builder only when it starts a build: a `CREATE INDEX` on a
+/// graph with no `Building` column. The builder keeps the graph until its build is done, so a write
+/// during the build, and each build step's own commit, queue nothing; a `CREATE INDEX` after the
+/// build is done queues it again.
+///
+/// The pool is global to the test binary and never started here, so this reads how many graphs
+/// wait in its queue before and after. It is the only unit test that registers a build host.
 #[test]
-fn a_graph_stays_queued_while_it_still_has_a_building_column() {
+fn a_commit_queues_its_graph_only_when_it_starts_a_build() {
     let attr = Arc::new("v".to_string());
-    let (host, label, _) = TestHost::building(&attr, &[1, 2, 3]);
-    // Registered after its CREATE INDEX, so queue it the way a commit would: with a write. Weakly,
-    // as the Redis host is, so the host does not keep itself alive through its graph or the queue.
+    let (g, label, ids) = people_with(&attr, &(1..=25).collect::<Vec<_>>());
+    let host = TestHost::new(g);
+    // Weakly, as the Redis host holds its graph, so the queued host does not keep it alive.
     host.mvcc
         .read()
         .set_build_host(Arc::new(WeakHost(Arc::downgrade(&host))));
-    host.write(|g| create_index_on(g, &label, &Arc::new("w".to_string())));
-    assert!(
-        host.mvcc.read().requeue_if_building(),
-        "columns are still Building, so the graph stays queued"
+    let queued = online_build::pending();
+
+    host.write(|g| create_index_on(g, &label, &attr));
+    assert_eq!(
+        online_build::pending(),
+        queued + 1,
+        "CREATE INDEX starts a build"
+    );
+    host.write(|g| set_attr(g, ids[0], &attr, Value::Int(100)));
+    assert_eq!(
+        online_build::pending(),
+        queued + 1,
+        "a write during the build"
     );
     host.build_to_end();
-    assert!(
-        !host.mvcc.read().requeue_if_building(),
-        "nothing left to build"
+    assert_eq!(
+        online_build::pending(),
+        queued + 1,
+        "the build steps' own commits, the last one included"
+    );
+    host.write(|g| create_index_on(g, &label, &Arc::new("w".to_string())));
+    assert_eq!(
+        online_build::pending(),
+        queued + 2,
+        "a CREATE INDEX after the build is done starts another"
     );
 }
 

@@ -18,11 +18,14 @@
 //! or re-created meanwhile costs a turn its batch.
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
-//! has a `Building` column and the graph is not queued yet, which covers every way a
-//! `CREATE INDEX` can arrive. A worker takes the graph with the earliest start time, runs one turn,
-//! and queues it again — not before as long as the turn took — until it has no `Building` column
-//! left. A graph is either queued or on one worker, never both, so it never has two turns at once.
-//! The work per `CREATE INDEX` is the same however many graphs there are.
+//! starts a build — it has a `Building` column, and the version it replaces has none — which covers
+//! every way a `CREATE INDEX` can arrive. A worker takes the graph with the earliest start time,
+//! runs one turn, and queues it again — not before as long as the turn took — until it has no
+//! `Building` column left, so the commits made meanwhile need not queue it. A graph is therefore
+//! queued once per build and has one turn at a time, unless every building column is dropped and a
+//! new one created while a turn runs: that commit starts a build and queues the graph a second
+//! time, and two turns at once publish nothing wrong ([`run_turn`]). The work per `CREATE INDEX`
+//! is the same however many graphs there are.
 
 use std::cmp::{Ordering as CmpOrdering, Reverse};
 use std::collections::BinaryHeap;
@@ -357,14 +360,8 @@ fn work() {
                 eprintln!("index build: a build step failed; it will be retried");
                 Some(FAILED_RETRY)
             }
-            // Done — unless a `Building` column came in while the graph was still queued.
-            Turn::Committed { more: false } | Turn::Idle => {
-                let mut more = false;
-                graph
-                    .host
-                    .read(&mut |mvcc| more = mvcc.requeue_if_building());
-                more.then_some(Duration::ZERO)
-            }
+            // Done: a commit that starts another build queues the graph again.
+            Turn::Committed { more: false } | Turn::Idle => None,
             Turn::Gone => None,
         };
 
