@@ -154,6 +154,7 @@ class testModuleArgs():
         it (its list mirrors C's), so it is read through Redis's CONFIG."""
         env, _ = Env(moduleArgs="index_build_thread_count 3")
         conn = env.getConnection()
-        reply = conn.execute_command("CONFIG", "GET", "graph.INDEX_BUILD_THREAD_COUNT")
-        env.assertEqual([str(v if isinstance(v, str) else v.decode()) for v in reply],
-                        ["graph.INDEX_BUILD_THREAD_COUNT", "3"])
+        reply = conn.config_get("graph.INDEX_BUILD_THREAD_COUNT")
+        text = lambda s: s if isinstance(s, str) else s.decode()
+        env.assertEqual({text(k): text(v) for k, v in reply.items()},
+                        {"graph.INDEX_BUILD_THREAD_COUNT": "3"})
