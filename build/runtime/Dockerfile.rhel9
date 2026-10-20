@@ -181,11 +181,18 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #   shadow-utils    : groupadd/useradd for the falkordb user
 # falkordb is uid/gid 999, as in the Debian image, so a data volume moves
 # between the two images without an ownership change.
+# Nothing here gains privileges: run.sh starts as root and drops to falkordb.
+# The setuid/setgid bits util-linux, shadow-utils and PAM install (su, mount,
+# newgrp, unix_chkpwd...) and the file capabilities of newuidmap/newgidmap are
+# removed, so a process in the container cannot use those programs to run
+# code, or their parsers, with more privileges than its own.
 RUN microdnf update -y && \
     microdnf install -y --setopt=install_weak_deps=0 \
       libstdc++ openssl-libs openssl bash findutils util-linux shadow-utils && \
     groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
-    microdnf clean all
+    microdnf clean all && \
+    find / -xdev -type f -perm /6000 -exec chmod ug-s {} + && \
+    getcap -r / 2>/dev/null | while read -r f _; do setcap -r "$f"; done
 
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
 COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
@@ -220,7 +227,9 @@ RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so /usr/local/bin/redis-s
     redis-sentinel --version && \
     redis-check-rdb --version && \
     redis-check-aof --version && \
-    test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"
+    test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999" && \
+    setid="$(find / -xdev -type f -perm /6000; getcap -r / 2>/dev/null)" && \
+    if [ -n "$setid" ]; then echo "FAIL: setuid, setgid or capability-carrying files:"; echo "$setid"; exit 1; fi
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
