@@ -229,6 +229,13 @@ records one more pre-#2950 crash found while re-proving (in-range week at chrono
 rows re-pinned (+20 after `check_range`, +28 after `date_from_components`, +29 after
 `parse_week_date`); `check_range` row added (PROVEN).
 
+## Re-targeted to b6567cb97
+
+#2954 (closes #2928) renames `Value::name` for vectors from `VecF32` to `Vectorf32` (C's
+`SIType_ToString`); `SV.name` (the spatial.rs "Type mismatch … but was <name>" errors)
+updated. Nothing else modelled here changed; value.rs rows re-pinned (+2 after
+`Value::name`).
+
 ## Wave 6 (`VecDistance`)
 vec_distance.rs PROVEN against the exact simsimd 6.5.16 wrapper (length check, then the
 C kernel as a parameter): `euclidean = sqrt ∘ l2sq`, `inner_product = -dot`,

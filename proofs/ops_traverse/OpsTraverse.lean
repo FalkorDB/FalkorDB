@@ -19,7 +19,11 @@ import OpsTraverse.SlotFeed
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
-**Re-targeted to main 737dfb5da** (from 289c201fe): no change to the traversal
+**Re-targeted to main b6567cb97** (from 737dfb5da): no change to the traversal
+operators. #2954 grew the `ListComprehension` arm of `eval.rs`, shifting the
+`eval_shortest_path` / `bfs_shortest_path` rows by +27 (COVERAGE.tsv re-pinned).
+
+Earlier: re-targeted to main 737dfb5da (from 289c201fe): no change to the traversal
 operators. #2899 (`e63165cb5`) rewrote `RangeIter` in `eval.rs`, shifting the
 `NeighborIter` / `shortestPath` rows by +10 (COVERAGE.tsv re-pinned); #2950
 (temporal.rs) and #3041 (parser) touch nothing here.

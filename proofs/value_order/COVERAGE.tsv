@@ -43,28 +43,28 @@ graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1308	PROVEN	Glue.ValueType
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1315	NOT COVERED	type test; not modelled
 graph/src/runtime/value.rs	ValueGetType::get_type	1357	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
 graph/src/runtime/value.rs	ValueGetType::get_type	1361	NOT COVERED	type reflection; not modelled
-graph/src/runtime/value.rs	Value::name	1385	PROVEN	Glue.W.name: name_eq_iff_order_eq (name is a bijective function of the variant)
-graph/src/runtime/value.rs	Value::to_json_string	1407	PROVEN	Json.toJsonString: toJsonString_eq
-graph/src/runtime/value.rs	fmt	1417	PROVEN	Json.jsonWrapperFmt: jsonWrapperFmt_eq
-graph/src/runtime/value.rs	Value::compare_list	1432	PROVEN	St/step/listLoop/listFinish: list_fst_eq_lex, lex_swap, lex_le_trans, sane_list_le_trans, sane_list_swap (flag component only via firstDiff)
-graph/src/runtime/value.rs	Value::compare_map	1505	PROVEN	keysCmp/mapVals: map_order_not_transitive, map_order_not_transitive_null (compare_value facts; ORDER BY panic fixed by #2912), map_neq_true (<> fixed by #2917; history pre2917_map_neq_both_false); maps modelled with pre-sorted unique keys
-graph/src/runtime/value.rs	Value::is_never_equal	1635	NOT COVERED	self-comparison predicate added after the model; not modelled
-graph/src/runtime/value.rs	Value::may_fail_self_match	1658	NOT COVERED	pre-filter added after the model; not modelled
-graph/src/runtime/value.rs	DisplayJson::fmt_json	1686	PROVEN	Json.fmtS/fmtJson (all arms; f64/f32 Display, escape, runtime accessors in JsonEnv structure): fmt_float_nonfinite, fmt_float_finite, fmt_list, fmt_node, fmt_rel, fmtS_entityFree
-graph/src/runtime/value.rs	write_json_string	1808	PROVEN	Json.writeJsonString: writeJsonString_plain
-graph/src/runtime/value.rs	write_node_json	1820	PROVEN	Json.writeNodeJson: writeNodeJson_includeType, writeNodeJson_depth
-graph/src/runtime/value.rs	Contains::contains	1860	PROVEN	Glue.Contains class / containsImpl: containsImpl_false
-graph/src/runtime/value.rs	Contains::contains	1867	NOT COVERED	IN-list membership; not modelled here
-graph/src/runtime/value.rs	PartialOrd::partial_cmp	1892	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
-graph/src/runtime/value.rs	compare_floats	1905	PROVEN	cmpF: nan_breaks_antisymmetry, pre2912_floatLane_eq_cmpV (history); extended F (NaN payload, -0.0, fractions, ±inf) via fpcmp
-graph/src/runtime/value.rs	compare_vecf32	1993	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
-graph/src/runtime/value.rs	first_difference	1997	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
-graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2035	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
-graph/src/runtime/value.rs	ValuesDeduper::is_seen	2045	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
-graph/src/runtime/value.rs	ValuesDeduper::has_hash	2056	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2063	NOT COVERED	hash-set membership not modelled (only the hash stream is)
-graph/src/runtime/value.rs	Encode::encode	2075	NOT COVERED	serialisation; outside the order model
-graph/src/runtime/value.rs	Decode::decode	2161	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	Value::name	1387	PROVEN	Glue.W.name (Edge/Vectorf32 since #2954): name_eq_iff_order_eq (name is a bijective function of the variant)
+graph/src/runtime/value.rs	Value::to_json_string	1409	PROVEN	Json.toJsonString: toJsonString_eq
+graph/src/runtime/value.rs	fmt	1419	PROVEN	Json.jsonWrapperFmt: jsonWrapperFmt_eq
+graph/src/runtime/value.rs	Value::compare_list	1434	PROVEN	St/step/listLoop/listFinish: list_fst_eq_lex, lex_swap, lex_le_trans, sane_list_le_trans, sane_list_swap (flag component only via firstDiff)
+graph/src/runtime/value.rs	Value::compare_map	1507	PROVEN	keysCmp/mapVals: map_order_not_transitive, map_order_not_transitive_null (compare_value facts; ORDER BY panic fixed by #2912), map_neq_true (<> fixed by #2917; history pre2917_map_neq_both_false); maps modelled with pre-sorted unique keys
+graph/src/runtime/value.rs	Value::is_never_equal	1637	NOT COVERED	self-comparison predicate added after the model; not modelled
+graph/src/runtime/value.rs	Value::may_fail_self_match	1660	NOT COVERED	pre-filter added after the model; not modelled
+graph/src/runtime/value.rs	DisplayJson::fmt_json	1688	PROVEN	Json.fmtS/fmtJson (all arms; f64/f32 Display, escape, runtime accessors in JsonEnv structure): fmt_float_nonfinite, fmt_float_finite, fmt_list, fmt_node, fmt_rel, fmtS_entityFree
+graph/src/runtime/value.rs	write_json_string	1810	PROVEN	Json.writeJsonString: writeJsonString_plain
+graph/src/runtime/value.rs	write_node_json	1822	PROVEN	Json.writeNodeJson: writeNodeJson_includeType, writeNodeJson_depth
+graph/src/runtime/value.rs	Contains::contains	1862	PROVEN	Glue.Contains class / containsImpl: containsImpl_false
+graph/src/runtime/value.rs	Contains::contains	1869	NOT COVERED	IN-list membership; not modelled here
+graph/src/runtime/value.rs	PartialOrd::partial_cmp	1894	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
+graph/src/runtime/value.rs	compare_floats	1907	PROVEN	cmpF: nan_breaks_antisymmetry, pre2912_floatLane_eq_cmpV (history); extended F (NaN payload, -0.0, fractions, ±inf) via fpcmp
+graph/src/runtime/value.rs	compare_vecf32	1995	MODELLED	cmpVec (length, then first_difference): vec_zero_eq_but_hash_differs; proven in value_math (chunked_eq_firstDiff)
+graph/src/runtime/value.rs	first_difference	1999	MODELLED	firstDifference: vec_zero_eq_but_hash_differs; proven in value_math
+graph/src/runtime/value.rs	ValuesDeduper::with_capacity	2037	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
+graph/src/runtime/value.rs	ValuesDeduper::is_seen	2047	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
+graph/src/runtime/value.rs	ValuesDeduper::has_hash	2058	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	2065	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	Encode::encode	2077	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	Decode::decode	2163	NOT COVERED	serialisation; outside the order model
 graph/src/runtime/ops/sort.rs	OrderedKey::cmp_key	76	PROVEN	Main.cmpKey (sort_cmp, DESC = swap; #2912 b033aecc6): Main.cmpKey_total (total preorder either direction); history pre2912_sortCmp_not_antisymmetric/pre2912_sortCmp_not_transitive (compare_value comparator)
 graph/src/runtime/batch.rs	Column::compare_at	399	PROVEN	Main.compareAt (Ints cmpI, Floats sort_cmp_f64, Values/ids sort_cmp): Main.compareAt_eq_scMain (every lane = sort_cmp on get), Main.scMain_total; history pre2912_floatLane_eq_cmpV
 graph/src/runtime/ops/distinct.rs	DistinctOp::next	62	PROVEN	rowHash: fx_row_collision, fx_collision_general (bug: second colliding row dropped); set insert not modelled
@@ -76,11 +76,11 @@ graph/src/runtime/vectorized.rs	compare_f64_column	162	NOT COVERED	typed-column 
 graph/src/runtime/vectorized.rs	compare_value_column	229	NOT COVERED	wrapper over compare_value_column_3vl; not modelled
 graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	evalEq/evalNeq (Neq: null->null, NaN/disjoint->true, #2917): map_neq_true, evalNeq_not_evalEq (<> = not =); history pre2917_map_neq_both_false; Lt/Le/Gt/Ge arms not modelled
 graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	NOT COVERED	column loop over compare_values; loop not modelled
-graph/src/runtime/value.rs	Value::sort_cmp	1559	PROVEN	SC.sc (generic in sort_cmp_f32) = Main.scMain: Main.scMain_total (total preorder on every wf value, nested lists/maps/vectors/points), Main.scMain_fixes_2891, SC.sc_laws
-graph/src/runtime/value.rs	Value::sort_cmp_map	1596	PROVEN	SC.sc map arm (len, sorted keys, values; mapC): SC.map_swap, SC.map_trans, Main.scMain_total, Main.main_hash_consistent
-graph/src/runtime/value.rs	sort_cmp_f64	1921	PROVEN	SC.scF64: SC.scF64_key (NaN on top, -0.0 = 0.0), SC.scF64_lw, SC.scF64_refl
-graph/src/runtime/value.rs	sort_cmp_f32	1935	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
-graph/src/runtime/value.rs	f32_hash_bits	1949	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
-graph/src/runtime/value.rs	sort_cmp_int_float	1961	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
+graph/src/runtime/value.rs	Value::sort_cmp	1561	PROVEN	SC.sc (generic in sort_cmp_f32) = Main.scMain: Main.scMain_total (total preorder on every wf value, nested lists/maps/vectors/points), Main.scMain_fixes_2891, SC.sc_laws
+graph/src/runtime/value.rs	Value::sort_cmp_map	1598	PROVEN	SC.sc map arm (len, sorted keys, values; mapC): SC.map_swap, SC.map_trans, Main.scMain_total, Main.main_hash_consistent
+graph/src/runtime/value.rs	sort_cmp_f64	1923	PROVEN	SC.scF64: SC.scF64_key (NaN on top, -0.0 = 0.0), SC.scF64_lw, SC.scF64_refl
+graph/src/runtime/value.rs	sort_cmp_f32	1937	PROVEN	Main.scF32: Main.scF32_key (-0.0 < 0.0, NaNs equal on top), Main.scF32_lw, Main.signed_zeros_apart, signed_zeros_apart_nested; history pre14e341_vec_zero_eq_but_hash_differs
+graph/src/runtime/value.rs	f32_hash_bits	1951	PROVEN	f32HashBits (Model): Main.f32HashBits_of_eq, Main.main_nans_one_key
+graph/src/runtime/value.rs	sort_cmp_int_float	1963	PROVEN	SC.scIntFloat: SC.scIntFloat_key (exact, no rounding, every i64)
 graph/src/runtime/batch.rs	Batch::compare_rows_at	1281	PROVEN	Main.compareRowsAt: Main.compareRowsAt_eq_scMain (Unbound ties, else sort_cmp)
 graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Main.listSort (sort_by(Value::sort_cmp)): Main.listSort_perm, Main.scMain_total (total order: W2-strlist-1 panic fixed by #2912)

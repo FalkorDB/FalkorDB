@@ -31,7 +31,8 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `pre2899_rangeIterStepField` | `RangeIter`'s step field before #2899 (`step.unsigned_abs() as i64`) |
 | `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1616-1660`; loop `eval.rs:979-1016` |
 | `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1762-1785` (via `list_contains`, `eval.rs:1708`) |
-| `comprehensionRust` / `comprehensionSpec` | `ListComprehension` via `eval_iter_expr` fallback, `eval.rs:1018-1033,1234-1243` |
+| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1040-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
+| `pre2954_comprehensionRust` | the same arm before #2954 (every source through `eval_iter_expr`'s UNWIND fallback) |
 | `reduceList` | `ExprIR::Reduce`, `eval.rs:1035-1061` |
 | `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
 | `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs:51-101`; C `AR_SUBSTRING` |
@@ -114,10 +115,14 @@ E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
    `eval.rs:1302`: `replaceRegEx('abc','b','$0x')` → `'ac'`, `'[$0]'` → `'a[b]c'`;
    C copies literally: `'a$0xc'`, `'a[$0]c'`. Test `bug_replace_regex_dollar_expansion`.
    Fix: `regex::NoExpand(repl)`.
-F. **List comprehension over null / scalar** — `eval.rs:1018-1033` via
-   `eval_iter_expr`'s UNWIND fallback (`eval.rs:1234-1243`): `[x IN null | x]` → `[]`
-   (C `null`), `[x IN 5 | x]` → `[5]` (C type error). Reduce and quantifiers
-   already do it right. Test `bug_list_comprehension_null_and_scalar_source`.
+F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
+   #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
+   `[x IN null | x]` → `[]` (C `null`), `[x IN 5 | x]` → `[5]` (C type error);
+   counterexample kept as `pre2954_comprehension_diverges`. Main streams only a list
+   literal or `range(..)` and evaluates any other source with `eval_node`: List
+   iterates, Null gives null, anything else errors "Type mismatch: expected List or
+   Null but was <name>" (`comprehension_eq_spec`, `comprehension_null`,
+   `comprehension_scalar_err`, `comprehensionSourceCheck_err` in `Entity.lean`).
 
 ## Divergences recorded, not bugs (or C is wrong)
 
@@ -190,6 +195,14 @@ new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eage
 no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
 the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
 (temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
+Re-targeted to b6567cb97: #2954 (closes #2928) fixes bug F — `ListComprehension` now
+evaluates a non-literal, non-`range` source with `eval_node` (null → null, scalar → type
+error). Old model kept as `pre2954_comprehensionRust` / `pre2954_comprehension_diverges`;
+new `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
+`comprehension_scalar_err`, `comprehension_literal_range_unchanged`. `Value::name` now
+spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
+`typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
+after `type_of`), value.rs (+2 after `Value::name`).
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/
@@ -802,22 +815,44 @@ theorem contains_nil (cmp : α → Ordering × Dis) : contains cmp [] = .f := rf
 
 /-! ## Comprehension / reduce / quantifier sources
 
-`[x IN src ...]` goes through `eval_iter_expr` (`eval.rs:1178`), whose fallback
-arm (`eval.rs:1234-1243`) is UNWIND's: `Null` → no rows, scalar → one row.
-Quantifiers (`eval.rs:1005-1012`) and `reduce` (`eval.rs:1053-1059`) instead
-return `Null` for a null source and raise for a scalar, as does C. -/
+Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1040-1085`) streams a list literal or
+`range(..)` through `eval_iter_expr` (`eval.rs:1226`) and evaluates any other source with
+`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error. Before,
+every source went through `eval_iter_expr`, whose fallback arm is UNWIND's (`Null` → no
+rows, scalar → one row). Quantifiers (`eval.rs:1005-1012`) and `reduce` already returned
+`Null` for a null source and raised for a scalar, as does C. -/
 
 inductive Src where | null | scalar (i : Int) | list (l : List Int)
   deriving DecidableEq, Repr
 
+/-- The syntactic shape of a comprehension source after #2954: a list literal or a
+`range(..)` call (both always yield a list), or any other expression, given by the
+value `eval_node` returns. -/
+inductive CSrc where | literal (l : List Int) | range (l : List Int) | other (v : Src)
+  deriving DecidableEq, Repr
+
+/-- The value a source expression denotes. -/
+def CSrc.val : CSrc → Src
+  | .literal l | .range l => .list l
+  | .other v => v
+
 inductive COut where | null | list (l : List Int) | err
   deriving DecidableEq, Repr
 
-/-- `ListComprehension` with no WHERE and identity projection. -/
-def comprehensionRust : Src → COut
+/-- `ListComprehension` before #2954 (no WHERE, identity projection): every source
+through `eval_iter_expr`'s UNWIND fallback. Historical. -/
+def pre2954_comprehensionRust : Src → COut
   | .null => .list []
   | .scalar i => .list [i]
   | .list l => .list l
+
+/-- `ListComprehension` on main (no WHERE, identity projection): literal / `range`
+stream, any other source is matched on its evaluated value. -/
+def comprehensionRust : CSrc → COut
+  | .literal l | .range l => .list l
+  | .other .null => .null
+  | .other (.scalar _) => .err
+  | .other (.list l) => .list l
 
 /-- C / openCypher, and Rust's own `reduce`/quantifier arms. -/
 def comprehensionSpec : Src → COut
@@ -825,15 +860,35 @@ def comprehensionSpec : Src → COut
   | .scalar _ => .err
   | .list l => .list l
 
-/-- **Bug F.** Live: `[x IN null | x]` → Rust `[]`, C `null`;
-`[x IN 5 | x]` → Rust `[5]`, C type error. Repro:
-`bug_list_comprehension_null_and_scalar_source`. -/
-theorem comprehension_diverges :
-    comprehensionRust .null ≠ comprehensionSpec .null ∧
-    comprehensionRust (.scalar 5) ≠ comprehensionSpec (.scalar 5) := by decide
+/-- **Bug F (fixed by #2954).** Was: `[x IN null | x]` → Rust `[]`, C `null`;
+`[x IN 5 | x]` → Rust `[5]`, C type error. -/
+theorem pre2954_comprehension_diverges :
+    pre2954_comprehensionRust .null ≠ comprehensionSpec .null ∧
+    pre2954_comprehensionRust (.scalar 5) ≠ comprehensionSpec (.scalar 5) := by decide
+
+/-- Main agrees with C / openCypher on every source. -/
+theorem comprehension_eq_spec (s : CSrc) : comprehensionRust s = comprehensionSpec s.val := by
+  cases s with
+  | literal l => rfl
+  | range l => rfl
+  | other v => cases v <;> rfl
+
+/-- `[x IN null | x]` is `null`. -/
+theorem comprehension_null : comprehensionRust (.other .null) = .null := rfl
+
+/-- `[x IN 5 | x]` is a type error. -/
+theorem comprehension_scalar_err (i : Int) : comprehensionRust (.other (.scalar i)) = .err := rfl
+
+/-- List-valued sources are unchanged by #2954: a literal, a `range`, or any expression
+evaluating to a list gives what the pre-#2954 code gave. -/
+theorem comprehension_literal_range_unchanged (l : List Int) :
+    comprehensionRust (.literal l) = pre2954_comprehensionRust (.list l) ∧
+    comprehensionRust (.range l) = pre2954_comprehensionRust (.list l) ∧
+    comprehensionRust (.other (.list l)) = pre2954_comprehensionRust (.list l) :=
+  ⟨rfl, rfl, rfl⟩
 
 theorem comprehension_agrees_on_lists (l : List Int) :
-    comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
+    pre2954_comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
 
 /-- `reduce(acc = init, x IN l | body)` (`eval.rs:1035-1061`) is `foldl`. -/
 def reduceList (body : β → α → β) (init : β) (l : List α) : β := l.foldl body init

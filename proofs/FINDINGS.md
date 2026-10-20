@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-20): proofs cite `origin/main` @ 737dfb5da.
+Current state (2026-10-20): proofs cite `origin/main` @ b6567cb97.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -166,7 +166,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-strlist-3**: `=~` matches substrings: `'abc' =~ 'b'` is true, where openCypher says false (`internal.rs:112`, `eval.rs:1274`).
 - **W2-strlist-4**: `toLower`/`toUpper` reject valid strings that contain U+FFFD (`string.rs:148`, `:170`). C ✓. **Fixed by #2953 (e7eb853b1)**: `toLower_total`, `case_agrees_C_if_simple`; history `pre2953_toLower_rejects_valid`.
 - **W2-strlist-5**: `string.replaceRegEx` expands `$` in the replacement (`string.rs:469`). C ✓. Fix: `NoExpand`.
-- **W2-strlist-6**: a list comprehension over null gives [] (C: null); over a scalar it gives `[5]` (C: type error) (`eval.rs:1018`).
+- **W2-strlist-6** — FIXED by #2954 (b6567cb97, closes #2928): a list comprehension over null gave [] (C: null); over a scalar it gave `[5]` (C: type error). History: `pre2954_comprehension_diverges`; main: `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err` (`eval.rs:1040-1085`).
 - **W2-temporal-4**: antipodal `distance()` gives NaN, because `(1-a).sqrt()` is taken with `a > 1` (`value.rs:137`). C ✓. **Fixed by #2983 (86dcd5a11; closes #2931)**: `a` clamped to [0,1]; `distance_finite` (under the stated `NanLaws` float facts); history `pre2983_distance_nan`.
 - **W2-temporal-5**: `date('2020-03-31') - duration({months:1})` gives 02-29, while `+ duration({months:-1})` gives 03-02 (`value.rs:746`). C gives 03-02. **Fixed by #2984 (5986f4df1; closes #2932)**: `-` and `+` share `shift_months`; `sub_eq_add_neg_months`; history `pre2984_sub_vs_add_neg`.
 - **W2-temporal-6**: Time + duration is not reduced mod a day (`value.rs:1027`). C ✓. **Fixed by #2985 (289c201fe; closes #2933)**: `timeAddDur_eq_tod`, `time_normalised`, `add_time_dur_in_day`; history `pre2985_time_not_normalised`.
@@ -341,6 +341,7 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 - #3382 (idx): db.idx.vector.queryNodes answers from a half-built index (0 rows, then 3, while UNDER CONSTRUCTION); Indexer::vector_query never checks is_operational, while C refuses until OPERATIONAL. Lean IndexLayer.Meta.Ixr.bug3382_vector_query_ignores_operational; property VectorQueryRequiresOperational.
 
 ### Merged
+- 2026-10-20 on main (now b6567cb97): #2954 (list comprehension over null is null, over a scalar a type error; closes #2928; fixes W2-strlist-6; `Value::name` spells Edge/Vectorf32 as C and `typeOf` = `name`). Proofs re-targeted: 35 projects green; 2601 PROVEN + 23 CONDITIONAL of 2624 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
 - 2026-10-20 on main (now 737dfb5da): #2899 (UNWIND range() never overflows; closes #2894), #2950 (temporal constructors never panic; closes #2930), #3041 (a slice bound that fails to parse is an error; closes #3036). Proofs re-targeted: 35 projects green; 2601 PROVEN + 23 CONDITIONAL of 2624 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: the `range()` overflow (the lazy iterator now equals the eager `range()` list, `rangeIter_correct`); W2-temporal-1..3 (constructors total); the slice-bound fallback (`slice_bound_error_reported`).
   - #3104 gate theorem: its `Oracle.Bal` premise was false only because of the slice-bound bug (`pre3041_gate_changes_result`). With #3041 the counterexample is gone and `bounded_bal` checks the premise for every expression input up to length 3, but it is not proven for the whole expression parser, so `listLitP_eq_ungated` stays conditional on it (and on `MemoSound`).

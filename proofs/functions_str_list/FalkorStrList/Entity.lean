@@ -114,7 +114,8 @@ def labels (r : RT) : List EV → Res
   | .null :: _ => .ok .null
   | _ => .unreachable
 
-/-- `typeOf` (entity.rs:56). Note `Edge`/`Vectorf32`, unlike `Value::name`. -/
+/-- `typeOf` (entity.rs:56). Since #2954 (b6567cb97) it returns `Value::name`
+(`typeName_eq_valueName`); both spell `Edge`/`Vectorf32` as C's `SIType_ToString`. -/
 def typeName : EV → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
@@ -125,12 +126,46 @@ def typeOf : List EV → Res
   | v :: _ => .ok (.str (typeName v))
   | [] => .unreachable
 
-/-- `Value::name` (value.rs:1352). Note `Relationship`/`VecF32`, unlike `typeOf`. -/
+/-- `Value::name` (value.rs:1387). Since #2954 (b6567cb97) it spells `Relationship` as
+`Edge` and `VecF32` as `Vectorf32` (C's `SIType_ToString`); before, it printed
+`Relationship`/`VecF32` (`pre2954_valueName`). -/
 def valueName : EV → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
-  | .rel _ => "Relationship" | .path _ => "Path" | .vecf32 => "VecF32" | .point => "Point"
+  | .rel _ => "Edge" | .path _ => "Path" | .vecf32 => "Vectorf32" | .point => "Point"
   | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
+
+/-- `Value::name` before #2954. Historical. -/
+def pre2954_valueName : EV → String
+  | .rel _ => "Relationship" | .vecf32 => "VecF32" | v => valueName v
+
+/-- `typeOf()` is `Value::name` (entity.rs:57 since #2954). -/
+theorem typeName_eq_valueName : typeName = valueName := by
+  funext v; cases v <;> rfl
+
+/-- The renames of #2954: only `Relationship` and `VecF32` changed. -/
+theorem pre2954_valueName_renames (e : Nat) :
+    pre2954_valueName (.rel e) = "Relationship" ∧ valueName (.rel e) = "Edge" ∧
+    pre2954_valueName .vecf32 = "VecF32" ∧ valueName .vecf32 = "Vectorf32" :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- The source check `ExprIR::ListComprehension` applies (eval.rs:1055-1069, #2954) to a
+source that is neither a list literal nor `range(..)`: a list is iterated, null gives
+`null` (`none`), anything else is a type error naming `Value::name`. -/
+def comprehensionSourceCheck : EV → Except String (Option (List EV))
+  | .list l => .ok (some l)
+  | .null => .ok none
+  | v => .error s!"Type mismatch: expected List or Null but was {valueName v}"
+
+theorem comprehensionSourceCheck_err (v : EV) (hl : ∀ l, v ≠ .list l) (hn : v ≠ .null) :
+    comprehensionSourceCheck v =
+      .error s!"Type mismatch: expected List or Null but was {valueName v}" := by
+  cases v <;> simp_all [comprehensionSourceCheck]
+
+example : comprehensionSourceCheck (.int 5) =
+    .error "Type mismatch: expected List or Null but was Integer" := rfl
+example (e : Nat) : comprehensionSourceCheck (.rel e) =
+    .error "Type mismatch: expected List or Null but was Edge" := rfl
 
 /-- `format!("{}", v.get_type())`: `ValueGetType::get_type` (value.rs:1328) then
 `Display for Type` (functions/mod.rs:610). `List(_)` prints `List`, `Relationship` prints

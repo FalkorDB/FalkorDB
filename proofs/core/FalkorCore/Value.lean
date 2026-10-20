@@ -29,11 +29,11 @@ inductive V (F : Type) where
 
 variable {F : Type}
 
-/-- `Value::name` (value.rs:1352). -/
+/-- `Value::name` (value.rs:1387; C's `SIType_ToString` spellings since #2954). -/
 def V.name : V F → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
-  | .rel _ => "Relationship" | .path _ => "Path" | .vec _ => "VecF32" | .point .. => "Point"
+  | .rel _ => "Edge" | .path _ => "Path" | .vec _ => "Vectorf32" | .point .. => "Point"
   | .datetime _ => "Datetime" | .date _ => "Date" | .time _ => "Time"
   | .duration _ => "Duration"
 

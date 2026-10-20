@@ -12,6 +12,12 @@ date ± duration month shift into a new `shift_months` and #3007 edits only
 `percentile_batch` (both outside this model; earlier #2983/#2985 edited
 `Point::distance` and `Time ± Duration`); COVERAGE.tsv line numbers re-pinned.
 
+**Re-targeted to main b6567cb97**: #2954 (closes #2928) renames two `Value::name`
+spellings to C's `SIType_ToString` — `Relationship` → `Edge`, `VecF32` → `Vectorf32` —
+and `typeOf()` now returns `name()`. `W.name` updated; `name_eq_iff_order_eq` still
+holds (names stay distinct per variant). No change to comparison, equality or hashing;
+value.rs rows re-pinned (+2 after `Value::name`).
+
 A model of FalkorDB-rs's value comparison (`Value::compare_value`), equality
 (`PartialEq for Value`), hashing (`Hash for Value` fed to `FxHasher`) and the
 comparators built on them (ORDER BY, DISTINCT, grouping, `=`/`<>`), with
@@ -112,7 +118,7 @@ fixed by #2917 (7fdf06a0e); 5 is harmless since `GroupKey::eq` is `sort_cmp`; 7 
 
 | here | there |
 | --- | --- |
-| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs:180, :221, :1177, :1328, :1282, :1352 |
+| `Glue.W` (16 variants), `W.clone`, `W.order`, `W.getType`, `W.valueOfType`, `W.name` | value.rs:180, :221, :1177, :1328, :1282, :1387 |
 | `DeletedNode.new`, `DeletedRelationship.new` | value.rs:69, :87 |
 | classes `OrderedEnum`, `CompareValue`, `ValueTypeOf`, `ValueGetType`, `Contains` | trait decls value.rs:1174, :1209, :1275, :1324, :1756 |
 | `withCapacity`, `checkAndInsert` | value.rs:1859, :1887 |

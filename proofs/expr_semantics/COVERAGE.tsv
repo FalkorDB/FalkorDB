@@ -47,22 +47,22 @@ graph/src/runtime/eval.rs	ExprEval::eval_operand	326	PROVEN	Eval.evalOperand: ev
 graph/src/runtime/eval.rs	ExprEval::eval_node	340	PROVEN	Eval.evalNode (all fast-path arms; compound = parameter): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq; arithmetic arms vArith/evalCmp (arith_agrees, vec_cmp_*)
 graph/src/runtime/eval.rs	ExprEval::eval_case	495	PROVEN	scalarCase/caseMatchScalar: case_agrees, case_match_agrees
 graph/src/runtime/eval.rs	ExprEval::eval_compound	535	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit, and_or_mismatch_names_type — #3294 message names the operand type), Xor (xor_kleene, xor_mismatch_names_type), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold, #2904: pow_propagates_error, pow_binary_eq_spec, pow_agrees_without_errors; history pre2904_pow_drops_error), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled; aggregate-finalizer arm (#2951 push-not-return) modelled in proofs/ops_aggregate
-graph/src/runtime/eval.rs	ExprEval::eval_batch	1123	CONDITIONAL	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation) || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
-graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1139	CONDITIONAL	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
-graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1169	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
-graph/src/runtime/eval.rs	ExprEval::eval_iter_expr	1199	PROVEN	EvalMore.evalIterExpr: evalIter_cases, evalIter_list; range arm wired to RangeIter: evalIter_range_is_iter (rangeIter_correct)
-graph/src/runtime/eval.rs	ExprEval::eval_compiled_regex	1275	PROVEN	EvalMore.evalCompiledRegex (Regex structure): compiledRegex_spec
-graph/src/runtime/eval.rs	check_string_or_null	1282	PROVEN	EvalMore.checkStringOrNull: checkStringOrNull_ok
-graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1336	PROVEN	BFS.evalShortestPath: shortestPath_args, shortestPath_self, buildPath_length
-graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1421	PROVEN	BFS.search/level/scan/chain/bfsNodes: bfs_sound (meets ⇒ no expect-panic, src→dst walk over followed edges), search_sound, level_inv, scan_inv, chain_sound, chain_total
-graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1550	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup
-graph/src/runtime/eval.rs	eval_quantifier	1637	NOT COVERED	list quantifiers; lists out of scope
-graph/src/runtime/eval.rs	all_equals	1686	PROVEN	evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive
-graph/src/runtime/eval.rs	all_not_equals	1709	PROVEN	evalCmp Neq (#2917: null->null, NaN/disjoint->true): vec_cmp_generic, neq_eq_not_eq (<> = NOT =)
-graph/src/runtime/eval.rs	list_contains	1733	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
-graph/src/runtime/eval.rs	get_elements	1747	NOT COVERED	list slicing; lists out of scope
-graph/src/runtime/eval.rs	logical_xor	1780	PROVEN	scalarXor: xor_kleene
-graph/src/runtime/eval.rs	evaluate_param	1787	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1150	CONDITIONAL	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation) || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1166	CONDITIONAL	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
+graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1196	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
+graph/src/runtime/eval.rs	ExprEval::eval_iter_expr	1226	PROVEN	EvalMore.evalIterExpr: evalIter_cases, evalIter_list; range arm wired to RangeIter: evalIter_range_is_iter (rangeIter_correct)
+graph/src/runtime/eval.rs	ExprEval::eval_compiled_regex	1302	PROVEN	EvalMore.evalCompiledRegex (Regex structure): compiledRegex_spec
+graph/src/runtime/eval.rs	check_string_or_null	1309	PROVEN	EvalMore.checkStringOrNull: checkStringOrNull_ok
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1363	PROVEN	BFS.evalShortestPath: shortestPath_args, shortestPath_self, buildPath_length
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1448	PROVEN	BFS.search/level/scan/chain/bfsNodes: bfs_sound (meets ⇒ no expect-panic, src→dst walk over followed edges), search_sound, level_inv, scan_inv, chain_sound, chain_total
+graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1577	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup
+graph/src/runtime/eval.rs	eval_quantifier	1664	NOT COVERED	list quantifiers; lists out of scope
+graph/src/runtime/eval.rs	all_equals	1713	PROVEN	evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive
+graph/src/runtime/eval.rs	all_not_equals	1736	PROVEN	evalCmp Neq (#2917: null->null, NaN/disjoint->true): vec_cmp_generic, neq_eq_not_eq (<> = NOT =)
+graph/src/runtime/eval.rs	list_contains	1760	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
+graph/src/runtime/eval.rs	get_elements	1774	NOT COVERED	list slicing; lists out of scope
+graph/src/runtime/eval.rs	logical_xor	1807	PROVEN	scalarXor: xor_kleene
+graph/src/runtime/eval.rs	evaluate_param	1814	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
 graph/src/runtime/value.rs	Add::add	946	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
 graph/src/runtime/value.rs	Value::add_slow	961	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
 graph/src/runtime/value.rs	Sub::sub	1078	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
@@ -71,8 +71,8 @@ graph/src/runtime/value.rs	Div::div	1153	PROVEN	vArith .div: arith_agrees, divGa
 graph/src/runtime/value.rs	Rem::rem	1181	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
 graph/src/runtime/value.rs	OrderedEnum::order	1211	MODELLED	V.order (scalar subset; value_order proves the full table)
 graph/src/runtime/value.rs	CompareValue::compare_value	1242	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
-graph/src/runtime/value.rs	Contains::contains	1867	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
-graph/src/runtime/value.rs	compare_floats	1905	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
+graph/src/runtime/value.rs	Contains::contains	1869	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	compare_floats	1907	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
 graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
 graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()
 graph/src/runtime/functions/math.rs	ceil	63	NOT COVERED	not modelled

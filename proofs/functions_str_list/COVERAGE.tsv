@@ -40,32 +40,32 @@ graph/src/runtime/functions/internal.rs	internal_case	130	PROVEN	Misc.internalCa
 graph/src/runtime/functions/internal.rs	internal_add	145	PROVEN	Misc.internalAdd: internal_stubs
 graph/src/runtime/functions/entity.rs	register	36	PROVEN	Entity.registered: register_nodup
 graph/src/runtime/functions/entity.rs	labels	40	PROVEN	Entity.labels/RT.labels: deleteNode_labels_iff, labels_lost_after_delete (BUG), deleteNode_preserves_all, entity_null
-graph/src/runtime/functions/entity.rs	type_of	56	PROVEN	Entity.typeOf/typeName: typeOf_total
-graph/src/runtime/functions/entity.rs	has_labels	86	PROVEN	Entity.hasLabels/hasLabelsLoop/valueName: hasLabels_all, hasLabels_typecheck, hasLabels_mismatch_names, hasLabels_null_label (#3127), deleteNode_preserves_all
-graph/src/runtime/functions/entity.rs	id	135	PROVEN	Entity.id: id_small, deleteNode_preserves
-graph/src/runtime/functions/entity.rs	properties	154	PROVEN	Entity.properties: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
-graph/src/runtime/functions/entity.rs	start_node	171	PROVEN	Entity.startNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
-graph/src/runtime/functions/entity.rs	end_node	187	PROVEN	Entity.endNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
-graph/src/runtime/functions/entity.rs	length	203	PROVEN	Entity.length: length_path, entity_null
-graph/src/runtime/functions/entity.rs	keys	221	PROVEN	Entity.keys: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
-graph/src/runtime/functions/entity.rs	relationship_type	250	PROVEN	Entity.relationshipType: deleteRel_preserves, entity_null
-graph/src/runtime/functions/entity.rs	exists	264	PROVEN	Entity.exists: exists_spec
-graph/src/runtime/functions/entity.rs	indegree	275	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
-graph/src/runtime/functions/entity.rs	outdegree	291	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
-graph/src/runtime/functions/entity.rs	parse_degree_args	311	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
+graph/src/runtime/functions/entity.rs	type_of	56	PROVEN	Entity.typeOf/typeName: typeOf_total, typeName_eq_valueName (#2954: type_of returns Value::name)
+graph/src/runtime/functions/entity.rs	has_labels	68	PROVEN	Entity.hasLabels/hasLabelsLoop/valueName: hasLabels_all, hasLabels_typecheck, hasLabels_mismatch_names, hasLabels_null_label (#3127), deleteNode_preserves_all
+graph/src/runtime/functions/entity.rs	id	117	PROVEN	Entity.id: id_small, deleteNode_preserves
+graph/src/runtime/functions/entity.rs	properties	136	PROVEN	Entity.properties: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	start_node	153	PROVEN	Entity.startNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	end_node	169	PROVEN	Entity.endNode: deleteRel_preserves, startEndNode_null, startEndNode_total (#3132 58d7c2c49)
+graph/src/runtime/functions/entity.rs	length	185	PROVEN	Entity.length: length_path, entity_null
+graph/src/runtime/functions/entity.rs	keys	203	PROVEN	Entity.keys: deleteNode_preserves, deleteRel_preserves, keys_eq_props_keys
+graph/src/runtime/functions/entity.rs	relationship_type	232	PROVEN	Entity.relationshipType: deleteRel_preserves, entity_null
+graph/src/runtime/functions/entity.rs	exists	246	PROVEN	Entity.exists: exists_spec
+graph/src/runtime/functions/entity.rs	indegree	257	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	outdegree	273	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
+graph/src/runtime/functions/entity.rs	parse_degree_args	293	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
 graph/src/runtime/functions/math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples; lazy UNWIND form agrees: rangeIter_eq_range
 graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter: rangeIter_eq_range (lazy = eager range, never overflows), rangeIter_of_inRange, rangeIter_examples; pre-#2899 variant pre2899_rangeIter_negate_overflows
 graph/src/runtime/eval.rs	eval_compound/GetElement	535	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds (arm at eval.rs:573)
 graph/src/runtime/eval.rs	eval_compound/GetElements	535	PROVEN	getElements_spec, getElements_bounds (arm at eval.rs:613)
 graph/src/runtime/eval.rs	eval_compound/In	535	PROVEN	contains_false_iff, contains_nil (arm at eval.rs:783)
 graph/src/runtime/eval.rs	eval_compound/Quantifier	535	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:992)
-graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	MODELLED	comprehension_diverges (BUG F) (arm at eval.rs:1031)
+graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	PROVEN	comprehensionRust/CSrc (#2954): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehension_literal_range_unchanged; Entity.comprehensionSourceCheck_err (arm at eval.rs:1040-1085); bug F fixed, pre2954_comprehension_diverges kept
 graph/src/runtime/eval.rs	eval_compound/Reduce	535	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1048)
-graph/src/runtime/eval.rs	eval_iter_expr	1199	MODELLED	comprehensionRust (fallback arm, bug F); range arm = rangeLen/rangeIter (rangeIter_eq_range)
-graph/src/runtime/eval.rs	eval_compiled_regex	1275	MODELLED	isMatchRust, expandRust (BUG C, E)
-graph/src/runtime/eval.rs	check_string_or_null	1282	NOT COVERED	type check only
-graph/src/runtime/eval.rs	eval_quantifier	1637	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
-graph/src/runtime/eval.rs	list_contains	1733	PROVEN	contains_false_iff
-graph/src/runtime/eval.rs	get_elements	1747	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
-graph/src/runtime/value.rs	Contains::contains	1867	PROVEN	contains_false_iff
+graph/src/runtime/eval.rs	eval_iter_expr	1226	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLen/rangeIter (rangeIter_eq_range)
+graph/src/runtime/eval.rs	eval_compiled_regex	1302	MODELLED	isMatchRust, expandRust (BUG C, E)
+graph/src/runtime/eval.rs	check_string_or_null	1309	NOT COVERED	type check only
+graph/src/runtime/eval.rs	eval_quantifier	1664	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+graph/src/runtime/eval.rs	list_contains	1760	PROVEN	contains_false_iff
+graph/src/runtime/eval.rs	get_elements	1774	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
+graph/src/runtime/value.rs	Contains::contains	1869	PROVEN	contains_false_iff
 graph/src/runtime/value.rs	add_slow (String/List arms)	961	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)

@@ -82,6 +82,8 @@ The team decided on 2026-09-25 that a deleted entity keeps returning *all* its d
 | `listSort_float_cmp_antisymmetric`, `listSort_perm` | `list.sort`'s float comparison is antisymmetric (#2912), and the sort returns a permutation | `FalkorStrList.lean`, `Misc.lean` |
 | `deleteNode_preserves_all`, `deleteNode_labels_iff` | Deleted entities keep their details; labels only when unchanged in the query | `Entity.lean` |
 | `startEndNode_null`, `startEndNode_total` | `startNode(null)`/`endNode(null)` is `null` (#3132) | `Entity.lean` |
+| `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err` | `[x IN src \| …]` equals C on every source: null gives `null`, a scalar a type error, list/`range` sources unchanged (#2954) | `FalkorStrList.lean` |
+| `typeName_eq_valueName`, `comprehensionSourceCheck_err` | `typeOf()` is `Value::name` (`Edge`, `Vectorf32`), the name the comprehension type error prints (#2954) | `Entity.lean` |
 
 ### How `splitAux_eq_cSplit` is proved
 
@@ -103,7 +105,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | C (W2-strlist-3) | `regexMatches_unanchored` | `=~` matches substrings: `'abc' =~ 'b'` is `true`; openCypher requires a whole-string match. C rejects `=~` | **Open** |
 | D (W2-strlist-4) | `pre2953_toLower_rejects_valid` | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
 | E (W2-strlist-5) | `replaceRegex_dollar` | `string.replaceRegEx('abc', 'b', '$0x')` returns `'ac'` because `$` is expanded; C copies the replacement literally (`'a$0xc'`) | **Open**: listed under "decisions needed" (#2929) |
-| F (W2-strlist-6) | `comprehension_diverges` | `[x IN null \| x]` returns `[]` (C: `null`); `[x IN 5 \| x]` returns `[5]` (C: type error) | **Open** |
+| F (W2-strlist-6) | `pre2954_comprehension_diverges` | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
 | W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:282`, `:461`), not the pending ones | **Open** |
 | — | `pre2899_rangeIter_negate_overflows` | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
@@ -119,8 +121,8 @@ This project has no CONDITIONAL rows. The string pool contract (`intern`) is dis
 
 | File | What's in it |
 |---|---|
-| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and `$` expansion, `string.join`; bugs A–F (A, B, D fixed; their counterexamples kept as `pre<PR>_` history) |
-| `Entity.lean` | `functions/entity.rs` over the runtime accessor model (deleted snapshot > pending > committed): deleted-entity theorems, `hasLabels`, degree arguments, `startNode`/`endNode`; W4-fn-1 |
+| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and `$` expansion, `string.join`; bugs A–F (A, B, D, F fixed; their counterexamples kept as `pre<PR>_` history) |
+| `Entity.lean` | `functions/entity.rs` over the runtime accessor model (deleted snapshot > pending > committed): deleted-entity theorems, `hasLabels`, degree arguments, `startNode`/`endNode`, `typeOf` = `Value::name`, the comprehension source check; W4-fn-1 |
 | `Misc.lean` | The remaining `string.rs`, `list.rs` and `internal.rs` functions: `STARTS WITH`/`ENDS WITH`/`CONTAINS`, `isNull`, string interning, `toStringList`, `matchRegEx`, `list.sort`, `list.dedup`, registration |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -165,4 +167,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-When you fix one of the open bugs (C, E, F, W4-fn-1), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.
+When you fix one of the open bugs (C, E, W4-fn-1), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.

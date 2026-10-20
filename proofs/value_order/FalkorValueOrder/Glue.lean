@@ -20,7 +20,7 @@ are *abstract* type parameters `F`, `F32`: nothing about them is assumed in this
 | `CompareValue` | trait value.rs:1208 |
 | `Ty`, `W.getType`, `ValueGetType` | trait value.rs:1323, impl :1327 |
 | `W.valueOfType`, `ValueTypeOf` | trait value.rs:1274, impl :1281 |
-| `W.name` | value.rs:1352 |
+| `W.name` | value.rs:1387 |
 | `Deduper`, `withCapacity`, `checkAndInsert` | value.rs:1854-1896 |
 -/
 
@@ -198,11 +198,12 @@ theorem getType_concrete (v : W F F32) :
     (∀ t, v.getType ≠ .optional t) ∧ (∀ ts, v.getType ≠ .union ts) ∧ v.getType ≠ .any := by
   cases v <;> simp [W.getType]
 
-/-- `Value::name` (value.rs:1352). -/
+/-- `Value::name` (value.rs:1387). Since #2954 (b6567cb97) it spells C's `SIType_ToString`
+names (`Edge`, `Vectorf32`; before: `Relationship`, `VecF32`), and `typeOf()` returns it. -/
 def W.name : W F F32 → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
-  | .rel _ => "Relationship" | .path _ => "Path" | .vecf32 _ => "VecF32"
+  | .rel _ => "Edge" | .path _ => "Path" | .vecf32 _ => "Vectorf32"
   | .point _ _ => "Point" | .datetime _ => "Datetime" | .date _ => "Date"
   | .time _ => "Time" | .duration _ => "Duration"
 

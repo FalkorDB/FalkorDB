@@ -156,9 +156,11 @@ inductive SV (F F32 : Type) where
   | null | int (i : Int) | float (f : F) | str (s : String) | map (kvs : List (String × SV F F32))
   | list (vs : List (SV F F32)) | vec (v : List F32) | point (p : Point F32) | other (name : String)
 
+/-- `Value::name` (value.rs:1387) on the variants spatial.rs inspects; `Vectorf32` since
+#2954 (b6567cb97), `VecF32` before. -/
 def SV.name {F F32} : SV F F32 → String
   | .null => "Null" | .int _ => "Integer" | .float _ => "Float" | .str _ => "String"
-  | .map _ => "Map" | .list _ => "List" | .vec _ => "VecF32" | .point _ => "Point"
+  | .map _ => "Map" | .list _ => "List" | .vec _ => "Vectorf32" | .point _ => "Point"
   | .other n => n
 
 inductive Res (α : Type) where

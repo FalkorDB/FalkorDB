@@ -43,30 +43,30 @@ graph/src/runtime/value.rs	value_of_type	1308	NOT COVERED	trait method declarati
 graph/src/runtime/value.rs	value_of_type	1315	PROVEN	valueOfType_none_iff
 graph/src/runtime/value.rs	get_type	1357	NOT COVERED	trait method declaration
 graph/src/runtime/value.rs	get_type	1361	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
-graph/src/runtime/value.rs	name	1385	MODELLED	V.name (used in error-message theorems)
-graph/src/runtime/value.rs	to_json_string	1407	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	fmt	1417	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	compare_list	1432	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
-graph/src/runtime/value.rs	compare_map	1505	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
-graph/src/runtime/value.rs	is_never_equal	1635	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1658	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	fmt_json	1686	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
-graph/src/runtime/value.rs	write_json_string	1808	NOT COVERED	json_escape crate (trusted)
-graph/src/runtime/value.rs	write_node_json	1820	NOT COVERED	runtime graph accessors + formatting
-graph/src/runtime/value.rs	contains	1860	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	contains	1867	PROVEN	proofs/functions_str_list Contains
-graph/src/runtime/value.rs	partial_cmp	1892	PROVEN	partialCmp_null
-graph/src/runtime/value.rs	compare_floats	1905	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
-graph/src/runtime/value.rs	compare_vecf32	1993	PROVEN	chunked_eq_firstDiff
-graph/src/runtime/value.rs	first_difference	1997	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2035	NOT COVERED	constructor
-graph/src/runtime/value.rs	is_seen	2045	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
-graph/src/runtime/value.rs	has_hash	2056	PROVEN	dedup_second_seen
-graph/src/runtime/value.rs	check_and_insert_hash	2063	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	name	1387	MODELLED	V.name (used in error-message theorems)
+graph/src/runtime/value.rs	to_json_string	1409	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	fmt	1419	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	compare_list	1434	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
+graph/src/runtime/value.rs	compare_map	1507	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
+graph/src/runtime/value.rs	is_never_equal	1637	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1660	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	fmt_json	1688	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
+graph/src/runtime/value.rs	write_json_string	1810	NOT COVERED	json_escape crate (trusted)
+graph/src/runtime/value.rs	write_node_json	1822	NOT COVERED	runtime graph accessors + formatting
+graph/src/runtime/value.rs	contains	1862	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	contains	1869	PROVEN	proofs/functions_str_list Contains
+graph/src/runtime/value.rs	partial_cmp	1894	PROVEN	partialCmp_null
+graph/src/runtime/value.rs	compare_floats	1907	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
+graph/src/runtime/value.rs	compare_vecf32	1995	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	1999	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	2037	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	2047	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	2058	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	2065	PROVEN	dedup_second_seen, dedup_first_unseen
 graph/src/runtime/value.rs	value_nesting_error	74	PROVEN	Nesting.valueNestingError_text (the message; decode/validate return it: decodeValue_refuses_past_cap, decode_nest_deep)
-graph/src/runtime/value.rs	encode	2075	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2161	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2173	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes; history pre3339_decode_any_depth (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2077	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2163	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2175	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes; history pre3339_decode_any_depth (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic

@@ -8,7 +8,14 @@ import FalkorCore.Float
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
 
-**Re-targeted to main 737dfb5da** (from 8621212fc). #2899 (`e63165cb5`, closes #2894):
+**Re-targeted to main b6567cb97** (from 737dfb5da). #2954 (closes #2928) changes the
+`ListComprehension` arm of `eval_compound` (null source → null, scalar → type error; list
+literal / `range` still stream through `eval_iter_expr`): not modelled here (modelled and
+proved in `proofs/functions_str_list`, `comprehension_eq_spec`); `eval_iter_expr` itself is
+unchanged, so `evalIter_cases`/`evalIter_list`/`evalIter_range_is_iter` still hold.
+COVERAGE.tsv eval.rs rows re-pinned (+27 after the arm), value.rs (+2 after `Value::name`).
+
+Earlier: re-targeted to main 737dfb5da (from 8621212fc). #2899 (`e63165cb5`, closes #2894):
 `RangeIter` now stores the exact element count `remaining` and the signed `step`, and
 advances only while another element is due — re-modelled as `rangeIter` (debug, checked
 `+=`) / `rangeIterRel` (release); `rangeIter_correct`: for every `i64` start/end and
