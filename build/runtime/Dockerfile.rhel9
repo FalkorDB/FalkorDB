@@ -194,6 +194,20 @@ RUN microdnf update -y && \
     find / -xdev -type f -perm /6000 -exec chmod ug-s {} + && \
     getcap -r / 2>/dev/null | while read -r f _; do setcap -r "$f"; done
 
+# No finite-field Diffie-Hellman in TLS: no DHE suites in TLS 1.2, no ffdhe
+# groups in TLS 1.3, only ECDHE. On a host in FIPS mode OpenSSL's FIPS
+# provider checks every client's Diffie-Hellman key the slow way
+# (CVE-2024-41996), so a client could make each handshake expensive. redis has
+# no setting for TLS 1.3 groups, so this edits the system crypto policy's
+# OpenSSL file, which every TLS connection here reads. (crypto-policies' own
+# ECDHE-ONLY module would also drop RSA authentication in TLS 1.2, which the
+# RSA certificates gen-certs.sh makes need.)
+RUN p=/etc/crypto-policies/back-ends/opensslcnf.config && \
+    sed -e 's/:ffdhe[0-9]*//g' -e 's/:kEDH//g' -e 's/:kDHEPSK//g' "$(readlink -f "$p")" > "$p.new" && \
+    mv -f "$p.new" "$p" && \
+    if grep -E 'ffdhe|kEDH|kDHEPSK' "$p"; then echo "FAIL: finite-field DH is still enabled"; exit 1; fi && \
+    openssl ciphers -v > /dev/null
+
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
 COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 COPY ./build/runtime/gosu-setpriv.sh /usr/local/bin/gosu
