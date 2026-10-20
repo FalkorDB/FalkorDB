@@ -52,10 +52,13 @@ Yes:
 - Since #3328 module-load arguments are parsed by the same rules as C's `Config_Init` (`rust_c_same_accept` in `LoadArgs.lean`), and a refused argument applies nothing (`error_applies_nothing`). Two differences remain:
   - C skips leading whitespace in numbers and Rust does not, so `CACHE_SIZE " 10"` loads on C and is refused by Rust (`leading_space_divergence`);
   - Rust accepts `INDEX_WORKER_THREADS`, `BOLT_PORT` and `EFFECTS_COMPRESSION`, which C does not know (`rust_only_names`). These are intended.
+- Since #3419 a `VKEY_MAX_ENTITY_COUNT` value set by `GRAPH.CONFIG SET` or a module-load argument survives `CONFIG REWRITE` and a restart: the rewritten `graph.VKEY_MAX_ENTITY_COUNT` line is inside the native config's range (`0..i64::MAX`) and reads back the same value (`vkey_rewrite_reloads_config`, `vkey_rewrite_reloads_load` in `ConfigRewrite.lean`). Before, `0` and anything above 2^30 (FalkorDB Cloud loads with `4611686000000000000`) made the next start abort (`pre3419_rewrite_refused`, #3413). Other native configs still have this problem (bug 16 below).
 
 **4. Does the compact reply decode to the right values in the client?**
 
 Yes. `dec_enc` and `decReply_enc`: for every value (scalars, temporal values, lists, maps, nodes, edges, paths, vectors, points) and for a whole reply, the compact encoding that `reply.rs` writes decodes in falkordb-py's parser to the intended value. Floats are compared after formatting, exactly as C formats them. `compact_emits` and `verbose_emits` prove that the `RedisModule_Reply*` call stream, postponed array lengths included, produces exactly that reply tree, and `bytes_of_emits` gives the RESP2 bytes. `postponed_wrong_len` shows that a wrong postponed count would break it.
+
+Since #3043 the verbose format prints floats and points as C does: a NaN inside a list or vector is `nan` (`fmtS_floats_c`, `fmtS_vec_c`), and a top-level point is `point({latitude:…, longitude:…})` without a space after the colons (`pointStr_c`, `verbose_point_c`). Both are stated against C's `%f` as a hypothesis (`CPf`).
 
 **5. Can `RO_QUERY` ever write?**
 
@@ -86,6 +89,7 @@ Yes:
 | `rustTimeout_le_max`, `rustTimeout_rw_uniform` | The effective timeout is bounded and, once configured, applies to writes as to reads | `Args.lean` |
 | `rustSet_inv` | `GRAPH.CONFIG SET` keeps `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` | `Config.lean` |
 | `rust_c_same_accept` (`LoadArgs`) | Module-load arguments are accepted exactly as C accepts them, up to two documented differences | `LoadArgs.lean` |
+| `vkey_rewrite_reloads_config`, `vkey_rewrite_reloads_load` | A `VKEY_MAX_ENTITY_COUNT` value set at run time or at load survives `CONFIG REWRITE` and a restart (#3419) | `ConfigRewrite.lean` |
 | `dec_enc`, `decReply_enc` | The compact reply decodes in the Python client to the intended values | `Compact.lean` |
 | `compact_emits`, `verbose_emits`, `compact_reply`, `bytes_of_emits` | The reply call streams produce exactly the intended reply and RESP bytes | `RespCompact.lean`, `RespVerbose.lean`, `Resp.lean` |
 | `ro_never_writes` | An `RO_QUERY` that runs performs no write | `RoQuery.lean` |
@@ -123,9 +127,10 @@ All confirmed live against C (`repro_live.py` in this folder, and the scripts na
 | 10 | `leading_space_divergence` | `CACHE_SIZE " 10"` and `GRAPH.CONFIG SET RESULTSET_SIZE " 5"` succeed on C and are refused by Rust | **Open** (confirmed live, not filed) |
 | 11 | `from_slice_past_end` | Any truncated `GRAPH.RESTORE` payload calls `RedisModule_LoadStringBuffer(NULL)`; a cut at a record boundary SIGSEGVs. C crashes too | **Open** (#2537; external PR #3167) |
 | 12 | `bulk_reply_differs` | The `GRAPH.BULK` reply says "relations created"; C says "edges created" (W4-redis-4) | **Open** (minor) |
-| 13 | none | Verbose format: a top-level point prints `latitude: 1.000000` with a space (C none); NaN inside a list prints `NaN` (C `nan`); `CREATE (a:A) DELETE a` reports no node stats | **Open** (minor, not filed) |
+| 13 | `pre3043_point_space`, `pre3043_nan_in_list` | Verbose format: a top-level point printed `latitude: 1.000000` with a space (C none); NaN inside a list printed `NaN` (C `nan`) | Fixed by #3043 (closes #3042); `pointStr_c`, `fmtS_floats_c`. Still open (minor, not filed): `CREATE (a:A) DELETE a` reports no node stats |
 | 14 | `bug2782_same_name_other_db_aborts`, `bug2782_invariant_broken` (`MultiDb.lean`) | `GRAPH_REGISTRY` is keyed by name only, so creating `shared` in db1 displaces db0's `shared`; the next write to db0's graph aborts ("graph was deleted or replaced…"; debug build: assert). Property `KeyspaceRegistered` / `WritesSucceed` | **Open** (#2782) |
 | 15 | `bug2653_nonutf8_key_mangled` (`KeyName.lean`) | A non-UTF-8 graph key is replicated and signalled under its `from_utf8_lossy` form: `\xc3(bin` → `\xef\xbf\xbd(bin`, so the replica writes a different key. Property `ReplicatedKeyIsStored` (C: `c_ok`) | **Open** (#2653) |
+| 16 | `pre3419_rewrite_refused`; `rewrite_reload_counterexamples` (`ConfigRewrite.lean`) | `CONFIG REWRITE` saves `graph.<NAME> <value>` for what `GRAPH.CONFIG SET` or a load argument stored; a value outside the native config's range aborts the next start. `VKEY_MAX_ENTITY_COUNT` 0 or above 2^30 did (#3413) | `VKEY_MAX_ENTITY_COUNT` fixed by #3419: `vkey_rewrite_reloads_config`, `vkey_rewrite_reloads_load`. **Open** (not live-checked, not filed): `CACHE_SIZE` > 1000, `THREAD_COUNT` > 1024, `NODE_CREATION_BUFFER` > 2^30 as load arguments, `JS_HEAP_SIZE` > 2^32 by either path |
 
 Also in the verbose format: a node deleted earlier in the same query still shows its labels (C shows `[]`). That one is intended: it was decided on 2026-09-25 that a deleted entity keeps all its details for the rest of the query.
 
@@ -140,6 +145,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `QueryArgs.lean`, `QueryArgsSpec.lean`, `QueryArgsAgree.lean` | `parse_query_flags`; what it accepts exactly; agreement with C's `_read_flags` |
 | `Config.lean` | `GRAPH.CONFIG`: validation, cross-field checks, `SET`, dispatch; C's `_Config_set` |
 | `LoadArgs.lean`, `ModuleInit.lean` | Module-load arguments (#3328), the configuration table, event handlers |
+| `ConfigRewrite.lean` | `CONFIG REWRITE` of the native configs against what the other paths store (#3419) |
 | `Compact.lean` | Compact value encoding and the falkordb-py decoder |
 | `Resp.lean`, `RespCompact.lean`, `RespVerbose.lean` | Reply call streams, postponed lengths, RESP2 bytes; verbose values and statistics |
 | `RoQuery.lean` | The `RO_QUERY` write guard |
@@ -161,11 +167,11 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 
 ## Coverage
 
-`COVERAGE.tsv` has 293 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (22).
+`COVERAGE.tsv` has 294 rows across `src/`. The biggest files are `buffered_io.rs` (55), `graph_core.rs` (44), `telemetry.rs` (36), `query_session.rs` (25) and `bulk_insert.rs` (22).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 253 |
+| PROVEN | 254 |
 | AXIOMATISED | 34 |
 | NOT COVERED | 6 |
 

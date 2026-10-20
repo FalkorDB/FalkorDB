@@ -85,15 +85,16 @@ src/serializers/mod.rs	Schema::decode	467	PROVEN	Serial.decSchema: decSchema_enc
 src/serializers/mod.rs	decode_schema_entry	529	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
 src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField (#3252: name used verbatim): decField_encField (every attribute name round-trips), field_name_kept, field_prefix_kept; history pre3252_field_prefix_lost (W4-redis-2: attr named range:x/vector:x reloaded as x, confirmed live then)
 src/serializers/mod.rs	Schema::from_graph	699	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
-src/reply.rs	format_value_to_string	36	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits
-src/reply.rs	reply_with_str	102	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
-src/reply.rs	format_g	112	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
-src/reply.rs	reply_compact_value	134	PROVEN	Resp.encC call stream: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed
-src/reply.rs	reply_verbose_value	346	PROVEN	Resp.encVb: verbose_emits (node/edge postponed arrays closed with exact counts); postponed_wrong_len
-src/reply.rs	reply_stats	530	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
-src/reply.rs	reply_result	619	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
-src/reply.rs	reply_verbose	668	PROVEN	Resp.resultCalls false: verbose_reply
-src/reply.rs	reply_compact	676	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
+src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c; history pre3043_nan_in_list
+src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
+src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
+src/reply.rs	format_g	123	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
+src/reply.rs	reply_compact_value	145	PROVEN	Resp.encC call stream: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed
+src/reply.rs	reply_verbose_value	357	PROVEN	Resp.encVb: verbose_emits (node/edge postponed arrays closed with exact counts); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
+src/reply.rs	reply_stats	543	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
+src/reply.rs	reply_result	632	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
+src/reply.rs	reply_verbose	681	PROVEN	Resp.resultCalls false: verbose_reply
+src/reply.rs	reply_compact	689	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
 src/graph_core.rs	up_to_nul	87	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
 src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); KeyName.lossy (concrete from_utf8_lossy) — #2653: bug2653_nonutf8_key_mangled
 src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key

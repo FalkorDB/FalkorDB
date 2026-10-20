@@ -88,7 +88,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `pow_drops_error`, `pow_constant_true` | `^` drops an operand's error: `2 ^ (1/0)` returns `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folds to `true` and the Filter is deleted: every row comes back although `x ^ true` is `null`. `pow_agrees_without_errors` shows that error dropping is the only difference | **Open**: issue #2902, PR #2904 not merged (`eval.rs` still uses `flat_map` at 0f45a8685) |
+| 1 | `pre2904_pow_drops_error`, `pre2904_pow_constant_true` | `^` dropped an operand's error: `2 ^ (1/0)` returned `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folded to `true` and the Filter was deleted: every row came back although `x ^ true` was `null` | Fixed by #2904 (`fd2c76a6c`, issue #2902): `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error` (`x ^ true` is now C's type error), `pow_binary_eq_spec`, `pow_agrees_without_errors`. The optimizer side is proven sound in [`../optimizer_rewrites`](../optimizer_rewrites) (`ConstEval.constEval_sound`) |
 | 2 | `rangeIter_wraps`, `rangeIter_panics` | `UNWIND range(i64::MAX - 1, i64::MAX)` yields `MAX-1, MAX, MIN, MIN+1, …` and never stops in release, and panics on overflow in debug. The eager `range()` gives the two elements | **Open**: issue #2894, PR #2899 not merged |
 | 3 | `pre2907_sign_float_is_float` | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
 | 4 | `int_float_eq_not_transitive` | Whenever two distinct integers round to the same `f64`, `=` stops being transitive: `2^53+1 = 2^53.0` and `2^53 = 2^53.0`, yet `2^53+1 <> 2^53` | Harmless: C promotes the same way (Neo4j compares exactly). `ORDER BY` no longer depends on it since #2912 (see `value_order`) |
@@ -104,7 +104,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | File | What's in it |
 |---|---|
-| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bugs 1–4 |
+| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^` (and its pre-#2904 history), `RangeIter`, `sign`, `toInteger`, `coalesce`; bugs 1–4 |
 | `Eval.lean` | `ExprEval` entry points and fast paths: `eval`, `eval_operand`, variable resolution, constants and parameters |
 | `EvalMore.lean` | Batch evaluation (`eval_batch`), `classify_join_keys`, UNWIND iteration, compiled regex, map projection |
 | `BFS.lean` | `NeighborIter` and the bidirectional BFS behind `shortestPath`; `bfs_sound` |
@@ -115,7 +115,7 @@ Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN
 
 ## Coverage
 
-Line numbers are pinned to main 289c201fe (#2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
+Line numbers are pinned to main 8621212fc (#2904 changes the `Pow` arm of `eval_compound` and `apply_pow`; #2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
 
 `COVERAGE.tsv` has 93 rows: 30 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs`, `eliminate_true_filters.rs` and `functions/mod.rs` (`init_functions`, MODELLED: the registered name set, #2724).
 
@@ -154,4 +154,4 @@ bash proofs/coverage.sh                   # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If an agreement theorem stops holding, the columnar and per-row paths now disagree on some input, and the failing goal shows which one. When #2904 or #2899 merges, turn `pow_drops_error` or `rangeIter_wraps` into a correctness theorem and keep the counterexample under a `pre<PR>_` name.
+If an agreement theorem stops holding, the columnar and per-row paths now disagree on some input, and the failing goal shows which one. When #2899 merges, turn `rangeIter_wraps` into a correctness theorem and keep the counterexample under a `pre<PR>_` name (as `pre2904_pow_drops_error` was kept for #2904).

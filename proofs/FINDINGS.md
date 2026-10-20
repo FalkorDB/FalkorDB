@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-20): proofs cite `origin/main` @ 289c201fe.
+Current state (2026-10-20): proofs cite `origin/main` @ 8621212fc.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -143,7 +143,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-traverse-5**: algo.SPpaths/SSpaths charge cost 0 per relationship without a `costProp` (`algo_procedures.rs:2308`, `2397`, `2518`). C charges 1.
 - **W2-agg-1**: clearing the global dedupers after each CALL{} (`apply.rs:283`) makes an outer `count(DISTINCT)` over-count: 6 where C gives 2.
 - **W2-agg-2**: per-group DISTINCT state is keyed by the FxHash of the group key (`aggregate.rs:715`, `:959`), so colliding groups share one seen-set.
-- **W2-agg-4** (low): a per-row percentile argument is overwritten, so the last one wins (`aggregation.rs:539`, `:253`).
+- **W2-agg-4** (low): a per-row percentile argument is overwritten, so the last one wins (`aggregation.rs:539`, `:253`). **Fixed by #3007 (1d3b029e1; closes #2980)**: main keeps the first non-null row's percentile, as C does; `pct_first_wins`, `pct_stable`, `percentile_first_row`; history `pre3007_pct_last_wins`.
 - **W2-agg-5**: an aggregate inside a list literal `return`s out of the whole stack machine (`eval.rs:877`). `[min(x),max(x)]` gives 2 where C gives `[1,2]`. **Fixed by #2951 (0912f4500; closes #2945)**: `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`; history `pre2951_stackEval_return_drops_frame`.
 
 ### Wrong results: index layer (`proofs/index_layer/repro.py`)
@@ -168,7 +168,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-strlist-5**: `string.replaceRegEx` expands `$` in the replacement (`string.rs:469`). C ✓. Fix: `NoExpand`.
 - **W2-strlist-6**: a list comprehension over null gives [] (C: null); over a scalar it gives `[5]` (C: type error) (`eval.rs:1018`).
 - **W2-temporal-4**: antipodal `distance()` gives NaN, because `(1-a).sqrt()` is taken with `a > 1` (`value.rs:137`). C ✓. **Fixed by #2983 (86dcd5a11; closes #2931)**: `a` clamped to [0,1]; `distance_finite` (under the stated `NanLaws` float facts); history `pre2983_distance_nan`.
-- **W2-temporal-5**: `date('2020-03-31') - duration({months:1})` gives 02-29, while `+ duration({months:-1})` gives 03-02 (`value.rs:746`). C gives 03-02.
+- **W2-temporal-5**: `date('2020-03-31') - duration({months:1})` gives 02-29, while `+ duration({months:-1})` gives 03-02 (`value.rs:746`). C gives 03-02. **Fixed by #2984 (5986f4df1; closes #2932)**: `-` and `+` share `shift_months`; `sub_eq_add_neg_months`; history `pre2984_sub_vs_add_neg`.
 - **W2-temporal-6**: Time + duration is not reduced mod a day (`value.rs:1027`). C ✓. **Fixed by #2985 (289c201fe; closes #2933)**: `timeAddDur_eq_tod`, `time_normalised`, `add_time_dur_in_day`; history `pre2985_time_not_normalised`.
 - **W2-temporal-7**: `toString(date({year:12345}))` gives "2345-01-01" (`value.rs:803`). C ✓.
 - **W2-temporal-8**: `duration('P2635249153387078803W')` wraps to P5D in release (`temporal.rs:376`). **Fixed by #2987 (9d3869aa8; closes #2935)**: checked W/D arithmetic; `dateLoop_week_overflow`, `dateLoop_days_i64`; history `pre2987_week_string_wraps`.
@@ -341,6 +341,10 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 - #3382 (idx): db.idx.vector.queryNodes answers from a half-built index (0 rows, then 3, while UNDER CONSTRUCTION); Indexer::vector_query never checks is_operational, while C refuses until OPERATIONAL. Lean IndexLayer.Meta.Ixr.bug3382_vector_query_ignores_operational; property VectorQueryRequiresOperational.
 
 ### Merged
+- 2026-10-20 on main (now 8621212fc): #2904 (`^` propagates operand errors and type-checks; closes #2902), #2984 (date - duration rolls over like +; closes #2932), #3007 (row-dependent percentile from the first row; closes #2980), #3043 (verbose reply points and NaN as C; closes #3042), #3419 (VKEY_MAX_ENTITY_COUNT range 0..i64::MAX; for #3413). Proofs re-targeted: 35 projects green; 2599 PROVEN + 23 CONDITIONAL of 2622 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
+  - **Discharged: `is_constant_true` and `eliminate_true_filters` are PROVEN.** They were CONDITIONAL on `hconst` (constant evaluation is sound), false for `^` (#2902). optimizer_rewrites `ConstEval.constEval_sound`: with #2904 no modelled arm swallows a child's error, so a constant result holds on every row; `constTrue_filter`, `andLoop_drop_constTrue`.
+  - Fixed, counterexamples kept as `pre<PR>_` history: `^` dropping errors (`pre2904_pow_drops_error`, `pre2904_pow_constant_true`), W2-agg-4 (#3007), W2-temporal-5 (#2984), verbose point spacing and NaN (#3043: `pointStr_c`, `fmtS_floats_c`; `pre3043_point_space`), the #3413 CONFIG REWRITE abort (#3419: `ConfigRewrite.vkey_rewrite_reloads_config`; `pre3419_rewrite_refused`).
+  - **New, confirmed live (same class as #3413):** other native configs accept values through the load-argument path or `GRAPH.CONFIG SET` that their native range rejects, so `CONFIG REWRITE` saves a line the next start refuses and the server aborts. Live on main + #3419: `loadmodule … CACHE_SIZE 2000` → `graph.CACHE_SIZE 2000` → restart "argument must be between 0 and 1000 inclusive … aborting"; `GRAPH.CONFIG SET JS_HEAP_SIZE 5000000000` → restart "between 0 and 4294967296 … aborting". Lean also shows `THREAD_COUNT` > 1024 and `NODE_CREATION_BUFFER` > 2^30 by load argument. C writes no `graph.*` lines on rewrite. Lean `ConfigRewrite.rewrite_reload_counterexamples`. Not filed yet.
 - 2026-10-20 on main (now 289c201fe): #2983 (antipodal distance; closes #2931), #2987 (duration string overflow; closes #2935), #3294 (AND/OR/XOR errors name the operand type; closes #3292), #2951 (list literal of aggregates; closes #2945), #2953 (toLower/toUpper with U+FFFD), #2985 (localtime ± duration; closes #2933). Proofs re-targeted: 35 projects green; 2595 PROVEN + 25 CONDITIONAL of 2620 non-FFI, non-test fns, so every non-FFI function is covered; 0 unlisted, 0 unmatched. About 270 rows that matched only by name were re-pinned to their exact line.
   - Fixed, counterexamples kept as `pre<PR>_` history: W2-agg-5, W2-strlist-4, W2-temporal-4 (the distance proof assumes the `NanLaws` float facts as hypotheses), W2-temporal-6, W2-temporal-8. #3294 is modelled (`and_or_mismatch_names_type`, `xor_mismatch_names_type`).
 - 2026-10-19 on main (now fb3d516d0): #3090 (a shared GrB_Matrix is freed exactly once; closes #3089), #3026 (GRAPH.BULK keeps one entry per attribute; closes #3024). Proofs re-targeted: 35 projects green; 2594 PROVEN + 25 CONDITIONAL of 2620 non-FFI, non-test fns (99.0%); 0 unlisted, 0 unmatched.

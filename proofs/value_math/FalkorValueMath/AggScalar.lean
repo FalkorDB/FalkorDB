@@ -197,8 +197,20 @@ theorem avgStep_plain (val s : F) (c : Int) (h : aboutToOverflow M s val = false
 
 /-! ## percentile (aggregation.rs:226) and stdev (:286) -/
 
-/-- `percentileDisc`/`percentileCont` step: store `p`, push the value as a Float. -/
+/-- `percentileDisc`/`percentileCont` step (since #3007): the percentile is stored
+only while nothing has been collected yet — the first non-null row's percentile is
+the aggregate's, as in C — and the value is pushed as a Float. -/
 def percentile (v p : AV F) : AV F → Res (AV F)
+  | ctx => match v with
+    | .null => .ok ctx
+    | _ => match ctx with
+      | .list [.float q, .list xs] =>
+        .ok (.list [.float (if xs.isEmpty then num M p else q), .list (xs ++ [.float (num M v)])])
+      | _ => .unreachable
+
+/-- The step before #3007 (main 289c201fe): every row overwrote the stored
+percentile, so the *last* row's percentile won (W2-agg: C keeps the first). -/
+def pre3007_percentile (v p : AV F) : AV F → Res (AV F)
   | ctx => match v with
     | .null => .ok ctx
     | _ => match ctx with
@@ -216,8 +228,76 @@ theorem percentile_collects (p : AV F) (vs : List (AV F)) :
     | null => obtain ⟨q', e⟩ := ih q xs; exact ⟨q', by simpa [foldAgg, percentile, isNull] using e⟩
     | _ =>
       first
-      | (obtain ⟨q', e⟩ := ih (num M p) (xs ++ [.float (num M _)])
+      | (obtain ⟨q', e⟩ := ih (if xs.isEmpty then num M p else q) (xs ++ [.float (num M _)])
          exact ⟨q', by simpa [foldAgg, percentile, isNull] using e⟩)
+
+/-- The per-row aggregation over `(value, percentile)` rows (both are arguments). -/
+def foldPct (step : AV F → AV F → AV F → Res (AV F)) : AV F → List (AV F × AV F) → Res (AV F)
+  | acc, [] => .ok acc
+  | acc, (v, p) :: rs => match step v p acc with
+    | .ok acc' => foldPct step acc' rs
+    | .unreachable => .unreachable
+
+/-- The percentile a run of rows ends up with: the first non-null row's, else `q`. -/
+def firstPct (q : F) (rs : List (AV F × AV F)) : F :=
+  match rs.find? (fun r => !isNull r.1) with
+  | some (_, p) => num M p
+  | none => q
+
+theorem percentile_step_null (p ctx : AV F) : percentile M .null p ctx = .ok ctx := rfl
+
+theorem percentile_step (v p : AV F) (hv : isNull v = false) (q : F) (xs : List (AV F)) :
+    percentile M v p (.list [.float q, .list xs]) =
+      .ok (.list [.float (if xs.isEmpty then num M p else q), .list (xs ++ [.float (num M v)])]) := by
+  cases v <;> simp_all [percentile, isNull]
+
+/-- Once something is collected the stored percentile never changes. -/
+theorem percentile_keeps (rs : List (AV F × AV F)) :
+    ∀ q x xs, foldPct (percentile M) (.list [.float q, .list (x :: xs)]) rs =
+      .ok (.list [.float q, .list ((x :: xs) ++
+        (rs.filter (fun r => !isNull r.1)).map (fun r => .float (num M r.1)))]) := by
+  induction rs with
+  | nil => intro q x xs; simp [foldPct]
+  | cons r rs ih =>
+    intro q x xs
+    obtain ⟨v, p⟩ := r
+    cases hv : isNull v
+    · simp only [foldPct, percentile_step M v p hv]
+      have e := ih q x (xs ++ [.float (num M v)])
+      simp only [List.isEmpty_cons, Bool.false_eq_true, ↓reduceIte, List.cons_append] at e ⊢
+      rw [e]; simp [hv]
+    · have : v = .null := by cases v <;> simp_all [isNull]
+      subst this
+      simpa [foldPct, percentile_step_null, isNull] using ih q x xs
+
+/-- **#3007 (closes #2980)**: from the initial state, the aggregate's percentile is
+the first non-null row's (C's behaviour), however the later rows' percentiles vary. -/
+theorem percentile_first_row (rs : List (AV F × AV F)) :
+    ∀ q, foldPct (percentile M) (.list [.float q, .list []]) rs =
+      .ok (.list [.float (firstPct M q rs),
+        .list ((rs.filter (fun r => !isNull r.1)).map (fun r => .float (num M r.1)))]) := by
+  induction rs with
+  | nil => intro q; simp [foldPct, firstPct]
+  | cons r rs ih =>
+    intro q
+    obtain ⟨v, p⟩ := r
+    cases hv : isNull v
+    · simp only [foldPct, percentile_step M v p hv]
+      simpa [hv, firstPct] using percentile_keeps M rs (num M p) (.float (num M v)) []
+    · have : v = .null := by cases v <;> simp_all [isNull]
+      subst this
+      simpa [foldPct, percentile_step_null, isNull, firstPct] using ih q
+
+/-- History (#2980, fixed by #3007): with two rows whose percentiles differ, the old
+step kept the *last* row's percentile `b`; main keeps the first row's `a`. -/
+theorem pre3007_percentile_last_wins (x y a b q : F) :
+    foldPct (pre3007_percentile M) (.list [.float q, .list []])
+        [(.float x, .float a), (.float y, .float b)] =
+      .ok (.list [.float b, .list [.float x, .float y]]) ∧
+    foldPct (percentile M) (.list [.float q, .list []])
+        [(.float x, .float a), (.float y, .float b)] =
+      .ok (.list [.float a, .list [.float x, .float y]]) := by
+  constructor <;> rfl
 
 /-- `stDev`/`stDevP` step on `[sum, values]`. -/
 def stdev : AV F → AV F → Res (AV F)

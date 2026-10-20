@@ -1,22 +1,22 @@
 /-!
 # Compact result encoding vs the falkordb-py decoder
 
-* `encPair` / `encV` — `reply_compact_value` (`src/reply.rs:134-344`): a value is emitted
+* `encPair` / `encV` — `reply_compact_value` (`src/reply.rs:145-355`): a value is emitted
   as its type tag followed by its payload; every caller wraps the two in a 2-array
-  (`reply_result`, `reply.rs:619-666`; list elements `reply.rs:185`; map values
-  `reply.rs:197`), and entity properties are 3-arrays `[attr_id, tag, payload]`.
+  (`reply_result`, `reply.rs:632-679`; list elements `reply.rs:196`; map values
+  `reply.rs:208`), and entity properties are 3-arrays `[attr_id, tag, payload]`.
 * `dec` — `falkordb/query_result.py:parse_scalar` and its `__parse_*` helpers
   (falkordb-py 1.x, the version pinned in `tests/requirements.txt`), which look labels,
   relationship types and property names up by id in the client's schema cache.
 
 RESP arrays whose length is sent postponed (`REDISMODULE_POSTPONED_LEN` then
-`RM_ReplySetArrayLength`, `reply.rs:222-230`) are modelled as ordinary arrays: the
+`RM_ReplySetArrayLength`, `reply.rs:233-241`) are modelled as ordinary arrays: the
 Redis module API guarantees the length set later is the one the client sees
 (AXIOMATISED in the coverage table — it is a Redis guarantee, not code here).
 
-Floats are abstract: `fmt` is `format_g(x, 15)` (`reply.rs:112`, libc `%.15g`) and
+Floats are abstract: `fmt` is `format_g(x, 15)` (`reply.rs:123`, libc `%.15g`) and
 `parseF` is Python's `float()`. Vector elements are sent with `RedisModule_ReplyWithDouble`
-(`reply.rs:330`, same as C), i.e. Redis's own double formatting `vfmt`, not `%.15g`. The round trip is exact *modulo* `parseF ∘ fmt`, which
+(`reply.rs:341`, same as C), i.e. Redis's own double formatting `vfmt`, not `%.15g`. The round trip is exact *modulo* `parseF ∘ fmt`, which
 is not the identity on `f64` (`0.1 + 0.2` → `"0.3"`); C emits the same `%.15g`
 (`_ResultSet_ReplyWithRoundedDouble`), so this is shared behaviour, not a divergence.
 -/
@@ -262,7 +262,7 @@ theorem decProps_enc : ∀ ps : List (Nat × Val F), decProps E (encProps E ps) 
     simp [encProps, decProps, specProps, h, decProps_enc ps]
 end
 
-/-- The whole compact reply (`reply_result::<true>`, `reply.rs:619-666`): a header of
+/-- The whole compact reply (`reply_result::<true>`, `reply.rs:632-679`): a header of
 `[1, name]` pairs, rows of 2-arrays, statistics strings. -/
 def encReply (names : List String) (rows : List (List (Val F))) (stats : List String) : R :=
   .arr [.arr (names.map fun n => .arr [.int 1, .bulk n]),

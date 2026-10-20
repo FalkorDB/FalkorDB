@@ -25,7 +25,7 @@ Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 | Lean | Rust |
 |---|---|
 | `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:981 / `fold` :229; keyless fast path `consume_input_vectorized` :509-689 |
-| `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:343, :387, :364, :412/:487, :440/:331/:583, :549/:675, :518 |
+| `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
 | `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
 | `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:302 `build_full_sort`, :403 `build_top_k`, :504 `next` (cap = k+s) |
@@ -64,15 +64,25 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
    `partial_cmp().unwrap_or(Equal)`, not transitive with NaN (`pre2912_partialCmpEq_not_transitive`),
    so std sort panicked and the server crashed (C returns nan). Main sorts by `sort_cmp_f64`
    (:625/:651), a total preorder (`pctCmp_total`). Test `bug_percentile_with_nan_panics`.
-4. aggregation.rs:539 (and :253): every row overwrites the percentile, so the last one wins
-   (`pct_last_wins`). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10.
-   Test `bug_percentile_row_dependent_argument_last_wins`.
+4. **FIXED by #3007 (1d3b029e1, closes #2980).** Was: aggregation.rs:539 (and :253) at 289c201fe
+   overwrote the percentile on every row, so the last one won (`pre3007_pct_last_wins`,
+   `pre3007_pct_repro`). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Main stores it only
+   while the collected list is empty (aggregation.rs:552-555, :257-260): `pct_first_wins`,
+   `pct_stable`, `pct_repro_first_row`. Test `bug_percentile_row_dependent_argument_last_wins`;
+   main's flow test `test_row_dependent_percentile_uses_first_row`.
 5. **FIXED by #2951 (0912f4500, closes #2945).** Was: eval.rs:877 an aggregate inside a list literal
    `return`ed out of the stack machine (`pre2951_stackEval_return_drops_frame`,
    `pre2951_count_lit_and_size`). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
    `size([count(x)])` C 1, Rust type error. Main pushes the result and `continue`s (eval.rs:883-893):
    `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`,
    `main_size_singleton_agg`. Test `bug_list_literal_of_aggregates_collapses`.
+
+**Re-target to 8621212fc (2026-10-20): W2-agg-4 fixed by #3007.** `pctStep` now stores the
+row's percentile only while no value has been collected, as aggregation.rs:552-555 does at
+8621212fc; `pct_first_wins` proves the aggregate's percentile is the first non-null row's (leading
+nulls skipped) and `pct_stable` that no later row changes it. The old overwrite model is kept as
+`pre3007_pctStep`/`pre3007_pctFold`; the counterexample is renamed `pre3007_pct_last_wins`.
+COVERAGE.tsv aggregation.rs lines re-pinned (+3/+6 after :254/:549).
 
 **Re-target to 289c201fe (2026-10-20): W2-agg-5 fixed by #2951.** `evalStack` is now a postfix
 stack machine (`compile`, `run`, `step`) whose aggregate leaf pushes its finalized value, as

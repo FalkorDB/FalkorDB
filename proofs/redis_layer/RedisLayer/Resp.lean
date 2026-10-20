@@ -153,7 +153,7 @@ theorem Emits.array {cs : List (Call F)} {ys : List R} (h : Emits dfmt cs ys) :
     simp
 
 /-- A postponed array closed by `SetArrayLength(k)` where `k` is the number of elements
-emitted in between (`reply.rs:219-228`, `:435-457`, `:505-516`). -/
+emitted in between (`reply.rs:230-239`, `:446-468`, `:516-527`). -/
 theorem Emits.postponed {cs : List (Call F)} {ys : List R} (h : Emits dfmt cs ys) :
     Emits dfmt (Call.arrP :: cs ++ [Call.setLen ys.length]) [.arr ys] := by
   intro s

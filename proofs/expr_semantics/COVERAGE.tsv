@@ -45,7 +45,7 @@ graph/src/runtime/eval.rs	ExprEval::eval	299	PROVEN	Eval.eval: eval_eq_root
 graph/src/runtime/eval.rs	ExprEval::eval_operand	316	PROVEN	Eval.evalOperand: evalOperand_eq (inline leaves = full evaluator)
 graph/src/runtime/eval.rs	ExprEval::eval_node	330	PROVEN	Eval.evalNode (all fast-path arms; compound = parameter): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq; arithmetic arms vArith/evalCmp (arith_agrees, vec_cmp_*)
 graph/src/runtime/eval.rs	ExprEval::eval_case	485	PROVEN	scalarCase/caseMatchScalar: case_agrees, case_match_agrees
-graph/src/runtime/eval.rs	ExprEval::eval_compound	525	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit, and_or_mismatch_names_type — #3294 message names the operand type), Xor (xor_kleene, xor_mismatch_names_type), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold: pow_drops_error bug), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled; aggregate-finalizer arm (#2951 push-not-return) modelled in proofs/ops_aggregate
+graph/src/runtime/eval.rs	ExprEval::eval_compound	525	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit, and_or_mismatch_names_type — #3294 message names the operand type), Xor (xor_kleene, xor_mismatch_names_type), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold, #2904: pow_propagates_error, pow_binary_eq_spec, pow_agrees_without_errors; history pre2904_pow_drops_error), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled; aggregate-finalizer arm (#2951 push-not-return) modelled in proofs/ops_aggregate
 graph/src/runtime/eval.rs	ExprEval::eval_batch	1113	CONDITIONAL	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation) || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
 graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1129	CONDITIONAL	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
 graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1159	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
@@ -62,16 +62,16 @@ graph/src/runtime/eval.rs	list_contains	1723	MODELLED	delegates to Contains::con
 graph/src/runtime/eval.rs	get_elements	1737	NOT COVERED	list slicing; lists out of scope
 graph/src/runtime/eval.rs	logical_xor	1770	PROVEN	scalarXor: xor_kleene
 graph/src/runtime/eval.rs	evaluate_param	1777	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
-graph/src/runtime/value.rs	Add::add	939	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
-graph/src/runtime/value.rs	Value::add_slow	954	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
-graph/src/runtime/value.rs	Sub::sub	1074	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
-graph/src/runtime/value.rs	Mul::mul	1123	PROVEN	vArith .mul: arith_agrees (scalar subset)
-graph/src/runtime/value.rs	Div::div	1152	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
-graph/src/runtime/value.rs	Rem::rem	1180	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
-graph/src/runtime/value.rs	OrderedEnum::order	1210	MODELLED	V.order (scalar subset; value_order proves the full table)
-graph/src/runtime/value.rs	CompareValue::compare_value	1241	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
-graph/src/runtime/value.rs	Contains::contains	1866	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
-graph/src/runtime/value.rs	compare_floats	1904	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
+graph/src/runtime/value.rs	Add::add	946	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
+graph/src/runtime/value.rs	Value::add_slow	961	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
+graph/src/runtime/value.rs	Sub::sub	1078	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
+graph/src/runtime/value.rs	Mul::mul	1124	PROVEN	vArith .mul: arith_agrees (scalar subset)
+graph/src/runtime/value.rs	Div::div	1153	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
+graph/src/runtime/value.rs	Rem::rem	1181	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
+graph/src/runtime/value.rs	OrderedEnum::order	1211	MODELLED	V.order (scalar subset; value_order proves the full table)
+graph/src/runtime/value.rs	CompareValue::compare_value	1242	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
+graph/src/runtime/value.rs	Contains::contains	1867	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	compare_floats	1905	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
 graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
 graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()
 graph/src/runtime/functions/math.rs	ceil	63	NOT COVERED	not modelled
@@ -81,14 +81,14 @@ graph/src/runtime/functions/math.rs	floor	100	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	log	114	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	log10	128	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	random_uuid	143	NOT COVERED	nondeterministic; not modelled
-graph/src/runtime/functions/math.rs	pow	176	NOT COVERED	wrapper over apply_pow; wrapper not modelled
+graph/src/runtime/functions/math.rs	pow	176	NOT COVERED	wrapper over apply_pow (returns its Result since #2904); not modelled here, proven in proofs/value_math pow_fn_in_domain
 graph/src/runtime/functions/math.rs	rand	186	NOT COVERED	nondeterministic; not modelled
 graph/src/runtime/functions/math.rs	round	196	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_int, sign_float_cases (#2906 fixed by #2907 f04c3557a; pre2907_sign_float_is_float historical)
 graph/src/runtime/functions/math.rs	sqrt	225	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	range	251	MODELLED	rangeMath: used as the spec in rangeIter_ok_up (argument validation not modelled)
 graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce: coalesce_first_nonnull
-graph/src/runtime/functions/math.rs	apply_pow	329	PROVEN	applyPow: pow_agrees_without_errors, pow_drops_error
+graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	applyPow (#2904: Result, type-checks operands): pow_bool_type_error, pow_agrees_without_errors, pow_binary_eq_spec; history pre2904_applyPow/pre2904_pow_drops_error
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	MODELLED	toIntegerFloat/toIntegerString fragment only (out-of-range floor): toInteger_float_vs_string
-graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	MODELLED	only its effect: constant evaluator = error-valued variables fed to powFold (pow_constant_true, bug); is_constant_true itself not modelled
+graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	MODELLED	only its effect on ^: the constant evaluator (every variable an error) fed to powFold no longer yields true (pow_constant_not_true, #2904); history pre2904_pow_constant_true; soundness proven in proofs/optimizer_rewrites ConstEval
 graph/src/runtime/functions/mod.rs	init_functions	1103	MODELLED	FnRegistry.rustNames (registered name set, extracted as data) — #2724 open: bug2724_prev_missing refutes CoversC; covers_all_but_prev

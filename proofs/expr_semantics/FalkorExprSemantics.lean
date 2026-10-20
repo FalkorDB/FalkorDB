@@ -6,15 +6,22 @@ import FalkorCore.Int64
 import FalkorCore.Float
 /-
 # Expression evaluation: the columnar path agrees with the per-row path, and
+# where the per-row path itself departs from openCypher / C FalkorDB
 
-**Re-targeted to main 289c201fe** (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
+**Re-targeted to main 8621212fc** (from 289c201fe). #2904 (#2902): `^` propagates
+operand errors (`?` instead of `flat_map`) and `apply_pow` type-checks its operands
+(`Type mismatch: expected Integer, Float, or Null but was …`) — `applyPow`/`powFold`
+re-modelled, `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`,
+`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model is kept as
+`pre2904_applyPow`/`pre2904_powFold` with `pre2904_pow_drops_error`,
+`pre2904_pow_constant_true`. COVERAGE.tsv line numbers re-pinned to 8621212fc.
+
+Earlier: re-targeted to main 289c201fe (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
 operand type error now names the operand's type like C (`expected Boolean or Null but
 was Integer`), on both the per-row and the columnar path — `boolMismatch` takes the
 value, `and_or_mismatch_names_type`, `xor_mismatch_names_type`. #2951 (#2945) changes
 only `eval_compound`'s aggregate-finalizer arm, which this project does not model
 (proofs/ops_aggregate does). The `init_functions` name set (`FnRegistry`) is unchanged.
-COVERAGE.tsv line numbers re-pinned to 289c201fe.
-# where the per-row path itself departs from openCypher / C FalkorDB
 
 A model of FalkorDB-rs scalar expression semantics and of the columnar
 evaluator (`VectorEval`) that Filter / Project / Aggregate actually run, with
@@ -43,8 +50,9 @@ machine-checked proofs that
 and with counterexamples, each reproduced against the real engine
 (`graph/tests/lean_expr_semantics.rs`), for
 
-* `^` silently dropping an operand's error (`pow_drops_error`), which also makes
-  the optimizer delete `WHERE x ^ true` as constant-true (`pow_constant_true`);
+* `^` silently dropping an operand's error — fixed by #2904 (`fd2c76a6c`), now
+  `pow_propagates_error` (historical `pre2904_pow_drops_error`; the optimizer
+  deleting `WHERE x ^ true` as constant-true is `pre2904_pow_constant_true`);
 * the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX`
   (`rangeIter_wraps`) — panic in debug, wrong rows and non-termination in release;
 * `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
@@ -77,8 +85,9 @@ and with counterexamples, each reproduced against the real engine
 | `CSt`, `whenPhase`/`thenPhase`/`elsePhase`, `vecCase`, `caseMatchVec` | `VectorEval::eval_case` (`vector_expr.rs:475`) |
 | `omap`, `ofold`          | Rust's `?` over a row set / over the children |
 | `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs:1762`), used by `ExprIR::In` (`eval.rs:774`) |
-| `applyPow`, `powFold`    | `apply_pow` (`math.rs:329`); `ExprIR::Pow` in `eval_compound` (`eval.rs:819-825`, the `flat_map`) |
-| `pow_constant_true`      | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:49`) |
+| `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:828-834`, `reduce` calling `apply_pow(acc?, value?)`) |
+| `pre2904_applyPow`, `pre2904_powFold` | the same before #2904 (the `flat_map`) |
+| `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
 | `rangeIterRel` / `rangeIterDbg` | `RangeIter::next` (`eval.rs:108-122`), release / debug build |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
 | `signRust`               | `sign` (`math.rs:210`) |
@@ -1398,50 +1407,152 @@ theorem null_in (l : List (V F)) :
     contains .null l = if l = [] then .bool false else .null := by
   unfold contains; rw [containsGo_null]; simp
 
-/-! ## `^`: the `flat_map` that drops errors (BUG) -/
+/-! ## `^`: operand errors propagate and operands are type-checked (#2904)
 
-/-- `apply_pow` (math.rs:329): numeric pairs become a float power, anything
-else — including a non-numeric operand — is `null`, never a type error. -/
-def applyPow (pw : F → F → F) : V F → V F → V F
+Before #2904 (main 289c201fe) the `Pow` arm folded its children with `flat_map`,
+which drops an `Err` (W-expr bug, issue #2902); that model is kept below as
+`pre2904_*` history. -/
+
+/-- The `apply_pow` type error (math.rs:328): `… but was {v.name()}`. -/
+def powMismatch (v : V F) : String :=
+  s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
+
+def V.numOrNull : V F → Bool
+  | .null | .int _ | .flt _ => true
+  | _ => false
+
+/-- `apply_pow` (math.rs:328, since #2904): a non-numeric, non-null operand (base
+first) is a type error; else `null` if either side is null; else `powf` of the two
+operands as `f64` (`get_numeric`). -/
+def applyPow (pw : F → F → F) (a b : V F) : Except String (V F) :=
+  if !a.numOrNull then .error (powMismatch a)
+  else if !b.numOrNull then .error (powMismatch b)
+  else match a, b with
+    | .int x, .int y => .ok (.flt (pw (FM.ofInt x) (FM.ofInt y)))
+    | .flt x, .flt y => .ok (.flt (pw x y))
+    | .int x, .flt y => .ok (.flt (pw (FM.ofInt x) y))
+    | .flt x, .int y => .ok (.flt (pw x (FM.ofInt y)))
+    | _, _ => .ok .null
+
+/-- One step of the `Pow` arm's `reduce(|acc, value| apply_pow(acc?, value?))`. -/
+def powStep (pw : F → F → F) (acc v : Except String (V F)) : Except String (V F) :=
+  match acc, v with
+  | .error e, _ => .error e
+  | .ok _, .error e => .error e
+  | .ok x, .ok y => applyPow pw x y
+
+/-- `ExprIR::Pow` in `eval_compound` (eval.rs:828-834, since #2904):
+`children.map(eval_node).reduce(|acc, value| apply_pow(acc?, value?))`, then
+`ok_or_else(..)??`. A single child is returned as is. -/
+def powFold (pw : F → F → F) : List (Except String (V F)) → Except String (V F)
+  | [] => .error "Pow operator requires at least one argument"
+  | y :: ys => ys.foldl (powStep pw) y
+
+/-- What every other operator does (`?` on each child first) — and C. -/
+def powSpec (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
+  match xs.mapM id with
+  | .error e => .error e
+  | .ok [] => .error "Pow operator requires at least one argument"
+  | .ok (y :: ys) => ys.foldlM (applyPow pw) y
+
+/-- `2 ^ (1/0)` is now the division error (was `2`, see `pre2904_pow_drops_error`). -/
+theorem pow_propagates_error (pw : F → F → F) :
+    powFold pw [.ok (.int 2), .error "Division by zero"] = .error "Division by zero" ∧
+    powFold pw [.error "Division by zero", .ok (.int 2)] = .error "Division by zero" :=
+  ⟨rfl, rfl⟩
+
+theorem powStep_foldl_error (pw : F → F → F) (e : String) :
+    ∀ ys : List (Except String (V F)), ys.foldl (powStep pw) (.error e) = .error e
+  | [] => rfl
+  | _ :: ys => powStep_foldl_error pw e ys
+
+/-- On error-free operands the fold is `foldlM apply_pow`: it stops at the first
+type error, exactly like the spec. -/
+theorem powStep_foldl_ok (pw : F → F → F) :
+    ∀ (ws : List (V F)) (a : V F),
+      (ws.map Except.ok).foldl (powStep pw) (.ok a) = ws.foldlM (applyPow pw) a
+  | [], a => rfl
+  | w :: ws, a => by
+    simp only [List.map_cons, List.foldl_cons, List.foldlM_cons]
+    show List.foldl (powStep pw) (applyPow pw a w) (ws.map Except.ok) = (applyPow pw a w) >>= _
+    cases applyPow pw a w with
+    | error e => rw [powStep_foldl_error]; rfl
+    | ok b => exact powStep_foldl_ok pw ws b
+
+theorem mapM_ok (ws : List (V F)) :
+    (ws.map (Except.ok : V F → Except String (V F))).mapM id = .ok ws := by
+  induction ws with
+  | nil => rfl
+  | cons v vs ih => simp only [List.map_cons, List.mapM_cons, id]; rw [ih]; rfl
+
+/-- On error-free operands main's fold *is* the spec, error for error. -/
+theorem pow_agrees_without_errors (pw : F → F → F) (vs : List (V F)) :
+    powFold pw (vs.map .ok) = powSpec pw (vs.map .ok) := by
+  unfold powSpec
+  rw [mapM_ok]
+  cases vs with
+  | nil => rfl
+  | cons v vs => exact powStep_foldl_ok pw vs v
+
+/-- The binary operator `a ^ b` is exactly the `?`-on-each-operand spec. -/
+theorem pow_binary_eq_spec (pw : F → F → F) (a b : Except String (V F)) :
+    powFold pw [a, b] = powSpec pw [a, b] := by
+  cases a with
+  | error e => rfl
+  | ok x =>
+    cases b with
+    | error e => rfl
+    | ok y => exact pow_agrees_without_errors pw [x, y]
+
+/-- The optimizer's constant evaluator (every variable an error) no longer folds
+`x ^ true` to `true`: the error reaches `is_constant_true`, which keeps the Filter. -/
+theorem pow_constant_not_true (pw : F → F → F) :
+    powFold pw [.error "Variable not found", .ok (.bool true)] = .error "Variable not found" := rfl
+
+/-- `x ^ true` at runtime is now the C type error (it was `null` for every row). -/
+theorem pow_bool_type_error (pw : F → F → F) (x : V F) (hx : x.numOrNull = true) :
+    powFold pw [.ok x, .ok (.bool true)] =
+      .error "Type mismatch: expected Integer, Float, or Null but was Boolean" := by
+  cases x <;> simp_all [powFold, List.foldl, powStep, applyPow, V.numOrNull, powMismatch, V.name] <;> rfl
+
+/-! ### History: the `flat_map` that dropped errors (fixed by #2904) -/
+
+/-- `apply_pow` before #2904: anything non-numeric was `null`, never a type error. -/
+def pre2904_applyPow (pw : F → F → F) : V F → V F → V F
   | .int a, .int b => .flt (pw (FM.ofInt a) (FM.ofInt b))
   | .flt a, .flt b => .flt (pw a b)
   | .int a, .flt b => .flt (pw (FM.ofInt a) b)
   | .flt a, .int b => .flt (pw a (FM.ofInt b))
   | _, _ => .null
 
-/-- `ExprIR::Pow` in `eval_compound` (eval.rs:818-825):
-`children.flat_map(|c| self.eval_node(c)).reduce(apply_pow)`. `flat_map` over a
-`Result` yields the `Ok` value and *nothing* for an `Err`. -/
-def powFold (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
+/-- `ExprIR::Pow` before #2904: `children.flat_map(eval_node).reduce(apply_pow)`.
+`flat_map` over a `Result` yields the `Ok` value and *nothing* for an `Err`. -/
+def pre2904_powFold (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
   match xs.filterMap Except.toOption with
   | [] => .error "Pow operator requires at least one argument"
-  | y :: ys => .ok (ys.foldl (applyPow pw) y)
+  | y :: ys => .ok (ys.foldl (pre2904_applyPow pw) y)
 
-/-- What every other binary operator does (`?` on each child), and what C does. -/
-def powSpec (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
+def pre2904_powSpec (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
   match xs.mapM id with
   | .error e => .error e
   | .ok [] => .error "Pow operator requires at least one argument"
-  | .ok (y :: ys) => .ok (ys.foldl (applyPow pw) y)
+  | .ok (y :: ys) => .ok (ys.foldl (pre2904_applyPow pw) y)
 
-/-- **BUG**: `2 ^ (1/0)` is `2` — the right operand's error vanishes and the
-left operand is returned *unpowered* (an `Int`, not even a `Float`). -/
-theorem pow_drops_error (pw : F → F → F) :
-    powFold pw [.ok (.int 2), .error "Division by zero"] = .ok (.int 2) ∧
-    powSpec pw [.ok (.int 2), .error "Division by zero"] = .error "Division by zero" :=
+/-- **BUG (fixed by #2904)**: `2 ^ (1/0)` was `2` — the right operand's error
+vanished and the left operand was returned *unpowered*. -/
+theorem pre2904_pow_drops_error (pw : F → F → F) :
+    pre2904_powFold pw [.ok (.int 2), .error "Division by zero"] = .ok (.int 2) ∧
+    pre2904_powSpec pw [.ok (.int 2), .error "Division by zero"] = .error "Division by zero" :=
   ⟨rfl, rfl⟩
 
-/-- **BUG, consequence**: the optimizer's `eliminate_true_filters` evaluates a
-`WHERE` predicate with the constant evaluator, where every variable is an
-error ("Variable not found"). For `x ^ true` that error is dropped, the fold
-yields the constant `true`, and the whole `Filter` is deleted from the plan —
-so `WHERE x ^ true` keeps every row although `x ^ true` is `null` for each. -/
-theorem pow_constant_true (pw : F → F → F) :
-    powFold pw [.error "Variable not found", .ok (.bool true)] = .ok (.bool true) := rfl
+/-- **BUG, consequence (fixed by #2904)**: the constant evaluator folded `x ^ true`
+to `true`, so `eliminate_true_filters` deleted `WHERE x ^ true`. -/
+theorem pre2904_pow_constant_true (pw : F → F → F) :
+    pre2904_powFold pw [.error "Variable not found", .ok (.bool true)] = .ok (.bool true) := rfl
 
-/-- On error-free operands the two agree: the bug is exactly error dropping. -/
-theorem pow_agrees_without_errors (pw : F → F → F) (vs : List (V F)) :
-    powFold pw (vs.map .ok) = powSpec pw (vs.map .ok) := by
+/-- Before #2904, error dropping was the only difference from `?`-semantics. -/
+theorem pre2904_pow_agrees_without_errors (pw : F → F → F) (vs : List (V F)) :
+    pre2904_powFold pw (vs.map .ok) = pre2904_powSpec pw (vs.map .ok) := by
   have h2 : ∀ ws : List (V F), (ws.map (Except.ok : V F → Except String (V F))).mapM id = .ok ws := by
     intro ws
     induction ws with
@@ -1453,7 +1564,7 @@ theorem pow_agrees_without_errors (pw : F → F → F) (vs : List (V F)) :
     induction ws with
     | nil => rfl
     | cons v vs ih => simp [Except.toOption, ih]
-  unfold powFold powSpec
+  unfold pre2904_powFold pre2904_powSpec
   rw [h1, h2]
   cases vs <;> rfl
 

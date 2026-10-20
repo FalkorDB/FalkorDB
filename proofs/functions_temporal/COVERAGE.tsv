@@ -30,23 +30,24 @@ graph/src/runtime/functions/temporal.rs	duration_fn	787	PROVEN	Pure.durationFn =
 graph/src/runtime/functions/temporal.rs	date_transaction_fn	797	PROVEN	Pure.dateTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	809	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	823	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
-graph/src/runtime/value.rs	Point::distance	144	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite, distance_not_nan (NanLaws), distance_eq_pre2983; history pre2983_distance_nan (W2-temporal-4 fixed), Spatial.pre2983_haversine #eval
-graph/src/runtime/value.rs	Point::validate	170	NOT COVERED	f32 range checks; live-tested
-graph/src/runtime/value.rs	Value::format_datetime	282	PROVEN	Components.formatDatetime: format_invalid, fields_roundtrip
-graph/src/runtime/value.rs	Value::format_date	300	PROVEN	formatDateDigits: formatDate_not_injective, formatDate_injective_4digit
-graph/src/runtime/value.rs	Value::format_time	311	PROVEN	Components.formatTime: formatTime_length, format_invalid, pad2_length
-graph/src/runtime/value.rs	Value::format_duration	322	NOT COVERED	string assembly over decomposeDuration; live-tested
-graph/src/runtime/value.rs	Value::get_datetime_component	499	PROVEN	Components.getDatetimeComponent (ChronoDT structure): components_invalid, clock_ranges, calendar_ranges, fields_roundtrip, datetime_unknown
-graph/src/runtime/value.rs	Value::get_date_component	558	PROVEN	Components.getDateComponent: components_invalid, calendar_ranges
-graph/src/runtime/value.rs	Value::get_time_component	606	PROVEN	Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
-graph/src/runtime/value.rs	Value::get_duration_component	634	NOT COVERED	chrono; live-tested vs C
-graph/src/runtime/value.rs	add_duration_to_timestamp	722	PROVEN	addDur: add_sub_months, sub_vs_add_neg, neg_days_encoding, timeAddDur_eq_tod; history pre2985_time_not_normalised (Time arm no longer calls it since #2985)
-graph/src/runtime/value.rs	sub_duration_from_timestamp	756	PROVEN	subDur: add_sub_months, sub_vs_add_neg
-graph/src/runtime/value.rs	days_in_month	778	PROVEN	daysInMonth: dim_link, civil_valid
-graph/src/runtime/value.rs	is_leap	790	PROVEN	isLeap: isLeap_tmod, isLeap_add400
-graph/src/runtime/value.rs	days_from_civil	797	PROVEN	daysFromCivil: dfc_civil, civil_dfc, dfc_injective, daysFromCivil_day
-graph/src/runtime/value.rs	civil_from_days	814	PROVEN	civilFromDays: dfc_civil, civil_valid, civil_dfc, civilFromDays_exact, civilFromDays_trunc
-graph/src/runtime/value.rs	write_date_into	829	PROVEN	formatDateDigits
+graph/src/runtime/value.rs	Point::distance	151	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite, distance_not_nan (NanLaws), distance_eq_pre2983; history pre2983_distance_nan (W2-temporal-4 fixed), Spatial.pre2983_haversine #eval
+graph/src/runtime/value.rs	Point::validate	177	NOT COVERED	f32 range checks; live-tested
+graph/src/runtime/value.rs	Value::format_datetime	289	PROVEN	Components.formatDatetime: format_invalid, fields_roundtrip
+graph/src/runtime/value.rs	Value::format_date	307	PROVEN	formatDateDigits: formatDate_not_injective, formatDate_injective_4digit
+graph/src/runtime/value.rs	Value::format_time	318	PROVEN	Components.formatTime: formatTime_length, format_invalid, pad2_length
+graph/src/runtime/value.rs	Value::format_duration	329	NOT COVERED	string assembly over decomposeDuration; live-tested
+graph/src/runtime/value.rs	Value::get_datetime_component	505	PROVEN	Components.getDatetimeComponent (ChronoDT structure): components_invalid, clock_ranges, calendar_ranges, fields_roundtrip, datetime_unknown
+graph/src/runtime/value.rs	Value::get_date_component	564	PROVEN	Components.getDateComponent: components_invalid, calendar_ranges
+graph/src/runtime/value.rs	Value::get_time_component	612	PROVEN	Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
+graph/src/runtime/value.rs	Value::get_duration_component	640	NOT COVERED	chrono; live-tested vs C
+graph/src/runtime/value.rs	add_duration_to_timestamp	728	PROVEN	addDur (via shiftMonths): add_sub_months, sub_eq_add_neg_months, sub_vs_add_neg, neg_days_encoding, timeAddDur_eq_tod; history pre2985_time_not_normalised (Time arm no longer calls it since #2985)
+graph/src/runtime/value.rs	sub_duration_from_timestamp	738	PROVEN	subDur (shiftMonths with -years/-months since #2984): sub_eq_add_neg_months, subDur_eq_shift, add_sub_months, sub_vs_add_neg, subDur_eq_pre2984; history pre2984_subDur/pre2984_sub_vs_add_neg (W2-temporal-5 fixed)
+graph/src/runtime/value.rs	shift_months	752	PROVEN	Duration.shiftMonths (#2984, shared by add/sub): shiftMonths_total (depends only on 12*years+months), sub_eq_add_neg_months, add_sub_months, sub_vs_add_neg; Int arithmetic (i32 y+years overflow out of range, SmallYear)
+graph/src/runtime/value.rs	days_in_month	785	PROVEN	daysInMonth: dim_link, civil_valid
+graph/src/runtime/value.rs	is_leap	797	PROVEN	isLeap: isLeap_tmod, isLeap_add400
+graph/src/runtime/value.rs	days_from_civil	804	PROVEN	daysFromCivil: dfc_civil, civil_dfc, dfc_injective, daysFromCivil_day
+graph/src/runtime/value.rs	civil_from_days	821	PROVEN	civilFromDays: dfc_civil, civil_valid, civil_dfc, civilFromDays_exact, civilFromDays_trunc
+graph/src/runtime/value.rs	write_date_into	836	PROVEN	formatDateDigits
 graph/src/runtime/functions/conversion.rs	register	40	NOT COVERED	registration
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	NOT COVERED	f64 parsing; live differential (toInteger('1e3'), ' 12')
 graph/src/runtime/functions/conversion.rs	value_to_float	103	NOT COVERED	f64 parsing; live differential (' 1', '0x10')
@@ -95,6 +96,6 @@ graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	VExpr.intLane: intLane_eq
 graph/src/runtime/vector_expr.rs	int_lane	955	PROVEN	VExpr.intLane
 graph/src/runtime/vector_expr.rs	float_lane	967	NOT COVERED	f64
 graph/src/runtime/vector_expr.rs	float_operand	982	NOT COVERED	trivial predicate
-graph/src/runtime/value.rs	Point::new	133	PROVEN	SpatialFns.Point.new: Point.new_fields
-graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	954	PROVEN	Duration.timeAddDur (arm at value.rs:1059, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
-graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1074	PROVEN	Duration.timeSubDur (arm at value.rs:1104, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised
+graph/src/runtime/value.rs	Point::new	140	PROVEN	SpatialFns.Point.new: Point.new_fields
+graph/src/runtime/value.rs	Value::add_slow (Time/Duration arm)	961	PROVEN	Duration.timeAddDur (arm at value.rs:1063, #2985): timeAddDur_eq_tod, timeAddDur_range, timeAddDur_eq, time_normalised
+graph/src/runtime/value.rs	Sub::sub (Time/Duration arm)	1078	PROVEN	Duration.timeSubDur (arm at value.rs:1105, #2985): timeSubDur_range, timeSubDur_eq, timeSub_timeAdd, time_normalised

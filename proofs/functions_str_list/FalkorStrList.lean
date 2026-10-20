@@ -177,6 +177,10 @@ Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
 (string.rs −4/−16 after the deletion, eval.rs +11 after #3294/#2951). The eval.rs
 changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
 literal) touch no arm modelled here.
+Re-targeted to 8621212fc: no modelled function changed. #2904 (`fd2c76a6c`, `^` in eval.rs
+and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3007, #3043 and
+#3419 touch no row of this project; value.rs rows re-pinned (+7 after the import block,
+`add_slow` :961, `Contains::contains` impl :1867).
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/

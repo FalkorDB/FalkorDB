@@ -110,15 +110,15 @@ Shared foundations (the float model `F`, `fpcmp`, i64 helpers, comparator laws `
 
 ## Coverage
 
-Line numbers are pinned to main 289c201fe (no change to the order, equality or hash code since fb3d516d0).
+Line numbers are pinned to main 8621212fc (no change to the order, equality or hash code since fb3d516d0).
 
-`COVERAGE.tsv` has 84 rows, mostly `value.rs`:
+`COVERAGE.tsv` has 85 rows, mostly `value.rs`:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 37 |
 | MODELLED | 2 |
-| NOT COVERED | 45 |
+| NOT COVERED | 46 |
 
 - **MODELLED:** `compare_vecf32` and `first_difference` are modelled here and proven in `value_math` (`chunked_eq_firstDiff`).
 - **NOT COVERED:** mostly geometry and accessors (`Point::distance`, `get_numeric`, …), which are outside this project's question. Some are proven in other projects; `bash proofs/coverage.sh` counts each function once, in its best bucket.

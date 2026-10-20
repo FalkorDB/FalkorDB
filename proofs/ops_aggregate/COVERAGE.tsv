@@ -49,23 +49,23 @@ graph/src/runtime/functions/aggregation.rs	sum	95	NOT COVERED	scalar body shadow
 graph/src/runtime/functions/aggregation.rs	max	119	PROVEN	maxScalar (NaN comparisons ignored, #2917): maxScalar_eq_batch (= max_batch, NaN included), maxScalar_eq_batch_nan; history pre2917_maxScalar_ne_batch_nan; also scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs always prefers
 graph/src/runtime/functions/aggregation.rs	min	142	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	avg	166	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	percentile	230	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer (same last-wins overwrite as percentile_batch)
-graph/src/runtime/functions/aggregation.rs	stdev	290	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	about_to_overflow	335	MODELLED	aboutToOverflow; #eval checks vs C (avg of [MAX,MAX,-MAX])
-graph/src/runtime/functions/aggregation.rs	count_batch	347	PROVEN	countBatch_spec, countStar_hom, countStar_rowwise, count_hom
-graph/src/runtime/functions/aggregation.rs	collect_batch	368	PROVEN	collectBatch_spec, collect_hom
-graph/src/runtime/functions/aggregation.rs	sum_batch	391	PROVEN	sum_hom (f64 accumulator: #eval of i64::MAX+1)
-graph/src/runtime/functions/aggregation.rs	max_batch	418	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom, maxScalar_eq_batch, maxScalar_eq_batch_nan
-graph/src/runtime/functions/aggregation.rs	avg_batch	448	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
-graph/src/runtime/functions/aggregation.rs	min_batch	495	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom; proofs/value_order min_nan_ignored
-graph/src/runtime/functions/aggregation.rs	percentile_batch	528	PROVEN	pct_last_wins (BUG: C keeps first row's percentile)
-graph/src/runtime/functions/aggregation.rs	stdev_batch	559	PROVEN	stdev_hom
-graph/src/runtime/functions/aggregation.rs	finalize_avg	593	PROVEN	avg_empty
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	611	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed); history pre2912_partialCmpEq_not_transitive
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	637	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed); history pre2912_partialCmpEq_not_transitive
-graph/src/runtime/functions/aggregation.rs	modf	671	NOT COVERED	f64 libm split; no float reasoning
-graph/src/runtime/functions/aggregation.rs	finalize_stdev	677	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
-graph/src/runtime/functions/aggregation.rs	finalize_stdevp	699	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
+graph/src/runtime/functions/aggregation.rs	percentile	230	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer (same first-row percentile rule as percentile_batch since #3007)
+graph/src/runtime/functions/aggregation.rs	stdev	293	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
+graph/src/runtime/functions/aggregation.rs	about_to_overflow	338	MODELLED	aboutToOverflow; #eval checks vs C (avg of [MAX,MAX,-MAX])
+graph/src/runtime/functions/aggregation.rs	count_batch	350	PROVEN	countBatch_spec, countStar_hom, countStar_rowwise, count_hom
+graph/src/runtime/functions/aggregation.rs	collect_batch	371	PROVEN	collectBatch_spec, collect_hom
+graph/src/runtime/functions/aggregation.rs	sum_batch	394	PROVEN	sum_hom (f64 accumulator: #eval of i64::MAX+1)
+graph/src/runtime/functions/aggregation.rs	max_batch	421	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom, maxScalar_eq_batch, maxScalar_eq_batch_nan
+graph/src/runtime/functions/aggregation.rs	avg_batch	451	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
+graph/src/runtime/functions/aggregation.rs	min_batch	498	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom; proofs/value_order min_nan_ignored
+graph/src/runtime/functions/aggregation.rs	percentile_batch	531	PROVEN	pctFold: pct_first_wins, pct_stable, pct_repro_first_row (W2-agg-4 fixed by #3007: first row's percentile, as C); history pre3007_pct_last_wins, pre3007_pct_repro
+graph/src/runtime/functions/aggregation.rs	stdev_batch	565	PROVEN	stdev_hom
+graph/src/runtime/functions/aggregation.rs	finalize_avg	599	PROVEN	avg_empty
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	617	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed); history pre2912_partialCmpEq_not_transitive
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	643	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed); history pre2912_partialCmpEq_not_transitive
+graph/src/runtime/functions/aggregation.rs	modf	677	NOT COVERED	f64 libm split; no float reasoning
+graph/src/runtime/functions/aggregation.rs	finalize_stdev	683	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
+graph/src/runtime/functions/aggregation.rs	finalize_stdevp	705	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
 graph/src/runtime/batch.rs	none	98	PROVEN	none_isNull
 graph/src/runtime/batch.rs	all	108	PROVEN	all_isNull
 graph/src/runtime/batch.rs	from_values	118	PROVEN	fromNulls_isNull

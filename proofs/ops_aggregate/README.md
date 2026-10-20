@@ -73,6 +73,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in five open issues | `SlotReuse.lean` |
 | `unbind_after_zero` | Every accumulator the aggregate zeroes is unbound again afterwards | `AggState.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
+| `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C (#3007) | `Agg.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
 
 ### How `vectorized_eq_rowwise` is proved
@@ -94,7 +95,7 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | W2-agg-1 | `distinct_fold_clear_overcounts` | `CALL {}` clears the runtime-wide DISTINCT state after each run (`apply.rs:283`), wiping an outer `count(DISTINCT)`'s state every batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)` gives 6; C gives 2 | **Open** |
 | W2-agg-2 | `hashed_dedup_merges_groups` | Per-group DISTINCT state is keyed by the FxHash of the group key (`aggregate.rs:715`, `:959`), so two groups whose keys collide share one seen-set. Keys `[0,0]` and `[1,-1452335207727870361]`: C counts 1 and 1, Rust 1 and 0 | **Open** |
 | W2-agg-3 | `pre2912_partialCmpEq_not_transitive` | `percentileDisc`/`percentileCont` sorted with `partial_cmp().unwrap_or(Equal)`, which is not transitive with NaN; the sort panicked and the server crashed | Fixed by #2912 (`pctCmp_total`) |
-| W2-agg-4 | `pct_last_wins` | A per-row percentile argument is overwritten by every row, so the last row wins. `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Low severity | **Open** |
+| W2-agg-4 | `pre3007_pct_last_wins`, `pre3007_pct_repro` | A per-row percentile argument was overwritten by every row, so the last row won. `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Low severity | Fixed by #3007 (`pct_first_wins`, `pct_stable`, `pct_repro_first_row`; main's test `test_row_dependent_percentile_uses_first_row`) |
 | W2-agg-5 | `pre2951_stackEval_return_drops_frame`, `pre2951_count_lit_and_size` | An aggregate inside a list literal `return`ed out of the expression stack machine (`eval.rs:877`). `[min(x), max(x)]` gave `2` where C gives `[1,2]`; `size([count(x)])` was a type error | Fixed by #2951 (`evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`, `main_size_singleton_agg`; main's test `test_list_literal_of_aggregates`) |
 | #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
 | #3150 | `bug3150_null_key_unbound` (property `KeysBound`) | `RETURN null AS x, count(1)`: the accumulator has id 0, the id of `x`; unbinding it unbinds `x`, the null column is dropped and `reply.rs:655` panics. With `'a' AS x` the value survives unbound, so the reply still prints it | **Open** (PR #3229) |
@@ -122,7 +123,7 @@ They were tagged CONDITIONAL. On main, `Discharge.lean` proves both hypotheses f
 
 | File | What's in it |
 |---|---|
-| `Agg.lean` | The aggregate value type `V`, the null-skipping fold, both drivers, every `*_batch` kernel, the batch-independence theorems, `max` and NaN, `pct_last_wins` |
+| `Agg.lean` | The aggregate value type `V`, the null-skipping fold, both drivers, every `*_batch` kernel, the batch-independence theorems, `max` and NaN, the percentile first-row rule (`pct_first_wins`) and its pre-#3007 history |
 | `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return` bug, percentile index bounds and comparator |
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |
 | `SortKey.lean` | `classify_sort_key`: the typed key column reads back the evaluated key |

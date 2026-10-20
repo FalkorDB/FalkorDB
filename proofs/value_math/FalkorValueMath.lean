@@ -16,12 +16,23 @@ import FalkorValueMath.Nesting
 /-!
 # Value arithmetic, math/conversion functions and function type checking (FalkorDB-rs)
 
-**Re-targeted to main 289c201fe** (from fb3d516d0). #2985 (#2933): `Time ± Duration`
+**Re-targeted to main 8621212fc** (from 289c201fe). #2904 (closes #2902): `apply_pow`
+returns `Result` and rejects a non-numeric, non-null operand (base first) with
+`Type mismatch: expected Integer, Float, or Null but was <type>` — `applyPow` now returns
+`Res`; `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`,
+`pow_null`, `pow_numeric_unchanged`, `pow_fn_in_domain`; history
+`pre2904_applyPow`/`pre2904_pow_nonnumeric_null`. #3007 (closes #2980): the scalar
+`percentile` step stores the percentile only while nothing is collected —
+`percentile_first_row`, `percentile_keeps`; history `pre3007_percentile`/
+`pre3007_percentile_last_wins`. #2984 adds `shift_months` to value.rs (row points to
+proofs/functions_temporal). COVERAGE.tsv line numbers re-pinned to 8621212fc.
+
+Earlier: re-targeted to main 289c201fe (from fb3d516d0). #2985 (#2933): `Time ± Duration`
 keeps only the time of day, `(t mod 86400 ± dur mod 86400) mod 86400`, and can no longer
 fail — `timeAddDur`/`timeSubDur` replace the `addTs`/`subTs` parameters in those arms;
 `add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days`,
 `time_add_dur_mod`. #2983 (`Point::distance` clamps `a` to `[0, 1]`) is modelled in
-proofs/functions_temporal. COVERAGE.tsv line numbers re-pinned to 289c201fe.
+proofs/functions_temporal. 
 
 Lean 4 (core only) models of `graph/src/runtime/value.rs` (arithmetic, formatting,
 memory accounting, attribute access, self-comparison, v19 codec),
@@ -42,7 +53,7 @@ on 18411. Compare/eq/hash laws are in `proofs/value_order` (reused, not redone).
 | `V`, `add`, `addSlow`, `sub`, `mul`, `div`, `rem`, `omInsert/omExtend` (Value) | value.rs:180, :910, :925, :1042, :1091, :1120, :1148; `OrderMap::insert/extend` ordermap.rs:76,218 |
 | `cAdd`, `cMul` (CArith) | C `SIValue_Add/_Multiply` + `AR_ADD/AR_MUL` type checks |
 | `Ty`, `valueOfType`, `Accepts`, `validate`, `validateArgsType`, `isCompatibleWith`, `canReturnBoolean`, `unionDisplay`, `regGet`, `regIsAggregate` (TypeCheck) | value.rs:1282; mod.rs:531, :787, :828, :590, :569, :610, :1048, :1079 |
-| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow`, `cAbs` (MathFns) | math.rs:46-342; C `AR_ABS` |
+| `FC`, `mAbs…mSqrt`, `coalesce`, `uuidLayout`, `applyPow` (+ `pre2904_applyPow`), `cAbs` (MathFns) | math.rs:46-352; C `AR_ABS` |
 | `parseI64`, `f64Grammar`, `cStrtoll`, `rustToIntegerStr`, `toInteger/toFloat/toStr/toBooleanV`, list forms, `isEmpty` (Conversion) | conversion.rs:44-285; C `AR_TOINTEGER/AR_TOFLOAT` (numeric_funcs.c) |
 | `cmpV`, `cmpList`, `cmpMap`, `chunked`, `firstDiff`, `mayFail`, `isNeverEqual` (SelfCompare) | value.rs:1224, :1399, :1472, :1817, :1821, :1554, :1531 |
 | `fmtDuration`, `HV/heapSize/amortized`, `getAttr`, `pointComponent`, `durationComponentPre`, `encode`/`pre3339_decode`, `dedupStep`, `jsonFloat` (Misc) | value.rs:296, :342, :388, :439, :458, :608, :2068 (decode before #3339), :1887, :1591 |
@@ -117,7 +128,8 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
 - Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`
   (historical `pre2907_sign_float_is_float`).
-- Also seen (known): `^` not type-checked (#2902),
+- Fixed: `^` not type-checked (#2902) — fixed by #2904 (`pre2904_pow_nonnumeric_null`).
+- Also seen (known):
   `toString(1.0)` '1', `toInteger('1e3')`, leading whitespace (functions_temporal).
 
 ## Suspicions / latent

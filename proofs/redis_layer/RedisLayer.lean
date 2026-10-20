@@ -11,6 +11,7 @@ import RedisLayer.SerialProof
 import RedisLayer.RespVerbose
 import RedisLayer.TelemetryLoop
 import RedisLayer.ModuleInit
+import RedisLayer.ConfigRewrite
 import RedisLayer.QuerySession
 import RedisLayer.GraphCore
 import RedisLayer.Commands2
@@ -39,7 +40,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021; `validatePre3021` historical) |
 | `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
-| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_result::<true>`, `src/reply.rs:134-344`, `:619-666` |
+| `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_result::<true>`, `src/reply.rs:145-355`, `:632-679` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
 | `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:780-910`) + Commit insertion (`planner/mod.rs:2416`, `:2749`) |
 | `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:597-608`; guards `runtime/eval.rs:936,956` |
@@ -113,8 +114,11 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    `keepFirst_plainRead` (agrees with what #3063 kept); history
    `Bulk.pre3026_two_entries_for_one_attr`.
 5. Verbose format: top-level point `point({latitude: 1.000000, …})` (C: no space after
-   `:`), NaN in lists `NaN` (C `nan`), a node deleted in the same query keeps its labels
-   (C `[]`), and `CREATE (a:A) DELETE a` reports no `Nodes created/deleted` stats.
+   `:`) and NaN in lists `NaN` (C `nan`) — **FIXED by #3043 (`7cde92c1d`, closes #3042)**:
+   `Resp.pointStr_c`, `verbose_point_c`, `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`; history
+   `pre3043_point_space`, `pre3043_nan_in_list`. Still: a node deleted in the same query keeps
+   its labels (C `[]`, intended), and `CREATE (a:A) DELETE a` reports no `Nodes
+   created/deleted` stats.
 6. Minor: several error texts differ (WRONGTYPE, empty key, count mismatch; `GRAPH.MEMORY …
    SAMPLES -1` Rust `ERR SAMPLES must be a non-negative integer`, C without the `ERR `).
    **Fixed by #3053** (`fe619ac5f`, live-checked on 19010/19011): `SAMPLES 0` accepted
@@ -137,6 +141,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
+| `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store (#3419) |
 | `QuerySession` | `src/query_session.rs` |
 | `GraphCore` | `src/graph_core.rs` |
 | `Commands`, `Commands2` | `src/commands/*.rs` |
@@ -211,6 +216,23 @@ leaves exactly the following bytes). `keepFirst_nodup` (at most one entry per at
 `keepFirst_sublist` (header order kept), `keepFirst_plain_of_nodup`/`readRecord_plain` (no
 repeated name → the plain per-column read), `repeated_header_null_first`; history
 `pre3026_two_entries_for_one_attr`.
+
+## Re-target to 8621212fc (#3043, #3419; previously 289c201fe)
+Of the main commits since 289c201fe only `src/reply.rs` (#3043) and `src/lib.rs` (#3419)
+touch `src/`. #3043: `Resp.wf` = `write_f` (`reply.rs:36`, NaN as `nan`) in the float and
+vector leaves of `fmtS`; `Resp.pointStr` (top-level point) without the space after the
+colons. Against C's `%f` (hypothesis `CPf`): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`,
+`pointStr_c`, `verbose_point_c`, `fixed3043_nan_in_list`; history `pre3043_point_space`,
+`pre3043_nan_in_list`. Glibc prints a NaN with the sign bit set as `-nan`, which `write_f`
+does not reproduce (`CPf.nan_text` is stated for `nan`). #3419: `ModuleInit.table` gives
+`VKEY_MAX_ENTITY_COUNT` the range `0..i64::MAX`; `ConfigRewrite.vkey_rewrite_reloads_config`
+/ `vkey_rewrite_reloads_load` — any value `GRAPH.CONFIG SET` or a module-load argument
+accepts is written by `CONFIG REWRITE` as a `graph.VKEY_MAX_ENTITY_COUNT` line that the next
+start accepts and reads back exactly; history `pre3419_rewrite_refused` (#3413).
+**Same class, open:** `rewrite_reload_counterexamples` — `CACHE_SIZE 1001`,
+`THREAD_COUNT 1025`, `NODE_CREATION_BUFFER 1073741825` (load arguments) and
+`JS_HEAP_SIZE 4294967297` (load arguments and `GRAPH.CONFIG SET`) are accepted, but the
+rewritten line is outside the table's range (not live-checked).
 
 ## Not covered
 

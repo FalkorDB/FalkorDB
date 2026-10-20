@@ -97,6 +97,8 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 | 2 | `coalesce_zero_args_rejected` | `coalesce()` with zero arguments was accepted and returned `null` (C: arity error). Same for `indegree`/`outdegree` | Fixed by #2990 (closes #2956) |
 | 3 | `pre3339_decode_any_depth`, `pre3339_isValid_any_depth` | Stored values had no nesting limit, so a deeply nested value could overflow the stack on load (GHSA-mwvh-8fq5-x2j8, #2722) | Fixed by #3339 (`decode_reach`, `stored_roundtrip`) |
 | 4 | `pre2907_sign_float_is_float` (in `expr_semantics`) | `sign(-2.5)` returned a Float | Fixed by #2907 |
+| 5 | `pre2904_pow_nonnumeric_null` | `^` with a non-numeric operand (`true ^ 2`, `2 ^ 'a'`) returned `null` instead of a type error (C: `Type mismatch: expected Integer, Float, or Null but was Boolean`) | Fixed by #2904 (closes #2902): `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`; numeric results unchanged (`pow_numeric_unchanged`), `pow()` never hits the error on its declared domain (`pow_fn_in_domain`) |
+| 6 | `pre3007_percentile_last_wins` | `percentileDisc`/`percentileCont` with a row-dependent percentile used the *last* row's percentile (C: the first row's) | Fixed by #3007 (closes #2980): `percentile_first_row`, `percentile_keeps` |
 | — | `isAggregate_case_sensitive` | `Functions::is_aggregate("COUNT")` is false although `count` is registered, because it doesn't lowercase | Latent: no caller today |
 | — | `encode_map_is_null` | `Encode<19>` writes a Map, Node, Relationship or Path as `NULL` behind only a `debug_assert!` | Latent: property writes never store those types |
 | — | `within_nest_empty` | The decoder accepts one level more than writers produce (`MAX` arrays around `[]`) | Harmless: still bounded, never stored |
@@ -139,13 +141,13 @@ Shared foundations (the engine `Value` as `V F`, `wrap` and the `wrapping_*` hel
 
 ## Coverage
 
-Line numbers are pinned to main 289c201fe.
+Line numbers are pinned to main 8621212fc.
 
-`COVERAGE.tsv` has 184 rows: 67 in `value.rs`, 36 in `functions/mod.rs`, 20 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 3 each in `path.rs` and `index_ddl.rs`, and 1 in `entity_type.rs`.
+`COVERAGE.tsv` has 185 rows: 68 in `value.rs`, 36 in `functions/mod.rs`, 20 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 3 each in `path.rs` and `index_ddl.rs`, and 1 in `entity_type.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 161 |
+| PROVEN | 162 |
 | MODELLED | 3 |
 | NOT COVERED | 20 |
 

@@ -83,7 +83,7 @@ theorem vectorized_eq_rowwise {S : Type} (step : S → V → S) (acc : S) (bs : 
 
 /-! ## The kernels, line by line -/
 
-/-- `count_batch` (aggregation.rs:343) with a column (`count(x)`). -/
+/-- `count_batch` (aggregation.rs:350) with a column (`count(x)`). -/
 def countStep (n : Int) (_ : V) : Int := n + 1
 def countBatch (acc : Int) (xs : List V) : Int := skipFold countStep acc xs
 
@@ -115,11 +115,11 @@ theorem countStar_rowwise (acc : Int) (n : Nat) :
   rw [countBatch_spec]
   simp [countStarBatch, V.isNull]
 
-/-- `sum_batch` (aggregation.rs:387): the accumulator is always `f64`. -/
+/-- `sum_batch` (aggregation.rs:394): the accumulator is always `f64`. -/
 def sumStep (t : Float) (v : V) : Float := t + v.num
 def sumBatch (acc : Float) (xs : List V) : Float := skipFold sumStep acc xs
 
-/-- `collect_batch` (aggregation.rs:364). -/
+/-- `collect_batch` (aggregation.rs:371). -/
 def collectStep (l : List V) (v : V) : List V := l ++ [v]
 def collectBatch (acc : List V) (xs : List V) : List V := skipFold collectStep acc xs
 
@@ -145,7 +145,7 @@ structure Cmp (α : Type) where
   nullFlag : α → α → Bool
   nanFlag : α → α → Bool
 
-/-- `max_batch` / `min_batch` (aggregation.rs:418, :495; since #2917 7fdf06a0e): `best =
+/-- `max_batch` / `min_batch` (aggregation.rs:421, :498; since #2917 7fdf06a0e): `best =
 Null` takes the first value, then `val` replaces `best` when strictly greater (less) and
 neither a null nor a NaN comparison. `want = .gt` for max, `.lt` for min. -/
 def mmStep {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (v : α) : Option α :=
@@ -214,13 +214,13 @@ theorem pre2917_maxScalar_ne_batch_nan :
     maxScalarPre2917 nanCmp 0 (some 5) ≠ mmStepPre2917 nanCmp .gt (some 5) 0 := by
   decide
 
-/-- `avg_batch` (aggregation.rs:440) state `[sum, count, had_overflow]`. -/
+/-- `avg_batch` (aggregation.rs:451) state `[sum, count, had_overflow]`. -/
 structure AvgS where
   sum : Float
   count : Int
   ovf : Bool
 
-/-- `about_to_overflow` (aggregation.rs:331). -/
+/-- `about_to_overflow` (aggregation.rs:338). -/
 def aboutToOverflow (a b : Float) : Bool :=
   (if a < 0 then -1.0 else if a > 0 then 1.0 else if a.isNaN then a else
     -- signum(+0.0) = 1, signum(-0.0) = -1
@@ -241,7 +241,7 @@ def avgStep (s : AvgS) (v : V) : AvgS :=
 
 def avgBatch (acc : AvgS) (xs : List V) : AvgS := skipFold avgStep acc xs
 
-/-- `finalize_avg` (aggregation.rs:583). -/
+/-- `finalize_avg` (aggregation.rs:599). -/
 def finalizeAvg (s : AvgS) : Option Float :=
   if s.count == 0 then none else if s.ovf then some s.sum else some (s.sum / Float.ofInt s.count)
 
@@ -307,11 +307,11 @@ theorem avg_no_overflow_is_sum (acc : AvgS) (xs : List V)
         rw [e] at h ⊢
         exact ih _ h
 
-/-- `stdev_batch` (aggregation.rs:549) state `[sum, values]`. -/
+/-- `stdev_batch` (aggregation.rs:565) state `[sum, values]`. -/
 def stdevStep (s : Float × List Float) (v : V) : Float × List Float := (s.1 + v.num, s.2 ++ [v.num])
 def stdevBatch (acc : Float × List Float) (xs : List V) := skipFold stdevStep acc xs
 
-/-- `finalize_stdev` (aggregation.rs:675): `n ≤ 1` → `0.0` (C and openCypher). -/
+/-- `finalize_stdev` (aggregation.rs:683): `n ≤ 1` → `0.0` (C and openCypher). -/
 def finalizeStdev (s : Float × List Float) : Float :=
   if s.2.length ≤ 1 then 0.0 else
     let mean := s.1 / Float.ofNat s.2.length
@@ -320,19 +320,80 @@ def finalizeStdev (s : Float × List Float) : Float :=
 
 theorem stdev_empty : finalizeStdev (stdevBatch (0.0, []) []) = 0.0 := rfl
 
-/-- `percentile_batch` (aggregation.rs:518) state `[percentile, values]`:
-every non-null row OVERWRITES the stored percentile (aggregation.rs:539). -/
+/-- `percentile_batch` (aggregation.rs:531 at 8621212fc) state
+`[percentile, values]`. Since #3007 (1d3b029e1, closes #2980) the percentile
+is stored only while `values` is still empty (aggregation.rs:552-555; the
+scalar body, aggregation.rs:257-260, does the same), so the first non-null
+row's percentile is the aggregate's, as in C (`agg_percentile.c`). -/
 def pctStep (s : Float × List Float) (vp : V × Float) : Float × List Float :=
-  if vp.1.isNull then s else (vp.2, s.2 ++ [vp.1.num])
+  if vp.1.isNull then s else (if s.2.isEmpty then vp.2 else s.1, s.2 ++ [vp.1.num])
 
 def pctFold (acc : Float × List Float) (xs : List (V × Float)) := xs.foldl pctStep acc
 
-/-- Last-wins: the stored percentile is the last non-null row's. C keeps the
-first row's (`agg_precentile.c`). Confirmed:
+/-- Once a value has been collected the stored percentile never changes. -/
+theorem pct_stable (q : Float) (l : List Float) (hl : l ≠ []) (xs : List (V × Float)) :
+    (pctFold (q, l) xs).1 = q := by
+  induction xs generalizing l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [pctFold, List.foldl] at *
+    unfold pctStep
+    by_cases hx : x.1.isNull
+    · simp only [hx, ↓reduceIte]; exact ih l hl
+    · have he : l.isEmpty = false := by cases l <;> simp_all
+      simp only [hx, he, Bool.false_eq_true, ↓reduceIte]
+      exact ih _ (by simp)
+
+/-- **Fixed by #3007 (W2-agg-4)**: the stored percentile is the first non-null
+row's. Leading null rows are skipped (they never reach the kernel's state), and
+no later row can overwrite it. -/
+theorem pct_first_wins (q : Float) (nulls : List (V × Float))
+    (hn : ∀ x ∈ nulls, x.1.isNull = true) (v : V) (p : Float) (hv : v.isNull = false)
+    (xs : List (V × Float)) :
+    (pctFold (q, []) (nulls ++ (v, p) :: xs)).1 = p := by
+  have hskip : pctFold (q, []) nulls = (q, []) := by
+    induction nulls with
+    | nil => rfl
+    | cons y ys ih =>
+      simp only [pctFold, List.foldl] at *
+      have hy := hn y (by simp)
+      simp only [pctStep, hy, ↓reduceIte]
+      exact ih (fun x hx => hn x (by simp [hx]))
+  simp only [pctFold, List.foldl_append] at *
+  rw [hskip]
+  simp only [List.foldl, pctStep, hv, Bool.false_eq_true, ↓reduceIte, List.isEmpty_nil,
+    List.nil_append]
+  exact pct_stable p [v.num] (by simp) xs
+
+/-! #### History: before #3007 (aggregation.rs:539 / :253 at 289c201fe) -/
+
+/-- Before #3007 every non-null row OVERWROTE the stored percentile. -/
+def pre3007_pctStep (s : Float × List Float) (vp : V × Float) : Float × List Float :=
+  if vp.1.isNull then s else (vp.2, s.2 ++ [vp.1.num])
+
+def pre3007_pctFold (acc : Float × List Float) (xs : List (V × Float)) :=
+  xs.foldl pre3007_pctStep acc
+
+/-- Last-wins: before #3007 the stored percentile was the last non-null row's.
+C keeps the first row's (`agg_precentile.c`). Confirmed then by
 `lean_ops_aggregate::bug_percentile_row_dependent_argument_last_wins`. -/
-theorem pct_last_wins (acc : Float × List Float) (xs : List (V × Float)) (v : V) (p : Float)
-    (hv : v.isNull = false) : (pctFold acc (xs ++ [(v, p)])).1 = p := by
-  simp [pctFold, List.foldl_append, pctStep, hv]
+theorem pre3007_pct_last_wins (acc : Float × List Float) (xs : List (V × Float)) (v : V)
+    (p : Float) (hv : v.isNull = false) : (pre3007_pctFold acc (xs ++ [(v, p)])).1 = p := by
+  simp [pre3007_pctFold, List.foldl_append, pre3007_pctStep, hv]
+
+/-- The `percentileDisc(x, x/10.0)` repro over x = 1..10: the percentile the
+finalizer sees was row 10's before #3007 and is row 1's on main (C's). -/
+def pctRow (k : Nat) : V × Float := (V.int k, Float.ofNat k / 10.0)
+def pctRepro : List (V × Float) := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map pctRow
+
+theorem pre3007_pct_repro :
+    (pre3007_pctFold (0.0, []) pctRepro).1 = Float.ofNat 10 / 10.0 := by
+  have : pctRepro = [1, 2, 3, 4, 5, 6, 7, 8, 9].map pctRow ++ [(V.int 10, Float.ofNat 10 / 10.0)] := rfl
+  rw [this]; exact pre3007_pct_last_wins _ _ _ _ rfl
+
+theorem pct_repro_first_row :
+    (pctFold (0.0, []) pctRepro).1 = Float.ofNat 1 / 10.0 :=
+  pct_first_wins 0.0 [] (by simp) (V.int 1) _ rfl ([2, 3, 4, 5, 6, 7, 8, 9, 10].map pctRow)
 
 /-! ### Batch homomorphisms for each concrete kernel -/
 

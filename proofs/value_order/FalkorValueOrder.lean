@@ -6,9 +6,11 @@ import FalkorValueOrder.Main
 /-
 # Value order: what `compare_value` promises, and where it breaks
 
-**Re-targeted to main 289c201fe** (from fb3d516d0): no change to `compare_value`,
-`sort_cmp`, `PartialEq` or `Hash` (#2983/#2985 edit `Point::distance` and `Time ±
-Duration`, both outside this model); COVERAGE.tsv line numbers re-pinned.
+**Re-targeted to main 8621212fc** (from 289c201fe, before that fb3d516d0): no
+change to `compare_value`, `sort_cmp`, `PartialEq` or `Hash`. #2984 moves the
+date ± duration month shift into a new `shift_months` and #3007 edits only
+`percentile_batch` (both outside this model; earlier #2983/#2985 edited
+`Point::distance` and `Time ± Duration`); COVERAGE.tsv line numbers re-pinned.
 
 A model of FalkorDB-rs's value comparison (`Value::compare_value`), equality
 (`PartialEq for Value`), hashing (`Hash for Value` fed to `FxHasher`) and the

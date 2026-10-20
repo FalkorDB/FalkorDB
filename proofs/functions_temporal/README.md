@@ -29,7 +29,7 @@ Rust has a second copy of `days_from_civil` in `temporal.rs`, which uses `i32` a
 
 **2. Is `Duration + Duration` correct?**
 
-A duration is stored as "the instant 1970-01-01 plus the years and months plus the days and seconds", and its components are recovered by decomposing that instant. `construct_decompose` proves that construct ∘ decompose is the identity, which is the law `Duration ± Duration` relies on. `add_sub_months` proves that `(d + P1M) - P1M = d` for every day of the month up to 28.
+A duration is stored as "the instant 1970-01-01 plus the years and months plus the days and seconds", and its components are recovered by decomposing that instant. `construct_decompose` proves that construct ∘ decompose is the identity, which is the law `Duration ± Duration` relies on. `add_sub_months` proves that `(d + P1M) - P1M = d` for every day of the month up to 28. Since #2984 `+` and `-` share `shift_months` (`shiftMonths`), and `sub_eq_add_neg_months` proves `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `shiftMonths_total` shows the shift depends only on the total month count.
 
 **3. Is ordering of temporal values a valid sort?**
 
@@ -76,7 +76,7 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 289c201fe: #2983, #2985 and #2987 fixed W2-temporal-4, -6 and -8; the others are still present.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 8621212fc: #2983, #2984, #2985 and #2987 fixed W2-temporal-4, -5, -6 and -8; the others are still present.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
@@ -84,7 +84,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run lo
 | W2-temporal-2 | `quarter_panics` | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashes the server** (`TimeDelta::days` panics). C: error | **Open** |
 | W2-temporal-3 | `week_slice_panics` | `RETURN date('2020W1é')` **crashes the server**: `&rest[..2]` is not on a char boundary. #3125 doesn't cover the `W` path (`parseDate_week_first`) | **Open** |
 | W2-temporal-4 | `pre2983_distance_nan` | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
-| W2-temporal-5 | `sub_vs_add_neg` | `date('2020-03-31') - duration({months:1})` is 2020-02-29, while `+ duration({months:-1})` is 2020-03-02 (C: 03-02) | **Open** |
+| W2-temporal-5 | `pre2984_sub_vs_add_neg` | `date('2020-03-31') - duration({months:1})` was 2020-02-29 (subtraction clamped the day), while `+ duration({months:-1})` was 2020-03-02 (C: 03-02) | Fixed by #2984 (`sub_eq_add_neg_months`: `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `sub_vs_add_neg`: both 03-02; `subDur_eq_pre2984`: unchanged for day ≤ 28) |
 | W2-temporal-6 | `pre2985_time_not_normalised` | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
 | W2-temporal-7 | `formatDate_not_injective` | `toString(date({year:12345}))` is `"2345-01-01"` (C: `"12345-01-01"`); `formatDate_injective_4digit` proves it is right for 4-digit years | **Open** |
 | W2-temporal-8 | `pre2987_week_string_wraps` | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
@@ -119,11 +119,11 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## Coverage
 
-`COVERAGE.tsv` has 99 rows: 31 in `temporal.rs`, 26 in `vector_expr.rs`, 20 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
+`COVERAGE.tsv` has 100 rows: 31 in `temporal.rs`, 26 in `vector_expr.rs`, 21 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 62 |
+| PROVEN | 63 |
 | MODELLED | 3 |
 | NOT COVERED | 34 |
 

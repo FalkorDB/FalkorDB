@@ -1,6 +1,17 @@
 /-
 # Optimizer rewrites: which passes preserve the query result, and which do not
 
+**Re-targeted to main 8621212fc.** #2904 (`fd2c76a6c`, closes #2902): `^` propagates
+operand errors and type-checks its operands. `Basic.eval` gains `pow` (`powV`) and
+`Err.notFound`; `sub`/`div` bodies are factored into `subV`/`divV` (same values).
+New `ConstEval`: the plan-time constant evaluator (`evalG` with every variable an
+error) is sound — `constEval_sound` — which discharges `hconst` for
+`eliminate_whole_filter` and `htrue` for `andLoop_drop_true`
+(`constTrue_filter`, `andLoop_drop_constTrue`): `is_constant_true` and
+`eliminate_true_filters` move from CONDITIONAL to PROVEN. History:
+`pre2904_pow_constant_true`. The other commits since 289c201fe do not touch
+`graph/src/planner/optimizer/`.
+
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
 (origin/main `0f45a8685`), except `select_scan_node.rs`, `utilize_index.rs` and
 `utilize_node_by_id.rs`'s #2390 changes (another agent's). Each pass is judged against a reference semantics of the IR:
@@ -26,8 +37,8 @@ effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
 re-ordering, #2556).
 `AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
 AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
-Build: `lake build` — 156 theorems, no `sorry`/`admit`/`axiom`. Every row of
-COVERAGE.tsv is PROVEN or CONDITIONAL. Rust source: origin/main `0f45a8685` (re-targeted across #2390,
+Build: `lake build` — 165 theorems, no `sorry`/`admit`/`axiom`. Every production row of
+COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). Rust source: origin/main `0f45a8685` (re-targeted across #2390,
 d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
 #3335: filters rebuilt with `and_of`).
 
@@ -43,9 +54,10 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
 * `push_limit_const` — below Limit only when the verdict is constant (Apply-argument case).
 * `merge_child_first_row` — merging stacked filters is exact *if the inner
   conjunct comes first* (and is not NULL).
-* `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`
-  — eliminate_true_filters is exact given that plan-time constant evaluation agrees
-  with runtime evaluation (false for `^`, known #2902).
+* `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`,
+  and (#2904) `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` —
+  eliminate_true_filters is exact: the plan-time constant verdict is the runtime
+  verdict on every row (before #2904 false for `^`, #2902: `pre2904_pow_constant_true`).
 * `refsNew_complete` — #2390's `ir_references_variable` (references.rs) sees every read of every
   IR variant of a plan the planner built (`PlanInv`: inline maps are Filters —
   proofs/planner_build `planMatch_stripped`); `refsNew_sound` — it reports only reads or
@@ -250,6 +262,7 @@ binds what it reads).
   reject `r.w` on a list.
 -/
 import FalkorOptimizer.Basic
+import FalkorOptimizer.ConstEval
 import FalkorOptimizer.References
 import FalkorOptimizer.References2
 import FalkorOptimizer.Passes

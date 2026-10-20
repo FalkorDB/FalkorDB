@@ -35,11 +35,13 @@ def documented : List String :=
 inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Bool)
   deriving DecidableEq, Repr
 
-/-- `redis_module!` `configurations:` (`lib.rs:97-116`): the `graph.*` redis.conf configs. -/
+/-- `redis_module!` `configurations:` (`lib.rs:97-116`): the `graph.*` redis.conf configs.
+`VKEY_MAX_ENTITY_COUNT` is `0..i64::MAX` since #3419 (`8621212fc`; was `1..1073741824`,
+`ConfigRewrite.pre3419_table`). -/
 def table : List (String × Kind) :=
   [("CACHE_SIZE", .i64 25 0 1000), ("THREAD_COUNT", .i64 0 0 1024),
    ("INDEX_WORKER_THREADS", .i64 0 0 1024), ("NODE_CREATION_BUFFER", .i64 16384 0 1073741824),
-   ("VKEY_MAX_ENTITY_COUNT", .i64 100000 1 1073741824), ("JS_HEAP_SIZE", .i64 268435456 0 4294967296),
+   ("VKEY_MAX_ENTITY_COUNT", .i64 100000 0 9223372036854775807), ("JS_HEAP_SIZE", .i64 268435456 0 4294967296),
    ("JS_STACK_SIZE", .i64 1048576 0 4294967296),
    ("IMPORT_FOLDER", .str "/var/lib/FalkorDB/import/"), ("TEMP_FOLDER", .str "/tmp"),
    ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false)]

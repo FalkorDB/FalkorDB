@@ -9,6 +9,7 @@ Reference semantics shared by every pass model.
 | `Val`            | `runtime::value::Value` (only the constructors the passes care about) |
 | `Row`, `Row.get` | a row of the batch env; an unbound column reads as NULL |
 | `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs:674` |
+| `powV`, `subV`, `divV` | `apply_pow` (`math.rs:328`, #2904), `Value` `-` and `/` |
 | `andL`           | the n-ary `ExprIR::And` loop (`eval.rs:674-699`), as a right fold of the binary step |
 | `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs:48-80`) |
 | `filterRows`     | `FilterOp` over the whole input: any row error fails the query |
@@ -35,6 +36,10 @@ deriving DecidableEq, Repr
 inductive Err where
   | divZero
   | typeMismatch
+  /-- `Variable … not found` / `not a constant expression`: what the plan-time
+  constant evaluator (`ExprEval::constant()`, no env, no runtime) returns for any
+  non-constant leaf (eval.rs:278-293). -/
+  | notFound
 deriving DecidableEq, Repr
 
 abbrev Row := List (Var × Val)
@@ -58,12 +63,15 @@ inductive Expr where
   | div (a b : Expr)
   /-- one step of the `ExprIR::And` loop: `and a rest` -/
   | and (a b : Expr)
+  /-- `a ^ b` (`ExprIR::Pow`, eval.rs:828-834, since #2904) -/
+  | pow (a b : Expr)
 deriving Repr
 
 def Expr.vars : Expr → List Var
   | .lit _ => []
   | .var v => [v]
-  | .eq a b | .neq a b | .lt a b | .gt a b | .sub a b | .div a b | .and a b => a.vars ++ b.vars
+  | .eq a b | .neq a b | .lt a b | .gt a b | .sub a b | .div a b | .and a b | .pow a b =>
+    a.vars ++ b.vars
 
 def cmpEq : Val → Val → Val
   | .null, _ | _, .null => .null
@@ -98,6 +106,33 @@ def andStep (a : Except Err Val) (rest : Unit → Except Err Val) : Except Err V
     | .error e => .error e
   | .ok _ => .error .typeMismatch
 
+/-- `f64::powf` on two integers converted with `get_numeric`; the model has no
+float values, so the result is left abstract. -/
+instance : Inhabited Val := ⟨.null⟩
+
+opaque powNum : Int → Int → Val
+
+/-- `apply_pow` (math.rs:328, since #2904): a non-numeric non-null operand is a
+type error (base checked first), a null operand gives null, else `powf`. -/
+def powV : Val → Val → Except Err Val
+  | .bool _, _ | .str _, _ => .error .typeMismatch
+  | _, .bool _ | _, .str _ => .error .typeMismatch
+  | .int i, .int j => .ok (powNum i j)
+  | _, _ => .ok .null
+
+/-- `Value - Value` on the modelled values. -/
+def subV : Val → Val → Except Err Val
+  | .int i, .int j => pure (.int (i - j))
+  | .null, _ | _, .null => pure .null
+  | _, _ => throw .typeMismatch
+
+/-- `Value / Value` on the modelled values (integer division by zero errors). -/
+def divV : Val → Val → Except Err Val
+  | .int _, .int 0 => throw .divZero
+  | .int i, .int j => pure (.int (i.tdiv j))
+  | .null, _ | _, .null => pure .null
+  | _, _ => throw .typeMismatch
+
 def eval (r : Row) : Expr → Except Err Val
   | .lit v => .ok v
   | .var v => .ok (r.get v)
@@ -105,20 +140,10 @@ def eval (r : Row) : Expr → Except Err Val
   | .neq a b => do let x ← eval r a; let y ← eval r b; pure (notV (cmpEq x y))
   | .lt a b => do let x ← eval r a; let y ← eval r b; pure (cmpLt x y)
   | .gt a b => do let x ← eval r a; let y ← eval r b; pure (cmpLt y x)
-  | .sub a b => do
-      let x ← eval r a; let y ← eval r b
-      match x, y with
-      | .int i, .int j => pure (.int (i - j))
-      | .null, _ | _, .null => pure .null
-      | _, _ => throw .typeMismatch
-  | .div a b => do
-      let x ← eval r a; let y ← eval r b
-      match x, y with
-      | .int _, .int 0 => throw .divZero
-      | .int i, .int j => pure (.int (i.tdiv j))
-      | .null, _ | _, .null => pure .null
-      | _, _ => throw .typeMismatch
+  | .sub a b => do let x ← eval r a; let y ← eval r b; subV x y
+  | .div a b => do let x ← eval r a; let y ← eval r b; divV x y
   | .and a b => andStep (eval r a) (fun _ => eval r b)
+  | .pow a b => do let x ← eval r a; let y ← eval r b; powV x y
 
 /-- n-ary AND: `And(c₁,…,cₙ)` — the loop over children, base `true`. -/
 def andL : List Expr → Expr
@@ -237,7 +262,7 @@ theorem eval_congr (e : Expr) (r₁ r₂ : Row) (h : ∀ v ∈ e.vars, r₁.get 
   | lit => rfl
   | var v => simp [eval, h v (by simp [Expr.vars])]
   | eq a b iha ihb | neq a b iha ihb | lt a b iha ihb | gt a b iha ihb
-  | sub a b iha ihb | div a b iha ihb | and a b iha ihb =>
+  | sub a b iha ihb | div a b iha ihb | and a b iha ihb | pow a b iha ihb =>
     simp only [Expr.vars, List.mem_append] at h
     simp only [eval]
     rw [iha (fun v hv => h v (Or.inl hv)), ihb (fun v hv => h v (Or.inr hv))]
@@ -451,9 +476,10 @@ theorem filter_and_single (c : Expr) (xs : List Row) :
   | nil => rfl
   | cons r rs ih => simp only [filterRows, passes_and_single, ih]
 
-/-- Whole-filter removal is sound under the hypothesis that the plan-time
-constant evaluator (`ExprEval::constant`, eval_true_filters.rs:49-72) agrees with
-the runtime evaluator. That hypothesis is *false* for `^` (issue #2902). -/
+/-- Whole-filter removal is sound when the filter is `true` on every row. Since
+#2904, `ConstEval.constTrue_sound` derives that hypothesis from the plan-time
+constant evaluator's verdict (before #2904 it was false for `^`, issue #2902:
+`ConstEval.pre2904_pow_constant_true`). -/
 theorem eliminate_whole_filter (c : Expr) (xs : List Row)
     (hconst : ∀ r, eval r c = .ok (.bool true)) : filterRows c xs = .ok xs := by
   induction xs with

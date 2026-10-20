@@ -67,5 +67,5 @@ graph/src/runtime/eval.rs	check_string_or_null	1272	NOT COVERED	type check only
 graph/src/runtime/eval.rs	eval_quantifier	1627	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
 graph/src/runtime/eval.rs	list_contains	1723	PROVEN	contains_false_iff
 graph/src/runtime/eval.rs	get_elements	1737	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
-graph/src/runtime/value.rs	Contains::contains	1866	PROVEN	contains_false_iff
-graph/src/runtime/value.rs	add_slow (String/List arms)	954	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)
+graph/src/runtime/value.rs	Contains::contains	1867	PROVEN	contains_false_iff
+graph/src/runtime/value.rs	add_slow (String/List arms)	961	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)

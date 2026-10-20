@@ -1,6 +1,6 @@
 import RedisLayer.Resp
 /-!
-# `reply_compact_value` as a call stream (`src/reply.rs:134-343`)
+# `reply_compact_value` as a call stream (`src/reply.rs:145-354`)
 
 `encC v` is the exact sequence of `RedisModule_Reply*` calls `reply_compact_value` makes
 (tag, then payload; the caller supplies the enclosing `ReplyWithArray(2)`).
@@ -10,7 +10,7 @@ kind, live or deleted entities, postponed label arrays included. With `bytes_of_
 is the RESP byte stream.
 
 Graph-API facts used (not code in `src/`): for a live entity, `get_node_attr_count(id)`
-equals the number of pairs `get_node_all_attrs_by_id(id)` yields (`reply.rs:232` — if not,
+equals the number of pairs `get_node_all_attrs_by_id(id)` yields (`reply.rs:243` — if not,
 `count_mismatch_breaks` shows the stream desynchronises); for a deleted one the attribute and
 type ids are recovered by name (`get_node_attribute_id`, `get_type_id`, `:213`, `:249`),
 which we take to be the ids themselves.
@@ -50,7 +50,7 @@ def countRels : List (V F) → Nat
   | v :: vs => (if v.isRel then 1 else 0) + countRels vs
 
 mutual
-/-- `reply_compact_value` (`reply.rs:134-343`). -/
+/-- `reply_compact_value` (`reply.rs:145-354`). -/
 def encC : V F → List (Call F)
   | .null => [.ll 1, .null]
   | .bool x => [.ll 4, .str (if x then "true" else "false")]

@@ -4,13 +4,22 @@ import RedisLayer.RespCompact
 
 | here | there |
 | --- | --- |
-| `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:36-100` |
-| `encVb`, `specVb`             | `reply_verbose_value` `:346-528` |
-| `statCalls`, `statLines`      | `reply_stats` `:530-617` |
-| `resultCalls`                 | `reply_result::<COMPACT>` `:619-666`, `reply_verbose` `:668`, `reply_compact` `:676` |
-| `Fmt.g15`                     | `format_g(x, 15)` `:112-131` (libc `snprintf`, AXIOMATISED as an abstract function) |
+| `wf`                          | `write_f` `:36-45` (#3043) |
+| `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:49-111` |
+| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:357-541` (top-level point `:531-540`, #3043) |
+| `statCalls`, `statLines`      | `reply_stats` `:543-630` |
+| `resultCalls`                 | `reply_result::<COMPACT>` `:632-679`, `reply_verbose` `:681`, `reply_compact` `:689` |
+| `Fmt.g15`                     | `format_g(x, 15)` `:123-142` (libc `snprintf`, AXIOMATISED as an abstract function) |
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
+
+**#3043 (`7cde92c1d`, closes #3042).** C prints NaN with `%f` as `nan`; Rust's `{:.6}` spells
+it `NaN`, so a NaN inside a list or vector printed `[NaN]` (C `[nan]`). `write_f` now prints
+`nan`. C's top-level verbose point is `point({latitude:%f, longitude:%f})`
+(`resultset_replyverbose.c:239`), without the space after the colons that the nested
+`SIValue_ToString` form has (`value.c:504`); the top-level form now matches. Against C's
+`%f` (`CPf`, a hypothesis about libc): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`, `pointStr_c`.
+History: `pre3043_point_space`, `pre3043_nan_in_list`.
 -/
 namespace RedisLayer.Resp
 open RedisLayer.Compact (R Val Env encPair encReply)
@@ -19,6 +28,7 @@ variable {F : Type}
 
 structure Fmt (F : Type) where
   f6 : F → String            -- `{:.6}`
+  nan : F → Bool             -- `f64::is_nan`
   dt : Int → String          -- `Value::format_datetime`
   date : Int → String
   time : Int → String
@@ -34,13 +44,16 @@ def joinSep : List String → String
   | [s] => s
   | s :: ss => s ++ ", " ++ joinSep ss
 
+/-- `write_f` (`:36-45`, #3043): C's `%f` spelling of NaN, `{:.6}` otherwise. -/
+def wf (x : F) : String := if M.nan x then "nan" else M.f6 x
+
 mutual
-/-- `format_value_to_string` (`:36-100`). -/
+/-- `format_value_to_string` (`:49-111`). -/
 def fmtS : V F → String
   | .null => "NULL"
   | .bool b => if b then "true" else "false"
   | .int i => toString i
-  | .float x => M.f6 x
+  | .float x => wf M x
   | .str s => s
   | .datetime t => M.dt t
   | .date t => M.date t
@@ -51,7 +64,7 @@ def fmtS : V F → String
   | .map kvs => "{" ++ joinSep (fmtMap kvs) ++ "}"
   | .node id .. => "(" ++ toString id ++ ")"
   | .edge id .. => "[" ++ toString id ++ "]"
-  | .vec xs => "<" ++ joinSep (xs.map M.f6) ++ ">"
+  | .vec xs => "<" ++ joinSep (xs.map (wf M)) ++ ">"
   | .point a o => "point({latitude: " ++ M.f6 a ++ ", longitude: " ++ M.f6 o ++ "})"
 def fmtList : List (V F) → List String
   | [] => []
@@ -61,11 +74,12 @@ def fmtMap : List (String × V F) → List String
   | (k, v) :: kvs => (k ++ ": " ++ fmtS v) :: fmtMap kvs
 end
 
+/-- The top-level verbose point (`:531-540`, #3043): no space after the colons. -/
 def pointStr (a o : F) : String :=
-  "point({latitude: " ++ M.f6 a ++ ", longitude: " ++ M.f6 o ++ "})"
+  "point({latitude:" ++ M.f6 a ++ ", longitude:" ++ M.f6 o ++ "})"
 
 mutual
-/-- `reply_verbose_value` (`:346-528`). -/
+/-- `reply_verbose_value` (`:357-541`). -/
 def encVb : V F → List (Call F)
   | .null => [.null]
   | .bool x => [.str (if x then "true" else "false")]
@@ -199,7 +213,7 @@ theorem vprops_emits : ∀ ps : List (Nat × V F), Emits E.vfmt (encVbProps E M 
     simpa [encVbProps, specVbProps] using this
 end
 
-/-! ## Statistics (`reply_stats`, `:530-617`) -/
+/-! ## Statistics (`reply_stats`, `:543-630`) -/
 
 structure Stats (F : Type) where
   labelsAdded : Nat
@@ -218,7 +232,7 @@ structure Stats (F : Type) where
 def opt (n : Nat) (label : String) : List String :=
   if n > 0 then [label ++ toString n] else []
 
-/-- The lines in emission order (`:568-616`). -/
+/-- The lines in emission order (`:581-629`). -/
 def statLines (st : Stats F) (version : Nat) : List String :=
   opt st.labelsAdded "Labels added: " ++ opt st.labelsRemoved "Labels removed: "
   ++ opt st.nodesCreated "Nodes created: " ++ opt st.propertiesSet "Properties set: "
@@ -232,7 +246,7 @@ def statLines (st : Stats F) (version : Nat) : List String :=
 
 def c1 (n : Nat) : Nat := if n > 0 then 1 else 0
 
-/-- `stats_len`, computed in the *counting* order (`:535-565`). -/
+/-- `stats_len`, computed in the *counting* order (`:548-578`). -/
 def statsLen (st : Stats F) : Nat :=
   3 + c1 st.labelsAdded + c1 st.labelsRemoved + c1 st.nodesCreated + c1 st.nodesDeleted
     + c1 st.propertiesSet + c1 st.propertiesRemoved + c1 st.relationshipsCreated
@@ -263,7 +277,7 @@ theorem stats_emits (st : Stats F) (version : Nat) :
   rw [List.length_map, ← statsLen_eq] at h
   exact h
 
-/-! ## Whole replies (`reply_result`, `:619-666`) -/
+/-! ## Whole replies (`reply_result`, `:632-679`) -/
 
 def rowCalls (compact : Bool) (row : List (V F)) : List (Call F) :=
   .arr row.length :: (row.map fun v => if compact then .arr 2 :: encC E v else encVb E M v).flatten
@@ -299,7 +313,7 @@ theorem flat_single {α β} (l : List α) (f : α → β) : (l.map fun a => [f a
 
 /-- **Compact reply**: `GRAPH.QUERY … --compact` sends exactly `Compact.encReply`, which
 `Compact.decReply_enc` proves the client decodes. Rows have one cell per return name
-(`batch.value_at(name.id, row)` for each name, `:653-662`). -/
+(`batch.value_at(name.id, row)` for each name, `:666-675`). -/
 theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Stats F)
     (version : Nat) (hn : names ≠ []) :
     Emits E.vfmt (resultCalls E M true names rows st version)
@@ -322,7 +336,7 @@ theorem compact_reply (names : List String) (rows : List (List (V F))) (st : Sta
   have := (((hh.append _ hr).append _ (stats_emits E M st version))).array
   simpa [resultCalls, hn, encReply, Function.comp_def, List.map_map] using this
 
-/-- A query without `RETURN` gets `[stats]` only (`:624-629`). -/
+/-- A query without `RETURN` gets `[stats]` only (`:637-642`). -/
 theorem noreturn_reply (compact : Bool) (rows : List (List (V F))) (st : Stats F) (version : Nat) :
     Emits E.vfmt (resultCalls E M compact [] rows st version)
       [.arr [.arr ((statLines M st version).map R.bulk)]] := by
@@ -347,5 +361,89 @@ theorem verbose_reply (names : List String) (rows : List (List (V F))) (st : Sta
   rw [List.length_map] at hr
   have := (((hh.append _ hr).append _ (stats_emits E M st version))).array
   simpa [resultCalls, hn, flat_single] using this
+
+/-! ## Agreement with C's `%f` (#3043) -/
+
+/-- C's `%f` (glibc / Apple libc `printf`), as a hypothesis: it agrees with Rust's `{:.6}` on
+every non-NaN value (finite values and `inf`/`-inf`), and prints NaN as `nan`. The second
+field holds for a NaN with the sign bit clear; glibc prints `-nan` for one with it set. -/
+structure CPf (M : Fmt F) where
+  cf : F → String
+  f6_agree : ∀ x, M.nan x = false → cf x = M.f6 x
+  nan_text : ∀ x, M.nan x = true → cf x = "nan"
+
+/-- C's top-level verbose point, `_ResultSet_VerboseReplyWithPoint`
+(`resultset_replyverbose.c:239`). -/
+def cPointStr (cf : F → String) (a o : F) : String :=
+  "point({latitude:" ++ cf a ++ ", longitude:" ++ cf o ++ "})"
+
+theorem wf_c (H : CPf M) (x : F) : wf M x = H.cf x := by
+  unfold wf
+  cases h : M.nan x
+  · simp [H.f6_agree x h]
+  · simp [H.nan_text x h]
+
+theorem fmtS_float_c (H : CPf M) (x : F) : fmtS M (.float x) = H.cf x := by
+  simp [fmtS, wf_c M H]
+
+theorem fmtList_floats_c (H : CPf M) (xs : List F) :
+    fmtList M (xs.map V.float) = xs.map H.cf := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [fmtList, fmtS_float_c M H, ih]
+
+/-- **A list of floats prints as C prints it**, NaN included (`RETURN [0.0/0.0]` → `[nan]`). -/
+theorem fmtS_floats_c (H : CPf M) (xs : List F) :
+    fmtS M (.list (xs.map V.float)) = "[" ++ joinSep (xs.map H.cf) ++ "]" := by
+  simp [fmtS, fmtList_floats_c M H]
+
+/-- **A vector prints as C prints it**, NaN included. -/
+theorem fmtS_vec_c (H : CPf M) (xs : List F) :
+    fmtS M (.vec xs) = "<" ++ joinSep (xs.map H.cf) ++ ">" := by
+  have : xs.map (wf M) = xs.map H.cf := List.map_congr_left (fun x _ => wf_c M H x)
+  simp [fmtS, this]
+
+/-- **The top-level verbose point is C's text.** Point coordinates are finite
+(`Point::validate`, `value.rs:177-190`), hence not NaN. -/
+theorem pointStr_c (H : CPf M) (a o : F) (ha : M.nan a = false) (ho : M.nan o = false) :
+    pointStr M a o = cPointStr H.cf a o := by
+  simp [pointStr, cPointStr, H.f6_agree a ha, H.f6_agree o ho]
+
+/-- The verbose reply of a top-level point is the bulk string C sends. -/
+theorem verbose_point_c (E : Env F) (H : CPf M) (a o : F) (ha : M.nan a = false)
+    (ho : M.nan o = false) : specVb E M (.point a o) = .bulk (cPointStr H.cf a o) := by
+  simp [specVb, pointStr_c M H a o ha ho]
+
+/-! ### History: before #3043 (`289c201fe`) -/
+
+/-- The top-level point before #3043 (`reply.rs:522-525` then): a space after each colon. -/
+def pre3043_pointStr (a o : F) : String :=
+  "point({latitude: " ++ M.f6 a ++ ", longitude: " ++ M.f6 o ++ "})"
+
+/-- The float leaf of `format_value_to_string` before #3043: plain `{:.6}`. -/
+def pre3043_fmtFloat (x : F) : String := M.f6 x
+
+/-- **Divergence before #3043 (confirmed live, `repro_live.py` V1)**: every top-level point
+differed from C's text (two characters longer). -/
+theorem pre3043_point_space (H : CPf M) (a o : F) (ha : M.nan a = false)
+    (ho : M.nan o = false) : pre3043_pointStr M a o ≠ cPointStr H.cf a o := by
+  intro h
+  have := congrArg String.length h
+  have l1 : "point({latitude: ".length = "point({latitude:".length + 1 := by decide
+  have l2 : ", longitude: ".length = ", longitude:".length + 1 := by decide
+  simp only [pre3043_pointStr, cPointStr, H.f6_agree a ha, H.f6_agree o ho,
+    String.length_append, l1, l2] at this
+  omega
+
+/-- **Divergence before #3043 (confirmed live, `repro_live.py` V2)**: Rust's `{:.6}` spells
+NaN `NaN`, so `RETURN [0.0/0.0]` printed `[NaN]`; C `[nan]`. -/
+theorem pre3043_nan_in_list (H : CPf M) (x : F) (hn : M.nan x = true) (hR : M.f6 x = "NaN") :
+    pre3043_fmtFloat M x ≠ H.cf x := by
+  simp [pre3043_fmtFloat, hR, H.nan_text x hn]
+
+/-- And on main the same NaN prints as C does. -/
+theorem fixed3043_nan_in_list (x : F) (hn : M.nan x = true) :
+    fmtS M (.list [.float x]) = "[nan]" := by
+  simp [fmtS, fmtList, joinSep, wf, hn]
 
 end RedisLayer.Resp

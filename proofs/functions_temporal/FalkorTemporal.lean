@@ -32,25 +32,26 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 
 | Lean | Rust |
 | --- | --- |
-| `isLeap`, `daysInMonth` | `is_leap` `value.rs:790`, `days_in_month` `value.rs:778` |
-| `daysFromCivil` | `days_from_civil` `value.rs:797` |
+| `isLeap`, `daysInMonth` | `is_leap` `value.rs:797`, `days_in_month` `value.rs:785` |
+| `daysFromCivil` | `days_from_civil` `value.rs:804` |
 | `daysFromCivilT` | `days_from_civil` `temporal.rs:437` (second copy, truncating i32 `/`) |
-| `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:814` (without / with `y as i32`) |
+| `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:821` (without / with `y as i32`) |
 | `constructDuration` | `construct_duration_secs` `temporal.rs:453` |
 | `decomposeDuration` | `decompose_duration` `temporal.rs:494` |
-| `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:722` / `sub_duration_from_timestamp` `value.rs:756` |
-| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1059` / `Sub` `value.rs:1104` (#2985) |
+| `shiftMonths` | `shift_months` `value.rs:752` (shared by `+`/`-` since #2984) |
+| `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:728` / `sub_duration_from_timestamp` `value.rs:738`; `pre2984_subDur`: the old clamping `-` (history) |
+| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1063` / `Sub` `value.rs:1105` (#2985) |
 | `weekPath`, `quarterPath` | `date_from_components` `temporal.rs:62` (week / quarter branches) |
 | `dateAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
 | `sliceOk` | `&rest[..2]` in `parse_week_date` `temporal.rs:258` |
 | `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:391-402` (`checked_mul`/`checked_add`, #2987) |
 | `wrapMul`, `Fns.pre2987_dateLoop` | pre-#2987 release `n * 7` (history) |
-| `formatDateDigits` | `format_date` `value.rs:300` + `write_date_into` `value.rs:829` |
+| `formatDateDigits` | `format_date` `value.rs:307` + `write_date_into` `value.rs:836` |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
 | `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
-| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:144` (clamped `a`, #2983); `pre2983_*`: history |
+| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:151` (clamped `a`, #2983); `pre2983_*`: history |
 
-## Proven (51 theorems + 30 kernel-checked era chunks)
+## Proven (55 theorems + 30 kernel-checked era chunks)
 
 Calendar: `dfc_civil` (days_from_civil ∘ civil_from_days = id on all Int),
 `civil_dfc` (civil_from_days ∘ days_from_civil = id on every real date), `civil_valid`
@@ -66,7 +67,9 @@ Duration` relies on), `construct_ym_s`, `decompose_monthsDur`, `add_sub_months`
 Columnar: `colEval_eq` (columnar AND/OR with row narrowing = per-row Kleene AND/OR; batch
 fails iff some row fails), `rowEval_short`, `intLane_eq` (int lane = `Value` arithmetic,
 incl. the divide-by-zero fallback), `mapM_bind_mapM`, `colEval_rows`, `rowK_eq`.
-Counterexamples as theorems: `sub_vs_add_neg`, `neg_days_encoding`,
+`shiftMonths_total`, `sub_eq_add_neg_months` (`ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M`, #2984),
+`subDur_eq_pre2984`, `subDur_eq_shift`.
+Counterexamples as theorems: `pre2984_sub_vs_add_neg`, `neg_days_encoding`,
 `time_not_normalised`, `week_string_wraps`, `week_panics`, `week_panics_delta`,
 `quarter_panics`, `week_slice_panics`, `formatDate_not_injective`,
 `dayOfWeek_seven_rejected`, `dayOfWeek_zero_is_sunday`, `civilFromDays_trunc`.
@@ -90,10 +93,12 @@ Counterexamples as theorems: `sub_vs_add_neg`, `neg_days_encoding`,
    6 485 401 antipodal pairs on a 0.1° grid. `(1.0 - a).sqrt()` with `a` rounded above 1.
    Test `bug_distance_antipodal_nan`. Main clamps `a` to `[0, 1]`: `distance_finite`,
    `distance_not_nan`, `distance_eq_pre2983`; history `pre2983_distance_nan`.
-5. **Wrong result** `date('2020-03-31') - duration({months:1})` = 2020-02-29 (Rust) vs
-   2020-03-02 (C), while Rust's `date + duration({months:-1})` = 2020-03-02
-   (`sub` clamps `value.rs:746`, `add` overflows `value.rs:712-722`). Test
-   `bug_date_minus_month_disagrees_with_plus_negative_month`.
+5. **FIXED by #2984 (5986f4df1).** Was: `date('2020-03-31') - duration({months:1})` =
+   2020-02-29 (Rust) vs 2020-03-02 (C), while Rust's `date + duration({months:-1})` =
+   2020-03-02 (`sub` clamped, `add` rolled over). Test
+   `bug_date_minus_month_disagrees_with_plus_negative_month`. Main shares `shift_months`:
+   `sub_eq_add_neg_months`, `sub_vs_add_neg` (incl. the localdatetime case),
+   `subDur_eq_pre2984`; history `pre2984_subDur`, `pre2984_sub_vs_add_neg`.
 6. **FIXED by #2985 (289c201fe).** Was: `localtime('01:00') + duration({days:1}) =
    localtime('01:00')` → false (C true); same for `{months:1}`. Time arithmetic was not
    reduced mod 86400. Test `bug_time_plus_day_not_normalised`. Main: `timeAddDur_eq_tod`,
@@ -138,7 +143,8 @@ C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 - `decompose_duration`: `y - 1970` in i32 and `ya + yb` in `Duration + Duration`
   (`value.rs:1014`) overflow in debug for durations whose year wraps (`civilFromDays_trunc`);
   release wraps silently. Not triggered in release (construct rejects afterwards).
-- `add_duration_to_timestamp`: `y + years` (i32) and `new_days * 86400` (i64) unchecked;
+- `shift_months` (shared by `+`/`-` since #2984): `y + years` (i32), and in
+  `sub_duration_from_timestamp` `-years` (i32::MIN), plus `days * 86400` (i64), unchecked;
   only reachable through the year-wrap above.
 - `date({year: 4294969266})`, `month: 4294967298`, `hour: 4294967297` are truncated by
   `as i32`/`as u32` (C does the same).
@@ -182,6 +188,18 @@ theorems (`pre2983_distance_nan`, `distance_finite`). #2985 (`289c201fe`) gives
 fixed). #3294 only changes the AND/OR type-error text, which `VExpr` leaves abstract
 (`none`). COVERAGE.tsv line numbers re-pinned (temporal.rs +9 after `:391`, value.rs +23..+26,
 vector_expr.rs +3 after `:456`).
+
+## Re-targeted to 8621212fc
+
+#2984 (`5986f4df1`) makes `sub_duration_from_timestamp` call the new `shift_months` with
+`-years`/`-months` (the clamp is gone), so `d - dur = d + (-dur)`: `Duration.shiftMonths`,
+`subDur` re-modelled, `add_sub_months` and `timeAddDur_eq_tod` re-proved through it,
+`sub_eq_add_neg_months` (every timestamp, every pure year/month duration),
+`shiftMonths_total`, `subDur_eq_pre2984`; W2-temporal-5 fixed (`pre2984_sub_vs_add_neg`).
+#2904 (`^`), #3007 (percentile), #3043 (reply.rs) and #3419 (lib.rs) touch nothing modelled
+here. COVERAGE.tsv value.rs rows re-pinned (+7 after the import block, +6 after
+`format_duration`, `add`/`sub` :728/:738, +7 from `days_in_month`, +4 after `add_slow`);
+`shift_months` row added (PROVEN).
 
 ## Wave 6 (`VecDistance`)
 vec_distance.rs PROVEN against the exact simsimd 6.5.16 wrapper (length check, then the

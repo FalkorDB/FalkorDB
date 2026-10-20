@@ -45,8 +45,8 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 **3. Is removing an always-true filter exact?**
 
-- **Yes, if the plan-time constant evaluator agrees with the runtime one** (`eliminate_whole_filter`, `filter_true`, `andLoop_drop_true`, `filter_and_single`).
-- That assumption is **false for `^`** (#2902): `WHERE x ^ true` has its filter removed. These rows are **CONDITIONAL** (see [Coverage](#coverage)).
+- **Yes** (`constTrue_filter`, `andLoop_drop_constTrue`, `filter_true`, `filter_and_single`). The plan-time constant evaluator is the runtime `eval_node` with no row, so every variable is an error. `constEval_sound` proves that whenever it returns a value, every row gives that value. This holds because, since #2904, no modelled operator swallows a child's error.
+- Before #2904 that was **false for `^`** (#2902): the `Pow` arm dropped errors with `flat_map`, so `WHERE x ^ true` folded to `true` and its filter was removed (`pre2904_pow_constant_true`). Now `x ^ true` is not constant (`pow_var_not_constTrue`), and at runtime it is C's type error (`pow_true_type_error`).
 - Since #3335 the rebuilt filter goes through `ExprIR::and_of`, which keeps the verdict, errors included (`flat_passes`, `flat_eval`, `scL_splice`).
 
 **4. Is the id seek exact?**
@@ -82,7 +82,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 |---|---|---|
 | `push_cp_left`, `push_cp_right`, `push_extend`, `push_sort_perm` | Push-down is exact below CP, per-row operators and Sort, for conjuncts that do not error (`NoErr`) | `Basic.lean` |
 | `merge_child_first_row` | Merging stacked filters is exact when the inner conjunct runs first | `Basic.lean` |
-| `eliminate_whole_filter` | Removing an always-true filter is exact, if plan-time and run-time evaluation agree | `Basic.lean` |
+| `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` | The plan-time constant verdict is the runtime verdict on every row, so removing a constant-true filter or conjunct is exact | `ConstEval.lean` |
 | `flat_passes` | Rebuilding a filter with `and_of` gives the same verdict, errors included | `AndOf.lean` |
 | `refsNew_complete`, `refsNew_sound` | The #2390 "is this variable read?" oracle is exact per operator | `References.lean` |
 | `fuse_unread_sound` | Fusion's whole-plan check sees every reader | `References2.lean` |
@@ -125,7 +125,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
 
-**CONDITIONAL rows.** `is_constant_true` and `eliminate_true_filters` rest on the hypothesis `hconst`: the plan-time constant evaluator agrees with runtime evaluation. That is false for `^` (#2902; PR #2904 not merged), so these two functions are not counted as PROVEN.
+**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample is kept as `pre2904_pow_constant_true`.
 
 `refsNew_complete` also assumes `PlanInv`: inline property maps have already been turned into Filters. That is proven in [`../planner_build`](../planner_build) (`planMatch_stripped`), but the two projects are not linked, so here it is a stated assumption.
 
@@ -134,7 +134,8 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | File | What's in it |
 |---|---|
 | `FalkorOptimizer.lean` | The report header and imports |
-| `Basic.lean` | Rows, `Val`, `eval` (three-valued, errors), Filter, push-down below CP/extend/Sort/Limit, filter merge, `eliminate_true_filters` |
+| `Basic.lean` | Rows, `Val`, `eval` (three-valued, errors, `^` since #2904), Filter, push-down below CP/extend/Sort/Limit, filter merge, `eliminate_true_filters` |
+| `ConstEval.lean` | The plan-time constant evaluator and its soundness (`constEval_sound`, #2904); `pre2904_pow_constant_true` |
 | `AndOf.lean` | `ExprIR::and_of` (#3335): splicing an AND into an AND keeps the runtime value |
 | `Helpers.lean` | Syntactic helpers: parameters, variable references, count extraction, fusion preconditions, Project/Aggregate outputs |
 | `Passes.lean` | Fusion, optional fusion, the id seek, `reduce_count`, `reorder_labels`, hash join, push-down routing and the exclusion list |
@@ -153,12 +154,10 @@ The project has no Lake dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 36 |
-| CONDITIONAL | 2 |
+| PROVEN | 38 |
 | NOT COVERED | 42 |
 
 - **PROVEN:** every production function in the optimizer files this project owns.
-- **CONDITIONAL:** `is_constant_true` and `eliminate_true_filters`, under `hconst` (see above).
 - **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
 
 ## What the model does not cover

@@ -352,18 +352,82 @@ theorem uuid_shape (bs : List Nat) (b6 b8 : Fin 256)
   refine ⟨by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout],
     by simp [uuidLayout], by simp [uuidLayout, hv], ⟨_, hw.1, hw.2, by simp [uuidLayout]⟩⟩
 
-/-! ## `pow` / `^` (math.rs:329; also seen: issue #2902) -/
+/-! ## `pow` / `^` (math.rs:328; #2904 fixed issue #2902) -/
 
-def applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
+/-- `Value::get_numeric` on a numeric value, at class level (`i as f64`). -/
+def numFC : V FC → FC
+  | .int a => fcOfInt a
+  | .float f => f
+  | _ => .pzero   -- unreachable: only called on Int/Float
+
+/-- The type error `apply_pow` raises for a non-numeric, non-null operand. -/
+def powMsg (v : V FC) : String := s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
+
+/-- `apply_pow` (math.rs:328, since #2904): reject a non-numeric non-null operand
+(base first), then `null` if either side is null, else `powf` of both operands
+converted to `f64` (C's `pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))`). -/
+def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
+  if !(base.isNum || base.isNull) then .err (powMsg base)
+  else if !(exponent.isNum || exponent.isNull) then .err (powMsg exponent)
+  else if base.isNull || exponent.isNull then .ok .null
+  else .ok (.float (powf (numFC base) (numFC exponent)))
+
+/-- `apply_pow` before #2904 (main 289c201fe): every non-numeric pair, including
+`true` or a string, silently became `null`. -/
+def pre2904_applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
   | .int a, .int b => .float (powf (fcOfInt a) (fcOfInt b))
   | .float a, .float b => .float (powf a b)
   | .int a, .float b => .float (powf (fcOfInt a) b)
   | .float a, .int b => .float (powf a (fcOfInt b))
   | _, _ => .null
 
-/-- Any non-numeric operand yields `null` rather than a type error. -/
-theorem pow_nonnumeric_null (powf : FC → FC → FC) (a b : V FC) (h : a.isNum = false ∨ b.isNum = false) :
-    applyPow powf a b = .null := by
-  cases a <;> cases b <;> simp_all [applyPow, V.isNum]
+/-- History (W2/#2902, fixed by #2904): any non-numeric operand yielded `null`
+rather than a type error. -/
+theorem pre2904_pow_nonnumeric_null (powf : FC → FC → FC) (a b : V FC)
+    (h : a.isNum = false ∨ b.isNum = false) :
+    pre2904_applyPow powf a b = .null := by
+  cases a <;> cases b <;> simp_all [pre2904_applyPow, V.isNum]
+
+/-- Main: a non-numeric, non-null base is a type error naming its type, whatever
+the exponent (even `null`) — as C and `pow()` do. -/
+theorem pow_nonnumeric_base_errors (powf : FC → FC → FC) (a b : V FC)
+    (ha : a.isNum = false) (hn : a.isNull = false) :
+    applyPow powf a b = .err (powMsg a) := by
+  simp [applyPow, ha, hn]
+
+/-- … and so is a non-numeric, non-null exponent once the base is numeric or null. -/
+theorem pow_nonnumeric_exp_errors (powf : FC → FC → FC) (a b : V FC)
+    (ha : (a.isNum || a.isNull) = true) (hb : b.isNum = false) (hn : b.isNull = false) :
+    applyPow powf a b = .err (powMsg b) := by
+  simp [applyPow, ha, hb, hn]
+
+/-- `true ^ 2` and `2 ^ true` are errors on main, `null` before #2904. -/
+theorem pow_bool_errors (powf : FC → FC → FC) (i : Int) :
+    applyPow powf (.bool true) (.int i) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧
+    applyPow powf (.int i) (.bool true) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧
+    pre2904_applyPow powf (.bool true) (.int i) = .null := by
+  refine ⟨?_, ?_, rfl⟩ <;> simp [applyPow, V.isNum, V.isNull, powMsg, V.name] <;> rfl
+
+/-- A null operand (with the other numeric or null) gives `null`. -/
+theorem pow_null (powf : FC → FC → FC) (a b : V FC)
+    (ha : (a.isNum || a.isNull) = true) (hb : (b.isNum || b.isNull) = true)
+    (h : (a.isNull || b.isNull) = true) :
+    applyPow powf a b = .ok .null := by
+  simp [applyPow, ha, hb, h]
+
+/-- On numeric operands nothing changed: main's single `get_numeric` + `powf`
+is exactly the old four Int/Float arms. -/
+theorem pow_numeric_unchanged (powf : FC → FC → FC) (a b : V FC)
+    (ha : a.isNum = true) (hb : b.isNum = true) :
+    applyPow powf a b = .ok (pre2904_applyPow powf a b) := by
+  cases a <;> cases b <;> simp_all [applyPow, pre2904_applyPow, V.isNum, V.isNull, numFC]
+
+/-- `pow()` (math.rs:176) declares `Int | Float | Null` arguments, so the function
+form never reaches the new error: on its domain it returns `Ok`, and the value
+is the pre-#2904 one. -/
+theorem pow_fn_in_domain (powf : FC → FC → FC) (a b : V FC)
+    (ha : (a.isNum || a.isNull) = true) (hb : (b.isNum || b.isNull) = true) :
+    applyPow powf a b = .ok (pre2904_applyPow powf a b) := by
+  cases a <;> cases b <;> simp_all [applyPow, pre2904_applyPow, V.isNum, V.isNull, numFC]
 
 end ValueMath
