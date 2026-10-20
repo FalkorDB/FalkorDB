@@ -42,7 +42,14 @@ use crate::{
         graph::{LabelId, NodeId, RelationshipId},
         graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
     },
-    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
+    runtime::{
+        functions::{
+            Type,
+            temporal::{construct_duration_secs, decompose_duration},
+        },
+        ordermap::OrderMap,
+        runtime::Runtime,
+    },
 };
 
 /// The deepest a value may nest: `[]` and `{}` are depth 1, `[[]]` is depth 2.
@@ -320,7 +327,6 @@ impl Value {
 
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
-        use crate::runtime::functions::temporal::decompose_duration;
         use std::fmt::Write;
         let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
             return format!("PT{duration_secs}S");
@@ -723,8 +729,6 @@ fn add_duration_to_timestamp(
     ts: i64,
     dur_secs: i64,
 ) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
     let (days, time_of_day) = shift_months(ts, years, months);
     Ok(days * 86400 + time_of_day + remaining_secs)
@@ -735,8 +739,6 @@ fn sub_duration_from_timestamp(
     ts: i64,
     dur_secs: i64,
 ) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
     let (days, time_of_day) = shift_months(ts, -years, -months);
     Ok(days * 86400 + time_of_day - remaining_secs)
@@ -1040,9 +1042,6 @@ impl Value {
             }
             // Duration + Duration: decompose both, add components
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
@@ -1085,9 +1084,6 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
