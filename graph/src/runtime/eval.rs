@@ -117,9 +117,12 @@ impl Iterator for RangeIter {
         }
         self.remaining -= 1;
         let val = self.current;
-        // Only wraps when stepping past the last element, whose successor is
-        // never yielded.
-        self.current = self.current.wrapping_add(self.step);
+        // Advance only while another element is due. That element lies inside
+        // the range, so this add cannot overflow; stepping past the last one
+        // (the only add that could) never happens.
+        if self.remaining > 0 {
+            self.current += self.step;
+        }
         Some(Value::Int(val))
     }
 
