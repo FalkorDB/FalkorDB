@@ -42,7 +42,14 @@ use crate::{
         graph::{LabelId, NodeId, RelationshipId},
         graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
     },
-    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
+    runtime::{
+        functions::{
+            Type,
+            temporal::{construct_duration_secs, decompose_duration},
+        },
+        ordermap::OrderMap,
+        runtime::Runtime,
+    },
 };
 
 /// The deepest a value may nest: `[]` and `{}` are depth 1, `[[]]` is depth 2.
@@ -320,7 +327,6 @@ impl Value {
 
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
-        use crate::runtime::functions::temporal::decompose_duration;
         use std::fmt::Write;
         let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
             return format!("PT{duration_secs}S");
@@ -723,9 +729,31 @@ fn add_duration_to_timestamp(
     ts: i64,
     dur_secs: i64,
 ) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, years, months);
+    Ok(days * 86400 + time_of_day + remaining_secs)
+}
+
+/// Subtract a duration from a timestamp.
+fn sub_duration_from_timestamp(
+    ts: i64,
+    dur_secs: i64,
+) -> Result<i64, String> {
+    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, -years, -months);
+    Ok(days * 86400 + time_of_day - remaining_secs)
+}
+
+/// Move `ts` by whole years and months, returning (days since epoch, time of
+/// day). A day past the end of the target month rolls over into the next
+/// month (2020-03-31 minus one month is 2020-03-02), as C's `timegm`
+/// normalisation does. Addition and subtraction share this so that
+/// `d - dur == d + (-dur)`.
+fn shift_months(
+    ts: i64,
+    years: i32,
+    months: i32,
+) -> (i64, i64) {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
@@ -748,31 +776,10 @@ fn add_duration_to_timestamp(
         (adj_year, adj_month, d)
     };
 
-    let new_days = days_from_civil(final_year, final_month, final_day);
-    Ok(new_days * 86400 + time_of_day + remaining_secs)
-}
-
-/// Subtract a duration from a timestamp.
-fn sub_duration_from_timestamp(
-    ts: i64,
-    dur_secs: i64,
-) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
-    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let days = ts.div_euclid(86400);
-    let time_of_day = ts.rem_euclid(86400);
-    let (y, m, d) = civil_from_days(days);
-
-    let new_year = y - years;
-    let new_month_raw = m as i32 - months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
-    let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
-    let max_day = days_in_month(adj_year, adj_month);
-    let day = d.min(max_day);
-
-    let new_days = days_from_civil(adj_year, adj_month, day);
-    Ok(new_days * 86400 + time_of_day - remaining_secs)
+    (
+        days_from_civil(final_year, final_month, final_day),
+        time_of_day,
+    )
 }
 
 const fn days_in_month(
@@ -1035,9 +1042,6 @@ impl Value {
             }
             // Duration + Duration: decompose both, add components
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
@@ -1083,9 +1087,6 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
