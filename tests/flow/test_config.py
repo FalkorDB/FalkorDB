@@ -336,9 +336,10 @@ class testConfig(FlowTestsBase):
         for value in [0, 4611686000000000000, 9223372036854775807]:
             self.env.assertEqual(self.redis_con.execute_command(
                 "CONFIG", "SET", "graph.VKEY_MAX_ENTITY_COUNT", str(value)), "OK")
-            self.env.assertEqual(self.redis_con.execute_command(
-                "CONFIG", "GET", "graph.VKEY_MAX_ENTITY_COUNT"),
-                ["graph.VKEY_MAX_ENTITY_COUNT", str(value)])
+            # config_get returns a dict under both RESP2 and RESP3
+            self.env.assertEqual(
+                self.redis_con.config_get("graph.VKEY_MAX_ENTITY_COUNT"),
+                {"graph.VKEY_MAX_ENTITY_COUNT": str(value)})
             self.env.assertEqual(self.db.config_set(config_name, value), "OK")
             self.env.assertEqual(self.db.config_get(config_name), value)
 
