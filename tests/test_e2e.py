@@ -1731,6 +1731,18 @@ def test_not_not_type_checks_its_operand():
     assert res.result_set == [[True, False, None]]
 
 
+def test_boolean_operator_type_mismatch_names_the_type():
+    # The operand's type in the engine's own vocabulary, as C words it — not
+    # Rust's Debug form (`Int(3)`, `String("a")`).
+    for q, t in [
+        ("UNWIND [3] AS x RETURN x AND true", "Integer"),
+        ("UNWIND [3] AS x RETURN x OR false", "Integer"),
+        ("UNWIND [3] AS x RETURN x XOR true", "Integer"),
+        ("UNWIND ['a'] AS x RETURN x AND true", "String"),
+    ]:
+        query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
