@@ -210,9 +210,10 @@ RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # The builder checked the module against the builder's packages; this image
-# installs far fewer, so check it again here. Then every redis entry point,
-# and that gosu really switches to falkordb.
-RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+# installs far fewer, so check it again here, with redis-server, which was
+# built against redis-builder's. Then every redis entry point, and that gosu
+# really switches to falkordb.
+RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so /usr/local/bin/redis-server 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
     if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
     redis-server --version && \
     redis-cli --version && \
