@@ -59,7 +59,7 @@ On every input, for these:
 
 `string.join` precomputes its length. `joinLen_correct` proves that the length is right, so its `debug_assert_eq!` can't fire.
 
-Case mapping is a deliberate difference. Rust uses full Unicode mapping, and C uses simple mapping: `toUpper('ß')` is `'SS'` in Rust and `'ẞ'` in C. Neo4j matches Rust.
+`toLower`/`toUpper` never error since #2953, including on strings holding U+FFFD (`toLower_total`), and equal C whenever the case mapping is one-to-one (`case_agrees_C_if_simple`). Case mapping itself is a deliberate difference. Rust uses full Unicode mapping, and C uses simple mapping: `toUpper('ß')` is `'SS'` in Rust and `'ẞ'` in C. Neo4j matches Rust.
 
 **5. What does a deleted entity return later in the same query?**
 
@@ -77,6 +77,7 @@ The team decided on 2026-09-25 that a deleted entity keeps returning *all* its d
 | `contains_false_iff` | When `IN` returns `false` rather than `null` | `FalkorStrList.lean` |
 | `substring3_agrees_C`, `left_agrees_C`, `right_agrees_C`, `trim_agrees_C`, `reverse_agrees_C`, `split_agrees_C` | These string functions equal C on every input | `FalkorStrList.lean` |
 | `joinLen_correct` | `string.join`'s precomputed length is exact | `FalkorStrList.lean` |
+| `toLower_total`, `case_agrees_C_if_simple` | `toLower`/`toUpper` never error, and equal C under a one-to-one mapping (#2953) | `FalkorStrList.lean` |
 | `listSort_float_cmp_antisymmetric`, `listSort_perm` | `list.sort`'s float comparison is antisymmetric (#2912), and the sort returns a permutation | `FalkorStrList.lean`, `Misc.lean` |
 | `deleteNode_preserves_all`, `deleteNode_labels_iff` | Deleted entities keep their details; labels only when unchanged in the query | `Entity.lean` |
 | `startEndNode_null`, `startEndNode_total` | `startNode(null)`/`endNode(null)` is `null` (#3132) | `Entity.lean` |
@@ -99,7 +100,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | A (W2-strlist-1) | `pre2912_listSort_cmp_not_antisymmetric` | `list.sort` over a list with NaN panicked and killed the server | Fixed by #2912 (`listSort_float_cmp_antisymmetric`) |
 | B (W2-strlist-2) | `pre2952_listRemove_end_overflows` | `list.remove([1,2,3], 1, i64::MAX)` panicked in debug; release returned `[1]` by accident (`listRemoveRelease_eq_spec`) | Fixed by #2952 (closes #2926; `listRemove_eq_spec`) |
 | C (W2-strlist-3) | `regexMatches_unanchored` | `=~` matches substrings: `'abc' =~ 'b'` is `true`; openCypher requires a whole-string match. C rejects `=~` | **Open** |
-| D (W2-strlist-4) | `toLower_rejects_valid` | `toLower('A�')` errors with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check can only misfire. C returns `'a�'` | **Open** |
+| D (W2-strlist-4) | `pre2953_toLower_rejects_valid` | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
 | E (W2-strlist-5) | `replaceRegex_dollar` | `string.replaceRegEx('abc', 'b', '$0x')` returns `'ac'` because `$` is expanded; C copies the replacement literally (`'a$0xc'`) | **Open**: listed under "decisions needed" (#2929) |
 | F (W2-strlist-6) | `comprehension_diverges` | `[x IN null \| x]` returns `[]` (C: `null`); `[x IN 5 \| x]` returns `[5]` (C: type error) | **Open** |
 | W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:282`, `:461`), not the pending ones | **Open** |
@@ -117,7 +118,7 @@ This project has no CONDITIONAL rows. The string pool contract (`intern`) is dis
 
 | File | What's in it |
 |---|---|
-| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and `$` expansion, `string.join`; bugs A–F |
+| `FalkorStrList.lean` | The report header; indexing and slicing, `list.remove`/`insert`, `head`/`last`/`tail`/`size`/`reverse`, `range`, quantifiers, `IN`, comprehension and `reduce`, the string functions against C, regex match and `$` expansion, `string.join`; bugs A–F (A, B, D fixed; their counterexamples kept as `pre<PR>_` history) |
 | `Entity.lean` | `functions/entity.rs` over the runtime accessor model (deleted snapshot > pending > committed): deleted-entity theorems, `hasLabels`, degree arguments, `startNode`/`endNode`; W4-fn-1 |
 | `Misc.lean` | The remaining `string.rs`, `list.rs` and `internal.rs` functions: `STARTS WITH`/`ENDS WITH`/`CONTAINS`, `isNull`, string interning, `toStringList`, `matchRegEx`, `list.sort`, `list.dedup`, registration |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -140,7 +141,7 @@ Shared foundations (`InI64`, `wrap`, `I64MIN`/`I64MAX`) come from [`../core`](..
   - `eval_compiled_regex` (bugs C and E).
 - **NOT COVERED:** `check_string_or_null`, a bare type check.
 
-Some rows give the file as a bare name (`eval.rs`, `list.rs`) and others as the full path (`graph/src/runtime/functions/list.rs`). `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
+Every row gives the full path (bare names such as `list.rs` or `value.rs` matched two files). Arm-level rows (`eval_compound/GetElement`, `add_slow (String/List arms)`) are pinned to the enclosing function's line, with the arm's line in the reason. `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
 ## What the model does not cover
 
@@ -164,4 +165,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-When you fix one of the open bugs (C–F, W4-fn-1), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.
+When you fix one of the open bugs (C, E, F, W4-fn-1), rename its counterexample to `pre<PR>_…`, add the correctness theorem, and move the row to PROVEN. Any change to `ops/delete.rs`'s snapshot also affects `Entity.lean`.

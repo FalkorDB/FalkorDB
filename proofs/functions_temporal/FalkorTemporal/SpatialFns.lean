@@ -1,7 +1,7 @@
 import FalkorTemporal.Pure
 /-!
 # Spatial and vector functions (functions/spatial.rs:38-229), `Point::new` / `Point::distance`
-(value.rs:110-141)
+(value.rs:133-176)
 
 f64/f32 are abstract (`Flt`), with only the IEEE facts the theorems use stated as fields.
 `simsimd` (vec_distance.rs, FFI) is two partial functions whose only assumed law is the
@@ -23,6 +23,7 @@ structure Flt (F F32 : Type) where
   sqrt : F → F
   atan2 : F → F → F
   sq : F → F                  -- `powi(2)`
+  clamp01 : F → F             -- `.clamp(0.0, 1.0)` (since #2983)
   toRadF64 : F32 → F          -- `f64::from(x.to_radians())`
   ofI64 : Int → F32           -- `i as f32`
   ofF64 : F → F32             -- `f as f32`
@@ -40,6 +41,7 @@ structure Flt (F F32 : Type) where
   atan2_zero_one : atan2 zero one = zero
   two_mul_zero : mul two zero = zero
   r_mul_zero : mul radius zero = zero
+  clamp01_zero : clamp01 zero = zero
   cos_finite : ∀ x, finite x = true → finite (cos x) = true
   mul_finite : ∀ x y, finite x = true → finite y = true → finite (mul x y) = true
 
@@ -49,32 +51,104 @@ structure Point (F32 : Type) where
   latitude : F32
   longitude : F32
 
-/-- `Point::new` (value.rs:110). -/
+/-- `Point::new` (value.rs:133). -/
 def Point.new (latitude longitude : F32) : Point F32 := { latitude, longitude }
 
 theorem Point.new_fields (a b : F32) : (Point.new a b).latitude = a ∧ (Point.new a b).longitude = b :=
   ⟨rfl, rfl⟩
 
-/-- `Point::distance` (value.rs:121), haversine, operation by operation. -/
-def distance (p q : Point F32) : F :=
+/-- The haversine term `a = cos φ₁ cos φ₂ · sin²(Δλ/2) + sin²(Δφ/2)` of `Point::distance`
+(value.rs:144-160), before the clamp. -/
+def havA (p q : Point F32) : F :=
   let lat1 := L.toRadF64 p.latitude
   let lon1 := L.toRadF64 p.longitude
   let lat2 := L.toRadF64 q.latitude
   let lon2 := L.toRadF64 q.longitude
   let dlat := L.sub lat2 lat1
   let dlon := L.sub lon2 lon1
-  let a := L.mulAdd (L.mul (L.cos lat1) (L.cos lat2)) (L.sq (L.sin (L.div dlon L.two)))
+  L.mulAdd (L.mul (L.cos lat1) (L.cos lat2)) (L.sq (L.sin (L.div dlon L.two)))
     (L.sq (L.sin (L.div dlat L.two)))
-  let c := L.mul L.two (L.atan2 (L.sqrt a) (L.sqrt (L.sub L.one a)))
-  L.mul L.radius c
+
+/-- `c = 2·atan2(√a, √(1 − a))`, times `EARTH_RADIUS` (value.rs:163-167). -/
+def havFinish (a : F) : F :=
+  L.mul L.radius (L.mul L.two (L.atan2 (L.sqrt a) (L.sqrt (L.sub L.one a))))
+
+/-- `Point::distance` (value.rs:144), haversine, operation by operation; since #2983
+(86dcd5a11) `a` is clamped to `[0, 1]`. -/
+def distance (p q : Point F32) : F := havFinish L (L.clamp01 (havA L p q))
+
+/-- Pre-#2983 `Point::distance`: no clamp (history, W2-temporal-4). -/
+def pre2983_distance (p q : Point F32) : F := havFinish L (havA L p q)
 
 /-- The distance from a (finite) point to itself is exactly 0. -/
 theorem distance_self (p : Point F32) (h1 : L.finite (L.toRadF64 p.latitude) = true)
     (h2 : L.finite (L.toRadF64 p.longitude) = true) : distance L p p = L.zero := by
   have hc := L.mul_finite _ _ (L.cos_finite _ h1) (L.cos_finite _ h1)
-  simp only [distance, L.sub_self _ h1, L.sub_self _ h2, L.div_zero_two, L.sin_zero, L.sq_zero,
-    L.mulAdd_zero _ hc, L.sqrt_zero, L.one_sub_zero, L.sqrt_one, L.atan2_zero_one, L.two_mul_zero,
-    L.r_mul_zero]
+  simp only [distance, havA, havFinish, L.sub_self _ h1, L.sub_self _ h2, L.div_zero_two,
+    L.sin_zero, L.sq_zero, L.mulAdd_zero _ hc, L.clamp01_zero, L.sqrt_zero, L.one_sub_zero,
+    L.sqrt_one, L.atan2_zero_one, L.two_mul_zero, L.r_mul_zero]
+
+section Antipodal
+
+/-! ### #2983: antipodal points (W2-temporal-4)
+
+The IEEE facts the NaN argument needs, stated over the same abstract `F`. `le` is IEEE `≤`
+(false whenever an operand is NaN). Each is a property of binary64 and of `f64::clamp`:
+`clamp_unit`/`clamp_id`/`clamp_nan` are `f64::clamp(0.0, 1.0)`'s documented contract;
+`one_sub_unit`: `1 − a ≥ 0` for `a ∈ [0, 1]` (rounding is monotone and `1 − 1 = 0`);
+`one_sub_above`: `1 − a < 0` for finite `a > 1`; `sqrt_*`: `√x` is NaN iff `x < 0` or NaN;
+`atan2_*`: `atan2` of non-NaN operands is in `[−π, π]`, of a NaN operand NaN;
+`mul_nan_right`: NaN propagates through `*`. -/
+structure NanLaws (L : Flt F F32) where
+  nan : F → Bool
+  le : F → F → Prop
+  nan_of_finite : ∀ x, L.finite x = true → nan x = false
+  clamp_unit : ∀ x, nan x = false → le L.zero (L.clamp01 x) ∧ le (L.clamp01 x) L.one
+  clamp_id : ∀ x, le L.zero x → le x L.one → L.clamp01 x = x
+  one_sub_unit : ∀ a, le L.zero a → le a L.one → le L.zero (L.sub L.one a)
+  one_sub_above : ∀ a, nan a = false → ¬ le a L.one →
+    ¬ le L.zero (L.sub L.one a) ∧ nan (L.sub L.one a) = false
+  sqrt_nonneg : ∀ x, le L.zero x → nan (L.sqrt x) = false
+  sqrt_neg : ∀ x, nan x = false → ¬ le L.zero x → nan (L.sqrt x) = true
+  atan2_finite : ∀ y x, nan y = false → nan x = false → L.finite (L.atan2 y x) = true
+  atan2_nan_right : ∀ y x, nan x = true → nan (L.atan2 y x) = true
+  two_finite : L.finite L.two = true
+  radius_finite : L.finite L.radius = true
+  mul_nan_right : ∀ x y, nan y = true → nan (L.mul x y) = true
+
+variable {L} (N : NanLaws L)
+
+/-- **W2-temporal-4 (history, fixed by #2983 86dcd5a11).** Before the clamp, whenever the
+rounded `a` landed above 1 (antipodal points: `a = 1 + 2⁻⁵²`), `distance` was NaN
+(C: 20037518). Repro `bug_distance_antipodal_nan` (35 428 of 6 485 401 antipodal pairs
+on a 0.1° grid); the mechanism is `#eval`'d in `Spatial.lean`. -/
+theorem pre2983_distance_nan (p q : Point F32) (hn : N.nan (havA L p q) = false)
+    (habove : ¬ N.le (havA L p q) L.one) : N.nan (pre2983_distance L p q) = true := by
+  unfold pre2983_distance havFinish
+  obtain ⟨hneg, hnn⟩ := N.one_sub_above _ hn habove
+  exact N.mul_nan_right _ _ (N.mul_nan_right _ _ (N.atan2_nan_right _ _ (N.sqrt_neg _ hnn hneg)))
+
+/-- **W2-temporal-4 fixed.** On main `distance` is finite (so never NaN) for every pair of
+points whose haversine term is not NaN (i.e. finite coordinates), antipodal ones included. -/
+theorem distance_finite (p q : Point F32) (hn : N.nan (havA L p q) = false) :
+    L.finite (distance L p q) = true := by
+  unfold distance havFinish
+  obtain ⟨h0, h1⟩ := N.clamp_unit _ hn
+  have hs1 := N.sqrt_nonneg _ h0
+  have hs2 := N.sqrt_nonneg _ (N.one_sub_unit _ h0 h1)
+  exact L.mul_finite _ _ N.radius_finite
+    (L.mul_finite _ _ N.two_finite (N.atan2_finite _ _ hs1 hs2))
+
+theorem distance_not_nan (p q : Point F32) (hn : N.nan (havA L p q) = false) :
+    N.nan (distance L p q) = false := N.nan_of_finite _ (distance_finite N p q hn)
+
+/-- The clamp only changes results that were wrong: whenever the rounded `a` is already in
+`[0, 1]`, main and pre-#2983 agree. -/
+theorem distance_eq_pre2983 (p q : Point F32) (h0 : N.le L.zero (havA L p q))
+    (h1 : N.le (havA L p q) L.one) : distance L p q = pre2983_distance L p q := by
+  unfold distance pre2983_distance; rw [N.clamp_id _ h0 h1]
+
+end Antipodal
 
 /-! ## spatial.rs -/
 

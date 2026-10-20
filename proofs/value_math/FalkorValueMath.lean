@@ -16,6 +16,13 @@ import FalkorValueMath.Nesting
 /-!
 # Value arithmetic, math/conversion functions and function type checking (FalkorDB-rs)
 
+**Re-targeted to main 289c201fe** (from fb3d516d0). #2985 (#2933): `Time ± Duration`
+keeps only the time of day, `(t mod 86400 ± dur mod 86400) mod 86400`, and can no longer
+fail — `timeAddDur`/`timeSubDur` replace the `addTs`/`subTs` parameters in those arms;
+`add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days`,
+`time_add_dur_mod`. #2983 (`Point::distance` clamps `a` to `[0, 1]`) is modelled in
+proofs/functions_temporal. COVERAGE.tsv line numbers re-pinned to 289c201fe.
+
 Lean 4 (core only) models of `graph/src/runtime/value.rs` (arithmetic, formatting,
 memory accounting, attribute access, self-comparison, v19 codec),
 `functions/math.rs`, `functions/conversion.rs` and `functions/mod.rs` (arity, argument

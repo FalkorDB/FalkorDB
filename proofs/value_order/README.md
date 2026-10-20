@@ -110,6 +110,8 @@ Shared foundations (the float model `F`, `fpcmp`, i64 helpers, comparator laws `
 
 ## Coverage
 
+Line numbers are pinned to main 289c201fe (no change to the order, equality or hash code since fb3d516d0).
+
 `COVERAGE.tsv` has 84 rows, mostly `value.rs`:
 
 | Bucket | Rows |

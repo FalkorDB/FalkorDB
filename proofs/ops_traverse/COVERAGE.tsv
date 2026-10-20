@@ -46,17 +46,17 @@ graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::cmp	2188	NOT COVERE
 graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::partial_cmp	2203	NOT COVERED	f64 heap ordering
 graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2219	NOT COVERED	f64 Dijkstra; differential-tested vs C
 graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2322	NOT COVERED	differential-tested vs C
-graph/src/runtime/functions/algo_procedures.rs	record_found_path	2405	NOT COVERED	differential-tested vs C
-graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2469	NOT COVERED	differential-tested vs C (maxCost bug 6)
-graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2572	NOT COVERED	result assembly
-graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2603	NOT COVERED	driver
-graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2654	NOT COVERED	registration
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2666	NOT COVERED	registration
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2407	NOT COVERED	differential-tested vs C
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2471	NOT COVERED	differential-tested vs C (maxCost bug 6)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2575	NOT COVERED	result assembly
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2606	NOT COVERED	driver
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2657	NOT COVERED	registration
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2669	NOT COVERED	registration
 graph/src/runtime/eval.rs	NeighborIter::new	153	NOT COVERED	shortestPath() BFS helpers; differential-tested only
 graph/src/runtime/eval.rs	NeighborIter::new_reversed	193	NOT COVERED	idem
 graph/src/runtime/eval.rs	NeighborIter::neighbors	221	NOT COVERED	idem
-graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1313	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
-graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1398	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1326	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1411	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	56	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	98	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList, evalIQ_inList_err (W2-index-3)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	250	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff

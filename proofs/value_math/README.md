@@ -139,6 +139,8 @@ Shared foundations (the engine `Value` as `V F`, `wrap` and the `wrapping_*` hel
 
 ## Coverage
 
+Line numbers are pinned to main 289c201fe.
+
 `COVERAGE.tsv` has 184 rows: 67 in `value.rs`, 36 in `functions/mod.rs`, 20 in `procedures.rs`, 17 in `math.rs`, 14 in `trig.rs`, 12 in `aggregation.rs`, 11 in `conversion.rs`, 3 each in `path.rs` and `index_ddl.rs`, and 1 in `entity_type.rs`.
 
 | Bucket | Rows |
@@ -159,7 +161,7 @@ The header's own count ("72 PROVEN, 11 MODELLED, 46 NOT COVERED of 129") predate
 - **Floats.** `f64` is abstract (`FOps`, the `FC` classes, `FloatCmp` laws). libm `exp`, `ln`, `log10`, `floor`, `ceil` and `round` are parameters, so their results are trusted.
 - **Parsing.** `f64::from_str` is modelled only by its grammar and its integer-literal rounding, not by the value it returns.
 - **Trusted libraries.** Chrono calendar accessors and formatting, `json_escape`, the RNG behind `rand`, the QuickJS UDF bridge and registry locking.
-- **Temporal helpers.** These are parameters here; they are proven in [`../functions_temporal`](../functions_temporal).
+- **Temporal helpers.** These are parameters here; they are proven in [`../functions_temporal`](../functions_temporal). The exception is `Time ± Duration`, which since #2985 no longer calls them: `timeAddDur`/`timeSubDur` model it directly, and `add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days` prove it never fails, always lands in `[0, 86400)`, and ignores whole days.
 - **Ordering and hashing.** Value ordering, equality and hashing are proven in `value_order`, not here.
 - **Memory accounting.** `heap_size` charges a `Relationship` 24 bytes it doesn't own; the model records this but doesn't treat it as wrong.
 

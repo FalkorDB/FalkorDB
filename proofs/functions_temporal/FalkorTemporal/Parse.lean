@@ -267,10 +267,30 @@ structure DurAcc where
   minutes : Int := 0
   seconds : Int := 0
 
-/-- `n * 7` on i64 in a release build wraps (`wrapMul` in Duration.lean). -/
+/-- `n * 7` on i64 in a release build wraps (`wrapMul` in Duration.lean). Used only by
+the pre-#2987 loop `pre2987_dateLoop`. -/
 def wrap64 (x : Int) : Int := (x + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
-/-- The date-part loop: digits and `-` accumulate, a letter commits the number. -/
+/-- `i64::checked_*`: `some x` iff `x` is in i64 range. -/
+def chk64 (x : Int) : Option Int := if decide (-2 ^ 63 ≤ x) && decide (x < 2 ^ 63) then some x else none
+
+/-- Pre-#2987 (9d3869aa8) date-part loop: `W` and `D` wrapped in release. History. -/
+def pre2987_dateLoop : List Char → String → DurAcc → Except String DurAcc
+  | [], _, a => .ok a
+  | ch :: cs, buf, a =>
+    if ch.isDigit || ch == '-' then pre2987_dateLoop cs (buf.push ch) a
+    else match C.parseI64 buf with
+      | none => .error s!"Invalid number in duration: {buf}"
+      | some n =>
+        match ch with
+        | 'Y' => pre2987_dateLoop cs "" { a with years := n }
+        | 'M' => pre2987_dateLoop cs "" { a with months := n }
+        | 'W' => pre2987_dateLoop cs "" { a with days := wrap64 (a.days + wrap64 (n * 7)) }
+        | 'D' => pre2987_dateLoop cs "" { a with days := wrap64 (a.days + n) }
+        | _ => .error s!"Unknown duration component: {ch}"
+
+/-- The date-part loop (temporal.rs:379-405): digits and `-` accumulate, a letter commits
+the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
 def dateLoop : List Char → String → DurAcc → Except String DurAcc
   | [], _, a => .ok a
   | ch :: cs, buf, a =>
@@ -281,8 +301,12 @@ def dateLoop : List Char → String → DurAcc → Except String DurAcc
         match ch with
         | 'Y' => dateLoop cs "" { a with years := n }
         | 'M' => dateLoop cs "" { a with months := n }
-        | 'W' => dateLoop cs "" { a with days := wrap64 (a.days + wrap64 (n * 7)) }
-        | 'D' => dateLoop cs "" { a with days := wrap64 (a.days + n) }
+        | 'W' => match chk64 (n * 7) >>= fun w => chk64 (a.days + w) with
+          | some d => dateLoop cs "" { a with days := d }
+          | none => .error s!"Duration overflow: weeks={n}"
+        | 'D' => match chk64 (a.days + n) with
+          | some d => dateLoop cs "" { a with days := d }
+          | none => .error s!"Duration overflow: days={n}"
         | _ => .error s!"Unknown duration component: {ch}"
 
 /-- The time-part loop: also accepts `.`, and drops the fraction before parsing. -/
@@ -328,5 +352,67 @@ theorem parseDuration_weeks (s : String) (r : Int × Int × Int × Int × Int ×
 theorem parseDuration_noP (s : String) (h : s.startsWith "P" = false) :
     parseDuration C s = .error s!"Duration string must start with 'P': {s}" := by
   simp [parseDuration, h]
+
+/-! ### #2987: the week/day accumulator never wraps -/
+
+/-- `W` with a week count whose `n * 7` leaves i64 is an error, not a wrap
+(W2-temporal-8 fixed). -/
+theorem dateLoop_week_overflow (cs : List Char) (buf : String) (a : DurAcc) (n : Int)
+    (hp : C.parseI64 buf = some n) (hov : chk64 (n * 7) = none) :
+    dateLoop C ('W' :: cs) buf a = .error s!"Duration overflow: weeks={n}" := by
+  simp [dateLoop, hp, hov, bind, Option.bind]
+
+/-- `D` whose sum with the days so far leaves i64 is an error. -/
+theorem dateLoop_day_overflow (cs : List Char) (buf : String) (a : DurAcc) (n : Int)
+    (hp : C.parseI64 buf = some n) (hov : chk64 (a.days + n) = none) :
+    dateLoop C ('D' :: cs) buf a = .error s!"Duration overflow: days={n}" := by
+  simp [dateLoop, hp, hov]
+
+/-- The repro `duration('P2635249153387078803W')`: once the number parses, main errors
+(pre-#2987: `P5D`, `pre2987_week_string_wraps`). -/
+theorem week_string_overflow_errors (cs : List Char) (buf : String) (a : DurAcc)
+    (hp : C.parseI64 buf = some 2635249153387078803) :
+    dateLoop C ('W' :: cs) buf a =
+      .error s!"Duration overflow: weeks={(2635249153387078803 : Int)}" :=
+  dateLoop_week_overflow C cs buf a _ hp (by decide)
+
+theorem chk64_some {x y : Int} (h : chk64 x = some y) : y = x ∧ -2 ^ 63 ≤ x ∧ x < 2 ^ 63 := by
+  unfold chk64 at h
+  split at h
+  · rename_i hc; simp only [Bool.and_eq_true, decide_eq_true_eq] at hc; cases h; exact ⟨rfl, hc⟩
+  · cases h
+
+/-- Every `days` the main date-part loop returns is exactly the (unwrapped) sum and lies in
+i64: no input can make it wrap. -/
+theorem dateLoop_days_i64 : ∀ (l : List Char) (buf : String) (a r : DurAcc),
+    -2 ^ 63 ≤ a.days → a.days < 2 ^ 63 → dateLoop C l buf a = .ok r →
+    -2 ^ 63 ≤ r.days ∧ r.days < 2 ^ 63
+  | [], _, a, r, h0, h1, h => by simp [dateLoop] at h; cases h; exact ⟨h0, h1⟩
+  | ch :: cs, buf, a, r, h0, h1, h => by
+    unfold dateLoop at h
+    split at h
+    · exact dateLoop_days_i64 cs _ a r h0 h1 h
+    · split at h
+      · cases h
+      · rename_i n _
+        split at h
+        · exact dateLoop_days_i64 cs _ _ r (by simpa using h0) (by simpa using h1) h
+        · exact dateLoop_days_i64 cs _ _ r (by simpa using h0) (by simpa using h1) h
+        · split at h
+          · rename_i d hd
+            cases hw : chk64 (n * 7) with
+            | none => simp [hw, bind, Option.bind] at hd
+            | some w =>
+              simp only [hw, bind, Option.bind] at hd
+              obtain ⟨-, hd0, hd1⟩ := chk64_some hd
+              have := (chk64_some hd).1
+              exact dateLoop_days_i64 cs _ _ r (by simp only; omega) (by simp only; omega) h
+          · cases h
+        · split at h
+          · rename_i d hd
+            obtain ⟨hdx, hd0, hd1⟩ := chk64_some hd
+            exact dateLoop_days_i64 cs _ _ r (by simp only; omega) (by simp only; omega) h
+          · cases h
+        · cases h
 
 end FalkorTemporal.Fns

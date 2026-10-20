@@ -495,10 +495,19 @@ theorem distinct_fold_clear_overcounts :
     (dedupBy id [] [1, 0, 1, 0, 1, 0]).length = 2 := by
   decide
 
-/-! ## eval.rs:877 — an aggregate's finalizer `return`s out of the stack machine -/
+/-! ## eval.rs:886-893 — an aggregate's finalized value is pushed (#2951)
+
+Re-targeted to 289c201fe. Before #2951 (0912f4500, closes #2945, FINDINGS
+W2-agg-5) the `FuncInvocation` arm of `ExprEval::eval_compound` ran
+`return match finalize { … }` (eval.rs:877 at fb3d516d0), leaving the whole
+stack machine with that one value; that model is kept below as
+`pre2951_evalStack`. On main the arm pushes the finalized value and
+`continue`s (eval.rs:883-893 at 289c201fe), so any enclosing frame, e.g. the
+list literal `[min(x), max(x)]`, still runs. -/
 
 /-- A two-node fragment of `ExprEval::eval_compound`'s stack machine: list
-literals and finalized aggregates. -/
+literals and finalized aggregates (`agg acc` stands for the accumulator
+already passed through its finalizer). -/
 inductive E where
   | agg (acc : Nat)
   | lit (n : Nat)
@@ -514,10 +523,115 @@ def evalRef : E → R
   | .lit n => .num n
   | .list es => .lst (es.attach.map fun ⟨e, _⟩ => evalRef e)
 
-/-- The Rust stack machine: on `FuncInvocation` of an aggregate with
-`agg_group_key = None` it executes `return match finalize { … }` — leaving the
-whole function with that value, abandoning every pending `List` frame. -/
+theorem evalRef_list (es : List E) : evalRef (.list es) = .lst (es.map evalRef) := by
+  simp [evalRef]
+
+/-- One step of the stack machine. `push` is a leaf's value: a literal, or an
+aggregate's finalized accumulator, which main pushes (eval.rs:889-892 at
+289c201fe). `mk n` is a list literal's frame: it pops its `n` operands and
+pushes the list. -/
+inductive I where
+  | push (r : R)
+  | mk (n : Nat)
+
+/-- Postfix code: operands in source order, then the list frame. -/
+def compile : E → List I
+  | .agg a => [.push (.num a)]
+  | .lit n => [.push (.num n)]
+  | .list es => (es.attach.flatMap fun ⟨e, _⟩ => compile e) ++ [.mk es.length]
+
+def step : I → List R → Option (List R)
+  | .push r, st => some (r :: st)
+  | .mk n, st => if n ≤ st.length then some (.lst (st.take n).reverse :: st.drop n) else none
+
+def run : List I → List R → Option (List R)
+  | [], st => some st
+  | i :: is, st => (step i st).bind (run is)
+
+/-- Main's stack machine (eval.rs:883-893 at 289c201fe): the aggregate arm
+pushes and `continue`s; the result is the single value left on the stack. -/
 def evalStack (e : E) : R :=
+  match run (compile e) [] with
+  | some [r] => r
+  | _ => .lst []
+
+theorem run_append (a b : List I) (st : List R) :
+    run (a ++ b) st = (run a st).bind (run b) := by
+  induction a generalizing st with
+  | nil => simp [run]
+  | cons i is ih =>
+    simp only [List.cons_append, run]
+    cases step i st <;> simp [ih]
+
+theorem run_compile (e : E) (k : List I) (st : List R) :
+    run (compile e ++ k) st = run k (evalRef e :: st) := by
+  match e with
+  | .agg a => simp [compile, run, step, evalRef]
+  | .lit n => simp [compile, run, step, evalRef]
+  | .list es =>
+    have hl : ∀ (xs : List E), (∀ x ∈ xs, x ∈ es) → ∀ (k : List I) (st : List R),
+        run ((xs.flatMap compile) ++ k) st = run k ((xs.map evalRef).reverse ++ st) := by
+      intro xs hxs
+      induction xs with
+      | nil => intro k st; simp
+      | cons x xs ih =>
+        intro k st
+        have hx : x ∈ es := hxs x (by simp)
+        have _ : sizeOf x < sizeOf (E.list es) := by
+          have := List.sizeOf_lt_of_mem hx; simp; omega
+        simp only [List.flatMap_cons, List.append_assoc, List.map_cons, List.reverse_cons]
+        rw [run_compile x, ih (fun y hy => hxs y (by simp [hy]))]
+        simp
+    have hfm : (es.attach.flatMap fun ⟨e, _⟩ => compile e) = es.flatMap compile := by
+      simp [List.flatMap]
+    simp only [compile, hfm, List.append_assoc]
+    rw [hl es (fun _ h => h)]
+    simp [run, step, evalRef_list]
+termination_by sizeOf e
+
+/-- **#2951, general.** Main's stack machine agrees with the recursive
+reference on every expression: no aggregate abandons an enclosing frame. -/
+theorem evalStack_eq_evalRef (e : E) : evalStack e = evalRef e := by
+  have := run_compile e [] []
+  simp only [List.append_nil] at this
+  simp [evalStack, this, run]
+
+/-- **#2951.** A list literal of finalized aggregates yields one element per
+item, each the finalized value, in order. -/
+theorem evalStack_list_of_aggs (accs : List Nat) :
+    evalStack (.list (accs.map .agg)) = .lst (accs.map .num) := by
+  rw [evalStack_eq_evalRef, evalRef_list]
+  simp [List.map_map, Function.comp_def, evalRef]
+
+theorem evalStack_list_of_aggs_length (accs : List Nat) :
+    ∃ rs, evalStack (.list (accs.map .agg)) = .lst rs ∧ rs.length = accs.length :=
+  ⟨accs.map .num, evalStack_list_of_aggs accs, by simp⟩
+
+/-- `size(·)`: the length of a list, a type error (`none`) on a number. -/
+def rsize : R → Option Nat
+  | .lst rs => some rs.length
+  | .num _ => none
+
+/-- `UNWIND [1, 2] AS x RETURN [min(x), max(x)]` is `[1, 2]`
+(tests/flow/test_aggregation.py `test_list_literal_of_aggregates`). -/
+theorem main_min_max_list : evalStack (.list [.agg 1, .agg 2]) = .lst [.num 1, .num 2] :=
+  evalStack_list_of_aggs [1, 2]
+
+/-- `[count(x), 5]` over `[1, 2]` is `[2, 5]`. -/
+theorem main_count_lit_list : evalStack (.list [.agg 2, .lit 5]) = .lst [.num 2, .num 5] := by
+  rw [evalStack_eq_evalRef]; simp [evalRef]
+
+/-- `size([count(x)])` is 1, not a type error. -/
+theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 := by
+  rw [evalStack_eq_evalRef]; simp [evalRef, rsize]
+
+/-! ### History: before #2951 (eval.rs:877 at fb3d516d0) -/
+
+/-- The Rust stack machine before #2951: on `FuncInvocation` of an aggregate
+with `agg_group_key = None` it executed `return match finalize { … }` —
+leaving the whole function with that value, abandoning every pending `List`
+frame. -/
+def pre2951_evalStack (e : E) : R :=
   match e with
   | .list es =>
     match es.find? (fun e => match e with | .agg _ => true | _ => false) with
@@ -530,12 +644,19 @@ def evalStack (e : E) : R :=
     | none => evalRef e
   | e => evalRef e
 
-theorem stackEval_return_drops_frame :
-    evalStack (.list [.agg 1, .agg 2]) = .num 2 ∧
+theorem pre2951_stackEval_return_drops_frame :
+    pre2951_evalStack (.list [.agg 1, .agg 2]) = .num 2 ∧
     evalRef (.list [.agg 1, .agg 2]) = .lst [.num 1, .num 2] := by
   constructor
   · rfl
   · simp [evalRef]
+
+/-- Before #2951 the other two live repros: `[count(x), 5]` gave 2 and
+`size([count(x)])` was a type error. -/
+theorem pre2951_count_lit_and_size :
+    pre2951_evalStack (.list [.agg 2, .lit 5]) = .num 2 ∧
+    rsize (pre2951_evalStack (.list [.agg 2])) = none := by
+  constructor <;> rfl
 
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 

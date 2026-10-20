@@ -16,9 +16,10 @@ import FalkorAggOps.SlotReuse
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
 Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
-No `sorry` / `admit` / `axiom`. 201 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
+No `sorry` / `admit` / `axiom`. 211 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
-(graph/tests/lean_ops_aggregate.rs; the 5 `bug_*` tests fail today, the 3 `agrees_*` pass).
+(graph/tests/lean_ops_aggregate.rs; the `bug_*` tests for open findings fail, the 3 `agrees_*` pass;
+`bug_list_literal_of_aggregates_collapses` passes since #2951).
 
 ## Model (here | there, all under graph/src/runtime/)
 | Lean | Rust |
@@ -31,7 +32,7 @@ Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 | `project_flatten`, `unwindOne`/`chunks` | ops/project.rs:54, ops/unwind.rs:90 + batched emitter |
 | `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59, per-row :871/:912, keyless pre-insert :524/:879 |
 | `dedupBy`, `dcgGo`/`distinctCountGrouped`, `distinctCountBatches` | ops/distinct.rs:62; DISTINCT key (node, hash(group key)) aggregate.rs:715/:959; apply.rs:283 dedupers clear |
-| `evalStack` vs `evalRef` | eval.rs:877 `return` in `eval_compound` |
+| `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); `pre2951_evalStack`: the old `return` at eval.rs:877 |
 | `Bitmap` | batch.rs:89-167 `NullBitmap` (`BitVec 64` words) |
 A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = `List (List α)`.
 
@@ -66,9 +67,19 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
 4. aggregation.rs:539 (and :253): every row overwrites the percentile, so the last one wins
    (`pct_last_wins`). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10.
    Test `bug_percentile_row_dependent_argument_last_wins`.
-5. eval.rs:877: an aggregate inside a list literal `return`s out of the stack machine
-   (`stackEval_return_drops_frame`). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
-   `size([count(x)])` C 1, Rust type error. Fix: push the result and `continue`. Test `bug_list_literal_of_aggregates_collapses`.
+5. **FIXED by #2951 (0912f4500, closes #2945).** Was: eval.rs:877 an aggregate inside a list literal
+   `return`ed out of the stack machine (`pre2951_stackEval_return_drops_frame`,
+   `pre2951_count_lit_and_size`). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
+   `size([count(x)])` C 1, Rust type error. Main pushes the result and `continue`s (eval.rs:883-893):
+   `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`,
+   `main_size_singleton_agg`. Test `bug_list_literal_of_aggregates_collapses`.
+
+**Re-target to 289c201fe (2026-10-20): W2-agg-5 fixed by #2951.** `evalStack` is now a postfix
+stack machine (`compile`, `run`, `step`) whose aggregate leaf pushes its finalized value, as
+eval.rs:883-893 does at 289c201fe; `evalStack_eq_evalRef` proves it equals the recursive reference
+on every expression, and `evalStack_list_of_aggs` that a list literal of finalized aggregates yields
+one element per item. The old `return` model is kept as `pre2951_evalStack`; the counterexample is
+renamed `pre2951_stackEval_return_drops_frame`.
 
 ## Gaps / assumptions
 Sort order inside `SortCmp` is a parameter `cv`; on main it is `Value::sort_cmp`, whose laws are

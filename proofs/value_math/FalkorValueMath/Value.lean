@@ -65,7 +65,16 @@ def durAdd (t : TOps) (a b : Int) (sign : Int) : Except String (V F) := do
   let ts ← t.construct (Int.tdiv totalMonths 12) (Int.tmod totalMonths 12) (sa + sign * sb)
   pure (.duration ts)
 
-/-- `Value::add_slow` (value.rs:925-1036), arms in source order. -/
+/-- `Time ± Duration` since #2985 (#2933, value.rs:1059, :1104): a time has no date,
+so only the time of day survives — `(t.rem_euclid(86400) ± dur.rem_euclid(86400))
+.rem_euclid(86400)`. `rem_euclid` by a positive divisor is `Int.emod`; the inner
+sum/difference is in `(-86400, 172800)`, so the `i64` arithmetic cannot wrap. Before
+#2985 both arms went through `add/sub_duration_from_timestamp` (`t.addTs`/`t.subTs`),
+which kept the date part and could fail. -/
+def timeAddDur (t dur : Int) : Int := (t % 86400 + dur % 86400) % 86400
+def timeSubDur (t dur : Int) : Int := (t % 86400 - dur % 86400) % 86400
+
+/-- `Value::add_slow` (value.rs:928-1045), arms in source order. -/
 def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
@@ -87,8 +96,8 @@ def addSlow (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .duration dur, .date d => .date <$> t.addTs d dur
   | .datetime d, .duration dur => .datetime <$> t.addTs d dur
   | .duration dur, .datetime d => .datetime <$> t.addTs d dur
-  | .time d, .duration dur => .time <$> t.addTs d dur
-  | .duration dur, .time d => .time <$> t.addTs d dur
+  | .time d, .duration dur => .ok (.time (timeAddDur d dur))
+  | .duration dur, .time d => .ok (.time (timeAddDur d dur))
   | a, b => .error s!"Unexpected types for add operator ({a.name}, {b.name})"
 
 /-- `impl Add for Value` (value.rs:910): scalar fast path, else `add_slow`. -/
@@ -110,7 +119,7 @@ def sub (o : FOps F) (t : TOps) : V F → V F → Except String (V F)
   | .duration a, .duration b => durAdd t a b (-1)
   | .date d, .duration dur => .date <$> t.subTs d dur
   | .datetime d, .duration dur => .datetime <$> t.subTs d dur
-  | .time d, .duration dur => .time <$> t.subTs d dur
+  | .time d, .duration dur => .ok (.time (timeSubDur d dur))
   | .duration _, .date _ => .error "Type mismatch: cannot subtract a temporal value from a duration"
   | .duration _, .datetime _ => .error "Type mismatch: cannot subtract a temporal value from a duration"
   | .duration _, .time _ => .error "Type mismatch: cannot subtract a temporal value from a duration"
@@ -327,6 +336,35 @@ theorem add_bool_int (b : Bool) (i : Int) :
 theorem add_date_dur_comm (d dur : Int) : add o t (.date d) (.duration dur) = add o t (.duration dur) (.date d) := rfl
 theorem add_datetime_dur_comm (d dur : Int) : add o t (.datetime d) (.duration dur) = add o t (.duration dur) (.datetime d) := rfl
 theorem add_time_dur_comm (d dur : Int) : add o t (.time d) (.duration dur) = add o t (.duration dur) (.time d) := rfl
+
+/-- #2985: `Time + Duration` never fails and is always a time of day, `[0, 86400)`. -/
+theorem add_time_dur_in_day (d dur : Int) :
+    add o t (.time d) (.duration dur) = .ok (.time (timeAddDur d dur)) ∧
+      0 ≤ timeAddDur d dur ∧ timeAddDur d dur < 86400 := by
+  refine ⟨rfl, Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
+
+/-- #2985: `Time - Duration` never fails and is always a time of day, `[0, 86400)`. -/
+theorem sub_time_dur_in_day (d dur : Int) :
+    sub o t (.time d) (.duration dur) = .ok (.time (timeSubDur d dur)) ∧
+      0 ≤ timeSubDur d dur ∧ timeSubDur d dur < 86400 := by
+  refine ⟨rfl, Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
+
+/-- #2985: adding then subtracting the same duration gives back the time of day. -/
+theorem time_sub_add_dur (d dur : Int) : timeSubDur (timeAddDur d dur) dur = d % 86400 := by
+  unfold timeSubDur timeAddDur
+  omega
+
+/-- #2985: a whole number of days does not move a time (`localtime + duration({days:1})`). -/
+theorem time_add_whole_days (d k : Int) : timeAddDur d (86400 * k) = d % 86400 := by
+  unfold timeAddDur
+  omega
+
+/-- #2985: the result depends only on the time of day of each operand, never on the
+date part the pre-#2985 `add_duration_to_timestamp` path carried along. -/
+theorem time_add_dur_mod (d dur : Int) :
+    timeAddDur d dur = timeAddDur (d % 86400) (dur % 86400) := by
+  unfold timeAddDur
+  omega
 
 theorem sub_dur_date (a d : Int) : sub o t (.duration a) (.date d) =
     .error "Type mismatch: cannot subtract a temporal value from a duration" := rfl

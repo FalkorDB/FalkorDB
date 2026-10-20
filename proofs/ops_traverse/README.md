@@ -124,6 +124,8 @@ The project has no dependencies beyond Lean core.
 
 ## Coverage
 
+Line numbers are pinned to main 289c201fe (no traversal code changed since fb3d516d0).
+
 `COVERAGE.tsv` has 77 rows:
 
 | Bucket | Rows |

@@ -10,7 +10,8 @@ import FalkorTemporal.CalendarLaws
 | `addDur`                  | `add_duration_to_timestamp` — `value.rs:696` |
 | `subDur`                  | `sub_duration_from_timestamp` — `value.rs:730` |
 | `durAddDur`               | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1008` |
-| `wrapMul`                 | release-mode `n * 7` in `parse_duration_string` — `temporal.rs:391` |
+| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1059-1061`, `Sub` `:1104-1106` (since #2985) |
+| `wrapMul`                 | pre-#2987 release-mode `n * 7` in `parse_duration_string` (history; main is checked, `Parse.lean`) |
 
 Every Temporal value is one `i64` of seconds; a Duration is "the instant
 1970-01-01 + years/months + days/seconds", so its *components* are recovered by
@@ -219,21 +220,71 @@ theorem neg_days_encoding :
     addDur (dateTs 2020 3 1) ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = dateTs 2020 3 2 := by
   decide +kernel
 
-/-- **Bug (Rust vs C, confirmed live)**: `Time + Duration` is not reduced modulo a day
-(`value.rs:1027` reuses `add_duration_to_timestamp`), so
-`localtime('01:00') + duration({days:1}) = localtime('01:00')` is false (C: true), and
-`+ duration({months:1})` likewise. The stored seconds differ though both print `01:00:00`. -/
-theorem time_not_normalised :
+/-- **Bug W2-temporal-6 (history, fixed by #2985 289c201fe)**: before #2985
+`Time + Duration` reused `add_duration_to_timestamp` and was not reduced modulo a day,
+so `localtime('01:00') + duration({days:1}) = localtime('01:00')` was false (C: true),
+and `+ duration({months:1})` likewise. The stored seconds differed though both printed
+`01:00:00`. -/
+theorem pre2985_time_not_normalised :
     addDur 3600 ((constructDuration 0 0 0 1 0 0 0).getD 0) = 3600 + 86400 ∧
     addDur 3600 plus1M = 3600 + 31 * 86400 := by decide +kernel
 
-/-- Release-mode `n * 7` (`temporal.rs:391`): two's-complement wrap. -/
+/-! ## `Time ± Duration` (since #2985, `add_slow` `value.rs:1059-1061`, `Sub` `:1104-1106`)
+
+`(t.rem_euclid(86400) ± dur.rem_euclid(86400)).rem_euclid(86400)`. Lean's `%` on `Int`
+with a positive divisor is `rem_euclid`. Both sides lie in `[0, 86400)` and their sum or
+difference in `(-86400, 172800)`, so the i64 arithmetic cannot overflow. -/
+
+def timeAddDur (t dur : Int) : Int := (t % 86400 + dur % 86400) % 86400
+def timeSubDur (t dur : Int) : Int := (t % 86400 - dur % 86400) % 86400
+
+/-- A `Time ± Duration` result is always a time of day. -/
+theorem timeAddDur_range (t dur : Int) : 0 ≤ timeAddDur t dur ∧ timeAddDur t dur < 86400 := by
+  unfold timeAddDur; omega
+theorem timeSubDur_range (t dur : Int) : 0 ≤ timeSubDur t dur ∧ timeSubDur t dur < 86400 := by
+  unfold timeSubDur; omega
+
+/-- **W2-temporal-6 fixed.** Main's `Time + Duration` is the time of day of the
+date-arithmetic result `add_duration_to_timestamp t dur` (every duration encoding is whole
+days plus a clock offset), i.e. the openCypher result, for every `t` and `dur`. -/
+theorem timeAddDur_eq_tod (t dur : Int) : timeAddDur t dur = addDur t dur % 86400 := by
+  unfold timeAddDur addDur decomposeDuration
+  generalize civilFromDays (dur / 86400) = c1
+  obtain ⟨y1, m1, d1⟩ := c1
+  generalize civilFromDays (t / 86400) = c2
+  obtain ⟨y2, m2, d2⟩ := c2
+  simp only
+  split <;> (try split) <;> omega
+
+/-- It is `(t + dur) mod 86400` and `(t − dur) mod 86400`. -/
+theorem timeAddDur_eq (t dur : Int) : timeAddDur t dur = (t + dur) % 86400 := by
+  unfold timeAddDur; omega
+theorem timeSubDur_eq (t dur : Int) : timeSubDur t dur = (t - dur) % 86400 := by
+  unfold timeSubDur; omega
+
+/-- `(t + dur) - dur = t` on times of day (false before #2985, where `+` overflowed into
+the next month and `-` clamped). -/
+theorem timeSub_timeAdd (t dur : Int) (h0 : 0 ≤ t) (h1 : t < 86400) :
+    timeSubDur (timeAddDur t dur) dur = t := by
+  unfold timeSubDur timeAddDur; omega
+
+/-- The repro of W2-temporal-6 on main: `localtime('01:00') + duration({days:1})` and
+`+ duration({months:1})` are `localtime('01:00')` (C: the same). -/
+theorem time_normalised :
+    timeAddDur 3600 ((constructDuration 0 0 0 1 0 0 0).getD 0) = 3600 ∧
+    timeAddDur 3600 plus1M = 3600 ∧ timeSubDur 3600 plus1M = 3600 := by decide +kernel
+
+/-- Pre-#2987 release-mode `n * 7` (`temporal.rs:391`): two's-complement wrap. -/
 def wrapMul (a b : Int) : Int := (a * b + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
-/-- **Bug (confirmed live)**: `duration('P2635249153387078803W')` is `P5D`: the week
-count wraps (`n * 7` unchecked, then `days += n`); debug builds panic instead.
-The map form `duration({weeks: …})` uses `checked_mul` and errors. -/
-theorem week_string_wraps : wrapMul 2635249153387078803 7 = 5 := by decide
+/-- **Bug W2-temporal-8 (history, fixed by #2987 9d3869aa8)**: before #2987
+`duration('P2635249153387078803W')` was `P5D`: the week count wrapped (`n * 7` unchecked,
+then `days += n`); debug builds panicked instead. Main uses `checked_mul`/`checked_add`
+and errors: `Parse.lean` `dateLoop_week_overflow`, `week_string_overflow_errors`. -/
+theorem pre2987_week_string_wraps : wrapMul 2635249153387078803 7 = 5 := by decide
+
+/-- On main the same product is out of i64, so `checked_mul` returns `None`. -/
+theorem week_string_checked_none : chkMul 2635249153387078803 7 = none := by decide
 
 /-! ## Ordering: Date/Time/Duration compare as their `i64` (`value.rs:1261`), a total order -/
 

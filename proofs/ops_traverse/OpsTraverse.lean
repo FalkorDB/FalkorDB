@@ -19,6 +19,9 @@ import OpsTraverse.SlotFeed
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
+**Re-targeted to main 289c201fe** (from fb3d516d0): no change to the traversal
+operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pinned.
+
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.

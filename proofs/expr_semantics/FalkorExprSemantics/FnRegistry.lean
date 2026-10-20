@@ -8,7 +8,7 @@ the functions C offers. This file states that property.
 
 | here | there |
 | --- | --- |
-| `rustNames` | every name `init_functions` registers, lowercased: the `cypher_fn!(funcs, "…"` and `funcs.add[_var_len\|_procedure]("…"` sites under `graph/src/runtime/functions/` at fb3d516d0 (134 names, extracted mechanically) |
+| `rustNames` | every name `init_functions` registers, lowercased: the `cypher_fn!(funcs, "…"` and `funcs.add[_var_len\|_procedure]("…"` sites under `graph/src/runtime/functions/` at fb3d516d0, unchanged at 289c201fe (134 names, extracted mechanically) |
 | `cPublic`   | every `AR_FuncDesc` in C `src/arithmetic/builtin_funcs.c` (origin/master d7cf86675, `git show`) *without* `.internal=true`, lowercased (104 names; the 40 internal ones — operators, `topath`, `list_comprehension`, … — are not callable by name, checked live) |
 | `resolves`  | `Functions::get`'s built-in arm: `self.functions.get(name.to_lowercase())` |
 

@@ -4,68 +4,68 @@ graph/src/runtime/value.rs	new	92	NOT COVERED	trivial constructor
 graph/src/runtime/value.rs	new	110	NOT COVERED	trivial constructor
 graph/src/runtime/value.rs	new	133	NOT COVERED	trivial constructor
 graph/src/runtime/value.rs	distance	144	MODELLED	proofs/functions_temporal Spatial.haversine (f64 abstract)
-graph/src/runtime/value.rs	validate	167	PROVEN	validatePoint_rejects_nan (class-level; range checks are f32 comparisons)
-graph/src/runtime/value.rs	clone	244	NOT COVERED	Clone: identity/Arc bump, no logic
-graph/src/runtime/value.rs	get_numeric	269	PROVEN	getNumeric_after_validation
-graph/src/runtime/value.rs	format_datetime	279	NOT COVERED	chrono formatting (trusted); live-checked vs C
-graph/src/runtime/value.rs	format_date	297	PROVEN	proofs/functions_temporal formatDate_*
-graph/src/runtime/value.rs	format_time	308	NOT COVERED	chrono formatting (trusted); live-checked
-graph/src/runtime/value.rs	format_duration	319	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
-graph/src/runtime/value.rs	heap_size	365	PROVEN	heap_le_amortized, rel_charged
-graph/src/runtime/value.rs	amortized_heap_size	411	PROVEN	heap_le_amortized, shares_le
-graph/src/runtime/value.rs	get_attr	462	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
-graph/src/runtime/value.rs	get_point_component	481	PROVEN	point_component_case
-graph/src/runtime/value.rs	get_datetime_component	496	NOT COVERED	chrono Datelike/Timelike accessors; 17 components live-checked vs C
-graph/src/runtime/value.rs	get_date_component	555	NOT COVERED	chrono accessors; live-checked (dayOfQuarter matches spec, C off by one)
-graph/src/runtime/value.rs	get_time_component	603	NOT COVERED	chrono accessors; live-checked
-graph/src/runtime/value.rs	get_duration_component	631	PROVEN	duration_weeks_zero (pre-chrono dispatch); chrono part live-checked
-graph/src/runtime/value.rs	add_duration_to_timestamp	719	PROVEN	proofs/functions_temporal addDur
-graph/src/runtime/value.rs	sub_duration_from_timestamp	753	PROVEN	proofs/functions_temporal subDur
-graph/src/runtime/value.rs	days_in_month	775	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	is_leap	787	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	days_from_civil	794	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	civil_from_days	811	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	write_date_into	826	PROVEN	proofs/functions_temporal
-graph/src/runtime/value.rs	hash	846	PROVEN	proofs/value_order: Main.main_hash_consistent (sort_cmp-equal => equal hash, #2917), sane_hash_consistent, hash_not_consistent_with_eq
-graph/src/runtime/value.rs	add	936	PROVEN	add_int, add_mixed, add_overflow_wraps, add_int_comm, add_null_*
-graph/src/runtime/value.rs	add_slow	951	PROVEN	add_list_*, lookup_omExtend, nodup_omExtend, add_str_*, add_*_dur_comm, str_plus_date_diverges
-graph/src/runtime/value.rs	sub	1068	PROVEN	sub_int, sub_null_*, sub_dur_date, wSub_eq_wAdd_neg
-graph/src/runtime/value.rs	mul	1117	PROVEN	mul_ok_iff, mul_int_comm, mul_agree_on_numeric, null_mul_str_diverges
-graph/src/runtime/value.rs	div	1146	PROVEN	div_ok_iff, div_int_zero, wDiv_exact, div_rem_identity, min_div_neg1_diverges
-graph/src/runtime/value.rs	rem	1174	PROVEN	rem_ok_iff, rem_int_zero, wRem_exact, rem_bounds, div_rem_identity
-graph/src/runtime/value.rs	order	1200	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	order	1204	PROVEN	eq_null_iff (order injective on Null); proofs/value_order: order_injective
-graph/src/runtime/value.rs	compare_value	1235	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	eq	1242	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
-graph/src/runtime/value.rs	compare_value	1251	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
-graph/src/runtime/value.rs	value_of_type	1301	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	value_of_type	1308	PROVEN	valueOfType_none_iff
-graph/src/runtime/value.rs	get_type	1350	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	get_type	1354	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
-graph/src/runtime/value.rs	name	1378	MODELLED	V.name (used in error-message theorems)
-graph/src/runtime/value.rs	to_json_string	1400	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	fmt	1410	NOT COVERED	Display wrapper over fmt_json
-graph/src/runtime/value.rs	compare_list	1425	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
-graph/src/runtime/value.rs	compare_map	1498	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
-graph/src/runtime/value.rs	is_never_equal	1628	PROVEN	isNeverEqual_iff
-graph/src/runtime/value.rs	may_fail_self_match	1651	PROVEN	mayFail_sound
-graph/src/runtime/value.rs	fmt_json	1679	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
-graph/src/runtime/value.rs	write_json_string	1801	NOT COVERED	json_escape crate (trusted)
-graph/src/runtime/value.rs	write_node_json	1813	NOT COVERED	runtime graph accessors + formatting
-graph/src/runtime/value.rs	contains	1853	NOT COVERED	trait method declaration
-graph/src/runtime/value.rs	contains	1860	PROVEN	proofs/functions_str_list Contains
-graph/src/runtime/value.rs	partial_cmp	1885	PROVEN	partialCmp_null
-graph/src/runtime/value.rs	compare_floats	1898	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
-graph/src/runtime/value.rs	compare_vecf32	1986	PROVEN	chunked_eq_firstDiff
-graph/src/runtime/value.rs	first_difference	1990	PROVEN	firstDiff_append, firstDiff_self
-graph/src/runtime/value.rs	with_capacity	2028	NOT COVERED	constructor
-graph/src/runtime/value.rs	is_seen	2038	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
-graph/src/runtime/value.rs	has_hash	2049	PROVEN	dedup_second_seen
-graph/src/runtime/value.rs	check_and_insert_hash	2056	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	validate	170	PROVEN	validatePoint_rejects_nan (class-level; range checks are f32 comparisons)
+graph/src/runtime/value.rs	clone	247	NOT COVERED	Clone: identity/Arc bump, no logic
+graph/src/runtime/value.rs	get_numeric	272	PROVEN	getNumeric_after_validation
+graph/src/runtime/value.rs	format_datetime	282	NOT COVERED	chrono formatting (trusted); live-checked vs C
+graph/src/runtime/value.rs	format_date	300	PROVEN	proofs/functions_temporal formatDate_*
+graph/src/runtime/value.rs	format_time	311	NOT COVERED	chrono formatting (trusted); live-checked
+graph/src/runtime/value.rs	format_duration	322	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
+graph/src/runtime/value.rs	heap_size	368	PROVEN	heap_le_amortized, rel_charged
+graph/src/runtime/value.rs	amortized_heap_size	414	PROVEN	heap_le_amortized, shares_le
+graph/src/runtime/value.rs	get_attr	465	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
+graph/src/runtime/value.rs	get_point_component	484	PROVEN	point_component_case
+graph/src/runtime/value.rs	get_datetime_component	499	NOT COVERED	chrono Datelike/Timelike accessors; 17 components live-checked vs C
+graph/src/runtime/value.rs	get_date_component	558	NOT COVERED	chrono accessors; live-checked (dayOfQuarter matches spec, C off by one)
+graph/src/runtime/value.rs	get_time_component	606	NOT COVERED	chrono accessors; live-checked
+graph/src/runtime/value.rs	get_duration_component	634	PROVEN	duration_weeks_zero (pre-chrono dispatch); chrono part live-checked
+graph/src/runtime/value.rs	add_duration_to_timestamp	722	PROVEN	proofs/functions_temporal addDur
+graph/src/runtime/value.rs	sub_duration_from_timestamp	756	PROVEN	proofs/functions_temporal subDur
+graph/src/runtime/value.rs	days_in_month	778	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	is_leap	790	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	days_from_civil	797	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	civil_from_days	814	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	write_date_into	829	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	hash	849	PROVEN	proofs/value_order: Main.main_hash_consistent (sort_cmp-equal => equal hash, #2917), sane_hash_consistent, hash_not_consistent_with_eq
+graph/src/runtime/value.rs	add	939	PROVEN	add_int, add_mixed, add_overflow_wraps, add_int_comm, add_null_*
+graph/src/runtime/value.rs	add_slow	954	PROVEN	add_list_*, lookup_omExtend, nodup_omExtend, add_str_*, add_*_dur_comm, str_plus_date_diverges, add_time_dur_in_day/time_add_whole_days/time_add_dur_mod (Time+Duration keeps only the time of day, #2985)
+graph/src/runtime/value.rs	sub	1074	PROVEN	sub_int, sub_null_*, sub_dur_date, wSub_eq_wAdd_neg, sub_time_dur_in_day/time_sub_add_dur (#2985)
+graph/src/runtime/value.rs	mul	1123	PROVEN	mul_ok_iff, mul_int_comm, mul_agree_on_numeric, null_mul_str_diverges
+graph/src/runtime/value.rs	div	1152	PROVEN	div_ok_iff, div_int_zero, wDiv_exact, div_rem_identity, min_div_neg1_diverges
+graph/src/runtime/value.rs	rem	1180	PROVEN	rem_ok_iff, rem_int_zero, wRem_exact, rem_bounds, div_rem_identity
+graph/src/runtime/value.rs	order	1206	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	order	1210	PROVEN	eq_null_iff (order injective on Null); proofs/value_order: order_injective
+graph/src/runtime/value.rs	compare_value	1241	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	eq	1248	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
+graph/src/runtime/value.rs	compare_value	1257	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
+graph/src/runtime/value.rs	value_of_type	1307	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	value_of_type	1314	PROVEN	valueOfType_none_iff
+graph/src/runtime/value.rs	get_type	1356	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	get_type	1360	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
+graph/src/runtime/value.rs	name	1384	MODELLED	V.name (used in error-message theorems)
+graph/src/runtime/value.rs	to_json_string	1406	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	fmt	1416	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	compare_list	1431	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
+graph/src/runtime/value.rs	compare_map	1504	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
+graph/src/runtime/value.rs	is_never_equal	1634	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1657	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	fmt_json	1685	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
+graph/src/runtime/value.rs	write_json_string	1807	NOT COVERED	json_escape crate (trusted)
+graph/src/runtime/value.rs	write_node_json	1819	NOT COVERED	runtime graph accessors + formatting
+graph/src/runtime/value.rs	contains	1859	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	contains	1866	PROVEN	proofs/functions_str_list Contains
+graph/src/runtime/value.rs	partial_cmp	1891	PROVEN	partialCmp_null
+graph/src/runtime/value.rs	compare_floats	1904	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
+graph/src/runtime/value.rs	compare_vecf32	1992	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	1996	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	2034	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	2044	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	2055	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	2062	PROVEN	dedup_second_seen, dedup_first_unseen
 graph/src/runtime/value.rs	value_nesting_error	67	PROVEN	Nesting.valueNestingError_text (the message; decode/validate return it: decodeValue_refuses_past_cap, decode_nest_deep)
-graph/src/runtime/value.rs	encode	2068	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
-graph/src/runtime/value.rs	decode	2154	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
-graph/src/runtime/value.rs	decode_value	2166	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes; history pre3339_decode_any_depth (#3339 b080a44c1)
+graph/src/runtime/value.rs	encode	2074	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	decode	2160	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
+graph/src/runtime/value.rs	decode_value	2172	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes; history pre3339_decode_any_depth (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
 graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
 graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic

@@ -61,6 +61,9 @@ Yes:
 | `weekPath_total` | The `week` constructor branch is panic-free on a sane domain | `Constructors.lean` |
 | `parseDate_ok`, `parseTime_ok` | The string parsers only accept real dates and times | `Parse.lean` |
 | `durationStruct_eq_map`, `dateStruct_eq_map` | The positional-slot constructor forms equal the map forms | `Pure.lean` |
+| `distance_finite` | `distance()` is never NaN for finite points, antipodal ones included (#2983) | `SpatialFns.lean` |
+| `timeAddDur_eq_tod`, `timeSub_timeAdd` | `localtime ± duration` is the time of day of the date-arithmetic result, and `-` undoes `+` (#2985) | `Duration.lean` |
+| `dateLoop_days_i64` | The `duration('P…W…D')` day accumulator never wraps; overflow is an error (#2987) | `Parse.lean` |
 | `colEval_eq`, `intLane_eq` | Columnar `AND`/`OR` and the int arithmetic lane equal per-row evaluation | `VectorExpr.lean` |
 | `distance_none_iff`, `vecDist_kernel` | `vec.*` distance returns `null` exactly for an unknown metric or a length mismatch, and otherwise calls the right simsimd kernel | `VecDistance.lean` |
 
@@ -73,18 +76,18 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). `temporal.rs` is unchanged between the last re-check (e8f8a3017) and current main (0f45a8685), and FINDINGS lists W2-temporal-1..9 as still present.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 289c201fe: #2983, #2985 and #2987 fixed W2-temporal-4, -6 and -8; the others are still present.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W2-temporal-1 | `week_panics`, `week_panics_delta` | `RETURN date({year:2020, week:10000000000})` **crashes the server** (chrono `NaiveDate + TimeDelta` overflow). C: "Invalid value for week" | **Open** |
 | W2-temporal-2 | `quarter_panics` | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashes the server** (`TimeDelta::days` panics). C: error | **Open** |
 | W2-temporal-3 | `week_slice_panics` | `RETURN date('2020W1é')` **crashes the server**: `&rest[..2]` is not on a char boundary. #3125 doesn't cover the `W` path (`parseDate_week_first`) | **Open** |
-| W2-temporal-4 | *(no theorem; `#eval` in `Spatial.lean`)* | `distance()` between near-antipodal points is `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Lean's `Float` is opaque to the kernel, so this is shown by evaluation, not proof | **Open** |
+| W2-temporal-4 | `pre2983_distance_nan` | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
 | W2-temporal-5 | `sub_vs_add_neg` | `date('2020-03-31') - duration({months:1})` is 2020-02-29, while `+ duration({months:-1})` is 2020-03-02 (C: 03-02) | **Open** |
-| W2-temporal-6 | `time_not_normalised` | `localtime('01:00') + duration({days:1}) = localtime('01:00')` is `false` (C: `true`): time arithmetic isn't reduced mod 86400 | **Open** |
+| W2-temporal-6 | `pre2985_time_not_normalised` | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
 | W2-temporal-7 | `formatDate_not_injective` | `toString(date({year:12345}))` is `"2345-01-01"` (C: `"12345-01-01"`); `formatDate_injective_4digit` proves it is right for 4-digit years | **Open** |
-| W2-temporal-8 | `week_string_wraps` | `duration('P2635249153387078803W')` is `P5D` in release (`n * 7` wraps) and panics in debug | **Open** |
+| W2-temporal-8 | `pre2987_week_string_wraps` | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
 | W2-temporal-9 | `dayOfWeek_seven_rejected`, `dayOfWeek_zero_is_sunday` | The map form's `dayOfWeek` is 0..6 with 0 = Sunday, so `dayOfWeek:7` errors (C: accepted); the string form uses 1..7 | **Open** (divergence) |
 | — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
 | — | `civilFromDays_trunc` | `y - 1970` in `i32` inside `decompose_duration` overflows for durations whose year wraps | Suspected, not triggered in release |
@@ -101,13 +104,13 @@ This project has no CONDITIONAL rows.
 | `Calendar.lean` | `isLeap`, `daysInMonth`, both `days_from_civil` copies, `civil_from_days`, and the named era pieces |
 | `EraDefs.lean`, `EraFwd0-3.lean`, `EraBwd0-3.lean`, `EraAll.lean` | The kernel-checked enumeration of one 400-year era (`fwdOk_all`, `bwdOk_all`) |
 | `CalendarLaws.lean` | `dfc_civil`, `civil_dfc`, `civil_valid`, `dfc_injective`, the `i32` cast |
-| `Duration.lean` | Duration construct/decompose, `add_duration_to_timestamp`/`sub_duration_from_timestamp`, temporal ordering; bugs 5, 6, 8 |
+| `Duration.lean` | Duration construct/decompose, `add_duration_to_timestamp`/`sub_duration_from_timestamp`, `Time ± Duration`, temporal ordering; bug 5, history of 6 and 8 |
 | `Constructors.lean` | The `date({week|quarter …})` branches, the `W` string slice, date formatting; bugs 1–3, 7, 9 |
 | `Fns.lean` | Field extractors, `*_pure` constructors, the clock functions, `register` |
-| `Parse.lean` | `parse_date_string`, `parse_time_string`, `parse_datetime_string`, `parse_duration_string` |
+| `Parse.lean` | `parse_date_string`, `parse_time_string`, `parse_datetime_string`, `parse_duration_string` (checked `W`/`D` since #2987) |
 | `Pure.lean` | The slot-based `*_struct_pure` constructors equal the map forms |
 | `Components.lean` | Temporal accessors and formatting (`value.rs`), `Point` |
-| `Spatial.lean`, `SpatialFns.lean` | `Point::distance` (haversine) and `spatial.rs`; the antipodal NaN, by evaluation |
+| `Spatial.lean`, `SpatialFns.lean` | `Point::distance` (haversine, clamped since #2983) and `spatial.rs`; the antipodal NaN, by evaluation and by proof over `NanLaws` |
 | `VecDistance.lean` | `vec_distance.rs` over the simsimd kernel as a parameter |
 | `VectorExpr.lean` | Columnar `AND`/`OR` and the int arithmetic lane against per-row evaluation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -116,11 +119,11 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## Coverage
 
-`COVERAGE.tsv` has 97 rows: 31 in `temporal.rs`, 26 in `vector_expr.rs`, 18 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`.
+`COVERAGE.tsv` has 99 rows: 31 in `temporal.rs`, 26 in `vector_expr.rs`, 20 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 60 |
+| PROVEN | 62 |
 | MODELLED | 3 |
 | NOT COVERED | 34 |
 
@@ -133,7 +136,7 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## What the model does not cover
 
-- **Floats.** `f64` is abstract. `toString`, `toInteger`/`toFloat` parsing and haversine are only evaluated or live-tested, and the antipodal NaN is shown by `#eval`, not proven.
+- **Floats.** `f64` is abstract. `toString` and `toInteger`/`toFloat` parsing are only live-tested. The antipodal-NaN theorems assume the binary64 facts they use (`NanLaws`: `f64::clamp`, `sqrt`, `atan2`, NaN propagation) rather than deriving them, and `mul_add`'s fused rounding is not modelled.
 - **Chrono.** Formatting, `from_ymd_opt`, `from_isoywd_opt`, the component accessors and `Utc::now` are trusted, as structures (`Chrono`, `ChronoDT`) whose laws come from chrono's docs.
 - **Overflow.** `i32`/`i64` overflow in `add_duration_to_timestamp`/`sub_duration_from_timestamp` is outside the proven range (`SmallYear`).
 - **Columnar coverage.** The columnar proof here covers `AND`/`OR` and the int lane only, not `CASE`, comparisons or the float lane (those are in `columnar` and `expr_semantics`). Which row's error message a batch reports isn't modelled.

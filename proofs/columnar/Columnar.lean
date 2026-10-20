@@ -126,6 +126,15 @@ proofs/ops_aggregate.
   `has_origins` arm of `start_batch`. The per-row origin argument is in
   `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
+## Re-target to 289c201fe
+Re-checked at origin/main `289c201fe`. Only #3294 (`2db1f22df`) touches a file here: the
+generic AND/OR path of `eval_and_or` (`vector_expr.rs:456-459`) now reports
+"Type mismatch: expected Boolean or Null but was <type>" (C's text). That row is covered by
+proofs/functions_temporal `VExpr.colEval_eq`, which keeps errors abstract, so no model or
+theorem changes. COVERAGE.tsv `vector_expr.rs` lines after `:456` re-cited (+3); `batch.rs`,
+`row.rs`, `vectorized.rs` and `batched_result_emitter.rs` are unchanged. Bug 1
+(`empty_batch_binds`) is still present.
+
 ## Wave 6 (`Dispatch`)
 Re-checked at origin/main `0f45a8685`: #3335 (`b8321be81`) removed `VectorEval::eval`'s
 `Paren` arm (the binder now strips every `Paren`), so `Dispatch.eval` routes `.paren` to the

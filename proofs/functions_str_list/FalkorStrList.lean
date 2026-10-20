@@ -41,14 +41,14 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `findFirst`, `cSplit`, `splitC` | C `AR_SPLIT` |
 | `splitRust` | `split`, `string.rs:103-137` |
 | `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:183-205` (std `str::replace`); C `AR_REPLACE` |
-| `caseRust`, `caseC` | `tolower`/`toupper`, `string.rs:139-181`; C `str_tolower` (utf8proc simple map) |
+| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:138-165`; C `str_tolower` (utf8proc simple map) (`pre2953_caseRust`: pre-#2953, historical) |
 | `isMatchRust`, `isMatchSpec` | `regex_matches` `internal.rs:100-120`, `RegexFnKind::Matches` `eval.rs:1274` |
 | `expandRust` | `Regex::replace_all(_, &str)` `$`-expansion, `string.rs:462,469`, `eval.rs:1294-1302` |
 | `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:324-386` |
 | `startsWith` | `internal_starts_with`, `internal.rs:32-48` (ends/contains analogous) |
 | `cmpFloatModel` | `compare_floats` `value.rs:1801` as used by `list.sort` `list.rs:213` |
 
-## Proven (86 theorems; main ones)
+## Proven (91 theorems in this file; main ones)
 
 * Indexing `l[i]` is total for every i64 (incl. `i64::MIN`), `len+i` cannot
   overflow, and equals the spec (negative from the end, else null)
@@ -72,6 +72,8 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 * `left`/`right`: Rust = C on all inputs (`left_agrees_C`, `right_agrees_C`), spec (`left_right_spec`).
 * `reverse` on strings: C's byte output = UTF-8 of Rust's `chars().rev()` (`reverse_agrees_C`).
 * `trim`: Rust (`ltrim∘rtrim`) = C (`rtrim∘ltrim`) (`trim_agrees_C`); `ltrim_idem`, `ltrim_head`.
+* `toLower`/`toUpper` never error since #2953 (`toLower_total`) and equal C when the
+  case mapping is simple (`case_agrees_C_if_simple`).
 * `split`: std's scanner = C's find-first algorithm for every non-empty
   delimiter (`splitAux_eq_cSplit`), and all empty-string branches agree (`split_agrees_C`).
 * `string.join`: when `compute_join_length` succeeds it equals the joined
@@ -100,10 +102,13 @@ C. **`=~` is unanchored** — `internal.rs:112`, `eval.rs:1274`
    openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
    ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
    Fix: compile `^(?:pat)$` (binder `rewrite_compiled_regex` and runtime path).
-D. **`toLower`/`toUpper` reject valid strings containing U+FFFD** —
-   `string.rs:148,170`: `toLower('A�')` → error "Invalid UTF8 string";
-   C → `'a�'`. A Rust `String` is always valid UTF-8, so the check can only
-   misfire. Test `bug_case_map_rejects_replacement_char`. Fix: delete the check.
+D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
+   #2953 (e7eb853b1).** Was: `toLower('A�')` → error "Invalid UTF8 string";
+   C → `'a�'`. A Rust `String` is always valid UTF-8, so the check could only
+   misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
+   check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
+   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`). The
+   counterexample is kept as `pre2953_toLower_rejects_valid`.
 E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
    `eval.rs:1302`: `replaceRegEx('abc','b','$0x')` → `'ac'`, `'[$0]'` → `'a[b]c'`;
    C copies literally: `'a$0xc'`, `'a[$0]c'`. Test `bug_replace_regex_dollar_expansion`.
@@ -166,6 +171,12 @@ Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLab
 `parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
 `parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
 (`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
+Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
+`toLower`/`toUpper` (bug D fixed; `pre2953_toLower_rejects_valid` kept as history,
+`toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
+(string.rs −4/−16 after the deletion, eval.rs +11 after #3294/#2951). The eval.rs
+changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
+literal) touch no arm modelled here.
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/
@@ -1165,39 +1176,71 @@ theorem replace_examples :
     replaceRust [] [] ['x'] = ['x'] ∧
     replaceRust "abc".toList ['b'] [] = "ac".toList := by decide +kernel
 
-/-! ### `toLower` / `toUpper` (`string.rs:139-181`)
+/-! ### `toLower` / `toUpper` (`string.rs:138-165`)
 
 `caseMap` abstracts Unicode case mapping. Rust uses std's *full* mapping
 (`char::to_lowercase` may yield several code points, and `str::to_lowercase`
 applies the final-sigma rule); C uses utf8proc's *simple* one-to-one mapping.
-The model only needs: Rust errors whenever U+FFFD occurs; C errors only on
-invalid byte sequences, which a Rust `String` cannot contain. -/
+C errors only on invalid byte sequences, which a Rust `String` cannot contain.
 
-def caseRust (full : Char → Str) (s : Str) : SOut :=
+Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred
+(`pre2953_caseRust`); main maps every string (`caseRust`). -/
+
+/-- Pre-#2953 `string_to_lower`/`string_to_upper`: reject any U+FFFD. -/
+def pre2953_caseRust (full : Char → Str) (s : Str) : SOut :=
   if '�' ∈ s then .err "Invalid UTF8 string" else .ok (s.flatMap full)
+
+/-- Main (`string.rs:138,154`): `s.to_lowercase()` / `s.to_uppercase()`. -/
+def caseRust (full : Char → Str) (s : Str) : SOut := .ok (s.flatMap full)
 
 def caseC (simple : Char → Char) (s : Str) : SOut := .ok (s.map simple)
 
-/-- **Bug D.** On the valid string `"A�"` Rust errors and C returns
-`"a�"`. Repro `bug_case_map_rejects_replacement_char`. -/
-theorem toLower_rejects_valid (full : Char → Str) (simple : Char → Char) :
-    caseRust full ['A', '�'] = .err "Invalid UTF8 string" ∧
+/-- **Bug D (history, fixed by #2953 e7eb853b1).** On the valid string `"A�"`
+pre-#2953 Rust errored and C returns `"a�"`. Repro
+`bug_case_map_rejects_replacement_char`. -/
+theorem pre2953_toLower_rejects_valid (full : Char → Str) (simple : Char → Char) :
+    pre2953_caseRust full ['A', '�'] = .err "Invalid UTF8 string" ∧
     caseC simple ['A', '�'] = .ok [simple 'A', simple '�'] := by
   constructor
-  · unfold caseRust; simp
+  · unfold pre2953_caseRust; simp
   · rfl
+
+/-- **Bug D fixed.** Main never errors: every string, including one holding
+U+FFFD, is case-mapped (`toLower('A�')` → `'a�'`, as C). -/
+theorem toLower_total (full : Char → Str) (s : Str) :
+    caseRust full s = .ok (s.flatMap full) := rfl
+
+theorem toLower_accepts_replacement (full : Char → Str) :
+    caseRust full ['A', '�'] = .ok (full 'A' ++ full '�') := by
+  simp [caseRust]
+
+/-- Main agrees with C on every string whenever the full mapping is the simple
+one (no multi-code-point or context-dependent mappings); in particular on
+strings holding U+FFFD, where pre-#2953 Rust errored. -/
+theorem case_agrees_C_if_simple (simple : Char → Char) (s : Str) :
+    caseRust (fun c => [simple c]) s = caseC simple s := by
+  simp only [caseRust, caseC]
+  congr 1
+  induction s with
+  | nil => rfl
+  | cons c t ih => simp [List.flatMap_cons, ih]
+
+/-- The fix only removed the U+FFFD branch: off it, main = pre-#2953. -/
+theorem caseRust_eq_pre2953 (full : Char → Str) (s : Str) (hs : '�' ∉ s) :
+    caseRust full s = pre2953_caseRust full s := by
+  simp [caseRust, pre2953_caseRust, hs]
 
 /-- If the full mapping were one-to-one, `size` would be preserved as in C;
 it is not (`'ß' ↦ "SS"`), so `size(toUpper('ß'))` is 2 in Rust and 1 in C.
 openCypher defers to the host (Neo4j/Java: full mapping, `"SS"`), so this is
 a recorded divergence, not a bug. -/
 theorem case_size_preserved_if_simple (full : Char → Str) (h : ∀ c, (full c).length = 1)
-    (s : Str) (hs : '�' ∉ s) : caseRust full s = .ok (s.flatMap full) ∧
+    (s : Str) : caseRust full s = .ok (s.flatMap full) ∧
     (s.flatMap full).length = s.length := by
-  refine ⟨by unfold caseRust; simp [hs], ?_⟩
+  refine ⟨rfl, ?_⟩
   induction s with
   | nil => rfl
-  | cons c t ih => simp only [List.flatMap_cons, List.length_append, h, List.length_cons]; simp at hs; rw [ih hs.2]; omega
+  | cons c t ih => simp only [List.flatMap_cons, List.length_append, h, List.length_cons]; rw [ih]; omega
 
 /-! ### `=~` (`internal.rs:100-120`, `eval.rs:1274`)
 

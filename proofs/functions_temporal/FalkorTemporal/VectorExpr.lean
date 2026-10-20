@@ -4,9 +4,9 @@
 | here | there |
 | --- | --- |
 | `V`                 | a child's `Value` for one row: `Bool`, `Null`, anything else (type error), or an eval error |
-| `St`                | per-row state of `eval_and_or`: `live`, `result[pos]`, `nulls[pos]` — `vector_expr.rs:392-465` |
-| `step`              | one child for one row: the `Bools` fast path (`:428-441`) and the generic path (`:445-460`), which are the same function of the row's value |
-| `rowEval`           | `ExprIR::And` / `ExprIR::Or` in `ExprEval::eval_compound` — `eval.rs:629-697` (loop with `break` on the settling value) |
+| `St`                | per-row state of `eval_and_or`: `live`, `result[pos]`, `nulls[pos]` — `vector_expr.rs:392-468` |
+| `step`              | one child for one row: the `Bools` fast path (`:428-441`) and the generic path (`:445-463`), which are the same function of the row's value |
+| `rowEval`           | `ExprIR::And` / `ExprIR::Or` in `ExprEval::eval_compound` — `eval.rs:629-706` (loop with `break` on the settling value) |
 | `colEval`           | `VectorEval::eval_and_or` — children outer, rows inner, settled rows dropped from `live` |
 | `finish`            | how `ExprColumn::Bools(result, nulls)` reads back as a `Value` |
 | `intLane`           | `arithmetic` int lane — `vector_expr.rs:878-915`; `valueArith` is `Add/Sub/Mul/Div/Rem for Value` (`value.rs`) |
@@ -20,7 +20,7 @@ namespace FalkorTemporal.VExpr
 inductive V where
   | b (x : Bool)
   | null
-  | bad        -- non-boolean, non-null value: "Type mismatch: expected Bool"
+  | bad        -- non-boolean, non-null value: "Type mismatch: expected Boolean or Null but was <type>" (#3294)
   | err        -- the child's own evaluation failed
   deriving DecidableEq
 

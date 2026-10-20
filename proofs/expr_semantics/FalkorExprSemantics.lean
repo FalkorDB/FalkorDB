@@ -6,6 +6,14 @@ import FalkorCore.Int64
 import FalkorCore.Float
 /-
 # Expression evaluation: the columnar path agrees with the per-row path, and
+
+**Re-targeted to main 289c201fe** (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
+operand type error now names the operand's type like C (`expected Boolean or Null but
+was Integer`), on both the per-row and the columnar path — `boolMismatch` takes the
+value, `and_or_mismatch_names_type`, `xor_mismatch_names_type`. #2951 (#2945) changes
+only `eval_compound`'s aggregate-finalizer arm, which this project does not model
+(proofs/ops_aggregate does). The `init_functions` name set (`FnRegistry`) is unchanged.
+COVERAGE.tsv line numbers re-pinned to 289c201fe.
 # where the per-row path itself departs from openCypher / C FalkorDB
 
 A model of FalkorDB-rs scalar expression semantics and of the columnar
@@ -877,7 +885,18 @@ theorem fold_omap_comm {α σ γ : Type} (f : γ → α → σ → Option σ) :
 
 variable {R : Type}
 
-def boolMismatch : String := "Type mismatch: expected Bool"
+/-- `Value::name` (value.rs:1384) on the scalar subset. `.other` stands for every
+non-scalar variant and carries only its type order, not its name: the model does not
+say what message a non-scalar operand produces, and no theorem below depends on it. -/
+def V.name : V F → String
+  | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .flt _ => "Float"
+  | .str _ => "String" | .other _ => "Other"
+
+/-- The `AND`/`OR`/`XOR` operand type error (eval.rs:642, :669, :693; vector_expr.rs:456).
+Since #3294 (#3292) it names the operand's type like C — `… but was {ir.name()}`; before,
+it was `expected Bool but was {ir:?}` (the `Debug` dump of the value). -/
+def boolMismatch (v : V F) : String :=
+  s!"Type mismatch: expected Boolean or Null but was {v.name}"
 
 /-- Per-row `AND` (`sc = false`) / `OR` (`sc = true`) of `eval_compound`
 (eval.rs:629-700): children left to right, stop at the first child equal to
@@ -888,7 +907,7 @@ def scalarAndOr (sc : Bool) (r : R) : List (R → Except String (V F)) → Bool 
     | .error e => .error e
     | .ok (.bool b) => if b == sc then .ok (.bool sc) else scalarAndOr sc r cs isNull
     | .ok .null => scalarAndOr sc r cs true
-    | .ok _ => .error boolMismatch
+    | .ok v => .error (boolMismatch v)
 
 /-- One position of `eval_and_or`'s `result` / `nulls` / `live` triple:
 still live (with its null flag), or settled. -/
@@ -1056,7 +1075,33 @@ def scalarXor : List (V F) → Option Bool → Except String (V F)
   | [], last => .ok (.bool (last.getD false))
   | .bool b :: vs, last => scalarXor vs (some (last.elim b (fun l => l != b)))
   | .null :: _, _ => .ok .null
-  | _ :: _, _ => .error boolMismatch
+  | v :: _, _ => .error (boolMismatch v)
+
+/-- #3294: a non-Boolean, non-null `AND`/`OR` operand fails with C's message naming its
+type, e.g. `1 AND true` → `Type mismatch: expected Boolean or Null but was Integer`,
+and so does an `XOR` operand. -/
+theorem and_or_mismatch_names_type (sc : Bool) (r : R) (v : V F) (cs : List (R → Except String (V F)))
+    (n : Bool) (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) :
+    scalarAndOr sc r (constChild v :: cs) n =
+      .error s!"Type mismatch: expected Boolean or Null but was {v.name}" := by
+  cases v with
+  | bool b => exact absurd rfl (hb b)
+  | null => exact absurd rfl hn
+  | _ => rfl
+
+theorem xor_mismatch_names_type (v : V F) (vs : List (V F)) (last : Option Bool)
+    (hb : ∀ b, v ≠ .bool b) (hn : v ≠ .null) :
+    scalarXor (v :: vs) last =
+      .error s!"Type mismatch: expected Boolean or Null but was {v.name}" := by
+  cases v with
+  | bool b => exact absurd rfl (hb b)
+  | null => exact absurd rfl hn
+  | _ => rfl
+
+example (r : R) : scalarAndOr false r [constChild (.int 1 : V F), constChild (.bool true)] false =
+    .error "Type mismatch: expected Boolean or Null but was Integer" := rfl
+example (r : R) : scalarAndOr true r [constChild (.bool false), constChild (.str "a" : V F)] false =
+    .error "Type mismatch: expected Boolean or Null but was String" := rfl
 
 theorem xor_kleene (a b : Option Bool) :
     scalarXor [k3 a, k3 b] none = .ok (k3 (match a, b with

@@ -32,21 +32,23 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 
 | Lean | Rust |
 | --- | --- |
-| `isLeap`, `daysInMonth` | `is_leap` `value.rs:764`, `days_in_month` `value.rs:752` |
-| `daysFromCivil` | `days_from_civil` `value.rs:771` |
-| `daysFromCivilT` | `days_from_civil` `temporal.rs:428` (second copy, truncating i32 `/`) |
-| `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:788` (without / with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:444` |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:485` |
-| `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:696` / `sub_duration_from_timestamp` `value.rs:730` |
+| `isLeap`, `daysInMonth` | `is_leap` `value.rs:790`, `days_in_month` `value.rs:778` |
+| `daysFromCivil` | `days_from_civil` `value.rs:797` |
+| `daysFromCivilT` | `days_from_civil` `temporal.rs:437` (second copy, truncating i32 `/`) |
+| `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:814` (without / with `y as i32`) |
+| `constructDuration` | `construct_duration_secs` `temporal.rs:453` |
+| `decomposeDuration` | `decompose_duration` `temporal.rs:494` |
+| `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:722` / `sub_duration_from_timestamp` `value.rs:756` |
+| `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1059` / `Sub` `value.rs:1104` (#2985) |
 | `weekPath`, `quarterPath` | `date_from_components` `temporal.rs:62` (week / quarter branches) |
 | `dateAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `NaiveDate + TimeDelta`, `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
 | `sliceOk` | `&rest[..2]` in `parse_week_date` `temporal.rs:258` |
-| `wrapMul` | `n * 7` in `parse_duration_string` `temporal.rs:391` (release) |
-| `formatDateDigits` | `format_date` `value.rs:274` + `write_date_into` `value.rs:803` |
-| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:392` / `ExprIR::And`,`Or` in `eval.rs:629-697` |
-| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:878` / `Add..Rem for Value` `value.rs:903-1160` |
-| `Spatial.haversine` | `Point::distance` `value.rs:121` |
+| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:391-402` (`checked_mul`/`checked_add`, #2987) |
+| `wrapMul`, `Fns.pre2987_dateLoop` | pre-#2987 release `n * 7` (history) |
+| `formatDateDigits` | `format_date` `value.rs:300` + `write_date_into` `value.rs:829` |
+| `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
+| `VExpr.intLane` / `valueArith` | `arithmetic` int lane `vector_expr.rs:880` / `Add..Rem for Value` `value.rs:933-1200` |
+| `Spatial2.distance` / `Spatial.haversine` | `Point::distance` `value.rs:144` (clamped `a`, #2983); `pre2983_*`: history |
 
 ## Proven (51 theorems + 30 kernel-checked era chunks)
 
@@ -83,25 +85,31 @@ Counterexamples as theorems: `sub_vs_add_neg`, `neg_days_encoding`,
 3. **Server crash** `RETURN date('2020W1é')` — `&rest[..2]` not a char boundary
    (`temporal.rs:258`); C: "Failed to parse date". Test
    `bug_date_week_string_char_boundary_panics`. Fix: `rest.get(..2)` / require ASCII.
-4. **Wrong result** `distance(point({latitude:-88.3, longitude:-180}),
+4. **FIXED by #2983 (86dcd5a11).** Was: `distance(point({latitude:-88.3, longitude:-180}),
    point({latitude:88.3, longitude:0}))` is `nan` (Rust) vs 20037518 (C); 35 428 of
-   6 485 401 antipodal pairs on a 0.1° grid. `(1.0 - a).sqrt()` with `a` rounded above 1
-   (`value.rs:137`). Test `bug_distance_antipodal_nan`. Fix: clamp `a` to `[0, 1]`.
+   6 485 401 antipodal pairs on a 0.1° grid. `(1.0 - a).sqrt()` with `a` rounded above 1.
+   Test `bug_distance_antipodal_nan`. Main clamps `a` to `[0, 1]`: `distance_finite`,
+   `distance_not_nan`, `distance_eq_pre2983`; history `pre2983_distance_nan`.
 5. **Wrong result** `date('2020-03-31') - duration({months:1})` = 2020-02-29 (Rust) vs
    2020-03-02 (C), while Rust's `date + duration({months:-1})` = 2020-03-02
    (`sub` clamps `value.rs:746`, `add` overflows `value.rs:712-722`). Test
    `bug_date_minus_month_disagrees_with_plus_negative_month`.
-6. **Wrong result** `localtime('01:00') + duration({days:1}) = localtime('01:00')` →
-   false (C true); same for `{months:1}`. Time arithmetic is not reduced mod 86400
-   (`value.rs:1027`, `:1072`). Test `bug_time_plus_day_not_normalised`.
+6. **FIXED by #2985 (289c201fe).** Was: `localtime('01:00') + duration({days:1}) =
+   localtime('01:00')` → false (C true); same for `{months:1}`. Time arithmetic was not
+   reduced mod 86400. Test `bug_time_plus_day_not_normalised`. Main: `timeAddDur_eq_tod`,
+   `timeAddDur_range`, `timeSub_timeAdd`, `time_normalised`; history
+   `pre2985_time_not_normalised`.
 7. **Wrong result** `toString(date({year:12345}))` = "2345-01-01" (C "12345-01-01");
    `date({year:-5})` prints "0005-01-01" (`write_date_into` `value.rs:803`). Test
    `bug_format_date_truncates_year`. Relatedly `toString(localdatetime(...) +
    duration({years:300000}))` = "<invalid timestamp: 9468663474030>" (C
    "302020-01-01T10:20:30") — `format_datetime` via chrono range.
-8. **Wrong result** `duration('P2635249153387078803W')` = `P5D` (release wrap of `n * 7`,
-   `temporal.rs:391`; debug panics). C returns a (garbage) non-P5D value; the map form
-   errors. Test `bug_duration_week_string_wraps`. Fix: `checked_mul`/`checked_add`.
+8. **FIXED by #2987 (9d3869aa8).** Was: `duration('P2635249153387078803W')` = `P5D`
+   (release wrap of `n * 7`; debug panics). C returns a (garbage) non-P5D value; the map
+   form errors. Test `bug_duration_week_string_wraps`. Main errors "Duration overflow:
+   weeks=…": `dateLoop_week_overflow`, `week_string_overflow_errors`,
+   `dateLoop_day_overflow`, `dateLoop_days_i64` (days never wraps); history
+   `pre2987_week_string_wraps`.
 9. **Divergence** map `dayOfWeek` is 0..6 with 0 = Sunday (`temporal.rs:75,84`):
    `date({year:2021, week:1, dayOfWeek:7})` errors (C: 2021-01-10); `dayOfWeek:0` accepted
    (C: error). The string form uses 1..7. Test `bug_date_map_day_of_week_is_zero_based`.
@@ -163,6 +171,17 @@ any non-digit (`allDigits` guard, temporal.rs:195, :309) instead of silently dro
 Suspicion (message only): `point({latitude: null, ..})` errors "requires 'latitude'
 field" for a literal map (slot form) but "must be a number, got Null" for a map value
 (`point_null_lat_msgs`); C uses one message for both.
+
+## Re-targeted to 289c201fe
+
+#2983 (`86dcd5a11`) clamps the haversine term: `SpatialFns.distance` now applies
+`clamp01`; `NanLaws` states the binary64 / `f64::clamp` facts used; W2-temporal-4 now has
+theorems (`pre2983_distance_nan`, `distance_finite`). #2985 (`289c201fe`) gives
+`Time ± Duration` its own arms (`timeAddDur`/`timeSubDur`; W2-temporal-6 fixed).
+#2987 (`9d3869aa8`) makes the `W`/`D` accumulators checked (`Fns.dateLoop`; W2-temporal-8
+fixed). #3294 only changes the AND/OR type-error text, which `VExpr` leaves abstract
+(`none`). COVERAGE.tsv line numbers re-pinned (temporal.rs +9 after `:391`, value.rs +23..+26,
+vector_expr.rs +3 after `:456`).
 
 ## Wave 6 (`VecDistance`)
 vec_distance.rs PROVEN against the exact simsimd 6.5.16 wrapper (length check, then the

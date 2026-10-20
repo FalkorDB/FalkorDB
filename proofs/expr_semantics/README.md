@@ -30,7 +30,7 @@ Yes, for every lane this project models:
 - **`AND`/`OR` with row narrowing:** the per-row short-circuit fold on every row (`andOr_agrees`);
 - **`CASE`:** each `WHEN`, `THEN` and `ELSE` runs for exactly the rows the per-row path runs it for (`case_agrees`, `case_match_agrees`). So `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END` can't divide by zero on either path.
 
-Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row.
+Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row. Since #3294 both paths word an `AND`/`OR` type error the same way (`boolMismatch`), but they may report it for different rows.
 
 **2. Is the logic openCypher's three-valued logic?**
 
@@ -39,7 +39,8 @@ Yes:
 - `AND`, `OR` and `XOR` are Kleene logic (`and_kleene`, `or_kleene`, `xor_kleene`);
 - De Morgan holds (`deMorgan_and`, `deMorgan_or`);
 - `x IN list` is Kleene "any" of `x = element` for scalars (`contains_is_kleene_any`), so `1 IN [2, null]` is `null` and not `false`;
-- `<>` is exactly `NOT (=)` (`neq_eq_not_eq`), since #2917.
+- `<>` is exactly `NOT (=)` (`neq_eq_not_eq`), since #2917;
+- a non-Boolean, non-null `AND`/`OR`/`XOR` operand fails with C's message naming its type, `Type mismatch: expected Boolean or Null but was Integer` (`and_or_mismatch_names_type`, `xor_mismatch_names_type`), since #3294.
 
 **3. What does integer arithmetic do at the edges?**
 
@@ -113,6 +114,8 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN`/`I64MAX`, `wrap_id`) come from [`../core`](../core) through a Lake path dependency.
 
 ## Coverage
+
+Line numbers are pinned to main 289c201fe (#2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
 
 `COVERAGE.tsv` has 93 rows: 30 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs`, `eliminate_true_filters.rs` and `functions/mod.rs` (`init_functions`, MODELLED: the registered name set, #2724).
 

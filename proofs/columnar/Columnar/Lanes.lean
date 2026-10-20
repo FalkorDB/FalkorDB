@@ -6,10 +6,10 @@ import Columnar.Row
 
 | here | there |
 | --- | --- |
-| `notRow`, `negate` | per-row `ExprIR::Not` (`eval.rs:699-708`) / `negate_bools` (`vector_expr.rs:854-873`) |
+| `notRow`, `negate` | per-row `ExprIR::Not` (`eval.rs:708-717`) / `negate_bools` (`vector_expr.rs:857-876`) |
 | `caseMatch`, `caseRow` | `ExprEval::eval_case` (`eval.rs:485-518`) |
-| `caseArm`, `caseArms`, `caseCol` | `VectorEval::eval_case` (`vector_expr.rs:475-549`): arm-by-arm narrowing of `unclaimed`, scatter into `out` |
-| `foldCall` | `VectorEval::eval_function` (`vector_expr.rs:555-620`) |
+| `caseArm`, `caseArms`, `caseCol` | `VectorEval::eval_case` (`vector_expr.rs:478-552`): arm-by-arm narrowing of `unclaimed`, scatter into `out` |
+| `foldCall` | `VectorEval::eval_function` (`vector_expr.rs:558-623`) |
 | `evalVariable` | `VectorEval::eval_variable` (`vector_expr.rs:310-329`) |
 | `filterPass` | `FilterOp` verdict → passing rows (`filter.rs:69-108`) |
 -/

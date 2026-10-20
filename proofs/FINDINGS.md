@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-19): proofs cite `origin/main` @ fb3d516d0.
+Current state (2026-10-20): proofs cite `origin/main` @ 289c201fe.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -144,7 +144,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-agg-1**: clearing the global dedupers after each CALL{} (`apply.rs:283`) makes an outer `count(DISTINCT)` over-count: 6 where C gives 2.
 - **W2-agg-2**: per-group DISTINCT state is keyed by the FxHash of the group key (`aggregate.rs:715`, `:959`), so colliding groups share one seen-set.
 - **W2-agg-4** (low): a per-row percentile argument is overwritten, so the last one wins (`aggregation.rs:539`, `:253`).
-- **W2-agg-5**: an aggregate inside a list literal `return`s out of the whole stack machine (`eval.rs:877`). `[min(x),max(x)]` gives 2 where C gives `[1,2]`.
+- **W2-agg-5**: an aggregate inside a list literal `return`s out of the whole stack machine (`eval.rs:877`). `[min(x),max(x)]` gives 2 where C gives `[1,2]`. **Fixed by #2951 (0912f4500; closes #2945)**: `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`; history `pre2951_stackEval_return_drops_frame`.
 
 ### Wrong results: index layer (`proofs/index_layer/repro.py`)
 - **W2-index-1**: `n.v = date(..)` returns every node of the label (`utilize_index.rs:631` drops the filter and `node_by_index_scan.rs:252` falls back). C ✓.
@@ -164,14 +164,14 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 ### Wrong results: functions
 - **W2-strlist-2** (**fixed by #2952, 07e712944; closes #2926**): `list.remove([1,2,3],1,i64::MAX)` panicked on overflow in debug builds (pre-fix `list.rs:168`). Now `remove_span` saturates (`listRemove_eq_spec`; historical `pre2952_listRemove_end_overflows`).
 - **W2-strlist-3**: `=~` matches substrings: `'abc' =~ 'b'` is true, where openCypher says false (`internal.rs:112`, `eval.rs:1274`).
-- **W2-strlist-4**: `toLower`/`toUpper` reject valid strings that contain U+FFFD (`string.rs:148`, `:170`). C ✓.
+- **W2-strlist-4**: `toLower`/`toUpper` reject valid strings that contain U+FFFD (`string.rs:148`, `:170`). C ✓. **Fixed by #2953 (e7eb853b1)**: `toLower_total`, `case_agrees_C_if_simple`; history `pre2953_toLower_rejects_valid`.
 - **W2-strlist-5**: `string.replaceRegEx` expands `$` in the replacement (`string.rs:469`). C ✓. Fix: `NoExpand`.
 - **W2-strlist-6**: a list comprehension over null gives [] (C: null); over a scalar it gives `[5]` (C: type error) (`eval.rs:1018`).
-- **W2-temporal-4**: antipodal `distance()` gives NaN, because `(1-a).sqrt()` is taken with `a > 1` (`value.rs:137`). C ✓.
+- **W2-temporal-4**: antipodal `distance()` gives NaN, because `(1-a).sqrt()` is taken with `a > 1` (`value.rs:137`). C ✓. **Fixed by #2983 (86dcd5a11; closes #2931)**: `a` clamped to [0,1]; `distance_finite` (under the stated `NanLaws` float facts); history `pre2983_distance_nan`.
 - **W2-temporal-5**: `date('2020-03-31') - duration({months:1})` gives 02-29, while `+ duration({months:-1})` gives 03-02 (`value.rs:746`). C gives 03-02.
-- **W2-temporal-6**: Time + duration is not reduced mod a day (`value.rs:1027`). C ✓.
+- **W2-temporal-6**: Time + duration is not reduced mod a day (`value.rs:1027`). C ✓. **Fixed by #2985 (289c201fe; closes #2933)**: `timeAddDur_eq_tod`, `time_normalised`, `add_time_dur_in_day`; history `pre2985_time_not_normalised`.
 - **W2-temporal-7**: `toString(date({year:12345}))` gives "2345-01-01" (`value.rs:803`). C ✓.
-- **W2-temporal-8**: `duration('P2635249153387078803W')` wraps to P5D in release (`temporal.rs:376`).
+- **W2-temporal-8**: `duration('P2635249153387078803W')` wraps to P5D in release (`temporal.rs:376`). **Fixed by #2987 (9d3869aa8; closes #2935)**: checked W/D arithmetic; `dateLoop_week_overflow`, `dateLoop_days_i64`; history `pre2987_week_string_wraps`.
 - **W2-temporal-9**: the `date()` map form's dayOfWeek is 0-based with 0 = Sunday (`temporal.rs:75`). C accepts 7.
 - Conversion divergences seen live, with no Rust test:
   - `toString(1.0)` gives "1" (C "1.000000");
@@ -341,6 +341,8 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 - #3382 (idx): db.idx.vector.queryNodes answers from a half-built index (0 rows, then 3, while UNDER CONSTRUCTION); Indexer::vector_query never checks is_operational, while C refuses until OPERATIONAL. Lean IndexLayer.Meta.Ixr.bug3382_vector_query_ignores_operational; property VectorQueryRequiresOperational.
 
 ### Merged
+- 2026-10-20 on main (now 289c201fe): #2983 (antipodal distance; closes #2931), #2987 (duration string overflow; closes #2935), #3294 (AND/OR/XOR errors name the operand type; closes #3292), #2951 (list literal of aggregates; closes #2945), #2953 (toLower/toUpper with U+FFFD), #2985 (localtime ± duration; closes #2933). Proofs re-targeted: 35 projects green; 2595 PROVEN + 25 CONDITIONAL of 2620 non-FFI, non-test fns, so every non-FFI function is covered; 0 unlisted, 0 unmatched. About 270 rows that matched only by name were re-pinned to their exact line.
+  - Fixed, counterexamples kept as `pre<PR>_` history: W2-agg-5, W2-strlist-4, W2-temporal-4 (the distance proof assumes the `NanLaws` float facts as hypotheses), W2-temporal-6, W2-temporal-8. #3294 is modelled (`and_or_mismatch_names_type`, `xor_mismatch_names_type`).
 - 2026-10-19 on main (now fb3d516d0): #3090 (a shared GrB_Matrix is freed exactly once; closes #3089), #3026 (GRAPH.BULK keeps one entry per attribute; closes #3024). Proofs re-targeted: 35 projects green; 2594 PROVEN + 25 CONDITIONAL of 2620 non-FFI, non-test fns (99.0%); 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: concurrent-drop leak (`Own.lean`: for any number of owners and any interleaving of clones and drops the matrix is freed exactly once, when the count reaches zero, `arc_frees_once`; `Iter` frees its iterator before the matrix; std's `Arc` contract is assumed, not proven); repeated GRAPH.BULK header column (`PropColumns`: at most one entry per attribute, first non-null wins, column order kept, equal to the plain read when no name repeats; `pre3026_two_entries_for_one_attr`).
 - 2026-10-19 on main (now 73077bb4a): #3033 (tensor decode refuses sections that break promotion completeness; closes #3031), #3086 (a field added while an index populates gets populated; closes #3069). Proofs re-targeted: 35 projects green; 2590 PROVEN + 25 CONDITIONAL of 2616 non-FFI, non-test fns (99.0%); 0 unlisted, 0 unmatched.
