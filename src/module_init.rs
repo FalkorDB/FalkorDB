@@ -25,10 +25,8 @@
 use crate::commands::constraint::{Settling, settle_constraint};
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
-    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
-    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
+    apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
@@ -45,11 +43,11 @@ use graph::{
     udf,
 };
 use redis_module::{
-    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
-    RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
-    Status, logging::log_warning,
+    Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
+    RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
+    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc, sync::atomic::AtomicI64};
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -158,69 +156,15 @@ pub fn graph_init(
         std::process::exit(1);
     }));
 
-    // Parse module args for AtomicI64/AtomicU64 statics not registered in the
-    // redis_module! config section.
-    {
-        let args_str: Vec<String> = args
-            .iter()
-            .map(redis_module::RedisString::to_string_lossy)
-            .collect();
-        let mut i = 0;
-        while i < args_str.len() {
-            let name = args_str[i].to_uppercase();
-            let target_i64: Option<&AtomicI64> = match name.as_str() {
-                "TIMEOUT" => Some(&TIMEOUT),
-                "TIMEOUT_DEFAULT" => Some(&TIMEOUT_DEFAULT),
-                "TIMEOUT_MAX" => Some(&TIMEOUT_MAX),
-                "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
-                "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
-                "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
-                "EFFECTS_COMPRESSION" => Some(&EFFECTS_COMPRESSION),
-                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD_DEPRECATED),
-                "OMP_THREAD_COUNT" => Some(&OMP_THREAD_COUNT),
-                _ => None,
-            };
-            if let Some(target) = target_i64 {
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<i64>()
-                {
-                    target.store(v, std::sync::atomic::Ordering::Relaxed);
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning(&format!("Invalid value for {name} module argument"));
-                return Status::Err;
-            }
-            if name == "MAX_INFO_QUERIES" {
-                // Clamped rather than rejected, the same way C's setter caps it
-                // and the same way GRAPH.CONFIG SET does at run-time.
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    && v >= 0
-                {
-                    MAX_INFO_QUERIES.store(
-                        v.min(MAX_INFO_QUERIES_CAP),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning("Invalid value for MAX_INFO_QUERIES module argument");
-                return Status::Err;
-            }
-            if name == "MAX_QUEUED_QUERIES" {
-                if i + 1 < args_str.len()
-                    && let Ok(v) = args_str[i + 1].parse::<u64>()
-                {
-                    MAX_QUEUED_QUERIES.store(v, std::sync::atomic::Ordering::Relaxed);
-                    i += 2;
-                    continue;
-                }
-                ctx.log_warning("Invalid value for MAX_QUEUED_QUERIES module argument");
-                return Status::Err;
-            }
-            i += 1;
-        }
+    // Every module argument, parsed and validated the way C's `Config_Init`
+    // does. A bad argument refuses the load, as in C.
+    let args: Vec<String> = args
+        .iter()
+        .map(redis_module::RedisString::to_string_lossy)
+        .collect();
+    if let Err(err) = apply_module_args(ctx, &args) {
+        ctx.log_warning(&err);
+        return Status::Err;
     }
     unsafe {
         // Disable OpenMP's pthread_atfork handlers. Without this, the
@@ -246,6 +190,13 @@ pub fn graph_init(
             ctx.log_notice("Failed initializing RediSearch.");
             return Status::Err;
         }
+
+        // RediSearch_Init registers its own INFO callback on our module, and
+        // Redis keeps one per module, so without this `INFO modules` reports
+        // RediSearch's version and settings as `graph_version` etc. Register
+        // ours after it, the same order C uses (module.c: RediSearch_Init, then
+        // setupCrashHandlers).
+        raw::register_info_function(ctx.ctx, Some(info_func));
 
         // RediSearch 8.6 changed the default scorer from TFIDF to BM25STD.
         // FalkorDB compares absolute fulltext scores against the legacy TFIDF
@@ -350,24 +301,7 @@ pub fn graph_init(
         }
     }
 
-    // Validate timeout mutual exclusion: cannot use deprecated TIMEOUT
-    // together with TIMEOUT_DEFAULT / TIMEOUT_MAX.
-    {
-        let timeout = TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
-        let timeout_default = TIMEOUT_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
-        let timeout_max = TIMEOUT_MAX.load(std::sync::atomic::Ordering::Relaxed);
-        if timeout > 0 && (timeout_default > 0 || timeout_max > 0) {
-            ctx.log_warning("Cannot specify TIMEOUT together with TIMEOUT_DEFAULT or TIMEOUT_MAX");
-            return Status::Err;
-        }
-        if timeout_default > 0 && timeout_max > 0 && timeout_default > timeout_max {
-            ctx.log_warning("TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX");
-            return Status::Err;
-        }
-    }
-
     // Initialize the thread pool with the configured thread count.
-    // THREAD_COUNT may come from module args (parsed by redis_module macro).
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
 
@@ -481,6 +415,24 @@ pub fn graph_init(
     }
 
     Status::Ok
+}
+
+/// The module's INFO callback. Adds nothing to a normal `INFO`, matching C's
+/// `InfoFunc` (debug.c). For a crash report it keeps redis-module's default
+/// trace info and, like C, lists every query that was executing.
+extern "C" fn info_func(
+    ctx: *mut raw::RedisModuleInfoCtx,
+    for_crash_report: c_int,
+) {
+    if for_crash_report == 0 {
+        return;
+    }
+    basic_info_command_handler(&InfoContext::new(ctx), true);
+
+    raw::add_info_section(ctx, Some("executing commands"));
+    for q in telemetry::try_snapshot_running() {
+        raw::add_info_field_str(ctx, "command", &format!("{} {}", q.graph_name, q.query));
+    }
 }
 
 const unsafe extern "C" fn on_flush(

@@ -646,7 +646,10 @@ impl<'a> ExprEval<'a> {
                             Value::Bool(false) => {}
                             Value::Null => is_null = true,
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
@@ -670,7 +673,10 @@ impl<'a> ExprEval<'a> {
                                 break;
                             }
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
@@ -691,7 +697,10 @@ impl<'a> ExprEval<'a> {
                             Value::Bool(true) => {}
                             Value::Null => is_null = true,
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
@@ -825,11 +834,11 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Pow => res.push(
                     node.children()
-                        .flat_map(|child| self.eval_node(&child, env, agg_group_key))
-                        .reduce(apply_pow)
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
+                        .reduce(|acc, value| apply_pow(acc?, value?))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
-                        })?,
+                        })??,
                 ),
                 ExprIR::Distinct => {
                     let rt = self.rt()?;
@@ -881,10 +890,14 @@ impl<'a> ExprEval<'a> {
                             .and_then(|e| e.value_at(key.id))
                             .ok_or_else(|| String::from("Variable not found"))?;
 
-                        return match finalize {
-                            Some(func) => Ok((func)(acc)),
-                            None => Ok(acc),
-                        };
+                        // Push, don't `return`: the aggregate may be one
+                        // operand of an enclosing frame still on the stack,
+                        // e.g. the list literal `[min(x), max(x)]`.
+                        res.push(match finalize {
+                            Some(func) => (func)(acc),
+                            None => acc,
+                        });
+                        continue;
                     }
                     // Fast path for struct-constructor functions (duration,
                     // date, point, ...): when the binder rewrote a
@@ -1076,9 +1089,7 @@ impl<'a> ExprEval<'a> {
                     let row = env.map_or_else(Row::new, RowView::to_owned_row);
                     res.push(runtime.run_nested_plan(nested.id, &nested.result, &row)?);
                 }
-                ExprIR::Paren => {
-                    res.push(self.eval_node(&node.child(0), env, agg_group_key)?);
-                }
+                ExprIR::Paren => unreachable!("the binder removes every Paren"),
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
@@ -1700,10 +1711,14 @@ where
         let prev = first?;
         for next in iter {
             let next = next?;
-            match prev.partial_cmp(&next) {
-                None => return Ok(Value::Null),
-                Some(Ordering::Less | Ordering::Greater) => {}
-                Some(Ordering::Equal) => return Ok(Value::Bool(false)),
+            // As C's `AR_NE`: null makes it null, and disjoint types or NaN
+            // are unequal even when the ordering half reads `Equal` (a map
+            // stops at its first disjoint value: `{a:1} <> {a:'x'}`).
+            match prev.compare_value(&next) {
+                (_, DisjointOrNull::ComparedNull) => return Ok(Value::Null),
+                (_, DisjointOrNull::NaN | DisjointOrNull::Disjoint)
+                | (Ordering::Less | Ordering::Greater, _) => {}
+                (Ordering::Equal, DisjointOrNull::None) => return Ok(Value::Bool(false)),
             }
         }
         Ok(Value::Bool(true))
