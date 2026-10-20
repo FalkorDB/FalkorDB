@@ -329,25 +329,24 @@ pub fn apply_pow(
     base: Value,
     exponent: Value,
 ) -> Result<Value, String> {
-    match (base, exponent) {
-        // Convert all numeric types to f64 and use powf
-        // This matches C's behavior:  pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Float((a as f64).powf(b as f64))),
-        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(b))),
-        (Value::Int(a), Value::Float(b)) => Ok(Value::Float((a as f64).powf(b))),
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powf(b as f64))),
-        // `pow()` is guarded by its declared argument types, but the `^`
-        // operator is not, so reject non-numeric operands here (as C does),
-        // even when the other operand is null.
-        (a, b) => match [a, b]
-            .iter()
-            .find(|v| !matches!(v, Value::Int(_) | Value::Float(_) | Value::Null))
-        {
-            Some(v) => Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            )),
-            None => Ok(Value::Null),
-        },
+    // `pow()` is guarded by its declared argument types, but the `^`
+    // operator is not, so reject non-numeric operands here (as C does),
+    // even when the other operand is null.
+    if let Some(v) = [&base, &exponent]
+        .into_iter()
+        .find(|v| !matches!(v, Value::Int(_) | Value::Float(_) | Value::Null))
+    {
+        return Err(format!(
+            "Type mismatch: expected Integer, Float, or Null but was {}",
+            v.name()
+        ));
     }
+    if matches!(base, Value::Null) || matches!(exponent, Value::Null) {
+        return Ok(Value::Null);
+    }
+    // Both are numeric: convert to f64 and use powf, as C does:
+    // pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
+    Ok(Value::Float(
+        base.get_numeric().powf(exponent.get_numeric()),
+    ))
 }
