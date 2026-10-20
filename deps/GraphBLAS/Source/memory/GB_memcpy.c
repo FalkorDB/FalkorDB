@@ -10,6 +10,9 @@
 // This function uses its own hard-coded chunk size.
 // The work is always done on the CPU; CUDA requires its own memcpy method.
 
+// fixme for CUDA: pass in the arena of the source and destination.
+// use a CUDA method if any of the arenas are on a GPU.
+
 #include "GB.h"
 
 #define GB_MEM_CHUNK (1024*1024)

@@ -28,20 +28,20 @@ GrB_Info GB_wait_arenas         // align data with A->data_arena
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    if (A == NULL)
+    if (!GB_arenas_will_wait (A))
     { 
         // nothing to do
         return (GrB_SUCCESS) ;
     }
 
+    //--------------------------------------------------------------------------
+    // align the data arenas with A->data_arena; header_arena unchanged
+    //--------------------------------------------------------------------------
+
     int header_arena = GB_arena (A->header_mem) ;
     int data_arena = A->data_arena ;
 
     ASSERT_MATRIX_OK (A, "A to wait_arenas: start", GB0_Z) ;
-
-    //--------------------------------------------------------------------------
-    // align the data arenas with A->data_arena
-    //--------------------------------------------------------------------------
 
     GrB_Matrix T = A ;
     GB_OK (GB_set_arenas (&T, header_arena, data_arena)) ;

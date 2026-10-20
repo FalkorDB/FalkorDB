@@ -31,7 +31,7 @@ GrB_Info GB_ewise_fulln_jit  // C=A+B via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_EWISEFN, /* is_eWiseMult: */ false,
+        GB_JIT_KERNEL_EWISEFN,
         /* C_iso: */ false, false, GxB_FULL, C->type,
         /* is_32: */ false, false, false,
         /* M: */ NULL, false, false, binaryop,

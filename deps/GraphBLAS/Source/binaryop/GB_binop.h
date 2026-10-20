@@ -87,5 +87,11 @@ GrB_BinaryOp GB_binop_second    // return SECOND operator, or NULL on error
     GrB_BinaryOp op             // header for SECOND_UDT operator
 ) ;
 
+GrB_BinaryOp GB_binop_first
+(
+    GrB_Type type,
+    GrB_BinaryOp op             // empty op header for user-defined case
+) ;
+
 #endif
 

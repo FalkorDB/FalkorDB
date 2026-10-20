@@ -42,6 +42,8 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     ASSERT (blob != NULL && Chandle != NULL) ;
     (*Chandle) = NULL ;
     GrB_Matrix C = NULL, T = NULL ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     //--------------------------------------------------------------------------
     // read the content of the header (160 bytes)

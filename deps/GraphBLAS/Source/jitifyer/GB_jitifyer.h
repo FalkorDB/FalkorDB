@@ -73,8 +73,8 @@ typedef enum
     // ewise methods:
     GB_JIT_KERNEL_COLSCALE      = 10, // GB_colscale
     GB_JIT_KERNEL_ROWSCALE      = 11, // GB_rowscale
-    GB_JIT_KERNEL_ADD           = 12, // GB_add_phase2
-    GB_JIT_KERNEL_UNION         = 13, // GB_add_phase2
+    GB_JIT_KERNEL_ADD           = 12, // GB_add_phase2 for eWiseAdd
+    GB_JIT_KERNEL_UNION         = 13, // GB_add_phase2 for eWiseUnion
     GB_JIT_KERNEL_EMULT2        = 14, // GB_emult_02
     GB_JIT_KERNEL_EMULT3        = 15, // GB_emult_03
     GB_JIT_KERNEL_EMULT4        = 16, // GB_emult_04
@@ -197,7 +197,17 @@ typedef enum
     GB_JIT_CUDA_KERNEL_SELECT_SPARSE = 1036,
 
     // build:
-    GB_JIT_CUDA_KERNEL_BUILD = 1037
+    GB_JIT_CUDA_KERNEL_BUILD = 1037,
+
+    // add:
+    GB_JIT_CUDA_KERNEL_ADD_SPARSE = 1038,
+    GB_JIT_CUDA_KERNEL_ADD_BITMAP = 1039,
+
+    // emult
+    GB_JIT_CUDA_KERNEL_EMULT_SPARSE = 1040,
+
+    // C<M or !M>=A where M is structural and C is initially empty
+    GB_JIT_CUDA_KERNEL_MASK_ASSIGN_SPARSE = 1041,
 
 }
 GB_jit_kcode ;

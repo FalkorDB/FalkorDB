@@ -25,6 +25,8 @@ GrB_Info GxB_Container_new_arena
     GrB_Info info ;
     ASSERT (Container != NULL) ;
     (*Container) = NULL ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     //--------------------------------------------------------------------------
     // allocate the new Container

@@ -126,11 +126,17 @@ GrB_Info GB_select_bitmap
 
             #ifndef GBCOMPACT
             GB_IF_FACTORY_KERNELS_ENABLED
+            if (op->xtype == A->type)
             { 
 
                 //--------------------------------------------------------------
                 // via the factory kernel 
                 //--------------------------------------------------------------
+
+                // The factory workers compare A(i,j) with ythunk in the type
+                // of A.  ythunk has been typecast to op->ytype, so they apply
+                // only when op->xtype (== op->ytype for the VALUE* ops) is the
+                // type of A; otherwise the JIT or generic kernel typecasts.
 
                 #define GB_selbit(opname,aname) \
                     GB (_sel_bitmap_ ## opname ## aname)

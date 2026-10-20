@@ -11,6 +11,11 @@
 #ifndef GB_CUDA_HPP
 #define GB_CUDA_HPP
 
+// ensure OpenMP is also available to the CUDA kernels
+#ifndef _OPENMP
+#error "CUDA requires OpenMP when used in GraphBLAS"
+#endif
+
 #include "CUDA/include/GraphBLAS_cuda.hpp"
 
 extern "C"
@@ -90,7 +95,7 @@ void GB_cuda_upscale_identity
 // stream pool
 //------------------------------------------------------------------------------
 
-GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream) ;
+GrB_Info GB_cuda_stream_pool_acquire (int device, cudaStream_t *stream) ;
 GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream) ;
 
 #endif

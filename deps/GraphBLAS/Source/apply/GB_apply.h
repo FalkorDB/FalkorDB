@@ -33,14 +33,14 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
 GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
 (
     GB_void *Cx,                    // output array
+    int Cx_arena,                   // arena of Cx
     const GrB_Type ctype,           // type of C
     const GB_iso_code C_code_iso,   // C non-iso, or code to compute C iso value
-        const GB_Operator op,       // unary/index-unary/binop to apply
+        const GB_Operator op_in,    // unary/index-unary/binop to apply
         const GrB_Scalar scalar,    // scalar to bind to binary operator
         bool binop_bind1st,         // if true, C=binop(s,A), else C=binop(A,s)
         bool flipij,                // if true, flip i,j for user idxunop
     const GrB_Matrix A,             // input matrix
-    const int data_arena,           // arena for workspace
     GB_Werk Werk
 ) ;
 

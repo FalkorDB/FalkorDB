@@ -8,12 +8,7 @@
 //------------------------------------------------------------------------------
 
 // GrB_init (or GxB_init) must called before any other GraphBLAS operation.
-// GrB_finalize must be called as the last GraphBLAS operation.  To use CUDA
-// and its RMM memory manager: use a mode of GxB_BLOCKING_GPU or
-// GxB_NONBLOCKING_GPU.
-
-// fixme for CUDA: rename GxB_*BLOCKING_GPU to GxB_*BLOCKING_CUDA or remove
-// them completely.
+// GrB_finalize must be called as the last GraphBLAS operation.
 
 #include "GB.h"
 #include "init/GB_init.h"
@@ -34,16 +29,7 @@ GrB_Info GrB_init           // start up GraphBLAS
     // initialize GraphBLAS
     //--------------------------------------------------------------------------
 
-#if defined ( GRAPHBLAS_HAS_CUDA )
-    if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
-    {
-        return (GB_init (mode,              // blocking or non-blocking mode
-            // RMM C memory management functions
-            GB_rmm_malloc, NULL, NULL, GB_rmm_free, Werk)) ;
-    }
-#endif
-
-    // default:  use the C11 malloc memory manager, which is thread-safe
+    // use the C11 malloc memory manager, which is thread-safe
     return (GB_init (mode,              // blocking or non-blocking mode
         malloc, calloc, realloc, free,  // ANSI C memory management functions
         Werk)) ;

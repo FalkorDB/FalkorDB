@@ -35,7 +35,7 @@ GrB_Info GB_select_generic_phase2
 
     // The op is either valued, user-defined, or nonzombie.  If it is the
     // nonzombie op, then A is not iso.  For the VALUEEQ* operators, C is
-    // always iso even if A is not iso.
+    // iso even if A is not iso, if op->xtype is the type of A.
 
     GB_Opcode opcode = op->opcode ;
     ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;

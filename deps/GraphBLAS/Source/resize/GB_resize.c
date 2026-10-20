@@ -67,9 +67,64 @@ GrB_Info GB_resize              // change the size of a matrix
         vdim_new = nrows_new ;
     }
 
+    //--------------------------------------------------------------------------
+    // special case: the matrix isn't changing at all
+    //--------------------------------------------------------------------------
+
     if (vdim_new == vdim_old && vlen_new == vlen_old)
     { 
         // nothing to do
+        GBURBLE ("(no change) ") ;
+        return (GrB_SUCCESS) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // special case: matrix is sparse/hypersparse and both dimensions growing
+    //--------------------------------------------------------------------------
+
+    if ((GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) &&
+        (vdim_new >= vdim_old) && (vlen_new >= vlen_old)
+        // If vdim_old is <= 1, then the list of Pending tuples does not have
+        // the Pending->j component.  If the new vdim is > 1, Pending->j is
+        // required, so the matrix cannot be resized without revising the
+        // Pending tuples, or assembling them first.  In this case, do not
+        // use this special case.  Instead, use the general case below.
+        && (! (vdim_old <= 1 && vdim_new > 1 && A->Pending != NULL))
+        )
+    { 
+
+        GBURBLE ("(sparse/hyper and dims not shrinking; no wait required) ") ;
+
+        // convert to hypersparse
+        GB_OK (GB_convert_any_to_hyper (A, Werk)) ;
+        ASSERT (GB_IS_HYPERSPARSE (A)) ;
+        ASSERT_MATRIX_OK (A, "A converted to hyper", GB0) ;
+
+        // A->Y will be invalidated, so free it
+        GB_hyper_hash_free (A) ;
+
+        // change the dimensions
+        A->vdim = vdim_new ;
+        A->vlen = vlen_new ;
+
+        bool Ap_is_32_new, Aj_is_32_new, Ai_is_32_new ;
+        GB_determine_pji_is_32 (&Ap_is_32_new, &Aj_is_32_new, &Ai_is_32_new,
+            GB_sparsity (A), A->nvals, A->vlen, A->vdim, Werk) ;
+
+        if (Ap_is_32_new != A->p_is_32 ||
+            Aj_is_32_new != A->j_is_32 ||
+            Ai_is_32_new != A->i_is_32)
+        { 
+            // The matrix integers need to change.  Do not validate the input
+            // matrix or the new settings since the existing dimensions may not
+            // be suitable with the existing integer sizes.  They will be valid
+            // once the integer conversion is done.
+            GB_OK (GB_convert_int (A, Ap_is_32_new, Aj_is_32_new, Ai_is_32_new,
+                false)) ;
+        }
+
+        GB_OK (GB_conform (A, Werk)) ;
+        ASSERT_MATRIX_OK (A, "A final resized (quick)", GB0) ;
         return (GrB_SUCCESS) ;
     }
 
@@ -84,7 +139,7 @@ GrB_Info GB_resize              // change the size of a matrix
     ASSERT_MATRIX_OK (A, "Final A to resize", GB0) ;
 
     //--------------------------------------------------------------------------
-    // resize the matrix
+    // resize the matrix for the general case
     //--------------------------------------------------------------------------
 
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
@@ -97,6 +152,8 @@ GrB_Info GB_resize              // change the size of a matrix
         //----------------------------------------------------------------------
         // A is full or bitmap
         //----------------------------------------------------------------------
+
+        GBURBLE ("(bitmap/full) ") ;
 
         // get the old and new dimensions
         int64_t anz_new = 1 ;
@@ -233,7 +290,6 @@ GrB_Info GB_resize              // change the size of a matrix
         A->vdim = vdim_new ;
         A->vlen = vlen_new ;
         A->nvec = vdim_new ;
-//      A->nvec_nonempty = (vlen_new == 0) ? 0 : vdim_new ;
         GB_nvec_nonempty_set (A, (vlen_new == 0) ? 0 : vdim_new) ;
 
     }
@@ -243,6 +299,8 @@ GrB_Info GB_resize              // change the size of a matrix
         //----------------------------------------------------------------------
         // convert A to hypersparse and resize it
         //----------------------------------------------------------------------
+
+        GBURBLE ("(sparse/hypersparse: general case requiring a wait) ") ;
 
         // convert to hypersparse
         GB_OK (GB_convert_any_to_hyper (A, Werk)) ;
@@ -299,7 +357,7 @@ GrB_Info GB_resize              // change the size of a matrix
         GB_OK (GB_hyper_prune (A, Werk)) ;
 
         //----------------------------------------------------------------------
-        // resize the matrix and the integers are valid for the new dimensions
+        // resize the matrix and ensure integers are valid for new dimensions
         //----------------------------------------------------------------------
 
         ASSERT_MATRIX_OK (A, "A just before resize vlen, vdim", GB0) ;
@@ -307,7 +365,7 @@ GrB_Info GB_resize              // change the size of a matrix
         A->vdim = vdim_new ;
         A->vlen = vlen_new ;
 
-        // At this point, the dimesions just have been changed but the integers
+        // At this point, the dimensions just have been changed but the integers
         // of Ap, Ah, and Ai have not.  The integer sizes may be temporarily
         // invalid.  They will be valid after the call to GB_convert_int below.
 
@@ -318,7 +376,7 @@ GrB_Info GB_resize              // change the size of a matrix
         if (Ap_is_32_new != A->p_is_32 ||
             Aj_is_32_new != A->j_is_32 ||
             Ai_is_32_new != A->i_is_32)
-        {
+        { 
             // The matrix integers need to change.  Do not validate the input
             // matrix or the new settings since the existing dimensions may not
             // be suitable with the existing integer sizes.  They will be valid

@@ -41,6 +41,7 @@ extern "C"
 GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
 (
     GrB_Matrix *Thandle,        // output matrix T, header allocated on input
+    int data_arena,             // data arena for T
     GrB_Type ctype,             // desired type of T
     const bool C_is_csc,        // desired CSR/CSC format of C and T
     const bool C_iso,           // true if C (and T) is iso
@@ -61,13 +62,15 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+    cudaStream_t stream = nullptr ;
     ASSERT (Thandle != NULL) ;
     GrB_Matrix T = (*Thandle) ;     // just the header of T is given on input
     ASSERT (T != NULL) ;
 
-    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int device = data_arena - GxB_NARENAS ;
 
-    cudaStream_t stream = nullptr ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     GB_void *Key_input = NULL ;
     uint64_t Key_input_mem = mem ;
     GB_void *Swork = NULL  ;
@@ -90,6 +93,9 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
 
     size_t csize = ctype->size ;
 
+    GB_OK (GB_cuda_stream_pool_acquire (device, &stream)) ;
+    GB_OK (GB_wait_arenas (A)) ;
+
     //--------------------------------------------------------------------------
     // construct Key_input
     //--------------------------------------------------------------------------
@@ -107,24 +113,29 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;
-
     // determine the geometry of the CUDA kernel launches
-    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int32_t number_of_sms = GB_Global_gpu_sm_get (device) ;
     int64_t raw_gridsz = GB_ICEIL (anz, GB_CUDA_TRANSPOSE_PREP_CHUNKSIZE) ;
     int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
     gridsz = std::max (gridsz, 1) ;
 
-    double t = GB_OPENMP_GET_WTIME ;        // fixme
+    GBURBLE ("(cuda transpose, device %d, sms: %d, gridsz: %d) ",
+        device, number_of_sms, gridsz) ;
+
+    #ifdef TIMING
+    double t = GB_OPENMP_GET_WTIME ;
+    #endif
 
     GB_OK (GB_cuda_transpose_prep_jit (
         /* output: */ Key_input,
-        /* input: */ Key_is_32, A, stream, gridsz)) ;
+        /* input: */ Key_is_32, A, device, stream, gridsz)) ;
 
     GB_OK (GB_cuda_stream_pool_release (&stream)) ;
 
+    #ifdef TIMING
     t = GB_OPENMP_GET_WTIME - t ;
-    printf ("CUDA transpose prep time: %g\n", t) ;  // fixme
+    printf ("CUDA transpose prep time: %g\n", t) ;
+    #endif
 
     //--------------------------------------------------------------------------
     // allocate the output matrix
@@ -140,7 +151,7 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
     info = GB_new (Thandle, // hyper, existing header
         ctype, avdim, avlen, GB_ph_null, C_is_csc,
         GxB_HYPERSPARSE, A_hyper_switch, 0,
-        Cp_is_32, Cj_is_32, Ci_is_32, GB_ARENA_RMM, GB_ARENA_RMM) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, data_arena, data_arena) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     GB_void *X = NULL ;
@@ -174,9 +185,8 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
     else if (op != NULL)
     { 
         // Swork = op (A)
-        // fixme: tell GB_apply_op it "must" use the GPU
-        info = GB_apply_op (Swork, ctype, C_code_iso, op, scalar,
-            binop_bind1st, flipij, A, GB_ARENA_RMM, Werk) ;
+        info = GB_apply_op (Swork, data_arena, ctype, C_code_iso, op, scalar,
+            binop_bind1st, flipij, A, Werk) ;
         ASSERT (info == GrB_SUCCESS) ;
         // GB_cuda_builder will not need to typecast Swork to T->x, and it may
         // choose to transplant it into T->x
@@ -199,6 +209,7 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
 
     GB_OK (GB_cuda_builder (
         Thandle,    // create T using an existing header
+        data_arena, // arena of T
         ctype,      // T is of type ctype
         avdim,      // T->vlen = A->vdim, always > 1
         avlen,      // T->vdim = A->vlen, always > 1

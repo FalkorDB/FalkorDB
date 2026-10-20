@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__add__000203aaa0aaace.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -9,6 +9,8 @@
 //------------------------------------------------------------------------------
 
 #include "include/GB_jit_kernel.h"
+
+#define GB_SET_UNION 1
 
 // op: (max, float)
 
@@ -122,7 +124,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x33cc5a4a7114c9bd ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

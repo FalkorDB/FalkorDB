@@ -9,6 +9,8 @@
 
 #include "GB.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Iterator_new_arena
 (
     GxB_Iterator *iterator,
@@ -16,8 +18,20 @@ GrB_Info GxB_Iterator_new_arena
 )
 {
 
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (iterator) ;
+    (*iterator) = NULL ;
+    GB_OK (GB_check_arena (header_arena)) ;
+
+    //--------------------------------------------------------------------------
+    // create the iterator
+    //--------------------------------------------------------------------------
+
     uint64_t header_mem = GB_mem (header_arena, 0) ;
     (*iterator) = GB_CALLOC_MEMORY (1, sizeof (struct GB_Iterator_opaque),
         &header_mem) ;
