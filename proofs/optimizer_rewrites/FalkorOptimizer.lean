@@ -21,9 +21,12 @@ Each file's header maps its definitions to Rust `file:line`.
 Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
 references, count extraction, fusion preconditions, Project/Aggregate outputs),
 `Sequence` (`optimize` sequencing, the tree rebuilds, edge-filter absorption).
+`PushPlan` (gap closed 2026-10-20: push_filters_down on a plan tree with write
+effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
+re-ordering, #2556).
 `AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
 AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
-Build: `lake build` — 133 theorems, no `sorry`/`admit`/`axiom`. Every row of
+Build: `lake build` — 156 theorems, no `sorry`/`admit`/`axiom`. Every row of
 COVERAGE.tsv is PROVEN or CONDITIONAL. Rust source: origin/main `0f45a8685` (re-targeted across #2390,
 d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
 #3335: filters rebuilt with `and_of`).
@@ -135,6 +138,56 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    ("called `Option::unwrap()` on a `None` value"); C: `Query cannot conclude with MATCH`.
    Lean `root_scan_has_no_parent`. Fix: `let Some(parent) = …parent() else { continue }`.
 
+## Gap closed 2026-10-20 (#748, #997, #3352) — `PushPlan`
+
+The push-down theorems above compare result rows only and route by `(id, scope)`.
+`PushPlan` gives push_filters_down a plan tree with graph state that writes
+change, and the routing exactly as main computes it (bare ids, `get_variables`
+walking through `Aggregate`, Case 1/Case 2 inheritance). Property `EffectSound`
+(rows **and** the graph left behind are kept); `RowSound` is the old criterion;
+`RoutesBound` (a pushed conjunct reads only variables available where it lands).
+
+9. **#748 / #997: a constant-false WHERE after `CALL { MERGE/CREATE }` is pushed into
+   the Apply's left branch, so the write never runs** — `push_filters_down.rs:264-276`
+   (`all` over an empty variable set is vacuously true, so the conjunct enters every
+   child, including the rows that feed the write-bearing right branch).
+   `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0` →
+   Rust 0 nodes, C 1; with `WITH *` both 1. `CALL { CREATE () } UNWIND 0 AS x MATCH ()
+   WHERE false RETURN 0` → Rust 0, C 1; the CASE-wrapped false → 1 on both. Lean
+   `bug748_merge_skipped`, `bug997_create_skipped` (`¬ EffectSound`), `bug748_rows_only_blind`
+   / `bug997_rows_only_blind` (the rows-only criterion holds on them), controls
+   `bug748_with_star_control`, `bug997_case_control`; `bug748_fixed`/`bug997_fixed` for a write barrier.
+10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
+   (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
+   left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
+   into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
+   (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
+   Argument → `n = 1, e = null` (C 123). Lean `bug3352_plan`, `bug3352_routes_unbound`
+   (`¬ RoutesBound`), `bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
+   for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
+
+## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
+
+The push-down proofs judged where `push_filters_down` moves a Filter, but no
+model followed an inline-attr Filter through `select_scan_node`'s chain
+rebuild. `PushPlan` now has `IR::CondTraverse` with its relationship and
+`transposed` (`Op.hop`), the rebuild branch of `select_scan_node`
+(`selectScan`, select_scan_node.rs:681-1260) and the property
+`KeepsFiltersBound` (a rewrite never moves a Filter below the operator that
+binds what it reads).
+
+11. **#2556: an inline property filter lands below the hop that binds it** —
+   with the bottom hop's outer child kept (`Unwind`), `initial_bound` still
+   seeds the best endpoint (`select_scan_node.rs:979-990`); `t {id:100}` wins
+   the endpoint choice on cardinality, so `t` is "bound" before any hop and
+   its Filter is placed after the first hop (:1202-1230).
+   `MATCH (x:Person {id:2}) WITH collect(x) AS fs UNWIND fs AS f MATCH
+   (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}),
+   (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)` → Rust 0, C 3 (live). Lean
+   `bug2556_plan`, `bug2556_t_seeded`, `bug2556_filter_below_binding`
+   (`¬ KeepsFiltersBound`, count 0 vs 3); `bug2556_fixed` (no seeding: the C plan);
+   `bug2556_push_not_cause` (`push_filters_down` leaves the Filter in place).
+
 ## Shared with C / deviations from openCypher (not Rust regressions)
 
 * `reduce_count` bakes the count at plan time: `CREATE (:Z) RETURN 1 AS c UNION ALL
@@ -204,3 +257,4 @@ import FalkorOptimizer.Helpers
 import FalkorOptimizer.Sequence
 import FalkorOptimizer.CallBoundary
 import FalkorOptimizer.AndOf
+import FalkorOptimizer.PushPlan

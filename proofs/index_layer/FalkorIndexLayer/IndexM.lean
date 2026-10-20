@@ -37,6 +37,12 @@ structure Idx where
   total : Nat
   language : Option String
   stopwords : Option (List String)
+  /-- Gap closed 2026-10-20 (#3166): the stopword list the live RediSearch spec was
+  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1119-1133`, read by
+  `RediSearch_CreateIndex`). RediSearch fixes it at creation: `register_fields`
+  (`mod.rs:1181`) adds fields to the spec and never touches it. `none` = the
+  `SetStopwords(null, 0)` arm (`mod.rs:1132`), i.e. RediSearch's own default. -/
+  rsStop : Option (List String) := none
 
 namespace Idx
 
@@ -53,7 +59,8 @@ def bumpId (x : Idx) (g' : Nat) : Idx := { x with id := g', slots := x.slots.bum
 and `pending_slots` are the *same* `Arc`s (shared, not copied). -/
 def cloneForUpdate (x : Idx) : Idx :=
   { id := x.id, spec := x.spec, rs := x.rs, fields := x.fields, order := x.order, slots := x.slots,
-    progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords }
+    progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords,
+    rsStop := x.rsStop }
 /-- `has_rs_index` (`mod.rs:1088`). -/
 def hasRsIndex (x : Idx) : Bool := x.spec.isSome
 /-- `rs_ptr` (`mod.rs:1095`): `none` is the null pointer. -/
@@ -64,16 +71,17 @@ def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
 /-- `create_rs_index` (`mod.rs:1101`). Error order as in Rust: stopwords
 `CString::new` (1108), language `CString::new`/unsupported (1129-1133), label
 `CString::new` (1140). On success the spec is fresh and carries only
-`NONE_INDEXABLE_FIELDS` (1155-1163). -/
+`NONE_INDEXABLE_FIELDS` (1155-1163), and (#3166 gap) is created with the stopword
+list `stop` (`mod.rs:1119-1133`), recorded as `rsStop`. -/
 def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) : Except String Idx :=
   if (stop.getD []).any hasNul then .error "nul" else
   match lang with
   | some l => if hasNul l then .error "nul" else if !langOk l then .error s!"Language is not supported: {l}"
               else if hasNul label then .error "nul"
-              else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩] }
+              else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
   | none => if hasNul label then .error "nul"
-            else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩] }
+            else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
 /-- The metric match of `register_fields` (`mod.rs:1273-1286`). -/
 def metricOf (sim : Option String) : Except String String :=

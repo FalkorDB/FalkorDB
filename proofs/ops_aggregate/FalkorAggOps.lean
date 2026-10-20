@@ -10,12 +10,13 @@ import FalkorAggOps.AggNext
 import FalkorAggOps.StreamOps
 import FalkorAggOps.LoadCsv
 import FalkorAggOps.Discharge
+import FalkorAggOps.SlotReuse
 
 /-!
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
 Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
-No `sorry` / `admit` / `axiom`. 70 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
+No `sorry` / `admit` / `axiom`. 201 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 (graph/tests/lean_ops_aggregate.rs; the 5 `bug_*` tests fail today, the 3 `agrees_*` pass).
 
@@ -88,6 +89,22 @@ made `GroupKey::eq` `sort_cmp == Equal` (aggregate.rs:94) and canonicalised NaN/
 (`cmpKey_lawful_main`, `cmpKey_trans_main`, `heapCmp_main`). The sort.rs `cmp_key`/`cmp`/`cmp`
 and aggregate.rs `hash` rows are PROVEN again. New fn `tiebreak` (sort.rs:237):
 `tiebreak_strict`, `tiebreak_swap`.
+
+## Gap closed 2026-10-20: binder slot ids across an aggregating WITH/RETURN (`SlotReuse.lean`)
+The aggregate model kept outputs, accumulators and pre-projection aliases in separate abstract
+slots; the binder numbers each scope from 0 and `Row` is keyed by the bare id, so they collide.
+`projLayout` mints the ids as the binder does (accumulators at `len` of the pre-projection scope,
+binder.rs:1072-1078/:2193-2200; aliases 0.. in the new scope, :1149-1167), `finishCore` /
+`finishVals` / `cell` add what `unbind` keeps (row.rs:160) and what a reader sees (batch.rs:631-640,
+:763-778). Properties a fix should prove: `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`
+(`AggRowSpec`). Refuted on main, each mirroring the live repro (Rust 9d3869aa8 vs C):
+`bug3375_output_overwrites_next_acc` (#3375: sum = count, 3 vs 6), `bug3375_avg_panics`
+(`finalize_avg` unreachable), `bug3150_null_key_unbound` (#3150: null key unbound → reply.rs:655
+panic; `'a'` survives as value-only), `bug3333_alias_binds_next_var` (#3333: alias of `m` binds
+`b`'s id 2), `bug3369_count_acc_in_merge_slot` / `bug3368_count_acc_in_merge_slot` (#3369, #3368:
+`count(*)` accumulators left value-only at the ids of later MERGE nodes; the MERGE that then reads
+them as bound is merge.rs, not modelled here). Controls that agree with live: `agree3375_one_key`,
+`agree3333_controls`.
 
 ## Wave-5 additions
 | Lean | Rust |

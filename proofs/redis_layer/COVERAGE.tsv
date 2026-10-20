@@ -95,10 +95,10 @@ src/reply.rs	reply_result	619	PROVEN	Resp.resultCalls: compact_reply, verbose_re
 src/reply.rs	reply_verbose	668	PROVEN	Resp.resultCalls false: verbose_reply
 src/reply.rs	reply_compact	676	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
 src/graph_core.rs	up_to_nul	87	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
-src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key))
+src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); KeyName.lossy (concrete from_utf8_lossy) — #2653: bug2653_nonutf8_key_mangled
 src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
-src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get
-src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others
+src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
+src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok, bug2782_invariant_broken (#2782)
 src/graph_core.rs	rename_graph	202	PROVEN	GraphCore.rename: rename_moves, rename_absent
 src/graph_core.rs	WriteQueryOk::new	256	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
 src/graph_core.rs	ffi::sanitise_error	318	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
@@ -134,7 +134,7 @@ src/graph_core.rs	profile_mut	1352	PROVEN	GraphCore.profileOutcome/dispatch (adm
 src/graph_core.rs	profile_sync	1453	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
 src/graph_core.rs	finish_write	1520	PROVEN	GraphCore.writeSteps (commit+committed if writer, else release_slot, #3290): reply_after_commit
 src/graph_core.rs	abandon_write	1554	PROVEN	GraphCore.abandonSteps (resync only if the slot is held, #3290): failed_no_commit, stale_run_silent
-src/graph_core.rs	commit_and_replicate	1571	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent
+src/graph_core.rs	commit_and_replicate	1571	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent; replicated key bytes = utf8(lossy(key)): KeyName.bug2653_nonutf8_key_mangled (#2653)
 src/graph_core.rs	process_write_queued_query	1615	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit); slot dropped on dequeue: SearchConcurrency Pool.paths_release_once
 src/graph_core.rs	CtxSink::replicate	1764	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
 src/graph_core.rs	graph_free	1777	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
@@ -279,7 +279,7 @@ src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName
 src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
-src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part NOT modelled
+src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
 src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two (+ GraphCore.writeSteps; write_version: QuerySession.reader_takes_no_slot)
 src/commands/record.rs	graph_record	174	PROVEN	Commands.recordKey: recordKey_creates
 src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end

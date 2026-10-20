@@ -91,6 +91,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 | 2 | `rangeIter_wraps`, `rangeIter_panics` | `UNWIND range(i64::MAX - 1, i64::MAX)` yields `MAX-1, MAX, MIN, MIN+1, …` and never stops in release, and panics on overflow in debug. The eager `range()` gives the two elements | **Open**: issue #2894, PR #2899 not merged |
 | 3 | `pre2907_sign_float_is_float` | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
 | 4 | `int_float_eq_not_transitive` | Whenever two distinct integers round to the same `f64`, `=` stops being transitive: `2^53+1 = 2^53.0` and `2^53 = 2^53.0`, yet `2^53+1 <> 2^53` | Harmless: C promotes the same way (Neo4j compares exactly). `ORDER BY` no longer depends on it since #2912 (see `value_order`) |
+| 5 | `bug2724_prev_missing` (`FnRegistry.lean`) | `prev()` is a documented, user-callable C function but is not registered in Rust ("Unknown function 'prev'"). Property `CoversC` (every non-internal C built-in resolves); `covers_all_but_prev` shows it is the only gap | **Open** (#2724) |
 | — | `toInteger_float_vs_string` | `toInteger(1e30)` saturates to `i64::MAX`, while `toInteger('1e30')` returns `null` | Noted difference, not filed |
 
 **CONDITIONAL rows.** Four rows are covered but not proven outright, because each rests on a hypothesis about other Rust code:
@@ -106,19 +107,20 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 | `Eval.lean` | `ExprEval` entry points and fast paths: `eval`, `eval_operand`, variable resolution, constants and parameters |
 | `EvalMore.lean` | Batch evaluation (`eval_batch`), `classify_join_keys`, UNWIND iteration, compiled regex, map projection |
 | `BFS.lean` | `NeighborIter` and the bidirectional BFS behind `shortestPath`; `bfs_sound` |
+| `FnRegistry.lean` | #2724: the registered function names vs. C's user-callable built-ins |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN`/`I64MAX`, `wrap_id`) come from [`../core`](../core) through a Lake path dependency.
 
 ## Coverage
 
-`COVERAGE.tsv` has 92 rows: 30 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs` and `eliminate_true_filters.rs`.
+`COVERAGE.tsv` has 93 rows: 30 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs`, `eliminate_true_filters.rs` and `functions/mod.rs` (`init_functions`, MODELLED: the registered name set, #2724).
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 44 |
 | CONDITIONAL | 4 |
-| MODELLED | 15 |
+| MODELLED | 16 |
 | NOT COVERED | 29 |
 
 - **MODELLED:** helpers the proofs use but don't state a theorem about, for example `compare_value` (scalar subset), `compare_floats`, `ExprColumn::get`, `range` (used as the spec of `rangeIter_ok_up`) and `eval_per_row` (taken as the induction hypothesis). `eval_compound` is MODELLED because only its `And`/`Or`/`Xor`/`Negate`/`Pow`/`In`/comparison arms are modelled; the list, map and comprehension arms are not.

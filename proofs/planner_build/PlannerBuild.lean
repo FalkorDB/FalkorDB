@@ -6,7 +6,7 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-483 theorems. Rust source: origin/main `0f45a8685` (re-targeted across #2390, d2c42e032
+511 theorems. Rust source: origin/main `0f45a8685` (re-targeted across #2390, d2c42e032
 "plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
 `AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
 longer unwraps one, `PatternMode::descend` no longer treats it as a connective). Rust repros: `cargo test -p graph --test lean_planner_build`
@@ -47,6 +47,7 @@ longer unwraps one, `PatternMode::descend` no longer treats it as a connective).
 | `Fmt.*` | EXPLAIN text mod.rs:341-536 |
 | `Ast.*`, `Ast2.*` | parser/ast.rs: `Variable` impls, `QueryGraph` builders, `filter_visited`, `connected_components`/`dfs`, `validate`/`inner_validate`, `return_column_names`, the `Display` impls |
 | `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:814 |
+| `E.MP.pathVars`, `E.BindsAllPaths`, `E.compVars`, `E.planMatchArm`, `E.MP.toPlan`, `Plan.argIsLeaf` (PathBind.lean) | paths a `plan_match` tree binds (PathBuilder mod.rs:1977-1980, elision :2350-2387); `QueryGraph::variables` ast.rs:816-822; MATCH arm mod.rs:3034-3082; Argument builds no children runtime.rs:658-660, emits one row :1285 |
 
 ## Proven (plain English)
 
@@ -172,6 +173,26 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    `create_loop_correct`. Lean `create_path_last_misplaced`, `create_path_last_skips_create`.
    Fix: the bug 1 fix (#3101 adds `PathBuilder` to the first walk) covers this too.
 
+## Gap closed 2026-10-20: named paths over an already-bound node (PathBind.lean)
+Open issues #2311, #2727, #2737, #2743, #2744, #2725 were missed: `nodeOnly_bound_*` described the
+bound node-only branch (mod.rs:1915-1962) but no property said a named path gets built, and the MATCH
+arm's Apply decision was not modelled. Now: the property `E.BindsAllPaths` (every named path of a
+MATCH / OPTIONAL MATCH pattern is bound by the plan) and `Plan.argIsLeaf` (no `Argument` has a child);
+root causes `nodeOnly_bound_no_paths` (the bound branch never emits `PathBuilder`) and
+`planMatchArm_path_unwrapped` (`all_visited`, mod.rs:3067, counts the new path variable, so the plan is
+not Apply-wrapped and stitching puts the previous clauses under its `Argument`, which the runtime never
+runs: `argument_fill_ignores_input`). Counterexamples mirroring the live repros (Rust 9d3869aa8 vs C):
+`bug2311_optional_path_null`, `bug2737_optional_path_null` (OPTIONAL: path null),
+`bug2743_bound_path_drops_rows` (count 0 vs 1), `bug2744_bound_path_unfed_argument`,
+`bug2727_alias_path_drops_rows` (0 rows vs 1), `bug2725_call_then_bound_path_loses_var` (one empty row:
+`Variable n0 not found`). `unbound_path_built`: the unbound branch satisfies the property.
+Not in this project: #2502 (the parser's `parse_pattern`, cypher.rs:1562-1572, called for a WHERE pattern
+predicate at cypher.rs:2119, swallows a following `MATCH` keyword and merges that clause's pattern into the
+predicate — `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → `'m' not defined`), and
+#2556 (the planner's Filter for `t {id:100}` sits right above the hop binding `t` —
+`firstRel_lowers_to`/`chainRel_lowers_to`; the optimizer moves it below, see the working variants'
+EXPLAIN).
+
 ## Open PRs touching planner/mod.rs (model = origin/main)
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
   CALL body walk — fixes bug 1 (`merge_path_last_misplaced` no longer applies: `walkFirst` would pass it).
@@ -231,3 +252,4 @@ import PlannerBuild.Fmt
 import PlannerBuild.Rename
 import PlannerBuild.Ast
 import PlannerBuild.Ast2
+import PlannerBuild.PathBind

@@ -32,6 +32,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 **3. Can the server deadlock?**
 
 - **Lock order.** `no_cycle` proves threads that acquire locks in rank order cannot form a wait-for cycle. `all_programs_ordered` checks that every locking path (the writer including escalation, the inline writer, index population, background index drop, the fork preparation, telemetry flush) obeys GIL < graph < indexer < registry. `bad_escalate_rejected` shows the checker catches a wrong order.
+- **RediSearch's locks (gap closed 2026-10-20, #3226).** The ranks now include RediSearch's global `RWLOCK` and per-spec lock, which an index scan holds from opening to dropping. A write that commits with its scan still open re-takes the spec lock as a writer (`bug3226_open_scan_upgrade`, a live abort) and takes the GIL while holding RediSearch's locks (`bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle`). Read scans, population, `RESTORE` and writers whose scan closes before the commit are ordered (`spec_programs_ordered`).
 - **The write queue hand-off.** `drain_no_lost_message` checks exhaustively, for 2 producers, that the `write_loop` flag protocol never strands a queued write; `recheck_needed` shows it would without its `is_empty` re-check.
 - **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (`pre3014_pool_deadlock_reachable`). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
 
@@ -91,6 +92,7 @@ All reproduced on live servers, Rust against C (scripts in `repro/`).
 | 3 (W3-conc-3) | `pre3087_dim_mismatch_dropped_range_entry`, `pre3087_noparams_dropped_range_entry` | A wrong-dimension vector removed the node from every index on its label | Fixed by #3087 (issue #3075): `docSet_vector_sound`, `vector_dim_mismatch_keeps_range_entry` |
 | 4 (W3-conc-4) | `pre3088_huge_k_kills_server` | A huge KNN `k` crashed the server | Fixed by #3088 (issue #3085): `alloc_bounded`, `huge_k_one_row` |
 | 5 | `pre3290_multi_write_refused` | An inline (`MULTI`/`EXEC`) write failed with "another write is in progress" while a queued write was matching. C creates it | Fixed by #3290 (issue #3093): `inline_write_ok`, `one_commit_per_version` |
+| #3226 | `bug3226_open_scan_upgrade`, `bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle` (properties `noReacquire`, `LockOrdered`) | A write that commits while its own index scan is still open (`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000`) takes RediSearch's spec lock as a writer while it holds it as a reader. The server aborts with `attempted to upgrade a spec read lock to a write lock`; C returns 10. The same path takes the GIL while it holds RediSearch's global lock, which makes a wait-for cycle with a `RESTORE` on the main thread. Paths that close the scan before the commit stay ordered (`spec_programs_ordered`). The BGSAVE-child half of the issue (a `pending_slots` mutex inherited across the fork) is not modelled | **Open** |
 
 Index option validation also differed from C: missing `dimension`/`similarityFunction` were accepted and `'Euclidean'` refused. That was fixed by #3094 (`rust_refuses_missing`, `rust_eq_c`). Two DDL-only differences remain and are pinned by `#guard`s: `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates an index (C refuses), and fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; `rust_keys_ok_imp_c`).
 
@@ -113,17 +115,17 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 115 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 116 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 66 |
 | AXIOMATISED | 20 |
-| MODELLED | 16 |
+| MODELLED | 17 |
 | NOT COVERED | 13 |
 
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
-- **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors.
+- **MODELLED:** functions that appear as a step of the transition system without a theorem of their own: `MvccGraph::new`/`from_graph` (`init`), `register_graph`, `execute_query`/`execute_profile`/`profile_sync` (a read on a snapshot), the `QuerySession` constructors, lock release and drop order, `must_run_inline`, and the `Field` constructors, and `CommitOp::next` (its lock path only, #3226).
 - **NOT COVERED:** string and reply-formatting helpers, config arithmetic (`compute_effective_timeout`), `rename_graph` (RENAME is not modelled), `reauthorize_write` (Redis pause and role flags), borrow helpers, and `MvccGraph::drop`. `reply_profile` is proven in `redis_layer`.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.

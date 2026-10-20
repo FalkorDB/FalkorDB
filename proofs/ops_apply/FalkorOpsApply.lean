@@ -5,6 +5,8 @@ import FalkorOpsApply.Delete
 import FalkorOpsApply.DeleteCancel
 import FalkorOpsApply.SetRemove
 import FalkorOpsApply.CartVhj
+import FalkorOpsApply.RowWrites
+import FalkorOpsApply.MergeSlot
 /-
 # ops_apply: MERGE, correlated sub-plans, FOREACH and UNION (FalkorDB-rs)
 
@@ -136,6 +138,31 @@ present (`setFromMapNode_replace`); the odometer only visits valid combinations
   Tests `bug_set_replace_node_from_node_keeps_pending_attrs`, `bug_set_replace_rel_from_map_keeps_pending_attrs`.
   Fix: clear the target's pending attributes in every `replace` branch.
 Also seen: W2-rewrites-3 (hash join keys Int/Float near 2^53, `keyAsI64_spec`).
+
+## Gap closed 2026-10-20 — per-row write visibility through Apply (`RowWrites`)
+The Apply model treated a sub-plan as a pure function of its row, so writes made by
+one outer row and read (or recycled) by a later one were outside every theorem.
+`RowWrites.WSub` adds the graph state, the queued writes and the Commit; batched Apply
+(`applyBatchedW`, one Commit per input batch) vs per-row (`applyRefW`, one per row).
+Properties stated (each refuted on main, each live-reproduced Rust vs C):
+* `WriteSeparable` — #2738, `bug2738_batched_call_hides_writes` (`can_batch` admits
+  Create/Delete/Set/Commit: `canBatchApply_admits_write`); fix target
+  `applyBatchedW_eq_ref_of_readIndep`.
+* `PartitionInvariant` — #2729, `bug2729_batch_split_flips_endpoint_check`, built from
+  `CreateBatch.createRel` + `Delete.deleteBatch` streaming per batch.
+* `NoStaleAlias` — #3164, `bug3164_stale_ref_deletes_recycled_id` (per-row commits
+  release ids that `IdSpace::reserve` reclaims while rows still hold them).
+
+## Gap closed 2026-10-20 — MERGE reads a value-only slot as its node (`MergeSlot`)
+`Merge.lean` keyed MERGE by the property alone, so the input row never mattered.
+`MergeSlot` adds the row (values + bound bits, `to_owned_row`) and the real hash input
+(`Ctors.mergeHashInput` with `get_by_id`, merge.rs:189): a value-only leftover at the
+variable's id (ops_aggregate `bug3368/3369_count_acc_in_merge_slot`) becomes the hash, and
+equal leftovers in two MERGEs share a cache entry (merge.rs:122-127).
+Properties: `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` (fix target: `fixKey_from_bound_node`,
+`fixed_binds_own_node`). Refuted, live-reproduced Rust vs C:
+* #3368 `bug3368_merge_takes_leftover_as_node` (`c` = `[B] b1`), `bug3368_fires_iff_leftovers_equal`;
+* #3369 `bug3369_merge_leaves_int_in_node_var` (`c` = `Int 1`), `bug3369_controls`.
 -/
 import FalkorOpsApply.Correlated
 import FalkorOpsApply.Union

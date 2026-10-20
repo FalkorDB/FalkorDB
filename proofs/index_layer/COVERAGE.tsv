@@ -50,8 +50,8 @@ graph/src/index/mod.rs	bump_id	1049	PROVEN	Slots.bump; bump_total, bump_fresh, o
 graph/src/index/mod.rs	clone_for_update	1068	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
-graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok
+graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
+graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop)
 graph/src/index/mod.rs	value_to_numeric	1357	PROVEN	valueToNumeric; equal_exact, numRange_exact
 graph/src/index/mod.rs	int_loses_f64_precision	1371	PROVEN	intLosesPrecision; intLosesPrecision_sound
 graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf (historical pre3081_open_bound_excludes_inf)
@@ -101,7 +101,7 @@ graph/src/index/indexer.rs	field_options	120	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	vector_options	140	PROVEN	Meta.IdxOptions.spec
 graph/src/index/indexer.rs	has_indices	168	PROVEN	Meta.Ixr.hasIndices_iff
 graph/src/index/indexer.rs	memory_usage	173	PROVEN	Meta.Ixr.memoryUsage_spec
-graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG); #3086 bump: createIndex_regen, createIndex_old_ticket_stale, createIndex_new_entry
+graph/src/index/indexer.rs	create_index	181	PROVEN	Meta.Ixr.createIndex_validates, createIndex_ok, createIndex_textopts_err, bug_range_after_fulltext (NEW BUG); #3086 bump: createIndex_regen, createIndex_old_ticket_stale, createIndex_new_entry; #3166: createIndex_fresh_stopwords_agree (new label), property CreateIndexKeepsStopwords refuted by bug3166_stopwords_not_applied / bug3166_violates (OPEN)
 graph/src/index/indexer.rs	drop_index	375	PROVEN	Meta.Ixr.dropIndex_spec, dropAttrs_wf, retain_nonempty
 graph/src/index/indexer.rs	remove	427	PROVEN	Meta.Ixr.remove_spec
 graph/src/index/indexer.rs	has_field_for_label	441	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
@@ -111,8 +111,8 @@ graph/src/index/indexer.rs	query	483	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp
 graph/src/index/indexer.rs	query_edges	497	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
 graph/src/index/indexer.rs	fulltext_query	508	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
 graph/src/index/indexer.rs	fulltext_query_edges	522	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	vector_query	541	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
-graph/src/index/indexer.rs	vector_query_edges	556	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound
+graph/src/index/indexer.rs	vector_query	541	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; #3382: IndexGaps.vectorQuery, property VectorQueryRequiresOperational refuted by bug3382_vector_query_ignores_operational, VectorQueryComplete by bug3382_partial_answer (OPEN)
+graph/src/index/indexer.rs	vector_query_edges	556	PROVEN	Meta.Ixr.lookups (route) + Iter.fulltextQ_exact / vectorQ_sound; same missing is_operational gate as vector_query (#3382)
 graph/src/index/indexer.rs	get_vector_metric	578	PROVEN	Meta.Ixr.getVectorMetric_spec
 graph/src/index/indexer.rs	get_vector_dimension	601	PROVEN	Meta.Ixr.getVectorDimension_spec
 graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Slots.inc; inc_dec_cur, ok_inc
@@ -123,7 +123,7 @@ graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Meta.Ixr.isTicketCurrent
 graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Slots.countFor
 graph/src/index/indexer.rs	enabled	720	PROVEN	Slots.countFor s.gen = 0; bump_fresh
 graph/src/index/indexer.rs	commit	730	PROVEN	Maintenance.commit_lookup, commit_preserves_inv
-graph/src/index/indexer.rs	commit_edge	760	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec
+graph/src/index/indexer.rs	commit_edge	760	PROVEN	Iter.commitEdge_lookup, delEdgeKey_spec; #2781 rollback: EdgeResync.resyncEdges
 graph/src/index/indexer.rs	get_fields	786	PROVEN	Meta.Ixr.lookups, isLabelIndexed_imp; Iter.queryN_mem/queryE_mem
 graph/src/index/indexer.rs	get_all_fields	799	PROVEN	Meta.Ixr.getAllFields_spec
 graph/src/index/indexer.rs	index_info	809	PROVEN	Meta.Ixr.indexInfo_spec (perm + sorted)
@@ -278,3 +278,5 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splic
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splice_remove	240	PROVEN	Leaf.ciRemove_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge	283	PROVEN	Leaf.ciMerge_spec, slotOf_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
+graph/src/runtime/pending.rs	resync_published_indexes	1635	MODELLED	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys/resyncEdges; property RollbackRestoresEdgeIndex refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit PD.resync_spec)
+graph/src/graph/graph.rs	commit_edge_index_locked	3850	MODELLED	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.resyncEdgeKeys (.1); PROVEN in proofs/graph_queries Index.commitEdgeDocs_mem

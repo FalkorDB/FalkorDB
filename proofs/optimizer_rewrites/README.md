@@ -23,6 +23,8 @@ The model gives the plan a reference meaning:
 
 A rewrite is correct if it keeps the multiset of result rows (and their order where ORDER BY applies), and does not make a query that succeeded start to fail.
 
+That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` change, and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph the query leaves behind. `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over; #748 and #997 are plans where they differ (`bug748_rows_only_blind`).
+
 ## The questions this project answers
 
 **1. Can a `WHERE` conjunct be pushed down safely?**
@@ -31,7 +33,10 @@ A rewrite is correct if it keeps the multiset of result rows (and their order wh
 - **Below Unwind, CondTraverse, Apply and ProcedureCall, yes** (`push_extend`): they keep their input columns.
 - **Below Sort, yes:** same rows, still sorted (`push_sort_perm`, `push_sort_sorted`).
 - **Below LIMIT or SKIP, no.** It changes which rows the LIMIT keeps (`limit_not_transparent`, `skip_not_transparent`). The exclusion list in `push_filters_down.rs` does not exclude them (`limit_skip_not_excluded`). Rust and C both return the wrong count here, so it is a shared spec bug, not a Rust regression. The only safe case is a conjunct whose verdict is the same on every row (`push_limit_const`).
-- **Routing is by variable id and scope** (`routesScoped_sound`): it only pushes where the variable is bound.
+- **Routing by variable id and scope is sound** (`routesScoped_sound`): it only pushes where the variable is bound.
+- **Main routes by bare id, not scope** (#3352): `bug3352_routes_unbound` and `bug3352_slot_collision_drops_match`.
+- **A variable-free conjunct enters every child, including the rows that feed a write** (#748, #997): `bug748_merge_skipped`, `bug997_create_skipped`.
+- **Re-ordering a traversal chain can land an inline filter below the hop that binds its variable** (#2556, in `select_scan_node`): `bug2556_filter_below_binding`.
 
 **2. Is merging two stacked filters exact?**
 
@@ -113,6 +118,10 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 7 | `pre2390_misses_*`, `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part **open** (PR #2918 not merged) |
 | 8 (W4-plan-4) | `root_scan_has_no_parent` | `CALL db.labels() YIELD label MATCH (n)` makes a scan the plan root; `utilize_node_by_id` calls `parent().unwrap()` on it | **Open**; the header says it still crashes on 8743953a8, FINDINGS says it no longer crashes on current builds but the `unwrap()` remains |
 | W6-opt-1 | `filter_pushed_through_boundary` | Push-down gives an OPTIONAL MATCH inside `CALL {}` the outer ids: "Variable n not found" where C returns rows. `fixed_keeps_filter` checks the trial fix | **Open** |
+| #748 | `bug748_merge_skipped` (property `EffectSound`; `bug748_rows_only_blind`) | `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0`: the constant `false` is pushed into both Apply branches, so the MERGE never runs. Rust 0 nodes, C 1; with `WITH *` both 1 (`bug748_with_star_control`) | **Open** |
+| #997 | `bug997_create_skipped` (property `EffectSound`; `bug997_rows_only_blind`) | `CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0`: `false` lands on the Apply's `Argument`, the CREATE never runs. Rust 0 nodes, C 1; the CASE-wrapped `false` reads `x` and stays above the Apply, 1 on both (`bug997_case_control`) | **Open** |
+| #3352 | `bug3352_slot_collision_drops_match`, `bug3352_routes_unbound` (properties `RowSound`, `RoutesBound`) | `… WITH p, count(r0) AS n OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked' …`: Case 2 inherits the bare ids of the whole pre-WITH subtree (through `Aggregate`), id 2 is taken for `r`, the filter lands on the `Argument`. Rust `e = null`, C 123 | **Open** (PR #3367) |
+| #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
 
@@ -133,6 +142,7 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | W6-opt-1: push-down across the `CALL {}` entry projection (namespace `Pr2845`) |
+| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes and main's id-only routing; `EffectSound` (rows and writes kept), `RowSound`, `RoutesBound`; #748, #997, #3352. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.

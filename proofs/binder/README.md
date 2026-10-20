@@ -94,6 +94,9 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W4-plan-2 | `getElement_rejected`, `negate_rejected` | `WHERE n.flags[0]` → "Expected boolean predicate" (C: 1); same for `true AND l[0]` and `true AND -null` | **Open** |
 | W4-plan-3 | `order_by_wrong_aggregate`, `const_kinds_conflated` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Open**; PR #3011 would widen it to non-aggregate ORDER BY, so fix this first |
 | W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
+| #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C errors ("Unable to locate a value with alias n1") | **Open** |
+
+**Gap closed 2026-10-20.** `PatternPredDeclaresNothing` (in `BindExpr.lean`) states that an accepted pattern predicate names only variables that are already visible; `bug1334_pattern_predicate_declares_var` refutes it on main. The slot-reuse family (#3333, #3369, #3375, #3368, #3150) comes from this binder's per-scope numbering, but it is modelled and refuted in [`../ops_aggregate`](../ops_aggregate) (`SlotReuse.lean`), where the colliding ids are consumed.
 
 Smaller over-acceptances, not filed as bugs: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` is accepted where C rejects (`agg_orderBy_by_name`), and so is `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`). `projectName_present_uncovered` shows a case where the invariant could break but a guard in the Rust prevents it; no bug.
 

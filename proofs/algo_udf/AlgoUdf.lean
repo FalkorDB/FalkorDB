@@ -195,6 +195,18 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 ## Gaps (earlier waves)
 Closed in wave 5: Dijkstra, the DFS enumeration, the BFS bound, BFS parent→edge
 reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
+
+## Gap closed 2026-10-20 (bugs the model missed; all **Open**, live-checked on main 9d3869aa8 vs C)
+* #3380 `Betweenness`: seeded draw loop and the C reference modelled.
+  `bug3380_default_size_16` (default 16, C 32; property `DefaultSizeMatchesC`),
+  `bug3380_seedless_deterministic` (no clock seed; `SeedlessRunVaries`),
+  `bug3380_seeded_fewer_sources` (20 requested on 40 nodes, seed 7 → 15; `SourcesExact`).
+* #3121 `CostProp`: `costProp` configured vs. absent kept apart (`edge_numeric_attr` :2104).
+  `bug3121_fastpath_missing_cost_zero`: the Dijkstra fast path (:2308) charges a configured
+  but missing cost 0 (C 1); property `MissingCostIsOne` (the enumeration path satisfies it).
+* #3349 `LagContract`: the LAGraph contract now has the `LAGRAPH_INVALID_GRAPH` (-1000)
+  outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
+  1×1, by column). `bug3349_one_node_projection_fails`; property `ProjectionTotal`.
 -/
 import AlgoUdf.Value
 import AlgoUdf.Config
@@ -226,3 +238,6 @@ import AlgoUdf.UdfClasses
 import AlgoUdf.UdfContext
 import AlgoUdf.UdfGlobals
 import AlgoUdf.UdfRepoOps
+import AlgoUdf.Betweenness
+import AlgoUdf.CostProp
+import AlgoUdf.LagContract

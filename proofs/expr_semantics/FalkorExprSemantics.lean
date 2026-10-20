@@ -1,6 +1,7 @@
 import FalkorExprSemantics.Eval
 import FalkorExprSemantics.EvalMore
 import FalkorExprSemantics.BFS
+import FalkorExprSemantics.FnRegistry
 import FalkorCore.Int64
 import FalkorCore.Float
 /-
@@ -106,6 +107,13 @@ bidirectional BFS meets, the parent-chain `expect`s never fire and the reconstru
 node sequence is a walk from src to dst over followed edges (invariants `scan_inv`,
 `level_inv`, `search_sound`, `chain_sound`, `chain_total`). Minimality of the BFS is argued
 in the source comment, not proved here.
+
+## Gap closed 2026-10-20
+
+* #2724 (`FnRegistry.lean`): property `CoversC` — every user-callable C built-in (the 104
+  non-internal `AR_FuncDesc`s of origin/master `builtin_funcs.c`) resolves in the Rust
+  registry. `bug2724_prev_missing`: `prev` does not (live: "Unknown function 'prev'"; C
+  returns null); `covers_all_but_prev`: it is the only one. **Open**.
 -/
 
 set_option linter.unusedSectionVars false

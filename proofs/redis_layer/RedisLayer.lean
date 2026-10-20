@@ -15,6 +15,8 @@ import RedisLayer.QuerySession
 import RedisLayer.GraphCore
 import RedisLayer.Commands2
 import RedisLayer.SlowLog
+import RedisLayer.MultiDb
+import RedisLayer.KeyName
 
 /-!
 # The Redis-facing layer (`src/`, excluding `redis_type.rs`)
@@ -227,4 +229,12 @@ report exactly the bytes the query's own traffic allocated/freed (below `2^64`) 
 (logging under `disable_tracking` is not counted), `other_thread_invisible` (the
 `QUERY_MEM_CAPACITY` check sees only the calling thread), `fresh_thread_counts` (the flag
 starts `true`).
+
+## Gap closed 2026-10-20 (bugs the model missed; both **Open**, live-checked on main 9d3869aa8 vs C)
+* #2782 `MultiDb`: keyspace keyed by `(db, key)` over the name-only `GRAPH_REGISTRY`.
+  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted; C ok×3), property
+  `KeyspaceRegistered` / `WritesSucceed`; `existing_ok` shows the invariant suffices.
+* #2653 `KeyName`: key names as bytes with a concrete `from_utf8_lossy`.
+  `bug2653_nonutf8_key_mangled` (`\xc3(bin` → `\xef\xbf\xbd(bin`, `\xff\xfe` → two U+FFFD),
+  property `ReplicatedKeyIsStored` (C satisfies it: `c_ok`; ASCII keys: `ascii_kept`).
 -/

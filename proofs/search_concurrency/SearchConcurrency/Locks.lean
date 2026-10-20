@@ -9,6 +9,7 @@
 | `populateProg`                 | `populate_index_batch` (`graph.rs:562`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3799`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
+| `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:93`) commits with the scan open |
 | `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1615`) `write_loop` flag protocol |
 | `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:59`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
 | `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
@@ -106,6 +107,116 @@ theorem all_programs_ordered :
     okProg [] dropIndexBgProg ∧ okProg [] forkProg ∧ okProg [] telemetryProg := by decide
 
 theorem bad_escalate_rejected : okProg [] badEscalateProg = false := by decide
+
+/-! ## Gap closed 2026-10-20 (#3226): the RediSearch locks an open index scan holds
+
+The ranks above stop at the registry; RediSearch's own locks were abstracted away, so
+`all_programs_ordered` could not see that an index scan keeps two of them **from scan
+open to scan drop**, not only for the duration of a call:
+
+* `rsGlobal`: RediSearch's global `RWLOCK` (`deps/RediSearch@ea1a6f4 src/rwlock.c:54-83`,
+  thread-reentrant; a read→write "upgrade" only trips an `RS_ASSERT` compiled out of
+  release builds, so it silently proceeds);
+* `rsSpec`: the per-spec `sp->rwlock` (`src/spec.c:2263-2310`). Re-entering it as a
+  writer while this thread holds it as a reader hits
+  `RS_LOG_ASSERT_ALWAYS(e->write, "attempted to upgrade a spec read lock to a write lock")`
+  (`spec.c:2304`) and aborts the server.
+
+Both are taken by `handleIterCommon` (`src/redisearch_api.c:904-905`, every
+`RediSearch_GetResultsIterator`, i.e. `Index::query` `mod.rs:1691` and the vector and
+full-text queries) and released only by `RediSearch_ResultsIteratorFree`
+(`redisearch_api.c:1064`), i.e. when the Rust `IndexResultsIter` drops with the scan op.
+`RediSearch_IndexAddDocument` (`redisearch_api.c:643-645`, reached from
+`Indexer::commit` `indexer.rs:730` → `Index::add_document`) takes both as a **writer**,
+and so do `RediSearch_CreateField` / `CreateIndex` (`redisearch_api.c:164`, …) on the
+RDB-load (`RESTORE`) path, which runs on the main thread under the GIL.
+
+They rank above the indexer lock: populate and commit take the indexer lock first and
+then call into RediSearch (`graph.rs:3828` `commit_index_locked`). -/
+
+def rsGlobal : Nat := 4
+def rsSpec : Nat := 5
+
+/-- **Property (#3226).** A thread never re-acquires a lock it already holds. For the
+RediSearch spec lock this is exactly the `spec.c:2304` assertion (read held, write
+wanted); with the rank order it is what `okProg` already demands, stated on its own so
+a fix that keeps the scan open but drops it before commit can prove it separately. -/
+def noReacquire : List Nat → List Op → Bool
+  | _, [] => true
+  | held, .acq l :: ops => !held.contains l && noReacquire (l :: held) ops
+  | held, .rel l :: ops => noReacquire (held.erase l) ops
+
+/-- **Property (#3226).** Every locking path is ordered (`okProg`, the premise of
+`no_cycle`) once the RediSearch locks are in the model. -/
+abbrev LockOrdered (p : List Op) : Prop := okProg [] p = true
+
+/-- A read query's index scan, opened and drained under the per-graph read lock. -/
+def readerScanProg : List Op :=
+  [.acq graphR, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal, .rel graphR]
+/-- `populate_index_batch` (`graph.rs:562`): indexer lock, then `add_document`. -/
+def populateSpecProg : List Op :=
+  [.acq indexer, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal, .rel indexer]
+/-- A writer whose index scan has been **dropped** before its commit publishes
+documents (e.g. `MATCH (n:W) WHERE n.v > 0 SET …` with no `LIMIT`: the scan is
+exhausted and freed before `CommitOp` escalates). -/
+def writerClosedScanProg : List Op :=
+  [.acq graphR, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal,
+   .rel graphR, .acq gil, .acq graphR, .acq indexer, .acq rsGlobal, .acq rsSpec,
+   .rel rsSpec, .rel rsGlobal, .rel indexer, .rel graphR, .rel gil]
+/-- `RESTORE` / RDB load on the main thread: GIL, then RediSearch as a writer. -/
+def restoreProg : List Op := [.acq gil, .acq rsGlobal, .acq rsSpec, .rel rsSpec, .rel rsGlobal, .rel gil]
+
+/-- With the RediSearch locks added, every path whose scan is closed before its
+commit is still ordered and never re-acquires. -/
+theorem spec_programs_ordered :
+    LockOrdered readerScanProg ∧ LockOrdered populateSpecProg ∧
+    LockOrdered writerClosedScanProg ∧ LockOrdered restoreProg ∧
+    noReacquire [] readerScanProg ∧ noReacquire [] populateSpecProg ∧
+    noReacquire [] writerClosedScanProg ∧ noReacquire [] restoreProg := by decide
+
+/-- Main at fb3d516d0, live repro of #3226:
+`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`.
+The index scan is opened in reader mode (`graphR`, then `handleIterCommon` takes
+`rsGlobal` and `rsSpec` as a reader). `LIMIT` stops pulling but the scan op, and so its
+results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs:93`) then
+escalates (`query_session.rs:386-391`: drop R, take the GIL, take W),
+`commit_deferred_indexes` takes the indexer lock (`pending.rs:1690` → `graph.rs:3815`),
+and `Indexer::commit` → `RediSearch_IndexAddDocument` takes `rsGlobal` and `rsSpec` as
+a writer while the same thread still holds them as a reader. -/
+def writerOpenScanProg : List Op :=
+  [.acq graphR, .acq rsGlobal, .acq rsSpec,            -- index scan opened, kept open
+   .rel graphR, .acq gil, .acq graphR,                  -- escalate (commit.rs:93)
+   .acq indexer, .acq rsGlobal, .acq rsSpec,            -- Indexer::commit → IndexAddDocument
+   .rel rsSpec, .rel rsGlobal, .rel indexer, .rel graphR, .rel gil,
+   .rel rsSpec, .rel rsGlobal]                          -- scan dropped with the plan
+
+/-- **BUG #3226 (abort).** Main re-acquires the RediSearch spec lock it holds as a
+reader: the `spec.c:2304` assertion. Live (port 6640, `main.dylib` at 9d3869aa8): the
+server aborts with `attempted to upgrade a spec read lock to a write lock`, stack
+`IndexSpec_LockWrite ← RediSearch_IndexAddDocument ← Indexer::commit ←
+Graph::commit_index ← Pending::commit_deferred_indexes ← CommitOp::next`; C returns 10. -/
+theorem bug3226_open_scan_upgrade : noReacquire [] writerOpenScanProg = false := by decide
+
+/-- **BUG #3226 (order).** The same path also takes the GIL while holding the RediSearch
+locks, the inversion behind the two-client stall. -/
+theorem bug3226_open_scan_unordered : ¬ LockOrdered writerOpenScanProg := by decide
+
+/-- **BUG #3226 (stall), as a wait-for cycle.** Thread 1 is the writer of
+`writerOpenScanProg` stopped at its escalation: it holds `rsGlobal` (read, from the
+open scan) and wants the GIL. Thread 0 is the main thread running `RESTORE`
+(`restoreProg`): it holds the GIL and wants `rsGlobal` as a writer. The issue's
+two-client run: PING gets no reply. `no_cycle` does not apply because the state is not
+`Ordered`. -/
+def stallState : WaitState :=
+  { holds := fun t => if t = 0 then [gil] else if t = 1 then [rsGlobal] else []
+    wants := fun t => if t = 0 then some rsGlobal else if t = 1 then some gil else none }
+
+theorem bug3226_restore_stall_cycle :
+    Chain (waitsOn stallState) 0 [1, 0] ∧ ¬ Ordered stallState := by
+  refine ⟨.cons ⟨rsGlobal, rfl, by decide⟩ (.cons ⟨gil, rfl, by decide⟩ (.nil 0)), ?_⟩
+  intro h
+  have := h 1 gil rfl rsGlobal (by decide)
+  exact absurd this (by decide)
 
 /-! ## Write-loop hand-off (`write_loop` flag), exhaustively checked
 

@@ -4,7 +4,7 @@
 A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
-most on `propext`, `Quot.sound`, `Classical.choice`. 181 theorems. Rust source: origin/main `0f45a8685`
+most on `propext`, `Quot.sound`, `Classical.choice`. 182 theorems. Rust source: origin/main `0f45a8685`
 (binder.rs re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR
 bind flat via `and_of`/`or_of` — `bind_andOr_paren`, `flatB_assoc`; planner/mod.rs cites
 re-targeted across #2390).
@@ -21,6 +21,15 @@ planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `mergeSV_covers`). **Removing** a key breaks it, and the binder removes keys
 in two places while the removed ids are still in the IR
 (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`).
+
+## Gap closed 2026-10-20: pattern predicates may declare variables (#1334)
+`bind_expr_node`'s `Pattern` arm (binder.rs:2077-2105) binds a WHERE pattern predicate with
+`bind_graph(…, false)`, which mints any unknown alias fresh. Property `PatternPredDeclaresNothing`
+(an accepted pattern predicate names only visible variables); refuted by
+`bug1334_pattern_predicate_declares_var`: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds with
+`n1` fresh (id 2) — live Rust returns every `n0`, C errors ("Unable to locate a value with alias n1").
+The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/ops_aggregate
+`SlotReuse.lean` (`projLayout` = this binder's per-scope minting fed to the aggregate).
 
 ## Lean ↔ Rust
 

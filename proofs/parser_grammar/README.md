@@ -104,6 +104,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | W4-parse-2 | `create_named_path_drops_dup_rel` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` creates 1 relationship (C: "already declared"); since #2829 `RETURN p, q` also returns an inconsistent path | **Open** |
 | W4-parse-3 | `merge_dup_rel_dropped` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` creates 1 relationship (C: error) | **Open** |
 | W4-parse-4 | `set_paren_property_accepted`, `type_colon_accepted` | `SET (n.x) = 5` and `[:A:B]` are accepted (C: syntax error) | **Open** |
+| #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `RETURN count(*)` Rust 1, C 2 | **Open** |
 | W3-parser-9 | `gate_changes_result` (history) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
 | #3057 | `not_not_kept`, `is_null_then_predicate`, `call_trailing_comma_refused`, `set_bracket_paren_refused`, `match_match_refused`, `load_csv_with_from_refused` | `NOT NOT x` was parsed as `x`; `1 IS NULL IN [false]` was rejected; `abs(-1,)`, `SET [n).x = 5`, `MATCH MATCH` and `LOAD CSV WITH FROM` were accepted | Fixed by #3060 (the theorems are now the correct behaviour) |
 
@@ -142,6 +143,7 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 | `C/Params.lean` | Query parameters and small helpers |
 | `C/Graph.lean`, `C/Components.lean`, `C/IR.lean`, `C/Fmt.lean` | `ast.rs`: `QueryGraph`, connected components, `QueryIR` validation, `Display` |
 | `C/ClauseBugs.lean`, `C/PatternBugs.lean` | The clause- and pattern-level counterexamples |
+| `C/PredicateBugs.lean` | #2502: `PredEndsBeforeClause` (a WHERE pattern predicate ends before a clause keyword) and its counterexamples |
 | `C/Oracle0.lean` | A small concrete expression oracle for running the clause models on examples |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

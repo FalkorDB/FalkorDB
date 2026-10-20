@@ -92,8 +92,18 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 | 6 (W4-plan-4) | `call_skips_rest`, `call_then_match_accepted` | Nothing after a procedure CALL is validated; `CALL db.labels() YIELD label MATCH (n)` reached a `parent().unwrap()` in `utilize_node_by_id` | **Open**; the header says it crashes the server, FINDINGS says it no longer crashes on current builds but the `unwrap()` remains |
 | 7 (W4-plan-5) | `with_last_accepted` | A query may end with WITH; C and openCypher reject it | **Open** |
 | 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8) |
+| #2311 | `bug2311_optional_path_null` | `MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0`: Rust `1, null`, C `1, [(0)]`. The bound node-only branch never builds the path (`BindsAllPaths` fails) | **Open** |
+| #2737 | `bug2737_optional_path_null` | `MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6`: Rust `null`, C `[(0)]`. Same cause as #2311 | **Open** |
+| #2743 | `bug2743_bound_path_drops_rows` | `MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)`: Rust 0, C 1. No path, and the plan is not Apply-wrapped, so the earlier clauses land under an `Argument` that never runs them (`argIsLeaf` fails) | **Open** |
+| #2744 | `bug2744_bound_path_unfed_argument` | `MATCH (n0:A) WITH n0 MATCH p=(n0) RETURN n0.k8, p`: Rust 0 rows, C 1 row. Plan `Project(ExpandInto(Argument(Project(Scan))))`, as the live EXPLAIN | **Open** |
+| #2727 | `bug2727_alias_path_drops_rows` | `MATCH (n0:A) WITH n0 AS alias4 MATCH (alias4), p1=(alias4) RETURN alias4.k0`: Rust 0 rows, C `'x'` | **Open** |
+| #2725 | `bug2725_call_then_bound_path_loses_var` | `MATCH (n0) CALL db.labels() YIELD label MATCH (n0), p0=(n0) RETURN …`: Rust `Variable n0 not found`, C `1, A, [(0)]`. Plan `Project(Argument(ProcedureCall(Scan)))`: one empty row | **Open** |
 
 Also: `where_scan_indistinguishable` shows why bug 3 happened (a planner-built `Filter` over a scan looks the same as the shape the optimizer rebuilds). `planFilter_correct` assumes all patterns of one WHERE start in one scope, because the planner keys inline patterns by variable id only; no query breaking that was found.
+
+The six issues #2311 … #2725 share two root causes, each a general theorem in `PathBind.lean`: `nodeOnly_bound_no_paths` (the already-bound node-only branch of `plan_match`, mod.rs:1915-1962, never adds a `PathBuilder`) and `planMatchArm_path_unwrapped` (the MATCH arm's `all_visited`, mod.rs:3067, counts the new path variable, so the plan is not wrapped in `Apply`). The properties a fix must prove are `BindsAllPaths` (every named path of the pattern is bound by the plan; `unbound_path_built` shows the unbound case already does) and `Plan.argIsLeaf` (no `Argument` has a child).
+
+Triaged here but not in this project: #2502 is the parser (`parse_pattern`, cypher.rs:1562-1572, called for a WHERE pattern predicate at cypher.rs:2119, takes a following `MATCH` keyword as a continuation and merges that clause into the predicate: `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → `'m' not defined`; parenthesising the WHERE fixes it). #2556 is the optimizer: the planner puts the `t {id:100}` Filter directly above the hop that binds `t` (`firstRel_lowers_to`, `chainRel_lowers_to`), and the optimized plan has it below that hop.
 
 There are no CONDITIONAL rows in this project.
 
@@ -116,6 +126,7 @@ There are no CONDITIONAL rows in this project.
 | `HopOrder.lean` | `self_loops_after_binders` (#3102) and the old loop |
 | `Misc.lean`, `Rename.lean`, `Fmt.lean` | Plan-tree helpers, `rename_projection_outputs`, EXPLAIN text |
 | `Ast.lean`, `Ast2.lean` | `parser/ast.rs`: variables, query graphs, connected components, validation, `Display` |
+| `PathBind.lean` | Named paths over an already-bound node: `BindsAllPaths`, `planMatchArm` (the MATCH arm), `Plan.argIsLeaf`, bugs #2311, #2727, #2737, #2743, #2744, #2725 |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.

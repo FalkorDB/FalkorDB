@@ -78,7 +78,7 @@ src/query_session.rs	graph_arc	311	NOT COVERED	accessor
 src/query_session.rs	with_graph	320	NOT COVERED	borrow helper
 src/query_session.rs	with_graph_mut	336	NOT COVERED	borrow helper
 src/query_session.rs	upgrade_to_write	354	PROVEN	Mvcc.delete_blocks_writes (registry check after escalation)
-src/query_session.rs	escalate	379	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726)
+src/query_session.rs	escalate	379	PROVEN	Locks.writerProg ordered; bad_escalate_rejected (#726); #3226: escalating with an index scan still open takes the GIL while holding RediSearch's locks (Locks.writerOpenScanProg; LockOrdered refuted by bug3226_open_scan_unordered, stall bug3226_restore_stall_cycle, OPEN)
 src/query_session.rs	reauthorize_write	413	NOT COVERED	pause/role flags (Redis state) not modelled
 src/query_session.rs	upgrade_to_write	454	PROVEN	delegates to QuerySession::upgrade_to_write
 src/query_session.rs	drop	464	MODELLED	release in reverse order (Mode field order)
@@ -114,3 +114,4 @@ graph/src/graph/graph.rs	vector_query_nodes	4204	PROVEN	Knn.alloc_bounded, no_ab
 graph/src/graph/graph.rs	vector_query_edges	4264	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	1881	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)
+graph/src/runtime/ops/commit.rs	next	69	MODELLED	lock path only (#3226): Locks.writerOpenScanProg (escalate at :93, commit_deferred_indexes → Indexer::commit → RediSearch_IndexAddDocument with the scan's spec read lock still held); properties noReacquire / LockOrdered refuted by bug3226_open_scan_upgrade, bug3226_open_scan_unordered (OPEN); scan-closed paths: spec_programs_ordered

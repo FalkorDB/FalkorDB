@@ -96,7 +96,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 2 | `unfiltered_drops_high_ids` | HarmonicCentrality sizes its source vector by node count, not the id bound, so nodes with high ids (after deletes) are dropped | **Open** |
 | 3 | `pagerank_unknown_label_compact_empty` | `pageRank` with an unknown label errors | **Open** |
 | 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness and HarmonicCentrality with an unknown `nodeLabels` entry return no rows; C errors "unknown label" | **Open** |
-| 5 | `pre3113_cost_default_diverges` | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0, as C's does (`dijkstra_cost_no_prop`) |
+| 5 | `pre3113_cost_default_diverges` | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), but also with a configured one the edge lacks, where C charges 1 (row 19) |
 | 6 | `forged_node_marker`, `forged_edge_marker` | A UDF result object carrying a forged `__falkor_type` marker is trusted, which panics the reply or creates a dangling edge (W3-algo-1) | **Open** |
 | 7 | `pre3074_neg_zero_not_preserved` | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
 | 8 | `pre3074_constructor_key_breaks_roundtrip`, `pre3074_constructor_regexp_becomes_string` | A map with a `constructor` key was taken for a `Date` or a `RegExp` | Fixed by #3074 |
@@ -109,6 +109,9 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
 | 16 | `getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
+| 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
+| 19 | `bug3121_fastpath_missing_cost_zero` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks costs 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne`; the enumeration path satisfies it (`rust_enum_ok`) | **Open** (#3121) |
+| 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
 
 Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
 
@@ -130,6 +133,9 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `Config.lean` | Procedure config parsing: `nodeLabels`, `relTypes`, `maxIterations`, `samplingSize`, `maxLen`, `pathCount` |
 | `Compact.lean` | Compact adjacency id↔index maps; WCC, CDLP, pageRank, Harmonic result assembly; betweenness sampling |
 | `Paths.lean` | `far_endpoint`, `cmp_found_path`, `record_found_path`, cost sums, the Dijkstra dispatch guard |
+| `Betweenness.lean` | #3380: betweenness `samplingSeed`, the seeded draw loop, and C's sampler and defaults |
+| `CostProp.lean` | #3121: `edge_numeric_attr` with `costProp` configured vs. absent; C's `_sum_path_cost` |
+| `LagContract.lean` | #3349: GraphBLAS storage orientation and `LAGraph_CheckGraph`'s `LAGRAPH_INVALID_GRAPH` outcome |
 | `MsfFlow.lean` | MSF's min-score monoid and component keys; maxFlow alignment |
 | `Graph.lean` | The graph view for the path searches: `Edge`, weighted `Walk`, hop walks, `node_successors` |
 | `DijkstraModel.lean`, `DijkstraInv.lean`, `Dijkstra.lean` | `dijkstra_single_path`: model, invariant preservation, `dijkstra_correct` |

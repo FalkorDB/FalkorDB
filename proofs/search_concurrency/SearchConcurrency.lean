@@ -185,6 +185,23 @@ recall) are hypotheses, not modelled; `Mvcc` abstracts the per-graph RwLock and
 versioned matrices (covered elsewhere); the drain check is exhaustive for 2
 producers only; memory ordering (Acquire/Release) is assumed SC; fork child
 behaviour beyond "sees `pub`" (GraphBLAS `wait_all`, OpenMP) is not modelled.
+
+## Gap closed 2026-10-20 (#3226; proofs cite fb3d516d0, repro on main 9d3869aa8)
+`Locks` now ranks RediSearch's global `RWLOCK` (`rsGlobal`) and per-spec `rwlock`
+(`rsSpec`) above the indexer lock. Both are taken by `handleIterCommon`
+(`deps/RediSearch src/redisearch_api.c:904-905`) and released only by
+`RediSearch_ResultsIteratorFree` (:1064), so an index scan holds them until it is
+dropped. Properties: `LockOrdered` (`okProg`, the premise of `no_cycle`) and
+`noReacquire` (the `spec.c:2304` assertion). `writerOpenScanProg` is the live repro
+`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000 RETURN count(n)`:
+the scan stays open below `LIMIT`, `CommitOp::next` escalates (`commit.rs:93`) and
+`Indexer::commit` → `RediSearch_IndexAddDocument` (:643-645) takes both locks as a
+writer. `bug3226_open_scan_upgrade` (live abort: "attempted to upgrade a spec read lock
+to a write lock", port 6640; C returns 10 on 6641), `bug3226_open_scan_unordered`, and
+`bug3226_restore_stall_cycle` (writer holds `rsGlobal` and wants the GIL; a `RESTORE`
+holds the GIL and wants `rsGlobal`). `spec_programs_ordered`: read scans, population,
+`RESTORE` and writers whose scan is closed before commit are ordered. Not modelled: the
+issue's BGSAVE half (a `pending_slots` mutex held by another thread at fork time).
 -/
 import SearchConcurrency.Search
 import SearchConcurrency.Tickets
@@ -209,3 +226,6 @@ import SearchConcurrency.Knn
 #print axioms SC.Pool.release_exactly_once
 #print axioms SC.Pool.count_eq_live
 #print axioms SC.Locks.never_stuck_3014
+#print axioms SC.Locks.bug3226_open_scan_upgrade
+#print axioms SC.Locks.bug3226_restore_stall_cycle
+#print axioms SC.Locks.spec_programs_ordered

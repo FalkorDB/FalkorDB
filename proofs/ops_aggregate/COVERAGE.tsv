@@ -14,8 +14,8 @@ graph/src/runtime/ops/aggregate.rs	consume_input_per_row	880	PROVEN	groupAll_spe
 graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	921	PROVEN	groupAll_spec, rowDriver_eq_batch
 graph/src/runtime/ops/aggregate.rs	run_agg_expr	990	PROVEN	rowDriver_eq_batch; DISTINCT branch: hashed_dedup_merges_groups, distinct_fold_clear_overcounts (BUGs)
 graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1091	PROVEN	setZero: setZero_eq, setZero_spec
-graph/src/runtime/ops/aggregate.rs	next	1120	PROVEN	aggNext/finishGroup: aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err; keyed_empty, keyless_one_row
-graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1239	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound
+graph/src/runtime/ops/aggregate.rs	next	1120	PROVEN	aggNext/finishGroup: aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err; keyed_empty, keyless_one_row; with binder ids (SlotReuse projLayout, finishCore/finishVals/cell) AggRowSpec is refuted: bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3150_null_key_unbound, bug3333_alias_binds_next_var, bug3369_count_acc_in_merge_slot, bug3368_count_acc_in_merge_slot (BUGs)
+graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1239	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; an accumulator id equal to a null key's id unbinds the key: bug3150_null_key_unbound (BUG)
 graph/src/runtime/ops/aggregate.rs	hash_u64	1263	PROVEN	hashU64: hashU64_spec (trait decl; collision: hashed_dedup_merges_groups)
 graph/src/runtime/ops/aggregate.rs	hash_u64	1267	PROVEN	hashU64: hashU64_spec (collision bug: hashed_dedup_merges_groups)
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec

@@ -14,6 +14,7 @@ import OpsTraverse.ASPStep
 import OpsTraverse.ASPFinal
 import OpsTraverse.ASPMain
 import OpsTraverse.ASPFuel
+import OpsTraverse.SlotFeed
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
@@ -21,7 +22,7 @@ import OpsTraverse.ASPFuel
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-166 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+176 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
@@ -45,6 +46,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `Drive.drive`, `capDrive`, `driveE` | the emitter-driven `next` loops (scans, CondTraverse with `trim_to_cap`, ExpandInto, CondVarLenTraverse, AllShortestPaths) |
 | `CTGlue` | `CondTraverseOp::new`/`build_state`/`trim_to_cap`/`out_alias_id`/`null_pad`/`next`, `ExpandIntoOp::new`, scan/builder constructors |
 | `VarLenGlue` | `path_value`, `VarLenIter::next` (frame-tree machine), `expand_row` endpoint plan, `new` |
+| `SlotFeed.aggRow`, `inputRow`, `declare` | how an Aggregate row feeds a later CondTraverse across `WITH`: `aggregate.rs:1150-1213`, `cond_traverse.rs:648-652,764-777`, binder slot ids `binder.rs:2155-2269` |
 | `IndexScan` | node/edge index scans (`evaluate_index_query`, `can_utilize_index`, `next` with the RediSearch contract `IndexSound` as hypothesis), fulltext and vector scans |
 
 ## What is proved (plain English)
@@ -129,6 +131,18 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    2397, 2518`; C: 1 per edge): `maxCost: 1` without `costProp` returns
    `[0,1,3]` cost 0 (C `[0,3]` cost 1). Test `bug_sppaths_default_cost_is_zero`.
 7. Out of target: `[x IN null | x]` returns `[]` (C `null`).
+
+8. **#3372: a grouping key's pre-projection slot leaks past `WITH`**
+   (`aggregate.rs:1187-1196` re-binds `c` at its scope-0 id; the binder numbers
+   each scope from 0, `binder.rs:2261`; CondTraverse reads the stale node as a bound
+   destination, `cond_traverse.rs:648-652,771-777`). `MATCH (a)-[:E]->(b)-[:E]->(c)
+   WITH c, count(*) AS k MATCH (c)-[:E]->(d)`: old `c` and new `d` are both slot 2,
+   Rust 0 rows (expected 4). Property `SlotFeed.ScopedRow`; Lean
+   `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`,
+   `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes`.
+
+Gap closed 2026-10-20: operator composition across `WITH` (Aggregate → CondTraverse)
+is now modelled at slot level (`SlotFeed.lean`), which catches #3372.
 
 ## Shared deviations from openCypher (C behaves the same or worse)
 

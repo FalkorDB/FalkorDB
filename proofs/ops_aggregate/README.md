@@ -70,6 +70,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `dedup_injective` | `DISTINCT` is correct exactly when its hash is injective | `Ops.lean` |
 | `drain_all` | The aggregate's `next` emits every group once, 1024 per batch | `AggNext.lean` |
 | `finishGroup_outputs` | Output bindings of a finished group take precedence | `AggNext.lean` |
+| `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in five open issues | `SlotReuse.lean` |
 | `unbind_after_zero` | Every accumulator the aggregate zeroes is unbound again afterwards | `AggState.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
@@ -95,9 +96,18 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | W2-agg-3 | `pre2912_partialCmpEq_not_transitive` | `percentileDisc`/`percentileCont` sorted with `partial_cmp().unwrap_or(Equal)`, which is not transitive with NaN; the sort panicked and the server crashed | Fixed by #2912 (`pctCmp_total`) |
 | W2-agg-4 | `pct_last_wins` | A per-row percentile argument is overwritten by every row, so the last row wins. `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Low severity | **Open** |
 | W2-agg-5 | `stackEval_return_drops_frame` | An aggregate inside a list literal `return`s out of the expression stack machine (`eval.rs:877`). `[min(x), max(x)]` gives `2` where C gives `[1,2]`; `size([count(x)])` is a type error | **Open** |
+| #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
+| #3150 | `bug3150_null_key_unbound` (property `KeysBound`) | `RETURN null AS x, count(1)`: the accumulator has id 0, the id of `x`; unbinding it unbinds `x`, the null column is dropped and `reply.rs:655` panics. With `'a' AS x` the value survives unbound, so the reply still prints it | **Open** (PR #3229) |
+| #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
+| #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |
+| #3368 | `bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Open** |
 | — | `dedup_collision_drops` | `DISTINCT`, `count(DISTINCT)` and the MERGE cache keep only a 64-bit FxHash; a collision drops a row | **Present on main** (#2780 closed as not planned) |
 | — | `pre2917_maxScalar_ne_batch_nan` | The scalar `max` body and `max_batch` disagreed on NaN | Fixed by #2917 (`maxScalar_eq_batch_nan`); harmless anyway, the scalar body is never called |
 | — | `one_child_not_unbound` | An aggregate call with only an accumulator child would be zeroed but never unbound, leaking its accumulator downstream | Latent: no parsed call has that shape |
+
+## Gap closed 2026-10-20: slot ids shared across the projection
+
+Until this date the aggregate model kept outputs, accumulators and pre-projection key aliases in separate slots, so `finishGroup_outputs` and `unbind_other` could not see that the binder gives them overlapping ids. `SlotReuse.lean` now mints the ids as the binder does and models that `unbind` keeps the value (a value-present-but-unbound column). Five open issues come from this one cause; see the bug table. The MERGE half of #3369 and #3368 (a value-only Int read as a bound node) lives in `merge.rs` and is not modelled here.
 
 ### CONDITIONAL rows, and how they were discharged
 
@@ -119,6 +129,7 @@ They were tagged CONDITIONAL. On main, `Discharge.lean` proves both hypotheses f
 | `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `args_for`, `new` |
 | `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash, `hash_u64` |
 | `AggNext.lean` | Column extraction and the aggregate's `next`: groups finished and emitted in batches |
+| `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, and the #3375/#3150/#3333/#3369/#3368 counterexamples |
 | `Discharge.lean` | Instantiates `SortCmp` and `AggState` with main's `sort_cmp` and hash from `value_order` |
 | `Bitmap.lean` | `NullBitmap` from `batch.rs`: set, clear, `all`, `from_values` |
 | `Ctors.lean` | `new` of Limit, Skip, Distinct, Project, Unwind, Sort and Commit |

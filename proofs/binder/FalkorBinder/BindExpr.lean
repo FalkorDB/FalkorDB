@@ -646,4 +646,48 @@ theorem selfRef_direct (a k : Name) (h : isAnon a = false) :
     checkSelfRef a (.other 0 [.prop k [.var a]]) = .error s!"'{a}' not defined; undefined attribute" := by
   simp [checkSelfRef, h, selfRef, selfRefL]
 
+
+/-! ## #1334: a pattern predicate may declare a new variable (gap closed 2026-10-20)
+
+The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs:2077-2105) binds the predicate with
+`bind_graph(&pattern, false)`, which `define_name_in_scope`s every alias (`allow_reuse`), minting
+a fresh variable for a name that is not in scope; the cleanup then only hides it again. Nothing
+checks that a *named* alias already existed, so `WHERE () -- (n1)` with no `n1` in scope binds
+and runs as "some edge exists anywhere". -/
+
+/-- **A pattern predicate declares nothing** (openCypher; C rejects with "Unable to resolve
+filtered alias"): whenever `bind_expr_node` accepts a pattern predicate, every named
+(non-`_anon`) variable in it was already visible where the predicate stands. A fix proves this
+by rejecting the pattern otherwise. -/
+def PatternPredDeclaresNothing (st : St) (locals : List Env) (vars : List Name) : Prop :=
+  ∀ r, bindNode C st locals (.pattern vars) = .ok r →
+    ∀ n ∈ vars, isAnon n = false → visible st locals n
+
+/-- The binder state while `MATCH (n0) WITH * WHERE …` binds its WHERE: the projection scope
+`{n0}` (scope 1), the parent `{n0}`, `use_parent_scope` set; `WITH *` adds nothing to
+`parent_to_child_scope` (binder.rs:1083-1110). -/
+def st1334 : St :=
+  { cur := [("n0", ⟨"n0", 0, 1, .node⟩)], parent := [("n0", ⟨"n0", 0, 0, .node⟩)],
+    depth := 1, useParent := true, p2c := [], cfp := [] }
+
+/-- **#1334**: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds — `n1` is minted fresh (id 2,
+after the anonymous node's 1) and cleaned up — although `n1` is visible nowhere. Live: Rust main
+returns 2 rows on a 2-node graph with an edge; C errors. -/
+theorem bug1334_pattern_predicate_declares_var :
+    bindNode C st1334 [] (.pattern ["_anon_0", "n1"]) =
+      .ok (.pattern [⟨"_anon_0", 1, 1, .any⟩, ⟨"n1", 2, 1, .any⟩],
+           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node⟩), ("_anon_0", ⟨"_anon_0", 1, 1, .any⟩)] }) ∧
+    ¬ visible st1334 [] "n1" ∧
+    ¬ PatternPredDeclaresNothing C st1334 [] ["_anon_0", "n1"] := by
+  have hb : bindNode C st1334 [] (.pattern ["_anon_0", "n1"]) =
+      .ok (.pattern [⟨"_anon_0", 1, 1, .any⟩, ⟨"n1", 2, 1, .any⟩],
+           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node⟩), ("_anon_0", ⟨"_anon_0", 1, 1, .any⟩)] }) := by
+    have ha : "_anon_0".startsWith "_anon" = true := by simp
+    have hn : "n1".startsWith "_anon" = false := by simp
+    simp (config := { decide := true }) [bindNode, st1334, injectLocals, bindNames, defineName,
+      Env.find?, freshVar, Env.insert, Env.has, cleanup, Env.retain, isAnon, List.lookup, List.filter,
+      ha, hn]
+  have hv : ¬ visible st1334 [] "n1" := by unfold visible; decide
+  exact ⟨hb, hv, fun h => hv (h _ hb "n1" (by simp) (by decide))⟩
+
 end FalkorBinder

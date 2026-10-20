@@ -91,3 +91,4 @@ graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce: coalesce_first
 graph/src/runtime/functions/math.rs	apply_pow	329	PROVEN	applyPow: pow_agrees_without_errors, pow_drops_error
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	MODELLED	toIntegerFloat/toIntegerString fragment only (out-of-range floor): toInteger_float_vs_string
 graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	MODELLED	only its effect: constant evaluator = error-valued variables fed to powFold (pow_constant_true, bug); is_constant_true itself not modelled
+graph/src/runtime/functions/mod.rs	init_functions	1103	MODELLED	FnRegistry.rustNames (registered name set, extracted as data) — #2724 open: bug2724_prev_missing refutes CoversC; covers_all_but_prev

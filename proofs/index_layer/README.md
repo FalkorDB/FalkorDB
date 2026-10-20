@@ -87,6 +87,9 @@ Each was reproduced live with `proofs/index_layer/repro.py`, which runs each que
 | 12 | (outside the model) | Geo radius near the poles: RediSearch geohash is limited to \|lat\| ≤ 85.05, so points at 89.99 are missed | **Open**. C has the same bug |
 | 13 (W4-index-1) | `bug_range_after_fulltext` | After a full-text index and then a range index on the same `n.s`, every range query on `n.s` targets the full-text field and returns `[]`. C correct | **Open**. Fix: pick the field whose type is `IndexType::Range` |
 | 14 (W7-btree-2) | `pre3285_docBytes3_reads_garbage`, `pre3285_docBytes3_last_oob` | `CowBTree` with `DOC_BYTES = 3/5/6/7` passed the const assert but read garbage docs or panicked | Fixed by #3285: `readWidth_admitted`, `admitted_fromPairs_roundtrip` |
+| #3166 | `bug3166_stopwords_not_applied`, `bug3166_violates` (property `StopwordsAgree` / `CreateIndexKeepsStopwords`) | A range index first, then `CREATE FULLTEXT INDEX … OPTIONS {stopwords: ['router']}`: the label reports `['router']`, but its RediSearch spec keeps the default list, because the second call only registers the new field on the existing spec. `queryNodes('L', 'router')` returns 1 row; C returns 0. `createIndex_fresh_stopwords_agree` proves the new-label path agrees | **Open** |
+| #3382 | `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer` (property `VectorQueryRequiresOperational` / `VectorQueryComplete`) | `db.idx.vector.queryNodes` answers while the index is UNDER CONSTRUCTION, with 0 rows and then 3. C refuses with "Invalid arguments for procedure" until OPERATIONAL. `vectorQueryGuarded_requires_operational` is the fix shape | **Open** |
+| #2781 | `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored` (property `RollbackRestoresEdgeIndex`) | A failed query that deletes edge 0 and reuses id 0 for `c→d` leaves the orphan document `(c, d, 0)` after rollback, beside the restored `(a, b, 0)`. The index scan returns both; a full scan and C return only `a→b`. `resyncEdgesFixed_restores` proves the fix: also delete the private key when the endpoints changed | **Open** |
 | W3-conc-3 | `pre3087_dim_mismatch`, `pre3087_noparams` | A vector of the wrong dimension (or a vector field with no options) made RediSearch reject the whole document, so the node dropped out of the label's other indexes | Fixed by #3087 (issue #3075): `setVector_sound` |
 
 C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a range index; Rust returns the right result.
@@ -104,6 +107,8 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `SetVector.lean` | The vector arm of `Document::set` (#3087): `setVector_sound` |
 | `Meta.lean`, `IndexM.lean` | `Field` and `Index` metadata, the RediSearch spec lifecycle |
 | `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the #3086 generation bump (`createIndex_regen`), bug 13 |
+| `IndexGaps.lean` | Gaps closed 2026-10-20: the stopwords the RediSearch spec applies (`Idx.rsStop`, #3166) and the vector query's missing OPERATIONAL gate (#3382) |
+| `EdgeResync.lean` | Gap closed 2026-10-20: the edge arm of `resync_published_indexes` with documents keyed by `(src, dst, id)` (#2781) |
 | `Iter.lean` | Result iterators, RediSearch refcounts (`RC.not_freed`), and the bridges `query_eq_scan_filter`, `queryE_eq_scan_filter`, `fulltextQ_exact`, `vectorQ_sound` |
 | `LeafBytes.lean` | Byte helpers of the leaf pages, `read_width` (`readWidth_admitted`) |
 | `LeafAos.lean`, `LeafAosD.lean` | The AoS page at `DOC_BYTES = 8` and at any width (#2278), bug 14 |
@@ -120,13 +125,15 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 279 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), and the RediSearch bindings (82, plus one commented row for the Redis module ABI types).
+`COVERAGE.tsv` has 281 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82, plus one commented row for the Redis module ABI types), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 196 |
 | AXIOMATISED | 83 |
+| MODELLED | 2 |
 
+- **MODELLED:** the two #2781 rows: the edge arm of the rollback is modelled and refuted (`bug2781_rollback_not_restored`); their positive theorems live in `proofs/pending_commit` and `proofs/graph_queries`.
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`. The 83rd row is the commented-out `redis.rs` line for the Redis module ABI types.
 
 ## What the model does not cover
@@ -135,7 +142,7 @@ No path dependencies.
 - **RediSearch internals.** Vector (HNSW) search, full-text scoring and geo distance are left to RediSearch. Geo appears only as a value kind; there are no distance theorems (bug 12 is outside the model).
 - **Concurrency.** Refcounts are modelled as counters; `ArcSwap` and the locks are not modelled.
 - **Index options.** `create_rs_index` and `register_fields` options are FFI results passed as parameters.
-- **Graph-side bookkeeping.** `index_add_docs` / `remove_docs` in `graph.rs` are not modelled. They are assumed to meet the side conditions of `commit_preserves_inv`, which the 22 live maintenance scenarios in `diff2.py` checked.
+- **Graph-side bookkeeping.** `index_add_docs` / `remove_docs` in `graph.rs` are not modelled; only the edge arm of the rollback is (`EdgeResync.lean`, #2781). They are assumed to meet the side conditions of `commit_preserves_inv`, which the 22 live maintenance scenarios in `diff2.py` checked.
 - **The native index.** The `CowBTree` tree logic is in [`../cow_btree`](../cow_btree), and the native numeric index that stores into it is in [`../native_index`](../native_index). This project covers the RediSearch path and the leaf byte layouts.
 
 ## Build and check

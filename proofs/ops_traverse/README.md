@@ -92,6 +92,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | W2-traverse-4 | `directed_cycle_backtrack_order`, `directed_cycle_not_a_walk` | allShortestPaths on a directed cycle returns the edge list backwards (`all_shortest_paths.rs:284-288`): on `0→1→2→0`, `(a)-[*]->(a)` gives edges `[3,2,1]` instead of `[1,2,3]`. C is also wrong | **Open** (shared with C) |
 | W2-traverse-5 | none (Cypher repro only) | `algo.SPpaths`/`algo.SSpaths` charged cost 0 per relationship without `costProp`; C charges 1 | Fixed by #3113 (the single-path shortcut still charges 0, as C does) |
+| #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
 | W2-strlist-6 | none (out of target) | `[x IN null \| x]` returns `[]`; C returns `null` | **Open** |
 
 ### Shared with C, not filed as Rust bugs
@@ -115,6 +116,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `ASPFold.lean`, `ASPInv.lean`, `ASPStep.lean`, `ASPFinal.lean`, `ASPMain.lean`, `ASPFuel.lean` | The allShortestPaths proof: relaxation, the invariant `Inv`, one BFS step, the backtrack, minimality/completeness/no duplicates, termination |
 | `Scans.lean` | Label scan, id seek, label + id-range scan |
 | `IndexScan.lean` | Node and edge index scans under the `IndexSound` contract, fulltext and vector scans, undirected edge orientation |
+| `SlotFeed.lean` | How an Aggregate output row feeds a later CondTraverse across `WITH`: binder slot ids, the Aggregate row, the endpoint reads; property `ScopedRow` and the #3372 counterexamples |
 | `Drive.lean` | The emitter-driven `next` loops and LIMIT propagation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

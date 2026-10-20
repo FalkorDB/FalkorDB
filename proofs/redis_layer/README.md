@@ -124,6 +124,8 @@ All confirmed live against C (`repro_live.py` in this folder, and the scripts na
 | 11 | `from_slice_past_end` | Any truncated `GRAPH.RESTORE` payload calls `RedisModule_LoadStringBuffer(NULL)`; a cut at a record boundary SIGSEGVs. C crashes too | **Open** (#2537; external PR #3167) |
 | 12 | `bulk_reply_differs` | The `GRAPH.BULK` reply says "relations created"; C says "edges created" (W4-redis-4) | **Open** (minor) |
 | 13 | none | Verbose format: a top-level point prints `latitude: 1.000000` with a space (C none); NaN inside a list prints `NaN` (C `nan`); `CREATE (a:A) DELETE a` reports no node stats | **Open** (minor, not filed) |
+| 14 | `bug2782_same_name_other_db_aborts`, `bug2782_invariant_broken` (`MultiDb.lean`) | `GRAPH_REGISTRY` is keyed by name only, so creating `shared` in db1 displaces db0's `shared`; the next write to db0's graph aborts ("graph was deleted or replaced…"; debug build: assert). Property `KeyspaceRegistered` / `WritesSucceed` | **Open** (#2782) |
+| 15 | `bug2653_nonutf8_key_mangled` (`KeyName.lean`) | A non-UTF-8 graph key is replicated and signalled under its `from_utf8_lossy` form: `\xc3(bin` → `\xef\xbf\xbd(bin`, so the replica writes a different key. Property `ReplicatedKeyIsStored` (C: `c_ok`) | **Open** (#2653) |
 
 Also in the verbose format: a node deleted earlier in the same query still shows its labels (C shows `[]`). That one is intended: it was decided on 2026-09-25 that a deleted entity keeps all its details for the rest of the query.
 
@@ -146,6 +148,8 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `Serial.lean`, `SerialSchema.lean`, `SerialEntry.lean`, `SerialProof.lean` | `serializers/mod.rs`: graph header, schema blocks, index fields, constraints, and their round trip |
 | `QuerySession.lean` | The per-query lock and GIL protocol in `query_session.rs` |
 | `GraphCore.lean` | `graph_core.rs`: names, registry, write commit, dispatch, queue admission |
+| `MultiDb.lean` | #2782: several Redis databases over the name-keyed registry; `graph_query`'s create/open path |
+| `KeyName.lean` | #2653: key names as bytes, a concrete `from_utf8_lossy`, the replicated key |
 | `Commands.lean`, `Commands2.lean` | The smaller command handlers: constraint, record, copy, bulk, memory, config get, and others |
 | `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher |
 | `SlowLog.lean` | `slow_log.rs` |

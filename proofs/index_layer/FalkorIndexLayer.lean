@@ -261,6 +261,30 @@ W5-idx-2 no-options shape; fixed by #3087.
   never misses a field) is `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
 - #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
+
+## Gap closed 2026-10-20 (#3166, #3382, #2781; proofs cite fb3d516d0, repros on main 9d3869aa8)
+Three open bugs the proofs missed, each now a stated property and a counterexample
+matching the live repro (ports 6640 Rust / 6641 C):
+- #3166 (`IndexGaps.lean`). `Idx.rsStop` records the stopwords the RediSearch spec was
+  created with (`mod.rs:1119-1133`); `register_fields` never changes them. Property
+  `StopwordsAgree` / `CreateIndexKeepsStopwords`: what `db.indexes()` reports is what
+  RediSearch applies. `bug3166_stopwords_not_applied`, `bug3166_violates`: a range index
+  first, then a fulltext index with `stopwords: ['router']` only registers the field on
+  the existing spec (`indexer.rs:300-313`) and records `['router']` (`:341-343`); Rust
+  matches 'router' (1 row), C does not (0). `createIndex_fresh_stopwords_agree`: the
+  new-label path agrees.
+- #3382 (`IndexGaps.lean`). `Ixr.vectorQuery` (`indexer.rs:541` → `mod.rs:1798`) has no
+  `is_operational` gate. Property `VectorQueryRequiresOperational` / `VectorQueryComplete`.
+  `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer`: under
+  construction, main answers `Ok` with 0 rows (a KnnSpec-legal answer from a half-built
+  table); live 0 then 3 rows, C "Invalid arguments for procedure". Fix shape:
+  `vectorQueryGuarded_requires_operational`.
+- #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
+  (`pending.rs:1661-1673`) with `commit_edge_index_locked`'s re-resolved key
+  (`graph.rs:3863-3896`), documents keyed by `(src, dst, id)`. Property
+  `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
+  the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
+  `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs
@@ -273,6 +297,8 @@ import FalkorIndexLayer.IndexM
 import FalkorIndexLayer.SetVector
 import FalkorIndexLayer.IndexerM
 import FalkorIndexLayer.Iter
+import FalkorIndexLayer.IndexGaps
+import FalkorIndexLayer.EdgeResync
 import FalkorIndexLayer.LeafBytes
 import FalkorIndexLayer.LeafMerge
 import FalkorIndexLayer.LeafAos

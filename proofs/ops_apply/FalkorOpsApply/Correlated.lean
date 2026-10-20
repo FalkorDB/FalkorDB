@@ -392,6 +392,9 @@ inductive IRKind
   | scan | traverse | filter | project | unwind | pathBuilder | semiApply | orApply
   | aggregate | cartesian | valueHashJoin | optional | apply | merge | union
   | sort | limit | skip | distinct
+  /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`/`IR::Remove`, `IR::Commit`,
+  `planner/mod.rs:91,102,107,109,308`); none is on the `can_batch` blacklist (see RowWrites.lean). -/
+  | create | delete | setProps | commit
   deriving DecidableEq, Repr
 
 /-- `ApplyOp::new`'s `can_batch` (`apply.rs:119-133`). -/

@@ -73,6 +73,8 @@ Mostly:
 | `createNode_spec`, `createRel_spec` | CREATE binds one fresh node per row; relationships use each row's endpoints | `CreateBatch.lean` |
 | `setFromMapNode_replace` | `SET n = {map}` leaves exactly the map's keys | `SetRemove.lean` |
 | `allTuples_length`, `orbit_valid` | A cartesian product has ∏ lengths rows and visits only valid combinations | `CartVhj.lean` |
+| `applyBatchedW_eq_ref_of_readIndep` | Batched Apply over a writing sub-plan equals per-row Apply when the sub-plan's reads ignore its own writes (the condition a fix for #2738 must meet) | `MergeSlot.lean` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, the fixed key, and #3368/#3369 |
+| `RowWrites.lean` |
 
 ### How `applyBatched_eq_ref` is proved
 
@@ -96,6 +98,11 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-apply-4 | `allBound_first_only` | When every MERGE variable is already bound, the shortcut (`merge.rs:368-400`) keeps only the first match. With two parallel `:R` edges, `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)`: Rust 1, C 2 | **Open** |
 | W2-apply-5 | `optionalBatched_order_differs` | Batched Optional moves the `null` rows after the matched rows. Low severity: order is unspecified, but `collect` shows it | **Open** |
 | #2776 (wider) | `noClear_keeps_pending` | `SET e = <node, relationship or map>` keeps attributes written earlier in the same query; only the node-from-map branch clears them (`set.rs:202-249`, `:279-376`). `CREATE (a {x:1}), (b {y:2}) SET a = b`: Rust `{x:1, y:2}`, C `{y:2}` | **Open** (#2776) |
+| #2738 | `bug2738_batched_call_hides_writes`, `canBatchApply_admits_write`; property `WriteSeparable` | A CALL subquery that writes is batched (`can_batch`, `apply.rs:119-133`, does not blacklist Create/Delete/Set/Commit), so its reads for every row of the batch see the graph from before the batch and one Commit flushes all rows' writes. `UNWIND [1,2,3] AS x CALL { MATCH (a:N) CREATE (:N) RETURN 1 AS one } RETURN count(*)` over one `:N`: Rust 3 (4 `:N` after), C 7 (8 after) | **Open** (#2738) |
+| #2729 | `bug2729_batch_split_flips_endpoint_check`; property `PartitionInvariant` | `CreateOp` and `DeleteOp` stream one batch at a time against the shared pending state, so `CREATE (n0)-[:R]->(n0) DETACH DELETE n0` fails with "endpoint was not found" as soon as rows holding the same `n0` reach CREATE in two batches (`create.rs:259-266` sees the earlier batch's pending delete). The issue's query inside `CALL {}` gets a different plan and a different batch split; the same rows at top level arrive in one batch. Also without CALL: `UNWIND range(1,1100) AS x MATCH (n:A {id:1}) CREATE (n)-[:R]->(n) DETACH DELETE n` fails on Rust, works with 1000 rows; C works for both | **Open** (#2729) |
+| #3164 | `bug3164_stale_ref_deletes_recycled_id`; property `NoStaleAlias` | Per-row Apply commits each row's sub-plan; a committed DETACH DELETE releases the node id and the next CREATE reclaims it (`id_space.rs:483-498`), while later outer rows still hold `Value::Node(id)`, so their DELETE removes the new node. `UNWIND [1,2] AS x MATCH (n:A) CALL { WITH n DETACH DELETE n RETURN 1 AS k UNION CREATE (:B) RETURN 2 AS k } RETURN x, id(n), k` on `(:A),(:C)`: Rust deletes 2 nodes and keeps one `:B`; C deletes 1 and keeps two | **Open** (#3164) |
+| #3368 | `bug3368_merge_takes_leftover_as_node`, `bug3368_fires_iff_leftovers_equal`; properties `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` | `compute_merge_pattern_hash` reads the MERGE variable's slot with `get_by_id` (`merge.rs:189`), bound or not, so a value-only leftover (a `count(*)` accumulator at the variable's id: ops_aggregate `bug3368_count_acc_in_merge_slot`) replaces the label and properties in the hash; two MERGEs whose leftovers are equal share a `merge_pattern_cache` entry and the later one binds the earlier one's node (`merge.rs:122-127`). `… MERGE (b:B {id:'b1'}) WITH b, r1 WITH count(*) AS c1 UNWIND [{id:'c1'}] AS r2 MERGE (c:C {id: r2.id}) RETURN labels(c), c.id`: Rust `[B] b1`, 2 nodes; C `[C] c1`, 3 nodes | **Open** (#3368) |
+| #3369 | `bug3369_merge_leaves_int_in_node_var`, `bug3369_controls`; properties `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` | Same cache hit, but `c` has id 3 and the cached pair is `(2, b1)`: slot 2 (`r2`) gets `b1` and `c` stays the unbound `Int 1` (ops_aggregate `bug3369_count_acc_in_merge_slot`), so `RETURN c` gives `1` and `c.id` fails "Type mismatch … but was Integer"; C `'c1'` | **Open** (#3369) |
 
 ### CONDITIONAL rows
 
@@ -120,6 +127,8 @@ Fixing W2-apply-1 (adding `IR::ValueHashJoin` to both blacklists) removes the kn
 | `DeleteCancel.lean` | The fallible DELETE after #2846, proven equal to `Delete.lean` on success |
 | `SetRemove.lean` | Every function of `set.rs` and `remove.rs` over a committed + pending attribute store |
 | `CartVhj.lean` | CartesianProduct (the odometer) and ValueHashJoin (hash table, integer promotion, matching) |
+| `MergeSlot.lean` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, the fixed key, and #3368/#3369 |
+| `RowWrites.lean` | Writing sub-plans under Apply (graph state, queued writes, Commit): batched vs per-row write visibility, the batch-split dependence of streaming CREATE/DELETE, and stale node references after id recycling (#2738, #2729, #3164) |
 | `Ctors.lean` | Constructors: `MergeOp::new`, its `OnceCell` resolvers and pattern hash, SemiApply, OR-apply, FOREACH, `UnionOp::store_argument_batch` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -127,25 +136,27 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 
 ## Coverage
 
-`COVERAGE.tsv` has 73 rows:
+`COVERAGE.tsv` has 74 rows:
 
 | Bucket | Rows |
 |---|---|
 | PROVEN | 64 |
 | CONDITIONAL | 4 |
-| MODELLED | 4 |
+| MODELLED | 5 |
 | AXIOMATISED | 1 |
 
 - **CONDITIONAL:** `ApplyOp::next_batched`, `OptionalOp::next_batched`, `SemiApplyOp::next`, `OrApplyMultiplexerOp::next`, all resting on `Separable` (above).
-- **MODELLED:** four `batch.rs` helpers the idiom is built from (`clone_active_rows_seq_origin`, `merge_over_input`, `origin_row`, `gather`). They are modelled as `tag`, the abstract merge, the origin tag and the fallback gather; the column-level code is not.
+- **MODELLED:** four `batch.rs` helpers the idiom is built from (`clone_active_rows_seq_origin`, `merge_over_input`, `origin_row`, `gather`). They are modelled as `tag`, the abstract merge, the origin tag and the fallback gather; the column-level code is not. Also `BatchRow::to_owned_row` (`MergeSlot.Row.ofCells`), used only to build the #3368/#3369 rows.
 - **AXIOMATISED:** `BatchOp::set_argument_batch`. It is not an axiom in Lean: its behaviour is what the `Separable` hypothesis describes.
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
 ## What the model does not cover
 
+- **Write visibility** (`RowWrites.lean`) is modelled with an abstract graph state and commit; the concrete counterexamples use small graph models (a node count; `(id, serial)` pairs), not the full graph store.
 - **Sub-plans are abstract functions.** Separability of each real operator is a hypothesis, except for the ValueHashJoin model, which is shown non-separable.
 - **MERGE is a single node pattern with one property.** The pattern hash is the key, so hash collisions (#2780) are assumed away. `ON MATCH`/`ON CREATE` are modelled only as updates of that key; relationship patterns and the null-property error are not modelled; the all-bound shortcut is a flag.
+- **`MergeSlot`** models one node pattern, one row per MERGE, no SET; FxHash is taken as injective on the token stream (map key names dropped from the comparison); the aggregation that leaves the value-only slot is restated as the input row, not imported from ops_aggregate.
 - **Output batch sizes** are modelled for FOREACH only. Apply, Optional and MERGE are compared on the flattened row stream.
 - **Errors.** FOREACH and UNION have their error paths modelled, but only the error-free theorems are proven.
 - **Attributes.** `SET`/`REMOVE` assume the committed key list of an entity is complete.
