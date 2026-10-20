@@ -450,6 +450,15 @@ class testTemporalDuration(FlowTestsBase):
         result = self.graph.query("RETURN toString(duration('P1M')) AS s")
         self.env.assertEqual(result.result_set[0], ["P1M"])
 
+        # huge week/day counts are an overflow error, not a silently wrapped
+        # duration (2635249153387078803 * 7 wraps to 5 in i64)
+        for s in ['P2635249153387078803W', 'P1W9223372036854775807D']:
+            try:
+                self.graph.query(f"RETURN duration('{s}')")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("overflow", str(e))
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """
@@ -602,6 +611,16 @@ class testTemporalDuration(FlowTestsBase):
         actual = self.graph.query(q).result_set[0][0]
         expected = time(hour=7, minute=49, second=40)
         self.env.assertEqual(actual, expected)
+
+        # a time keeps only its time of day: days/months in the duration
+        # vanish and the clock wraps around midnight (openCypher, C)
+        q = """RETURN localtime('01:00') + duration({days: 1}) = localtime('01:00'),
+                      localtime('01:00') + duration({months: 1}) = localtime('01:00'),
+                      localtime('01:00') - duration({days: 3}) = localtime('01:00'),
+                      localtime('23:00') + duration({hours: 2}) = localtime('01:00'),
+                      localtime('01:00') - duration({hours: 2}) = localtime('23:00')"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, [True, True, True, True, True])
 
         try:
             q = """RETURN duration({hours:2, minutes:40, seconds:30})

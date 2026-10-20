@@ -155,8 +155,11 @@ impl Point {
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
+        // `a` is sin²(c/2), mathematically in [0, 1]; for (near-)antipodal
+        // points it rounds just above 1 and `(1.0 - a).sqrt()` would be NaN.
         let a = (lat1.cos() * lat2.cos())
-            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2));
+            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2))
+            .clamp(0.0, 1.0);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in meters
@@ -1050,9 +1053,12 @@ impl Value {
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
                 Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
-                Ok(Self::Time(add_duration_to_timestamp(t, dur)?))
-            }
+            // A time has no date: keep only the time of day. Every duration
+            // encoding is whole days (years/months/days) plus a clock offset,
+            // so the time of day of `t + dur` is the openCypher result.
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
+                Self::Time((t.rem_euclid(86400) + dur.rem_euclid(86400)).rem_euclid(86400)),
+            ),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1095,9 +1101,9 @@ impl Sub for Value {
             (Self::Datetime(d), Self::Duration(dur)) => {
                 Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) => {
-                Ok(Self::Time(sub_duration_from_timestamp(t, dur)?))
-            }
+            (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
+                (t.rem_euclid(86400) - dur.rem_euclid(86400)).rem_euclid(86400),
+            )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
                 Err("Type mismatch: cannot subtract a temporal value from a duration".to_string())
