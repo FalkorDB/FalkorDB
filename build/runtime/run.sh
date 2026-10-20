@@ -35,10 +35,29 @@ fix_data_dir_perms() {
         echo "Notice: unknown file '$unknown' in ${FALKORDB_DATA_PATH}; ownership not changed."
         return 1
     fi
-    if ! find "${FALKORDB_DATA_PATH}" ! -user "$FALKORDB_USER" -exec chown "$FALKORDB_USER:$FALKORDB_USER" {} +; then
+    if ! find "${FALKORDB_DATA_PATH}" ! -user "$FALKORDB_USER" -exec chown -h "$FALKORDB_USER:$FALKORDB_USER" {} +; then
         echo "Warning: could not hand ${FALKORDB_DATA_PATH} to $FALKORDB_USER."
         return 1
     fi
+}
+
+# The files gen-certs.sh generates in the TLS directory.
+TLS_FILES="ca.key ca.crt ca.txt openssl.cnf server.key server.crt
+           client.key client.crt redis.key redis.crt redis.dh"
+
+# falkordb can write to the TLS directory, so before root generates files
+# there, each of those names must be absent or a regular file with a single
+# link: a symlink or hard link would make root write, or chown, a file
+# elsewhere. Nothing runs as falkordb this early, so nothing can change them
+# between this check and gen-certs.sh.
+check_tls_files() {
+    for f in $TLS_FILES; do
+        p="${FALKORDB_TLS_PATH}/$f"
+        if [ -L "$p" ] || { [ -e "$p" ] && [ -z "$(find "$p" -maxdepth 0 -type f -links 1)" ]; }; then
+            echo "Error: $p is a link or not a regular file. Remove it to have it generated again."
+            return 1
+        fi
+    done
 }
 
 # gen-certs.sh runs as root and writes its keys 0600. Hand falkordb the files it
@@ -46,10 +65,9 @@ fix_data_dir_perms() {
 # Returns non-zero when any of them was not handed over.
 fix_tls_perms() {
     rc=0
-    for f in ca.key ca.crt ca.txt openssl.cnf server.key server.crt \
-             client.key client.crt redis.key redis.crt redis.dh; do
+    for f in $TLS_FILES; do
         if [ -e "${FALKORDB_TLS_PATH}/$f" ] &&
-            ! chown "$FALKORDB_USER:$FALKORDB_USER" "${FALKORDB_TLS_PATH}/$f"; then
+            ! chown -h "$FALKORDB_USER:$FALKORDB_USER" "${FALKORDB_TLS_PATH}/$f"; then
             echo "Warning: could not hand ${FALKORDB_TLS_PATH}/$f to $FALKORDB_USER."
             rc=1
         fi
@@ -86,6 +104,9 @@ if [ "$(id -u)" = "0" ] && [ -z "${SKIP_DROP_PRIVS:-}" ] && has_cap 6 && has_cap
 fi
 
 if [ "${TLS:-0}" -eq "1" ]; then
+    if [ "$(id -u)" = "0" ] && ! check_tls_files; then
+        exit 1
+    fi
     # shellcheck disable=SC2086
     ${FALKORDB_BIN_PATH}/gen-certs.sh
     if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
