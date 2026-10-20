@@ -103,7 +103,7 @@ jobs:
   # The C engine's rolling images moved to the `edge-c` family on `master`, and
   # C never published to GHCR, so there is no contention on either registry.
   # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
-  # pointer only moves at 6.0 GA, via release-image.yml. See issue #2290.
+  # pointer moves only on a release, via release-tag.yml. See issue #2290.
   promote-edge:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
@@ -138,7 +138,7 @@ jobs:
           set -euo pipefail
           # One imagetools call fans the SAME multi-arch manifest out to both
           # registries — still a retag, never a rebuild, so the bytes PR CI
-          # validated are the bytes that ship. Same pattern release-image.yml
+          # validated are the bytes that ship. Same pattern release-tag.yml
           # uses for semver tags.
           # `:edge` is the primary rolling channel now that this tree is the
           # default branch. `:edge-rs` is kept as an alias so anything already
