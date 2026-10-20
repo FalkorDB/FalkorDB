@@ -1306,6 +1306,7 @@ impl<'a> Runtime<'a> {
         }
     }
 
+    /// Evaluate ID predicates and intersect them with the graph's ID bounds.
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
@@ -1360,6 +1361,11 @@ impl<'a> Runtime<'a> {
                     unreachable!()
                 }
             }
+        }
+        // max_node_id() is zero on a fresh graph, but ID 0 does not exist yet.
+        // Check after evaluating the predicates to preserve invalid-ID errors.
+        if self.g.borrow().node_count() == 0 {
+            return Ok(None);
         }
         let mut result = RoaringTreemap::new();
         result.insert_range(min..=max);
