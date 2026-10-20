@@ -21,7 +21,7 @@ structure FnI where
 def nmReduce : Nat := 4000003
 def nmPlaceholder : Nat := 4000004
 
-/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2763-2778). -/
+/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2772-2787). -/
 def argItemsP (pe : PE) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -30,7 +30,7 @@ def argItemsP (pe : PE) : Nat → List ET → P (List ET)
     if c2 = .comma then do next; argItemsP pe n (acc ++ [e])
     else do tok .rparen; pure (acc ++ [e])
 
-/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs:2754-2781); #3060:
+/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs:2763-2790); #3060:
 only an empty list ends at once, so `f(1,)` is an error. -/
 def argsP (pe : PE) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek

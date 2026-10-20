@@ -99,7 +99,7 @@ theorem boolean_levels (a b c : Nat) :
 
 Each is reproduced against the Rust in `graph/tests/lean_parser_grammar.rs`. -/
 
-/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs:2209-2219), as the
+/-- **`NOT NOT x` keeps both `NOT`s** (#3060, `fe619ac5f`, cypher.rs:2218-2228), as the
 grammar does — `NOT` type-checks its operand, so `RETURN NOT NOT 1` is a type error (C
 too). Historical (2c874022a, `not_not_dropped`): the parity fold returned `x`. -/
 theorem not_not_kept :
@@ -117,7 +117,7 @@ theorem not_run_folds :
   decide
 
 /-- **A predicate after `IS NULL` is accepted** with the grammar's tree (#3060,
-cypher.rs:2426-2429 comes back to level 5). Historical (2c874022a,
+cypher.rs:2435-2438 comes back to level 5). Historical (2c874022a,
 `is_null_then_predicate_rejected`): it returned to the parent level and was rejected. -/
 theorem is_null_then_predicate :
     parseAll 400 [.int 1, .kw .is_, .kw .null, .kw .in_, .ident 3] =
@@ -126,21 +126,77 @@ theorem is_null_then_predicate :
       .ok (.node .in_ [.node .isNull [lf (.bool false), lf (.int 1)], lf (.var 3)]) [] := by
   decide
 
-/-- A failed slice bound is silently replaced by `0` / `i64::MAX`
-(cypher.rs:2140-2148): `x[1 + ..2]`, `x[abs()..2]`, `x[(..2]` are all
-accepted as `x[0..2]`, where the grammar (and C) reject them. -/
-theorem slice_bound_error_swallowed :
-    parseAll 400 [.ident 3, .lbrack, .int 1, .plus, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
-    parseAll 400 [.ident 3, .lbrack, .ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
-    parseAll 400 [.ident 3, .lbrack, .lparen, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+/-- **A slice bound that fails to parse is an error** (#3041, `2023af648`, closes
+#3036; cypher.rs:2136-2165), as in the grammar and C: `x[1 + ..2]`, `x[abs()..2]`,
+`x[(..2]`, `x[1..2 +]` and `x[1..(]` are refused. -/
+theorem slice_bound_error_reported :
+    (∃ e, parseAll 400 [.ident 3, .lbrack, .int 1, .plus, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, parseAll 400 [.ident 3, .lbrack, .ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, parseAll 400 [.ident 3, .lbrack, .lparen, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, parseAll 400 [.ident 3, .lbrack, .int 1, .dotdot, .int 2, .plus, .rbrack] = .err e) ∧
+    (∃ e, parseAll 400 [.ident 3, .lbrack, .int 1, .dotdot, .lparen, .rbrack] = .err e) ∧
     (∃ e, G.all 200 [.ident 3, .lbrack, .int 1, .plus, .dotdot, .int 2, .rbrack] = .err e) ∧
-    (∃ e, G.all 200 [.ident 3, .lbrack, .ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) := by
-  refine ⟨rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+    (∃ e, G.all 200 [.ident 3, .lbrack, .ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, G.all 200 [.ident 3, .lbrack, .lparen, .dotdot, .int 2, .rbrack] = .err e) := by
+  refine ⟨⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
 
-/-- **A trailing comma in a call is refused** (#3060, cypher.rs:2760-2770), as in the
+/-- Left-out bounds still default to `0` / `i64::MAX`, as in the grammar:
+`x[..2]`, `x[1..]`, `x[..]`, `x[1..2]`. -/
+theorem slice_bounds_omitted :
+    parseAll 400 [.ident 3, .lbrack, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+    parseAll 400 [.ident 3, .lbrack, .int 1, .dotdot, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 1), lf (.int 9223372036854775807)]) [] ∧
+    parseAll 400 [.ident 3, .lbrack, .dotdot, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 9223372036854775807)]) [] ∧
+    parseAll 400 [.ident 3, .lbrack, .int 1, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 1), lf (.int 2)]) [] ∧
+    G.all 200 [.ident 3, .lbrack, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+    G.all 200 [.ident 3, .lbrack, .int 1, .dotdot, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 1), lf (.int 9223372036854775807)]) [] ∧
+    G.all 200 [.ident 3, .lbrack, .dotdot, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 9223372036854775807)]) [] ∧
+    G.all 200 [.ident 3, .lbrack, .int 1, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 1), lf (.int 2)]) [] := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- History (#3036, fixed by #3041): before #3041 a failed slice bound was
+silently replaced by `0` / `i64::MAX` (cypher.rs:2140-2148 at 8621212fc), with
+the lexer left wherever the failed bound stopped: `[1 + ..2]`, `[abs()..2]`,
+`[(..2]` (after `x`) were all read as `x[0..2]`. The bound parser is the current
+`parseExpr`, which did not change. -/
+theorem pre3041_slice_bound_error_swallowed :
+    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.int 1, .plus, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.lparen, .dotdot, .int 2, .rbrack] =
+      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
+    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.int 1, .plus, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) ∧
+    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.lparen, .dotdot, .int 2, .rbrack] = .err e) := by
+  refine ⟨rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+
+/-- **`listOp` never swallows a bound's error**: whenever the bound parser fails
+where a bound starts (not on `..` / `]`), `parse_list_operator_expression`
+fails at the same place. -/
+theorem listOp_from_err (pe : List Tok → Out) (lhs : RT) (ts e : List Tok)
+    (hd : ∀ r, ts ≠ .dotdot :: r) (h : pe ts = .err e) : listOp pe lhs ts = .err e := by
+  unfold listOp; split
+  · exact absurd rfl (hd _)
+  · simp [h]
+
+theorem listOp_to_err (pe : List Tok → Out) (lhs : RT) (ts e : List Tok)
+    (hd : ∀ r, ts ≠ .dotdot :: r) (f : RT) (r : List Tok) (hf : pe ts = .ok f (.dotdot :: r))
+    (hr : ∀ r', r ≠ .rbrack :: r') (h : pe r = .err e) : listOp pe lhs ts = .err e := by
+  unfold listOp; split
+  · exact absurd rfl (hd _)
+  · simp only [hf]; unfold listOpTo; split
+    · exact absurd rfl (hr _)
+    · simp [h]
+
+/-- **A trailing comma in a call is refused** (#3060, cypher.rs:2769-2779), as in the
 grammar and C; `f()` and `f(1)` still parse. Historical (2c874022a, `call_trailing_comma`):
 `abs(1,)` was accepted as `abs(1)`. -/
 theorem call_trailing_comma_refused :
@@ -156,7 +212,7 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
     exprList pe (n + 1) [] (.comma :: r) = .err (.comma :: r) := by
   simp [exprList, cur, exprItems, h]
 
-/-- `+-x` is accepted (cypher.rs:2223-2224 reads an optional `+` then an
+/-- `+-x` is accepted (cypher.rs:2232-2233 reads an optional `+` then an
 optional `-`), while `- -x` and `-+x` are rejected (#2309). The grammar
 allows exactly one sign. -/
 theorem sign_sequences :

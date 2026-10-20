@@ -1,7 +1,7 @@
 /-
 # Expression constructs outside the fragment of `Model.lean`: CASE,
 # quantifiers, reduce, list / pattern comprehensions, shortestPath
-# (cypher.rs:1584-1940, 2783-2995)
+# (cypher.rs:1584-1940, 2792-3004)
 
 Sub-expressions are the oracle `pe` (the expression parser re-entered).
 -/
@@ -249,7 +249,7 @@ theorem reduceP_sound (pe : PE) (s : PS) t s' (h : reduceP pe s = .ok t s') : GR
             exact .mk ha he h3 ai hc hit hin h8 al hp h11 ab hr
   · simp at h
 
-/-! ## List comprehension with projection (cypher.rs:2906-2941; Cypher.g4:394-395) -/
+/-! ## List comprehension with projection (cypher.rs:2915-2950; Cypher.g4:394-395) -/
 
 /-- `parse_list_comprehension`, after `[ var IN`. -/
 def listCompP (pe : PE) (v : Nat) : P ET := do

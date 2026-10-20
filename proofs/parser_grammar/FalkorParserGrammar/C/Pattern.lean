@@ -1,6 +1,6 @@
 /-
 # Patterns: `parse_labels`, `parse_node_pattern`, `parse_relationship_pattern`,
-# `add_pattern_node`, `parse_pattern` (cypher.rs:1359-1581, 2997-3191)
+# `add_pattern_node`, `parse_pattern` (cypher.rs:1359-1581, 3006-3200)
 -/
 import FalkorParserGrammar.C.Graph
 
@@ -10,7 +10,7 @@ def fuelP {α} : P α := fun _ => .fuel
 @[simp] theorem run_fuelP {α} (s : PS) : (fuelP : P α) s = .fuel := rfl
 
 /-- `format!("_anon_{}", self.anon_counter); self.anon_counter += 1`
-(cypher.rs:3017-3019 and twice in parse_relationship_pattern). The `u32`
+(cypher.rs:3026-3028 and twice in parse_relationship_pattern). The `u32`
 increment cannot overflow on any query Redis accepts (4·10⁹ anonymous
 entities). -/
 def anonFresh : P Nat := fun s => .ok (anonName s.2) (s.1, s.2 + 1)
@@ -21,7 +21,7 @@ def asU32 (i : Int) : Nat := (i % 4294967296).toNat
 /-- `OrderSet::insert` / `HashSet::insert`: append if absent. -/
 def sins (l : Nat) (acc : List Nat) : List Nat := if l ∈ acc then acc else acc ++ [l]
 
-/-- `parse_labels` (cypher.rs:3184-3191). -/
+/-- `parse_labels` (cypher.rs:3193-3200). -/
 def labelsP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -32,8 +32,8 @@ def labelsP : Nat → List Nat → P (List Nat)
       labelsP n (sins l acc)
     else pure acc
 
-/-- The property part of a node / relationship pattern (cypher.rs:3023-3030,
-3129-3136): `$param`, an inline map (`parse_inline_properties`, i.e.
+/-- The property part of a node / relationship pattern (cypher.rs:3032-3030,
+3138-3145): `$param`, an inline map (`parse_inline_properties`, i.e.
 `parse_map` with pattern comprehensions forbidden, which only adds
 errors), or the empty map. -/
 def propsP (o : Oracle) : P ET := do
@@ -48,7 +48,7 @@ def aliasOr : Option Nat → P Nat
   | some v => pure v
   | none => anonFresh
 
-/-- `parse_node_pattern` (cypher.rs:3013-3034). -/
+/-- `parse_node_pattern` (cypher.rs:3022-3043). -/
 def nodeP (o : Oracle) (F : Nat) : P (QNode Nat) := do
   tok .lparen
   let a ← tryIdent
@@ -58,7 +58,7 @@ def nodeP (o : Oracle) (F : Nat) : P (QNode Nat) := do
   tok .rparen
   pure ⟨alias, ls, attrs⟩
 
-/-- The relationship-type loop (cypher.rs:3059-3069): after each type an
+/-- The relationship-type loop (cypher.rs:3068-3078): after each type an
 optional `|` and then an optional `:`; either one continues. -/
 def typesP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
@@ -68,14 +68,14 @@ def typesP : Nat → List Nat → P (List Nat)
     let c ← opt .colon
     if p || c then typesP n (sins t acc) else pure (sins t acc)
 
-/-- An optional integer hop bound (cypher.rs:3071-3076, 3078-3083). -/
+/-- An optional integer hop bound (cypher.rs:3080-3076, 3087-3092). -/
 def hopP : P (Option Int) := do
   let c ← peek
   match c with
   | .int i => do next; pure (some i)
   | _ => pure none
 
-/-- The `*`-range (cypher.rs:3070-3095). -/
+/-- The `*`-range (cypher.rs:3079-3104). -/
 def varLenP : P (Option (Nat × Option Nat)) := do
   let st ← opt .star
   if st then do
@@ -89,7 +89,7 @@ def varLenP : P (Option (Nat × Option Nat)) := do
       | none => pure (some (1, none))
   else pure none
 
-/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs:3103-3107). -/
+/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs:3112-3116). -/
 def normVL (vl : Option (Nat × Option Nat)) : Option (Nat × Option Nat) :=
   if vl = some (1, some 1) then none else vl
 
@@ -97,7 +97,7 @@ def badRange : Option (Nat × Option Nat) → Bool
   | some (mn, some mx) => decide (mn > mx)
   | _ => false
 
-/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs:3050-3138). -/
+/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs:3059-3147). -/
 def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Nat × List Nat × ET × Option (Nat × Option Nat)) := do
   let a ← tryIdent
   let alias ← aliasOr a
@@ -110,7 +110,7 @@ def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Nat × List Nat × ET × O
   tok .rbrack
   pure (alias, types, attrs, normVL vl0)
 
-/-- `parse_relationship_pattern` (cypher.rs:3036-3182). Rust collects the
+/-- `parse_relationship_pattern` (cypher.rs:3045-3191). Rust collects the
 types through a `HashSet`, so their order is unspecified; the model keeps
 first-occurrence order (only membership is observable downstream). -/
 def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Nat) : P (QRel Nat × QNode Nat) := do

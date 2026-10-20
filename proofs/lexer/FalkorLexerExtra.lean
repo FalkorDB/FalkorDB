@@ -3,12 +3,12 @@
 
 `Lexer::pos`, `current`, `current_str`, `set_pos`, `lex_numeric`, `err_ctx`,
 `format_error`, the `Token` `Display` impl, and `cypher_escape`. Line numbers
-are from origin/main (4a4f2a72f).
+are from origin/main (737dfb5da).
 
 * **`posF_boundary`** — `pos(false)` is always a char boundary.
 * **`next_pos_ge`** — after `next()`, `pos(true)` is at or past the old
   `pos(false)`: the `&str[pos..pos(true)]` slice `parse_named_exprs` takes
-  (cypher.rs:2741) is well-ordered.
+  (cypher.rs:2750) is well-ordered.
 * **`currentStr_ok`** — `current_str` never slices off a boundary.
 * **`lexNum_zero_exp`** — `0e5` is one float literal (#2910; `pre2910_zero_exp_bug`).
 * **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes

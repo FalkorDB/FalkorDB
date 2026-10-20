@@ -17,10 +17,10 @@ HEADERS) and a call's trailing comma are now refused, so their flags are gone an
 relations below describe those constructs exactly as Cypher.g4 does. -/
 structure CExt where
   /-- Consecutive DELETE / SET / REMOVE clauses folded into one IR clause
-  (cypher.rs:1188-1203, 3306-3308, 3387-3389). -/
+  (cypher.rs:1188-1203, 3315-3308, 3396-3398). -/
   foldUpd : Bool
   /-- A SET / REMOVE target that is not a variable or a property expression
-  (`SET (n.x) = 5`, cypher.rs:3325-3352). Since #3060 a `[` no longer stands in for `(`. -/
+  (`SET (n.x) = 5`, cypher.rs:3334-3361). Since #3060 a `[` no longer stands in for `(`. -/
   anyTarget : Bool
   /-- `CALL proc` without parentheses inside a query (cypher.rs:1057-1063). -/
   callImplicit : Bool

@@ -7,7 +7,7 @@ import FalkorParserGrammar.C.Oracle0
 namespace FalkorParserGrammar.C
 
 /-- `MATCH (_anon_0:A), (:B)`: the anonymous node is named `_anon_0`
-(cypher.rs:3017), the same as the user's node, so `add_pattern_node` merges
+(cypher.rs:3026), the same as the user's node, so `add_pattern_node` merges
 them into one node with labels A and B. Live: Rust returns 0 rows, C 1
 (on `CREATE (:A), (:B)`). -/
 theorem anon_name_collides :

@@ -27,7 +27,8 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:253-267,292-310` |
 | `head`, `last`, `tail`, `size`, reverse | `list.rs:57-154` |
 | `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-310` |
-| `rangeIterStepField` | `RangeIter` construction/`next`, `eval.rs:108-123,1211-1216` |
+| `rangeIter` | `RangeIter::next` after #2899, `eval.rs:114-127`, built at `eval.rs:1236-1241` (debug: checked `+=`) |
+| `pre2899_rangeIterStepField` | `RangeIter`'s step field before #2899 (`step.unsigned_abs() as i64`) |
 | `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1616-1660`; loop `eval.rs:979-1016` |
 | `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1762-1785` (via `list_contains`, `eval.rs:1708`) |
 | `comprehensionRust` / `comprehensionSpec` | `ListComprehension` via `eval_iter_expr` fallback, `eval.rs:1018-1033,1234-1243` |
@@ -136,10 +137,11 @@ F. **List comprehension over null / scalar** — `eval.rs:1018-1033` via
 
 ## Unconfirmed / variants of known issues
 
-* `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64` is `i64::MIN`
-  and `-self.step` (`eval.rs:120`) overflows — debug panic "attempt to negate
-  with overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release is
-  correct (`[10]`). Variant of #2894 (`rangeIter_negate_overflows`).
+* (fixed by #2899) `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64`
+  was `i64::MIN` and `-self.step` overflowed — debug panic "attempt to negate with
+  overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release was correct
+  (`[10]`). Variant of #2894 (`pre2899_rangeIter_negate_overflows`); now
+  `rangeIter_eq_range` / `rangeIter_examples`.
 
 ## Gaps / assumptions
 
@@ -181,6 +183,13 @@ Re-targeted to 8621212fc: no modelled function changed. #2904 (`fd2c76a6c`, `^` 
 and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3007, #3043 and
 #3419 touch no row of this project; value.rs rows re-pinned (+7 after the import block,
 `add_slow` :961, `Contains::contains` impl :1867).
+Re-targeted to 737dfb5da: #2899 (`e63165cb5`, closes #2894) rewrote `RangeIter` (exact
+`remaining` count, signed `step`, advance only while another element is due): the
+`i64::MIN` negation variant is gone (`pre2899_rangeIter_negate_overflows` kept as history);
+new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
+no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
+the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
+(temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/
@@ -531,7 +540,7 @@ def range (start stop step : Int) : ROut :=
 
 /-- Every element of `range` lies between `start` and `end`, hence inside
 `i64`: the eager `range` cannot overflow for any `i64` arguments (contrast
-with the lazy `RangeIter`, #2894). -/
+with the pre-#2899 lazy `RangeIter`, #2894; the current one is `rangeIter_eq_range`). -/
 theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
     (hdir : ¬ ((start > stop ∧ step > 0) ∨ (start < stop ∧ step < 0)))
     (x : Int) (hx : x ∈ rangeElems start stop step) :
@@ -590,16 +599,88 @@ theorem range_examples :
     range 0 10 3 = .ok [0, 3, 6, 9] ∧ range 10 0 (-3) = .ok [10, 7, 4, 1] ∧
     range 10 0 I64MIN = .ok [10] ∧ range 1 0 1 = .ok [] := ⟨rfl, rfl, rfl, rfl⟩
 
-/-! ## Lazy `RangeIter::next` (`eval.rs:108-123`)
+/-! ## Lazy `RangeIter::next` before #2899 (history)
 
-The constructor stores `step: step.unsigned_abs() as i64` (`eval.rs:1215`); for
-`step = i64::MIN` that is `i64::MIN` again, and `next` then evaluates
-`-self.step`, which overflows before the (known, #2894) `+=`. -/
+Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`eval.rs:1215` at
+8621212fc); for `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluated
+`-self.step`, which overflowed before the (#2894) `+=`. -/
 
-def rangeIterStepField (step : Int) : Int := wrap step.natAbs
+def pre2899_rangeIterStepField (step : Int) : Int := wrap step.natAbs
 
-theorem rangeIter_negate_overflows :
-    rangeIterStepField I64MIN = I64MIN ∧ ¬ InI64 (-(rangeIterStepField I64MIN)) := by decide
+theorem pre2899_rangeIter_negate_overflows :
+    pre2899_rangeIterStepField I64MIN = I64MIN ∧ ¬ InI64 (-(pre2899_rangeIterStepField I64MIN)) := by
+  decide
+
+/-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:114-127`)
+
+`eval_iter_expr` (`eval.rs:1236-1241`) builds `RangeIter { current: start, step,
+remaining: length }` with the signed `step` (no negation any more) and the same
+`length` as the eager `range` (`rangeLen`). `next` yields `current`, decrements
+`remaining` and advances `current += step` only while `remaining > 0`. Debug build:
+the `+=` is checked. -/
+
+def rangeIter (step : Int) : Nat → Int → Except String (List Int)
+  | 0, _ => .ok []
+  | r + 1, cur =>
+    if r = 0 then .ok [cur]
+    else if InI64 (cur + step) then (rangeIter step r (cur + step)).map (cur :: ·)
+    else .error "attempt to add with overflow"
+
+/-- The lazy iterator is the element list as long as every element it is due to
+yield is an `i64` (it never computes the one past the last). -/
+theorem rangeIter_of_inRange (step : Int) :
+    ∀ (r : Nat) (cur : Int), (∀ k : Nat, k < r → InI64 (cur + k * step)) →
+      rangeIter step r cur = .ok ((List.range r).map fun (k : Nat) => cur + (k : Int) * step)
+  | 0, _, _ => rfl
+  | r + 1, cur, h => by
+    by_cases hr : r = 0
+    · subst hr; simp [rangeIter]
+    · have h1 : InI64 (cur + step) := by have := h 1 (by omega); simpa using this
+      have ih := rangeIter_of_inRange step r (cur + step) (fun k hk => by
+        have := h (k + 1) (by omega)
+        have e : cur + step + (k : Int) * step = cur + ((k + 1 : Nat) : Int) * step := by
+          push_cast; rw [Int.add_mul]; omega
+        rwa [e])
+      have hl : ((List.range (r + 1)).map fun (k : Nat) => cur + (k : Int) * step) =
+          cur :: ((List.range r).map fun (k : Nat) => cur + step + (k : Int) * step) := by
+        simp only [List.range_succ_eq_map, List.map_cons, List.map_map]
+        congr 1
+        · simp
+        · apply List.map_congr_left; intro k _
+          simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
+      simp only [rangeIter, hr, ↓reduceIte, h1, ih, hl]; rfl
+
+/-- **#2894 / #2899, fixed**: `UNWIND range(a, b, step)` (lazy) yields exactly the list
+the eager `range(a, b, step)` returns, for every `i64` `a`, `b`, `step`, and never
+overflows — including `step = i64::MIN` (contrast `pre2899_rangeIter_negate_overflows`)
+and ranges ending on `i64::MAX`/`i64::MIN`. -/
+theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI64 stop)
+    (l : List Int) (hr : range start stop step = .ok l) (hne : l ≠ []) :
+    rangeIter step (rangeLen start stop step) start = .ok l := by
+  unfold range at hr
+  split at hr
+  · cases hr
+  · split at hr
+    · cases hr; exact absurd rfl hne
+    · split at hr
+      · cases hr
+      · cases hr
+        rename_i hs hdir _
+        apply rangeIter_of_inRange
+        intro k hk
+        have hx : start + k * step ∈ rangeElems start stop step := by
+          unfold rangeElems; exact List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
+        have := range_elems_between start stop step hs hdir _ hx
+        simp only [InI64] at *; omega
+
+/-- The examples of `range_iter_stops_at_i64_bounds` (`eval.rs` unit test) and
+the former debug panic `UNWIND range(10, 0, i64::MIN)`. -/
+theorem rangeIter_examples :
+    rangeIter 1 (rangeLen (I64MAX - 1) I64MAX 1) (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
+    rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] ∧
+    rangeIter I64MIN (rangeLen 10 0 I64MIN) 10 = .ok [10] ∧
+    rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
 /-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1616-1660`) -/
 

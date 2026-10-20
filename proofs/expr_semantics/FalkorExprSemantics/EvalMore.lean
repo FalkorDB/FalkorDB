@@ -144,10 +144,10 @@ theorem evalBatch_eq_perRow (b : BatchM V) (params : String → Option V)
     | _ => simp [bind, Except.bind]
   | _ => simp [bind, Except.bind]
 
-/-! ## `eval_iter_expr` (eval.rs:1178): what `UNWIND` iterates -/
+/-! ## `eval_iter_expr` (eval.rs:1199): what `UNWIND` iterates -/
 
 /-- The emitted rows: `none` = no rows. `rangeVals` is `RangeIter`'s output (PROVEN
-`rangeIter_ok_up`); here a parameter fixed by start/end/step. -/
+`rangeIter_correct`, wired in by `evalIter_range_is_iter`); here a parameter fixed by start/end/step. -/
 inductive IterSrc (V : Type) where
   | range (start stop step : Int)
   | listLit (vs : List V)

@@ -35,7 +35,7 @@ Not on main:
 - `list.insert` normalisation can't overflow (`insertNorm_safe`).
 - Every element of the eager `range(a, b, step)` lies between start and end, so it never overflows (`range_elems_between`, `range_noOverflow`).
 
-The lazy `UNWIND range(10, 0, -9223372036854775808)` still panics in debug (`rangeIter_negate_overflows`), a variant of #2894; see `expr_semantics`.
+The lazy `UNWIND range(a, b, step)` yields exactly the eager list and never overflows, for every `i64` input (`rangeIter_eq_range`), since #2899. Before it, `UNWIND range(10, 0, -9223372036854775808)` panicked in debug (`pre2899_rangeIter_negate_overflows`), a variant of #2894; see also `expr_semantics`.
 
 **3. Are the quantifiers and `IN` three-valued logic?**
 
@@ -73,6 +73,7 @@ The team decided on 2026-09-25 that a deleted entity keeps returning *all* its d
 | `getElements_bounds`, `getElements_spec` | `l[a..b]` never panics and is the clamped slice | `FalkorStrList.lean` |
 | `listRemove_eq_spec` | `list.remove` equals the spec for all `i64` inputs, debug and release (#2952) | `FalkorStrList.lean` |
 | `range_noOverflow` | The eager `range()` never overflows | `FalkorStrList.lean` |
+| `rangeIter_eq_range` | The lazy `UNWIND range()` iterator yields exactly the eager `range()` list and never overflows, for every `i64` input (#2899) | `FalkorStrList.lean` |
 | `all_is_kand`, `any_is_kor`, `none_is_not_any`, `single_spec` | The list quantifiers are three-valued logic | `FalkorStrList.lean` |
 | `contains_false_iff` | When `IN` returns `false` rather than `null` | `FalkorStrList.lean` |
 | `substring3_agrees_C`, `left_agrees_C`, `right_agrees_C`, `trim_agrees_C`, `reverse_agrees_C`, `split_agrees_C` | These string functions equal C on every input | `FalkorStrList.lean` |
@@ -104,7 +105,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | E (W2-strlist-5) | `replaceRegex_dollar` | `string.replaceRegEx('abc', 'b', '$0x')` returns `'ac'` because `$` is expanded; C copies the replacement literally (`'a$0xc'`) | **Open**: listed under "decisions needed" (#2929) |
 | F (W2-strlist-6) | `comprehension_diverges` | `[x IN null \| x]` returns `[]` (C: `null`); `[x IN 5 \| x]` returns `[5]` (C: type error) | **Open** |
 | W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:282`, `:461`), not the pending ones | **Open** |
-| — | `rangeIter_negate_overflows` | `UNWIND range(10, 0, i64::MIN)` panics in debug ("attempt to negate with overflow"); release is correct | Unconfirmed variant of #2894 |
+| — | `pre2899_rangeIter_negate_overflows` | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
 C bugs recorded for comparison:
 
@@ -131,12 +132,11 @@ Shared foundations (`InI64`, `wrap`, `I64MIN`/`I64MAX`) come from [`../core`](..
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 65 |
-| MODELLED | 4 |
+| PROVEN | 66 |
+| MODELLED | 3 |
 | NOT COVERED | 1 |
 
 - **MODELLED:** these `eval.rs` functions are modelled to state a bug, not proven correct, because the bugs are still open:
-  - `RangeIter::next` (`rangeIter_negate_overflows`);
   - the `ListComprehension` arm and `eval_iter_expr` (bug F);
   - `eval_compiled_regex` (bugs C and E).
 - **NOT COVERED:** `check_string_or_null`, a bare type check.

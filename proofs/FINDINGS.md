@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-20): proofs cite `origin/main` @ 8621212fc.
+Current state (2026-10-20): proofs cite `origin/main` @ 737dfb5da.
 There is one Lake project per area under `proofs/<area>/` (35 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -70,7 +70,7 @@ Most AXIOMATISED rows are bindgen `extern` declarations (GraphBLAS, LAGraph, Red
 | 6 | The parser depth guard is bypassed by `SET`/`REMOVE` property chains and nested `FOREACH` (crash) | #2895 | #2900 |
 | 7 | A block comment ends at any `/`; a trailing `/` is swallowed; an unterminated `/*` is accepted | #2901 | #2908 |
 | 8 | Lexer: CRLF, `0e5`, non-canonical `-2^63`, an overflow hidden by a postfix, `\u+041` | #2909 | #2910 |
-| 9 | `UNWIND range()` overflows near the i64 limits | #2894 | #2899 |
+| 9 | `UNWIND range()` overflows near the i64 limits | #2894 | #2899 (merged, e63165cb5) |
 | 10 | `^` drops operand errors, so `WHERE x ^ true` has its filter removed; `'a' ^ 2` gives null | #2902 | #2904 |
 | 11 | `sign()` of a Float returns a Float | #2906 | #2907 |
 | 12 | Parallel edges collapse when the edge or path variable is read outside the traverse's ancestors | #2896 | #2918 |
@@ -98,7 +98,7 @@ Not filed:
 IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is Rust-only.
 
 ### Server crash / data damage
-- **W2-temporal-1..3**: `date({year:2020, week:10000000000})`, `date({…quarter:2, dayOfQuarter:i64::MAX})` and `date('2020W1é')` panic at `functions/temporal.rs:83`, `:95` and `:248`. C returns errors. C ✓.
+- **W2-temporal-1..3**: `date({year:2020, week:10000000000})`, `date({…quarter:2, dayOfQuarter:i64::MAX})` and `date('2020W1é')` panic at `functions/temporal.rs:83`, `:95` and `:248`. C returns errors. C ✓. **Fixed by #2950 (737dfb5da; closes #2930)**: every date constructor is total (`dateFromComponents_total`, `weekPath_total`, `quarterPath_total`, `weekSlice_total`) and gives the same date as before where it did not panic (`weekPath_eq_pre2950`, `quarterPath_eq_pre2950`); history `pre2950_week_panics`, `pre2950_quarter_panics`, `pre2950_week_slice_panics`, and the newly found `pre2950_week_edge_panics` (an in-range week at chrono's year edge, `date({year:-262143, week:1})`, also crashed before #2950).
 - **W2-strlist-1**: `list.sort` with NaN panics (`functions/list.rs:200`). Already fixed by PR #2912.
 - **W2-agg-3**: `percentileDisc`/`percentileCont` with NaN panic (`aggregation.rs:615`, `:645`). Probably already fixed by PR #2912; to verify.
 - **W2-pending-1**: #2876 is wider than filed. The id-keyed deleted-entity maps (`runtime.rs:159`, read by every accessor at `:1460-1790`) shadow any live entity that reuses the id, even when nothing can reach the deleted one. `MERGE` then creates a duplicate node, which is persistent damage. Reads of labels, properties, type and endpoints of relationships are wrong too. C ✓.
@@ -235,7 +235,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - several output-format differences;
   - likely root cause of #2539 (`attribute_store.rs:598` `as u16`) (**bulk side fixed by #3063, 0f45a8685**).
 - **Parser**:
-  - a slice bound that fails to parse is silently replaced by 0 or MAX;
+  - a slice bound that fails to parse is silently replaced by 0 or MAX (**fixed by #3041, 2023af648; closes #3036**: `slice_bound_error_reported`; history `pre3041_slice_bound_error_swallowed`);
   - `NOT NOT x` is parsed as `x`;
   - `SET [n).x` is accepted;
   - `1 IS NULL IN [...]` is rejected;
@@ -341,6 +341,9 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 - #3382 (idx): db.idx.vector.queryNodes answers from a half-built index (0 rows, then 3, while UNDER CONSTRUCTION); Indexer::vector_query never checks is_operational, while C refuses until OPERATIONAL. Lean IndexLayer.Meta.Ixr.bug3382_vector_query_ignores_operational; property VectorQueryRequiresOperational.
 
 ### Merged
+- 2026-10-20 on main (now 737dfb5da): #2899 (UNWIND range() never overflows; closes #2894), #2950 (temporal constructors never panic; closes #2930), #3041 (a slice bound that fails to parse is an error; closes #3036). Proofs re-targeted: 35 projects green; 2601 PROVEN + 23 CONDITIONAL of 2624 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
+  - Fixed, counterexamples kept as `pre<PR>_` history: the `range()` overflow (the lazy iterator now equals the eager `range()` list, `rangeIter_correct`); W2-temporal-1..3 (constructors total); the slice-bound fallback (`slice_bound_error_reported`).
+  - #3104 gate theorem: its `Oracle.Bal` premise was false only because of the slice-bound bug (`pre3041_gate_changes_result`). With #3041 the counterexample is gone and `bounded_bal` checks the premise for every expression input up to length 3, but it is not proven for the whole expression parser, so `listLitP_eq_ungated` stays conditional on it (and on `MemoSound`).
 - 2026-10-20 on main (now 8621212fc): #2904 (`^` propagates operand errors and type-checks; closes #2902), #2984 (date - duration rolls over like +; closes #2932), #3007 (row-dependent percentile from the first row; closes #2980), #3043 (verbose reply points and NaN as C; closes #3042), #3419 (VKEY_MAX_ENTITY_COUNT range 0..i64::MAX; for #3413). Proofs re-targeted: 35 projects green; 2599 PROVEN + 23 CONDITIONAL of 2622 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
   - **Discharged: `is_constant_true` and `eliminate_true_filters` are PROVEN.** They were CONDITIONAL on `hconst` (constant evaluation is sound), false for `^` (#2902). optimizer_rewrites `ConstEval.constEval_sound`: with #2904 no modelled arm swallows a child's error, so a constant result holds on every row; `constTrue_filter`, `andLoop_drop_constTrue`.
   - Fixed, counterexamples kept as `pre<PR>_` history: `^` dropping errors (`pre2904_pow_drops_error`, `pre2904_pow_constant_true`), W2-agg-4 (#3007), W2-temporal-5 (#2984), verbose point spacing and NaN (#3043: `pointStr_c`, `fmtS_floats_c`; `pre3043_point_space`), the #3413 CONFIG REWRITE abort (#3419: `ConfigRewrite.vkey_rewrite_reloads_config`; `pre3419_rewrite_refused`).
@@ -444,7 +447,7 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 1. **ORDER BY panics**, with "comparison function does not correctly implement a total order", once there are 21 or more rows. NaN compares Less both ways (`runtime/value.rs:1801`, `runtime/ops/sort.rs:348`); Int vs Float via `i as f64` is not transitive near 2^53; `compare_map` (`value.rs:1472`) returns Equal early. Trigger: a read-only `MATCH (n:N) RETURN n.v ORDER BY n.v` over stored NaNs. C returns the rows. → #2891 / PR #2912.
 2. **A client `GRAPH.EFFECT` with node id 2^61 crashes the server**, and `u64::MAX-1` hangs it (`id_space.rs:292`, `graph.rs:1474`, `:734`). → #2892 / PR #2911.
 3. **`SET`/`REMOVE n.a.a.a…` bypasses `check_depth`, and nested FOREACH has no depth guard.** → #2895 / PR #2900.
-4. **`UNWIND range(MAX-1, MAX)` overflows** in `RangeIter::next` (`runtime/eval.rs:120`). → #2894 / PR #2899.
+4. **`UNWIND range(MAX-1, MAX)` overflows** in `RangeIter::next` (`runtime/eval.rs:120`). → #2894 / PR #2899. Fixed by #2899 (e63165cb5): `rangeIter_correct` (expr_semantics), `rangeIter_eq_range` (functions_str_list); history `pre2899_rangeIter_wraps`, `pre2899_rangeIter_panics`, `pre2899_rangeIter_negate_overflows`.
 
 ### Wrong results (C is correct)
 5. **DISTINCT, count(DISTINCT) and MERGE drop rows on a 64-bit FxHash collision.** Closed as not planned (#2780).

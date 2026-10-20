@@ -1,12 +1,12 @@
 /-
 # Pattern comprehensions, `[`-dispatch, shortestPath, and the
-# pattern-comprehension guards (cypher.rs:1753-1940, 2783-2995, 3512-3522)
+# pattern-comprehension guards (cypher.rs:1753-1940, 2792-2995, 3521-3531)
 -/
 import FalkorParserGrammar.C.ExprC
 
 namespace FalkorParserGrammar.C
 
-/-! ## The forbidden-pattern-comprehension flag (cypher.rs:2783-2799) -/
+/-! ## The forbidden-pattern-comprehension flag (cypher.rs:2792-2808) -/
 
 /-- `without_pattern_comprehensions(place, parse)`: run `parse` with the flag
 set to `place`; the outer flag comes back whatever `parse` returned. The
@@ -18,7 +18,7 @@ theorem withoutPC_spec {α} (outer : Option Nat) (place : Nat) (parse : Option N
     (withoutPC outer place parse).1 = (parse (some place)).1 ∧ (withoutPC outer place parse).2 = outer :=
   ⟨rfl, rfl⟩
 
-/-- `reject_forbidden_pattern_comprehension` (cypher.rs:2794-2797). -/
+/-- `reject_forbidden_pattern_comprehension` (cypher.rs:2803-2806). -/
 def rejectForbidden (flag : Option Nat) : Except Nat Unit :=
   match flag with
   | some place => .error place
@@ -28,7 +28,7 @@ theorem rejectForbidden_spec (flag : Option Nat) :
     rejectForbidden flag = .ok () ↔ flag = none := by
   cases flag <;> simp [rejectForbidden]
 
-/-- `reject_aggregate` (cypher.rs:3512-3522). -/
+/-- `reject_aggregate` (cypher.rs:3521-3531). -/
 def rejectAggregate (t : ET) : P Unit := if (aggName t).isSome then fail else pure ()
 
 theorem rejectAggregate_spec (t : ET) (s : PS) :
@@ -39,7 +39,7 @@ theorem rejectAggregate_spec (t : ET) (s : PS) :
   · split <;> simp_all
   · split <;> simp
 
-/-- `parse_inline_properties` (cypher.rs:2997-3011): the map's own error is
+/-- `parse_inline_properties` (cypher.rs:3006-3020): the map's own error is
 kept only when it is an unknown-function error. -/
 def inlineErr (isUnknownFn : String → Bool) (msg : String) (r : Except String ET) : Except String ET :=
   match r with
@@ -51,7 +51,7 @@ theorem inlineErr_spec (u : String → Bool) (msg : String) (r : Except String E
     (∀ e, r = .error e → inlineErr u msg r = .error (if u e then e else msg)) := by
   constructor <;> intro x h <;> subst h <;> rfl
 
-/-! ## Pattern comprehension (cypher.rs:2949-2995; Cypher.g4:397-398) -/
+/-! ## Pattern comprehension (cypher.rs:2958-3004; Cypher.g4:397-398) -/
 
 def pcChain (o : Oracle) (F : Nat) : Nat → QNode Nat → QG Nat → P (QG Nat)
   | 0, _, _ => fuelP
@@ -76,7 +76,7 @@ def patCompP (o : Oracle) (F : Nat) (pv : Option Nat) : P ET := do
   tok .rbrack
   pure (.node .patComp [cond, res])
 
-/-! ## `parse_list_literal_or_comprehension` (cypher.rs:2809-2876) -/
+/-! ## `parse_list_literal_or_comprehension` (cypher.rs:2818-2885) -/
 
 /-- Run a speculative parse: an error becomes `none` (the caller restores). -/
 def attempt {α} (x : P α) : P (Option α) := fun s =>
@@ -118,7 +118,7 @@ def listLitRest (o : Oracle) (F : Nat) (forb : Bool) (saved : PS) : P (ET × Boo
       let rb ← opt .rbrack
       pure (leaf .list, !rb)
 
-/-- `list_has_top_level_pipe` (cypher.rs:2883-2903, #3104), on the tokens
+/-- `list_has_top_level_pipe` (cypher.rs:2892-2903, #3104), on the tokens
 after the `[`: one counter `open` for all three bracket kinds; a `|` at
 `open = 0` is `true`, a `,` there or a closer that would take `open` below 0
 is `false`, end of input (or a lexer error) is `false`. `[]` is
@@ -134,18 +134,18 @@ def pipeScan : Nat → List CT → Bool
     | .eof => false
     | _ => pipeScan d r
 
-/-- The gate of #3104 (cypher.rs:2841-2845) on the state after `[`: the
+/-- The gate of #3104 (cypher.rs:2850-2854) on the state after `[`: the
 current token is `(` or an identifier/keyword, and `list_has_top_level_pipe`. -/
 def gateOK (s : PS) : Bool :=
   (s.cur == .lparen || (identOf s.cur).isSome) && pipeScan 0 s.1
 
-/-- Alternative 4, the list literal (cypher.rs:2871-2875). -/
+/-- Alternative 4, the list literal (cypher.rs:2880-2884). -/
 def listLitLit (saved : PS) : P (ET × Bool) := do
   setS saved
   let rb ← opt .rbrack
   pure (leaf .list, !rb)
 
-/-- `parse_list_literal_or_comprehension` after `[` (cypher.rs:2809-2876), as
+/-- `parse_list_literal_or_comprehension` after `[` (cypher.rs:2818-2885), as
 merged by #3104 (`4a4f2a72f`): alternatives 2 and 3 are only tried when the
 gate is open and the memo (`o.seen`) does not hold the attempt; `forb` is the
 forbidden-pattern-comprehension flag. (`listLitRest` also restores `saved`

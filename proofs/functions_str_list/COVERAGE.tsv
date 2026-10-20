@@ -53,19 +53,19 @@ graph/src/runtime/functions/entity.rs	exists	264	PROVEN	Entity.exists: exists_sp
 graph/src/runtime/functions/entity.rs	indegree	275	PROVEN	Entity.indegree/degree: degree_null, degree_deleted
 graph/src/runtime/functions/entity.rs	outdegree	291	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
 graph/src/runtime/functions/entity.rs	parse_degree_args	311	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
-graph/src/runtime/functions/math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples
-graph/src/runtime/eval.rs	RangeIter::next	111	MODELLED	rangeIter_negate_overflows (variant of #2894)
-graph/src/runtime/eval.rs	eval_compound/GetElement	525	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds (arm at eval.rs:573)
-graph/src/runtime/eval.rs	eval_compound/GetElements	525	PROVEN	getElements_spec, getElements_bounds (arm at eval.rs:613)
-graph/src/runtime/eval.rs	eval_compound/In	525	PROVEN	contains_false_iff, contains_nil (arm at eval.rs:783)
-graph/src/runtime/eval.rs	eval_compound/Quantifier	525	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:992)
-graph/src/runtime/eval.rs	eval_compound/ListComprehension	525	MODELLED	comprehension_diverges (BUG F) (arm at eval.rs:1031)
-graph/src/runtime/eval.rs	eval_compound/Reduce	525	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1048)
-graph/src/runtime/eval.rs	eval_iter_expr	1189	MODELLED	comprehensionRust (fallback arm); range arm = rangeLen
-graph/src/runtime/eval.rs	eval_compiled_regex	1265	MODELLED	isMatchRust, expandRust (BUG C, E)
-graph/src/runtime/eval.rs	check_string_or_null	1272	NOT COVERED	type check only
-graph/src/runtime/eval.rs	eval_quantifier	1627	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
-graph/src/runtime/eval.rs	list_contains	1723	PROVEN	contains_false_iff
-graph/src/runtime/eval.rs	get_elements	1737	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
+graph/src/runtime/functions/math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples; lazy UNWIND form agrees: rangeIter_eq_range
+graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter: rangeIter_eq_range (lazy = eager range, never overflows), rangeIter_of_inRange, rangeIter_examples; pre-#2899 variant pre2899_rangeIter_negate_overflows
+graph/src/runtime/eval.rs	eval_compound/GetElement	535	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds (arm at eval.rs:573)
+graph/src/runtime/eval.rs	eval_compound/GetElements	535	PROVEN	getElements_spec, getElements_bounds (arm at eval.rs:613)
+graph/src/runtime/eval.rs	eval_compound/In	535	PROVEN	contains_false_iff, contains_nil (arm at eval.rs:783)
+graph/src/runtime/eval.rs	eval_compound/Quantifier	535	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:992)
+graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	MODELLED	comprehension_diverges (BUG F) (arm at eval.rs:1031)
+graph/src/runtime/eval.rs	eval_compound/Reduce	535	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1048)
+graph/src/runtime/eval.rs	eval_iter_expr	1199	MODELLED	comprehensionRust (fallback arm, bug F); range arm = rangeLen/rangeIter (rangeIter_eq_range)
+graph/src/runtime/eval.rs	eval_compiled_regex	1275	MODELLED	isMatchRust, expandRust (BUG C, E)
+graph/src/runtime/eval.rs	check_string_or_null	1282	NOT COVERED	type check only
+graph/src/runtime/eval.rs	eval_quantifier	1637	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+graph/src/runtime/eval.rs	list_contains	1733	PROVEN	contains_false_iff
+graph/src/runtime/eval.rs	get_elements	1747	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
 graph/src/runtime/value.rs	Contains::contains	1867	PROVEN	contains_false_iff
 graph/src/runtime/value.rs	add_slow (String/List arms)	961	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)

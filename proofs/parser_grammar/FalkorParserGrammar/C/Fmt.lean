@@ -108,12 +108,12 @@ theorem addPatNode_spec (cl : CK) (g : QG Nat) (seen : List Nat) (n : QNode Nat)
     (n.alias ∈ seen → cl ≠ .match_ → addPatNode cl (g, seen) n = (g, seen)) := by
   refine ⟨fun h => ?_, fun h hc => ?_, fun h hc => ?_⟩ <;> simp [addPatNode, *]
 
-/-- `match_dot_property_separator` (cypher.rs:2654-2671): consumes a `.`, fails otherwise. -/
+/-- `match_dot_property_separator` (cypher.rs:2663-2680): consumes a `.`, fails otherwise. -/
 theorem dotSep_spec (s : PS) : (s.cur = .dot → tok .dot s = .ok () s.adv) ∧
     (s.cur ≠ .dot → tok .dot s = .err) := by
   constructor <;> intro h <;> simp [tok, h]
 
-/-- `parse_property_name` (cypher.rs:2704-2716) reads exactly like `parse_ident`. -/
+/-- `parse_property_name` (cypher.rs:2713-2725) reads exactly like `parse_ident`. -/
 theorem propName_spec : propName = ident := rfl
 
 end FalkorParserGrammar.C

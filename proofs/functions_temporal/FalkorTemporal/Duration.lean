@@ -5,8 +5,8 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:453` |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:494` (`y - 1970` is i32: `toI32`) |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:482` |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs:523` (`y - 1970` is i32: `toI32`) |
 | `shiftMonths`             | `shift_months` — `value.rs:752` (shared by `+` and `-` since #2984) |
 | `addDur`                  | `add_duration_to_timestamp` — `value.rs:728` |
 | `subDur`                  | `sub_duration_from_timestamp` — `value.rs:738` (`pre2984_subDur`: the old clamping one, history) |
@@ -32,7 +32,7 @@ theorem chk32_of (x : Int) (h : I32 x) : chk32 x = some x := by
   unfold chk32; unfold I32 at h
   rw [decide_eq_true h.1, decide_eq_true h.2]; rfl
 
-/-- `construct_duration_secs` (`temporal.rs:453-491`), `Err` ↦ `none`. -/
+/-- `construct_duration_secs` (`temporal.rs:482-520`), `Err` ↦ `none`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -56,7 +56,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
   simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind]
 
-/-- `decompose_duration` (`temporal.rs:494-504`) as built in release (i32 wrap). -/
+/-- `decompose_duration` (`temporal.rs:523-533`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
   let days := dur / 86400
   let tod := dur % 86400
@@ -369,7 +369,7 @@ theorem time_normalised :
     timeAddDur 3600 ((constructDuration 0 0 0 1 0 0 0).getD 0) = 3600 ∧
     timeAddDur 3600 plus1M = 3600 ∧ timeSubDur 3600 plus1M = 3600 := by decide +kernel
 
-/-- Pre-#2987 release-mode `n * 7` (`temporal.rs:391`): two's-complement wrap. -/
+/-- Pre-#2987 release-mode `n * 7` (`temporal.rs:391` at 8621212fc): two's-complement wrap. -/
 def wrapMul (a b : Int) : Int := (a * b + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
 /-- **Bug W2-temporal-8 (history, fixed by #2987 9d3869aa8)**: before #2987

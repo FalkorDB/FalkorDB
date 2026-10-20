@@ -2,9 +2,9 @@
 # `parse_expr_inner` never panics
 
 The four panic sites of `parse_expr_inner` are
-`children().last().unwrap()` (cypher.rs:2316, 2321), `child(0)` of a
-`Negate` (2542) and of a `Paren` (2629), and the two `unreachable!()`
-(2645, 2648). They are all safe because of one stack invariant:
+`children().last().unwrap()` (cypher.rs:2316, 2330), `child(0)` of a
+`Negate` (2551) and of a `Paren` (2638), and the two `unreachable!()`
+(2645, 2657). They are all safe because of one stack invariant:
 
 * every frame's level is at most 11;
 * the stack is never empty inside the loop;
@@ -250,11 +250,9 @@ theorem primary_ok (n : Nat) (ts : List Tok) : ResOK PrimOK (primary pe n ts) :=
   all_goals gsimp
 
 theorem listOp_ok (lhs : RT) (hl : Good lhs) (ts : List Tok) : ResOK Good (listOp pe lhs ts) := by
-  unfold listOp listOpFrom
+  unfold listOp listOpTo
   repeat' split
   all_goals (try pe_facts hpe pe)
-  all_goals (try (unfold listOpTo; repeat' split))
-  all_goals (try (unfold orDefault))
   all_goals gsimp
 
 theorem mapProjItem_ok (ts : List Tok) : ResOK Good (mapProjItem pe ts) := by

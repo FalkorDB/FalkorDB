@@ -19,7 +19,12 @@ import OpsTraverse.SlotFeed
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
-**Re-targeted to main 289c201fe** (from fb3d516d0): no change to the traversal
+**Re-targeted to main 737dfb5da** (from 289c201fe): no change to the traversal
+operators. #2899 (`e63165cb5`) rewrote `RangeIter` in `eval.rs`, shifting the
+`NeighborIter` / `shortestPath` rows by +10 (COVERAGE.tsv re-pinned); #2950
+(temporal.rs) and #3041 (parser) touch nothing here.
+
+Earlier: re-targeted to main 289c201fe (from fb3d516d0): no change to the traversal
 operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pinned.
 
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
@@ -171,7 +176,7 @@ is now modelled at slot level (`SlotFeed.lean`), which catches #3372.
 * `get_nodes` (label-matrix intersection) is assumed sorted ascending.
 * allShortestPaths minimality/completeness are proved for the non-cycle case only;
   the cycle case (`src = dst`) has the known ordering bug and is not claimed.
-* `shortestPath()` (bidirectional BFS in `runtime/eval.rs:1400`) and the
+* `shortestPath()` (bidirectional BFS in `runtime/eval.rs:1421`) and the
   `algo.*paths` procedures are differential-tested against C only.
 * Record caps, OPTIONAL null padding and emitter loops are modelled at row level
   (the emitter's batch packing is proved in proofs/columnar).

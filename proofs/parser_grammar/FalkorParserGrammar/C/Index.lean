@@ -1,6 +1,6 @@
 /-
 # Index DDL and the entry point: `parse_index_ops`, `match_dot_property_separator`,
-# `parse` (cypher.rs:551-769, 2654-2671)
+# `parse` (cypher.rs:551-769, 2663-2680)
 -/
 import FalkorParserGrammar.C.ClausesG3
 import FalkorParserGrammar.C.ClausesNP
@@ -10,7 +10,7 @@ namespace FalkorParserGrammar.C
 /-- `current_str().eq_ignore_ascii_case("constraint")` (cypher.rs:572, 673). -/
 def nmConstraint : Nat := 6000001
 
-/-- `match_dot_property_separator` (cypher.rs:2654-2671): a `.`; anything
+/-- `match_dot_property_separator` (cypher.rs:2663-2680): a `.`; anything
 else (including a float token `.1`) is an error. -/
 def dotSepP : P Unit := tok .dot
 

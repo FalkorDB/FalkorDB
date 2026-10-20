@@ -37,7 +37,13 @@ Yes. Date, time and duration ordering is a total order (`temporal_order_total`, 
 
 **4. Can a temporal constructor crash the server?**
 
-Yes, and three inputs that do so are confirmed (see [Bugs found](#bugs-found)). The project proves where the safe region is. `weekPath_total` shows that the week branch of `date({year, week, dayOfWeek})` never panics for `|week| ≤ 10⁶` and `|year| ≤ 200 000`. `week_panics` gives a `week` outside that range that does panic. The missing guard is C's "valid values 1 - 53".
+Not since #2950. Before it, three inputs crashed the server (W2-temporal-1 to -3 in [Bugs found](#bugs-found)). #2950 range-checks every component before chrono sees it: week 1–53, quarter 1–4, dayOfQuarter 1–92, and `i32`/`u32` conversions that fail instead of truncating. It also splits the week string with `split_at_checked`. The project proves:
+
+- `dateFromComponents_total`: `date_from_components` returns a date or an error for **every** input, any integer in any of its seven slots. This is what `date(map)`, `localdatetime(map)` and their slot forms call;
+- `weekSlice_total`: the `W` string path never panics, and `date('2020W1é')` is an error (`week_slice_errors`);
+- `weekPath_ok`, `quarterPath_ok`, `weekPath_eq_pre2950`, `quarterPath_eq_pre2950`: in-range inputs give the same date as before. Only the panics changed.
+
+The old crashes are kept as history (`pre2950_week_panics`, `pre2950_quarter_panics`, `pre2950_week_slice_panics`). While re-proving, one more pre-#2950 crash turned up: an in-range week whose date falls outside chrono's year range, such as `date({year:-262143, week:1})`. That is `pre2950_week_edge_panics`, and it is now an error (`week_edge_errors`).
 
 **5. Do the parsers produce real dates?**
 
@@ -58,7 +64,7 @@ Yes:
 | `daysFromCivilT_eq` | The two Rust copies of `days_from_civil` agree | `Calendar.lean` |
 | `construct_decompose` | Decomposing a duration and rebuilding it gives the same duration | `Duration.lean` |
 | `temporal_order_total` | Date/time/duration ordering is total | `Duration.lean` |
-| `weekPath_total` | The `week` constructor branch is panic-free on a sane domain | `Constructors.lean` |
+| `dateFromComponents_total`, `weekSlice_total` | No input makes the date constructors panic (#2950) | `Constructors.lean` |
 | `parseDate_ok`, `parseTime_ok` | The string parsers only accept real dates and times | `Parse.lean` |
 | `durationStruct_eq_map`, `dateStruct_eq_map` | The positional-slot constructor forms equal the map forms | `Pure.lean` |
 | `distance_finite` | `distance()` is never NaN for finite points, antipodal ones included (#2983) | `SpatialFns.lean` |
@@ -76,13 +82,13 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 8621212fc: #2983, #2984, #2985 and #2987 fixed W2-temporal-4, -5, -6 and -8; the others are still present.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). Re-checked against main 737dfb5da: #2950 fixed W2-temporal-1, -2 and -3, and #2983, #2984, #2985 and #2987 fixed W2-temporal-4, -5, -6 and -8. W2-temporal-7 and -9 are still present.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-temporal-1 | `week_panics`, `week_panics_delta` | `RETURN date({year:2020, week:10000000000})` **crashes the server** (chrono `NaiveDate + TimeDelta` overflow). C: "Invalid value for week" | **Open** |
-| W2-temporal-2 | `quarter_panics` | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashes the server** (`TimeDelta::days` panics). C: error | **Open** |
-| W2-temporal-3 | `week_slice_panics` | `RETURN date('2020W1é')` **crashes the server**: `&rest[..2]` is not on a char boundary. #3125 doesn't cover the `W` path (`parseDate_week_first`) | **Open** |
+| W2-temporal-1 | `pre2950_week_panics`, `pre2950_week_panics_delta`, `pre2950_week_edge_panics` | `RETURN date({year:2020, week:10000000000})` **crashed the server** (chrono `NaiveDate + TimeDelta` overflow). C: "Invalid value for week". So did an in-range week at chrono's year edge, `date({year:-262143, week:1})` | Fixed by #2950 (`dateFromComponents_total`, `week_huge_errors`, `week_edge_errors`) |
+| W2-temporal-2 | `pre2950_quarter_panics` | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashed the server** (`TimeDelta::days` panics). C: error | Fixed by #2950 (`quarterPath_total`, `quarter_doq_errors`) |
+| W2-temporal-3 | `pre2950_week_slice_panics` | `RETURN date('2020W1é')` **crashed the server**: `&rest[..2]` is not on a char boundary | Fixed by #2950 (`weekSlice_total`, `week_slice_errors`) |
 | W2-temporal-4 | `pre2983_distance_nan` | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
 | W2-temporal-5 | `pre2984_sub_vs_add_neg` | `date('2020-03-31') - duration({months:1})` was 2020-02-29 (subtraction clamped the day), while `+ duration({months:-1})` was 2020-03-02 (C: 03-02) | Fixed by #2984 (`sub_eq_add_neg_months`: `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `sub_vs_add_neg`: both 03-02; `subDur_eq_pre2984`: unchanged for day ≤ 28) |
 | W2-temporal-6 | `pre2985_time_not_normalised` | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
@@ -105,7 +111,7 @@ This project has no CONDITIONAL rows.
 | `EraDefs.lean`, `EraFwd0-3.lean`, `EraBwd0-3.lean`, `EraAll.lean` | The kernel-checked enumeration of one 400-year era (`fwdOk_all`, `bwdOk_all`) |
 | `CalendarLaws.lean` | `dfc_civil`, `civil_dfc`, `civil_valid`, `dfc_injective`, the `i32` cast |
 | `Duration.lean` | Duration construct/decompose, `add_duration_to_timestamp`/`sub_duration_from_timestamp`, `Time ± Duration`, temporal ordering; bug 5, history of 6 and 8 |
-| `Constructors.lean` | The `date({week|quarter …})` branches, the `W` string slice, date formatting; bugs 1–3, 7, 9 |
+| `Constructors.lean` | `date_from_components` (week, quarter and year/month/day branches) and its totality, the `W` string split, date formatting; bugs 7, 9; history of 1–3 |
 | `Fns.lean` | Field extractors, `*_pure` constructors, the clock functions, `register` |
 | `Parse.lean` | `parse_date_string`, `parse_time_string`, `parse_datetime_string`, `parse_duration_string` (checked `W`/`D` since #2987) |
 | `Pure.lean` | The slot-based `*_struct_pure` constructors equal the map forms |
@@ -119,11 +125,11 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## Coverage
 
-`COVERAGE.tsv` has 100 rows: 31 in `temporal.rs`, 26 in `vector_expr.rs`, 21 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
+`COVERAGE.tsv` has 101 rows: 32 in `temporal.rs`, 26 in `vector_expr.rs`, 21 in `value.rs`, 11 in `conversion.rs`, 7 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 63 |
+| PROVEN | 64 |
 | MODELLED | 3 |
 | NOT COVERED | 34 |
 
@@ -156,4 +162,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A change to `days_from_civil` or `civil_from_days` re-runs the era enumeration, so expect the long build. When you fix one of the W2-temporal bugs, rename its counterexample to `pre<PR>_…`, prove the fixed behaviour, and flip the matching `bug_*` repro test.
+A change to `days_from_civil` or `civil_from_days` re-runs the era enumeration, so expect the long build. When you fix one of the open W2-temporal bugs, rename its counterexample to `pre<PR>_…`, prove the fixed behaviour, and flip the matching `bug_*` repro test.

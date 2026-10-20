@@ -1,7 +1,7 @@
 /-
 # Model of the expression parser of `graph/src/parser/cypher.rs`
 
-A line-by-line model of `Parser::parse_expr_inner` (cypher.rs:2186-2649), the
+A line-by-line model of `Parser::parse_expr_inner` (cypher.rs:2195-2658), the
 `parse_expr_return!` / `parse_operators!` macros (macro.rs:115-168) and the
 primaries it calls. Line numbers refer to cypher.rs unless stated otherwise.
 
@@ -52,7 +52,7 @@ def adv : List Tok → List Tok
   | [] => []
   | _ :: r => r
 
-/-- Keyword text as an identifier (`parse_ident` accepts keywords, cypher.rs:2675). -/
+/-- Keyword text as an identifier (`parse_ident` accepts keywords, cypher.rs:2684). -/
 def kwCode : Kw → Nat
   | .or_ => 1000 | .xor => 1001 | .and_ => 1002 | .not_ => 1003 | .in_ => 1004
   | .starts => 1005 | .ends => 1006 | .with_ => 1007 | .contains => 1008
@@ -126,9 +126,9 @@ abbrev lf (o : Op) : RT := .node o []
 
 /-! ## Results -/
 
-/-- A sub-parser's result. `err` keeps the lexer position, because
-`parse_list_operator_expression` carries on from wherever a failed
-`parse_expr` stopped (cypher.rs:2140-2148). `panic` is an `unwrap()` /
+/-- A sub-parser's result. `err` keeps the lexer position (before #3041,
+`parse_list_operator_expression` carried on from wherever a failed
+`parse_expr` stopped; `pre3041_listOp`). `panic` is an `unwrap()` /
 `unreachable!()` / `child(0)` on a childless node; `fuel` is the model's
 step budget running out (not a Rust behaviour). -/
 inductive Res (α : Type)
@@ -169,7 +169,7 @@ def ret (t : RT) : List Frame → List Tok → St
 
 /-! ## `parse_operators!` (macro.rs:135-168), levels 0, 1, 2, 6, 7, 8 -/
 
-/-- The operator tokens of each binary level (cypher.rs:2260-2536). The
+/-- The operator tokens of each binary level (cypher.rs:2269-2545). The
 multi-token form tries its tokens in order and `continue`s on the first
 match, so a lookup table is the same thing. -/
 def opTok : Nat → Tok → Option Op
@@ -193,7 +193,7 @@ def binStep (l : Nat) (res : RT) (K : List Frame) (ts : List Tok) : St :=
     .run ((l + 1, none) :: (l, some (if res.root = op then res else .node op [res])) :: K) (adv ts)
   | none => ret res K ts
 
-/-! ## Level 4: comparison with chained-range desugaring (cypher.rs:2274-2345) -/
+/-! ## Level 4: comparison with chained-range desugaring (cypher.rs:2283-2354) -/
 
 def cmpTok : Tok → Option Op
   | .eq => some .eq | .neq => some .neq | .lt => some .lt
@@ -206,7 +206,7 @@ def isCmp : Op → Bool
 
 def RT.last? (t : RT) : Option RT := t.kids.getLast?
 
-/-- `last_cmp_is_ordering` (2292-2311). -/
+/-- `last_cmp_is_ordering` (2301-2320). -/
 def lastCmpIsOrdering (res : RT) : Bool :=
   isCmp res.root ||
     (res.root == .and_ && (match res.last? with | some c => isCmp c.root | none => false))
@@ -216,13 +216,13 @@ def cmpStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
   | none => ret res K ts
   | some op =>
     let ts := adv ts
-    -- last_cmp_is_ordering (2292-2311)
+    -- last_cmp_is_ordering (2301-2320)
     if lastCmpIsOrdering res then
-      -- last_cmp_node (2315-2319): `.children().last().unwrap()`
+      -- last_cmp_node (2324-2328): `.children().last().unwrap()`
       match (if res.root = .and_ then res.last? else some res) with
       | none => .panic
       | some lcn =>
-        -- middle_clone (2320-2321): `.children().last().unwrap()`
+        -- middle_clone (2329-2330): `.children().last().unwrap()`
         match lcn.last? with
         | none => .panic
         | some mid =>
@@ -231,9 +231,9 @@ def cmpStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
     else
       .run ((5, none) :: (4, some (.node op [res])) :: K) ts
 
-/-! ## Level 5: string, list and null predicates (cypher.rs:2346-2525) -/
+/-! ## Level 5: string, list and null predicates (cypher.rs:2355-2534) -/
 
-/-- The `while optional_match_token!(Is)` loop (2409-2425). -/
+/-- The `while optional_match_token!(Is)` loop (2418-2434). -/
 def isLoop (res : RT) : List Tok → Res RT
   | .kw .is_ :: r =>
     match r with
@@ -243,7 +243,7 @@ def isLoop (res : RT) : List Tok → Res RT
     | r' => .err r'
   | ts => .ok res ts
 
-/-- `stack.push((current, Some(res))); stack.push((current + 1, None))` (2523-2524). -/
+/-- `stack.push((current, Some(res))); stack.push((current + 1, None))` (2532-2533). -/
 def push5 (res : RT) (K : List Frame) (ts : List Tok) : St :=
   .run ((6, none) :: (5, some res) :: K) ts
 
@@ -261,7 +261,7 @@ def predStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
   | .kw .contains :: r => push5 (.node .contains [res]) K r
   | .regex :: r => push5 (.node .regex [res]) K r
   | .kw .is_ :: _ =>
-    -- #3060 (`fe619ac5f`): `stack.push((current, Some(res), height)); continue;` (2428) —
+    -- #3060 (`fe619ac5f`): `stack.push((current, Some(res), height)); continue;` (2437) —
     -- more predicates may follow (`x IS NULL IN [false]`); it used to `parse_expr_return!`.
     match isLoop res ts with
     | .ok res' ts' => .run ((5, some res') :: K) ts'
@@ -282,7 +282,7 @@ def predStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
 
 /-! ## Primaries, lists, maps, calls -/
 
-/-- `parse_ident` (2673-2685). Identifier-length validation is not modelled. -/
+/-- `parse_ident` (2682-2694). Identifier-length validation is not modelled. -/
 def parseIdent : List Tok → Res Nat
   | t :: r => match identOf t with
     | some v => .ok v r
@@ -309,7 +309,7 @@ def fnTable : List Nat → Option (Nat × Nat)
   | [10] => some (1, 3)   -- a three-argument function, e.g. substring
   | _ => none
 
-/-- The `loop` of `parse_expression_list` (2763-2769) and its closing `)` (2772-2778):
+/-- The `loop` of `parse_expression_list` (2772-2778) and its closing `)` (2781-2787):
 after a `,` an expression must follow. -/
 def exprItems (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List Tok) :
     Res (List RT) :=
@@ -326,14 +326,14 @@ def exprItems (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List To
     | .panic => .panic
     | .fuel => .fuel
 
-/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (2754-2781). #3060 (`fe619ac5f`):
+/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (2763-2790). #3060 (`fe619ac5f`):
 only an *empty* list may end at once (`if !is_end_token(current) { loop {..} }`), so
 `f(1,)` is an error; it used to re-test the end token after every `,`. -/
 def exprList (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List Tok) :
     Res (List RT) :=
   if cur ts = .rparen then .ok acc (adv ts) else exprItems pe fuel acc ts
 
-/-- `parse_map` (3193-3223), entered at `{`. -/
+/-- `parse_map` (3202-3232), entered at `{`. -/
 def mapBody (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List Tok) : Res RT :=
   match fuel with
   | 0 => .fuel
@@ -361,7 +361,7 @@ def parseMap (pe : List Tok → Out) (fuel : Nat) : List Tok → Res RT
   | .lbrace :: r => mapBody pe fuel [] r
   | ts => .ok (lf .map) ts
 
-/-- `parse_list_comprehension` (2906-2941); `var IN` already consumed. No
+/-- `parse_list_comprehension` (2915-2950); `var IN` already consumed. No
 `|` token exists in the fragment, so the projection is the variable. -/
 def listCompTail (v : Nat) (l : RT) : Res RT → Res (RT × Bool)
   | .ok c (.rbrack :: r) => .ok (.node (.listComp v) [l, c, lf (.var v)], false) r
@@ -378,7 +378,7 @@ def listComp (pe : List Tok → Out) (v : Nat) (ts : List Tok) : Res (RT × Bool
   | .panic => .panic
   | .fuel => .fuel
 
-/-- `parse_list_literal_or_comprehension` (2809-2876), after `[`.
+/-- `parse_list_literal_or_comprehension` (2818-2885), after `[`.
 1) `ident IN` commits to a comprehension; 2) and 3), the pattern
 comprehensions, are not tried: since #3104 they need `list_has_top_level_pipe`,
 and this alphabet has no `|` (before #3104 they were tried and always failed,
@@ -435,44 +435,73 @@ def primary (pe : List Tok → Out) (fuel : Nat) : List Tok → Res (RT × Bool)
       | .fuel => .fuel
   | [] => .err []
 
-/-- `parse_list_operator_expression` (2136-2156), after `[`. A failed
-`from`/`to` is *replaced by a default* rather than reported. -/
-def orDefault (r : Out) (d : RT) : RT :=
+/-- `parse_list_operator_expression` (2136-2165), after `[`. Since #3041
+(`2023af648`) a bound is left out only when `..` (for `from`) or `]` (for `to`)
+comes where it would start; a bound that is there but fails to parse is an
+error. -/
+def listOpTo (pe : List Tok → Out) (lhs fr : RT) (ts : List Tok) : Res RT :=
+  match ts with
+  | .rbrack :: r => .ok (.node .getElems [lhs, fr, lf (.int 9223372036854775807)]) r
+  | _ =>
+    match pe ts with
+    | .ok t (.rbrack :: r) => .ok (.node .getElems [lhs, fr, t]) r
+    | .ok _ r => .err r
+    | .err e => .err e
+    | .panic => .panic
+    | .fuel => .fuel
+
+def listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
+  match ts with
+  | .dotdot :: r => listOpTo pe lhs (lf (.int 0)) r
+  | _ =>
+    match pe ts with
+    | .ok f (.dotdot :: r) => listOpTo pe lhs f r
+    | .ok f (.rbrack :: r) => .ok (.node .getElem [lhs, f]) r
+    | .ok _ r => .err r
+    | .err e => .err e
+    | .panic => .panic
+    | .fuel => .fuel
+
+/-! ### Before #3041 (main 8621212fc), kept as history -/
+
+/-- A failed `from`/`to` was *replaced by a default* rather than reported. -/
+def pre3041_orDefault (r : Out) (d : RT) : RT :=
   match r with
   | .ok t _ => t
   | _ => d
 
-/-- After `..`: the `to` expression's result is `toR`, the lexer at `r`. -/
-def listOpTo (lhs : RT) (fromR toR : Out) (r : List Tok) : Res RT :=
+def pre3041_listOpTo (lhs : RT) (fromR toR : Out) (r : List Tok) : Res RT :=
   match toR.rest r with
   | .rbrack :: r' =>
-    .ok (.node .getElems [lhs, orDefault fromR (lf (.int 0)),
-      orDefault toR (lf (.int 9223372036854775807))]) r'
+    .ok (.node .getElems [lhs, pre3041_orDefault fromR (lf (.int 0)),
+      pre3041_orDefault toR (lf (.int 9223372036854775807))]) r'
   | r' => .err r'
 
-/-- After the `from` expression, whose result is `fromR`. -/
-def listOpFrom (pe : List Tok → Out) (lhs : RT) (fromR : Out) (ts : List Tok) : Res RT :=
+def pre3041_listOpFrom (pe : List Tok → Out) (lhs : RT) (fromR : Out) (ts : List Tok) : Res RT :=
   match fromR.rest ts with
   | .dotdot :: r =>
     match pe r with
     | .panic => .panic
     | .fuel => .fuel
-    | .ok t r' => listOpTo lhs fromR (.ok t r') r
-    | .err e => listOpTo lhs fromR (.err e) r
+    | .ok t r' => pre3041_listOpTo lhs fromR (.ok t r') r
+    | .err e => pre3041_listOpTo lhs fromR (.err e) r
   | .rbrack :: r =>
     match fromR with
     | .ok f _ => .ok (.node .getElem [lhs, f]) r
     | _ => .err r
   | r => .err r
 
-def listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
+/-- `parse_list_operator_expression` before #3041: `parse_expr` for `from`, and
+on `..` again for `to`, each `unwrap_or_else` a default; the lexer carried on
+from wherever the failed parse stopped. -/
+def pre3041_listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
   match pe ts with
   | .panic => .panic
   | .fuel => .fuel
-  | .ok f r => listOpFrom pe lhs (.ok f r) ts
-  | .err e => listOpFrom pe lhs (.err e) ts
+  | .ok f r => pre3041_listOpFrom pe lhs (.ok f r) ts
+  | .err e => pre3041_listOpFrom pe lhs (.err e) ts
 
--- `parse_map_projection` (3225-3281), after `{`:
+-- `parse_map_projection` (3234-3290), after `{`:
 /-- One item of a map projection: `.*`, `.prop`, `key: expr` or `var`. -/
 def mapProjItem (pe : List Tok → Out) (ts : List Tok) : Res RT :=
   match ts with
@@ -511,7 +540,7 @@ def mapProj (pe : List Tok → Out) (fuel : Nat) (base : RT) : List Tok → Res 
   | .rbrace :: r => .ok (.node .mapProj [base]) r
   | ts => mapProjBody pe fuel [base] ts
 
-/-- `parse_labels` (3184-3191); `OrderSet::insert` drops repeats. -/
+/-- `parse_labels` (3193-3200); `OrderSet::insert` drops repeats. -/
 def labels (acc : List Nat) : List Tok → Res (List Nat)
   | .colon :: t :: r =>
     match identOf t with
@@ -520,7 +549,7 @@ def labels (acc : List Nat) : List Tok → Res (List Nat)
   | [.colon] => .err []
   | ts => .ok acc ts
 
-/-- Level 10's postfix loop (2584-2608). -/
+/-- Level 10's postfix loop (2593-2617). -/
 def postLoop (pe : List Tok → Out) (fuel : Nat) (res : RT) (ts : List Tok) : Res RT :=
   match fuel with
   | 0 => .fuel
@@ -546,7 +575,7 @@ def postLoop (pe : List Tok → Out) (fuel : Nat) (res : RT) (ts : List Tok) : R
       | .fuel => .fuel
     | _ => .ok res ts
 
-/-- Level 10 (2559-2622): the postfix loop, then an optional `:Label...`. -/
+/-- Level 10 (2568-2631): the postfix loop, then an optional `:Label...`. -/
 def postStep (pe : List Tok → Out) (fuel : Nat) (res : RT) (K : List Frame) (ts : List Tok) : St :=
   match postLoop pe fuel res ts with
   | .ok res' ts' =>
@@ -562,25 +591,25 @@ def postStep (pe : List Tok → Out) (fuel : Nat) (res : RT) (K : List Frame) (t
   | .panic => .panic
   | .fuel => .fuel
 
-/-- Level 3's `while NOT` counter (2201-2209). -/
+/-- Level 3's `while NOT` counter (2210-2218). -/
 def countNots : List Tok → Nat × List Tok
   | .kw .not_ :: r => let p := countNots r; (p.1 + 1, p.2)
   | ts => (0, ts)
 
-/-- The frames level 3 pushes for `n` leading `NOT`s (2209-2219). -/
+/-- The frames level 3 pushes for `n` leading `NOT`s (2218-2228). -/
 def notFrames (n : Nat) (K : List Frame) : List Frame :=
   if n = 0 then (3, none) :: K
   else if n % 2 = 1 then (3, some (lf .not_)) :: K
   else (3, some (lf .not_)) :: (3, some (lf .not_)) :: K
 
-/-- Level 9 prefix (2221-2237): an optional `+`, then an optional `-`. -/
+/-- Level 9 prefix (2230-2246): an optional `+`, then an optional `-`. -/
 def signs : List Tok → Bool × List Tok
   | .plus :: .dash :: r => (true, r)
   | .plus :: r => (false, r)
   | .dash :: r => (true, r)
   | ts => (false, ts)
 
-/-- Level 11 with a tree (2623-2644). `take_out` of a `Paren` child moves
+/-- Level 11 with a tree (2632-2653). `take_out` of a `Paren` child moves
 its children up in its place. -/
 def closeStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
   match res with
@@ -588,7 +617,7 @@ def closeStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
     match ts with
     | .rparen :: r =>
       match cs with
-      | [] => .panic                                    -- `child(0)` (2629)
+      | [] => .panic                                    -- `child(0)` (2638)
       | .node .paren gcs :: rest => ret (.node .paren (gcs ++ rest)) K r
       | c :: rest => ret (.node .paren (c :: rest)) K r
     | r => .err r
@@ -601,12 +630,12 @@ def closeStep (res : RT) (K : List Frame) (ts : List Tok) : St :=
 
 /-- One iteration of `while let Some((current, res, _)) = stack.pop()`. -/
 def step (pe : List Tok → Out) (fuel : Nat) : List Frame → List Tok → St
-  | [], _ => .panic                                     -- `unreachable!()` (2648)
+  | [], _ => .panic                                     -- `unreachable!()` (2657)
   | (l, none) :: K, ts =>
     if l < 3 ∨ (3 < l ∧ l < 9) ∨ l = 10 then
       .run ((l + 1, none) :: (l, none) :: K) ts
     else if l = 3 then
-      -- #3060 (`fe619ac5f`, 2193-2203): no `NOT` pushes `(3, None)`; a run of `n ≥ 1`
+      -- #3060 (`fe619ac5f`, 2202-2212): no `NOT` pushes `(3, None)`; a run of `n ≥ 1`
       -- pushes `2 - n % 2` frames `(3, Some(Not))` — one `NOT` for odd `n`, two for even.
       let (n, ts') := countNots ts
       .run ((4, none) :: notFrames n K) ts'
@@ -627,13 +656,13 @@ def step (pe : List Tok → Out) (fuel : Nat) : List Frame → List Tok → St
     | 4 => cmpStep res K ts
     | 5 => predStep res K ts
     | 9 =>
-      -- the i64::MIN special case (2540-2556) reads `child(0)` of a Negate
+      -- the i64::MIN special case (2549-2565) reads `child(0)` of a Negate
       match res with
       | .node .neg [] => .panic
       | _ => ret res K ts
     | 10 => postStep pe fuel res K ts
     | 11 => closeStep res K ts
-    | _ => .panic                                       -- `unreachable!()` (2645)
+    | _ => .panic                                       -- `unreachable!()` (2654)
 
 /-- The loop, with a step budget. -/
 def loop (pe : List Tok → Out) : Nat → St → Out
@@ -644,7 +673,7 @@ def loop (pe : List Tok → Out) : Nat → St → Out
   | 0, .run _ _ => .fuel
   | n + 1, .run K ts => loop pe n (step pe n K ts)
 
-/-- `parse_expr` / `parse_expr_inner` (2175-2193): start from `[(0, None)]`.
+/-- `parse_expr` / `parse_expr_inner` (2184-2202): start from `[(0, None)]`.
 Nested `parse_expr` calls (in calls, maps, indexes, comprehensions) use one
 unit less of budget. -/
 def parseExpr : Nat → List Tok → Out

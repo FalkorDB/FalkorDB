@@ -8,7 +8,20 @@ import FalkorCore.Float
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
 
-**Re-targeted to main 8621212fc** (from 289c201fe). #2904 (#2902): `^` propagates
+**Re-targeted to main 737dfb5da** (from 8621212fc). #2899 (`e63165cb5`, closes #2894):
+`RangeIter` now stores the exact element count `remaining` and the signed `step`, and
+advances only while another element is due — re-modelled as `rangeIter` (debug, checked
+`+=`) / `rangeIterRel` (release); `rangeIter_correct`: for every `i64` start/end and
+nonzero step the caller accepts, it yields exactly the eager range (`rangeList`, and
+`rangeMath` with any fuel ≥ the length) and never overflows; `evalIter_range_is_iter`,
+`rangeIter_sizeHint_exact` (new `size_hint`), `rangeIter_bounds_examples`,
+`rangeIter_max_fixed`. The old model and its counterexamples are kept as
+`pre2899_rangeIterRel`/`pre2899_rangeIterDbg`, `pre2899_rangeIter_wraps`,
+`pre2899_rangeIter_panics`, `pre2899_rangeIter_panics_down`, `pre2899_rangeIter_ok_up`.
+#2950 (temporal.rs) and #3041 (parser) touch nothing modelled here. COVERAGE.tsv
+eval.rs line numbers re-pinned to 737dfb5da.
+
+Earlier: re-targeted to main 8621212fc (from 289c201fe). #2904 (#2902): `^` propagates
 operand errors (`?` instead of `flat_map`) and `apply_pow` type-checks its operands
 (`Type mismatch: expected Integer, Float, or Null but was …`) — `applyPow`/`powFold`
 re-modelled, `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`,
@@ -53,8 +66,9 @@ and with counterexamples, each reproduced against the real engine
 * `^` silently dropping an operand's error — fixed by #2904 (`fd2c76a6c`), now
   `pow_propagates_error` (historical `pre2904_pow_drops_error`; the optimizer
   deleting `WHERE x ^ true` as constant-true is `pre2904_pow_constant_true`);
-* the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX`
-  (`rangeIter_wraps`) — panic in debug, wrong rows and non-termination in release;
+* the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX` — fixed by
+  #2899 (`e63165cb5`), now `rangeIter_correct` (historical `pre2899_rangeIter_wraps`:
+  panic in debug, wrong rows and non-termination in release);
 * `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
   `sign_float_is_int` (historical `pre2907_sign_float_is_float`);
 * mixed Int/Float equality not being transitive (`int_float_eq_not_transitive`).
@@ -88,7 +102,10 @@ and with counterexamples, each reproduced against the real engine
 | `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:828-834`, `reduce` calling `apply_pow(acc?, value?)`) |
 | `pre2904_applyPow`, `pre2904_powFold` | the same before #2904 (the `flat_map`) |
 | `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
-| `rangeIterRel` / `rangeIterDbg` | `RangeIter::next` (`eval.rs:108-122`), release / debug build |
+| `rangeIter` / `rangeIterRel` | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
+| `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:129-132`) |
+| `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1224-1233`); the eager `range()` list |
+| `pre2899_rangeIterRel` / `pre2899_rangeIterDbg` | `RangeIter::next` before #2899, release / debug |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
 | `signRust`               | `sign` (`math.rs:210`) |
 | `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs:41-88`) |
@@ -1568,21 +1585,24 @@ theorem pre2904_pow_agrees_without_errors (pw : F → F → F) (vs : List (V F))
   rw [h1, h2]
   cases vs <;> rfl
 
-/-! ## `UNWIND range(..)`: the lazy iterator overflows (BUG) -/
+/-! ## `UNWIND range(..)`: the lazy iterator before #2899 (BUG, fixed)
 
-/-- `RangeIter::next` (eval.rs:108-122) in a release build (wrapping `+=`),
+Kept for history: before #2899 (`e63165cb5`) `RangeIter` stored `end`, the step's
+magnitude and a direction flag, and stepped past the last element. -/
+
+/-- `RangeIter::next` before #2899 (eval.rs:108-122 at 8621212fc) in a release build (wrapping `+=`),
 run for at most `fuel` items. `step` is stored as `step.unsigned_abs() as i64`
 and negated for a descending range — `wrap` models both casts. -/
-def rangeIterRel (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
+def pre2899_rangeIterRel (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
   | 0, _ => []
   | fuel + 1, cur =>
     if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then []
-    else cur :: rangeIterRel up stepAbs endv fuel
+    else cur :: pre2899_rangeIterRel up stepAbs endv fuel
       (wrap (cur + (if up then wrap stepAbs else wrap (-(wrap stepAbs)))))
 
 /-- The same iterator in a debug build: `+=` and unary `-` are checked and
 panic ("attempt to add/negate with overflow"). -/
-def rangeIterDbg (up : Bool) (stepAbs endv : Int) : Nat → Int → Except String (List Int)
+def pre2899_rangeIterDbg (up : Bool) (stepAbs endv : Int) : Nat → Int → Except String (List Int)
   | 0, _ => .ok []
   | fuel + 1, cur =>
     if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then .ok []
@@ -1591,7 +1611,7 @@ def rangeIterDbg (up : Bool) (stepAbs endv : Int) : Nat → Int → Except Strin
       let d := if up then st else -st
       if !up && ¬ InI64' (-st) then .error "attempt to negate with overflow"
       else if ¬ InI64' (cur + d) then .error "attempt to add with overflow"
-      else (rangeIterDbg up stepAbs endv fuel (cur + d)).map (cur :: ·)
+      else (pre2899_rangeIterDbg up stepAbs endv fuel (cur + d)).map (cur :: ·)
 where
   InI64' (x : Int) : Bool := decide (I64MIN ≤ x) && decide (x ≤ I64MAX)
 
@@ -1603,15 +1623,15 @@ def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
     if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then []
     else cur :: rangeMath up stepAbs endv fuel (cur + (if up then stepAbs else -stepAbs))
 
-/-- When the step past `end` is still representable, the lazy iterator is the
+/-- Before #2899: when the step past `end` is still representable, the lazy iterator was the
 mathematical range (and so agrees with the eager `range()`). -/
-theorem rangeIter_ok_up (stepAbs endv : Int) (hs : 0 < stepAbs) (hs' : stepAbs ≤ I64MAX)
+theorem pre2899_rangeIter_ok_up (stepAbs endv : Int) (hs : 0 < stepAbs) (hs' : stepAbs ≤ I64MAX)
     (hroom : endv + stepAbs ≤ I64MAX) :
     ∀ (fuel : Nat) (cur : Int), I64MIN ≤ cur →
-      rangeIterRel true stepAbs endv fuel cur = rangeMath true stepAbs endv fuel cur
+      pre2899_rangeIterRel true stepAbs endv fuel cur = rangeMath true stepAbs endv fuel cur
   | 0, _, _ => rfl
   | fuel + 1, cur, hc => by
-    simp only [rangeIterRel, rangeMath, Bool.true_and, Bool.not_true, Bool.false_and,
+    simp only [pre2899_rangeIterRel, rangeMath, Bool.true_and, Bool.not_true, Bool.false_and,
       Bool.or_false, ↓reduceIte]
     by_cases h : cur > endv
     · simp [h]
@@ -1619,31 +1639,230 @@ theorem rangeIter_ok_up (stepAbs endv : Int) (hs : 0 < stepAbs) (hs' : stepAbs �
       have hin : InI64 (cur + stepAbs) := by simp only [InI64, I64MIN, I64MAX] at *; omega
       have hst : InI64 stepAbs := by simp only [InI64, I64MIN, I64MAX] at *; omega
       rw [wrap_id hst, wrap_id hin]
-      exact rangeIter_ok_up stepAbs endv hs hs' hroom fuel (cur + stepAbs)
+      exact pre2899_rangeIter_ok_up stepAbs endv hs hs' hroom fuel (cur + stepAbs)
         (by unfold I64MIN at *; omega)
 
-/-- **BUG (release)**: `UNWIND range(i64::MAX - 1, i64::MAX)` yields
+/-- **BUG (release; fixed by #2899)**: `UNWIND range(i64::MAX - 1, i64::MAX)` yields
 `MAX-1, MAX, MIN, MIN+1, …` and never stops (`cur > MAX` is never true);
 exactly the rows `redis-cli GRAPH.QUERY g "UNWIND range(9223372036854775806,
 9223372036854775807) AS x RETURN x LIMIT 5"` returns. The eager `range()` gives
 the two elements. -/
-theorem rangeIter_wraps :
-    rangeIterRel true 1 I64MAX 5 (I64MAX - 1)
+theorem pre2899_rangeIter_wraps :
+    pre2899_rangeIterRel true 1 I64MAX 5 (I64MAX - 1)
       = [I64MAX - 1, I64MAX, I64MIN, I64MIN + 1, I64MIN + 2] ∧
     rangeMath true 1 I64MAX 5 (I64MAX - 1) = [I64MAX - 1, I64MAX] := by
   decide
 
-/-- **BUG (debug)**: the same query panics. -/
-theorem rangeIter_panics :
-    rangeIterDbg true 1 I64MAX 5 (I64MAX - 1) = .error "attempt to add with overflow" := by
+/-- **BUG (debug; fixed by #2899)**: the same query panics. -/
+theorem pre2899_rangeIter_panics :
+    pre2899_rangeIterDbg true 1 I64MAX 5 (I64MAX - 1) = .error "attempt to add with overflow" := by
   rfl
 
-/-- **BUG (debug)**: descending to `i64::MIN` panics too, and a step of
+/-- **BUG (debug; fixed by #2899)**: descending to `i64::MIN` panics too, and a step of
 `i64::MIN` panics on the negation before the second item. -/
-theorem rangeIter_panics_down :
-    rangeIterDbg false 1 I64MIN 5 (I64MIN + 1) = .error "attempt to add with overflow" ∧
-    rangeIterDbg false (-I64MIN) (-10) 5 0 = .error "attempt to negate with overflow" :=
+theorem pre2899_rangeIter_panics_down :
+    pre2899_rangeIterDbg false 1 I64MIN 5 (I64MIN + 1) = .error "attempt to add with overflow" ∧
+    pre2899_rangeIterDbg false (-I64MIN) (-10) 5 0 = .error "attempt to negate with overflow" :=
   ⟨rfl, rfl⟩
+
+/-! ## `UNWIND range(..)` after #2899: exactly the eager range, never overflows -/
+
+/-- `RangeIter::next` after #2899 (`eval.rs:114-127`), debug build (checked `+=`):
+`remaining` counts the elements still due and `current` advances only while
+another one is (`if self.remaining > 0 { self.current += self.step }`). -/
+def rangeIter (step : Int) : Nat → Int → Except String (List Int)
+  | 0, _ => .ok []
+  | r + 1, cur =>
+    if r = 0 then .ok [cur]
+    else if I64MIN ≤ cur + step ∧ cur + step ≤ I64MAX then
+      (rangeIter step r (cur + step)).map (cur :: ·)
+    else .error "attempt to add with overflow"
+
+/-- The same in a release build (wrapping `+=`). -/
+def rangeIterRel (step : Int) : Nat → Int → List Int
+  | 0, _ => []
+  | r + 1, cur => if r = 0 then [cur] else cur :: rangeIterRel step r (wrap (cur + step))
+
+/-- `length` as `eval_iter_expr` (`eval.rs:1224-1233`) computes it (in `i128`/`u128`,
+so exactly): `|end - start| / |step| + 1`; it becomes `remaining`. -/
+def rangeLen (a e s : Int) : Nat := (e - a).natAbs / s.natAbs + 1
+
+/-- The eager `range()` list: `start + k*step` for `k < n`. -/
+def rangeList (a s : Int) (n : Nat) : List Int := (List.range n).map fun (k : Nat) => a + (k : Int) * s
+
+theorem rangeIter_of_inRange (step : Int) :
+    ∀ (r : Nat) (cur : Int), (∀ k : Nat, k < r → InI64 (cur + k * step)) →
+      rangeIter step r cur = .ok (rangeList cur step r) ∧
+      rangeIterRel step r cur = rangeList cur step r
+  | 0, _, _ => ⟨rfl, rfl⟩
+  | r + 1, cur, h => by
+    by_cases hr : r = 0
+    · subst hr; simp [rangeIter, rangeIterRel, rangeList]
+    · have h1 : InI64 (cur + step) := by have := h 1 (by omega); simpa using this
+      have ih := rangeIter_of_inRange step r (cur + step) (fun k hk => by
+        have := h (k + 1) (by omega)
+        have e : cur + step + (k : Int) * step = cur + ((k + 1 : Nat) : Int) * step := by
+          push_cast; rw [Int.add_mul]; omega
+        rwa [e])
+      have hl : rangeList cur step (r + 1) = cur :: rangeList (cur + step) step r := by
+        simp only [rangeList, List.range_succ_eq_map, List.map_cons, List.map_map]
+        congr 1
+        · simp
+        · apply List.map_congr_left; intro k _
+          simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
+      have hw : wrap (cur + step) = cur + step := wrap_id h1
+      have h1' : I64MIN ≤ cur + step ∧ cur + step ≤ I64MAX := h1
+      refine ⟨?_, ?_⟩
+      · simp only [rangeIter, hr, ↓reduceIte, h1', and_self, ih.1, hl]; rfl
+      · simp only [rangeIterRel, hr, ↓reduceIte, hw, ih.2, hl]
+
+/-- Arithmetic facts about the element count `length` the caller computes. -/
+theorem rangeLen_bounds (a e s : Int) (hs : s ≠ 0)
+    (hdir : ¬ ((a > e ∧ s > 0) ∨ (a < e ∧ s < 0))) :
+    (∀ k : Nat, k < rangeLen a e s → min a e ≤ a + k * s ∧ a + k * s ≤ max a e) ∧
+    (s > 0 → a + (rangeLen a e s : Int) * s > e) ∧
+    (s < 0 → a + (rangeLen a e s : Int) * s < e) := by
+  unfold rangeLen
+  have hS : 0 < s.natAbs := Int.natAbs_pos.mpr hs
+  have hqd := Nat.div_mul_le_self (e - a).natAbs s.natAbs
+  have hlt := Nat.lt_mul_div_succ (e - a).natAbs hS
+  have hlt' : (e - a).natAbs < ((e - a).natAbs / s.natAbs + 1) * s.natAbs := by
+    rw [Nat.mul_comm]; exact hlt
+  generalize hq : (e - a).natAbs / s.natAbs = q at hqd hlt'
+  have hD : ((e - a).natAbs : Int) = if e ≥ a then e - a else a - e := by split <;> omega
+  have hSi : (s.natAbs : Int) = if s > 0 then s else -s := by split <;> omega
+  have key : ∀ k : Nat, (k : Int) * s = if s > 0 then ((k * s.natAbs : Nat) : Int)
+      else -((k * s.natAbs : Nat) : Int) := by
+    intro k; push_cast; rw [hSi]; split
+    · rfl
+    · rw [Int.mul_neg, Int.neg_neg]
+  refine ⟨fun k hk => ?_, fun hp => ?_, fun hn => ?_⟩
+  · have hkq : k * s.natAbs ≤ q * s.natAbs := Nat.mul_le_mul_right _ (by omega)
+    have hc : ((k * s.natAbs : Nat) : Int) ≤ ((e - a).natAbs : Int) := by exact_mod_cast Nat.le_trans hkq hqd
+    rw [key k]; rw [hD] at hc
+    have h0 : (0 : Int) ≤ ((k * s.natAbs : Nat) : Int) := Int.natCast_nonneg _
+    split at hc <;> split <;> omega
+  · have hc : ((e - a).natAbs : Int) < (((q + 1) * s.natAbs : Nat) : Int) := by exact_mod_cast hlt'
+    rw [key (q + 1)]; rw [hD] at hc
+    have h0 : (0 : Int) ≤ (((q+1) * s.natAbs : Nat) : Int) := Int.natCast_nonneg _
+    simp only [hp, ↓reduceIte]; push_cast at hc ⊢
+    split at hc <;> omega
+  · have hc : ((e - a).natAbs : Int) < (((q + 1) * s.natAbs : Nat) : Int) := by exact_mod_cast hlt'
+    rw [key (q + 1)]; rw [hD] at hc
+    have hnp : ¬ s > 0 := by omega
+    simp only [hnp, ↓reduceIte]; push_cast at hc ⊢
+    split at hc <;> omega
+
+/-- `rangeMath` with enough fuel is the explicit list of `m` elements. -/
+theorem rangeMath_eq (up : Bool) (stepAbs endv : Int) :
+    ∀ (m fuel : Nat) (cur : Int), m ≤ fuel →
+      (∀ k : Nat, k < m → ¬ ((up && decide (cur + k * (if up then stepAbs else -stepAbs) > endv)) ||
+          (!up && decide (cur + k * (if up then stepAbs else -stepAbs) < endv))) = true) →
+      ((up && decide (cur + m * (if up then stepAbs else -stepAbs) > endv)) ||
+          (!up && decide (cur + m * (if up then stepAbs else -stepAbs) < endv))) = true →
+      rangeMath up stepAbs endv fuel cur = rangeList cur (if up then stepAbs else -stepAbs) m
+  | 0, 0, _, _, _, _ => rfl
+  | 0, fuel + 1, cur, _, _, hout => by
+    simp only [Int.natCast_zero, Int.zero_mul, Int.add_zero] at hout
+    simp [rangeMath, hout, rangeList]
+  | m + 1, 0, _, h, _, _ => absurd h (by omega)
+  | m + 1, fuel + 1, cur, hf, hin, hout => by
+    have h0 := hin 0 (by omega)
+    simp only [Int.natCast_zero, Int.zero_mul, Int.add_zero] at h0
+    have ih := rangeMath_eq up stepAbs endv m fuel (cur + (if up then stepAbs else -stepAbs)) (by omega)
+      (fun k hk => by
+        have := hin (k + 1) (by omega)
+        have e : cur + (if up then stepAbs else -stepAbs) + (k : Int) * (if up then stepAbs else -stepAbs)
+            = cur + ((k + 1 : Nat) : Int) * (if up then stepAbs else -stepAbs) := by
+          push_cast; rw [Int.add_mul]; omega
+        rwa [e])
+      (by have e : cur + (if up then stepAbs else -stepAbs) + (m : Int) * (if up then stepAbs else -stepAbs)
+            = cur + ((m + 1 : Nat) : Int) * (if up then stepAbs else -stepAbs) := by
+            push_cast; rw [Int.add_mul]; omega
+          rwa [e])
+    have hl : rangeList cur (if up then stepAbs else -stepAbs) (m + 1) =
+        cur :: rangeList (cur + (if up then stepAbs else -stepAbs)) (if up then stepAbs else -stepAbs) m := by
+      simp only [rangeList, List.range_succ_eq_map, List.map_cons, List.map_map]
+      congr 1
+      · simp
+      · apply List.map_congr_left; intro k _
+        simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
+    rw [hl, rangeMath]
+    simp only [Bool.not_eq_true] at h0
+    rw [h0]; simp only [Bool.false_eq_true, ↓reduceIte, ih]
+
+/-- **#2899 (fixed)**: for every `i64` `start`, `end`, nonzero `step` the
+caller does not reject, the lazy iterator yields exactly the eager range and
+never overflows, in debug and release. -/
+theorem rangeIter_correct (a e s : Int) (ha : InI64 a) (he : InI64 e) (hs : s ≠ 0)
+    (hdir : ¬ ((a > e ∧ s > 0) ∨ (a < e ∧ s < 0))) :
+    rangeIter s (rangeLen a e s) a = .ok (rangeList a s (rangeLen a e s)) ∧
+    rangeIterRel s (rangeLen a e s) a = rangeList a s (rangeLen a e s) ∧
+    (∀ fuel, rangeLen a e s ≤ fuel →
+      rangeMath (decide (s > 0)) s.natAbs e fuel a = rangeList a s (rangeLen a e s)) := by
+  obtain ⟨hb, hup, hdn⟩ := rangeLen_bounds a e s hs hdir
+  have hin : ∀ k : Nat, k < rangeLen a e s → InI64 (a + k * s) := by
+    intro k hk; have := hb k hk; unfold InI64 at *; omega
+  refine ⟨(rangeIter_of_inRange s _ a hin).1, (rangeIter_of_inRange s _ a hin).2, fun fuel hf => ?_⟩
+  have hsa : (if decide (s > 0) then (s.natAbs : Int) else -(s.natAbs : Int)) = s := by
+    by_cases h : s > 0 <;> simp [h] <;> omega
+  have := rangeMath_eq (decide (s > 0)) s.natAbs e (rangeLen a e s) fuel a hf
+    (fun k hk => by rw [hsa]; have := hb k hk; by_cases h : s > 0 <;> simp [h] <;> omega)
+    (by rw [hsa]; by_cases h : s > 0
+        · simp [h, hup h]
+        · simp [h]; exact hdn (by omega))
+  rw [this, hsa]
+
+/-- `RangeIter::size_hint` (`eval.rs:129-132`) is `(remaining, Some(remaining))`:
+exact, because the iterator yields exactly `remaining` items. -/
+def rangeIterSizeHint (r : Nat) : Nat × Option Nat := (r, some r)
+
+theorem rangeIter_sizeHint_exact (step : Int) :
+    ∀ (r : Nat) (cur : Int), (rangeIterRel step r cur).length = (rangeIterSizeHint r).1 ∧
+      (rangeIterSizeHint r).2 = some (rangeIterRel step r cur).length
+  | 0, _ => ⟨rfl, rfl⟩
+  | r + 1, cur => by
+    by_cases hr : r = 0
+    · subst hr; simp [rangeIterRel, rangeIterSizeHint]
+    · have ih := (rangeIter_sizeHint_exact step r (wrap (cur + step))).1
+      simp only [rangeIterSizeHint] at ih ⊢
+      simp [rangeIterRel, hr, ih]
+
+/-- The four cases of `range_iter_stops_at_i64_bounds` (eval.rs tests): the last
+element may sit on `i64::MAX`/`i64::MIN`, and a step of `i64::MIN` is fine
+(the pre-#2899 negation is gone). -/
+theorem rangeIter_bounds_examples :
+    rangeIter 1 2 (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
+    rangeIter (-1) 2 (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] ∧
+    rangeIter I64MIN 1 0 = .ok [0] ∧
+    rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
+
+/-- **#2894 fixed by #2899**: `UNWIND range(i64::MAX - 1, i64::MAX)` now yields the two
+elements the eager `range()` gives (contrast `pre2899_rangeIter_wraps`). -/
+theorem rangeIter_max_fixed :
+    rangeIter 1 (rangeLen (I64MAX - 1) I64MAX 1) (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
+    rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] :=
+  ⟨rfl, rfl⟩
+
+/-- `eval_iter_expr`'s `range` arm (`eval.rs:1205-1243`) wired to the real iterator:
+whenever it emits rows, they are exactly what `RangeIter` yields from
+`remaining = length`, with no overflow (debug) — the same list as the eager `range()`. -/
+theorem evalIter_range_is_iter (isList : Int → Option (List Int)) (isNull : Int → Bool)
+    (a e s : Int) (ha : InI64 a) (he : InI64 e) (l : List Int)
+    (h : Eval.evalIterExpr isList isNull (fun a e s => rangeList a s (rangeLen a e s))
+      (.range a e s) = .ok (some l)) :
+    rangeIter s (rangeLen a e s) a = .ok l ∧ rangeLen a e s ≤ 2 ^ 32 - 1 := by
+  unfold Eval.evalIterExpr at h
+  by_cases hs : s = 0
+  · simp [hs] at h
+  · by_cases hdir : (a > e ∧ s > 0) ∨ (a < e ∧ s < 0)
+    · simp [hs, hdir] at h
+    · by_cases hlen : (e - a).natAbs / s.natAbs + 1 > 2 ^ 32 - 1
+      · simp [hs, hdir, hlen] at h
+      · simp only [hs, hdir, hlen, ↓reduceIte, Except.ok.injEq, Option.some.injEq] at h
+        subst h
+        exact ⟨(rangeIter_correct a e s ha he hs hdir).1, by unfold rangeLen; omega⟩
 
 /-! ## Numeric comparison across Int and Float is not transitive -/
 

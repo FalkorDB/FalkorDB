@@ -31,7 +31,8 @@ def asIdents (l : List Tok) : List Tok :=
 
 /-- The documented disagreement classes (see `Theorems.lean`). Since #3060 (`fe619ac5f`)
 `NOT NOT`, a predicate after `IS NULL` and a call's trailing comma are no longer among
-them: the bounded check now proves those agree with the grammar. -/
+them, and since #3041 (`2023af648`) neither is an accepted slice (`..`): the bounded
+check now proves those agree with the grammar. -/
 def known (l : List Tok) : Bool :=
   let pairs := l.zip (l.drop 1)
   pairs.any (fun (x, y) =>
@@ -40,7 +41,6 @@ def known (l : List Tok) : Bool :=
     -- a run of ≥ 3 NOTs folds by parity (not_run_folds); none fits in 3 tokens with an operand
     (l.zip (l.drop 1) |>.zip (l.drop 2) |>.any (fun ((x, y), z) =>
       x == .kw .not_ && y == .kw .not_ && z == .kw .not_)) ||
-    (l.contains .dotdot && (parseAll 400 l matches .ok _ _)) ||       -- slice_bound_error_swallowed
     ((parseAll 400 l matches .ok _ _) && (G.all 200 (asIdents l) matches .ok _ _))  -- keyword as variable
 
 /-- **Bounded soundness and completeness**: on every one of the 9,724 token
@@ -58,5 +58,40 @@ theorem bounded_agree :
   intro l hl
   have := List.all_eq_true.mp bounded_check l hl
   simpa [okAt] using this
+
+/-! ## Balanced consumption (the fragment's `Oracle.Bal`)
+
+`C.ListGate`'s premise `Oracle.Bal` says `parse_expr` only succeeds by consuming
+a bracket-balanced run with no top-level `,` (or `|`, which this alphabet lacks).
+Before #3041 it was false (`x[(..2]` consumed an unclosed `(`,
+`pre3041_slice_bound_error_swallowed`). Here it is checked on the fragment. -/
+
+/-- Depth scan: never below 0, ends at 0, no `,` at depth 0. -/
+def balRun : Nat → List Tok → Bool
+  | d, [] => d == 0
+  | d, t :: r =>
+    if t == .lparen || t == .lbrack || t == .lbrace then balRun (d + 1) r
+    else if t == .rparen || t == .rbrack || t == .rbrace then d != 0 && balRun (d - 1) r
+    else if t == .comma then d != 0 && balRun d r
+    else balRun d r
+
+/-- A successful `parseExpr` leaves a suffix of its input and consumed a balanced run. -/
+def balOK (l : List Tok) : Bool :=
+  match parseExpr 400 l with
+  | .ok _ r => r.length ≤ l.length && l.drop (l.length - r.length) == r &&
+      balRun 0 (l.take (l.length - r.length))
+  | _ => true
+
+set_option maxRecDepth 100000 in
+/-- **The fragment's `parse_expr` consumes balanced runs** on every token list of
+length ≤ 3 over `alpha`. (The same check was run with `#eval` over all lists of
+length ≤ 5 over `alpha` and of length ≤ 6 over the slice alphabet
+`x 1 + ( ) [ ] ..`, with no failure.) -/
+theorem bounded_bal : (lists 3).all balOK = true := by decide +kernel
+
+/-- The input of `pre3041_gate_changes_result`, `[1][(1..2]`, no longer parses. -/
+theorem slice_unclosed_paren_refused :
+    ∃ e, parseExpr 400 [.lbrack, .int 1, .rbrack, .lbrack, .lparen, .int 1, .dotdot, .int 2, .rbrack] = .err e :=
+  ⟨_, rfl⟩
 
 end FalkorParserGrammar

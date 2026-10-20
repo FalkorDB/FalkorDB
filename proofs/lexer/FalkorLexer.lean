@@ -4,7 +4,8 @@
 A model of FalkorDB-rs's hand-written Cypher lexer (`graph/src/parser/lexer.rs`),
 its string-escape decoder (`graph/src/parser/string_escape.rs`), the literal
 handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
-/ nesting guards added in `e7daadac8`, with machine-checked proofs of:
+/ nesting guards added in `e7daadac8` (Rust line numbers from main `737dfb5da`),
+with machine-checked proofs of:
 
 * **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
   `WHITESPACE`/`Comment` run wherever the spec accepts one (since #2908,
@@ -62,13 +63,13 @@ and machine-checked *counterexamples* for the places where a property is false
 | `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
 | `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
 | `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs:700-737) |
-| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2561-2577) + level 9 |
-| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2538-2556) + `parse_literal` (cypher.rs:445-469) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804-1814, 3071-3091) |
+| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs:2570-2586) + level 9 |
+| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs:2547-2565) + `parse_literal` (cypher.rs:445-469) |
+| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs:1804-1814, 3080-3100) |
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
 | `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
-| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3324-3327, 3404-3407) |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3430-3504) |
+| `setTarget`               | the property loop of `parse_set_items` / `parse_remove_items` (cypher.rs:3333-3327, 3413-3416) |
+| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:3439-3513) |
 
 ## What this does NOT cover
 
@@ -1348,7 +1349,7 @@ def pre2910Str2int (radix : Nat) (ds : List Nat) : Except String Int :=
   else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
   else .error "Integer overflow"
 
-/-- Level 9 of `parse_expr_inner` (cypher.rs:2215-2237, 2538-2556) — and
+/-- Level 9 of `parse_expr_inner` (cypher.rs:2224-2237, 2547-2565) — and
 `parse_literal` (cypher.rs:445-469), which has the same three cases — applied
 to one literal token, optionally preceded by `-`; a `Negate` node over a
 constant then evaluates by `checked_neg`, which cannot fail on `0..=i64::MAX`. -/
@@ -1418,7 +1419,7 @@ theorem pre2910_min_noncanonical_bug :
     (evalLit true (pre2910Str2int 16 (0 :: canon 16 (2 ^ 63)))).toOption = none ∧
     specLit true 16 (0 :: canon 16 (2 ^ 63)) = some I64MIN := by decide
 
-/-- The tree shapes level 9 inspects (cypher.rs:2540-2555). -/
+/-- The tree shapes level 9 inspects (cypher.rs:2549-2564). -/
 inductive LitTree
   | const (v : Int)
   | negate (e : LitTree)
@@ -1431,7 +1432,7 @@ def level9 : LitTree → Except String LitTree
   | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
   | e => .ok e
 
-/-- Level 10 since #2910 (`dba677942`, cypher.rs:2561-2577): a bare
+/-- Level 10 since #2910 (`dba677942`, cypher.rs:2570-2586): a bare
 `Constant(i64::MIN)` followed by a postfix token (`[`, `.`, `{`, `:`) is the
 unnegated literal `2^63` and is an overflow, before the postfix loop wraps
 it. Otherwise the postfix (if any) wraps the tree. -/
@@ -1473,7 +1474,7 @@ theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
     ∃ t, litExpr neg pf v = .ok t := by
   cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
 
-/-- `i as u32` on an `i64` hop count (cypher.rs:1806, 1813, 3073, 3080). -/
+/-- `i as u32` on an `i64` hop count (cypher.rs:1806, 1813, 3073, 3089). -/
 def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
 
 /-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
@@ -1533,7 +1534,7 @@ tree `t` with recorded height `e`. Each constructor names the Rust site and
 carries that site's `check_depth` as the premise `e ≤ MAX_TREE_DEPTH` — or
 has none when the site performs none. -/
 inductive Reach : T → Nat → Prop
-  /-- A complete primary (cypher.rs:2238-2254): whatever `parse_primary_expr`
+  /-- A complete primary (cypher.rs:2247-2263): whatever `parse_primary_expr`
   built above the sub-expressions it parsed — each `parse_expr` result
   `(cᵢ, eᵢ)` — is charged `max eᵢ + PRIMARY_LEVELS` and checked. The premise
   `hshape` is the per-constructor fact `primary_levels` checks. -/
@@ -1542,37 +1543,37 @@ inductive Reach : T → Nat → Prop
       (hshape : height t ≤ hl (cs.map Prod.fst) + PRIMARY_LEVELS)
       (hck : m + PRIMARY_LEVELS ≤ MAX_TREE_DEPTH) : Reach t (m + PRIMARY_LEVELS)
   /-- A run of `NOT`s (one frame for an odd count, two for an even one since #3060,
-  cypher.rs:2209-2219), unary `-`, a recursing `(`/`[` primary, `NOT IN`'s pushed `Not`
+  cypher.rs:2218-2228), unary `-`, a recursing `(`/`[` primary, `NOT IN`'s pushed `Not`
   (cypher.rs:2231, 2245, 2416ff): each a childless node at 1. -/
   | opener : Reach (.mk []) 1
   /-- `tree!(Op, res)` then `height + 1` and `check_depth`: `parse_operators!`
-  (macro.rs), the comparison and predicate wraps (cypher.rs:2326-2337,
-  2365-2405, 2504-2506). -/
+  (macro.rs), the comparison and predicate wraps (cypher.rs:2335-2337,
+  2374-2405, 2513-2515). -/
   | wrap {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
   /-- `parse_expr_return!`'s `Some(expr)` arm: `push_child_tree(res)`,
   `*h = max(*h, height + 1)`, `check_depth(*h)`. Also an n-ary operator's next
   operand (`parse_operators!` keeps the node, then this attaches). -/
   | attach {ks : List T} {ep : Nat} {c : T} {ec : Nat} : Reach (.mk ks) ep → Reach c ec →
       max ep (ec + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (ks ++ [c])) (max ep (ec + 1))
-  /-- `((x))` → `(x)` (cypher.rs:2627-2633): the inner `Paren` is taken out,
+  /-- `((x))` → `(x)` (cypher.rs:2636-2642): the inner `Paren` is taken out,
   `height.saturating_sub(1)`; no check (the estimate shrinks). -/
   | collapse {ks : List T} {e : Nat} : Reach (.mk [.mk ks]) e → Reach (.mk ks) (e - 1)
-  /-- The chained comparison's cloned middle operand (cypher.rs:2317-2333):
+  /-- The chained comparison's cloned middle operand (cypher.rs:2326-2342):
   measured exactly by `tree_height`, plus one for the new comparison. -/
   | chainMid (m : T) : height m + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [m]) (height m + 1)
-  /-- Postfix `[i]` / `[a..b]` (cypher.rs:2586-2593): `GetElement(s)(lhs, idx…)`,
+  /-- Postfix `[i]` / `[a..b]` (cypher.rs:2595-2602): `GetElement(s)(lhs, idx…)`,
   `height = max(height + 1, index_height + 1)`, checked. -/
   | index {t e} {is : List T} {ei : Nat} : Reach t e → (∀ i ∈ is, height i ≤ ei) →
       max (e + 1) (ei + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (t :: is)) (max (e + 1) (ei + 1))
-  /-- Postfix `.prop` (cypher.rs:2594-2597): `height += 1`, checked at the
+  /-- Postfix `.prop` (cypher.rs:2603-2606): `height += 1`, checked at the
   end of the step. -/
   | prop {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
-  /-- Postfix map projection `{k: v, .p, .*}` (cypher.rs:2598-2604):
+  /-- Postfix map projection `{k: v, .p, .*}` (cypher.rs:2607-2613):
   `MapProjection(base, Constant(k) → v …)`, `max(height + 1, value_height + 2)`. -/
   | mapProj {t e} {vs : List T} {ev : Nat} : Reach t e → (∀ v ∈ vs, height v ≤ ev) →
       max (e + 1) (ev + 2) ≤ MAX_TREE_DEPTH →
       Reach (.mk (t :: vs.map (fun v => .mk [v]))) (max (e + 1) (ev + 2))
-  /-- `x:L1:L2` (cypher.rs:2609-2619): `hasLabels(res, List(Constant…))`,
+  /-- `x:L1:L2` (cypher.rs:2618-2628): `hasLabels(res, List(Constant…))`,
   `max(height + 1, 3)`. -/
   | labels {t : T} {e n : Nat} : Reach t e → max (e + 1) 3 ≤ MAX_TREE_DEPTH →
       Reach (.mk [t, .mk (List.replicate n (.mk []))]) (max (e + 1) 3)
@@ -1634,8 +1635,8 @@ theorem guarded_height_le {t : T} {e : Nat} (h : Reach t e) : height t ≤ MAX_T
   Nat.le_trans (height_sound h) (guarded h)
 
 /-- `PRIMARY_LEVELS = 2` covers each shape `parse_primary_expr` builds over its
-sub-expressions `cs` (read off cypher.rs:1584-1614, 1942-2107, 2906-2995,
-3111-3141): `FuncInvocation(Distinct(args…), placeholder)`,
+sub-expressions `cs` (read off cypher.rs:1584-1614, 1942-2107, 2915-2995,
+3120-3150): `FuncInvocation(Distinct(args…), placeholder)`,
 `Map(Constant(k) → v…)`, `Case(subject, List(conds…), else)`,
 `ListComprehension(l, c, e)`, `Quantifier(l, c)`, `Reduce(i, l, b)`,
 `PatternComprehension(c, e)`, and `count(*)`'s two leaves. -/
@@ -1674,8 +1675,8 @@ theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
   rw [chain_height] at this
   simp [MAX_TREE_DEPTH] at this
 
-/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3324-3327,
-3322-3325) build the SET/REMOVE target with `parse_property_lookup` in a bare
+/-- …but `parse_set_items` / `parse_remove_items` (cypher.rs:3333-3327,
+3331-3334) build the SET/REMOVE target with `parse_property_lookup` in a bare
 `while` loop, outside `Reach`: no estimate, no check. Modelled literally, it
 accepts every length, so the tree the binder then recurses over is unbounded
 (repro: `MATCH (n) SET n.a.a…(5000) = 1` overflows the binder's stack;
@@ -1696,7 +1697,7 @@ theorem set_target_unbounded (k : Nat) :
 /-- The parser's call-recursive descents. `expr` is a `parse_expr` (or
 `parse_literal_list/map`, `CALL {}`) — all routed through `Parser::nested`;
 `foreach` is `parse_foreach_clause`, whose body re-enters itself directly
-(cypher.rs:3484-3487). -/
+(cypher.rs:3493-3496). -/
 inductive Call
   | leaf
   | expr (kids : List Call)

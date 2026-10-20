@@ -78,7 +78,7 @@ theorem call_trailing_comma_refused :
         .kw .return_, .ident 5]).isOk = false := by decide
 
 /-- `SET (n.x) = 5` is accepted as a replace-assignment to a property
-(cypher.rs:3343-3357: the `=` arm takes any primary as target). Live:
+(cypher.rs:3352-3366: the `=` arm takes any primary as target). Live:
 `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` sets x; C: syntax error. -/
 theorem set_paren_property_accepted :
     (q [.kw .create, .lparen, .ident 1, .rparen, .kw .set, .lparen, .ident 1, .dot, .ident 2,

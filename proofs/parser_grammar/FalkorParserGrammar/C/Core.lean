@@ -2,8 +2,7 @@
 # Clause level: tokens, trees, the parser monad and its primitives
 
 The clause parsers of `graph/src/parser/cypher.rs` (line numbers are from
-origin/main, commit 3fec7d7c9; identical
-to 55204c94b for every parser file) are modelled over a token type `CT`
+origin/main, commit 737dfb5da) are modelled over a token type `CT`
 that has every `Token` / `Keyword` of `lexer.rs:63-156`.
 
 Expressions are an *oracle*: `parse_expr`, `parse_primary_expr(false)`,
@@ -55,7 +54,7 @@ def identOf : CT → Option Nat
   | .kw k => some (kwId k)
   | _ => none
 
-/-- The name `format!("_anon_{n}")` (cypher.rs:3017, 3054, 3125) as a name id.
+/-- The name `format!("_anon_{n}")` (cypher.rs:3017, 3054, 3134) as a name id.
 A user may spell the same identifier (`_anon_0` is a valid name). -/
 def anonName (k : Nat) : Nat := 2000000 + k
 
@@ -77,7 +76,7 @@ def ET.root : ET → EOp | .node o _ => o
 def ET.kids : ET → List ET | .node _ cs => cs
 abbrev leaf (o : EOp) : ET := .node o []
 
-/- `find_aggregate_name` (cypher.rs:3524-3535): the first aggregate function
+/- `find_aggregate_name` (cypher.rs:3533-3544): the first aggregate function
 met by a preorder DFS. -/
 mutual
 def aggName : ET → Option Nat
@@ -231,18 +230,18 @@ def peek : P CT := fun s => .ok s.cur s
 /-- `self.lexer.next()`. -/
 def next : P Unit := fun s => .ok () s.adv
 
-/-- `parse_ident` (cypher.rs:2673-2685); identifier-length validation
+/-- `parse_ident` (cypher.rs:2682-2694); identifier-length validation
 (`validate_identifier_len`) is not modelled (it can only add errors). -/
 def ident : P Nat := fun s => match identOf s.cur with
   | some v => .ok v s.adv
   | none => .err
 
-/-- `try_parse_ident` (2692-2702): `parse_ident` without the error. -/
+/-- `try_parse_ident` (2701-2711): `parse_ident` without the error. -/
 def tryIdent : P (Option Nat) := fun s => match identOf s.cur with
   | some v => .ok (some v) s.adv
   | none => .ok none s
 
-/-- `parse_property_name` (2704-2716): the same as `parse_ident`. -/
+/-- `parse_property_name` (2713-2725): the same as `parse_ident`. -/
 def propName : P Nat := ident
 
 theorem np_tok (t : CT) : NP (tok t) := ⟨fun s => by unfold tok; split <;> simp⟩
@@ -291,17 +290,17 @@ structure FnInfo where
 
 /-- What the clause parsers take from the expression level. -/
 structure Oracle where
-  /-- `parse_expr(allow_pattern_predicate)` (cypher.rs:2175). -/
+  /-- `parse_expr(allow_pattern_predicate)` (cypher.rs:2184). -/
   pe : Bool → P ET
   /-- `parse_primary_expr(false)` (cypher.rs:1942): tree and `recurse`. -/
   pp : P (ET × Bool)
-  /-- `parse_map` (cypher.rs:3193), modelled in `Model.parseMap`. -/
+  /-- `parse_map` (cypher.rs:3202), modelled in `Model.parseMap`. -/
   pmap : P ET
   /-- `self.lexer.str[pos..pos(true)]` of a projection, as a name id. -/
   txt : PS → PS → Nat
   /-- `get_functions().get(name, Procedure)` (cypher.rs:1052). -/
   proc : List Nat → Option FnInfo
-  /-- `self.not_pattern_comprehension.contains(&attempt)` (cypher.rs:2843):
+  /-- `self.not_pattern_comprehension.contains(&attempt)` (cypher.rs:2852):
   whether the memo of failed pattern-comprehension attempts (#3104) holds the
   key `(pos, allow_pattern_predicate, forbidden, depth)` of an attempt from this
   state. The memo is parser state the clause model does not thread, so it is a
