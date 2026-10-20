@@ -199,37 +199,36 @@ impl MvccGraph {
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
-        let (old_labels, old_types, old_node_attrs, old_rel_attrs, old_schema_version) = {
+        let (old_labels, old_types, old_node_attrs, old_rel_attrs) = {
             let g = self.graph.borrow();
             (
                 g.get_labels().len(),
                 g.get_types().len(),
                 g.get_node_attribute_names().len(),
                 g.get_relationship_attribute_names().len(),
-                g.schema_version,
             )
         };
 
         // Single borrow for new graph to collect all schema counts
-        let (new_labels, new_types, new_node_attrs, new_rel_attrs, new_schema_version) = {
+        let (new_labels, new_types, new_node_attrs, new_rel_attrs) = {
             let g = new_graph.borrow();
             (
                 g.get_labels().len(),
                 g.get_types().len(),
                 g.get_node_attribute_names().len(),
                 g.get_relationship_attribute_names().len(),
-                g.schema_version,
             )
         };
 
-        // If schema changed, ensure schema_version is incremented
-        if (old_labels != new_labels
+        // Schema names are only ever appended, so a changed count is a changed
+        // schema: move the version on to the one the names now hash to
+        if old_labels != new_labels
             || old_types != new_types
             || old_node_attrs != new_node_attrs
-            || old_rel_attrs != new_rel_attrs)
-            && new_schema_version == old_schema_version
+            || old_rel_attrs != new_rel_attrs
         {
-            new_graph.borrow_mut().schema_version += 1;
+            let mut g = new_graph.borrow_mut();
+            g.schema_version = g.compute_schema_version();
         }
 
         new_graph.borrow_mut().trim_attr_stores();

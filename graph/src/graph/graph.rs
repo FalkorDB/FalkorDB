@@ -439,7 +439,9 @@ pub struct Graph {
     constraints: Vec<Constraint>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
-    /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
+    /// Schema version clients send with `GRAPH.QUERY ... version`: a hash of
+    /// the schema names, recomputed when a write adds one (see
+    /// `schema_version_of`)
     pub schema_version: u64,
     /// FalkorDB numeric indexes, folded into the graph version: `new_version`
     /// forks them copy-on-write and the committed-version swap publishes graph +
@@ -930,7 +932,7 @@ impl Graph {
         let relationship_ids = IdSpace::restored(relationship_count, deleted_relationships);
         let node_cap = node_ids.bound();
         let relationship_cap = relationship_ids.bound();
-        let schema_version = (node_labels.len() + relationship_types.len()) as u64;
+        let schema_version = schema_version_of(&node_labels, &relationship_types, &attrs_name);
         Self {
             name: name.to_string(),
             node_cap: node_cap.next_multiple_of(chunk).max(64),
@@ -5006,6 +5008,17 @@ impl Graph {
         self.attrs_name.iter().cloned().collect()
     }
 
+    /// The schema version the current schema names hash to; see
+    /// [`schema_version_of`].
+    #[must_use]
+    pub fn compute_schema_version(&self) -> u64 {
+        schema_version_of(
+            &self.node_labels,
+            &self.relationship_types,
+            &self.attrs_name,
+        )
+    }
+
     /// Register a node attribute name (get-or-create). Used by effect
     /// replication to pre-register attribute names on the replica.
     pub fn add_node_attribute_name(
@@ -5038,6 +5051,106 @@ impl Graph {
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
+    }
+}
+
+/// CRC-32 of a graph's schema names - labels, then relationship types, then
+/// attribute names, each in id order - used as the schema version clients send
+/// with `GRAPH.QUERY ... version`.
+///
+/// A client caches these names to decode the ids in compact replies, and sends
+/// the version to learn whether its cache still holds. Hashing the names,
+/// rather than counting schema changes, is what lets it notice a graph that
+/// was deleted and recreated under the same key: the new graph starts from an
+/// empty schema, and a counter reaches the old value again after as many
+/// changes even when the names arrive in another order, i.e. with other ids.
+/// Derived from the names alone, it is also the same on master and replica
+/// and across an RDB reload. An empty schema is version 0, which is what a
+/// graph that does not exist yet reports.
+///
+/// 32 bits because `version` is parsed as at most `u32::MAX`, as in C.
+pub(crate) fn schema_version_of(
+    labels: &[Arc<String>],
+    types: &[Arc<String>],
+    attrs: &AttrNameMap,
+) -> u64 {
+    if labels.is_empty() && types.is_empty() && attrs.iter().next().is_none() {
+        return 0;
+    }
+    let mut hasher = crc32fast::Hasher::new();
+    let sections: [&mut dyn Iterator<Item = &Arc<String>>; 3] =
+        [&mut labels.iter(), &mut types.iter(), &mut attrs.iter()];
+    for (tag, names) in sections.into_iter().enumerate() {
+        // Tag and length-prefix, so names cannot shift between sections or
+        // run into each other
+        hasher.update(&[tag as u8]);
+        for name in names {
+            hasher.update(&(name.len() as u32).to_le_bytes());
+            hasher.update(name.as_bytes());
+        }
+    }
+    u64::from(hasher.finalize())
+}
+
+#[cfg(test)]
+mod schema_version_tests {
+    use super::*;
+
+    fn names(list: &[&str]) -> Vec<Arc<String>> {
+        list.iter().map(|n| Arc::new((*n).to_string())).collect()
+    }
+
+    fn attrs(list: &[&str]) -> AttrNameMap {
+        let mut map = AttrNameMap::default();
+        for name in list {
+            map.insert(Arc::new((*name).to_string()));
+        }
+        map
+    }
+
+    #[test]
+    fn empty_schema_is_version_zero() {
+        assert_eq!(schema_version_of(&[], &[], &attrs(&[])), 0);
+    }
+
+    #[test]
+    fn same_names_same_version() {
+        let a = schema_version_of(&names(&["A", "B"]), &names(&["R"]), &attrs(&["x"]));
+        let b = schema_version_of(&names(&["A", "B"]), &names(&["R"]), &attrs(&["x"]));
+        assert_eq!(a, b);
+        assert_ne!(a, 0);
+    }
+
+    #[test]
+    fn reordered_names_change_the_version() {
+        // A graph recreated with its labels in another order reuses the ids for
+        // other names, so it must not share the old version
+        let before = schema_version_of(&names(&["First", "Second"]), &[], &attrs(&[]));
+        let after = schema_version_of(&names(&["Second", "First"]), &[], &attrs(&[]));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn a_name_in_another_section_changes_the_version() {
+        let label = schema_version_of(&names(&["X"]), &[], &attrs(&[]));
+        let rel_type = schema_version_of(&[], &names(&["X"]), &attrs(&[]));
+        let attr = schema_version_of(&[], &[], &attrs(&["X"]));
+        assert_ne!(label, rel_type);
+        assert_ne!(label, attr);
+        assert_ne!(rel_type, attr);
+    }
+
+    #[test]
+    fn names_do_not_run_together() {
+        let split = schema_version_of(&names(&["ab", "c"]), &[], &attrs(&[]));
+        let joined = schema_version_of(&names(&["a", "bc"]), &[], &attrs(&[]));
+        assert_ne!(split, joined);
+    }
+
+    #[test]
+    fn fits_the_version_argument() {
+        let v = schema_version_of(&names(&["A"]), &names(&["R"]), &attrs(&["x"]));
+        assert!(v <= u64::from(u32::MAX));
     }
 }
 

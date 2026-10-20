@@ -171,3 +171,60 @@ class testGraphVersioning(FlowTestsBase):
         replica_version = get_version(self.replica)
         self.env.assertEqual(master_version, replica_version)
         VERSION = master_version
+
+    # a stale version is rejected with C's wording, which clients match on
+    def test05_version_mismatch_wording(self):
+        res = self.master.execute_command("GRAPH.QUERY", GRAPH_ID, "RETURN 1", "version", VERSION + 1)
+        self.env.assertTrue(isinstance(res[0], ResponseError))
+        self.env.assertEqual(str(res[0]), "version mismatch")
+
+    # a graph deleted and recreated with the same label names in another order
+    # assigns those names other ids, so it must not share the old version even
+    # though it took as many schema changes to build
+    def test06_version_differs_after_recreate_in_other_order(self):
+        con = self.master
+        graph_id = "GraphVersionRecreate"
+
+        def get_version():
+            res = con.execute_command("GRAPH.RO_QUERY", graph_id, "RETURN 1", "version", 0)
+            return int(res[1])
+
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:First), (:Second)")
+        before = get_version()
+
+        con.execute_command("GRAPH.DELETE", graph_id)
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:Second), (:First)")
+        after = get_version()
+        self.env.assertNotEqual(before, after)
+
+        res = con.execute_command("GRAPH.RO_QUERY", graph_id, "RETURN 1", "version", before)
+        self.env.assertTrue(isinstance(res[0], ResponseError))
+
+        # the same names in the same order keep the ids, and the version
+        con.execute_command("GRAPH.DELETE", graph_id)
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:Second)")
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:First)")
+        self.env.assertEqual(get_version(), after)
+
+        con.execute_command("GRAPH.DELETE", graph_id)
+
+
+class testGraphVersionPersistency(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env(enableDebugCommand=True)
+
+    # the version is derived from the schema names, so it survives a reload
+    def test01_version_survives_reload(self):
+        con = self.env.getConnection()
+        graph_id = "GraphVersionReload"
+
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:A {a: 1})-[:R {r: 1}]->(:B)")
+        before = int(con.execute_command("GRAPH.RO_QUERY", graph_id, "RETURN 1", "version", 0)[1])
+
+        self.env.dumpAndReload()
+        con = self.env.getConnection()
+
+        res = con.execute_command("GRAPH.RO_QUERY", graph_id, "RETURN 1", "version", before)
+        self.env.assertFalse(isinstance(res[0], ResponseError))
+
+        con.execute_command("GRAPH.DELETE", graph_id)

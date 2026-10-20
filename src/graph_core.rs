@@ -989,12 +989,14 @@ fn compute_effective_timeout(
 }
 
 /// Replies `[error, current_version]` for a client-supplied version that does
-/// not match the graph's current schema version.
+/// not match the graph's current schema version. The error reads `version
+/// mismatch`, C's wording, which clients match on to refresh their cached
+/// schema and retry.
 pub(crate) fn reply_invalid_graph_version(
     ctx: &Context,
     current_version: i64,
 ) {
-    const ERR: &std::ffi::CStr = c"ERR invalid graph version";
+    const ERR: &std::ffi::CStr = c"version mismatch";
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_error(ctx.ctx, ERR.as_ptr());
     raw::reply_with_long_long(ctx.ctx, current_version);
