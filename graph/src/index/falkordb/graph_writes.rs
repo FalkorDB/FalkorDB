@@ -429,42 +429,38 @@ pub fn create_index(
 // unit of work of its own, taking it again on the current version if a writer committed first, so
 // live writes interleave with the steps. See `ColumnState`.
 
-/// Nodes one build step reads, at most: C's populate batch (`src/index/index_construct.c`).
-pub(crate) const BUILD_STEP_NODES: usize = 10_000;
+/// Entities one build step reads, at most, nodes or edges; an edge step also finishes the
+/// multi-edge pair it stops in. C's node populate batch (`src/index/index_construct.c`), whose
+/// edge batch is 1,000.
+pub(crate) const BUILD_STEP_ENTITIES: usize = 10_000;
 
-/// Edges one build step reads, at most, plus the rest of the multi-edge pair it stops in: C's
-/// populate batch (`src/index/index_construct.c`).
-pub(crate) const BUILD_STEP_EDGES: usize = 1_000;
-
-/// One build step: index the next batch of one `Building` column's entities, at most `nodes` nodes
-/// or `edges` edges, at their current values, and move its cursor past them, or flip the column
-/// `Ready` if the batch reached the end. Returns whether a column is still `Building` afterwards,
+/// One build step: index the next batch of one `Building` column's entities, at most `entities`
+/// of them, at their current values, and move its cursor past them, or flip the column `Ready` if
+/// the batch reached the end. Returns whether a column is still `Building` afterwards,
 /// i.e. whether to run another step. Tests pass small batches to force cursors through every
 /// boundary.
 #[cfg(test)]
 pub(crate) fn build_step(
     g: &mut Graph,
-    nodes: usize,
-    edges: usize,
+    entities: usize,
 ) -> bool {
-    g.step_index_build(nodes, edges);
+    g.step_index_build(entities);
     g.falkordb_index.has_building_columns()
 }
 
-/// Read the next build step's batch from `g`: the first `Building` column's next `nodes` nodes or
-/// `edges` edges, at their values in `g`, encoded and sorted. `None` if no column is `Building`.
+/// Read the next build step's batch from `g`: the first `Building` column's next `entities` nodes
+/// or edges, at their values in `g`, encoded and sorted. `None` if no column is `Building`.
 /// The step adds it to `g` itself (`Graph::step_index_build`).
 pub(crate) fn read_build_batch(
     g: &Graph,
-    nodes: usize,
-    edges: usize,
+    entities: usize,
 ) -> Option<BuildBatch> {
     let (entity, key, from) = g.falkordb_index.next_building()?;
     let column = g
         .falkordb_index
         .column(entity, &key.0, &key.1)
         .expect("next_building names an existing column");
-    let (tuples, next) = scan(g, &key.0, &key.1, from, nodes, edges, |value| {
+    let (tuples, next) = scan(g, &key.0, &key.1, from, entities, |value| {
         column.encode_value(value)
     });
     Some(BuildBatch {
@@ -611,7 +607,7 @@ fn collect_edge_entries(
         .collect()
 }
 
-/// The tuples of column `(entity, label, attr)` for up to `nodes` `label` nodes, or `edges`
+/// The tuples of column `(entity, label, attr)` for up to `entities` `label` nodes, or
 /// `label`-typed edges, from `from` on, as `g` holds them: encoded with `encode`, sorted and
 /// unique, one `(key, id)` for each whose `attr` value the column indexes. Also returns where the
 /// next batch resumes, or `None` when the scan reached the end.
@@ -624,17 +620,16 @@ fn scan(
     label: &Arc<String>,
     attr: &Arc<String>,
     from: BuildCursor,
-    nodes: usize,
-    edges: usize,
+    entities: usize,
     encode: impl Fn(&Value) -> Option<u64>,
 ) -> (Vec<(u64, u64)>, Option<BuildCursor>) {
     let mut tuples = Vec::new();
     let next = match from {
         BuildCursor::Node(from) => {
-            scan_nodes(g, label, attr, from, nodes, encode, &mut tuples).map(BuildCursor::Node)
+            scan_nodes(g, label, attr, from, entities, encode, &mut tuples).map(BuildCursor::Node)
         }
         BuildCursor::Edge { src, dst } => {
-            scan_edges(g, label, attr, (src, dst), edges, encode, &mut tuples)
+            scan_edges(g, label, attr, (src, dst), entities, encode, &mut tuples)
                 .map(|(src, dst)| BuildCursor::Edge { src, dst })
         }
     };

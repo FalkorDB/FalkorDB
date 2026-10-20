@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
 
-use super::graph_writes::{BUILD_STEP_EDGES, BUILD_STEP_NODES};
+use super::graph_writes::BUILD_STEP_ENTITIES;
 use crate::graph::graph::Graph;
 use crate::graph::mvcc_graph::{BuildCommit, MvccGraph};
 
@@ -75,20 +75,19 @@ pub(crate) enum Turn {
     Failed,
 }
 
-/// One build turn on the graph `host` names, with the default batch sizes.
+/// One build turn on the graph `host` names, with the default batch size.
 ///
 /// The builder runs at most one turn per graph at a time. Two at once would still publish nothing
 /// wrong — the later one's commit finds the earlier one's published, and takes its step again on
 /// it — but would read a batch twice.
 fn run_turn(host: &dyn BuildHost) -> Turn {
-    run_turn_within(host, BUILD_STEP_NODES, BUILD_STEP_EDGES)
+    run_turn_within(host, BUILD_STEP_ENTITIES)
 }
 
-/// [`run_turn`] with explicit batch sizes, for tests.
+/// [`run_turn`] with an explicit batch size, for tests.
 pub(crate) fn run_turn_within(
     host: &dyn BuildHost,
-    nodes: usize,
-    edges: usize,
+    entities: usize,
 ) -> Turn {
     // One read for the published version to build on. The step needs no lock: a published version
     // never changes, and the step goes into a new version of it that only this turn holds.
@@ -101,7 +100,7 @@ pub(crate) fn run_turn_within(
     };
     let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
     drop(published);
-    if !prepared.borrow_mut().step_index_build(nodes, edges) {
+    if !prepared.borrow_mut().step_index_build(entities) {
         return Turn::Idle;
     }
     // Whoever stops the builder may hold what publishing needs (the Redis shutdown handler holds
@@ -116,7 +115,7 @@ pub(crate) fn run_turn_within(
     let mut replaced = None;
     let published = host.publish(&mut |mvcc| {
         replaced = Some(mvcc.read());
-        let step = |g: &mut Graph| g.step_index_build(nodes, edges);
+        let step = |g: &mut Graph| g.step_index_build(entities);
         turn = match mvcc.commit_index_build(&prepared, step) {
             Some(BuildCommit::Prepared | BuildCommit::Redone) => Turn::Committed {
                 more: mvcc.read().borrow().falkordb_index.has_building_columns(),

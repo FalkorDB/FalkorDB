@@ -43,16 +43,15 @@ fn reserve_nodes(
         .expect("reserved")
 }
 
-/// Run build steps of at most `nodes` nodes or `edges` edges on `g` itself until no column is
+/// Run build steps of at most `entities` nodes or edges on `g` itself until no column is
 /// `Building`. Returns how many steps it took.
 fn build_to_end(
     g: &mut Graph,
-    nodes: usize,
-    edges: usize,
+    entities: usize,
 ) -> usize {
     let mut steps = 0;
     while g.falkordb_index.has_building_columns() {
-        graph_writes::build_step(g, nodes, edges);
+        graph_writes::build_step(g, entities);
         steps += 1;
         assert!(steps < 100_000, "the build never finishes");
     }
@@ -181,8 +180,7 @@ fn create_index_builds_the_column_from_live_nodes() {
     // Three nodes fit one step, which indexes them and flips the column `Ready`.
     assert!(!graph_writes::build_step(
         &mut g,
-        graph_writes::BUILD_STEP_NODES,
-        graph_writes::BUILD_STEP_EDGES
+        graph_writes::BUILD_STEP_ENTITIES
     ));
     assert!(!g.falkordb_index.has_building_columns());
     assert!(
@@ -769,7 +767,7 @@ fn one_pass(
     copy.falkordb_index
         .drop_index(&IndexType::Range, entity, label, attrs);
     graph_writes::create_index(&mut copy, &IndexType::Range, entity, label, attrs);
-    build_to_end(&mut copy, usize::MAX, usize::MAX);
+    build_to_end(&mut copy, usize::MAX);
     contents(&copy, entity, label, attr, values)
 }
 
@@ -785,7 +783,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     create_index_on(&mut g, &label, &attr);
 
     // The first step indexes ids[0] and ids[1], and stops at ids[2].
-    assert!(graph_writes::build_step(&mut g, 2, 2));
+    assert!(graph_writes::build_step(&mut g, 2));
     assert_eq!(
         cursor(&g, EntityType::Node, &label, &attr),
         Some(BuildCursor::Node(NodeId::from(ids[2])))
@@ -802,7 +800,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     set_attr(&mut g, ids[4], &attr, Value::Int(55));
     let created = add_person(&mut g, &attr, 70);
 
-    build_to_end(&mut g, 2, 2);
+    build_to_end(&mut g, 2);
     let values = [10, 15, 20, 30, 40, 50, 55, 60, 70];
     assert_eq!(
         contents(&g, EntityType::Node, &label, &attr, &values),
@@ -858,7 +856,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
 
     // A two-edge step stops inside the a->b pair, so it finishes the pair: three edges, and the
     // next step resumes at a->c.
-    assert!(graph_writes::build_step(&mut g, 2, 2));
+    assert!(graph_writes::build_step(&mut g, 2));
     assert_eq!(
         cursor(&g, EntityType::Relationship, &ty, &attr),
         Some(BuildCursor::Edge {
@@ -888,7 +886,7 @@ fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     applied!(g, |w| g
         .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w));
 
-    build_to_end(&mut g, 2, 2);
+    build_to_end(&mut g, 2);
     let values = [1, 2, 3, 4, 5, 6, 7, 8, 55];
     assert_eq!(
         contents(&g, EntityType::Relationship, &ty, &attr, &values),
@@ -955,7 +953,7 @@ fn any_batch_size_builds_the_one_pass_column() {
         assert_eq!(nodes.1.len(), 9, "ten nodes, one deleted");
         assert_eq!(edges.1.len(), 8);
 
-        build_to_end(&mut g, batch, batch);
+        build_to_end(&mut g, batch);
         assert_eq!(
             contents(&g, EntityType::Node, &label, &v, &node_values),
             nodes,
@@ -977,7 +975,7 @@ fn a_node_step_reads_at_most_its_batch() {
     for (batch, steps) in [(1usize, 9usize), (2, 5), (4, 3), (9, 1), (10, 1)] {
         let (mut g, label, _) = people_with(&attr, &(1..=9).collect::<Vec<_>>());
         create_index_on(&mut g, &label, &attr);
-        assert_eq!(build_to_end(&mut g, batch, batch), steps, "batch {batch}");
+        assert_eq!(build_to_end(&mut g, batch), steps, "batch {batch}");
         assert_eq!(range_scan(&g, &label, &attr, 0, 100).len(), 9);
     }
 }
@@ -989,7 +987,7 @@ fn set_then_delete_in_one_batch_during_a_build() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[1, 2, 3]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1));
     assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[0]]);
 
     // SET ids[0].v = 5, ids[2].v = 5, then DELETE both, as `Pending::commit` orders them.
@@ -1005,7 +1003,7 @@ fn set_then_delete_in_one_batch_during_a_build() {
     g.delete_nodes(&del, &mut writes).unwrap();
     g.apply_index_writes(&mut writes);
 
-    build_to_end(&mut g, 1, 1);
+    build_to_end(&mut g, 1);
     assert_eq!(
         range_scan(&g, &label, &attr, 0, 10),
         vec![ids[1]],
@@ -1023,7 +1021,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1));
     set_attr(&mut g, ids[0], &attr, Value::Int(30));
 
     drop_index_on(&mut g, &label, &attr);
@@ -1034,11 +1032,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
             .is_none()
     );
     assert!(
-        !graph_writes::build_step(
-            &mut g,
-            graph_writes::BUILD_STEP_NODES,
-            graph_writes::BUILD_STEP_EDGES
-        ),
+        !graph_writes::build_step(&mut g, graph_writes::BUILD_STEP_ENTITIES),
         "nothing left to build"
     );
     assert!(
@@ -1063,7 +1057,7 @@ fn recreating_a_building_column_restarts_its_build() {
     let attr = Arc::new("v".to_string());
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
-    assert!(graph_writes::build_step(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1));
 
     drop_index_on(&mut g, &label, &attr);
     set_attr(&mut g, ids[0], &attr, Value::Int(15)); // while no index exists
@@ -1074,7 +1068,7 @@ fn recreating_a_building_column_restarts_its_build() {
         "the re-created column starts over"
     );
 
-    build_to_end(&mut g, 1, 1);
+    build_to_end(&mut g, 1);
     assert_eq!(range_scan(&g, &label, &attr, 10, 10), Vec::<u64>::new());
     assert_eq!(range_scan(&g, &label, &attr, 15, 15), vec![ids[0]]);
     assert_eq!(range_scan(&g, &label, &attr, 20, 20), vec![ids[1]]);
@@ -1092,7 +1086,7 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
         set_attr(&mut g, id, &w, Value::Int(value));
     }
     create_index_on(&mut g, &label, &v);
-    assert!(graph_writes::build_step(&mut g, 1, 1));
+    assert!(graph_writes::build_step(&mut g, 1));
     let v_cursor = cursor(&g, EntityType::Node, &label, &v);
     assert_eq!(v_cursor, Some(BuildCursor::Node(NodeId::from(ids[1]))));
 
@@ -1107,7 +1101,7 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
         "the first column's build is untouched"
     );
 
-    build_to_end(&mut g, 1, 1);
+    build_to_end(&mut g, 1);
     assert_eq!(range_scan(&g, &label, &v, 0, 100), vec![ids[0], ids[1]]);
     assert_eq!(range_scan(&g, &label, &w, 2, 2), vec![ids[1]]);
 }
@@ -1155,7 +1149,7 @@ impl TestHost {
 
     /// One build turn with batches of 10.
     fn turn(&self) -> Turn {
-        online_build::run_turn_within(self, 10, 10)
+        online_build::run_turn_within(self, 10)
     }
 
     /// Turns until the graph has nothing left to build.
@@ -1776,7 +1770,7 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                     host.race_next_turn(move |g| {
                         *made.lock().unwrap() = write(g, &mut write_rng);
                     });
-                    let turn = online_build::run_turn_within(host.as_ref(), 5, 5);
+                    let turn = online_build::run_turn_within(host.as_ref(), 5);
                     assert!(
                         matches!(turn, Turn::Committed { .. } | Turn::Idle),
                         "seed {seed}: {turn:?}"
@@ -1795,7 +1789,7 @@ fn random_interleavings_of_writes_and_build_steps_match_a_one_pass_build() {
                     }
                 }
                 _ => {
-                    let turn = online_build::run_turn_within(host.as_ref(), 5, 5);
+                    let turn = online_build::run_turn_within(host.as_ref(), 5);
                     assert!(
                         matches!(turn, Turn::Committed { .. } | Turn::Idle),
                         "seed {seed}: {turn:?}"
@@ -2030,13 +2024,13 @@ fn prepare_turn(
     nodes: usize,
 ) -> Arc<AtomicRefCell<Graph>> {
     let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_version()));
-    assert!(prepared.borrow_mut().step_index_build(nodes, nodes));
+    assert!(prepared.borrow_mut().step_index_build(nodes));
     prepared
 }
 
 /// The step a commit takes again if a writer made its prepared version stale.
 fn step_of(nodes: usize) -> impl FnOnce(&mut Graph) -> bool {
-    move |g| g.step_index_build(nodes, nodes)
+    move |g| g.step_index_build(nodes)
 }
 
 /// A turn that nothing committed against publishes the version it prepared with no lock held,
@@ -2153,12 +2147,12 @@ fn a_turn_frees_the_version_its_commit_replaces_after_the_host_lets_go() {
         replaced: Mutex::new(Vec::new()),
     };
     assert_eq!(
-        online_build::run_turn_within(&freeing, 10, 10),
+        online_build::run_turn_within(&freeing, 10),
         Turn::Committed { more: true }
     );
     host.race_next_turn(the_racing_write(&ids, &attr));
     assert_eq!(
-        online_build::run_turn_within(&freeing, 10, 10),
+        online_build::run_turn_within(&freeing, 10),
         Turn::Committed { more: true }
     );
     let replaced = freeing.replaced.into_inner().unwrap();

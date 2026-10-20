@@ -3791,8 +3791,8 @@ impl Graph {
     }
 
     /// One index-build step on this version: read the next batch of its first `Building` column
-    /// at the values this version holds, at most `nodes` nodes or `edges` edges, add it to the
-    /// column and move the column's cursor. `false`, changing nothing, if no column is `Building`.
+    /// at the values this version holds, at most `entities` nodes or edges, add it to the column
+    /// and move the column's cursor. `false`, changing nothing, if no column is `Building`.
     /// The indexer takes it on a new version of the published graph, and again on a new version
     /// of the current one if a writer committed before it published
     /// ([`MvccGraph::commit_index_build`]).
@@ -3801,10 +3801,9 @@ impl Graph {
     #[cfg(feature = "index-falkordb")]
     pub(crate) fn step_index_build(
         &mut self,
-        nodes: usize,
-        edges: usize,
+        entities: usize,
     ) -> bool {
-        graph_writes::read_build_batch(self, nodes, edges)
+        graph_writes::read_build_batch(self, entities)
             .is_some_and(|batch| self.falkordb_index.apply_build(batch))
     }
 
