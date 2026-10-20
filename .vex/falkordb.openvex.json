@@ -1,0 +1,791 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/FalkorDB/FalkorDB/blob/main/.vex/falkordb.openvex.json",
+  "author": "FalkorDB",
+  "timestamp": "2026-10-20T00:00:00Z",
+  "version": 1,
+  "tooling": "build/vex/vex.py, from .vex/statements.toml",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2005-2541"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue is in how the tar program extracts setuid and setgid files from an archive. tar is present only as part of the Debian base system; nothing in this image runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2010-4756"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw makes glob() use a lot of CPU and memory on a crafted wildcard pattern. Of the programs this image runs, only redis-server calls glob(), to expand wildcard include paths in its own configuration, which whoever runs the container writes; network clients cannot supply a pattern."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2011-3374"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/apt"
+        },
+        {
+          "@id": "pkg:deb/debian/libapt-pkg7.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in apt-key, a key-management script shipped by older apt versions. The apt 3.0 in this image no longer includes apt-key, and the package manager is never run inside the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2013-4392"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how systemd and its tmpfiles tool reset file permissions and SELinux labels. Neither program is installed, and no program that runs in this container loads the libsystemd0 or libudev1 libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2017-18018"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The race exists only when chown or chgrp walk a directory tree with both -R and -L (follow every symbolic link). Our start-up scripts never pass -L: they chown single files, and the one recursive call (on the browser's data directory, falkordb image only) does not follow symbolic links."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2018-20796"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw is unbounded recursion when glibc's regular-expression matcher runs a crafted pattern that uses back-references. No program this image runs passes a pattern from outside to glibc's regular-expression functions, and FalkorDB's Cypher =~ operator uses a separate regex engine that rejects back-references."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010022"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: it only helps an attacker who has already found a separate stack buffer overflow in a thread of a program, to get past glibc's stack-overflow check. Such an overflow would be a vulnerability of its own, fixed as such."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010023"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw needs someone to run ldd on, or otherwise load, an ELF file prepared by an attacker. Nothing in this image runs ldd, and network clients cannot make the server load a file of their choosing."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010024"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: glibc reuses the memory of finished threads, which makes some addresses easier to predict, and that only helps an attacker who already has a separate memory-corruption bug and a way to learn addresses from the process."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010025"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: the heap of each new thread starts at an address aligned to 64 MB, which leaves less randomness, and that only helps an attacker who already has a separate memory-corruption bug."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-9192"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw is unbounded recursion when glibc's regular-expression matcher runs a crafted pattern that uses back-references. No program this image runs passes a pattern from outside to glibc's regular-expression functions, and FalkorDB's Cypher =~ operator uses a separate regex engine that rejects back-references."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31437"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31438"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31439"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5278"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the sort program and needs a crafted key option on its command line. sort is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-6141"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libtinfo6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in postprocess_termcap(), part of libtic, the library that compiles terminal descriptions for tools such as tic and infocmp. Those tools are not installed and no program in this image uses libtic; bash uses only libtinfo, which Debian builds without termcap parsing."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-69720"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libtinfo6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the infocmp command-line tool, which is not installed in this image (we remove the ncurses-bin package). The libtinfo6 package that remains contains only libraries, which do not include infocmp's code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102010"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/gcc-14-base"
+        },
+        {
+          "@id": "pkg:deb/debian/libatomic1"
+        },
+        {
+          "@id": "pkg:deb/debian/libgcc-s1"
+        },
+        {
+          "@id": "pkg:deb/debian/libstdc++6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the pb_ds binary-heap template, which exists only as C++ header code compiled into the programs that use it; it is not part of the libstdc++ runtime library in this image. No program in this image is built with it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102473"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/dash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "dash is this image's /bin/sh and runs our start-up scripts, and its slow pattern matcher is present. It only receives patterns written in those scripts or values the operator sets in environment variables; no network client of FalkorDB or of the browser can supply a pattern to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102474"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/dash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in dash's handling of Unicode escapes in its printf and echo built-ins, a feature added in dash 0.5.13. This image ships dash 0.5.12, whose printf and echo do not interpret Unicode escapes at all."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15059"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-oomd, the out-of-memory killer service, which is not installed. The image has only the libsystemd0 and libudev1 libraries, which do not contain oomd's code, and nothing that runs in the container loads them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-16742"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-homed, the service that manages user home directories, which is not installed. The image has only the libsystemd0 and libudev1 libraries, which do not contain homed's code, and nothing that runs in the container loads them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18374"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how fopen() reads a ',ccs=' character-set option in its mode string. No program or library in this image passes that option; apart from glibc's own files, no binary in the image contains the text ',ccs='."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18477"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how tar restores incremental backups. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18508"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how tar extracts archives with the --one-top-level option. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19499"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in strfmon(), which formats money amounts. No program or library in this image calls it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19542"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw needs a glibc search tree (tsearch/tdelete) of about a million entries. The only such tree in the programs this image runs is the terminal library's cache of terminal control strings, used only by bash in the optional TLS script and holding at most a few hundred entries that network input cannot add to."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-27171"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/zlib1g"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an endless loop in zlib's crc32_combine functions when they are given a negative length. No program or library in this image calls those functions."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-40228"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-journald, which forwards emergency log messages to users' terminals. journald is not installed, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42250"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libbz2-1.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the bzip2recover tool, which is not installed (the bzip2 package is absent). The libbz2 library in the image does not contain that tool's code, and no program that runs in the container loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-53910"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/diffutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the diff3 program. Nothing in this image runs diff3 or any other diffutils program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5435"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in deprecated glibc functions that print DNS records for debugging (ns_sprintrr, fp_nquery and related). No program or library in this image calls them, and glibc's DNS lookups do not use them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54369"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libacl1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in libacl's file-ACL functions when a privileged program uses them on a path someone else can change. No program that runs in this container loads libacl: only cp, mv, install, sed and tar use it, and none of them runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54370"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libacl1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the getfacl, setfacl and chacl tools, which are not installed (the acl package is absent). The libacl library that remains is not loaded by any program that runs in the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54371"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libattr1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the getfattr and setfattr tools, which are not installed (the attr package is absent). The libattr library that remains is not loaded by any program that runs in the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56391"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the uniq program and needs its -w option with crafted multibyte input. uniq is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56392"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the unexpand program and needs a very large tab-stop argument. unexpand is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5704"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a crafted archive hide files from tar's listing so they are extracted unnoticed. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6238"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in deprecated glibc functions that print DNS records for debugging (ns_sprintrr, fp_nquery and related), when given a crafted DNS response. No program or library in this image calls them, and glibc's DNS lookups do not use them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6368"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in wordexp(), which expands shell-style words. No program or library in this image calls wordexp()."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6791"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in wordexp(), which expands shell-style words. No program or library in this image calls wordexp()."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-77117"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in glibc's converter for the SHIFT_JISX0213 character set, which runs only when a program converts text from that character set; Redis, FalkorDB and the browser's server never ask for it, and none takes a character-set name from its input. The browser's image library is never loaded, because the browser's image optimizer is switched off."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-80489"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in glibc's converter for the EUC-JISX0213 character set, which runs only when a program converts text from that character set; Redis, FalkorDB and the browser's server never ask for it, and none takes a character-set name from its input. The browser's image library is never loaded, because the browser's image optimizer is switched off."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85091"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/zlib1g"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in gz_vacate(), which zlib added in version 1.3.1.2 for non-blocking writes. This image has zlib 1.3.1, which does not contain that function."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-8674"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw aborts a program whose DNS settings list a search domain of about 200 characters or more, in /etc/resolv.conf or the LOCALDOMAIN variable. In a container those settings come from the container platform and whoever runs the container; nothing in this image writes them, and network clients cannot change them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86805"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader handles $ORIGIN paths for setuid and setgid programs. This image contains no setuid or setgid programs and no programs with file capabilities, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-89092"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in nscd, glibc's name-service caching daemon, which Debian ships as a separate package. That package is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95619"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/gcc-14-base"
+        },
+        {
+          "@id": "pkg:deb/debian/libatomic1"
+        },
+        {
+          "@id": "pkg:deb/debian/libgcc-s1"
+        },
+        {
+          "@id": "pkg:deb/debian/libstdc++6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The overflow is in size rounding that the aligned form of operator new does only on systems without posix_memalign(). The libstdc++ in this image calls posix_memalign() and passes the requested size unchanged, so that rounding code is not in it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95818"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader expands $ORIGIN for setuid and setgid programs. This image contains no setuid or setgid programs and no programs with file capabilities, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-97399"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in a version of strncasecmp() written for IBM POWER8 processors. This image is built for x86-64 and arm64, whose glibc does not contain that code."
+    },
+    {
+      "vulnerability": {
+        "name": "TEMP-0290435-0B57B5"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue is that tar treats an archive name containing a colon as a remote tape drive and contacts that host. Nothing in this image runs tar or its rmt helper."
+    },
+    {
+      "vulnerability": {
+        "name": "TEMP-0841856-B18BAF"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/bash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue lets environment variables run commands when bash is started by a setuid or setgid program for a user other than root. This image has no setuid or setgid programs, so bash is never started that way."
+    }
+  ]
+}

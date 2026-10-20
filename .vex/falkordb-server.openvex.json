@@ -1,0 +1,2813 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/FalkorDB/FalkorDB/blob/main/.vex/falkordb-server.openvex.json",
+  "author": "FalkorDB",
+  "timestamp": "2026-10-20T00:00:00Z",
+  "version": 1,
+  "tooling": "build/vex/vex.py, from .vex/statements.toml",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2005-2541"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue is in how the tar program extracts setuid and setgid files from an archive. tar is present only as part of the Debian base system; nothing in this image runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2010-4756"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw makes glob() use a lot of CPU and memory on a crafted wildcard pattern. Of the programs this image runs, only redis-server calls glob(), to expand wildcard include paths in its own configuration, which whoever runs the container writes; network clients cannot supply a pattern."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2011-3374"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/apt"
+        },
+        {
+          "@id": "pkg:deb/debian/libapt-pkg7.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in apt-key, a key-management script shipped by older apt versions. The apt 3.0 in this image no longer includes apt-key, and the package manager is never run inside the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2013-4392"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how systemd and its tmpfiles tool reset file permissions and SELinux labels. Neither program is installed, and no program that runs in this container loads the libsystemd0 or libudev1 libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2017-18018"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The race exists only when chown or chgrp walk a directory tree with both -R and -L (follow every symbolic link). Our start-up scripts never pass -L: they chown single files, and the one recursive call (on the browser's data directory, falkordb image only) does not follow symbolic links."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2018-20796"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw is unbounded recursion when glibc's regular-expression matcher runs a crafted pattern that uses back-references. No program this image runs passes a pattern from outside to glibc's regular-expression functions, and FalkorDB's Cypher =~ operator uses a separate regex engine that rejects back-references."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010022"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: it only helps an attacker who has already found a separate stack buffer overflow in a thread of a program, to get past glibc's stack-overflow check. Such an overflow would be a vulnerability of its own, fixed as such."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010023"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw needs someone to run ldd on, or otherwise load, an ELF file prepared by an attacker. Nothing in this image runs ldd, and network clients cannot make the server load a file of their choosing."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010024"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: glibc reuses the memory of finished threads, which makes some addresses easier to predict, and that only helps an attacker who already has a separate memory-corruption bug and a way to learn addresses from the process."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-1010025"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "This is a limit of a hardening feature, not a flaw that can be exploited on its own: the heap of each new thread starts at an address aligned to 64 MB, which leaves less randomness, and that only helps an attacker who already has a separate memory-corruption bug."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-9192"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw is unbounded recursion when glibc's regular-expression matcher runs a crafted pattern that uses back-references. No program this image runs passes a pattern from outside to glibc's regular-expression functions, and FalkorDB's Cypher =~ operator uses a separate regex engine that rejects back-references."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-46195"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libgcc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libstdc++"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the Rust symbol demangler in GCC's libiberty, which tools such as binutils and gdb use. The libgcc and libstdc++ libraries in this image do not contain that code, and the image has no binutils or gdb."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2022-27943"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libgcc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libstdc++"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the Rust symbol demangler in GCC's libiberty, which tools such as binutils and gdb use. The libgcc and libstdc++ libraries in this image do not contain that code, and the image has no binutils or gdb."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2022-3219"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes GnuPG spin on a small crafted input, such as a compressed public key carrying thousands of signatures. GnuPG is in this image only because microdnf, the base image's package manager, depends on it (through gpgme), and nothing the container runs starts a GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2022-41409"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/pcre2"
+        },
+        {
+          "@id": "pkg:rpm/redhat/pcre2-syntax"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in pcre2test, a test program from the separate pcre2-tools package, not in the PCRE2 library. pcre2test is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-30571"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a race in libarchive's disk-extraction code: in a program that extracts archives from several threads, the process umask can be left at 0, creating world-writable directories. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31437"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31438"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-31439"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue concerns tampering with sealed systemd journal log files. This image has no journald, no journalctl and no journal files, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-32636"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes GLib's GVariant deserializer very slow on crafted data, a denial of service for programs that parse untrusted GVariant input. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-4156"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gawk"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the gawk program and needs gawk to process a crafted script or file. Nothing in this image runs gawk."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-45322"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a use-after-free in libxml2's xmlUnlinkNode() that can only happen after a memory allocation fails. libxml2 is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-50495"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/ncurses-base"
+        },
+        {
+          "@id": "pkg:rpm/redhat/ncurses-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in _nc_wrap_entry(), used when compiling terminfo source files (the tic tool), and it lives in the libtic library. Nothing in this image loads libtic; the shell uses only libtinfo, which does not contain that function."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-0232"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/sqlite-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a use-after-free in SQLite's JSON parser (jsonParseAddNodeArray) that can crash a program evaluating crafted JSON in SQL. SQLite is in this image only because rpm and microdnf, the base image's package tools, depend on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-11053"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes curl send a password from a .netrc file to a different host when it follows a redirect. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-13176"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "This ECDSA timing leak was fixed before the OpenSSL 3.5 series began, and the OpenSSL 3.5.8 in this image contains the fix. The image also signs nothing with ECDSA unless you give it an ECDSA key: TLS is off by default, and TLS=1 generates RSA keys."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-41996"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "The flaw makes a TLS server check a client's finite-field Diffie-Hellman key more slowly than it needs to, which OpenSSL's FIPS provider still does on hosts in FIPS mode. This image's system crypto policy turns off finite-field Diffie-Hellman key exchange, in TLS 1.2 and TLS 1.3, so no connection reaches that check."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-7264"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an out-of-bounds read in libcurl's parser for time fields in server certificates. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-9681"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a subdomain's HSTS entry overwrite its parent domain's entry in curl's HSTS cache. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-13034"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets curl skip a pinned public key check on QUIC (HTTP/3) connections made with GnuTLS when certificate verification is turned off. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-14017"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a TLS setting changed for one multi-threaded LDAPS transfer apply to other transfers in the same program. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-14524"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes curl pass an OAuth2 bearer token to another host when a transfer redirects to an IMAP, LDAP, POP3 or SMTP URL. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-15079"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl accept an SSH host that is not in the user's known-hosts file during SCP or SFTP transfers. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-15224"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes libcurl authenticate with a running SSH agent during SCP or SFTP public-key logins even when not asked to. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-1632"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a NULL pointer dereference in bsdunzip, libarchive's unzip command-line tool. This image has only the libarchive library, not bsdunzip, and nothing the container runs loads that library."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-27113"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a NULL pointer dereference in libxml2's pattern matcher (xmlPatMatch) that can crash a program using it. libxml2 is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-30258"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a crafted subkey, once imported into a GnuPG keyring, stop GnuPG from verifying signatures made by other keys. GnuPG is in this image only because microdnf, the base image's package manager, depends on it (through gpgme), and nothing the container runs starts a GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-3360"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow and buffer under-read in GLib's g_date_time_new_from_iso8601() when it parses a very long invalid ISO 8601 timestamp. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5278"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the sort program and needs a crafted key option on its command line. sort is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5915"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a heap buffer over-read in libarchive's RAR reader (copy_from_lzss_window) on a crafted RAR archive. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5916"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in libarchive's WARC reader on an archive that declares a huge content length. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5917"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a one-byte heap overflow in libarchive's pax/ustar writer (build_ustar_entry_name) when it builds file names for a new archive. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-5918"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libarchive read past the end of a piped input stream while reading an archive. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-60753"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is unbounded memory use in the bsdtar program's -s path-substitution option. This image has only the libarchive library, not bsdtar, and nothing the container runs loads that library."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-6141"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libtinfo6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in postprocess_termcap(), part of libtic, the library that compiles terminal descriptions for tools such as tic and infocmp. Those tools are not installed and no program in this image uses libtic; bash uses only libtinfo, which Debian builds without termcap parsing."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-68972"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets an attacker append unsigned text to a GnuPG clear-signed message whose plaintext lines end in a form feed, while signature verification still succeeds. GnuPG is in this image only because microdnf, the base image's package manager, depends on it (through gpgme), and nothing the container runs starts a GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-69720"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libtinfo6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the infocmp command-line tool, which is not installed in this image (we remove the ncurses-bin package). The libtinfo6 package that remains contains only libraries, which do not include infocmp's code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-7039"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in GLib's temporary-file creation (get_tmp_file) that can cause out-of-bounds access and, with planted symlinks, expose another program's temporary files. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-70873"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/sqlite-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a heap memory disclosure in SQLite's zipfile extension when it inflates a crafted ZIP file. The extension is not built into this image's SQLite library, the sqlite3 shell that carries it is not installed, and nothing the container runs loads the library."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-9232"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in OpenSSL's HTTP client handling no_proxy with an IPv6 address, and was fixed in OpenSSL 3.5.4; this image has 3.5.8. Nothing the container runs uses that HTTP client in any case."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0988"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in GLib's g_buffered_input_stream_peek() that overflows a buffer when a program passes crafted offset and count values. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0989"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is unbounded recursion in libxml2's RelaxNG parser on schemas with deeply nested <include> directives, which can exhaust the stack. libxml2 is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0990"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is infinite recursion in libxml2's XML catalog resolver (xmlCatalogXMLResolveURI) on a catalog whose delegate entry refers to itself. libxml2 is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-0992"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes libxml2 burn CPU walking XML catalogs that repeat <nextCatalog> entries pointing to the same catalog. libxml2 is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102010"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/gcc-14-base"
+        },
+        {
+          "@id": "pkg:deb/debian/libgcc-s1"
+        },
+        {
+          "@id": "pkg:deb/debian/libstdc++6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the pb_ds binary-heap template, which exists only as C++ header code compiled into the programs that use it; it is not part of the libstdc++ runtime library in this image. No program in this image is built with it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102010"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libgcc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libstdc++"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the pb_ds binary-heap template (__gnu_pbds::priority_queue::erase_if), which lives in C++ headers and is compiled into the programs that use it. No program or library in this image contains that code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102473"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/dash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "dash is this image's /bin/sh and runs our start-up scripts, and its slow pattern matcher is present. It only receives patterns written in those scripts or values the operator sets in environment variables; no network client of FalkorDB or of the browser can supply a pattern to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-102474"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/dash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in dash's handling of Unicode escapes in its printf and echo built-ins, a feature added in dash 0.5.13. This image ships dash 0.5.12, whose printf and echo do not interpret Unicode escapes at all."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-103242"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a heap buffer overflow in rpm's hex2binv() when rpm2cpio, rpm2archive or rpm -qlvp reads a crafted, unsigned package whose file-signature header tag has the wrong type. rpm is in this image only as the base image's package tool, and nothing the container runs starts rpm or loads its libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-105712"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets gpgtar, when it extracts an untrusted archive into an existing directory that holds a symlink, write a file outside that directory. GnuPG is in this image only because microdnf, the base image's package manager, depends on it (through gpgme), and nothing the container runs starts a GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107161"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/cyrus-sasl-lib"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a heap overflow in Cyrus SASL's DIGEST-MD5 plugin that a malicious server can trigger in a client logging in with DIGEST-MD5. That plugin is not installed in this image, and nothing that runs in the container loads the Cyrus SASL library."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107708"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/krb5-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a crash in the Kerberos KDC server (krb5kdc) when a trusted realm sends a delegation request with a malformed name. The KDC server is not installed in this image, and nothing that runs in the container loads the Kerberos libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-107778"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/krb5-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a crash in the Kerberos library when a service accepts forwarded credentials whose ticket lists do not match. The Kerberos libraries are part of the Red Hat UBI base image, where only libcurl and Cyrus SASL use them; nothing that runs in this container (the startup script, redis-server or the FalkorDB module) loads them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-11850"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/krb5-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is an out-of-bounds read in the Kerberos KDC's LDAP database plugin when it reads a malformed record. That plugin and the KDC server are not installed in this image, and nothing that runs in the container loads the Kerberos libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-12610"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/pam"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in SSSD's PAM responder (sssd_pam), not in the PAM library this package provides. SSSD is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-13595"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libblkid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libfdisk"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libmount"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libsmartcols"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libuuid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux-core"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in libblkid's disk-probing code, which reads partition tables and filesystem signatures. Nothing FalkorDB runs loads libblkid, and the image has no setuid or setgid programs, so nothing in the container can make it probe a file with more privileges than the caller already has."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-1484"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in GLib's g_base64_encode() that can write past a buffer when it encodes very large input. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-1485"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a buffer underflow in GLib's content-type detection when it parses a crafted treemagic file that a local user has installed. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-1489"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in GLib's Unicode case conversion that can write past a buffer for extremely large strings. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15028"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a heap out-of-bounds read in libarchive's tar reader on a PAX header with a malformed SUN.holesdata sparse-file attribute. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15059"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-oomd, the out-of-memory killer service, which is not installed. The image has only the libsystemd0 and libudev1 libraries, which do not contain oomd's code, and nothing that runs in the container loads them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15059"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/systemd-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the systemd-oomd service's IPC handler. systemd-oomd is not installed in this image; the systemd-libs package here holds only client libraries and name-service modules, which do not contain that handler."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-16742"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-homed, the service that manages user home directories, which is not installed. The image has only the libsystemd0 and libudev1 libraries, which do not contain homed's code, and nothing that runs in the container loads them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-1757"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libxml2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a memory leak in the xmllint interactive shell when a user keeps entering blank lines. libxml2 and its xmllint tool are in this image only because microdnf, the base image's package manager, depends on libxml2, and nothing the container runs starts xmllint or loads libxml2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-17591"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a use-after-free in libarchive's archive_entry_copy_mac_metadata() when a program copies an entry's Mac metadata onto itself. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18374"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how fopen() reads a ',ccs=' character-set option in its mode string. No program or library in this image passes that option; apart from glibc's own files, no binary in the image contains the text ',ccs='."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18477"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how tar restores incremental backups. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18508"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how tar extracts archives with the --one-top-level option. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18739"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/popt"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an off-by-one in popt's poptStuffArgs() that can corrupt option-parsing state when a program calls it repeatedly or uses deeply nested aliases. popt is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18743"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/popt"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an undersized realloc in popt's poptConfigFileToString() when a program loads crafted popt configuration. popt is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18839"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/popt"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a size_t underflow in popt's help formatting (singleOptionHelp) when a program prints help for options wider than the terminal. popt is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-18924"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a use-after-free in libcurl when an application uses HTTP/2 server push on handles that share connections. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19499"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in strfmon(), which formats money amounts. No program or library in this image calls it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19542"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw needs a glibc search tree (tsearch/tdelete) of about a million entries. The only such tree in the programs this image runs is the terminal library's cache of terminal control strings, used only by bash in the optional TLS script and holding at most a few hundred entries that network input cannot add to."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-19931"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send one user's request over a connection another user authenticated with Negotiate (Kerberos/SPNEGO). curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-22185"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openldap"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a one-byte out-of-bounds read in the LMDB mdb_load tool when it reads a malformed input file. mdb_load is not installed in this image, and nothing that runs in the container loads the OpenLDAP libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-24883"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a crash in GnuPG when it parses a signature packet with a very long length. GnuPG is in this image only because microdnf, the base image's package manager, depends on it (through gpgme), and nothing the container runs starts a GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-27171"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/zlib1g"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an endless loop in zlib's crc32_combine functions when they are given a negative length. No program or library in this image calls those functions."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-27171"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/zlib"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The infinite loop is in the x2nmodp() helper that zlib 1.2.12 introduced for crc32_combine(); this image's zlib 1.2.11 uses the older algorithm, which returns early for the negative lengths that trigger the loop. No program or library in the image calls crc32_combine() at all."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-27456"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libblkid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libfdisk"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libmount"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libsmartcols"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libuuid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux-core"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the setuid mount program sets up a loop device for an /etc/fstab entry that lets ordinary users mount (the user,loop options). This image has no /etc/fstab, and its mount program is not setuid, so a non-root user cannot mount anything."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28387"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in DANE (TLSA record) server authentication in TLS clients, and was fixed in OpenSSL 3.5.6; this image has 3.5.8. Nothing the container runs uses DANE in any case."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28388"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in delta CRL processing during certificate verification, and was fixed in OpenSSL 3.5.6; this image has 3.5.8. Nothing the container runs enables CRL or delta CRL checking in any case."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28389"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in decrypting CMS (S/MIME) messages, and was fixed in OpenSSL 3.5.6; this image has 3.5.8. Nothing the container runs processes CMS or PKCS#7 messages in any case."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-31789"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The overflow happens only on 32-bit systems and was fixed in OpenSSL 3.5.6. This image is 64-bit (x86-64) and has OpenSSL 3.5.8."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-34743"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/xz-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in liblzma's lzma_index_append() after lzma_index_decoder() has decoded an empty index. No program or library in this image calls those functions, and nothing the image runs loads liblzma."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-35189"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "affected",
+      "action_statement": "TLS is off by default. If you turn it on (TLS=1, or a tls-port in REDIS_ARGS), require a password or ACL (for example REDIS_ARGS=\"--requirepass <secret>\") so that untrusted clients cannot run CONFIG SET, REPLICAOF, MIGRATE or CLUSTER commands; keep tls-auth-clients at no; and do not replicate or cluster over TLS with peers you do not trust. Move to an image with OpenSSL 3.5.9 or a Red Hat fix when one is published."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-35191"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in OpenSSL's QUIC server when address validation is turned off. Nothing in this image uses QUIC: Redis and FalkorDB use TLS over TCP, and neither can be configured to use QUIC."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-3784"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets curl reuse an HTTP proxy tunnel for a request that uses different proxy credentials. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-40228"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libsystemd0"
+        },
+        {
+          "@id": "pkg:deb/debian/libudev1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in systemd-journald, which forwards emergency log messages to users' terminals. journald is not installed, and no program that runs in the container loads libsystemd0 or libudev1."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-4105"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/systemd-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the systemd-machined service's RegisterMachine D-Bus method. systemd-machined is not installed in this image, and the systemd-libs package here does not contain it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41990"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libgcrypt"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in libgcrypt's Dilithium (ML-DSA) signing code, which was added in libgcrypt 1.12.0. This image has libgcrypt 1.10.0, which has no Dilithium code, and nothing the image runs loads libgcrypt."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42250"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libbz2-1.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the bzip2recover tool, which is not installed (the bzip2 package is absent). The libbz2 library in the image does not contain that tool's code, and no program that runs in the container loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42250"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/bzip2-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the bzip2recover program, not in the libbz2 library this package provides. bzip2recover is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42765"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in OCSP checking during certificate verification, a feature that first appeared in OpenSSL 3.6. This image has OpenSSL 3.5.8, which does not have that code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42772"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how OpenSSL's QUIC stack reassembles out-of-order stream data. Nothing in this image uses QUIC: Redis and FalkorDB use TLS over TCP, and neither can be configured to use QUIC."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-4426"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is undefined behavior in libarchive's zisofs decompression on a crafted ISO 9660 image with an invalid block-size field, which can crash the program. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-44605"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a heap buffer overflow in rpm's NDB database backend when it reads a crafted NDB database file. rpm is in this image only as the base image's package tool, and nothing the container runs starts rpm or loads its libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-4873"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets curl reuse a plain-text IMAP, POP3 or SMTP connection for a later request that requires TLS, so data is sent unencrypted. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-50812"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/sqlite-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a NULL pointer dereference in SQLite's session extension when a program applies a malformed changeset. SQLite is in this image only because rpm and microdnf, the base image's package tools, depend on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-53613"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libblkid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libfdisk"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libmount"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libsmartcols"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libuuid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux-core"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets an ordinary user redirect a mount that an /etc/fstab entry with the user or users option allows them to make. This image has no /etc/fstab, and its mount program is not setuid, so a non-root user cannot mount anything."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-53615"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libblkid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libfdisk"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libmount"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libsmartcols"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libuuid"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux"
+        },
+        {
+          "@id": "pkg:rpm/redhat/util-linux-core"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in libblkid's disk-probing code, which reads partition tables and filesystem signatures. Nothing FalkorDB runs loads libblkid, and the image has no setuid or setgid programs, so nothing in the container can make it probe a file with more privileges than the caller already has."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-53910"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/diffutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the diff3 program. Nothing in this image runs diff3 or any other diffutils program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5435"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in deprecated glibc functions that print DNS records for debugging (ns_sprintrr, fp_nquery and related). No program or library in this image calls them, and glibc's DNS lookups do not use them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54369"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libacl1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in libacl's file-ACL functions when a privileged program uses them on a path someone else can change. No program that runs in this container loads libacl: only cp, mv, install, sed and tar use it, and none of them runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54370"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libacl1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the getfacl, setfacl and chacl tools, which are not installed (the acl package is absent). The libacl library that remains is not loaded by any program that runs in the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54371"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libattr1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in the getfattr and setfattr tools, which are not installed (the attr package is absent). The libattr library that remains is not loaded by any program that runs in the container."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54872"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The leak is in ECDSA signing on Brainpool and other curves without a constant-time implementation (P-256, P-384 and P-521 are not affected), and in SM2, which this OpenSSL build leaves out. TLS is off by default and with TLS=1 the image generates RSA keys, so nothing signs on an affected curve unless you supply such a key yourself."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54873"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how long OpenSSL's QUIC stack keeps packet buffers. Nothing in this image uses QUIC: Redis and FalkorDB use TLS over TCP, and neither can be configured to use QUIC."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54875"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in an SM2 implementation that OpenSSL uses only on ARM64 and RISC-V. This image is x86-64 only, and its OpenSSL build leaves SM2 out entirely."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5545"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send an authenticated HTTP request over a connection that was authenticated with Negotiate under other credentials. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56391"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the uniq program and needs its -w option with crafted multibyte input. uniq is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56391"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/coreutils-single"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the uniq command's -w option when it reads crafted multibyte input. The image's startup scripts use only chown, mkdir, id, cat and env from coreutils, and nothing the image runs calls uniq."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56392"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/coreutils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in the unexpand program and needs a very large tab-stop argument. unexpand is installed as part of the base system, but nothing in this container runs it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5704"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a crafted archive hide files from tar's listing so they are extracted unnoticed. Nothing in this image runs tar."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-57062"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnupg2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is that gpgsm, GnuPG's S/MIME tool, accepts AES-GCM authentication tags as short as 4 bytes in CMS messages, below the 12-byte minimum. gpgsm isn't installed in this image (Red Hat ships it in the separate gnupg2-smime package), and nothing the container runs starts any GnuPG program."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5745"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libarchive"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a NULL pointer dereference in libarchive's ACL text parser (archive_acl_from_text_nl) on a malformed ACL string in a crafted archive. libarchive is in this image only because rpm, the base image's package tool, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5773"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl reuse an SMB connection for a different share, so a transfer reads or writes the wrong file. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-5958"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/sed"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw needs sed to be run with both -i and --follow-symlinks on a path an attacker can change. Nothing in this image runs sed."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6238"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in deprecated glibc functions that print DNS records for debugging (ns_sprintrr, fp_nquery and related), when given a crafted DNS response. No program or library in this image calls them, and glibc's DNS lookups do not use them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6253"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets curl send one proxy's credentials to a second proxy after a redirect, when different proxies are set for different URL schemes. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6276"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send cookies meant for one host to another when a reused handle first sent a custom Host header. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6368"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in wordexp(), which expands shell-style words. No program or library in this image calls wordexp()."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6429"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send a .netrc password to a redirected host when both plain-HTTP requests go over the same proxy connection. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-67693"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnutls"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes GnuTLS accept a certificate whose Key Usage and Extended Key Usage settings contradict each other. GnuTLS is part of the Red Hat UBI base image, pulled in by its package manager (microdnf) through GLib and GnuPG; nothing that runs in this container (the startup script, redis-server or the FalkorDB module) loads GnuTLS."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-6791"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in wordexp(), which expands shell-style words. No program or library in this image calls wordexp()."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-7168"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send the Proxy-Authorization header meant for one proxy to a different proxy when a handle is reused after Digest proxy login. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-72897"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw needs a TLS server that moves a connection to a different SSL_CTX in the middle of a handshake by calling SSL_set_SSL_CTX(). redis-server never calls that function or installs the callbacks that would, and FalkorDB's module runs no TLS server."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-75803"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in EVP_Cipher() accepting an empty ChaCha20-Poly1305 or AES-OCB ciphertext without checking its tag, and was fixed in OpenSSL 3.5.8, the version in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-75804"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is that OpenSSL's QUIC stack does not enforce connection-level flow control. Nothing in this image uses QUIC: Redis and FalkorDB use TLS over TCP, and neither can be configured to use QUIC."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-75805"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in OpenSSL's CMP client when it asks a server to revoke a certificate identified by a CSR. Nothing the container runs uses CMP; only the openssl command-line tool contains it, and the image runs that tool only to generate keys and certificates."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-75806"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets one forged datagram end a DTLS 1.2 session. Nothing in this image uses DTLS: Redis and FalkorDB use TLS over TCP, where upstream rates the same record a conformance issue only, since any bad record already ends a TLS connection."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-77117"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in glibc's converter for the SHIFT_JISX0213 character set, which runs only when a program converts text from that character set. Redis and FalkorDB never ask for that conversion, and no program this image runs takes a character-set name from its input."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-77696"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is a timing leak in SM2 signing. This image's OpenSSL build leaves SM2 out, so no SM2 signing code exists in it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-78367"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw lets a crafted file name inside a source tarball inject RPM macros, and so run code, when rpmbuild builds from that tarball (-ta, -tb, -ts). rpmbuild comes in Red Hat's separate rpm-build package, which isn't installed in this image, and nothing the container runs starts rpm."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-80230"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl skip public key pinning when certificate verification has been turned off. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-80489"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in glibc's converter for the EUC-JISX0213 character set, which runs only when a program converts text from that character set. Redis and FalkorDB never ask for that conversion, and no program this image runs takes a character-set name from its input."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-82209"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl store a cookie set for a whole public suffix (such as co.uk) and send it to unrelated sites under that suffix. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-82327"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libsolv"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an out-of-bounds write in libsolv's repo_write() when it rewrites a corrupted or crafted .solv repository cache. libsolv is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84784"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/openssl"
+        },
+        {
+          "@id": "pkg:rpm/redhat/openssl-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how OpenSSL's QUIC stack handles a flood of NEW_CONNECTION_ID frames. Nothing in this image uses QUIC: Redis and FalkorDB use TLS over TCP, and neither can be configured to use QUIC."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84837"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw lets shell metacharacters in a tarball's path run commands when rpmbuild builds from that tarball (rpmbuild -t*). rpmbuild comes in Red Hat's separate rpm-build package, which isn't installed in this image, and nothing the container runs starts rpm."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85091"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/zlib1g"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in gz_vacate(), which zlib added in version 1.3.1.2 for non-blocking writes. This image has zlib 1.3.1, which does not contain that function."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86409"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes libcurl keep sending AWS SigV4 signed headers on a reused handle after the application turned SigV4 off. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86414"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes curl send credentials meant for the destination server to an HTTP proxy that answers a tunnel request with 401. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86469"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glib2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a symlink race in GLib's g_file_replace() fallback path with G_FILE_CREATE_REPLACE_DESTINATION, which lets a local user who can write to the destination directory redirect the write to another file. GLib is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-8674"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The flaw aborts a program whose DNS settings list a search domain of about 200 characters or more, in /etc/resolv.conf or the LOCALDOMAIN variable. In a container those settings come from the container platform and whoever runs the container; nothing in this image writes them, and network clients cannot change them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-8674"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glibc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-common"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-minimal-langpack"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The crash needs a search domain of about 200 characters or more in /etc/resolv.conf or the LOCALDOMAIN variable. Both are set by whoever runs the container (the container runtime writes resolv.conf from the host's settings); nothing a database client sends can change them."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86805"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader handles $ORIGIN paths for setuid and setgid programs. This image contains no setuid or setgid programs and no programs with file capabilities, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-86805"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glibc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-common"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-minimal-langpack"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader expands $ORIGIN in the library search path (RPATH) of setuid and setgid programs. No program or library in this image has an RPATH or RUNPATH at all, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-87864"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets crafted message text inject IMAP commands when curl uploads a message with IMAP APPEND and line-ending conversion. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-88647"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnutls"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a crafted certificate pass GnuTLS hostname checking through its Common Name fallback, so a TLS client could accept the wrong server. GnuTLS is part of the Red Hat UBI base image, pulled in by its package manager (microdnf) through GLib and GnuPG; nothing that runs in this container (the startup script, redis-server or the FalkorDB module) loads GnuTLS."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-88648"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/gnutls"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets GnuTLS accept certificates issued by a subordinate certificate authority for names outside the limits that authority is restricted to. GnuTLS is part of the Red Hat UBI base image, pulled in by its package manager (microdnf) through GLib and GnuPG; nothing that runs in this container (the startup script, redis-server or the FalkorDB module) loads GnuTLS."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-89092"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in nscd, glibc's name-service caching daemon, which Debian ships as a separate package. That package is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-89092"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glibc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-common"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-minimal-langpack"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in nscd, the name service caching daemon. nscd is not installed in this image."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-8932"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl reuse a connection after the application changed its TLS client-certificate settings, so a request uses the wrong client certificate setup. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-9080"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a use-after-free in libcurl when an application calls curl_easy_pause() from its socket callback. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-9149"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libsolv"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a heap buffer overflow in libsolv's repo_add_solv() on a crafted .solv file with negative size values. libsolv is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-9150"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libsolv"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a stack buffer overflow in libsolv's Debian metadata parser on crafted SHA384 or SHA512 checksum fields. libsolv is in this image only because microdnf, the base image's package manager, depends on it, and nothing the container runs loads it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-92388"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a memory-safety bug in libcurl when an application reuses or copies a handle after an FTP wildcard listing fails. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-92389"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a malicious TFTP server make libcurl send leftover data from an earlier transfer on a reused handle. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-92390"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a malicious server overwrite an existing local file when the curl command is run with -J (file name from the server) and no-clobber. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-92391"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a stack overflow in libcurl's curl_mime_free() when an application builds deeply nested MIME parts. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-94266"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes curl include a password taken from a .netrc file in the effective URL it reports. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-9545"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets libcurl send early request data to an impostor HTTP/3 server before checking its certificate when resuming a cached TLS session. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-9546"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/curl-minimal"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libcurl-minimal"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes libcurl keep sending an HTTP Referer header after the application cleared it. curl and libcurl are part of the Red Hat UBI base image, where libcurl serves its package manager (microdnf); nothing that runs in this container (the startup script, redis-server or the FalkorDB module) runs curl or loads libcurl."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95519"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw makes rpm macro-expand the entries of a manifest file before opening them, so querying or verifying an attacker's manifest (rpm -q -p) can run shell commands. rpm is in this image only as the base image's package tool, and nothing the container runs starts rpm or loads its libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95520"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an integer overflow in rpm's iterReadArchiveNext() that leads to a heap buffer overflow when rpm2cpio, rpm2archive, rpm -qlvp or an install reads a symlink entry in a crafted package. rpm is in this image only as the base image's package tool, and nothing the container runs starts rpm or loads its libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95521"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/rpm"
+        },
+        {
+          "@id": "pkg:rpm/redhat/rpm-libs"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw lets a source RPM whose source or spec file names contain a %() macro run a shell command when it is installed or rebuilt. rpm is in this image only as the base image's package tool, and nothing the container runs starts rpm or loads its libraries."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95619"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/gcc-14-base"
+        },
+        {
+          "@id": "pkg:deb/debian/libgcc-s1"
+        },
+        {
+          "@id": "pkg:deb/debian/libstdc++6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The overflow is in size rounding that the aligned form of operator new does only on systems without posix_memalign(). The libstdc++ in this image calls posix_memalign() and passes the requested size unchanged, so that rounding code is not in it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95619"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/libgcc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/libstdc++"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The overflow needs a C++ program to request over-aligned memory of nearly 2^64 bytes. The only caller in this image is vector-search (SVS) code linked into FalkorDB's module, which FalkorDB never uses (its vector indexes are HNSW), and those calls size memory through std::vector, which caps requests far below that."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95818"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader expands $ORIGIN for setuid and setgid programs. This image contains no setuid or setgid programs and no programs with file capabilities, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-95818"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glibc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-common"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-minimal-langpack"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is in how the dynamic loader handles an RPATH or RUNPATH that begins with $ORIGIN in setuid and setgid programs. No program or library in this image has an RPATH or RUNPATH at all, so that code never runs."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-97399"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/libc-bin"
+        },
+        {
+          "@id": "pkg:deb/debian/libc6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The flaw is in a version of strncasecmp() written for IBM POWER8 processors. This image is built for x86-64 and arm64, whose glibc does not contain that code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-97399"
+      },
+      "products": [
+        {
+          "@id": "pkg:rpm/redhat/glibc"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-common"
+        },
+        {
+          "@id": "pkg:rpm/redhat/glibc-minimal-langpack"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The over-read is in the strncasecmp code glibc uses only on POWER8 processors. This image is built for x86-64 and does not contain that code."
+    },
+    {
+      "vulnerability": {
+        "name": "TEMP-0290435-0B57B5"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/tar"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue is that tar treats an archive name containing a colon as a remote tape drive and contacts that host. Nothing in this image runs tar or its rmt helper."
+    },
+    {
+      "vulnerability": {
+        "name": "TEMP-0841856-B18BAF"
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/bash"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The issue lets environment variables run commands when bash is started by a setuid or setgid program for a user other than root. This image has no setuid or setgid programs, so bash is never started that way."
+    }
+  ]
+}
