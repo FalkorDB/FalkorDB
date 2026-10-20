@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build LLVM libomp as a static archive for the toolchain image.
 #
-# apt.llvm.org's libomp-22-dev ships only libomp.so / libomp.so.5 (no .a),
+# apt.llvm.org's libomp-23-dev ships only libomp.so / libomp.so.5 (no .a),
 # so we compile the runtime ourselves from llvm-project. Output:
 #   /opt/libomp/lib/libomp.a
 #   /opt/libomp/include/omp.h
@@ -32,14 +32,14 @@ detect_llvm_version() {
 }
 LLVMORG_VERSION="${1:-$(detect_llvm_version)}"
 if [ -z "${LLVMORG_VERSION}" ]; then
-    echo "ERROR: could not detect LLVM version; pass it explicitly: ./build/libomp.sh 22.1.6" >&2
+    echo "ERROR: could not detect LLVM version; pass it explicitly: ./build/libomp.sh 23.1.2" >&2
     exit 1
 fi
 echo "libomp.sh: requested llvmorg-${LLVMORG_VERSION}"
 
-# apt.llvm.org sometimes ships a clang point release (e.g. 22.1.7) BEFORE the
+# apt.llvm.org sometimes ships a clang point release (e.g. 23.1.3) BEFORE the
 # llvm-project git tag of the same name has been cut upstream. In that
-# window a literal `git clone --branch llvmorg-22.1.7` aborts with "Remote
+# window a literal `git clone --branch llvmorg-23.1.3` aborts with "Remote
 # branch not found" and the toolchain image build fails.
 #
 # Resolve the requested X.Y.Z to the highest existing patch ≤ Z for the
@@ -97,10 +97,35 @@ git clone \
     "${SRC_DIR}"
 
 cd "${SRC_DIR}"
-git sparse-checkout set --no-cone openmp cmake runtimes
+
+# Two ways in, chosen by major:
+#   >= 23  runtimes/ -- LLVM 23 removed openmp/'s standalone mode ("The legacy
+#          standalone build mode has been removed"). The runtimes build pulls
+#          CMake modules and lit config from llvm/ as well. Per-target dirs off
+#          keeps libomp.a in ${PREFIX}/lib.
+#   <  23  openmp/ standalone. runtimes/ does NOT work here: before 22, openmp
+#          picks its header path by OPENMP_STANDALONE_BUILD, so under runtimes/
+#          it calls get_clang_resource_dir, which needs the PACKAGE_VERSION only
+#          a full LLVM build sets, and configure fails ("string sub-command
+#          REGEX, mode MATCH needs at least 5 arguments"). The per-OS artifact
+#          images build with their distro clang (rhel9: 21, amazonlinux2023: 19)
+#          and land here.
+LLVM_MAJOR="${LLVMORG_VERSION%%.*}"
+if [ "${LLVM_MAJOR}" -ge 23 ]; then
+    git sparse-checkout set --no-cone openmp cmake runtimes llvm/cmake llvm/utils third-party
+    CMAKE_SOURCE_ARGS=(
+        -S runtimes
+        -DLLVM_ENABLE_RUNTIMES=openmp
+        -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
+        -DLLVM_INCLUDE_TESTS=OFF
+    )
+else
+    git sparse-checkout set --no-cone openmp cmake runtimes
+    CMAKE_SOURCE_ARGS=(-S openmp)
+fi
 
 cmake \
-    -S openmp \
+    "${CMAKE_SOURCE_ARGS[@]}" \
     -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLIBOMP_ENABLE_SHARED=OFF \
