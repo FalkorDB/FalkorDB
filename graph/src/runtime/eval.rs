@@ -639,7 +639,10 @@ impl<'a> ExprEval<'a> {
                             Value::Bool(false) => {}
                             Value::Null => is_null = true,
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
@@ -663,7 +666,10 @@ impl<'a> ExprEval<'a> {
                                 break;
                             }
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
@@ -684,7 +690,10 @@ impl<'a> ExprEval<'a> {
                             Value::Bool(true) => {}
                             Value::Null => is_null = true,
                             ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean or Null but was {}",
+                                    ir.name()
+                                ));
                             }
                         }
                     }
