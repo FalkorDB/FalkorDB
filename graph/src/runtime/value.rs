@@ -2217,7 +2217,7 @@ fn decode_value(
             // dim comes from the buffer itself, so check it against the
             // bytes that are actually there before reserving for it
             if dim > (bytes.len() - 4) / 4 {
-                return Err("vector data truncated".into());
+                return Err(format!("vector dim {dim} exceeds its buffer"));
             }
             let mut v = ThinVec::with_capacity(dim);
             for i in 0..dim {

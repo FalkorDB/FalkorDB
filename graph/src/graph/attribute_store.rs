@@ -2189,7 +2189,8 @@ mod tests {
             ops: rec.ops.into(),
         };
 
-        assert!(Value::decode(&mut r).is_err());
+        let err = Value::decode(&mut r).unwrap_err();
+        assert!(err.contains("exceeds its buffer"), "{err}");
     }
 
     #[test]
