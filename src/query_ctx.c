@@ -9,8 +9,12 @@
 #include "errors.h"
 #include "globals.h"
 #include "util/simple_timer.h"
+#include "configuration/config.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "serializers/graphcontext_type.h"
+
+#include <errno.h>
+#include <time.h>
 
 // GraphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
@@ -407,9 +411,150 @@ void QueryCtx_AcquireReadLock (void) {
 	}
 
 	// acquire read lock
-	// TODO: change to TryAcquireReadLock with the appropriate timeout
 	GraphContext_AcquireReadLock (QueryCtx_GetGraphCtx ()) ;
 	ctx->internal_exec_ctx.read_locked = true ;
+}
+
+// acquire graph's read lock for a reader query, first waiting out any writer
+// on this graph that is acquiring the write lock (the writer gate) and bounding
+// the total wait by timeout_ms (<= 0 blocks)
+// returns true if the read lock was acquired, false if the timeout elapsed
+// first (caller should abort the query as a timeout)
+bool QueryCtx_TimeAcquireReadLock
+(
+	int64_t timeout_ms
+) {
+	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+
+	// shouldn't try to acquire read lock when write lock is held
+	ASSERT (ctx->internal_exec_ctx.write_locked == false) ;
+
+	// return if we've already acquired read lock
+	if (ctx->internal_exec_ctx.read_locked == true) {
+		return true ;
+	}
+
+	int rc = GraphContext_TimeAcquireReadLock (QueryCtx_GetGraphCtx (),
+			(int) timeout_ms) ;
+	if (rc == 0) {
+		ctx->internal_exec_ctx.read_locked = true ;
+		return true ;
+	}
+
+	return false ;
+}
+
+// outcome of a single write-lock acquisition attempt
+typedef enum {
+	WRITE_LOCK_ACQUIRED,  // lock held; GIL and key handle retained for caller
+	WRITE_LOCK_RETRY,     // poll interval elapsed; GIL released, caller retries
+	WRITE_LOCK_FAILED     // validation / lock error; GIL released, caller aborts
+} WriteLockAttempt;
+
+// perform a single attempt to acquire the graph write lock:
+// lock the GIL, re-validate pause / role / key, then wait up to `poll_interval`
+// milliseconds for the write lock
+//
+// the full re-validation runs on every attempt because the GIL is released
+// between attempts: the key may have been dropped / replaced, this instance
+// may have been demoted to a replica, or a pause window may have opened in
+// the meantime
+//
+// on WRITE_LOCK_ACQUIRED the GIL and the open key handle are retained for the
+// remainder of the write; on every other outcome both are released
+static WriteLockAttempt _QueryCtx_TryAcquireWriteLock (
+	QueryCtx *ctx,           // query context
+	GraphContext *gc,        // graph to lock
+	const char *graph_name,  // graph name, for key lookup and error messages
+	int poll_interval        // ms to wait for the lock before yielding the GIL
+) {
+	RedisModuleCtx *redis_ctx = ctx->global_exec_ctx.redis_ctx ;
+	WriteLockAttempt result   = WRITE_LOCK_FAILED ;
+	int rc                    = 0 ;
+
+	RedisModuleString *graphID = RedisModule_CreateString (redis_ctx,
+			graph_name, strlen (graph_name)) ;
+
+	//--------------------------------------------------------------------------
+	// lock GIL
+	//--------------------------------------------------------------------------
+
+	_QueryCtx_ThreadSafeContextLock (ctx) ;
+
+	RedisModuleKey *key = RedisModule_OpenKey (redis_ctx, graphID,
+			REDISMODULE_WRITE) ;
+	RedisModule_FreeString (redis_ctx, graphID) ;
+
+	//--------------------------------------------------------------------------
+	// re-validate pause / role now that the GIL is held
+	//--------------------------------------------------------------------------
+	// a write admitted before a replica-pause window opened (e.g. FAILOVER /
+	// CLIENT PAUSE) may reach this point after the pause started, or after
+	// this instance has been demoted to a replica. once the GIL is held,
+	// neither can change until we release it, so this check is race-free.
+	//
+	// commands applied from our own master's replication stream, or being
+	// replayed while loading AOF/RDB, are exempt: they were already
+	// committed elsewhere (or persisted locally) - our job is to mirror
+	// them, not re-authorize them
+
+	int ctx_flags = RedisModule_GetContextFlags (redis_ctx) ;
+	bool bypass_checks = (ctx_flags & REDISMODULE_CTX_FLAGS_REPLICATED)    ||
+	                      (ctx_flags & REDISMODULE_CTX_FLAGS_LOADING)       ||
+	                      (ctx_flags & REDISMODULE_CTX_FLAGS_ASYNC_LOADING) ;
+
+	if (!bypass_checks) {
+		if (RedisModule_AvoidReplicaTraffic ()) {
+			ErrorCtx_SetError (EMSG_REPLICA_TRAFFIC_PAUSED) ;
+			goto done ;
+		}
+
+		if (ctx_flags & REDISMODULE_CTX_FLAGS_READONLY) {
+			ErrorCtx_SetError (EMSG_NOT_MASTER) ;
+			goto done ;
+		}
+	}
+
+	if (RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_EMPTY) {
+		ErrorCtx_SetError (EMSG_EMPTY_KEY, graph_name) ;
+		goto done ;
+	}
+
+	if (RedisModule_ModuleTypeGetType (key) != GraphContextRedisModuleType) {
+		ErrorCtx_SetError (EMSG_NON_GRAPH_KEY, graph_name) ;
+		goto done ;
+	}
+
+	if (gc != RedisModule_ModuleTypeGetValue (key)) {
+		ErrorCtx_SetError (EMSG_DIFFERENT_VALUE, graph_name) ;
+		goto done ;
+	}
+
+	//--------------------------------------------------------------------------
+	// try to acquire the graph write lock within the poll interval
+	//--------------------------------------------------------------------------
+
+	rc = GraphContext_TimeAcquireWriteLock (gc, poll_interval) ;
+	if (rc == 0) {
+		// success: retain GIL and key handle for the remainder of the write
+		ctx->internal_exec_ctx.key = key ;
+		ctx->internal_exec_ctx.write_locked = true ;
+		ASSERT (ctx->internal_exec_ctx.read_locked == false) ;
+		return WRITE_LOCK_ACQUIRED ;
+	}
+
+	// ETIMEDOUT: poll interval elapsed, retry after yielding the GIL
+	// any other return is unexpected and aborts the write
+	result = (rc == ETIMEDOUT) ? WRITE_LOCK_RETRY : WRITE_LOCK_FAILED ;
+	if (result == WRITE_LOCK_FAILED) {
+		ErrorCtx_SetError (EMSG_WRITE_LOCK_FAILED, rc) ;
+	}
+
+done:
+	// release key handle and GIL before retrying / aborting
+	RedisModule_CloseKey (key) ;
+	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+	return result ;
 }
 
 // acquire graph's write lock
@@ -441,100 +586,71 @@ bool QueryCtx_AcquireWriteLock (void) {
 	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
 	bool read_locked = ctx->internal_exec_ctx.read_locked ;
 	if (read_locked == true) {
-		//GraphContext_ReleaseLock (gc) ;
 		GraphContext_ReleaseReadLock (gc) ;
 		ctx->internal_exec_ctx.read_locked = false ;
 	}
 
-	//--------------------------------------------------------------------------
-	// lock GIL
-	//--------------------------------------------------------------------------
+	const char *graph_name = GraphContext_GetName (gc) ;
 
-	RedisModuleCtx *redis_ctx  = ctx->global_exec_ctx.redis_ctx ;
-	const char     *graph_name = GraphContext_GetName (gc) ;
-
-	RedisModuleString *graphID = RedisModule_CreateString (redis_ctx,
-			graph_name, strlen (graph_name)) ;
-
-	_QueryCtx_ThreadSafeContextLock (ctx) ;
+	// initial slice: ms to park on the graph lock per attempt before yielding
+	int64_t poll_interval ;
+	Config_Option_get (Config_WRITE_LOCK_POLL_INTERVAL, &poll_interval) ;
 
 	//--------------------------------------------------------------------------
-	// make sure graph key exists
+	// acquire the write lock, yielding the GIL between attempts
 	//--------------------------------------------------------------------------
-
-	RedisModuleKey *key = RedisModule_OpenKey (redis_ctx, graphID,
-			REDISMODULE_WRITE) ;
-	RedisModule_FreeString (redis_ctx, graphID) ;
-
-	//--------------------------------------------------------------------------
-	// re-validate pause / role now that the GIL is held
-	//--------------------------------------------------------------------------
-	// a write admitted before a replica-pause window opened (e.g. FAILOVER /
-	// CLIENT PAUSE) may reach this point after the pause started, or after
-	// this instance has been demoted to a replica. once the GIL is held,
-	// neither can change until we release it, so this check is race-free.
+	// holding the GIL while blocking on the write lock freezes the whole server
+	// until every in-flight reader drains. instead we wait for the lock in fixed
+	// `poll_interval` ms slices: each attempt parks on the lock for at most that
+	// long (holding the GIL), then releases the GIL and sleeps briefly before
+	// re-validating and retrying - so the main thread stays responsive for the
+	// whole wait, however long the in-flight reads run.
 	//
-	// commands applied from our own master's replication stream, or being
-	// replayed while loading AOF/RDB, are exempt: they were already
-	// committed elsewhere (or persisted locally) - our job is to mirror
-	// them, not re-authorize them
+	// the short sleep is the actual hand-off: without it the worker re-acquires
+	// the GIL before the blocked main thread can grab it, so the GIL would stay
+	// effectively pinned. sleeping off-CPU guarantees the main thread wins the
+	// GIL and serves pending commands between slices.
+	//
+	// anti-starvation is the writer gate's job, not this loop's: new reader-
+	// queries park at the gate (below) instead of taking the read lock, so they
+	// can't slip in during our hand-offs. the writer therefore waits only for
+	// the readers already holding the lock to drain - bounded, and responsive
+	// the whole time. no backoff, no blocking escalation: both only traded that
+	// responsiveness away for a landing guarantee the gate already provides.
+	GraphContext_WriterGateEnter (gc) ;
 
-	int ctx_flags = RedisModule_GetContextFlags (redis_ctx) ;
-	bool bypass_checks = (ctx_flags & REDISMODULE_CTX_FLAGS_REPLICATED)    ||
-	                      (ctx_flags & REDISMODULE_CTX_FLAGS_LOADING)       ||
-	                      (ctx_flags & REDISMODULE_CTX_FLAGS_ASYNC_LOADING) ;
+	WriteLockAttempt attempt ;
 
-	if (!bypass_checks) {
-		if (RedisModule_AvoidReplicaTraffic ()) {
-			ErrorCtx_SetError (EMSG_REPLICA_TRAFFIC_PAUSED) ;
-			goto clean_up ;
+	if (poll_interval <= 0) {
+		// legacy mode: no slicing / yielding. acquire the lock with a single
+		// blocking call that holds the GIL until granted - the exact behavior
+		// prior to the responsive write-lock change. the server may stall here
+		// until all in-flight readers drain
+		attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, graph_name, -1) ;
+	} else {
+		const struct timespec yield = { 0, 1000000 } ;  // 1ms GIL hand-off
+		while ((attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, graph_name,
+						(int) poll_interval)) == WRITE_LOCK_RETRY) {
+			// GIL released by the attempt; sleep off-CPU so the main thread runs
+			nanosleep (&yield, NULL) ;
 		}
-
-		if (ctx_flags & REDISMODULE_CTX_FLAGS_READONLY) {
-			ErrorCtx_SetError (EMSG_NOT_MASTER) ;
-			goto clean_up ;
-		}
 	}
 
-	if (RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_EMPTY) {
-		ErrorCtx_SetError (EMSG_EMPTY_KEY, graph_name) ;
-		goto clean_up ;
+	// writer no longer waiting: wake readers parked at the gate. on success
+	// they proceed and block on the now-held rwlock; on failure they proceed
+	// normally
+	GraphContext_WriterGateLeave (gc) ;
+
+	if (attempt == WRITE_LOCK_ACQUIRED) {
+		return true ;
 	}
 
-	if (RedisModule_ModuleTypeGetType (key) != GraphContextRedisModuleType) {
-		ErrorCtx_SetError (EMSG_NON_GRAPH_KEY, graph_name) ;
-		goto clean_up ;
-	}
-
-	if (gc != RedisModule_ModuleTypeGetValue (key)) {
-		ErrorCtx_SetError (EMSG_DIFFERENT_VALUE, graph_name) ;
-		goto clean_up ;
-	}
-
-	ctx->internal_exec_ctx.key = key ;
-
-	// acquire graph write lock
-	// TODO: change to TryAcquireWriteLock with the appropriate timeout
-	GraphContext_AcquireWriteLock (gc) ;
-	ctx->internal_exec_ctx.write_locked = true ;
-	ASSERT (ctx->internal_exec_ctx.read_locked == false) ;
-
-	return true ;
-
-clean_up:
-	// free key handle
-	RedisModule_CloseKey (key) ;
-
-	// unlock GIL
-	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
-
-	// restore read lock
+	// acquisition failed: restore the read lock if we released one, then raise
+	// the runtime exception breakpoint if set, otherwise return false
 	if (read_locked) {
 		QueryCtx_AcquireReadLock () ;
 	}
 
-	// if there is a break point for runtime exception, raise it
-	// otherwise return false
 	ErrorCtx_RaiseRuntimeException (NULL) ;
 	return false ;
 }

@@ -420,3 +420,198 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         asyncio.run(run(self))
 
+    def test_12_write_lock_yields_gil_while_waiting(self):
+        # a writer that has to wait for the graph write lock must NOT pin
+        # Redis' GIL for the whole wait: it should release the GIL every
+        # WRITE_LOCK_POLL_INTERVAL ms and retry, so unrelated commands keep
+        # being served while the in-flight reader drains.
+        #
+        # this test holds the graph READ lock with a ~2s read, issues a writer
+        # that must wait behind it, and hammers the server with PINGs from an
+        # unrelated connection. if the writer pinned the GIL the PINGs would
+        # stall for the remainder of the read (~seconds); with GIL yielding
+        # they return promptly. it also asserts the write ultimately lands.
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        # ensure graph exists with a single :N node
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=32, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a long read (~2s) that holds the graph READ lock for its duration
+            long_read = "UNWIND range(0, 40000000) AS x WITH x WHERE x % 40000001 = 0 RETURN count(x)"
+
+            # a write that must wait for the read lock to drain before it commits
+            write = "CREATE (:N {v:2}) RETURN 1"
+
+            # unrelated connection used to probe server responsiveness
+            probe = AsyncRedis(port=self.env.port, decode_responses=True)
+            await probe.ping()
+
+            # start the long read and let it acquire the READ lock
+            read_task = asyncio.create_task(g.ro_query(long_read))
+            await asyncio.sleep(0.2)
+
+            # start the writer; it blocks waiting for the READ lock to drain
+            write_task = asyncio.create_task(g.query(write))
+            await asyncio.sleep(0.05)  # let the writer reach the lock wait
+
+            # probe responsiveness while the writer is waiting: PINGs should
+            # return promptly because the writer keeps yielding the GIL
+            loop = asyncio.get_running_loop()
+            latencies = []
+            for _ in range(50):
+                t0 = loop.time()
+                await probe.ping()
+                latencies.append(loop.time() - t0)
+                await asyncio.sleep(0.01)
+
+            # the read completes and the write lands
+            await read_task
+            await write_task
+
+            # server stayed responsive: with the GIL pinned (old behavior) every
+            # PING would stall ~the full 2s read, so the median would be ~2s.
+            # with GIL yielding the vast majority are served in a few ms; assert
+            # on the median so a rare scheduling outlier under CI load (a single
+            # slow PING) can't flake the test while still clearly separating the
+            # responsive behavior from the frozen one
+            latencies.sort()
+            median_latency = latencies[len(latencies) // 2]
+            self.env.assertLess(median_latency, 0.2)
+
+            # the write took effect
+            res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 1)
+
+            await probe.aclose()
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+
+    def test_13_writer_gate_prevents_starvation(self):
+        # the writer gate is the anti-starvation mechanism: while a writer waits
+        # for the lock, new reader-queries park at the gate instead of taking the
+        # read lock, so they can't slip in during the GIL hand-offs. the writer
+        # therefore waits only for the reads already holding the lock to drain,
+        # not for the whole flood. (before the gate this scenario took ~3s.)
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=64, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a medium read (~50ms) that holds the graph READ lock
+            read_q  = "UNWIND range(0, 1000000) AS x WITH x WHERE x % 1000001 = 0 RETURN count(x)"
+            write_q = "CREATE (:N {v:2}) RETURN 1"
+
+            loop = asyncio.get_running_loop()
+            FLOOD_SECONDS = 3.0
+            deadline = loop.time() + FLOOD_SECONDS
+            reads    = []
+
+            # keep ~32 reads in flight so the read lock stays continuously
+            # contended for the whole window
+            async def flood():
+                while loop.time() < deadline:
+                    while (sum(1 for r in reads if not r.done()) < 32
+                           and loop.time() < deadline):
+                        reads.append(asyncio.create_task(g.ro_query(read_q)))
+                    await asyncio.sleep(0.005)
+
+            flood_task = asyncio.create_task(flood())
+            await asyncio.sleep(0.3)  # let the flood saturate the read lock
+
+            t0 = loop.time()
+            await g.query(write_q)
+            writer_elapsed = loop.time() - t0
+            writer_preempted_flood = loop.time() < deadline
+
+            await flood_task
+            await asyncio.gather(*reads, return_exceptions=True)
+
+            # the gate bounds the wait to the in-flight reads draining - the
+            # writer lands fast and preempts the flood rather than waiting it out
+            self.env.assertLess(writer_elapsed, 1.5)
+            self.env.assertTrue(writer_preempted_flood)
+
+            # the write took effect
+            res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 1)
+
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+
+    def test_14_reader_respects_timeout_at_writer_gate(self):
+        # a reader parked at the writer gate must still honor its own query
+        # timeout: if the in-flight writer doesn't clear within the reader's
+        # budget, the reader aborts with a timeout error rather than waiting for
+        # the whole write (or the read blocking it) to resolve.
+        #
+        # setup: a long read holds the read lock, a writer behind it is blocked
+        # acquiring the write lock (so the gate stays up for the whole read),
+        # and a probe reader with a short timeout must abort at the gate.
+
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        self.graph.query("CREATE (:N {v:1})")
+
+        async def run(self):
+            # socket_timeout generous so the ~3s long read / blocked writer that
+            # we await below don't trip a client-side read timeout
+            pool = BlockingConnectionPool(max_connections=32, timeout=None, socket_timeout=30, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            # a reliably-long read (~3s) holds the read lock; wide margins so the
+            # probe below lands well inside the window regardless of scheduling
+            long_read = "UNWIND range(0, 60000000) AS x WITH x WHERE x % 60000001 = 0 RETURN count(x)"
+
+            loop = asyncio.get_running_loop()
+            read_task = asyncio.create_task(g.ro_query(long_read))
+            await asyncio.sleep(0.5)  # let the read acquire and hold the lock
+            write_task = asyncio.create_task(g.query("CREATE (:N {v:2}) RETURN 1"))
+            # give the writer ample time to reach the write-lock acquire and
+            # raise the gate (the first CREATE also pays plan compilation)
+            await asyncio.sleep(0.8)
+
+            # a reader with a 200ms timeout must abort within its budget, not
+            # block for the full ~3s read
+            t0 = loop.time()
+            timed_out = False
+            try:
+                await g.ro_query("MATCH (n) RETURN count(n)", timeout=200)
+            except redis.exceptions.ResponseError as e:
+                timed_out = "timed out" in str(e).lower()
+            probe_wait = loop.time() - t0
+
+            await read_task
+            await write_task
+
+            # core property: the reader aborted (timed out) instead of slipping
+            # through or hanging for the whole read
+            self.env.assertTrue(timed_out)
+            # and it aborted promptly - nowhere near the ~3s read
+            self.env.assertLess(probe_wait, 2.0)
+
+            await pool.aclose()
+            self.conn.delete(GRAPH_ID)
+
+        asyncio.run(run(self))
+

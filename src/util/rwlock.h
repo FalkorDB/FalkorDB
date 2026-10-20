@@ -13,3 +13,9 @@ int rwlock_timedwrlock
 	int timeout_ms
 ) ;
 
+int rwlock_timedrdlock
+(
+	pthread_rwlock_t *lock,
+	int timeout_ms
+) ;
+

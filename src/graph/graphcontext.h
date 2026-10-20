@@ -147,6 +147,35 @@ bool GraphContext_IsWriteLocked
 	const GraphContext *gc
 ) ;
 
+//------------------------------------------------------------------------------
+// writer gate
+//------------------------------------------------------------------------------
+
+// mark that a writer has begun waiting for this graph's write lock; new
+// reader-queries park at the gate until GraphContext_WriterGateLeave
+void GraphContext_WriterGateEnter
+(
+	GraphContext *gc
+) ;
+
+// mark that the writer finished acquiring the write lock (or gave up) and wake
+// every reader parked at the gate
+void GraphContext_WriterGateLeave
+(
+	GraphContext *gc
+) ;
+
+// acquire the graph READ lock for a reader query: wait out any writer on this
+// graph that is acquiring the write lock (the writer gate), then take the read
+// lock, both bounded by a single deadline so the total wait never exceeds
+// timeout_ms (<= 0 waits indefinitely / blocking)
+// returns 0 on success, ETIMEDOUT if the deadline elapsed, or another errno
+int GraphContext_TimeAcquireReadLock
+(
+	GraphContext *gc,   // graph to lock
+	int timeout_ms      // max total time to wait, <= 0 to block
+) ;
+
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
 (
