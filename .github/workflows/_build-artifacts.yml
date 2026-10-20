@@ -78,16 +78,17 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image}.
+          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image, vex_os}.
           # `dockerfile` provides the `artifact` target; `build_image` is the
           # chef/builder base (Debian toolchain image) or "" for self-contained
           # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
-          # `image` says the Dockerfile's `server` target is built here too.
+          # `image` says the Dockerfile's `server` target is built here too;
+          # `vex_os` is its OS in .vex/statements.toml.
           ALL='[
             {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
             {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true}
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true,"vex_os":"rhel"},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true,"vex_os":"amazon"}
           ]'
           if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
             CELLS=$(printf '%s' "$ALL" | jq -c .)
@@ -303,6 +304,26 @@ jobs:
                    | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
               "$REPORT"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Then the VEX document, as _ci-pipeline.yml's security-scan checks it
+      # for the Debian images.
+      - name: Check the VEX against falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          VEX_OS: ${{ matrix.vex_os }}
+          TAR: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: |
+          set -euo pipefail
+          trivy image --quiet --skip-db-update --input "$TAR" --vex .vex/falkordb-server.openvex.json \
+            --show-suppressed --format json --output "$RUNNER_TEMP/trivy-vex-${SUFFIX}.json"
+          cid=$(docker create "falkordb-server:${SUFFIX}")
+          docker export -o "$RUNNER_TEMP/fs-${SUFFIX}.tar" "$cid"
+          docker container rm "$cid" >/dev/null
+          python3 build/vex/vex.py check --report "$RUNNER_TEMP/trivy-vex-${SUFFIX}.json" \
+            --fs "$RUNNER_TEMP/fs-${SUFFIX}.tar" --image falkordb-server --os "$VEX_OS" \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload falkordb-server image (${{ matrix.suffix }})
         if: matrix.image && inputs.export_images
