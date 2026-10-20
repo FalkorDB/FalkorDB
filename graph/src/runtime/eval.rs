@@ -1038,12 +1038,12 @@ impl<'a> ExprEval<'a> {
                     // fallback would turn null into no rows and a scalar into
                     // one, where a comprehension gives null / a type error.
                     let source = node.child(0);
-                    let items = match source.data() {
-                        ExprIR::List => self.eval_iter_expr(&source, env)?,
-                        ExprIR::FuncInvocation(func) if func.name == "range" => {
-                            self.eval_iter_expr(&source, env)?
-                        }
-                        _ => match self.eval_node(&source, env, agg_group_key)? {
+                    let streams = matches!(source.data(), ExprIR::List)
+                        || matches!(source.data(), ExprIR::FuncInvocation(func) if func.name == "range");
+                    let items = if streams {
+                        self.eval_iter_expr(&source, env)?
+                    } else {
+                        match self.eval_node(&source, env, agg_group_key)? {
                             Value::List(values) => Some(RowIter::many(Box::new(
                                 Arc::unwrap_or_clone(values).into_iter(),
                             ))),
@@ -1057,7 +1057,7 @@ impl<'a> ExprEval<'a> {
                                     value.name()
                                 ));
                             }
-                        },
+                        }
                     };
                     if let Some(result) = items {
                         for value in result {

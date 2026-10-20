@@ -1726,6 +1726,17 @@ def test_list_comprehension_non_list_source():
     assert query("RETURN [x IN [] | x] AS result").result_set == [[[]]]
     assert query("RETURN [x IN range(1, 0) | x] AS result").result_set == [[[]]]
 
+    # The error names the type the way C does (and typeOf() does): Edge and
+    # Vectorf32, not Relationship and VecF32.
+    query("CREATE (:TypeNameA)-[:TYPE_NAME_R]->(:TypeNameB)", write=True)
+    for src, name in [("r", "Edge"), ("vecf32([1.0])", "Vectorf32"), ("n", "Node")]:
+        query_exception(
+            f"MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN [x IN {src} | x]",
+            f"Type mismatch: expected List or Null but was {name}")
+    res = query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN typeOf(r), typeOf(vecf32([1.0])), typeOf(n)")
+    assert res.result_set == [["Edge", "Vectorf32", "Node"]]
+    query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->(m) DELETE r, n, m", write=True)
+
 
 @pytest.mark.extra
 def test_syntax_outside_the_grammar_is_rejected():
