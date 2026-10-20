@@ -114,10 +114,12 @@ if [ "${TLS:-0}" -eq "1" ]; then
         --tls-ca-cert-file ${FALKORDB_TLS_PATH}/ca.crt \
         --tls-auth-clients no \
         --dir "${FALKORDB_DATA_PATH}" \
-        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" \
+        IMPORT_FOLDER "${FALKORDB_IMPORT_PATH}/" ${FALKORDB_ARGS}
 else
     # shellcheck disable=SC2086
     exec "$@" redis-server ${REDIS_ARGS} --protected-mode no \
         --dir "${FALKORDB_DATA_PATH}" \
-        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" \
+        IMPORT_FOLDER "${FALKORDB_IMPORT_PATH}/" ${FALKORDB_ARGS}
 fi
