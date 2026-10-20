@@ -216,6 +216,9 @@ jobs:
   # both repos. The per-arch tags are single-platform manifests, so one amd64
   # runner fetches the arm64 image from the registry with no emulation.
   #
+  # The rhel9/amazonlinux2023 server images are not built here; the
+  # _build-artifacts.yml cells that build them scan them the same way.
+  #
   # What Trivy sees here is the Debian packages and the browser's node_modules.
   # It cannot see the Rust crates linked into libfalkordb.so or the
   # redis-server built from source: neither carries package metadata.

@@ -12,9 +12,10 @@
 # (fail-fast: false) and run on native runners (no QEMU) for maximum parallelism.
 #
 # Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
-# `server` target, the falkordb-server image for that OS, and start it to check
-# that the module loads and answers a query. With `export_images` the image is
-# uploaded too, as `image-falkordb-server-<suffix>`, for the release to push.
+# `server` target, the falkordb-server image for that OS, start it to check
+# that the module loads and answers a query, and scan it with Trivy. With
+# `export_images` the image is uploaded too, as `image-falkordb-server-<suffix>`,
+# for the release to push.
 # x64/arm64v8 have no such step: the merge queue builds the Debian images.
 
 name: Build artifacts (reusable)
@@ -246,6 +247,62 @@ jobs:
           UIDS=$(docker exec smoke sh -c 'while read -r k v _; do if [ "$k" = Uid: ]; then echo "$v"; fi; done < /proc/1/status')
           if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
           echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
+
+      # The same scan and gate as _ci-pipeline.yml's security-scan, which covers
+      # the Debian images: fail on a HIGH or CRITICAL vulnerability that has a
+      # fixed version, and keep the full report. These images are built only
+      # here, so this is where they are scanned, the release's build included:
+      # a failure here means publish-images has nothing to push.
+      - name: Scan falkordb-server image (${{ matrix.suffix }}, full report)
+        if: matrix.image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          input: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          format: json
+          output: ${{ runner.temp }}/trivy-report-${{ matrix.suffix }}.json
+          exit-code: '0'
+          version: 'v0.69.2'
+
+      - name: Upload Trivy report (${{ matrix.suffix }})
+        if: ${{ !cancelled() && matrix.image }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-report-${{ matrix.suffix }}
+          path: ${{ runner.temp }}/trivy-report-${{ matrix.suffix }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Fail on fixable HIGH/CRITICAL vulnerabilities (${{ matrix.suffix }})
+        if: matrix.image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          input: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+          version: 'v0.69.2'
+
+      - name: Summarise blocking findings (${{ matrix.suffix }})
+        if: ${{ failure() && matrix.image }}
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          REPORT: ${{ runner.temp }}/trivy-report-${{ matrix.suffix }}.json
+        run: |
+          set -euo pipefail
+          # hashFiles() only sees the workspace, and the report is outside it.
+          if [ ! -f "$REPORT" ]; then exit 0; fi
+          {
+            echo "### Trivy: fixable HIGH/CRITICAL in \`falkordb-server:${SUFFIX}\`"
+            echo
+            echo "| Severity | ID | Package | Installed | Fixed | Target |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]?
+                   | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (.FixedVersion // "") != "")
+                   | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
+              "$REPORT"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload falkordb-server image (${{ matrix.suffix }})
         if: matrix.image && inputs.export_images
