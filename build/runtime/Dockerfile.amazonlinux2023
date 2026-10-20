@@ -176,8 +176,11 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #   shadow-utils    : groupadd/useradd for the falkordb user
 # falkordb is uid/gid 999, as in the Debian image, so a data volume moves
 # between the two images without an ownership change.
-RUN dnf update -y && \
-    dnf install -y --setopt=install_weak_deps=0 \
+# dnf only sees the repository release of the base image, which is pinned, so
+# a plain `dnf update` installs nothing. --releasever=latest takes every
+# package to the newest release, which is where security fixes land.
+RUN dnf upgrade -y --releasever=latest && \
+    dnf install -y --releasever=latest --setopt=install_weak_deps=0 \
       libstdc++ openssl-libs openssl bash findutils util-linux shadow-utils && \
     groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
     dnf clean all
@@ -205,9 +208,10 @@ RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # The builder checked the module against the builder's packages; this image
-# installs far fewer, so check it again here. Then every redis entry point,
-# and that gosu really switches to falkordb.
-RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+# installs far fewer, so check it again here, with redis-server, which was
+# built against redis-builder's. Then every redis entry point, and that gosu
+# really switches to falkordb.
+RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so /usr/local/bin/redis-server 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
     if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
     redis-server --version && \
     redis-cli --version && \
