@@ -1381,6 +1381,8 @@ impl ValueGetType for Value {
 }
 
 impl Value {
+    /// The type's name as C spells it (`SIType_ToString`): what `typeOf()`
+    /// returns and what every "Type mismatch: … but was <name>" error prints.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -1392,9 +1394,9 @@ impl Value {
             Self::List(_) => "List",
             Self::Map(_) => "Map",
             Self::Node(_) => "Node",
-            Self::Relationship(..) => "Relationship",
+            Self::Relationship(..) => "Edge",
             Self::Path(_) => "Path",
-            Self::VecF32(_) => "VecF32",
+            Self::VecF32(_) => "Vectorf32",
             Self::Point(_) => "Point",
             Self::Datetime(_) => "Datetime",
             Self::Date(_) => "Date",
