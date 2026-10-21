@@ -467,3 +467,37 @@ class testProcedures(FlowTestsBase):
         self.env.assertEqual(reducible, True)
         self.env.assertEqual(aggregation, False)
         self.env.assertEqual(variable_len, True)
+
+    def test13_clauses_after_call_are_validated(self):
+        # the clauses that follow a procedure call get the same checks as
+        # anywhere else; a trailing MATCH used to crash the server
+        # https://github.com/FalkorDB/FalkorDB/issues/3279
+        g = self.db.select_graph("validate_after_call")
+        g.query("CREATE (:N)")
+
+        queries = [
+            ("CALL db.labels() YIELD label MATCH (n)",
+             "Query cannot conclude with MATCH"),
+            ("CALL db.labels() YIELD label WITH label MATCH (n)",
+             "Query cannot conclude with MATCH"),
+            ("CALL db.labels() YIELD label OPTIONAL MATCH (n)",
+             "Query cannot conclude with MATCH"),
+            ("CALL db.labels() YIELD label UNWIND [1] AS x",
+             "Query cannot conclude with UNWIND"),
+            ("CALL db.labels() YIELD label CREATE (a)-[:R|S]->(b)",
+             "Exactly one relationship type must be specified for each relation in a CREATE pattern"),
+            ("CALL db.labels() YIELD label MERGE (a)-[:R|S]->(b)",
+             "Exactly one relationship type must be specified for each relation in a MERGE pattern"),
+        ]
+        for query, error in queries:
+            try:
+                g.query(query)
+                self.env.assertTrue(False, message=query)
+            except redis.ResponseError as e:
+                self.env.assertContains(error, str(e))
+
+        # nothing was created, and valid queries after a CALL still run
+        self.env.assertEqual(g.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[0]])
+        result = g.query("CALL db.labels() YIELD label MATCH (n) RETURN label, labels(n)")
+        self.env.assertEqual(result.result_set, [['N', ['N']]])
+        g.delete()
