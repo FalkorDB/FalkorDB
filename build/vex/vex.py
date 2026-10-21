@@ -636,15 +636,18 @@ def cmd_check(args):
         reported.setdefault(v["VulnerabilityID"], set()).add(v["PkgName"])
     for st in statements:
         cve = st["cve"]
-        if st["status"] == "not_affected":
-            if cve not in hidden_by:
+        # A not_affected statement's findings are hidden; any other status leaves them reported.
+        matched = hidden_by if st["status"] == "not_affected" else reported
+        if cve not in matched:
+            if st["status"] == "not_affected":
                 errors.append(f"the statement for {cve} hid nothing in this scan: Trivy no longer "
                               "reports it, or the statement does not match")
-            for pkg in sorted(set(st["packages"]) - hidden_by.get(cve, set())):
-                errors.append(f"the statement for {cve} names {pkg}, which this scan does not report it in: "
-                              "drop the package, or split the statement by image")
-        elif cve not in reported:
-            errors.append(f"the {st['status']} statement for {cve} matches no finding in this scan")
+            else:
+                errors.append(f"the {st['status']} statement for {cve} matches no finding in this scan")
+            continue
+        for pkg in sorted(set(st["packages"]) - matched[cve]):
+            errors.append(f"the statement for {cve} names {pkg}, which this scan does not report it in: "
+                          "drop the package, or split the statement by image")
 
     # Evidence.
     if args.fs:

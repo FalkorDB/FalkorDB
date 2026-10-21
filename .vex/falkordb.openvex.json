@@ -2,7 +2,7 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/FalkorDB/FalkorDB/blob/main/.vex/falkordb.openvex.json",
   "author": "FalkorDB",
-  "timestamp": "2026-10-20T00:00:00Z",
+  "timestamp": "2026-10-21T00:00:00Z",
   "version": 1,
   "tooling": "build/vex/vex.py, from .vex/statements.toml",
   "statements": [

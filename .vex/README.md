@@ -62,15 +62,16 @@ requests skip this because an upstream change alone, such as a new CVE or a
 package update, can fail it, and would then block every one of them.
 
 - **Nightly** (`vex-nightly.yml`): the published Debian `:edge` images, and the
-  RHEL 9 and Amazon Linux 2023 images built from `main`. A failure opens an
-  issue titled "Nightly VEX check failed", or comments on the open one, and the
-  next passing run closes it.
+  RHEL 9 and Amazon Linux 2023 images built from `main`. A failing scheduled
+  run opens an issue titled "Nightly VEX check failed", or comments on the open
+  one, and the next passing scheduled run closes it.
 - **At release** (`release-tag.yml`): the images being released. A failure
   stops them from being published.
 
 To check a branch before merging it, run `vex-nightly.yml` on the branch
 (`gh workflow run vex-nightly.yml --ref <branch>`), with `-f tag=rc-pr-<N>` to
-check the pull request's Debian images instead of `:edge`.
+check the pull request's Debian images instead of `:edge`. A run started this
+way never opens or closes the issue.
 
 The check fails when:
 

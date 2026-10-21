@@ -71,17 +71,24 @@ jobs:
         with:
           version: v0.69.2
 
-      # The arm64 image is only read, never run, so no emulation is needed.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The tag is resolved to a digest once: :edge moves on every merge, and
+      # the scan and the export must read the same image. The arm64 image is
+      # only read, never run, so no emulation is needed.
       - name: Check the VEX against ${{ matrix.repo }}:${{ inputs.tag }} (${{ matrix.platform }})
         env:
           REPO: ${{ matrix.repo }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest)
+          REF="${IMAGE%:*}@${DIGEST}"
+          echo "Checking $IMAGE: $REF ($PLATFORM)"
           python3 build/vex/vex.py generate --check
           trivy image --quiet --platform "$PLATFORM" --vex ".vex/${REPO}.openvex.json" --show-suppressed \
-            --format json --output "$RUNNER_TEMP/trivy-vex.json" "$IMAGE"
-          cid=$(docker create --platform "$PLATFORM" "$IMAGE")
+            --format json --output "$RUNNER_TEMP/trivy-vex.json" "$REF"
+          cid=$(docker create --platform "$PLATFORM" "$REF")
           docker export -o "$RUNNER_TEMP/fs.tar" "$cid"
           docker container rm "$cid" >/dev/null
           python3 build/vex/vex.py check --report "$RUNNER_TEMP/trivy-vex.json" --fs "$RUNNER_TEMP/fs.tar" \
