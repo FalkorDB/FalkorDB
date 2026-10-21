@@ -154,7 +154,7 @@ impl Runtime<'_> {
             // write borrow.
             let node_ids: Vec<NodeId> = {
                 let pending = self.pending.borrow();
-                let g = self.g.borrow();
+                let g = self.graph();
                 g.node_id_space()
                     .reserve(active_len, &pending.created_nodes)?
                     .into_iter()
@@ -248,7 +248,7 @@ impl Runtime<'_> {
                     endpoints.push((from_id, to_id));
                 }
             } else {
-                let g = self.g.borrow();
+                let g = self.graph();
                 let pending = self.pending.borrow_mut();
                 for row in batch.active_indices() {
                     let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
@@ -276,7 +276,7 @@ impl Runtime<'_> {
             // Reserve all relationship IDs at once
             let ids: Vec<RelationshipId> = {
                 let pending = self.pending.borrow();
-                let g = self.g.borrow();
+                let g = self.graph();
                 g.relationship_id_space()
                     .reserve(endpoints.len(), &pending.taken_relationship_ids)?
                     .into_iter()

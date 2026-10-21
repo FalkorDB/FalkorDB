@@ -329,7 +329,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // so we don't rebuild the full-type Vec per row.
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        let g = self.runtime.g.borrow();
+                        let g = self.runtime.graph();
                         // Edge index: a numeric Equal/Range on a column we own is served
                         // by the CoW B-tree (endpoints recovered from the graph's reverse index);
                         // string/geo/composite or a missing column falls through to RediSearch during
@@ -351,8 +351,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
                             if cache.is_none() {
-                                *cache =
-                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
+                                *cache = Some(Arc::new(self.runtime.graph().get_all_edges(label)));
                             }
                             Arc::clone(cache.as_ref().unwrap())
                         };

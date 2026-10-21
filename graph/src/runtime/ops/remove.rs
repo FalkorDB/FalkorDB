@@ -116,7 +116,7 @@ impl Runtime<'_> {
             };
             match entity {
                 Value::Node(node) => {
-                    if (self.g.borrow().is_node_deleted(node)
+                    if (self.graph().is_node_deleted(node)
                         && !self.pending.borrow().is_node_created(node))
                         || self.pending.borrow().is_node_deleted(node)
                     {
