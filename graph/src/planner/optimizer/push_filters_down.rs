@@ -78,6 +78,21 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
     }
 }
 
+/// `branch_output_variables` for a branch whose Project/Aggregate may sit under
+/// the operators that follow a `WITH` (`ORDER BY`, `SKIP`, `LIMIT`, `DISTINCT`,
+/// `WHERE`), none of which change the environment.
+fn env_reset_outputs(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+    if let Some(outputs) = branch_output_variables(node) {
+        return Some(outputs);
+    }
+    match node.data() {
+        IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_) => {
+            env_reset_outputs(&node.child(0))
+        }
+        _ => None,
+    }
+}
+
 /// Pushes filter conjuncts down through nodes.
 ///
 /// Transforms:
@@ -231,7 +246,12 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             }
                         };
                         if !filter_in_left {
-                            let left_vars = collect_subtree_variables(&parent.child(0));
+                            // A left branch ending in Project/Aggregate resets
+                            // the env: variable ids are reused after it, so
+                            // only its named outputs reach the right branch.
+                            let left = parent.child(0);
+                            let left_vars = env_reset_outputs(&left)
+                                .unwrap_or_else(|| collect_subtree_variables(&left));
                             inherited.extend(left_vars);
                         }
                         break;
@@ -531,5 +551,73 @@ mod tests {
                 "= property(p) a 1",
             ]],
         );
+    }
+
+    /// Variable ids restart after a `WITH`, so a later `OPTIONAL MATCH` binds
+    /// an id that a pre-`WITH` variable also used. The left branch's hidden
+    /// variables must not count as bound, or the `WHERE` filter is pushed
+    /// below the traverse that binds the variable it tests.
+    #[test]
+    fn optional_where_after_aggregating_with_stays_above_traverse() {
+        let _ = crate::runtime::functions::init_functions();
+        let query = "MATCH (p:Person) OPTIONAL MATCH (r0:Rule)-[:SCOPED_TO]->(p) \
+                     WITH p, count(r0) AS n \
+                     OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked' \
+                     RETURN n, r.status AS e";
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+        push_filters_down(&mut plan);
+
+        let filter = plan
+            .root()
+            .indices::<Bfs>()
+            .find(|i| matches!(plan.node(*i).data(), IR::Filter(_)))
+            .expect("filter survives");
+        assert!(
+            matches!(
+                plan.node(filter).parent().expect("parent").data(),
+                IR::Optional(_)
+            ),
+            "filter pushed below the traverse that binds its variable"
+        );
+    }
+
+    /// The same shape with operators wrapping the `WITH`'s Aggregate.
+    #[test]
+    fn optional_where_after_wrapped_with_stays_above_traverse() {
+        let _ = crate::runtime::functions::init_functions();
+        for tail in ["ORDER BY n", "ORDER BY n SKIP 0 LIMIT 5", "WHERE n >= 0"] {
+            let query = format!(
+                "MATCH (p:Person) OPTIONAL MATCH (r0:Rule)-[:SCOPED_TO]->(p) \
+                 WITH p, count(r0) AS n {tail} \
+                 OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked' \
+                 RETURN n, r.status AS e"
+            );
+            let mut parser = Parser::new(&query);
+            parser.parse_parameters().expect("parse parameters");
+            let raw = parser.parse().expect("parse");
+            let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+            let mut plan = Planner::new(scope_vars).plan(ir);
+            push_filters_down(&mut plan);
+
+            let on_status = plan
+                .root()
+                .indices::<Bfs>()
+                .find(|i| {
+                    matches!(plan.node(*i).data(), IR::Filter(f)
+                        if render(f).contains("property(status)"))
+                })
+                .expect("filter survives");
+            assert!(
+                matches!(
+                    plan.node(on_status).parent().expect("parent").data(),
+                    IR::Optional(_)
+                ),
+                "filter pushed below its traverse for `{tail}`"
+            );
+        }
     }
 }
