@@ -411,7 +411,7 @@ class testEntityUpdate():
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Type mismatch: expected Node but was Relationship", str(e))
+                self.env.assertContains("Type mismatch: expected Node but was Edge", str(e))
     
 
     def test_26_fail_update_label_for_constant(self):
