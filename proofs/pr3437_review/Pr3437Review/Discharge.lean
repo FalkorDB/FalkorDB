@@ -200,51 +200,8 @@ theorem lookup_of_mem {V' : Type} (outer : List (Nat × V')) (valueAt : Nat → 
       · simp at he; exact absurd he.1 h
       · exact ih (fun q hq => hall q (by simp [hq])) hm'
 
-/-- The batch row of `list_loop_columnar` (eval.rs:1560-1564) at row `r`, read through
-`BatchRow::value_at`: the loop column, then the broadcast columns. -/
-def batchEnv (vid : Nat) (outer : List (Nat × V F)) (chunk : List (V F)) (r : Nat) : Nat → Option (V F) :=
-  fun j => if j = vid then some ((Bridge.loopVarColumn chunk).get r)
-    else (outer.lookup j).map fun v => (Bridge.broadcastColumn v chunk.length).get r
-
-/-- **`RowAgree`.** If `vector_plan` accepted the bodies, the per-row evaluator on the batch
-row is main's per-element evaluator on `env + {var: chunk[r]}`, for every body and every row.
-No premise about the bodies: since a739b990f an accepted body binds nothing but the loop
-variable (`vectorPlan_broadcasts`). -/
-theorem rowAgree (isBad : Nat → Bool) (env : Nat → Option (V F)) (vid : Nat) (bodies : List (E (V F)))
-    (outer : List (Nat × V F)) (hplan : vectorPlan vid (bodies.map (toBT isBad)) env = some outer)
-    (chunk : List (V F)) (r : Nat) (hr : r < chunk.length) :
-    ∀ e ∈ bodies, evalNode O ev c (some (batchEnv vid outer chunk r)) e =
-      evalNode O ev c (some (upd env vid chunk[r])) e := by
-  intro e he
-  apply evalNode_frame
-  intro id hid
-  have hb := vectorPlan_broadcasts vid (bodies.map (toBT isBad)) env outer hplan id
-    (by rw [varsAll_map]; exact mem_varsL he hid)
-  have hall := vectorPlan_vals vid (bodies.map (toBT isBad)) env outer hplan
-  simp only [batchEnv, upd]
-  by_cases hv : id = vid
-  · simp [hv, Bridge.loopVar_get chunk r hr]
-  · simp only [hv, ite_false]
-    rcases hb with hb | ⟨v, hval, hm⟩
-    · exact absurd hb hv
-    · rw [lookup_of_mem outer env hall id v hm, hval]
-      simp [Bridge.broadcast_get v chunk.length r hr]
-
-/-- **`Col.Sound`'s predicate half for every accepted body**: columnar's `eval_sound`, with
-its per-row reference being `evalNode` on the batch row, gives main's per-element values. -/
-theorem colSound_accepted {C : Type} (A : Columnar.Dispatch.Arms (V F) C)
-    (S : Columnar.Dispatch.RowSem (V F) C) (L : Columnar.Dispatch.Lawful A S)
-    (n : Columnar.Dispatch.Node (V F)) (isBad : Nat → Bool) (env : Nat → Option (V F)) (vid : Nat) (pred : E (V F))
-    (outer : List (Nat × V F)) (hplan : vectorPlan vid [toBT isBad pred] env = some outer)
-    (chunk : List (V F))
-    (hS : ∀ r, S.rowEval n r = evalNode O ev c (some (batchEnv vid outer chunk r)) pred)
-    (col : C) (h : Columnar.Dispatch.eval A n (List.range chunk.length) = .ok col) :
-    chunk.mapM (fun v => evalNode O ev c (some (upd env vid v)) pred) =
-      .ok ((List.range chunk.length).map (S.get col)) := by
-  apply Bridge.colSound_pred A S L n _ chunk .null _ col h
-  intro r hr
-  rw [hS r, rowAgree O ev c isBad env vid [pred] outer (by simpa using hplan) chunk r hr pred (by simp)]
-  simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hr]
+-- The batch row, `RowAgree` and `Col.Sound` on the real chunk batch: `Concrete.lean`
+-- (`Concrete.rowAgree`, `Concrete.colOf_sound`), over `ChunkBatch.chunkBatch`.
 
 end Pr3437.Discharge
 
