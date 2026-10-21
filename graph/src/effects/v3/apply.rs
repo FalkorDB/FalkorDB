@@ -71,8 +71,9 @@ pub fn apply_effects(
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
     let mut docs = IndexDocs::default();
+    let mut index_ddl = Vec::new();
     for record in payload.records() {
-        apply_record(g, record?, &mut docs)?;
+        apply_record(g, record?, &mut docs, &mut index_ddl)?;
     }
 
     // Refusing a divergent buffer is this function's contract, and the refusal
@@ -84,6 +85,23 @@ pub fn apply_effects(
     // `CreateEdge` below): settled only at the end, like the id space, because
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
+
+    // Index DDL last, once no other record can refuse the buffer: the RediSearch
+    // index map is shared by every MVCC version, so discarding this version on a
+    // refusal would not undo a `CREATE_INDEX` / `DROP_INDEX` that had already run
+    // (#3023). In record order, so a drop and a re-create of one index keep
+    // their meaning. `docs` was collected against the indexes as they stood
+    // before this buffer's DDL; an index this buffer creates is populated from
+    // what the buffer wrote instead: RediSearch from the version it publishes,
+    // and the native index's columns (part of this version) from the graph as
+    // it now stands.
+    //
+    // One case this does not cover: a statement that is itself refused here
+    // (an index that already exists, a drop of one that does not) still leaves
+    // the statements before it applied.
+    for ddl in index_ddl {
+        ddl.run(g)?;
+    }
 
     // Both indexes once for the whole buffer: the native index's staged changes, then
     // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
@@ -157,10 +175,78 @@ fn id_space_error_map(
     }
 }
 
+/// An index statement whose record has been verified, held back until the
+/// whole buffer has applied and validated (see [`apply_effects`]).
+enum IndexDdl {
+    Create {
+        index_type: IndexType,
+        schema_type: EntityType,
+        label: Arc<String>,
+        fields: Vec<Arc<String>>,
+        options: Option<IndexOptions>,
+    },
+    Drop {
+        index_type: IndexType,
+        schema_type: EntityType,
+        label: Arc<String>,
+        fields: Vec<Arc<String>>,
+    },
+}
+
+impl IndexDdl {
+    fn run(
+        self,
+        g: &mut Graph,
+    ) -> Result<(), ApplyError> {
+        // Population is spawned, not run here. `populate_indexes_sync` ran on
+        // the Redis main thread, so a replica applying an index over a large
+        // label froze for the whole build. It reads the *committed* graph, so
+        // it is told to wait for this version: until it is published, the
+        // committed graph lacks everything this buffer wrote, and nothing else
+        // indexes those entities — `docs` only collected for indexes that
+        // already existed. A later statement that drops or recreates the index
+        // does not race it either: the population ticket carries a generation,
+        // and a worker whose generation is stale stops.
+        let published_at = Some(g.version);
+        match self {
+            Self::Create {
+                index_type,
+                schema_type,
+                label,
+                fields,
+                options,
+            } => g.create_index_populated_at(
+                &index_type,
+                &schema_type,
+                &label,
+                &fields,
+                options,
+                published_at,
+            )?,
+            Self::Drop {
+                index_type,
+                schema_type,
+                label,
+                fields,
+            } => {
+                g.drop_index_populated_at(
+                    &index_type,
+                    &schema_type,
+                    &label,
+                    &fields,
+                    published_at,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn apply_record(
     g: &mut Graph,
     record: Record,
     docs: &mut IndexDocs,
+    index_ddl: &mut Vec<IndexDdl>,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -429,27 +515,14 @@ fn apply_record(
             // dictionary has diverged on another.
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            // Population is spawned, not run here. `populate_indexes_sync` ran
-            // on the Redis main thread, so a replica applying an index over a
-            // large label froze for the whole build — the same class of problem
-            // as expanding ids while decoding.
-            //
-            // Spawning is safe for the reason it is safe on the primary, which
-            // has always done it under concurrent writes: `populate_index_batch`
-            // populates from a snapshot in 10,000-row batches, and entities
-            // written *after* the snapshot are indexed by the write path instead
-            // (`docs` into `commit_index`). A later record that drops
-            // or recreates the index does not race it either — the population
-            // ticket carries a generation, and a worker whose generation is
-            // stale releases its ticket and stops rather than committing
-            // documents into the new spec.
-            g.create_index(
-                &index_type,
-                &schema_type,
-                &label,
-                &fields,
-                index_options(&index_type, &options),
-            )?;
+            // Verified now, run once the buffer has applied: see `IndexDdl`.
+            index_ddl.push(IndexDdl::Create {
+                options: index_options(&index_type, &options),
+                index_type,
+                schema_type,
+                label,
+                fields,
+            });
             Ok(())
         }
 
@@ -472,7 +545,12 @@ fn apply_record(
             let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            g.drop_index(&index_type, &schema_type, &label, &fields)?;
+            index_ddl.push(IndexDdl::Drop {
+                index_type,
+                schema_type,
+                label,
+                fields,
+            });
             Ok(())
         }
 
