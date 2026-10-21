@@ -648,25 +648,7 @@ fn type_to_dbms_value(t: &Type) -> Value {
 
 fn type_to_dbms_string(t: &Type) -> String {
     match t {
-        Type::Any => format_union(&[
-            "Map",
-            "Node",
-            "Edge",
-            "List",
-            "Path",
-            "Datetime",
-            "Date",
-            "Time",
-            "Duration",
-            "String",
-            "Boolean",
-            "Integer",
-            "Float",
-            "Null",
-            "Pointer",
-            "Point",
-            "Vectorf32",
-        ]),
+        Type::Any => format_union(&DBMS_TYPE_ORDER),
         Type::Null => String::from("Null"),
         Type::Bool => String::from("Boolean"),
         Type::Int => String::from("Integer"),
@@ -683,11 +665,55 @@ fn type_to_dbms_string(t: &Type) -> String {
         Type::Date => String::from("Date"),
         Type::Time => String::from("Time"),
         Type::Duration => String::from("Duration"),
-        Type::Union(types) => {
-            let strs: Vec<String> = types.iter().map(type_to_dbms_string).collect();
+        Type::Union(_) => {
+            // C lists a union's members in its fixed type order, whatever
+            // order the signature declares them in.
+            let mut strs = Vec::new();
+            collect_dbms_types(t, &mut strs);
+            strs.sort_by_key(|s| {
+                DBMS_TYPE_ORDER
+                    .iter()
+                    .position(|o| *o == s.as_str())
+                    .unwrap_or(DBMS_TYPE_ORDER.len())
+            });
+            strs.dedup();
             format_union_strings(&strs)
         }
         Type::Optional(inner) => type_to_dbms_string(inner),
+    }
+}
+
+/// C's type order (its `SIType` bit order), used to spell unions.
+const DBMS_TYPE_ORDER: [&str; 17] = [
+    "Map",
+    "Node",
+    "Edge",
+    "List",
+    "Path",
+    "Datetime",
+    "Date",
+    "Time",
+    "Duration",
+    "String",
+    "Boolean",
+    "Integer",
+    "Float",
+    "Null",
+    "Pointer",
+    "Point",
+    "Vectorf32",
+];
+
+/// The single-type spellings a type stands for, nested unions flattened.
+fn collect_dbms_types(
+    t: &Type,
+    out: &mut Vec<String>,
+) {
+    match t {
+        Type::Union(types) => types.iter().for_each(|t| collect_dbms_types(t, out)),
+        Type::Optional(inner) => collect_dbms_types(inner, out),
+        Type::Any => out.extend(DBMS_TYPE_ORDER.iter().map(|s| (*s).to_string())),
+        _ => out.push(type_to_dbms_string(t)),
     }
 }
 
