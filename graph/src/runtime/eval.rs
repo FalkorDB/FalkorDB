@@ -347,19 +347,18 @@ impl<'v, 't> ListLoop<'v, 't> {
     ) -> Option<&[(u32, Value)]> {
         if self.plan.is_none() {
             let mut reads = Vec::new();
-            let mut bound = vec![self.var.id];
             let ok = self
                 .predicate
                 .iter()
                 .chain(self.projection.iter())
-                .all(|body| collect_body_vars(body, &mut reads, &mut bound));
+                .all(|body| collect_body_vars(body, &mut reads));
             let plan = ok
                 .then(|| {
                     reads.sort_unstable();
                     reads.dedup();
                     reads
                         .into_iter()
-                        .filter(|id| !bound.contains(id))
+                        .filter(|&id| id != self.var.id)
                         // An unresolvable variable is an error the per-element
                         // path reports; leave it to that path.
                         .map(|id| env.value_at(id).map(|v| (id, v)))
@@ -372,24 +371,22 @@ impl<'v, 't> ListLoop<'v, 't> {
     }
 }
 
-/// Collects the variables `node` reads into `reads` and those it binds itself
-/// (nested comprehensions, quantifiers, `reduce`) into `bound`. Returns
-/// `false` for a body the columnar path must not take: one that reads the
-/// whole row (a nested plan), aggregates, or writes — the last so that a write
-/// keeps happening in per-element order.
+/// Collects the variables `node` reads into `reads`. Returns `false` for a
+/// body the columnar path must not take: one that reads the whole row (a
+/// nested plan), aggregates, or writes — the last so that a write keeps
+/// happening in per-element order — or binds variables of its own (a nested
+/// comprehension, quantifier or `reduce`), so that the only variable a
+/// columnar body binds is the loop variable, which every batch row holds.
 fn collect_body_vars(
     node: &ExprNode<'_>,
     reads: &mut Vec<u32>,
-    bound: &mut Vec<u32>,
 ) -> bool {
     match node.data() {
         ExprIR::Variable(v) => reads.push(v.id),
-        ExprIR::ListComprehension(v) | ExprIR::Quantifier { var: v, .. } => bound.push(v.id),
-        ExprIR::Reduce(vars) => {
-            bound.push(vars.accumulator.id);
-            bound.push(vars.iterator.id);
-        }
-        ExprIR::NestedPlan(_)
+        ExprIR::ListComprehension(_)
+        | ExprIR::Quantifier { .. }
+        | ExprIR::Reduce(_)
+        | ExprIR::NestedPlan(_)
         | ExprIR::Pattern(_)
         | ExprIR::PatternComprehension(_)
         | ExprIR::Distinct => return false,
@@ -401,7 +398,7 @@ fn collect_body_vars(
         _ => {}
     }
     node.children()
-        .all(|child| collect_body_vars(&child, reads, bound))
+        .all(|child| collect_body_vars(&child, reads))
 }
 
 /// The batch column holding `chunk` as the loop variable's binding.
