@@ -11,6 +11,34 @@ import FalkorCore.Float
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
 
+**2026-10-21 — every arm a list-comprehension body can reach (`Eval.lean`, `Frame.lean`,
+`EvalArms.lean`; `evaluate_param` moved to `EvalParam.lean`).** The expression tree `E` now has
+a faithful constructor for each `ExprIR` arm `eval_node` / `eval_compound` / `eval_case`
+(eval.rs:340-1134) treat specially: `AND` / `OR` (`andOrLoop`: Kleene logic, the first operand
+equal to the short-circuit value settles it and nothing after it is evaluated —
+`and_false_short_circuits`, `or_true_short_circuits`, `andOr_error_first`, `andOr_kleene`,
+`andOr_mismatch`), `XOR` (`xorLoop`: a `null` settles it, `xor_null_settles`, `xor_two`), `NOT`
+(`not_spec`), `CASE` both forms (`evalArms`: only the matching `THEN` and, if none matched, the
+`ELSE` are evaluated — `case_hit_lazy`, `case_value_hit_lazy`, `case_miss_else`), non-aggregate
+function calls (the runtime check before the arguments, the struct-constructor slot path,
+`validate_args_type`, the read-only check, the call — `func_constant_errors`, `func_common`; the
+`GraphFn` is held by the node, as in Rust), `IN` (`listContains`, `in_spec`), list literals
+(`evalRev`: the work stack evaluates the elements **last to first**, so the rightmost error is
+reported — `list_error_rightmost`, `evalRev_ok`; C reports the same element, checked live),
+subscripts (`getElem`, `getElement_index`), map projections (`projLoop`) and `DISTINCT`. The
+catch-all `compound` (every other arm: `Length`, `Negate`, `Pow`, n-ary operators, binders,
+aggregates, …) now receives its children as **thunks**, so it can be lazy; the eager form it had
+cannot short-circuit (proofs/pr3437_review `pre20261021_compound_cannot_short_circuit`).
+`all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
+`allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
+evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
+arm (moved here from pr3437_review). `E.funcs` lists the functions a tree calls. Every theorem
+above the extension is unchanged in statement except that the catch-all's type is now
+`Compound V`. Live (main 9212add39 vs C): `UNWIND [0] AS x RETURN x <> 0 AND 1/x = 1` → Rust
+`false`, C `Division by zero`; likewise `false AND 1/x = 1`, `true OR 1/x = 1`,
+`null XOR 1/x = 1` (Rust `null`) and `CASE WHEN true THEN 1 ELSE 1/x END` (Rust `1`): C evaluates
+every operand / branch eagerly, Rust short-circuits as the source comments intend.
+
 **Re-targeted to main b6567cb97** (from 737dfb5da). #2954 (closes #2928) changes the
 `ListComprehension` arm of `eval_compound` (null source → null, scalar → type error; list
 literal / `range` still stream through `eval_iter_expr`): not modelled here (modelled and

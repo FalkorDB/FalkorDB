@@ -18,7 +18,7 @@ marked *main* (or, in `ClassifierPre`, 6efd69cd6). No `sorry` / `admit` / `nativ
 headline theorems use only `propext`, `Quot.sound`, `Classical.choice`. Definitions are
 imported from proofs/core (`V`, `F`, i64), proofs/columnar (`Dispatch.eval_sound`),
 proofs/value_order (`W.valueOfType`), proofs/functions_str_list (`evalQuantifier`, `K`) and
-proofs/expr_semantics (`checkedNeg`).
+proofs/expr_semantics (`checkedNeg`, `E`/`evalNode` and its frame property).
 
 | module | Rust |
 | --- | --- |
@@ -30,83 +30,71 @@ proofs/expr_semantics (`checkedNeg`).
 | `Bridge` | `VectorEval` over the chunk batch vs columnar's `eval_sound`; `counts_comprehension` (eval.rs:315) and its guard in `VectorEval::eval` (vector_expr.rs:253-269); `loop_var_column` (eval.rs:405), `broadcast_column` (:417) |
 | `ValueOfType` | `value_of_type` (value.rs:1315-1350) |
 | `NegFold` | the unary level of `parse_expr_inner` (cypher.rs:2547-2580), `ExprIR::Negate` (eval.rs:895-907), `evaluate_param` (:2277-2286) |
-| `Discharge` | `ListLoop::new` over expr_semantics' `E`; `RowAgree` for every accepted body; `BatchRow` of eval.rs:1560-1564 |
+| `Discharge` | `ListLoop::new` over expr_semantics' `E` (`newBody`, `newBody_drops`); the classifier's view of `E` (`toBT`) |
+| `ChunkBatch` | the chunk batch of `list_loop_columnar` (eval.rs:1560-1564) over columnar's `Batch`: well formed, rows `0..len`, the batch row reads the element / outer values |
+| `PRArms` | the PR's `VectorEval` (vector_expr.rs:211-283, 336-353 at a739b990f) as columnar arms: the exact `NodeIds` fetch is main's column (`evalPropertyPR_eq`), `counts_comprehension` routes per row; `lawfulPR` |
+| `Concrete` | what `list_loop_columnar` calls (`colOf`) and **`colOf_sound`** (`Col.Sound`, the former premise `hS`); `RowAgree` on the real batch (`rowAgree`) |
+| `Runtime` | the attribute state behind the exact fetch (`nodeStore_matValues`, `withStore_rtOf`) |
+| `Final` | the headline theorems with nothing but `hreg` assumed |
 | `ExactProp` | `materialize_node_property_exact` (runtime.rs:1566-1587), `get_node_int_attributes_by_idx` (graph.rs:2602-2613), `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1186-1216), `eval_property` (vector_expr.rs:337-353) |
 
 ## Verdicts
 
-1. **Chunked = per-element** — CONDITIONAL on one premise, `hS` (columnar's per-row reference = expr_semantics' `evalNode`; see below). `Body.Drops` and `RowAgree` are discharged; no binder premise is left (a739b990f).
-   `comprehension_eq_main`: for every source (streamed literal/`range`, stored list, null,
-   scalar) the PR's comprehension is `Except`-equal to main's — same list, same order, or the
-   same error. `quantifier_eq_main`: `any`/`all`/`none`/`single` likewise (both sides feed
-   the same counts to `evalQuantifier`, so Cypher's three-valued answers are unchanged).
-   Both rest on `prRun_eq`, which is stronger than the PR needs: *any* partition of the list
-   into chunks, with *any* per-chunk choice of columnar or per-element path, gives main's
-   loop over the concatenation (`chunksOf_flatten`, `streamLoop_flatten` cover the two
-   partitions the PR uses). `columnar_sound`: a chunk the columnar path finishes gives what
-   main's loop gives, through every lane (`Bools` fast paths `passed_bools`, `count_bools`,
-   `tally_bools`; the all-pass `extend_from_slice` `filterPass_full`).
-2. **Error behaviour** — CONDITIONAL (`hS` only). The equalities in 1 are equalities
-   of `Except`, so the reported error is main's. `ref_error_first`: main's error is the
-   first element whose step fails, all earlier ones having succeeded;
-   `refStep_collect_error`: within an element, the predicate's error, else (only if it
-   passed) the projection's. A chunk whose columnar evaluation errors is re-run per element
-   from the sink as it was (`chunkStep_eq`; every `?` in `list_loop_columnar` precedes its
-   sink write), so no partial result escapes.
-3. **Fallback classifier** — PROVEN (a739b990f). `collect_rejects_iff`: `collect_body_vars`
-   returns `false` iff the body contains a nested `ListComprehension` / `Quantifier` /
-   `Reduce`, a `NestedPlan`, `Pattern`, `PatternComprehension`, `Distinct`, a writing or an
-   aggregating function, at any depth; `vectorPlan_no_bad`: no plan (so no columnar path)
-   for such a predicate or projection; `vectorPlan_broadcasts`: every variable the bodies
-   read is the loop variable or broadcast with `env.value_at(id)` (`vectorPlan_vals`).
-   History: `pre_a739b990f_accepts_nested_binder` (6efd69cd6 accepted `any(z IN [x] …)`).
-4. **`size(<comprehension>)`** — CONDITIONAL (`hS` only). `size_eq_main`: counting = `size` of
-   main's list for every source (null source → null; empty `range` → 0);
-   `size_projection_error`: a non-identity projection's error still surfaces; `eval_sound_pr`
-   / `counted_goes_per_row`: the new `!counts_comprehension` guard sends the shape to
-   `eval_per_row`, and columnar's `eval_sound` still holds for the PR's `VectorEval::eval`.
-5. **`value_of_type(List, List(Any))`** — PROVEN. `vtPR_eq`: the PR's `value_of_type`
-   (early arm at every recursion level) equals main's for every value and type;
-   `size_arg_list` for `size()`'s union argument.
-6. **Negated literal folding** — PROVEN. `fold_eq_eval` / `fold_eq_evalParam`: for every
-   tree the PR's unary level evaluates (`ExprEval` and `evaluate_param`) to main's — same
-   value with the same float bits, or same error. `fold_never_min`: `-9223372036854775808`
-   takes the pre-existing `i64::MIN` branch, so the folded (wrapping) `-i` never sees
-   `i64::MIN` and debug builds cannot panic there; `paren_min_not_folded`:
-   `-(-9223372036854775808)` is not folded and still raises; `negF_zero` /
-   `neg_zero_literal`: `-0.0` is the constant with bits `0x8000000000000000`, as main
-   computed; `bare_min_refused`.
-7. **`materialize_node_property_exact`** — PROVEN. `exact_eq_main`: equal to main's
-   `classify_exact_column(materialize_node_property_values(..))` in every case — on the
-   read-only int/null path the same `Ints` lane and null bits (`getIntLoop_spec`), otherwise
-   it is that call (`getIntLoop_other`: any other stored tag gives up); `evalProp_eq`.
+1. **Chunked = per-element** — **PROVEN** (2026-10-21; was CONDITIONAL on `hS`).
+   `Final.pr_comprehension_eq_main`: for every source (streamed literal/`range`, stored list,
+   null, scalar) the PR's comprehension, with the PR's real `VectorEval` over the real chunk
+   batch, is `Except`-equal to main's — same list, same order, or the same error;
+   `Final.pr_quantifier_eq_main`: `any`/`all`/`none`/`single` likewise;
+   `Final.pr_chunkStep_eq` (`list_loop_chunk`), `Final.pr_columnar_sound` (`list_loop_columnar`).
+   They rest on `prRun_eq` (any partition into chunks, any per-chunk choice of path) and
+   `Concrete.colOf_sound`, so `hS` is gone: the vector evaluator's column is, row for row, main's
+   per-element `ExprEval::eval_node` (columnar `CoreBridge.lawful` + `VecEval.eval_sound` for the
+   PR's arms, `PRArms.lawfulPR`), and the batch row agrees with the owned row on every variable an
+   accepted body reads (`Concrete.rowAgree`). The `_of` forms take an abstract runtime and
+   `PropReads`; the headline forms take the runtime built from its attribute state, for which
+   `PropReads` is proved (columnar `RuntimeReads.propReads`).
+2. **Error behaviour** — **PROVEN**. The equalities in 1 are equalities of `Except`, so the
+   reported error is main's. `ref_error_first`, `refStep_collect_error` as before; a chunk whose
+   columnar evaluation errors is re-run per element from the sink as it was (`chunkStep_eq`).
+3. **Fallback classifier** — PROVEN (a739b990f). `collect_rejects_iff`, `vectorPlan_no_bad`,
+   `vectorPlan_broadcasts`, `vectorPlan_vals`; history `pre_a739b990f_accepts_nested_binder`.
+4. **`size(<comprehension>)`** — **PROVEN**. `Final.pr_size_eq_main`; `size_projection_error`;
+   `PRArms.counted_goes_per_row` (the `!counts_comprehension` guard on the PR's real arms).
+5. **`value_of_type(List, List(Any))`** — PROVEN. `vtPR_eq`, `size_arg_list`.
+6. **Negated literal folding** — PROVEN. `fold_eq_eval`, `fold_eq_evalParam`, `fold_never_min`,
+   `paren_min_not_folded`, `negF_zero`/`neg_zero_literal`, `bare_min_refused`.
+7. **`materialize_node_property_exact`** — PROVEN. `exact_eq_main`, `evalProp_eq`; and the PR's
+   `eval_property` column is main's (`PRArms.evalPropertyPR_eq`, through `toECx_eq`: the two
+   models of `classify_exact_column` agree).
 
-## Hypotheses: what was discharged, what is left (`Discharge.lean`)
+## What is assumed, and how `hS` was discharged
 
-* **`Body.Drops` — DISCHARGED** (`newBody_drops`): `ListLoop::new` over expr_semantics' `E`
-  with main's per-element evaluator `evalNode` on `env + {var: v}`.
-* **ExprEval frame property — DISCHARGED** (`evalNode_frame`) for expr_semantics' evaluator.
-* **`RowAgree` — DISCHARGED for every body `vector_plan` accepts** (`rowAgree`): since
-  a739b990f the only bound variable of a columnar body is the loop variable; every other
-  read is broadcast with `env.value_at(id)` and the batch columns read back the element /
-  outer value (`loopVar_get`, `broadcast_get`). No binder id-uniqueness premise remains.
-* **Left: `hS`** — columnar's abstract per-row reference `Dispatch.RowSem.rowEval` (the
-  premise of `eval_sound`, through `Dispatch.Lawful`) equals expr_semantics' `evalNode` on the
-  batch row (`colSound_accepted` takes it as an argument). Blocked, precisely:
-  1. no owner instantiates `Dispatch.Lawful`: columnar proves each lane against its own
-     operator-level references over `Columnar.V F` and never assembles them;
-  2. expr_semantics' `E` models `AND` / `OR` / `CASE` (and `NOT`, `XOR`, function calls, `IN`,
-     `IS NULL`, …) only as the eager value-only `compound`, which cannot short-circuit
-     (`compound_cannot_short_circuit`; live: `RETURN false AND 1/0 = 1` → `false` on main),
-     and the classifier accepts these forms;
-  3. the arms both projects do model (`=`/`<>`/`<`…, `+ - * / %`, `prop`, `var`, `const`,
-     `param`) are over different value types, and no owner proves expr_semantics'
-     `evalCmp`/`all_equals` equal to columnar's `compareValues`/`rowCmp`, or `O.arith` to
-     `valueArith`.
-  Needed from the owners: a tree-level per-row evaluator shared by columnar and
-  expr_semantics with faithful `AND`/`OR`/`CASE`/`NOT`/call arms (or a translation
-  `Columnar.V F ↔ FalkorCore.V F` plus those arms in `E`), and a `Dispatch.Lawful` instance
-  built from columnar's lane theorems.
+* **`hS` — DISCHARGED** (`Concrete.colOf_sound`, `Final.prCol_sound`). The three gaps the
+  previous review listed were closed in the owners: (1) columnar's `Dispatch.Lawful` now has an
+  instance — `VecEval` models `VectorEval::eval` over expr_semantics' `E` and `CoreBridge.lawful`
+  proves every field from the lane theorems (`evalAndOr_sound`, `evalCase_sound`,
+  `evalFunction_sound`, `hasLabelsLane_sound`, `negate_agree`, `arithmetic_agree`,
+  `compareColumns_agree`, `evalVariable_agree`, `classifyExact_exact`); (2) expr_semantics' `E` has
+  faithful AND/OR/XOR/NOT/CASE/call/IN/list/subscript/projection arms with main's short-circuit and
+  error order (`and_false_short_circuits`, `case_hit_lazy`, `list_error_rightmost`, …; the old
+  eager catch-all is kept as `pre20261021_compound_cannot_short_circuit`); (3) columnar runs over
+  `FalkorCore.V F` and `CoreOps` proves the shared forms equal (`allEq_rowCmp`, `allNeq_rowCmp`,
+  `cmpResult_rowCmp`, `caseHit_caseMatch`, `notRow_eq`; arithmetic is `valueArith` on both sides).
+* **`Body.Drops`** — DISCHARGED (`newBody_drops`). **Frame property** — expr_semantics
+  `evalNode_frame` (every arm). **`RowAgree`** — `Concrete.rowAgree` on `ChunkBatch.chunkBatch`.
+* **Bulk property reads** — DISCHARGED for the runtime built from its attribute state (columnar
+  `RuntimeReads.matNode_eq` / `matRel_eq`; the PR's exact fetch reads the same state,
+  `Runtime.nodeStore_matValues`).
+* **Left, stated as a premise**: `hreg` (`Final.Registry`) — every `FuncInvocation` named
+  `hasLabels` in the bodies holds the registered `hasLabels` (`HasLabelsFn.hasLabelsFn`,
+  functions/entity.rs:62). It is the shape of the trees the parser and binder build
+  (`get_functions().get("hasLabels")`, registry names are unique), needed because
+  `VectorEval::eval` dispatches on the function's *name*.
+* **Modelling choices** (not premises): function calls are pure functions of their arguments
+  (`rand()`, `randomUUID()` are compared in distribution only; both paths make the same calls
+  for zero-argument functions); `agg_group_key` is not modelled (it only affects aggregate calls
+  and `DISTINCT`, both rejected by `collect_body_vars`); attribute-id resolution is the
+  memoized lookup's value (proofs/runtime_core `attrIdM_correct`).
 
 ## Proposed parser_grammar re-statements on the PR's parser
 
@@ -148,8 +136,10 @@ pattern comprehensions, shadowed and outer variables (`WITH … WHERE`, `ORDER B
   the first conjunct of `sign_sequences` (`+-1` ↦ `Neg[1]`; PR: `Const(-1)`) and the
   `parseAll = G.all` agreement (`bounded_agree`) on inputs containing `- <int>` describe
   main's tree, not the PR's. Semantics are unchanged (`fold_eq_eval`); the tree shape is not.
-* **proofs/columnar `Dispatch.eval`** lacks the `!counts_comprehension` guard;
-  `eval_sound_pr` shows soundness survives (instantiate `Arms` with `armsPR`).
+* **proofs/columnar `VecEval.eval` / `CoreBridge.armsOf`** model main's `VectorEval`; the PR's
+  arms are `PRArms.armsPR` (the `!counts_comprehension` guard and the exact `NodeIds` fetch) and
+  `PRArms.lawfulPR` shows soundness survives; at merge, fold them into columnar. (The coarser
+  `Dispatch` model: `Bridge.eval_sound_pr`.)
 * **proofs/functions_str_list / expr_semantics**: the `ListComprehension` and `Quantifier`
   arms moved into `eval_list_comprehension` / `ExprEval::eval_quantifier`; their models of
   main stay true of the PR by `comprehension_eq_main` / `quantifier_eq_main` (under the

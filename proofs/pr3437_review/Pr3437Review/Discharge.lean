@@ -4,46 +4,23 @@ import Pr3437Review.Classifier
 import Pr3437Review.Bridge
 
 /-!
-# PR #3437: discharging `Body.Drops` and `RowAgree` from proofs/expr_semantics' `ExprEval`
+# PR #3437: the per-element body over proofs/expr_semantics' `ExprEval`
 
-The per-element / per-row evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
+The per-element evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
 (`ExprEval::eval_node`, eval.rs:503 on the PR) over its tree `E`, with the row as
 `env : Nat → Option V` (`RowView::value_at`). Values are the engine's `V F`.
 
 * **`Body.Drops` — discharged** (`newBody_drops`). `ListLoop::new` (eval.rs:323-338) drops a
   predicate that is the literal `true` and a projection that is the loop variable; on the
   owned row `env + {var: v}` the owner's evaluator gives `Bool(true)` and `v` for them.
-* **Frame property — discharged for the owner's fragment** (`evalNode_frame`): `evalNode`
-  depends on the row only through the ids of the `var` nodes in the tree.
-* **`RowAgree` — discharged for every body `vector_plan` accepts** (`rowAgree`, a739b990f):
-  an accepted body binds nothing but the loop variable (`Classifier.vectorPlan_broadcasts`),
-  so the batch row (`loop_var_column` at the loop id, `broadcast_column`s at the plan's ids)
-  and the owned row agree on every id the body reads; no id-uniqueness premise. Before
-  a739b990f nested binders were accepted and this needed a binder scoping theorem
-  (`ClassifierPre`, `Classifier.pre_a739b990f_accepts_nested_binder`).
-* **`Col.Sound`'s predicate half** (`colSound_accepted`) from columnar's `Dispatch.eval_sound`,
-  **given `hS`**: columnar's abstract per-row reference `RowSem.rowEval` *is* this `evalNode`
-  on the batch row.
-
-**`hS` is not dischargeable from the owners' models** (`Dispatch.Lawful` would have to be
-instantiated with `RowSem.rowEval := evalNode` and every field proved):
-1. `Dispatch.Lawful` has no concrete instance anywhere: columnar proves each lane against
-   its own operator-level reference (`rowCmp`, `valueArith`, `notRow`, `caseRow`,
-   `foldCall`, `VExpr.colEval`) over its own value type `Columnar.V F` (seven constructors,
-   abstract `FloatModel`), not over a tree evaluator, and never assembles them.
-2. expr_semantics' `E` has a faithful arm only for `const`, `var`, `param`, map literals,
-   `prop`, `+`, `- * / %`, `=`, `<>`, `< > <= >=`; every other arm is the eager, value-only
-   `compound`. That cannot express `AND` / `OR` / `CASE`, which short-circuit
-   (`compound_cannot_short_circuit`; live on main: `RETURN false AND 1/0 = 1` → `false`,
-   `true OR 1/0 = 1` → `true`, `CASE WHEN true THEN 1 ELSE 1/0 END` → `1`). The classifier
-   accepts all three, so they are not routed per element.
-3. The comparison and arithmetic arms that both projects do model are over different value
-   types (`Columnar.V F` vs expr_semantics' abstract `Ops V`), and no owner relates
-   `all_equals` / `all_not_equals` (expr_semantics `evalCmp`) to columnar's
-   `compareValues` / `rowCmp`, or `O.arith` to `valueArith`.
-Needed: a tree-level per-row evaluator shared by both projects (or a translation
-`Columnar.V F ↔ FalkorCore.V F` plus `E` arms for AND/OR/NOT/CASE/function calls with
-their scalar semantics), and an instance of `Dispatch.Lawful` built from columnar's lanes.
+* **`toBT`**: an `E` tree as `collect_body_vars` sees it (children in `ExprIR` order), with
+  `varsOf_toBT` (the classifier reads exactly `E.vars`).
+* The frame property is expr_semantics' `evalNode_frame` (every arm); `RowAgree` on the real
+  chunk batch and `Col.Sound` (the former premise `hS`) are `Concrete.rowAgree` /
+  `Concrete.colOf_sound`.
+* History (closed 2026-10-21): `pre20261021_compound_cannot_short_circuit` — with an eager
+  catch-all, `E` could not express `false AND <error>` = `false`; the faithful arm does
+  (`and_short_circuits`).
 -/
 
 namespace Pr3437.Discharge

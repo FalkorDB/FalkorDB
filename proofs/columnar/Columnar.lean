@@ -44,6 +44,36 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
 
+## 2026-10-21: `VectorEval` is `ExprEval`, row by row, over the full engine value
+
+* **Values** are proofs/core's `FalkorCore.V F` (all sixteen variants; `Column.lean`), so the
+  lanes and expr_semantics' evaluator share one value type; `compare_value`'s null arms order
+  by `OrderedEnum::order` and `NOT` names the operand type, as in Rust.
+* **`VecEval`**: `VectorEval::eval` (vector_expr.rs:211-283) over proofs/expr_semantics' `E`, arms
+  in source order with their guards; `eval_sound` (every tree in scope, every set of valid
+  rows) and `evalValues_sound` (`eval_values`, :285). `Dispatch.lean` stays as the coarser
+  `Kind`/`Node` model of the same walk.
+* **`CoreOps`**: the engine's operations as expr_semantics' `Ops`; the shared forms agree —
+  `allEq_rowCmp` / `allNeq_rowCmp` (`all_equals` / `all_not_equals` = `compare_values` for
+  `=` / `<>`), `cmpResult_rowCmp` (the `< > <= >=` fast path), `caseHit_caseMatch`, `notRow_eq`;
+  `+ - * / %` are `valueArith`.
+* **Lanes against `ExprEval`**: `AndOrLane.evalAndOr_sound` (`eval_and_or`: each child is
+  evaluated over exactly the rows the per-row short-circuit loop reaches), `CaseLane.evalCase_sound`
+  (`eval_case`: a `WHEN` over the unclaimed rows, a `THEN` over the rows it claims),
+  `FuncLane.evalFunction_sound` (`eval_function`, the all-`Scalar` fold included),
+  `FuncLane.hasLabelsLane_sound` + `HasLabelsFn.hl_hasLabelsFn` (`eval_has_labels` against the
+  registry's `hasLabels`, entity.rs:62-127, with `validate_args_type` / `value_of_type`),
+  `LaneWF` (every lane returns `len` rows).
+* **`CoreBridge.lawful`**: the `Lawful` instance over a batch — every field proved from the
+  lane theorems; **`vec_sound`**: whenever `VectorEval::eval` returns a column, entry `i` is
+  `ExprEval::eval_node` on the batch row `rows[i]`. Its one runtime premise, `PropReads` (the
+  bulk property fetch = the per-row read), is a theorem for the runtime built from its
+  attribute state: **`RuntimeReads.matNode_eq` / `matRel_eq` / `propReads`**
+  (`materialize_{node,relationship}_property_values` vs `get_{node,relationship}_attribute`,
+  runtime.rs:1459-1658, the graph's batch and by-name reads being their definitions).
+* **`EvalBatch`**: proofs/expr_semantics' `BatchLaws` for `eval_batch` discharged
+  (`evalBatch_sound`).
+
 ## Proved (plain English)
 * gather reads row `idx[k]` (value, bound bit, origin); gather∘gather composes;
   gather never panics on physical indices and preserves WF.

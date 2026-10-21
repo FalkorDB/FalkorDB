@@ -12,15 +12,14 @@ the chunk batch is built:
 
 * **`RowAgree`** — the per-row evaluator on batch row `r` (a `BatchRow` over the batch
   `list_loop_columnar` builds, eval.rs:1560-1564) equals main's per-element evaluator on the
-  owned row `env + {var: chunk[r]}`. It holds when (a) the batch's columns read back the
-  chunk element and the broadcast outer values (`loopVar_get`, `broadcast_get` below;
-  `set_column`'s `classify_stored_column` is lossless: columnar `Column.classifyStored_*`),
-  (b) the body reads the row only through `ExprIR::Variable` children, every one of which
-  is the loop variable, a broadcast outer variable or one the body binds itself
-  (`Classifier.vectorPlan_broadcasts`), and (c) `ExprEval::eval_node`'s result depends on the
-  row only through the variables the body reads (a frame property of the unmodelled
-  `ExprEval`), with binder ids unique within the expression (`Binder::fresh_var`,
-  binder.rs:2255). (c) is the undischarged part.
+  owned row `env + {var: chunk[r]}`: the batch's columns read back the chunk element and the
+  broadcast outer values (`loopVar_get`, `broadcast_get` below; `ChunkBatch`), an accepted
+  body reads only the loop variable and broadcast variables (`Classifier.vectorPlan_broadcasts`),
+  and `ExprEval` reads the row only through them (expr_semantics `evalNode_frame`) —
+  `Concrete.rowAgree`.
+
+This module is the `Dispatch` (`Kind`/`Node`) form of the bridge; the concrete one, over
+columnar's `VecEval` and the PR's real arms, is `PRArms` / `Concrete` / `Final`.
 
 The PR's one change to `VectorEval::eval` — `!counts_comprehension(node)` on the function
 arm (vector_expr.rs:255-257) — sends `size(<comprehension>)` to `eval_per_row`; `armsPR`

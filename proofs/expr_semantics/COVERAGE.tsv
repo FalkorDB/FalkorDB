@@ -44,25 +44,25 @@ graph/src/runtime/eval.rs	ExprEval::rt	288	PROVEN	Eval.Ev.rt: rt_cases
 graph/src/runtime/eval.rs	ExprEval::resolve_var	297	PROVEN	Eval.resolveVar: resolveVar_spec
 graph/src/runtime/eval.rs	ExprEval::eval	309	PROVEN	Eval.eval: eval_eq_root
 graph/src/runtime/eval.rs	ExprEval::eval_operand	326	PROVEN	Eval.evalOperand: evalOperand_eq (inline leaves = full evaluator)
-graph/src/runtime/eval.rs	ExprEval::eval_node	340	PROVEN	Eval.evalNode (all fast-path arms; compound = parameter): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq; arithmetic arms vArith/evalCmp (arith_agrees, vec_cmp_*)
-graph/src/runtime/eval.rs	ExprEval::eval_case	495	PROVEN	scalarCase/caseMatchScalar: case_agrees, case_match_agrees
-graph/src/runtime/eval.rs	ExprEval::eval_compound	535	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit, and_or_mismatch_names_type — #3294 message names the operand type), Xor (xor_kleene, xor_mismatch_names_type), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold, #2904: pow_propagates_error, pow_binary_eq_spec, pow_agrees_without_errors; history pre2904_pow_drops_error), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled; aggregate-finalizer arm (#2951 push-not-return) modelled in proofs/ops_aggregate
-graph/src/runtime/eval.rs	ExprEval::eval_batch	1150	CONDITIONAL	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation) || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
-graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1166	CONDITIONAL	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow || CONDITIONAL on BatchLaws (materialize_node_property_values = get_node_attribute per id; runtime_core materialize_eq, itself CONDITIONAL)
+graph/src/runtime/eval.rs	ExprEval::eval_node	340	PROVEN	Eval.evalNode (every fast-path arm; 2026-10-21: faithful AND/OR/XOR/NOT/CASE/FuncInvocation/IN/List/GetElement/MapProjection/Distinct arms, thunked catch-all): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq, evalNode_frame, and_false_short_circuits, or_true_short_circuits, case_hit_lazy, func_common, list_error_rightmost, in_spec
+graph/src/runtime/eval.rs	ExprEval::eval_case	495	PROVEN	Eval.evalNode case arm / evalSubj / evalArms (lazy, value and searched form): case_hit_lazy, case_value_hit_lazy, case_miss_else; scalarCase/caseMatchScalar: case_agrees, case_match_agrees
+graph/src/runtime/eval.rs	ExprEval::eval_compound	535	PROVEN	Eval.evalNode arms (2026-10-21): And/Or andOrLoop (and_false_short_circuits, or_true_short_circuits, andOr_error_first, andOr_kleene, andOr_mismatch), Xor xorLoop (xor_null_settles, xor_two, logicalXor_eq), Not (not_spec), List evalRev (list_error_rightmost, evalRev_ok), In listContains (in_spec), GetElement getElem (getElement_index), FuncInvocation (func_common, func_constant_errors; struct slots evalSlots), Map evalKeys (map_bad_key), MapProjection projLoop, Distinct; frame evalNode_frame; remaining arms = thunked catch-all, proved per arm in proofs/functions_str_list (eval_compound/* rows), Pow powFold here, aggregate finalizer in proofs/ops_aggregate
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1150	PROVEN	EvalMore.evalBatch: evalBatch_eq_perRow; BatchLaws discharged for the real batch and runtime by proofs/columnar EvalBatch.laws / evalBatch_sound (RuntimeReads.matNode_eq: bulk fetch = per-row get_node_attribute; node column = rows' nodes)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1166	PROVEN	EvalMore.tryEvalBatchProperty: evalBatch_eq_perRow; BatchLaws discharged by proofs/columnar EvalBatch.laws / evalBatch_sound
 graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1196	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
 graph/src/runtime/eval.rs	ExprEval::eval_iter_expr	1226	PROVEN	EvalMore.evalIterExpr: evalIter_cases, evalIter_list; range arm wired to RangeIter: evalIter_range_is_iter (rangeIter_correct)
 graph/src/runtime/eval.rs	ExprEval::eval_compiled_regex	1302	PROVEN	EvalMore.evalCompiledRegex (Regex structure): compiledRegex_spec
 graph/src/runtime/eval.rs	check_string_or_null	1309	PROVEN	EvalMore.checkStringOrNull: checkStringOrNull_ok
 graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1363	PROVEN	BFS.evalShortestPath: shortestPath_args, shortestPath_self, buildPath_length
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1448	PROVEN	BFS.search/level/scan/chain/bfsNodes: bfs_sound (meets ⇒ no expect-panic, src→dst walk over followed edges), search_sound, level_inv, scan_inv, chain_sound, chain_total
-graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1577	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup
+graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1577	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup; Eval.evalNode mapProj arm / projLoop (items evaluated in order, runtime check first)
 graph/src/runtime/eval.rs	eval_quantifier	1664	NOT COVERED	list quantifiers; lists out of scope
-graph/src/runtime/eval.rs	all_equals	1713	PROVEN	evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive
-graph/src/runtime/eval.rs	all_not_equals	1736	PROVEN	evalCmp Neq (#2917: null->null, NaN/disjoint->true): vec_cmp_generic, neq_eq_not_eq (<> = NOT =)
-graph/src/runtime/eval.rs	list_contains	1760	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
+graph/src/runtime/eval.rs	all_equals	1713	PROVEN	EvalArms.allEquals (lazy iterator, prev = first element): allEquals_two, allEquals_stops; evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive; = columnar compare_values Eq (columnar CoreOps.allEq_rowCmp)
+graph/src/runtime/eval.rs	all_not_equals	1736	PROVEN	EvalArms.allNotEquals: allNotEquals_two; evalCmp Neq (#2917): vec_cmp_generic, neq_eq_not_eq; = columnar compare_values Neq (columnar CoreOps.allNeq_rowCmp)
+graph/src/runtime/eval.rs	list_contains	1760	PROVEN	Eval.listContains (List / Null / type error): in_spec; Contains::contains: contains_is_kleene_any, null_in
 graph/src/runtime/eval.rs	get_elements	1774	NOT COVERED	list slicing; lists out of scope
-graph/src/runtime/eval.rs	logical_xor	1807	PROVEN	scalarXor: xor_kleene
-graph/src/runtime/eval.rs	evaluate_param	1814	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
+graph/src/runtime/eval.rs	logical_xor	1807	PROVEN	Eval.logicalXor: logicalXor_eq, xor_two; scalarXor: xor_kleene
+graph/src/runtime/eval.rs	evaluate_param	1814	PROVEN	EvalParam.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
 graph/src/runtime/value.rs	Add::add	946	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
 graph/src/runtime/value.rs	Value::add_slow	961	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
 graph/src/runtime/value.rs	Sub::sub	1078	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
