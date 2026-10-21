@@ -1,6 +1,7 @@
 import string
 import random
 from common import *
+from common import _db_handle
 from index_utils import *
 
 GRAPH_ID = "G"
@@ -299,4 +300,51 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][0], 0)
         result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 20000)
+        g.delete()
+
+    def test12_concurrent_writes_during_index_population(self):
+        # Writes that race background index population must not leave stale
+        # documents: population reads the committed graph, while a writer
+        # publishes its documents before its commit, so a batch in between used
+        # to overwrite the writer's newer document with the old value.
+        import threading
+        g = self.db.select_graph('idx_pop_writes')
+        n = 200000
+        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PW {k: k, v: 0})", {'n': n})
+
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+
+            def writer():
+                try:
+                    # own client: redis connections are not shared across threads
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_writes')
+                    i = 0
+                    while not stop.is_set():
+                        wg.query("MATCH (n:PW) WHERE n.k % 50 = $m SET n.v = n.v + 1", {'m': i % 50})
+                        wg.query("MATCH (n:PW {k: $k}) DELETE n", {'k': i})
+                        wg.query("CREATE (:PW {k: $k, v: 0})", {'k': n + i})
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                create_node_range_index(g, 'PW', 'v', sync=True)
+            finally:
+                stop.set()
+                t.join()
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with a label scan
+            for v, expected in g.ro_query(
+                    "MATCH (n:PW) RETURN n.v, count(n) ORDER BY n.v").result_set:
+                q = "MATCH (n:PW) WHERE n.v = $v RETURN count(n)"
+                self.env.assertIn("Node By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            g.query("DROP INDEX FOR (n:PW) ON (n.v)")
         g.delete()
