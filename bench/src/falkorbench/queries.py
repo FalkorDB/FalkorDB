@@ -91,6 +91,14 @@ SETUP = [
     # the constraint goes OPERATIONAL (unlike the SIMILAR one, which fails).
     "CREATE INDEX FOR ()-[r:UREL]-() ON (r.uid)",
     "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[:UREL {uid: 1}]->(b), (a)-[:UREL {uid: 2}]->(b)",
+    # Fan-out corpus for algo.BFS: 2,000 :Fan nodes, each with 6 :FAN
+    # out-edges to pseudo-random targets, so a BFS frontier grows ~6x per hop
+    # and reaches the whole corpus in a few levels — the case the :KNOWS ring
+    # (one out-edge per node, a chain) never exercises: a bitmap visited set
+    # and pull steps. Last in SETUP so no earlier entity id moves.
+    "UNWIND range(0, 1999) AS i CREATE (:Fan {id: i, v: i % 100})",
+    "CREATE INDEX FOR (f:Fan) ON (f.id)",
+    "UNWIND range(0, 1999) AS i UNWIND range(1, 6) AS j MATCH (a:Fan {id: i}), (b:Fan {id: (i * 7 + j * 131) % 2000}) CREATE (a)-[:FAN]->(b)",
 ]
 
 # Raw redis commands run after SETUP (redis-cli arg lists). {graph} is
@@ -277,6 +285,41 @@ QUERIES = [
     Q("algo.BFS",            False, "MATCH (a:Person {id: 0}) CALL algo.BFS(a, 3, 'KNOWS') YIELD nodes RETURN size(nodes)", cg=True),
     Q("algo.BFS unbounded",  False, "MATCH (a:Person {id: 0}) CALL algo.BFS(a, -1, 'KNOWS') YIELD nodes RETURN size(nodes)"),
     Q("algo.WCC",            False, "CALL algo.WCC(null) YIELD node, componentId RETURN count(DISTINCT componentId)", cg=True),
+
+    # ---- algo.BFS over a fan-out graph (the :KNOWS ring is a chain) --------
+    # Depth decides the visited-set representation (sparse for 2 hops, bitmap
+    # beyond) and whether the frontier ever gets wide enough to pull.
+    Q("BFS fan 2 hops",      False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 2, 'FAN') YIELD nodes RETURN size(nodes)"),
+    Q("BFS fan 4 hops",      False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 4, 'FAN') YIELD nodes RETURN size(nodes)"),
+    Q("BFS fan unbounded",   False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size(nodes)"),
+    # `edges` needs parents, which keeps LAGraph's path; untyped goes through
+    # the materialized all-types adjacency, not a single tensor.
+    Q("BFS fan with edges",  False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 3, 'FAN') YIELD nodes, edges RETURN size(nodes), size(edges)"),
+    Q("BFS fan untyped",     False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 3, NULL) YIELD nodes RETURN size(nodes)"),
+    # The one.semurg.io benchmark's query shape: a filtered comprehension over
+    # the BFS result.
+    Q("BFS + filter comprehension", False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size([n IN nodes WHERE n.id <> 0])"),
+
+    # ---- comprehensions and quantifiers over long lists -------------------
+    Q("comprehension node filter",  False, "MATCH (p:Person) WITH collect(p) AS ps RETURN size([n IN ps WHERE n.age > 40])"),
+    Q("comprehension node project", False, "MATCH (p:Person) WITH collect(p) AS ps RETURN size([n IN ps | n.score])"),
+    Q("comprehension outer var",    False, "MATCH (p:Person) WITH collect(p) AS ps, 40 AS t RETURN size([n IN ps WHERE n.age > t | n.id])"),
+    Q("any over node list",         False, "MATCH (p:Person) WITH collect(p) AS ps RETURN any(n IN ps WHERE n.id = -1)"),
+    Q("all over node list",         False, "MATCH (p:Person) WITH collect(p) AS ps RETURN all(n IN ps WHERE n.age >= 0)"),
+    Q("comprehension to string",    False, "RETURN size([x IN range(0, 9999) WHERE x % 3 = 0 | toString(x)])", cg=True),
+    Q("comprehension kept list",    False, "RETURN [x IN range(0, 9999) WHERE x % 1000 = 0 | x * 2]", cg=True),
+    Q("nested comprehension long",  False, "RETURN size([x IN range(0, 999) WHERE size([y IN range(0, 9) WHERE y < x % 10]) > 3])", cg=True),
+
+    # ---- concurrent readers -------------------------------------------------
+    # 16 clients at once: per-row reads of one shared graph version, where
+    # contention between readers (not single-query cost) decides the number.
+    Q("concurrent prop reads",  False, "MATCH (p:Person) RETURN sum(p.age)", 200, clients=16),
+    Q("concurrent BFS filter",  False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size([n IN nodes WHERE n.id <> 0])", 200, clients=16),
+
+    # ---- serialization ------------------------------------------------------
+    # DUMP encodes the whole graph through the RDB encoder (matrices, tensors,
+    # attribute stores) without touching disk.
+    Q("DUMP graph",             False, "DUMP {graph}", 20, raw=("DUMP", "{graph}")),
 
     # ---- coverage features (indexes, procedures, algos, temporal, CSV, UDF)
     # These run against the small Doc corpus / expressions, so they are cheap;

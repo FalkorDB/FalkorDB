@@ -186,6 +186,11 @@ class BenchClient:
         DEBUG RELOAD, GRAPH.CONSTRAINT, GRAPH.UDF, MEMORY MALLOC-STATS."""
         return self.db.execute_command(*args)
 
+    def raw(self, *args: object) -> object:
+        """A raw command whose reply may be binary (e.g. DUMP): returned as
+        bytes rather than decoded as text, which would fail."""
+        return self.db.execute_command(*args, NEVER_DECODE=True)
+
     # --- probes --------------------------------------------------------------
 
     @property

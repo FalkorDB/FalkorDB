@@ -141,7 +141,10 @@ def measure_queries(
     for query in queries:
         n = query.reps if query.reps is not None else default_reps
         try:
-            bench.run(query.cypher, write=query.write)  # warmup / plan cache
+            if query.raw:
+                bench.raw(*query.argv(bench.graph_name))  # warmup
+            else:
+                bench.run(query.cypher, write=query.write)  # warmup / plan cache
         except ResponseError as e:
             first = str(e).splitlines()[0][:100]
             if c_compat:
@@ -158,12 +161,10 @@ def measure_queries(
             "-p",
             str(bench.server.port),
             "-c",
-            "1",
+            str(query.clients),
             "-n",
             str(n),
-            query.command,
-            bench.graph_name,
-            query.cypher,
+            *query.argv(bench.graph_name),
         ]
         # Memory snapshots sit outside the counter window so the MALLOC-STATS
         # call's own work does not land in the instruction counts.
@@ -224,7 +225,10 @@ def run_once(
     fails = 0
     for query in queries:
         try:
-            bench.run(query.cypher, write=query.write)
+            if query.raw:
+                bench.raw(*query.argv(bench.graph_name))
+            else:
+                bench.run(query.cypher, write=query.write)
         except ResponseError as e:
             echo(f"FAIL {query.name}: {str(e).splitlines()[0][:120]}")
             fails += 1
