@@ -830,7 +830,7 @@ pub fn graph_bulk_insert(
                 &name,
             )));
             key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(name, g.clone());
+            register_graph(ctx, name, g.clone());
             g
         }
     };

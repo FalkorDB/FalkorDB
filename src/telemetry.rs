@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
-use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_id, up_to_nul};
 use crate::redis_type::GRAPH_TYPE;
 
 /// Maximum stored string length for query/params in telemetry entries.
@@ -644,6 +644,9 @@ struct PendingEntry {
     /// The Redis key this query addressed — replaced by the key the graph is
     /// registered under *now* just before the write, see `resolve_current_names`.
     graph_name: Arc<str>,
+    /// The database the graph is registered in, set alongside `graph_name` by
+    /// `resolve_current_names`: the stream lives next to the graph.
+    db: i32,
     /// The graph this query ran on, weakly.
     ///
     /// The graph and not the name is what an entry belongs to: a name can be
@@ -664,11 +667,11 @@ struct BatchGraph {
     /// being freed and its address reused by another between resolution and the write.
     /// `Arc::as_ptr` of this is also what the batch's entries are matched against.
     graph: Arc<RwLock<ThreadedGraph>>,
-    /// The key this batch's entries addressed. Tried against the registry first: it is
-    /// still the right answer for every graph whose key has not moved.
+    /// The key this batch's entries addressed. Reused as the resolved name when the
+    /// registry still agrees, which it does for every graph whose key has not moved.
     captured: Arc<str>,
-    /// The key the graph is registered under *now*, once resolved.
-    current: Option<Arc<str>>,
+    /// The database and key the graph is registered under *now*, once resolved.
+    current: Option<(i32, Arc<str>)>,
 }
 
 /// Re-key every entry to the Redis key its graph is registered under *now*, dropping
@@ -684,7 +687,7 @@ struct BatchGraph {
 ///
 /// One registry lock for the whole batch rather than one per entry: at flush rates the
 /// per-entry version was tens of thousands of acquisitions a second on a mutex that
-/// `register_graph`, `rename_graph`, `graph_free` and the pre-fork sync all need.
+/// `register_graph`, `relocate_graph`, `graph_free` and the pre-fork sync all need.
 ///
 /// Called with the GIL held, so that the name this settles on and the keyspace
 /// [`key_holds_graph`] then checks it against cannot disagree: a `RENAME` runs on the
@@ -697,38 +700,18 @@ fn resolve_current_names(
     graphs: &mut [BatchGraph],
 ) {
     if !graphs.is_empty() {
+        // The registry is keyed by graph identity, so this is one hash lookup per
+        // distinct graph of the batch whatever happened to its key since.
         let registry = GRAPH_REGISTRY.lock();
-        // One hash lookup per graph settles the overwhelming majority: the key an entry
-        // addressed is still the key its graph answers to unless a `RENAME` moved it, or
-        // the name was rebound to a different graph, in the milliseconds since.
-        let mut unresolved = 0;
         for b in &mut *graphs {
-            match registry.get(&*b.captured) {
-                Some(arc) if arc.data_ptr() == b.graph.data_ptr() => {
-                    b.current = Some(Arc::clone(&b.captured));
-                }
-                _ => unresolved += 1,
-            }
-        }
-        // Only the graphs that missed need the scan, and it stops as soon as the last of
-        // them is placed. Scanning unconditionally is O(R·G) in the number of graphs in
-        // the keyspace, with the GIL held, every 5-10ms: on a multi-tenant keyspace of
-        // tens of thousands of graphs that is all command processing stalled behind
-        // telemetry bookkeeping.
-        if unresolved > 0 {
-            for (name, arc) in registry.iter() {
-                let Some(b) = graphs
-                    .iter_mut()
-                    .find(|b| b.current.is_none() && b.graph.data_ptr() == arc.data_ptr())
-                else {
-                    continue;
+            b.current = registry.get(&graph_id(&b.graph)).map(|e| {
+                let name = if *b.captured == *e.name {
+                    Arc::clone(&b.captured)
+                } else {
+                    Arc::from(e.name.as_str())
                 };
-                b.current = Some(Arc::from(name.as_str()));
-                unresolved -= 1;
-                if unresolved == 0 {
-                    break;
-                }
-            }
+                (e.db, name)
+            });
         }
     }
     deferred.retain_mut(|pe| {
@@ -738,7 +721,7 @@ fn resolve_current_names(
         // entry can borrow a live graph's address and be filed under its name. Upgrading
         // here instead put one contended atomic per entry, a thousand of them a flush,
         // on the single counter every query thread is already touching.
-        let Some(name) = graphs
+        let Some((db, name)) = graphs
             .iter()
             .find(|b| Arc::as_ptr(&b.graph) == pe.graph.as_ptr())
             .and_then(|b| b.current.as_ref())
@@ -750,6 +733,7 @@ fn resolve_current_names(
         if pe.graph_name != *name {
             pe.graph_name = Arc::clone(name);
         }
+        pe.db = *db;
         true
     });
 }
@@ -795,10 +779,10 @@ fn hold_batch_graphs(deferred: &[PendingEntry]) -> Vec<BatchGraph> {
 /// Release what [`hold_batch_graphs`] took, off this thread if it turns out to be the
 /// last holder.
 ///
-/// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
-/// thread rather than run it inline, because `Index::drop` reaches RediSearch and takes
-/// the GIL. The flusher is a latency-critical thread for the same reason they are: the
-/// next batch waits behind whatever runs here.
+/// `graph_free` hands teardown to a background thread rather than run it inline,
+/// because `Index::drop` reaches RediSearch and takes the GIL. The flusher is a
+/// latency-critical thread for the same reason it is: the next batch waits behind
+/// whatever runs here.
 fn release_batch_graphs(graphs: Vec<BatchGraph>) {
     for b in graphs {
         let arc = b.graph;
@@ -939,6 +923,7 @@ pub fn enqueue_entry(
         if tx
             .send(PendingEntry {
                 graph_name: Arc::clone(graph_name),
+                db: 0,
                 graph: Arc::downgrade(graph),
                 entry,
             })
@@ -1226,9 +1211,15 @@ fn flusher_loop() {
                 // rather than once per entry. Sorting is enough: entries of one graph end
                 // up in one run, and being stable it keeps arrival order within a graph,
                 // which is the order consumers read.
-                deferred.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
-                for run in deferred.chunk_by(|a, b| a.graph_name == b.graph_name) {
+                // By database too: two databases can each hold a graph of one name.
+                deferred.sort_by(|a, b| (a.db, &a.graph_name).cmp(&(b.db, &b.graph_name)));
+                for run in deferred.chunk_by(|a, b| a.db == b.db && a.graph_name == b.graph_name) {
                     let name = &run[0].graph_name;
+                    // The stream is written into the graph's database; this
+                    // context is detached, so it is selected per run.
+                    unsafe {
+                        raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(tsc, run[0].db);
+                    }
                     // The registry named this key; Redis has to agree that it still
                     // holds this graph. See `key_holds_graph`. One graph per run, so
                     // any entry of it answers for the rest.

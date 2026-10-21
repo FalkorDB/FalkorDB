@@ -130,38 +130,76 @@ pub fn c_graph_key(
     RedisString::create_from_slice(ctx.get_raw(), &bytes[..end])
 }
 
-/// Global registry of all live graph instances.
+/// A graph in the keyspace, and where in the keyspace it is.
+pub struct RegisteredGraph {
+    pub graph: Arc<RwLock<ThreadedGraph>>,
+    /// The Redis logical database the graph's key is in.
+    pub db: i32,
+    /// The graph's Redis key, rendered lossily: a Redis key name is arbitrary bytes
+    /// and the module addresses graphs by `String`.
+    pub name: String,
+}
+
+/// The identity a graph is registered under: the address of its shared state,
+/// which no other live graph can have.
+#[must_use]
+pub fn graph_id(arc: &Arc<RwLock<ThreadedGraph>>) -> usize {
+    arc.data_ptr() as usize
+}
+
+/// Global registry of every graph in the keyspace, keyed by [`graph_id`].
+///
 /// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
-/// before fork, preventing deadlocks in the BGSAVE child process.
+/// before fork, preventing deadlocks in the BGSAVE child process, as the writer
+/// guard ([`graph_is_registered`]), and as the module's index of where each graph
+/// lives (the RDB virtual-key builder, telemetry, constraint promotion).
+///
+/// Keyed by identity, not by name, like C's `graphs_in_keyspace` pointer array: a
+/// name only identifies a key within one logical database, so two graphs at the
+/// same name in different databases displaced each other when the name was the
+/// key (#2782). The location is a property of the entry, kept current by
+/// `RENAME`, `MOVE` and `SWAPDB` notifications.
 pub static GRAPH_REGISTRY: std::sync::LazyLock<
-    parking_lot::Mutex<HashMap<String, Arc<RwLock<ThreadedGraph>>>>,
+    parking_lot::Mutex<HashMap<usize, RegisteredGraph>>,
 > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
+/// The logical database `ctx` has selected.
+#[must_use]
+pub fn selected_db(ctx: &Context) -> i32 {
+    unsafe { raw::RedisModule_GetSelectedDb.unwrap()(ctx.ctx) }
+}
+
+/// Record that `arc` now lives at key `name` of the database `ctx` has selected.
 pub fn register_graph(
+    ctx: &Context,
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
-    // Invariant: every registered name must have been removed from the
-    // registry before being re-inserted. `graph_free` removes entries on
-    // Redis key delete/overwrite/expire, and the RDB multi-key load path
-    // mutates the placeholder Arc in place rather than rebinding the name.
-    // If this assert fires, a caller is leaking the previously-registered
-    // Arc and likely racing index/teardown shutdown.
-    let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    debug_assert!(
-        displaced.is_none(),
-        "register_graph: name already registered; missing graph_free or placeholder swap"
-    );
-    // Drop any displaced graph off the main Redis thread. Index::drop ->
-    // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
-    // thread pool when its timer can't be stopped synchronously; that
-    // callback asserts gc->stopped == 1 and aborts under the resulting
-    // race. Moving the drop to a background thread also routes Index::drop
-    // through the GIL-acquiring path, which the synchronous main-thread
-    // drop intentionally skips.
-    if let Some(displaced) = displaced {
-        std::thread::spawn(move || drop(displaced));
-    }
+    register_graph_at(selected_db(ctx), name, arc);
+}
+
+/// Record that `arc` now lives at key `name` of database `db`.
+///
+/// Registering a graph that is already registered only moves it: no two graphs
+/// share an identity, so nothing can be displaced. `graph_free` removes the entry
+/// when Redis frees the value.
+pub fn register_graph_at(
+    db: i32,
+    name: String,
+    arc: Arc<RwLock<ThreadedGraph>>,
+) {
+    GRAPH_REGISTRY
+        .lock()
+        .entry(graph_id(&arc))
+        .and_modify(|e| {
+            e.db = db;
+            e.name.clone_from(&name);
+        })
+        .or_insert(RegisteredGraph {
+            graph: arc,
+            db,
+            name,
+        });
 }
 
 /// True if `arc` is still the graph registered under some Redis key.
@@ -170,7 +208,7 @@ pub fn register_graph(
 /// **aborts** if it fails — mirroring C's `QueryCtx_AcquireWriteLock`, which re-opens
 /// the key under WRITE and raises a runtime exception when the key is empty, is not a
 /// graph, or holds a *different* value than the one the query started on (our
-/// `data_ptr` comparison is that third check).
+/// identity lookup is that third check).
 ///
 /// Aborting rather than committing-and-discarding is required, not just tidy: the
 /// write would still be replicated, and a replica's `GRAPH.EFFECT` handler *creates* a
@@ -181,39 +219,39 @@ pub fn register_graph(
 /// because every path that removes a key (`GRAPH.DELETE`, `FLUSHALL`, overwrite,
 /// expiry) runs inline on the main thread, which cannot execute a command callback
 /// while this query holds the GIL.
-///
-/// The scan compares `data_ptr` rather than looking the name up: `rename_graph`
-/// re-keys the registry without updating `Graph::name()`, so an O(1) by-name lookup
-/// would wrongly abort after a `RENAME`.
 pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
-    let target = arc.data_ptr() as usize;
-    GRAPH_REGISTRY
-        .lock()
-        .values()
-        .any(|registered| registered.data_ptr() as usize == target)
+    GRAPH_REGISTRY.lock().contains_key(&graph_id(arc))
 }
 
-/// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
-///
-/// `graph_free` only runs for the *overwritten destination* value, so without
-/// this the old name keeps a stale entry: the next `register_graph` under
-/// that name (e.g. a concurrent write query re-creating the key) displaces
-/// it and trips the invariant assert above.
-pub fn rename_graph(
-    old_name: &str,
-    new_name: &str,
+/// The database `arc` is registered in, if it is registered.
+pub fn registered_db(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<i32> {
+    GRAPH_REGISTRY.lock().get(&graph_id(arc)).map(|e| e.db)
+}
+
+/// Move the registry entry of the graph identified by `id` to key `name` of `db`.
+/// A no-op for a graph that is not registered.
+pub fn relocate_graph(
+    id: usize,
+    db: i32,
+    name: &str,
 ) {
-    let displaced = {
-        let mut reg = GRAPH_REGISTRY.lock();
-        reg.remove(old_name)
-            .and_then(|arc| reg.insert(new_name.to_string(), arc))
-    };
-    // The destination entry is normally already removed (overwriting the key
-    // ran `graph_free` synchronously), but under lazy free that removal is
-    // deferred, so we may displace it here. Drop off the main Redis thread
-    // (see `register_graph` for the rationale).
-    if let Some(displaced) = displaced {
-        std::thread::spawn(move || drop(displaced));
+    if let Some(e) = GRAPH_REGISTRY.lock().get_mut(&id) {
+        e.db = db;
+        name.clone_into(&mut e.name);
+    }
+}
+
+/// `SWAPDB a b`: every graph in `a` is now in `b`, and the other way round.
+pub fn swap_graph_dbs(
+    a: i32,
+    b: i32,
+) {
+    for e in GRAPH_REGISTRY.lock().values_mut() {
+        if e.db == a {
+            e.db = b;
+        } else if e.db == b {
+            e.db = a;
+        }
     }
 }
 
@@ -1781,19 +1819,12 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // ArcInner. Compare against the boxed Arc's `data_ptr()` so the
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-        let data_ptr = boxed.data_ptr() as usize;
-        let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
-            let mut reg = GRAPH_REGISTRY.lock();
-            #[allow(clippy::needless_collect)]
-            let keys: Vec<String> = reg
-                .iter()
-                .filter(|(_, arc)| arc.data_ptr() as usize == data_ptr)
-                .map(|(k, _)| k.clone())
-                .collect();
-            keys.into_iter().filter_map(|k| reg.remove(&k)).collect()
-        };
+        let removed = GRAPH_REGISTRY.lock().remove(&graph_id(&boxed));
         // Drop off the main Redis thread so Index::drop routes through the
-        // GIL-acquiring path (see register_graph for the rationale).
+        // GIL-acquiring path. Index::drop -> RediSearch_DropIndex queues a
+        // destroyCallback to RediSearch's GC thread pool when its timer can't be
+        // stopped synchronously; that callback asserts gc->stopped == 1 and aborts
+        // under the resulting race on the main thread.
         std::thread::spawn(move || {
             drop(boxed);
             drop(removed);

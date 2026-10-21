@@ -157,7 +157,7 @@ pub fn graph_copy(
     // Registered under the key it was written to: the registry is the module's index of
     // the *keyspace*, and `graph_rdb_save`, the virtual-key builder and the telemetry
     // flusher all address Redis by the name they find here.
-    register_graph(dest_name.to_string(), boxed);
+    register_graph(ctx, dest_name.to_string(), boxed);
 
     // Replicate via GRAPH.RESTORE so replicas receive the serialized graph data. The
     // full key bytes, not `graph_name`: C sends the truncated C string here and leaves

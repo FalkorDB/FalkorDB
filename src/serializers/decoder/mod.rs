@@ -43,6 +43,7 @@ pub enum LoadedKey {
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
+    db: i32,
     key_name: &str,
     cache_size: usize,
 ) -> Result<LoadedKey, String> {
@@ -75,10 +76,13 @@ pub fn rdb_load_graph(
         // name, so any other key holding a slice of it is a virtual key and
         // has to be deleted once the load ends.
         if key_name != hdr.graph_name {
-            decode_state.meta_keys.push(key_name.to_string());
+            decode_state.meta_keys.push((db, key_name.to_string()));
         }
 
-        let is_first_key = !decode_state.pending.contains_key(&hdr.graph_name);
+        // A graph's virtual keys are always in its own database, so the db
+        // tells apart two graphs of one name that the stream interleaves.
+        let graph_key = (db, hdr.graph_name.clone());
+        let is_first_key = !decode_state.pending.contains_key(&graph_key);
 
         if is_first_key {
             // First key: initialize the pending graph.
@@ -125,32 +129,29 @@ pub fn rdb_load_graph(
                 adj_matrix: VersionedMatrix::<bool>::new(0, 0),
                 lbls_matrix: VersionedMatrix::<bool>::new(0, 0),
             };
-            decode_state.pending.insert(hdr.graph_name.clone(), pg);
+            decode_state.pending.insert(graph_key.clone(), pg);
         } else {
             // Subsequent key: just decrement keys_remaining.
-            if let Some(pg) = decode_state.pending.get_mut(&hdr.graph_name) {
+            if let Some(pg) = decode_state.pending.get_mut(&graph_key) {
                 pg.keys_remaining -= 1;
             }
         }
 
         // Decode this key's payloads into the pending graph.
         {
-            let pg = decode_state
-                .pending
-                .get_mut(&hdr.graph_name)
-                .ok_or_else(|| {
-                    format!(
-                        "pending graph {} not found while loading multi-key RDB payload",
-                        hdr.graph_name
-                    )
-                })?;
+            let pg = decode_state.pending.get_mut(&graph_key).ok_or_else(|| {
+                format!(
+                    "pending graph {} not found while loading multi-key RDB payload",
+                    hdr.graph_name
+                )
+            })?;
             decode_payloads_into_pending(&mut r, &payloads, pg, &hdr)?;
         }
 
         // If all keys have been loaded, finalize immediately.
         // This avoids depending on aux_load ordering between module types.
         let should_finalize = {
-            let pg = decode_state.pending.get(&hdr.graph_name).ok_or_else(|| {
+            let pg = decode_state.pending.get(&graph_key).ok_or_else(|| {
                 format!(
                     "pending graph {} disappeared during multi-key RDB load",
                     hdr.graph_name
@@ -159,13 +160,15 @@ pub fn rdb_load_graph(
             pg.keys_remaining == 0
         };
         if should_finalize {
-            let graph_name = hdr.graph_name.clone();
-            let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
-                format!("pending graph {graph_name} not found at multi-key RDB finalization")
+            let pg = decode_state.pending.remove(&graph_key).ok_or_else(|| {
+                format!(
+                    "pending graph {} not found at multi-key RDB finalization",
+                    hdr.graph_name
+                )
             })?;
             let graph = finalize_pending_graph(pg);
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
-            decode_state.finalized.insert(graph_name, graph);
+            decode_state.finalized.insert(graph_key, graph);
         }
 
         return Ok(LoadedKey::Partial {
