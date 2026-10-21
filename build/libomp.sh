@@ -97,18 +97,36 @@ git clone \
     "${SRC_DIR}"
 
 cd "${SRC_DIR}"
-# The runtimes build pulls CMake modules and lit config from llvm/ as well.
-git sparse-checkout set --no-cone openmp cmake runtimes llvm/cmake llvm/utils third-party
 
-# Build through runtimes/: LLVM 23 removed openmp/'s standalone mode
-# ("The legacy standalone build mode has been removed"), and runtimes/ works
-# for earlier majors too. Per-target dirs off keeps libomp.a in ${PREFIX}/lib.
+# Two ways in, chosen by major:
+#   >= 23  runtimes/ -- LLVM 23 removed openmp/'s standalone mode ("The legacy
+#          standalone build mode has been removed"). The runtimes build pulls
+#          CMake modules and lit config from llvm/ as well. Per-target dirs off
+#          keeps libomp.a in ${PREFIX}/lib.
+#   <  23  openmp/ standalone. runtimes/ does NOT work here: before 22, openmp
+#          picks its header path by OPENMP_STANDALONE_BUILD, so under runtimes/
+#          it calls get_clang_resource_dir, which needs the PACKAGE_VERSION only
+#          a full LLVM build sets, and configure fails ("string sub-command
+#          REGEX, mode MATCH needs at least 5 arguments"). The per-OS artifact
+#          images build with their distro clang (rhel9: 21, amazonlinux2023: 19)
+#          and land here.
+LLVM_MAJOR="${LLVMORG_VERSION%%.*}"
+if [ "${LLVM_MAJOR}" -ge 23 ]; then
+    git sparse-checkout set --no-cone openmp cmake runtimes llvm/cmake llvm/utils third-party
+    CMAKE_SOURCE_ARGS=(
+        -S runtimes
+        -DLLVM_ENABLE_RUNTIMES=openmp
+        -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
+        -DLLVM_INCLUDE_TESTS=OFF
+    )
+else
+    git sparse-checkout set --no-cone openmp cmake runtimes
+    CMAKE_SOURCE_ARGS=(-S openmp)
+fi
+
 cmake \
-    -S runtimes \
+    "${CMAKE_SOURCE_ARGS[@]}" \
     -B "${BUILD_DIR}" \
-    -DLLVM_ENABLE_RUNTIMES=openmp \
-    -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
-    -DLLVM_INCLUDE_TESTS=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     -DLIBOMP_ENABLE_SHARED=OFF \
     -DLIBOMP_OMPD_SUPPORT=OFF \
