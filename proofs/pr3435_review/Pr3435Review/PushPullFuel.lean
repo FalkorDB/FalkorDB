@@ -1,14 +1,14 @@
 import Pr3435Review.PushPull
-/-! # Claim 2, continued: the loop's exits, its fuel, and `k: i32`
+/-! # Claim 2, continued: the loop's exits, its fuel, and `k: i64`
 
 * `step_visited` — each level that does not end the loop adds `nq ≥ 1` new
   nodes, so `k` never exceeds the number of visited nodes, which never exceeds `n`.
 * `step_inv` — one full iteration (step, `nq != 0`, assign, `k += 1`) keeps `Inv`.
 * `run_fuel_stable` — the fuel is never observed: Rust's unbounded `loop` is `run`
   with any fuel `≥ n`.
-* `overflow_needs_huge_graph` — `k += 1` (:1144) can only wrap/panic when a node is
-  at shortest-path distance `2^31 - 1` from the source, so `n ≥ 2^31` nodes and a
-  shortest path of `2^31 - 1` edges.
+* `k_increment_no_overflow` — `k += 1` (a76e66420 :1159, `k: i64`) is exact:
+  `k + 1 ≤ n ≤ 2^60`. History: `pre_a76e664_overflow_needs_huge_graph` (the
+  `i32` counter of 28ab35368 could wrap only on a `2^31 - 1`-edge shortest path).
 * `exit_conditions` — the loop's two exits are exactly `k > max_level`
   (with `max_level ≥ 0`) and an empty next level.
 -/
@@ -39,18 +39,19 @@ theorem step_visited {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat
 /-- One non-final iteration keeps the invariant (needs `n < 2^31` for `k`). -/
 theorem step_inv {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) {A AT : Pat}
     (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) {ml : Int} {K : Nat} {s : St H} (hI : Inv n A src ml K s)
+    (hn : n ≤ GRB_DIM_MAX) {ml : Int} {K : Nat} {s : St H} (hI : Inv n A src ml K s)
     (hx : ¬ (0 ≤ ml ∧ ml < s.k)) (push : Bool) {q' : BVec}
     (hq : (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = some q')
     (h0 : g.nvals q' ≠ 0) {v' : LVec} (ha : g.assign s.v q' s.k = some v') :
-    Inv n A src ml (K + 1) ⟨v', q', g.nvals q', s.nq, push, wrap32 (s.k + 1), hr.upd s.h (g.nvals q')⟩ := by
+    Inv n A src ml (K + 1) ⟨v', q', g.nvals q', s.nq, push, wrap64 (s.k + 1), hr.upd s.h (g.nvals q')⟩ := by
+  unfold GRB_DIM_MAX at hn
   obtain ⟨hvis, hfr⟩ := step_visited hg hT hb hs hI push hq h0 ha
   have hv' := hg.assign _ _ _ _ ha
   have hk := hI.k_eq
   have hKn : K + 1 ≤ n := Nat.le_trans hvis (count_le _ _)
   refine ⟨?_, by omega, ?_, ?_, hvis, ?_⟩
-  · show wrap32 (s.k + 1) = ((K + 1 : Nat) : Int)
-    rw [hk, wrap32_id (by omega) (by omega)]; omega
+  · show wrap64 (s.k + 1) = ((K + 1 : Nat) : Int)
+    rw [hk, wrap64_id (by omega) (by omega)]; omega
   · intro j l
     show v' j = some l ↔ _
     rw [hv' j]
@@ -82,7 +83,7 @@ theorem step_inv {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) {
 every fuel `≥ n` gives the result of Rust's unbounded `loop`. -/
 theorem run_fuel_stable {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) {A AT : Pat}
     (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) :
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) :
     ∀ (f : Nat) (s : St H) (K : Nat), Inv n A src ml K s → n + 1 ≤ f + K →
       run g hr A AT ml (f + 1) s = run g hr A AT ml f s := by
   intro f
@@ -115,7 +116,7 @@ theorem run_fuel_stable {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : He
 /-- Every fuel `≥ n` gives the same answer as `bfsLevelsPushPull` (fuel `n + 1`). -/
 theorem run_fuel_any {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) (h0 : H)
     {A AT : Pat} (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) :
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) :
     ∀ e, run g hr A AT ml (n + e) (init n src h0) = bfsLevelsPushPull g hr h0 A AT n src ml := by
   intro e
   induction e with
@@ -125,11 +126,29 @@ theorem run_fuel_any {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur 
     rw [← ih]
     exact run_fuel_stable hg hr hT hb hs hn ml (n + e) _ 1 (init_inv hs A ml h0) (by omega)
 
-/-- **When can `k: i32` overflow?** At the `k += 1` (:1144) of a level `K` that
-did not end the loop, there is a node at shortest-path distance exactly `K` and
-at least `K + 1` nodes. So `k = i32::MAX` there needs a node at distance
-`2^31 - 1`, i.e. `n ≥ 2^31` nodes on one shortest path. No `n < 2^31` premise. -/
-theorem overflow_needs_huge_graph {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat}
+/-- **`k: i64` never overflows** (a76e66420 :1126, :1159). At the `k += 1` of a
+level `K` that did not end the loop there are at least `K + 1` visited nodes, so
+`K + 1 ≤ n ≤ 2^60 < i64::MAX`: the increment is exact, in debug and release. -/
+theorem k_increment_no_overflow {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat}
+    (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
+    (hn : n ≤ GRB_DIM_MAX) {ml : Int} {K : Nat} {s : St H} (hI : Inv n A src ml K s) (push : Bool)
+    {q' : BVec} (hq : (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = some q')
+    (h0 : g.nvals q' ≠ 0) {v' : LVec} (ha : g.assign s.v q' s.k = some v') :
+    s.k + 1 < 9223372036854775808 ∧ wrap64 (s.k + 1) = s.k + 1 := by
+  obtain ⟨hvis, _⟩ := step_visited hg hT hb hs hI push hq h0 ha
+  have hKn : K + 1 ≤ n := Nat.le_trans hvis (count_le _ _)
+  have hk := hI.k_eq
+  have h1 : s.k + 1 < 9223372036854775808 := by rw [hk]; unfold GRB_DIM_MAX at hn; omega
+  exact ⟨h1, wrap64_id (by rw [hk]; omega) h1⟩
+
+/-- **Historical (pre-a76e664, 28ab35368 :1111 `k: i32`).** At the `k += 1` of a
+level `K` that did not end the loop, there is a node at shortest-path distance
+exactly `K` and at least `K + 1` nodes. So `k = i32::MAX` there needed a node at
+distance `2^31 - 1` (`n ≥ 2^31` on one shortest path); then a release build
+wrapped `k` negative and stopped honouring `max_level`. Fixed by a76e66420 (`k:
+i64`, INT64 levels): `k_increment_no_overflow`. The statement itself is
+type-independent and still true. -/
+theorem pre_a76e664_overflow_needs_huge_graph {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) {A AT : Pat}
     (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
     {ml : Int} {K : Nat} {s : St H} (hI : Inv n A src ml K s) (push : Bool) {q' : BVec}
     (hq : (if push then g.vxm s.q s.v A else g.mxv s.q s.v AT) = some q')

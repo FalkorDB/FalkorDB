@@ -1,7 +1,7 @@
 import VersionedMatrix
 /-! # Claim 1: `Tensor::clean_fwd` / `Tensor::clean_bwd` (PR #3435)
 
-PR branch `perf/bfs-pushpull` 28ab35368, `graph/src/graph/graphblas/tensor.rs`:
+PR branch `perf/bfs-pushpull` a76e66420 (tensor.rs unchanged since 28ab35368), `graph/src/graph/graphblas/tensor.rs`:
 
 | here | there |
 | --- | --- |

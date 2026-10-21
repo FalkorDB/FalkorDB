@@ -32,13 +32,17 @@ def alternate : Heur Unit := ⟨fun _ _ _ p => !p, fun _ _ => ()⟩
 
 /-- LAGraph's spec is met by the push/pull loop itself (so `LagSpec` is consistent). -/
 def lagModel (n : Nat) : Pat → Nat → Int → Bool → Option LVec := fun A src ml _ =>
-  match bfsLevelsPushPull (gbModel n) pushAlways () A (fun j i => A i j) n src ml with
-  | .ok w => some w
-  | .error _ => none
+  if src < n then
+    match bfsLevelsPushPull (gbModel n) pushAlways () A (fun j i => A i j) n src ml with
+    | .ok w => some w
+    | .error _ => none
+  else none
 
-theorem lagModel_spec (n : Nat) (hn : n < 2147483648) : LagSpec n (lagModel n) where
+theorem lagModel_spec (n : Nat) (hn : n ≤ GRB_DIM_MAX) : LagSpec n (lagModel n) where
+  src_range A src ml me hs := by simp [lagModel]; omega
   level A src ml me w hb hs h := by
     unfold lagModel at h
+    rw [if_pos hs] at h
     generalize hr : bfsLevelsPushPull (gbModel n) pushAlways () A (fun j i => A i j) n src ml = r at h
     cases r with
     | ok w' =>

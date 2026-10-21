@@ -1,24 +1,23 @@
 import Pr3435Review.Dist
 /-! # Claim 2: `bfs_levels_push_pull` computes BFS levels, for every push/pull choice
 
-PR branch 28ab35368, `graph/src/runtime/functions/algo_procedures.rs`:
+PR branch a76e66420 (28ab35368 + the review fix), `graph/src/runtime/functions/algo_procedures.rs`:
 
 | here | there |
 | --- | --- |
-| `GB`, `GBSpec` | the GraphBLAS calls `GrB_vxm` :1126, `GrB_mxv` :1129, `GrB_Vector_nvals` :1135, `GrB_Vector_assign_INT32` :1140 (FFI, hypothesis structure; C API spec below) |
-| `Heur`        | the switching heuristic :1101-1123 — `avg_degree`, `edges_unexplored`, `alpha`/`beta`, `frontier_edges`; **arbitrary** here |
+| `GB`, `GBSpec` | the GraphBLAS calls `GrB_vxm` :1141, `GrB_mxv` :1144, `GrB_Vector_nvals` :1150, `GrB_Vector_assign_INT64` :1155 (FFI, hypothesis structure; C API spec below) |
+| `Heur`        | the switching heuristic :1116-1138 — `avg_degree`, `edges_unexplored`, `alpha`/`beta`, `frontier_edges`; **arbitrary** here |
 | `rustHeur`    | that heuristic over an abstract float type (`Fl`), showing it is one instance |
-| `init`        | :1087-1099 — `GrB_Vector_new` ×2 (:1089-1090), `v(src) = 0`, `q(src) = true` (:1098-1099, return codes ignored) |
-| `run`         | the `loop` :1112-1145 (exit `k > max_level` :1113, step :1124-1133, `last_nq`/`nvals` :1134-1135, exit `nq == 0` :1136, `edges_unexplored -=` :1139, assign :1140-1143, `k += 1` :1144) |
-| `wrap32`      | `k += 1` on `k: i32` in a release build (wrapping; a debug build panics instead) |
-| `bfsLevelsPushPull` | `bfs_levels_push_pull` :1066-1148 |
+| `init`        | the loop's start state after :1100-1114 succeeded (`v(src) = 0`, `q(src) = true`); the allocation / source-check prologue is `Alloc.bfsFull` |
+| `run`         | the `loop` :1127-1160 (exit `k > max_level` :1128, step :1139-1148, `last_nq`/`nvals` :1149-1150, exit `nq == 0` :1151, `edges_unexplored -=` :1154, assign :1155-1158, `k += 1` :1159) |
+| `wrap64`      | `k += 1` on `k: i64` (:1126, :1159) in a release build (wrapping; debug panics); never wraps (`step_inv` needs only `n ≤ 2^60`) |
+| `bfsLevelsPushPull` | the loop from `init` (fuel `n + 1`); the whole fn `bfs_levels_push_pull` :1066-1163 is `Alloc.bfsFull` |
 
-`GxB_Vector_Option_set_INT32(.., GxB_SPARSITY_CONTROL, ..)` (:1097, :1125, :1128)
+`GxB_Vector_Option_set_INT32(.., GxB_SPARSITY_CONTROL, ..)` (:1107, :1140, :1143)
 is a storage hint and does not change a vector's contents (SuiteSparse user
 guide, "sparsity control"); it is not modelled. A failing step or assign returns
-`Err` after freeing `v` and `q` (:1131-1133, :1141-1143); `run` returns the same
-`Err` string. (A failing `GrB_Vector_new` for `q` at :1090 returns through `?` without
-freeing `v` — a leak on allocation failure only; not modelled.) The Rust `loop` has no fuel; `run` takes fuel and
+`Err` through `fail` (:1089-1097, frees each non-null vector) (:1146-1148, :1156-1158); `run` returns the same
+`Err` string (allocation and cleanup: `Alloc.lean`). The Rust `loop` has no fuel; `run` takes fuel and
 `run_fuel_stable` / `run_fuel_any` (`PushPullFuel.lean`) show any fuel `≥ n` is never observed.
 
 ## FFI spec assumed (`GBSpec`, C API 2.0 / SuiteSparse:GraphBLAS user guide)
@@ -28,7 +27,7 @@ freeing `v` — a leak on allocation failure only; not modelled.) The Rust `loop
   (PAIR ignores values, so element types of `A`/`q` are irrelevant).
 * `GrB_mxv(q, v, NULL, GxB_ANY_PAIR_BOOL, AT, q, GrB_DESC_RSC)`: pattern
   `{ j < n | v(j) absent ∧ ∃ i, AT(j,i) ∧ q(i) }`.
-* `GrB_Vector_assign_INT32(v, q, NULL, k, GrB_ALL, n, GrB_DESC_S)`: `v<struct(q)> = k`,
+* `GrB_Vector_assign_INT64(v, q, NULL, k, GrB_ALL, n, GrB_DESC_S)`: `v<struct(q)> = k`,
   no replace: `v'(j) = k` if `q(j)` is stored, else `v(j)`.
 * `GrB_Vector_nvals(&nq, q)`: the number of stored entries.
 * Input aliasing (`q` as both output and input) is allowed by the C API.
@@ -79,7 +78,7 @@ structure Fl where
   sub : T → T → T
   lt : T → T → Bool
 
-/-- The Rust heuristic (:1101-1123, :1139) over any float model: `h` is
+/-- The Rust heuristic (:1116-1138, :1154) over any float model: `h` is
 `edges_unexplored`. -/
 def rustHeur (F : Fl) (n nvals : Nat) : Heur F.T :=
   let avg := F.div (F.ofNat nvals) (F.ofNat (max n 1))
@@ -95,11 +94,15 @@ def rustHeur (F : Fl) (n nvals : Nat) : Heur F.T :=
 
 /-! ## The loop -/
 
-/-- Release-build `i32` addition (two's-complement wrap). -/
-def wrap32 (x : Int) : Int := (x + 2147483648) % 4294967296 - 2147483648
+/-- Release-build `i64` addition (two's-complement wrap). -/
+def wrap64 (x : Int) : Int := (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
 
-theorem wrap32_id {x : Int} (h1 : -2147483648 ≤ x) (h2 : x < 2147483648) : wrap32 x = x := by
-  unfold wrap32; omega
+theorem wrap64_id {x : Int} (h1 : -9223372036854775808 ≤ x) (h2 : x < 9223372036854775808) :
+    wrap64 x = x := by
+  unfold wrap64; omega
+
+/-- `GrB_INDEX_MAX + 1` = 2^60: the largest vector size `GrB_Vector_new` accepts. -/
+abbrev GRB_DIM_MAX : Nat := 1152921504606846976
 
 structure St (H : Type) where
   v : LVec
@@ -113,7 +116,7 @@ structure St (H : Type) where
 section
 variable {H : Type} (g : GB) (hr : Heur H) (A AT : Pat) (maxLevel : Int)
 
-/-- The `loop` (:1112-1145). -/
+/-- The `loop` (:1127-1160). -/
 def run : Nat → St H → Except String LVec
   | 0, _ => .error "fuel"
   | f + 1, s =>
@@ -126,18 +129,21 @@ def run : Nat → St H → Except String LVec
       if nq' = 0 then .ok s.v else
       match g.assign s.v q' s.k with
       | none => .error "BFS level assign failed"
-      | some v' => run f ⟨v', q', nq', s.nq, push, wrap32 (s.k + 1), hr.upd s.h nq'⟩
+      | some v' => run f ⟨v', q', nq', s.nq, push, wrap64 (s.k + 1), hr.upd s.h nq'⟩
 
 end
 
-/-- :1087-1099, with `src < n` (else `setElement` fails, its code is ignored, and
-both vectors stay empty). -/
+/-- The state after the two `setElement`s. At a76e66420 (:1110-1114) they are
+checked, so the loop only starts when `src < n`; the `src < n` conjunct keeps the
+pre-a76e664 behaviour (28ab35368 :1098-1099 ignored the codes, leaving both
+vectors empty for `src ≥ n`) for `pre_a76e664_pushPull_src_out_of_range`. -/
 def init {H : Type} (n src : Nat) (h0 : H) : St H :=
   ⟨fun j => if j = src ∧ src < n then some 0 else none,
    fun j => decide (j = src ∧ src < n), 1, 0, true, 1, h0⟩
 
-/-- `bfs_levels_push_pull(a, at, n, nvals, src, max_level)`; `h0` is the
-initial `edges_unexplored`. Fuel `n + 1` (any fuel `≥ n` gives the same, `run_fuel_stable`). -/
+/-- The loop of `bfs_levels_push_pull` from `init`; `h0` is the initial
+`edges_unexplored`. Fuel `n + 1` (any fuel `≥ n` gives the same, `run_fuel_stable`).
+At 28ab35368 this was the whole function after the (unchecked) prologue. -/
 def bfsLevelsPushPull {H : Type} (g : GB) (hr : Heur H) (h0 : H) (A AT : Pat)
     (n src : Nat) (maxLevel : Int) : Except String LVec :=
   run g hr A AT maxLevel (n + 1) (init n src h0)
@@ -213,9 +219,10 @@ enough fuel, `run` returns `Ok` only with the exact BFS levels, and never runs
 out of fuel — for **every** heuristic, hence every push/pull sequence. -/
 theorem run_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) {A AT : Pat}
     (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) :
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) :
     ∀ (f : Nat) (s : St H) (K : Nat), Inv n A src ml K s → n + 1 ≤ f + K →
       (∀ w, run g hr A AT ml f s = .ok w → Levels A src ml w) ∧ NoFuel (run g hr A AT ml f s) := by
+  unfold GRB_DIM_MAX at hn
   intro f
   induction f with
   | zero => intro s K hI hf; have := hI.k_le; omega
@@ -290,11 +297,11 @@ theorem run_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H
             have hvis : K + 1 ≤ count n (fun j => (v' j).isSome) := by
               have := hI.visited; omega
             have hKn : K + 1 ≤ n := Nat.le_trans hvis (count_le _ _)
-            have hI' : Inv n A src ml (K + 1) ⟨v', q', g.nvals q', s.nq, push, wrap32 (s.k + 1),
+            have hI' : Inv n A src ml (K + 1) ⟨v', q', g.nvals q', s.nq, push, wrap64 (s.k + 1),
                 hr.upd s.h (g.nvals q')⟩ := by
               refine ⟨?_, by omega, ?_, ?_, hvis, ?_⟩
-              · show wrap32 (s.k + 1) = ((K + 1 : Nat) : Int)
-                rw [hk, wrap32_id (by omega) (by omega)]; omega
+              · show wrap64 (s.k + 1) = ((K + 1 : Nat) : Int)
+                rw [hk, wrap64_id (by omega) (by omega)]; omega
               · intro j l
                 show v' j = some l ↔ _
                 rw [hv' j]
@@ -354,11 +361,11 @@ transpose), any source `src < n`, any `max_level` (`< 0` = unbounded), and
 **any heuristic** (so any sequence of push/pull choices), if every GraphBLAS
 call succeeds the result is `Ok w` with `w` exactly the BFS levels
 (`Levels`); otherwise it is one of the two GraphBLAS-failure errors. Requires
-`n < 2^31` so that `k : i32` and the INT32 level values never wrap
-(`overflow_needs_huge_graph` for why this is the only place `n` matters). -/
+`n ≤ 2^60` (`GRB_DIM_MAX`, which `GrB_Vector_new` enforces, so `Alloc.bfsFull`
+discharges it) so that `k : i64` never wraps (`k_increment_no_overflow`). -/
 theorem pushPull_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) (h0 : H)
     {A AT : Pat} (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) :
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) :
     (∀ w, bfsLevelsPushPull g hr h0 A AT n src ml = .ok w → Levels A src ml w) ∧
       NoFuel (bfsLevelsPushPull g hr h0 A AT n src ml) :=
   run_correct hg hr hT hb hs hn ml (n + 1) _ 1 (init_inv hs A ml h0) (by omega)
@@ -368,7 +375,7 @@ theorem pushPull_correct {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : H
 theorem pushPull_heuristic_irrelevant {H₁ H₂ : Type} {n : Nat} {g : GB} (hg : GBSpec n g)
     (hr₁ : Heur H₁) (hr₂ : Heur H₂) (h₁ : H₁) (h₂ : H₂)
     {A AT : Pat} (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) {w₁ w₂ : LVec}
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) {w₁ w₂ : LVec}
     (e₁ : bfsLevelsPushPull g hr₁ h₁ A AT n src ml = .ok w₁)
     (e₂ : bfsLevelsPushPull g hr₂ h₂ A AT n src ml = .ok w₂) : w₁ = w₂ := by
   have L₁ := (pushPull_correct hg hr₁ h₁ hT hb hs hn ml).1 w₁ e₁
@@ -384,7 +391,7 @@ theorem pushPull_heuristic_irrelevant {H₁ H₂ : Type} {n : Nat} {g : GB} (hg 
 /-- In particular the Rust heuristic, over any float model. -/
 theorem pushPull_correct_rust (F : Fl) (eu0 : F.T) (nvals : Nat) {n : Nat} {g : GB} (hg : GBSpec n g)
     {A AT : Pat} (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int) :
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int) :
     (∀ w, bfsLevelsPushPull g (rustHeur F n nvals) eu0 A AT n src ml = .ok w → Levels A src ml w) ∧
       NoFuel (bfsLevelsPushPull g (rustHeur F n nvals) eu0 A AT n src ml) :=
   pushPull_correct hg _ eu0 hT hb hs hn ml
@@ -392,7 +399,7 @@ theorem pushPull_correct_rust (F : Fl) (eu0 : F.T) (nvals : Nat) {n : Nat} {g : 
 /-- If every GraphBLAS call succeeds, the result is `Ok`. -/
 theorem pushPull_ok_of_total {H : Type} {n : Nat} {g : GB} (hg : GBSpec n g) (hr : Heur H) (h0 : H)
     {A AT : Pat} (hT : ∀ i j, AT j i = A i j) (hb : Bounded A n) {src : Nat} (hs : src < n)
-    (hn : n < 2147483648) (ml : Int)
+    (hn : n ≤ GRB_DIM_MAX) (ml : Int)
     (hok : ∀ r, bfsLevelsPushPull g hr h0 A AT n src ml ≠ .error r) :
     ∃ w, bfsLevelsPushPull g hr h0 A AT n src ml = .ok w ∧ Levels A src ml w := by
   rcases (pushPull_correct hg hr h0 hT hb hs hn ml).2 with ⟨w, hw⟩ | h | h
