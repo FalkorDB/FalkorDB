@@ -63,7 +63,7 @@
 //!           Var("b")
 //! ```
 
-use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, mem::discriminant, sync::Arc};
 
 use itertools::Itertools;
 use orx_tree::{Dfs, DynTree, NodeRef};
@@ -339,6 +339,61 @@ pub struct ShortestPathInfo {
     pub min_hops: u32,
     pub max_hops: Option<u32>,
     pub directed: bool,
+}
+
+impl<TVar: Clone> ExprIR<TVar> {
+    /// `a AND b AND …` over `conjuncts`, kept flat.
+    ///
+    /// AND is associative, so an operand that is itself an AND contributes
+    /// its operands in place: `and_of([a AND b, c])` is `AND(a, b, c)`, not
+    /// `AND(AND(a, b), c)`. Every pass that reads a filter one conjunct at a
+    /// time (index use, node-by-id seeks, filter push-down) then sees all of
+    /// them. Left-to-right order, and with it evaluation order and
+    /// short-circuiting, is unchanged.
+    ///
+    /// One operand is returned as it is. No operands give `true`, the
+    /// identity of AND and what an empty `And` evaluates to; callers that
+    /// would rather drop an empty filter check for that first.
+    pub fn and_of(conjuncts: impl IntoIterator<Item = DynTree<Self>>) -> DynTree<Self> {
+        Self::flat(Self::And, conjuncts, true)
+    }
+
+    /// `a OR b OR …` over `disjuncts`, kept flat: the OR counterpart of
+    /// [`Self::and_of`]. No operands give `false`, the identity of OR.
+    pub fn or_of(disjuncts: impl IntoIterator<Item = DynTree<Self>>) -> DynTree<Self> {
+        Self::flat(Self::Or, disjuncts, false)
+    }
+
+    /// `op` over `operands`, splicing in the operands of any operand whose
+    /// root is `op` itself. Only AND into AND and OR into OR: merging across
+    /// operators would change the meaning, and XOR and NOT are left alone.
+    fn flat(
+        op: Self,
+        operands: impl IntoIterator<Item = DynTree<Self>>,
+        identity: bool,
+    ) -> DynTree<Self> {
+        debug_assert!(matches!(op, Self::And | Self::Or));
+        let kind = discriminant(&op);
+        let is_op = |e: &Self| discriminant(e) == kind;
+        let mut operands = operands.into_iter().collect::<Vec<_>>();
+        if operands.len() == 1 && !is_op(operands[0].root().data()) {
+            return operands.pop().unwrap();
+        }
+        let mut tree = DynTree::new(op);
+        let mut root = tree.root_mut();
+        for operand in operands {
+            let splice = is_op(operand.root().data());
+            root.push_child_tree(operand);
+            if splice {
+                root.child_mut(root.num_children() - 1).take_out();
+            }
+        }
+        match tree.root().num_children() {
+            0 => DynTree::new(Self::Constant(Value::Bool(identity))),
+            1 => tree.root().child(0).clone_as_tree(),
+            _ => tree,
+        }
+    }
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -1412,3 +1467,98 @@ pub type RawQueryIR = QueryIR<Arc<String>>;
 
 /// Type alias for bound query IR (variables have resolved IDs and types).
 pub type BoundQueryIR = QueryIR<Variable>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use orx_tree::{DynTree, NodeRef};
+
+    use super::ExprIR;
+    use crate::{runtime::value::Value, tree};
+
+    type Expr = DynTree<ExprIR<Arc<String>>>;
+
+    fn var(name: &str) -> Expr {
+        tree!(ExprIR::Variable(Arc::new(name.to_string())))
+    }
+
+    fn op(
+        data: ExprIR<Arc<String>>,
+        children: Vec<Expr>,
+    ) -> Expr {
+        tree!(data; children)
+    }
+
+    fn show(e: &Expr) -> String {
+        let root = e.root();
+        let children: Vec<String> = root.children().map(|c| show(&c.clone_as_tree())).collect();
+        if children.is_empty() {
+            format!("{}", root.data())
+        } else {
+            format!("{}({})", root.data(), children.join(", "))
+        }
+    }
+
+    #[test]
+    fn nested_and_is_flattened_in_order() {
+        let ab = op(ExprIR::And, vec![var("a"), var("b")]);
+        let de = op(ExprIR::And, vec![var("d"), var("e")]);
+        let flat = op(
+            ExprIR::And,
+            vec![var("a"), var("b"), var("c"), var("d"), var("e")],
+        );
+        assert_eq!(show(&ExprIR::and_of([ab, var("c"), de])), show(&flat));
+    }
+
+    #[test]
+    fn nested_or_is_flattened() {
+        let ab = op(ExprIR::Or, vec![var("a"), var("b")]);
+        let flat = op(ExprIR::Or, vec![var("a"), var("b"), var("c")]);
+        assert_eq!(show(&ExprIR::or_of([ab, var("c")])), show(&flat));
+    }
+
+    #[test]
+    fn different_operators_are_not_merged() {
+        let a_or_b = op(ExprIR::Or, vec![var("a"), var("b")]);
+        let a_and_b = op(ExprIR::And, vec![var("a"), var("b")]);
+        let a_xor_b = op(ExprIR::Xor, vec![var("a"), var("b")]);
+        let not_and = op(ExprIR::Not, vec![a_and_b.clone()]);
+
+        let and = ExprIR::and_of([a_or_b.clone(), a_xor_b.clone(), not_and.clone(), var("c")]);
+        let expected = op(
+            ExprIR::And,
+            vec![a_or_b.clone(), a_xor_b.clone(), not_and, var("c")],
+        );
+        assert_eq!(show(&and), show(&expected));
+
+        let or = ExprIR::or_of([a_and_b.clone(), a_xor_b, var("c")]);
+        assert_eq!(root_children(&or), 3);
+        assert!(matches!(or.root().child(0).data(), ExprIR::And));
+    }
+
+    #[test]
+    fn single_operand_collapses() {
+        assert_eq!(show(&ExprIR::and_of([var("a")])), "a");
+        assert_eq!(show(&ExprIR::or_of([var("a")])), "a");
+        // A lone operand of the same operator is returned as is, not wrapped.
+        let ab = op(ExprIR::And, vec![var("a"), var("b")]);
+        assert_eq!(show(&ExprIR::and_of([ab.clone()])), show(&ab));
+    }
+
+    #[test]
+    fn no_operands_give_the_identity() {
+        assert!(matches!(
+            ExprIR::<Arc<String>>::and_of([]).root().data(),
+            ExprIR::Constant(Value::Bool(true))
+        ));
+        assert!(matches!(
+            ExprIR::<Arc<String>>::or_of([]).root().data(),
+            ExprIR::Constant(Value::Bool(false))
+        ));
+    }
+
+    fn root_children(e: &Expr) -> usize {
+        e.root().num_children()
+    }
+}

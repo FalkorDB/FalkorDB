@@ -49,6 +49,45 @@ use crate::graph::graph::Graph;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::{Point, Value};
 
+/// The deepest a value may nest when it crosses into or out of a UDF: `[]` and
+/// `{}` are depth 1, `[[]]` is depth 2.
+///
+/// Both conversions recurse once per level, and each level holds QuickJS
+/// handles and an `rquickjs` frame, so a level here costs far more stack than
+/// it does anywhere else in the engine. A UDF can build an arbitrarily deep
+/// array or object in a loop (or one that contains itself), so without a bound
+/// the conversion exhausts the stack of the query thread and aborts the
+/// server. 1,024 is far beyond any nesting real data uses.
+///
+/// The bound alone does not fit every build in a 2 MiB worker stack: a level
+/// costs about 0.9 KB on a release build but about 6 KB under ASAN, where
+/// 1,024 levels overflow. So each level also runs through [`with_stack`],
+/// which moves onto a fresh heap-allocated stack segment when the current one
+/// runs low.
+pub const MAX_UDF_VALUE_NESTING: usize = 1024;
+
+/// Stack that must remain before a conversion level runs on the current
+/// stack, with room for several sanitizer-sized levels.
+const STACK_RED_ZONE: usize = 128 * 1024;
+
+/// Size of each stack segment [`with_stack`] allocates when the current one
+/// runs low.
+const STACK_SEGMENT: usize = 1024 * 1024;
+
+/// Runs one conversion level, first switching to a new stack segment if less
+/// than [`STACK_RED_ZONE`] of the current one is left. The check is a
+/// stack-pointer comparison; a segment is only allocated by a deep value.
+fn with_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
+
+/// The error a conversion returns for a value nested past
+/// [`MAX_UDF_VALUE_NESTING`].
+#[must_use]
+pub fn udf_nesting_error() -> String {
+    format!("UDF value nesting exceeds the maximum depth of {MAX_UDF_VALUE_NESTING}")
+}
+
 /// Convert a FalkorDB Value to a JavaScript value.
 ///
 /// `runtime`, when present, resolves relationship endpoints/type/attributes
@@ -60,6 +99,34 @@ pub fn value_to_js<'js>(
     value: &Value,
     graph: &Arc<AtomicRefCell<Graph>>,
     runtime: Option<&Runtime<'_>>,
+) -> Result<JsValue<'js>, String> {
+    value_to_js_at(ctx, value, graph, runtime, 0)
+}
+
+/// [`value_to_js`] for a value inside `depth` enclosing lists or maps.
+///
+/// The conversion recurses once per level, so a list or map past
+/// [`MAX_UDF_VALUE_NESTING`] is an error rather than a stack overflow.
+fn value_to_js_at<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value,
+    graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
+    depth: usize,
+) -> Result<JsValue<'js>, String> {
+    if matches!(value, Value::List(_) | Value::Map(_)) && depth >= MAX_UDF_VALUE_NESTING {
+        return Err(udf_nesting_error());
+    }
+    with_stack(|| value_to_js_level(ctx, value, graph, runtime, depth))
+}
+
+/// The body of [`value_to_js_at`], run on a stack with room for it.
+fn value_to_js_level<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value,
+    graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
+    depth: usize,
 ) -> Result<JsValue<'js>, String> {
     match value {
         Value::Null => Ok(JsValue::new_null(ctx.clone())),
@@ -90,7 +157,7 @@ pub fn value_to_js<'js>(
             let arr =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array creation error: {e}"))?;
             for (i, item) in items.iter().enumerate() {
-                let js_val = value_to_js(ctx, item, graph, runtime)?;
+                let js_val = value_to_js_at(ctx, item, graph, runtime, depth + 1)?;
                 arr.set(i, js_val)
                     .map_err(|e| format!("JS array set error: {e}"))?;
             }
@@ -100,7 +167,7 @@ pub fn value_to_js<'js>(
             let obj =
                 Object::new(ctx.clone()).map_err(|e| format!("JS object creation error: {e}"))?;
             for (key, val) in map.iter() {
-                let js_val = value_to_js(ctx, val, graph, runtime)?;
+                let js_val = value_to_js_at(ctx, val, graph, runtime, depth + 1)?;
                 // Escape keys that start with "__falkor_" to avoid collision
                 // with internal metadata properties.
                 let js_key = if key.starts_with("__falkor_") {
@@ -183,6 +250,27 @@ pub fn value_to_js<'js>(
 
 /// Convert a JavaScript value back to a FalkorDB Value.
 pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
+    js_to_value_at(val, 0)
+}
+
+/// [`js_to_value`] for a value inside `depth` enclosing arrays or objects.
+///
+/// A UDF can build an arbitrarily deep array or object in a loop (or one that
+/// contains itself), and the conversion recurses once per level. So an array
+/// or object past [`MAX_UDF_VALUE_NESTING`] is an error rather than a stack
+/// overflow; that is also the bound every other way into the engine holds.
+fn js_to_value_at(
+    val: JsValue<'_>,
+    depth: usize,
+) -> Result<Value, String> {
+    with_stack(|| js_to_value_level(val, depth))
+}
+
+/// The body of [`js_to_value_at`], run on a stack with room for it.
+fn js_to_value_level(
+    val: JsValue<'_>,
+    depth: usize,
+) -> Result<Value, String> {
     if val.is_null() || val.is_undefined() {
         return Ok(Value::Null);
     }
@@ -229,6 +317,9 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
 
     // Check for Array before object (arrays are objects too)
     if val.is_array() {
+        if depth >= MAX_UDF_VALUE_NESTING {
+            return Err(udf_nesting_error());
+        }
         let arr: Array = val.into_array().ok_or("Expected array")?;
         // Check for VecF32 marker
         if let Ok(ftype) = arr.as_object().get::<_, String>("__falkor_type")
@@ -246,7 +337,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
         let mut items = Vec::with_capacity(arr.len());
         for i in 0..arr.len() {
             let item: JsValue = arr.get(i).map_err(|e| format!("Array item error: {e}"))?;
-            items.push(js_to_value(item)?);
+            items.push(js_to_value_at(item, depth + 1)?);
         }
         return Ok(Value::List(Arc::new(items.into())));
     }
@@ -266,6 +357,10 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                     return Ok(Value::Relationship(id.into()));
                 }
                 "path" => {
+                    // Its members are converted recursively too.
+                    if depth >= MAX_UDF_VALUE_NESTING {
+                        return Err(udf_nesting_error());
+                    }
                     let nodes_arr: Array = obj.get("nodes").map_err(|e| format!("{e}"))?;
                     let rels_arr: Array = obj.get("relationships").map_err(|e| format!("{e}"))?;
                     let n_nodes = nodes_arr.len();
@@ -281,7 +376,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                     let mut path_values = Vec::with_capacity(n_nodes + n_rels);
                     for i in 0..n_nodes {
                         let node_val: JsValue = nodes_arr.get(i).map_err(|e| format!("{e}"))?;
-                        let node = js_to_value(node_val)?;
+                        let node = js_to_value_at(node_val, depth + 1)?;
                         if !matches!(node, Value::Node(_)) {
                             return Err(format!(
                                 "Invalid path: element at node position {i} is not a Node"
@@ -290,7 +385,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                         path_values.push(node);
                         if i < n_rels {
                             let rel_val: JsValue = rels_arr.get(i).map_err(|e| format!("{e}"))?;
-                            let rel = js_to_value(rel_val)?;
+                            let rel = js_to_value_at(rel_val, depth + 1)?;
                             if !matches!(rel, Value::Relationship(_)) {
                                 return Err(format!(
                                     "Invalid path: element at relationship position {i} is not a Relationship"
@@ -345,6 +440,9 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
         }
 
         // Plain object -> Map
+        if depth >= MAX_UDF_VALUE_NESTING {
+            return Err(udf_nesting_error());
+        }
         // Filter out internal __falkor_* metadata, but keep escaped user keys (__falkor_esc_*)
         let keys: Vec<String> = obj
             .keys::<String>()
@@ -362,10 +460,155 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
             } else {
                 key
             };
-            map.push((Arc::new(original_key), js_to_value(v)?));
+            map.push((Arc::new(original_key), js_to_value_at(v, depth + 1)?));
         }
         return Ok(Value::Map(Arc::new(map.into_iter().collect())));
     }
 
     Err("Unsupported JS value type".to_string())
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::{MAX_UDF_VALUE_NESTING, js_to_value, udf_nesting_error, value_to_js};
+    use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
+    use crate::runtime::value::Value;
+    use atomic_refcell::AtomicRefCell;
+    use rquickjs::{Context, Runtime, Value as JsValue};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    /// Run `f` in a fresh JS context on a thread with half the query pool's
+    /// 2 MiB stack. The conversions grow their stack as they go, so a pass
+    /// here does not depend on the build's frame sizes (ASAN's are ~6x).
+    fn in_js_on_worker_stack(f: impl FnOnce(&rquickjs::Ctx<'_>) + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || {
+                let rt = Runtime::new().unwrap();
+                let ctx = Context::full(&rt).unwrap();
+                ctx.with(|ctx| f(&ctx));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// `depth` nested single-element arrays, built by a loop in JS.
+    fn js_nested_array<'js>(
+        ctx: &rquickjs::Ctx<'js>,
+        depth: usize,
+    ) -> JsValue<'js> {
+        ctx.eval(format!(
+            "(() => {{ let a = 1; for (let i = 0; i < {depth}; i++) a = [a]; return a; }})()"
+        ))
+        .unwrap()
+    }
+
+    fn list_depth(mut v: &Value) -> usize {
+        let mut depth = 0;
+        while let Value::List(items) = v {
+            depth += 1;
+            v = &items[0];
+        }
+        depth
+    }
+
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    #[test]
+    fn js_array_at_the_cap_converts() {
+        in_js_on_worker_stack(|ctx| {
+            let v = js_to_value(js_nested_array(ctx, MAX_UDF_VALUE_NESTING)).unwrap();
+            assert_eq!(list_depth(&v), MAX_UDF_VALUE_NESTING);
+        });
+    }
+
+    #[test]
+    fn js_array_past_the_cap_is_an_error() {
+        in_js_on_worker_stack(|ctx| {
+            let r = js_to_value(js_nested_array(ctx, MAX_UDF_VALUE_NESTING + 1));
+            assert_eq!(r, Err(udf_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn the_advisory_array_is_an_error() {
+        // 300,000 levels, built in a loop: the UDF result that used to
+        // exhaust the stack in the conversion.
+        in_js_on_worker_stack(|ctx| {
+            let r = js_to_value(js_nested_array(ctx, 300_000));
+            assert_eq!(r, Err(udf_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn a_self_containing_array_is_an_error() {
+        in_js_on_worker_stack(|ctx| {
+            let a: JsValue = ctx
+                .eval("(() => { const a = []; a.push(a); return a; })()")
+                .unwrap();
+            assert_eq!(js_to_value(a), Err(udf_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn js_objects_count_toward_the_cap() {
+        in_js_on_worker_stack(|ctx| {
+            let deep = |depth: usize| -> JsValue<'_> {
+                ctx.eval(format!(
+                    "(() => {{ let o = 1; for (let i = 0; i < {depth}; i++) o = {{k: o}}; return o; }})()"
+                ))
+                .unwrap()
+            };
+            assert!(matches!(
+                js_to_value(deep(MAX_UDF_VALUE_NESTING)),
+                Ok(Value::Map(_))
+            ));
+            assert_eq!(
+                js_to_value(deep(MAX_UDF_VALUE_NESTING + 1)),
+                Err(udf_nesting_error())
+            );
+        });
+    }
+
+    #[test]
+    fn value_to_js_respects_the_cap() {
+        ensure_init();
+        in_js_on_worker_stack(|ctx| {
+            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            // At the cap: converts, and converts back to the same value.
+            let v = nested(MAX_UDF_VALUE_NESTING);
+            let js = value_to_js(ctx, &v, &g, None).unwrap();
+            // Compared by depth: `Value`'s `==` recurses too, and is not what
+            // is under test.
+            assert_eq!(list_depth(&js_to_value(js).unwrap()), MAX_UDF_VALUE_NESTING);
+            // Past it: an error, not a stack overflow.
+            assert_eq!(
+                value_to_js(ctx, &nested(MAX_UDF_VALUE_NESTING + 1), &g, None).map(|_| ()),
+                Err(udf_nesting_error())
+            );
+        });
+    }
+
+    #[test]
+    fn ordinary_nesting_round_trips() {
+        ensure_init();
+        in_js_on_worker_stack(|ctx| {
+            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            let v = Value::List(Arc::new(thin_vec![
+                Value::Int(1),
+                Value::List(Arc::new(thin_vec![Value::String(Arc::new("a".into()))])),
+                Value::List(Arc::new(thin_vec![])),
+            ]));
+            let js = value_to_js(ctx, &v, &g, None).unwrap();
+            assert_eq!(js_to_value(js).unwrap(), v);
+        });
+    }
 }

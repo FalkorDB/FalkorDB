@@ -790,7 +790,6 @@ mod tests {
     use crate::graph::graph::{Graph, NodeOpError};
     use crate::graph::graphblas::test_init::ensure_init;
     use roaring::RoaringTreemap;
-    use rustc_hash::FxHashMap;
 
     fn graph() -> Graph {
         ensure_init();
@@ -819,7 +818,8 @@ mod tests {
         g: &mut Graph,
         nodes: &RoaringTreemap,
     ) -> Result<(), NodeOpError> {
-        g.delete_nodes(nodes, &mut FxHashMap::default()).map(|_| ())
+        g.delete_nodes(nodes, &mut crate::index::index_docs::IndexDocs::default())
+            .map(|_| ())
     }
 
     #[test]
