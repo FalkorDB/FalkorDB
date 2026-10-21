@@ -184,8 +184,14 @@ impl Encode<19> for RoaringTreemap {
         offset: u64,
     ) {
         let mut buf = Vec::with_capacity(count as usize * 8);
-        for id in self.iter().skip(offset as usize).take(count as usize) {
-            buf.extend_from_slice(&id.to_le_bytes());
+        // Seek to the `offset`-th id instead of skipping up to it, so a save split
+        // across many virtual keys does not re-walk every earlier id per key.
+        if let Some(first) = self.select(offset) {
+            let mut iter = self.iter();
+            iter.advance_to(first);
+            for id in iter.take(count as usize) {
+                buf.extend_from_slice(&id.to_le_bytes());
+            }
         }
         w.write_buffer(&buf);
     }
