@@ -253,7 +253,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.1.0"
-source = "git+https://github.com/AviAvni/redismodule-rs?branch=master#91a39b5dfa08dcbd18626ec4906b2f474891a03a"
+source = "git+https://github.com/AviAvni/redismodule-rs?branch=fix%2Fresp-string-bytes#324aa42bd4c0f1b2953b79fae2f3bfb373aa1903"
 
 [[package]]
 name = "convert_case"
@@ -1191,7 +1191,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 [[package]]
 name = "redis-module"
 version = "99.99.99"
-source = "git+https://github.com/AviAvni/redismodule-rs?branch=master#91a39b5dfa08dcbd18626ec4906b2f474891a03a"
+source = "git+https://github.com/AviAvni/redismodule-rs?branch=fix%2Fresp-string-bytes#324aa42bd4c0f1b2953b79fae2f3bfb373aa1903"
 dependencies = [
  "backtrace",
  "bindgen",
@@ -1213,7 +1213,7 @@ dependencies = [
 [[package]]
 name = "redis-module-macros"
 version = "99.99.99"
-source = "git+https://github.com/AviAvni/redismodule-rs?branch=master#91a39b5dfa08dcbd18626ec4906b2f474891a03a"
+source = "git+https://github.com/AviAvni/redismodule-rs?branch=fix%2Fresp-string-bytes#324aa42bd4c0f1b2953b79fae2f3bfb373aa1903"
 dependencies = [
  "common",
  "proc-macro2",
@@ -1224,7 +1224,7 @@ dependencies = [
 [[package]]
 name = "redis-module-macros-internals"
 version = "99.99.99"
-source = "git+https://github.com/AviAvni/redismodule-rs?branch=master#91a39b5dfa08dcbd18626ec4906b2f474891a03a"
+source = "git+https://github.com/AviAvni/redismodule-rs?branch=fix%2Fresp-string-bytes#324aa42bd4c0f1b2953b79fae2f3bfb373aa1903"
 dependencies = [
  "lazy_static",
  "proc-macro2",
