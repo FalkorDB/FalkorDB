@@ -193,6 +193,8 @@ class testTemporalDate(FlowTestsBase):
             ("RETURN date({year: 2021, quarter: 1, dayOfQuarter: 200})", "dayOfQuarter"),
             ("RETURN date({year: 2020, quarter: 4294967297})", "quarter"),
             ("RETURN date('2020W1é')", "week"),
+            ("RETURN date({year: 2021, week: 1, dayOfWeek: 0})", "dayOfWeek"),
+            ("RETURN date({year: 2021, week: 1, dayOfWeek: 8})", "dayOfWeek"),
         ]
         for q, msg in queries:
             try:
@@ -206,6 +208,12 @@ class testTemporalDate(FlowTestsBase):
                       toString(date({year: 1984, quarter: 4, dayOfQuarter: 92}))"""
         res = self.graph.query(q)
         self.env.assertEqual(res.result_set[0], ['1984-12-31', '1984-12-31'])
+
+        # dayOfWeek is ISO 1..7 with 7 = Sunday, like the string form
+        q = """RETURN toString(date({year: 2021, week: 1, dayOfWeek: 7})),
+                      toString(date('2021-W01-7'))"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set[0], ['2021-01-10', '2021-01-10'])
 
     def test_date_compare(self):
         q = """WITH date({year: 1980, month: 12, day: 24}) AS x,
