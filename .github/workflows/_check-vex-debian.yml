@@ -1,7 +1,8 @@
 # Reusable workflow: check the Debian images against their VEX documents. For
-# falkordb and falkordb-server, on amd64 and arm64, scan the image with
+# falkordb and falkordb-server, on amd64 and arm64, fail on a HIGH or CRITICAL
+# vulnerability that has a fix, as PR CI does; then scan the image with
 # .vex/<repo>.openvex.json applied, export its filesystem, and run
-# `build/vex/vex.py check`. It fails when a HIGH or CRITICAL finding with no
+# `build/vex/vex.py check`. That fails when a HIGH or CRITICAL finding with no
 # fix has no statement, when a statement no longer matches the scan, or when
 # its evidence no longer holds (.vex/README.md, "What CI checks").
 #
@@ -74,20 +75,39 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The tag is resolved to a digest once: :edge moves on every merge, and
-      # the scan and the export must read the same image. The arm64 image is
-      # only read, never run, so no emulation is needed.
-      - name: Check the VEX against ${{ matrix.repo }}:${{ inputs.tag }} (${{ matrix.platform }})
-        env:
-          REPO: ${{ matrix.repo }}
-          PLATFORM: ${{ matrix.platform }}
+      # every step below must read the same image.
+      - name: Resolve ${{ matrix.repo }}:${{ inputs.tag }}
+        id: image
         run: |
           set -euo pipefail
           DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest)
-          REF="${IMAGE%:*}@${DIGEST}"
-          echo "Checking $IMAGE: $REF ($PLATFORM)"
+          echo "ref=${IMAGE%:*}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE is ${IMAGE%:*}@${DIGEST}"
+
+      # The same gate as _ci-pipeline.yml's security-scan, which never reads
+      # the VEX: vex.py check leaves findings that have a fix to it. A fix can
+      # appear after the merge queue scanned the image, and the release would
+      # otherwise retag it. This scan also fetches the database the next one uses.
+      - name: Fail on fixable HIGH/CRITICAL vulnerabilities (${{ matrix.platform }})
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          trivy image --quiet --platform "$PLATFORM" --severity CRITICAL,HIGH --ignore-unfixed \
+            --exit-code 1 "$REF"
+
+      # The arm64 image is only read, never run, so no emulation is needed.
+      - name: Check the VEX against ${{ matrix.repo }}:${{ inputs.tag }} (${{ matrix.platform }})
+        if: ${{ !cancelled() && steps.image.outcome == 'success' }}
+        env:
+          REPO: ${{ matrix.repo }}
+          REF: ${{ steps.image.outputs.ref }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
           python3 build/vex/vex.py generate --check
-          trivy image --quiet --platform "$PLATFORM" --vex ".vex/${REPO}.openvex.json" --show-suppressed \
-            --format json --output "$RUNNER_TEMP/trivy-vex.json" "$REF"
+          trivy image --quiet --skip-db-update --platform "$PLATFORM" --vex ".vex/${REPO}.openvex.json" \
+            --show-suppressed --format json --output "$RUNNER_TEMP/trivy-vex.json" "$REF"
           cid=$(docker create --platform "$PLATFORM" "$REF")
           docker export -o "$RUNNER_TEMP/fs.tar" "$cid"
           docker container rm "$cid" >/dev/null

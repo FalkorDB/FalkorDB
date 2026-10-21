@@ -386,7 +386,7 @@ class Analysis:
             if self.fs.is_file(real):
                 try:
                     e = parse_elf(self.fs.open(real))
-                except (UnreadableElf, struct.error, ValueError) as exc:
+                except (UnreadableElf, struct.error, ValueError, IndexError) as exc:
                     self.unreadable[real] = str(exc)
             self._elf[real] = e
         return self._elf[real]
@@ -454,6 +454,10 @@ class Analysis:
                 continue
             seen.add(real)
             e = self.elf(real)
+            if e is None and real in self.unreadable:
+                # Its DT_NEEDED would be lost, and not-run evidence pass unchecked.
+                missing.append(f"{real} is an ELF file this checker cannot read ({self.unreadable[real]})")
+                continue
             if e is None:
                 for prog in self.interpreters(real):
                     interp = self.fs.canonical(prog)
