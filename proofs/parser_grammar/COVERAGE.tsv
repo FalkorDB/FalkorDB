@@ -106,8 +106,8 @@ graph/src/parser/ast.rs	QueryGraph::connected_components	878	PROVEN	C.Components
 graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	C.Components dfs_step/dfsRels_step (Step invariant)
 graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	C.Fmt fmtSetItem_attr
 graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	C.Fmt fmtIR_return
-graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; call_skips_rest_validation (BUG)
-graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, match_last_after_call_accepted (BUG)
-graph/src/parser/ast.rs	validate_set_items	1384	PROVEN	C.IR vSetItems_np
-graph/src/parser/ast.rs	validate_inlined_properties	1403	PROVEN	C.IR vInlined (used in vClause_simple)
-graph/src/parser/ast.rs	QueryIR::return_column_names	1425	PROVEN	C.IR returnCols_last_return, colsL_append_return
+graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; match_last_after_call_rejected (#3297)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4; history pre3297_call_skips_rest_validation, pre3297_match_last_after_call_accepted)
+graph/src/parser/ast.rs	validate_set_items	1385	PROVEN	C.IR vSetItems_np
+graph/src/parser/ast.rs	validate_inlined_properties	1404	PROVEN	C.IR vInlined (used in vClause_simple)
+graph/src/parser/ast.rs	QueryIR::return_column_names	1426	PROVEN	C.IR returnCols_last_return, colsL_append_return

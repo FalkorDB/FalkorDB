@@ -7,7 +7,7 @@ contracts of the stores underneath (attribute/label name tables, attribute store
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
 Rust repros: `graph/tests/lean_runtime_core.rs`
 (`cargo test -p graph --test lean_runtime_core`); `bug_*` tests assert the correct
-answer and FAIL today, `agrees_*` pass.
+answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main b84473a7f.
 
 | here | there |
 | --- | --- |
@@ -16,9 +16,9 @@ answer and FAIL today, `agrees_*` pass.
 | `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
 | `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:514-561`) |
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:710`), `children_to_recurse` (`:652`) |
-| `Accessors.*` | entity accessors `runtime.rs:1371-1872` (attrs, memo, labels, degrees, endpoints/type) |
-| `Misc.*`      | `check_timeout` (`:468`), `check_mem_capacity` (`:478`), `map_to_index_options` (`:1881`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
-| (reused)      | `evaluate_id_filter` (`:1310`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`) |
+| `Accessors.*` | entity accessors `runtime.rs:1377-1878` (attrs, memo, labels, degrees, endpoints/type) |
+| `Misc.*`      | `check_timeout` (`:468`), `check_mem_capacity` (`:478`), `map_to_index_options` (`:1887`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
+| (reused)      | `evaluate_id_filter` (`:1309-1373`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 
 ## Proven (plain English)
 - Budget: the reference budget `need` (Skip adds, Project passes, anything else is a

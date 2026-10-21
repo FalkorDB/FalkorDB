@@ -25,7 +25,7 @@ inductive Call (F : Type) where
   | arrP                    -- RedisModule_ReplyWithArray(REDISMODULE_POSTPONED_LEN)
   | setLen (n : Nat)        -- RedisModule_ReplySetArrayLength(n)
   | dbl (x : F)             -- RedisModule_ReplyWithDouble
-  | err (s : String)        -- RedisModule_ReplyWithError
+  | err (s : String)        -- RedisModule_ReplyWithError (s = `ErrorText.legalResp` of the message, #3428)
 
 /-- Reply trees: `Compact.R` plus errors. -/
 inductive T where

@@ -149,6 +149,9 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    plans `NodeByLabelScan`/`AllNodeScan` as the root → **Rust server crash**
    ("called `Option::unwrap()` on a `None` value"); C: `Query cannot conclude with MATCH`.
    Lean `root_scan_has_no_parent`. Fix: `let Some(parent) = …parent() else { continue }`.
+   Since #3297 (main b84473a7f) validation rejects that query (planner_build
+   `call_then_match_rejected`), so this repro no longer reaches the `unwrap()`; the `unwrap()`
+   itself remains (hazard, no known query reaches it).
 
 ## Gap closed 2026-10-20 (#748, #997, #3352) — `PushPlan`
 

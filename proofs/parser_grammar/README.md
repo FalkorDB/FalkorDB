@@ -101,7 +101,7 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | #3036 | `pre3041_slice_bound_error_swallowed` (history) | A slice bound that failed to parse became `0` or `i64::MAX`: `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error); `[(1..2]` was accepted | Fixed by #3041: `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err` |
 | — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two). Same root cause as W2-binder-1 | **Open** |
 | — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
-| W4-plan-4 | `call_skips_rest_validation`, `match_last_after_call_accepted` | Nothing after a procedure CALL is validated: `… MERGE ()-[:R\|S]->()` creates an edge, `… UNWIND [1] AS x` is accepted; C rejects all | **Open**; the header says `CALL db.labels() YIELD label MATCH (n)` crashes the server, FINDINGS says it no longer crashes on current builds but the `unwrap()` remains |
+| W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected`; history `pre3297_call_skips_rest_validation`, `pre3297_match_last_after_call_accepted` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
 | W4-parse-1 | `anon_name_collides` | Anonymous entities are named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Open** |
 | W4-parse-2 | `create_named_path_drops_dup_rel` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` creates 1 relationship (C: "already declared"); since #2829 `RETURN p, q` also returns an inconsistent path | **Open** |
 | W4-parse-3 | `merge_dup_rel_dropped` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` creates 1 relationship (C: error) | **Open** |
@@ -170,7 +170,7 @@ Every function listed is PROVEN. For the functions involved in open bugs (for ex
 - The step budget (`fuel`) is the model's. It is not proven that more fuel never changes a result, so parsers and `connected_components` are proven partially correct: nothing is claimed when fuel runs out.
 - Relationship types go through a `HashSet`; the model keeps first-occurrence order, and only membership is observable.
 - Identifier length limits, error messages and error positions are not modelled.
-- The header cites `cypher.rs` line numbers from main at `737dfb5da`; the theorems are re-checked against current main by `lean_ci.sh`, but the line numbers may have drifted.
+- The header cites `cypher.rs` line numbers from main at `737dfb5da` (the `ast.rs` CALL arm at `b84473a7f`, after #3297); the theorems are re-checked against current main by `lean_ci.sh`, but the line numbers may have drifted.
 
 ## Build and check
 

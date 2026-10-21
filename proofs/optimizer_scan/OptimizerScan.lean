@@ -7,7 +7,7 @@ work to (`Runtime::evaluate_id_filter`, `NodeByIndexScanOp`, `Index::build_query
 
 Build: `lake build` (Lean 4.35, core only). No `sorry`, `admit`, `axiom`, `native_decide`;
 `utilize_sound` and `seek_sound` depend only on `propext`, `Quot.sound`, `Classical.choice`.
-64 theorems, 34 `decide`d examples (counterexamples and sanity checks).
+70 theorems, 35 `decide`d examples (counterexamples and sanity checks).
 Coverage per Rust function: `COVERAGE.tsv`. Rust repros: `graph/tests/lean_optimizer_scan.rs`
 (`cargo test -p graph --test lean_optimizer_scan`; `bug_*` tests FAIL today by design).
 Index repros need RediSearch, so they run live: `venv/bin/python proofs/optimizer_scan/repro.py`
@@ -23,8 +23,9 @@ comparison (only `true` keeps a row).
 | Lean | Rust |
 | --- | --- |
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
-| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1367` (`id as u64` at 1322) |
-| `IdSeek.maxNodeId`, `seek` | `graph/graph.rs:1624` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
+| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1363` (`id as u64` at 1322) |
+| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1364-1373` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
+| `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1624` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-287` |
@@ -43,7 +44,7 @@ Id seeks (`IdSeek.lean`):
 - `step_none`, `step_some`: each `evaluate_id_filter` arm keeps exactly the ids of the running range that satisfy it.
 - `step_nonempty`: the running `min ≤ max` invariant holds, so `insert_range(min..=max)` is never inverted.
 - `fold_none`, `fold_some`, `go_eq_fold`, `asU64_of_small`: the whole fold is exact for operands in `[0, 2^63)`.
-- `seek_sound`: on a non-empty graph with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`.
+- `seek_sound` (main b84473a7f, #3394): on any well-formed graph (`G.wf`: `node_count` counts the live ids), including one that never held a node, with non-negative integer operands, `NodeByIdSeek` = `Filter(id(n) op v …)` over `AllNodeScan`. `empty_graph_seek_none`: a never-populated graph seeks nothing. History: `pre3394_seek_sound` needed `nodeCount ≠ 0`; `pre3394_phantom_node0`.
 
 Index utilization (`Index.lean`, `IndexSound.lean`, `IndexPipeline.lean`):
 - `ordI_swap`, `ord3_swap`, `eq3_swap`, `flip_correct`: comparison flip when the property is on the right.
@@ -79,10 +80,13 @@ Scan selection (`ScanOrder.lean`):
    Test `bug_select_scan_node_places_filter_before_its_variable_is_bound`.
    STILL PRESENT at 8743953a8 (re-checked live on a build of main's planner, b3582e34a: Rust 0,
    expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
-2. **`NodeByIdSeek` returns a node that never existed, and writes to it persist** —
+2. **`NodeByIdSeek` returned a node that never existed, and writes to it persisted** — **FIXED by #3394**
+   (9212add39, closes #3353; main b84473a7f: `evaluate_id_filter` returns `Ok(None)` when
+   `node_count() == 0`, `runtime.rs:1364-1369`; Lean `seek_sound` without `nodeCount ≠ 0`,
+   `empty_graph_seek_none`; history `pre3394_seek`, `pre3394_seek_sound`, `pre3394_phantom_node0`). Before:
    `Graph::max_node_id` (`graph.rs:1624`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.
-   Lean `IdSeek.gEmpty` examples. On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
+   Lean `IdSeek.gEmpty`, `pre3394_phantom_node0`. On a fresh graph `MATCH (n) WHERE id(n) = 0 RETURN n`
    → Rust 1 row, C 0. `MATCH (n) WHERE id(n)=0 SET n.x=1, n:Z` then `CREATE (m:Q)` →
    `MATCH (n) RETURN labels(n), properties(n)` Rust `[Z, Q] {x: 1}`, C `[Q] {}`;
    `DELETE` errors "0 was never allocated here"; `CREATE (n)-[:R]->(:W)` makes a self-loop.
@@ -123,7 +127,8 @@ Scan selection (`ScanOrder.lean`):
 
 ## Suspected / hazards (not confirmed as wrong results)
 - `utilize_node_by_id.rs:106` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's
-  repro (`CALL db.labels() YIELD label MATCH (n) RETURN label`) no longer crashes: on builds at
+  repro (`CALL db.labels() YIELD label MATCH (n) RETURN label`) is rejected by validation since #3297
+  (b84473a7f); before that it already no longer crashed: on builds at
   1c9994e37+#3076 (88e92ae25) and at main's planner (b3582e34a) the plan is
   `Project → AllNodeScan(n) → ProcedureCall`, so the scan has a parent. The `unwrap` remains (hazard).
 - `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is

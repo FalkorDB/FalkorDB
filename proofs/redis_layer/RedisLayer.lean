@@ -18,6 +18,7 @@ import RedisLayer.Commands2
 import RedisLayer.SlowLog
 import RedisLayer.MultiDb
 import RedisLayer.KeyName
+import RedisLayer.ErrorText
 
 /-!
 # The Redis-facing layer (`src/`, excluding `redis_type.rs`)
@@ -259,4 +260,17 @@ starts `true`).
 * #2653 `KeyName`: key names as bytes with a concrete `from_utf8_lossy`.
   `bug2653_nonutf8_key_mangled` (`\xc3(bin` → `\xef\xbf\xbd(bin`, `\xff\xfe` → two U+FFFD),
   property `ReplicatedKeyIsStored` (C satisfies it: `c_ok`; ASCII keys: `ascii_kept`).
+
+## Re-target to b84473a7f (#3428; previously b6567cb97)
+#3428 (closes #3185) touches no `src/` file: it moves `redis-module` to the fork branch
+`fix/resp-string-bytes`, where `Context::str_as_legal_resp_string` (the step every error
+reply and simple-string reply goes through before `RedisModule_ReplyWithError` /
+`…SimpleString`) maps the UTF-8 *bytes* (`\r \n NUL → space`) instead of `c as u8` per char.
+`ErrorText`: `legalResp` (main) — `legalResp_safe` (no CR/LF/NUL, so `from_vec_unchecked`
+is sound and the `-…\r\n` frame of `Resp.respT` holds), `legalResp_length`,
+`legalResp_high_bytes` (every byte ≥ 0x80 kept in place: error text is byte-preserving for
+non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toUTF8`;
+history `pre3428_legalResp`, `pre3428_cjk_panics` (`一` → NUL → `CString::new(..).unwrap()`
+panic), `pre3428_latin1_garbled` (`é` → lone 0xE9). `Resp.Call.err s` / `respT (.err s)`
+take `s` to be that already-scrubbed text.
 -/

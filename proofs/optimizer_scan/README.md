@@ -23,9 +23,9 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**
 
-- **On a non-empty graph with non-negative integer bounds, yes.** `seek_sound` proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan`.
+- **With non-negative integer bounds, yes — on any graph since #3394.** `seek_sound` proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node (main b84473a7f).
 - `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, and the running range never inverts.
-- **On a graph that never held a node, no.** `MATCH (n) WHERE id(n) = 0 RETURN n` returns a phantom node 0. Writes to it persist into the next `CREATE` (the `gEmpty` examples in `IdSeek.lean`).
+- **On a graph that never held a node, not before #3394.** `MATCH (n) WHERE id(n) = 0 RETURN n` returned a phantom node 0, and writes to it persisted into the next `CREATE` (`pre3394_phantom_node0`). #3394 returns no range when `node_count() == 0` (`empty_graph_seek_none`).
 
 **3. Does reordering the hops keep the rows?**
 
@@ -53,7 +53,8 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | `utilizeIndex_sound`, `tryIndexRewrite_sound` | The whole `utilize_index` driver, including its fixed-point loop, preserves results | `Cleanup.lean` |
 | `overPending_sound` | Over `IncludePending` the kept Filter makes the index scan exact for any set of pending writes | `Cleanup.lean` |
 | `prune_sound` | Dropping the AllNodeScan child of an edge index scan keeps the edges | `Cleanup.lean` |
-| `seek_sound` | NodeByIdSeek equals the id filter on non-empty graphs with bounds in `[0, 2⁶³)` | `IdSeek.lean` |
+| `seek_sound` | NodeByIdSeek equals the id filter on every well-formed graph (empty included, since #3394) with bounds in `[0, 2⁶³)` | `IdSeek.lean` |
+| `empty_graph_seek_none` | a graph that never held a node seeks nothing (#3394) | `IdSeek.lean` |
 | `order_sound`, `run_perm`, `swap_holds` | Hop ordering and orientation keep the rows | `ScanOrder.lean` |
 | `place_wellScoped`, `salvage_wellScoped` | Filters are placed after their variables are bound, given an honest seed | `ScanOrder.lean` |
 | `reorderLabels_sound`, `withPrimary_sound` | Label order and the primary-label choice cannot change a scan | `ScanOrder.lean` |
@@ -75,7 +76,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | # | Counterexample | What it means | Status |
 |---|---|---|---|
 | W2-scan-1 | `place` examples over `exHops` in `ScanOrder.lean` (honest seed passes, seed with `best_node` fails) | A filter runs before its variable is bound: the `MATCH (b:A) WITH b LIMIT 1 …` query above returns 0, C 1 | **Open** |
-| W2-scan-2 | `gEmpty` examples in `IdSeek.lean` | On a graph that never held a node, `id(n) = 0` returns a phantom node. `SET` on it leaks into the next `CREATE`, `DELETE` errors | **Open** (still present at 2c874022a) |
+| W2-scan-2 (#3353) | `seek_sound`, `empty_graph_seek_none`; history `pre3394_phantom_node0`, `pre3394_seek_sound` | On a graph that never held a node, `id(n) = 0` returned a phantom node. `SET` on it leaked into the next `CREATE`, `DELETE` errored | **Fixed by #3394** (9212add39, on main b84473a7f) |
 | W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-4 | `IndexCex` C7, C7' | `abs(n.a) IN [1]` is pushed as `n.a IN [1]` and misses `a = -1`; `toString(n.a) IN ['1']` returns `[]` (C: `[1]`) | **Open** |
 | W2-scan-5 | `IndexCex` C8 | `2 IN [n.a, n.b]` becomes array-contains on `n.a`: `[]` (C: `[3]`) | **Open** |
@@ -84,7 +85,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 
 The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C); array-contains inside AND (C10, shared with C). C2 (temporals indexed as numbers, #3076) and C11 (`n.v > 'B' AND n.v < 'B'`, #3072) are fixed; their examples now state agreement.
 
-**Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) no longer crashes, because the scan now has a parent, but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
+**Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) is rejected by validation since #3297 (and had stopped crashing before that, because the scan has a parent), but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
 
 There are no CONDITIONAL rows in this project.
 
@@ -93,7 +94,7 @@ There are no CONDITIONAL rows in this project.
 | File | What's in it |
 |---|---|
 | `OptimizerScan.lean` | The report header and imports |
-| `IdSeek.lean` | `get_id_filter`, the flip table, `evaluate_id_filter` (`step`, `fold`, `evalIdFilter`), `seek` vs `reference`, `seek_sound`, the id-seek examples |
+| `IdSeek.lean` | `get_id_filter`, the flip table, `evaluate_id_filter` (`step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, `pre3394_*` history, the id-seek examples |
 | `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`) |
 | `IndexSound.lean` | `sel_*` lemmas for each query node, `trySingle_spec` |
 | `IndexPipeline.lean` | The AND/OR pushdown, `goodF`, and the headline `utilize_sound` |

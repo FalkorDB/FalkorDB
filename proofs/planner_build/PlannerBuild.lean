@@ -6,10 +6,11 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-511 theorems. Rust source: origin/main `0f45a8685` (re-targeted across #2390, d2c42e032
+516 theorems. Rust source: origin/main `b84473a7f` (re-targeted across #2390, d2c42e032
 "plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
 `AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
-longer unwraps one, `PatternMode::descend` no longer treats it as a connective). Rust repros: `cargo test -p graph --test lean_planner_build`
+longer unwraps one, `PatternMode::descend` no longer treats it as a connective; #3297: the
+clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust repros: `cargo test -p graph --test lean_planner_build`
 (`bug_*` tests assert the C/openCypher answer and FAIL today).
 
 ## Lean ↔ Rust
@@ -150,16 +151,15 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    an inline pattern (→ `AntiSemiApply`). Tests `bug_not_over_or_with_pattern_keeps_null_rows`,
    `bug_not_over_and_with_pattern_keeps_null_rows` (fail today).
 
-6. **Nothing after a procedure CALL is validated — and a scan at the plan root crashes the server** (NEW):
-   `inner_validate`'s `Call` arm (parser/ast.rs:1166-1206) returns `Ok(())` without looking at the following
-   clauses. Live Rust release vs C (graph `CREATE (:N)`):
-   `CALL db.labels() YIELD label MATCH (n)` → **Rust server panics** ("called `Option::unwrap()` on a `None`
-   value" at optimizer/utilize_node_by_id.rs:118 — the scan is the plan root, `parent().unwrap()`), C
-   `Query cannot conclude with MATCH …`; `CALL db.labels() YIELD label UNWIND [1] AS x` → Rust OK (empty),
-   C error; `CALL db.labels() YIELD label CREATE (a)-[:R|S]->(b)` → Rust creates 2 nodes + 1 edge, C
-   `Exactly one relationship type must be specified …`. Lean `call_skips_rest`, `call_then_match_accepted`.
-   Fix: in the `Call` arm continue with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`;
-   independently, `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()`.
+6. **Nothing after a procedure CALL was validated** — **FIXED by #3297** (b774fdfad, on main b84473a7f):
+   `inner_validate`'s `Call` arm (parser/ast.rs:1224-1263) now continues with
+   `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`. Lean `call_validates_rest`,
+   `call_transparent`, `call_then_match_rejected`, `call_then_unwind_rejected`,
+   `call_then_create_multi_type_rejected` (each now gives C's error). Before the fix (history
+   `pre3297_callArm`, `pre3297_call_skips_rest`, `pre3297_call_then_match_accepted`):
+   `CALL db.labels() YIELD label MATCH (n)` reached a scan at the plan root (`utilize_node_by_id`
+   `parent().unwrap()`), `… UNWIND [1] AS x` was accepted, `… CREATE (a)-[:R|S]->(b)` created an edge.
+   Still open independently: `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()`.
 7. **A query may end with WITH** (NEW, deviation from C and openCypher): the `With`/`Return` arm
    (ast.rs:1268-1271) accepts a final WITH: `MATCH (n) WITH n` / `UNWIND [1] AS x WITH x` → Rust returns
    rows, C `Query cannot conclude with WITH (must be a RETURN clause, …)`. Lean `with_last_accepted`.

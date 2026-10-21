@@ -12,11 +12,14 @@
 | `dfs`, `components` | `dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
 | `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1151-1393 |
 
-* CONFIRMED bug (`call_skips_rest`): `inner_validate`'s procedure-call arm
-  (ast.rs:1166-1206) returns `Ok(())` without validating the clauses after it, so
-  `CALL db.labels() YIELD label MATCH (n)` reaches the optimizer with a scan at the
-  plan root and the server **panics** (`utilize_node_by_id.rs:118` `parent().unwrap()`);
-  `… UNWIND [1] AS x` is accepted, `… CREATE (a)-[:R|S]->(b)` creates an edge; C rejects all.
+* FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
+  (ast.rs:1224-1263) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
+  so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
+  label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
+  (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
+  History: before #3297 the arm returned `Ok(())` (`pre3297_callArm`, `pre3297_call_skips_rest`,
+  `pre3297_call_then_match_accepted`); `CALL db.labels() YIELD label MATCH (n)` then reached the
+  optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
 * `with_last_accepted`: a query ending in `WITH` is accepted (`MATCH (n) WITH n` returns
   rows); C rejects it ("Query cannot conclude with WITH"), as openCypher does.
 * `validate_ends`: away from those, a query cannot end in MATCH / UNWIND / a
@@ -353,7 +356,7 @@ theorem szL {α : Type} [SizeOf α] (l : List α) : 1 ≤ sizeOf l := by cases l
 
 mutual
 def innerValidate : QC → List QC → Except String Unit
-  | .call p a, _ => callCheck p a
+  | .call p a, rest => (callCheck p a).bind fun _ => next rest
   | .match_ m, rest => (inlinedOk m).bind fun _ => match rest with
     | [] => .error "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)"
     | c :: cs => innerValidate c cs
@@ -396,18 +399,51 @@ end
 
 def validate (q : QC) : Except String Unit := innerValidate q []
 
-/-- The procedure-call arm never looks at what follows (ast.rs:1166-1206). -/
-theorem call_skips_rest (p : String) (a : Option String) (rest : List QC) :
-    innerValidate (.call p a) rest = callCheck p a := by rw [innerValidate]
+/-- **PROVEN** (#3297): the procedure-call arm checks the call, then validates the clauses
+after it (ast.rs:1224-1263, `iter.next().map_or(Ok(()), …)`). -/
+theorem call_validates_rest (p : String) (a : Option String) (rest : List QC) :
+    innerValidate (.call p a) rest = (callCheck p a).bind fun _ => next rest := by
+  rw [innerValidate]
 
-/-- `CALL db.labels() YIELD label MATCH (n)` validates (Rust then panics in
-`utilize_node_by_id`); `MATCH (n)` alone does not. -/
-theorem call_then_match_accepted :
-    validate (.query [.call "db.labels" none, .match_ true]) = .ok () ∧
-    validate (.query [.match_ true]) ≠ .ok () := by
-  constructor
-  · simp [validate, innerValidate, callCheck]
-  · simp [validate, innerValidate, inlinedOk, Except.bind]
+/-- **PROVEN** (#3297): a call that passes its own check validates exactly like the clauses
+that follow it, so a CALL no longer hides the end-of-query rule from what comes after it. -/
+theorem call_transparent (p : String) (a : Option String) (rest : List QC)
+    (h : callCheck p a = .ok ()) : innerValidate (.call p a) rest = next rest := by
+  rw [call_validates_rest, h]; rfl
+
+/-- **PROVEN** (#3297, closes W4-plan-4): `CALL db.labels() YIELD label MATCH (n)` is now
+rejected with the same message as `MATCH (n)` alone, as in C. -/
+theorem call_then_match_rejected :
+    validate (.query [.call "db.labels" none, .match_ true]) = .error "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)" := by
+  simp [validate, innerValidate, callCheck, next, inlinedOk, Except.bind]
+
+/-- **PROVEN** (#3297): `CALL db.labels() YIELD label UNWIND [1] AS x` is rejected. -/
+theorem call_then_unwind_rejected :
+    validate (.query [.call "db.labels" none, .unwind]) = .error "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)" := by
+  simp [validate, innerValidate, callCheck, next, Except.bind]
+
+/-- **PROVEN** (#3297): `CALL db.labels() YIELD label CREATE (a)-[:R|S]->(b)` is rejected. -/
+theorem call_then_create_multi_type_rejected :
+    validate (.query [.call "db.labels" none, .create true [2]]) = .error "Exactly one relationship type must be specified for each relation in a CREATE pattern." := by
+  simp [validate, innerValidate, callCheck, next, inlinedOk, relTypesOk, Except.bind]; rfl
+
+/-! ### History: before #3297 (b6567cb97 and earlier) -/
+
+/-- The pre-#3297 procedure-call arm: `callCheck` and then `Ok(())`, never looking at `rest`. -/
+def pre3297_callArm (p : String) (a : Option String) (_rest : List QC) : Except String Unit :=
+  callCheck p a
+
+/-- The pre-#3297 arm ignored whatever followed the CALL (W4-plan-4). -/
+theorem pre3297_call_skips_rest (p : String) (a : Option String) (rest : List QC) :
+    pre3297_callArm p a rest = callCheck p a := rfl
+
+/-- Before #3297, `CALL db.labels() YIELD label MATCH (n)` validated (and then hit a scan at the
+plan root in `utilize_node_by_id`); main rejects it (`call_then_match_rejected`). -/
+theorem pre3297_call_then_match_accepted :
+    pre3297_callArm "db.labels" none [.match_ true] = .ok () ∧
+    validate (.query [.call "db.labels" none, .match_ true]) ≠ .ok () := by
+  refine ⟨by simp [pre3297_callArm, callCheck], ?_⟩
+  rw [call_then_match_rejected]; simp
 
 /-- `MATCH (n) WITH n` validates (C and openCypher reject a final WITH). -/
 theorem with_last_accepted : validate (.query [.match_ true, .with_]) = .ok () := by

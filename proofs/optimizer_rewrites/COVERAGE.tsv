@@ -36,7 +36,7 @@ graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	replace_cartesia
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	rebuild_with_hash_joins	80	PROVEN	Sequence.rebuildHJ_id (copy when nothing fires), rebuildHJ_sound (congruence + sound local rewrite vhj_correct)
 graph/src/planner/optimizer/replace_cartesian_with_hash_join.rs	try_hash_join_rewrite	101	PROVEN	Passes.vhj_correct (side selection is the coverage test of push_cp_left); #3335 rebuilds the filter with ExprIR::and_of: AndOf.flat_passes (same Filter verdict, errors included), flat_eval
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	Passes.flip_holds
-graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	Passes.idFilter_correct, step_correct, step_no_wrap, id_gt_neg_empty, id_le_neg_all, id_eq_null_errors (with runtime.rs:1309 evaluate_id_filter); Helpers.root_scan_has_no_parent (CONFIRMED panic utilize_node_by_id.rs:118 on a root scan)
+graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	Passes.idFilter_correct, step_correct, step_no_wrap, id_gt_neg_empty, id_le_neg_all, id_eq_null_errors (with runtime.rs:1309 evaluate_id_filter); Helpers.root_scan_has_no_parent (hazard: parent().unwrap() on a root scan; the W4-plan-4 repro is rejected by validation since #3297)
 graph/src/planner/optimizer/reduce_bound_edge.rs	optimized_plan	82	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_bound_edge.rs	bound_edges	98	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)
 graph/src/planner/optimizer/reduce_bound_edge.rs	unread_edge_is_not_bound	113	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (plan-shape unit test)

@@ -89,8 +89,8 @@ def vRemove : List ET → V
   | .node (.prop _) (.node .null _ :: _) :: _ => .err
   | _ :: is => vRemove is
 
-/-- The CALL check (ast.rs:1167-1201). It returns without looking at the
-clauses after the CALL. -/
+/-- The CALL argument check (ast.rs:1224-1261). Since #3297 the arm then
+validates the clauses after the CALL (`vClause`); before, it returned here. -/
 def vCall (f : List Nat) (args : List ET) : V :=
   let first : V :=
     if f = procCNI then
@@ -132,7 +132,7 @@ theorem sz_ir_pos (c : IR) : 0 < sizeOf c := by cases c <;> simp <;> omega
 mutual
 /-- `inner_validate(self, iter)` (ast.rs:1157-1326). -/
 def vClause : IR → List IR → V
-  | .call f args _ _ _ _, _ => vCall f args
+  | .call f args _ _ _ _, rest => (vCall f args).andThen (vNext rest)
   | .match_ p _ _, rest => (vInlined p).andThen (match rest with
       | [] => V.err | c :: r => vClause c r)
   | .unwind _ _, rest => match rest with
@@ -219,24 +219,48 @@ theorem vClause_simple (p : QG Nat) (hp : vInlined p = .ok) :
     cases c <;> simp_all [simpleClause, vClause, vNext, V.andThen] <;> (try subst_vars) <;>
       simp_all [V.andThen]
 
-/-- **BUG (ast.rs:1167-1201)**: the CALL arm returns `Ok(())` and never
-validates the clauses after it. A query ending in MATCH after a CALL, or a
-CREATE of an untyped relationship after a CALL, passes validation:
-`CALL db.labels() YIELD label MATCH (n)` and
-`CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label` both crash
-the server (live; C rejects both). -/
-theorem call_skips_rest_validation (f : List Nat) (hf : f ≠ procCNI) (hd : f ≠ procFTDrop)
-    (rest : List IR) : validate (.query (.call f [] [] [] none true :: rest) false) = .ok := by
-  simp [validate, vClause, vCall, hf, hd, V.andThen]
+/-- **PROVEN** (#3297, closes W4-plan-4): the CALL arm checks the call's
+arguments and then validates the clauses after it
+(`iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`, ast.rs:1262-1263). -/
+theorem call_validates_rest (f : List Nat) (args : List ET) ys as fl ex (rest : List IR) :
+    vClause (.call f args ys as fl ex) rest = (vCall f args).andThen (vNext rest) := by
+  rw [vClause]
+
+/-- **PROVEN** (#3297): a CALL whose own check passes is transparent to
+validation: the query validates iff the clauses after it do. -/
+theorem call_transparent (f : List Nat) (args : List ET) ys as fl ex (rest : List IR)
+    (h : vCall f args = .ok) : vClause (.call f args ys as fl ex) rest = vNext rest := by
+  rw [call_validates_rest, h]; rfl
 
 theorem match_last_rejected (p : QG Nat) (hp : vInlined p = .ok) :
     validate (.query [.match_ p none false] false) = .err := by
   simp [validate, vClause, hp, V.andThen]
 
-/-- The same MATCH-terminated tail is accepted once a CALL precedes it. -/
-theorem match_last_after_call_accepted (p : QG Nat) :
-    validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .ok := by
-  simp [validate, vClause, vCall, procCNI, procFTDrop, V.andThen]
+/-- **PROVEN** (#3297): a MATCH-terminated tail is rejected after a CALL as
+well (`CALL db.labels() YIELD label MATCH (n)`; C rejects it too). -/
+theorem match_last_after_call_rejected (p : QG Nat) (hp : vInlined p = .ok) :
+    validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err := by
+  simp [validate, vClause, vCall, vNext, procCNI, procFTDrop, hp, V.andThen]
+
+/-! ### History: before #3297 (b6567cb97 and earlier) -/
+
+/-- The pre-#3297 CALL arm: the argument check, then `Ok(())`. -/
+def pre3297_vCallArm (f : List Nat) (args : List ET) (_rest : List IR) : V := vCall f args
+
+/-- **BUG before #3297 (ast.rs:1167-1201 at b6567cb97)**: the CALL arm
+never validated the clauses after it, so `CALL db.labels() YIELD label
+MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label`
+were accepted (live: both crashed the server; C rejects both). -/
+theorem pre3297_call_skips_rest_validation (f : List Nat) (hf : f ≠ procCNI) (hd : f ≠ procFTDrop)
+    (rest : List IR) : pre3297_vCallArm f [] rest = .ok := by
+  simp [pre3297_vCallArm, vCall, hf, hd, V.andThen]
+
+/-- The MATCH-terminated tail the old arm accepted, which main rejects. -/
+theorem pre3297_match_last_after_call_accepted (p : QG Nat) (hp : vInlined p = .ok) :
+    pre3297_vCallArm [5] [] [.match_ p none false] = .ok ∧
+    validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err :=
+  ⟨by simp [pre3297_vCallArm, vCall, procCNI, procFTDrop, V.andThen],
+   match_last_after_call_rejected p hp⟩
 
 /-- `body_has_return` (cypher.rs:1105-1113). -/
 def bodyHasReturn : IR → Bool

@@ -131,6 +131,7 @@ All confirmed live against C (`repro_live.py` in this folder, and the scripts na
 | 14 | `bug2782_same_name_other_db_aborts`, `bug2782_invariant_broken` (`MultiDb.lean`) | `GRAPH_REGISTRY` is keyed by name only, so creating `shared` in db1 displaces db0's `shared`; the next write to db0's graph aborts ("graph was deleted or replaced…"; debug build: assert). Property `KeyspaceRegistered` / `WritesSucceed` | **Open** (#2782) |
 | 15 | `bug2653_nonutf8_key_mangled` (`KeyName.lean`) | A non-UTF-8 graph key is replicated and signalled under its `from_utf8_lossy` form: `\xc3(bin` → `\xef\xbf\xbd(bin`, so the replica writes a different key. Property `ReplicatedKeyIsStored` (C: `c_ok`) | **Open** (#2653) |
 | 16 | `pre3419_rewrite_refused`; `rewrite_reload_counterexamples` (`ConfigRewrite.lean`) | `CONFIG REWRITE` saves `graph.<NAME> <value>` for what `GRAPH.CONFIG SET` or a load argument stored; a value outside the native config's range aborts the next start. `VKEY_MAX_ENTITY_COUNT` 0 or above 2^30 did (#3413) | `VKEY_MAX_ENTITY_COUNT` fixed by #3419: `vkey_rewrite_reloads_config`, `vkey_rewrite_reloads_load`. **Open** (not live-checked, not filed): `CACHE_SIZE` > 1000, `THREAD_COUNT` > 1024, `NODE_CREATION_BUFFER` > 2^30 as load arguments, `JS_HEAP_SIZE` > 2^32 by either path |
+| 17 | `pre3428_cjk_panics`, `pre3428_latin1_garbled` (`ErrorText.lean`) | **Crash.** Error and simple-string replies went through redismodule-rs `str_as_legal_resp_string`, which truncated each char to `c as u8`: `é` was sent as the lone byte 0xE9, and a char whose low byte is 0 (`一`) made `CString::new(..).unwrap()` panic (#3185) | Fixed by #3428 (fork branch `fix/resp-string-bytes`, main b84473a7f): `legalResp_safe`, `legalResp_high_bytes`, `legalResp_cjk` — error text is now byte-preserving apart from CR/LF/NUL → space |
 
 Also in the verbose format: a node deleted earlier in the same query still shows its labels (C shows `[]`). That one is intended: it was decided on 2026-09-25 that a deleted entity keeps all its details for the rest of the query.
 
@@ -156,6 +157,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `GraphCore.lean` | `graph_core.rs`: names, registry, write commit, dispatch, queue admission |
 | `MultiDb.lean` | #2782: several Redis databases over the name-keyed registry; `graph_query`'s create/open path |
 | `KeyName.lean` | #2653: key names as bytes, a concrete `from_utf8_lossy`, the replicated key |
+| `ErrorText.lean` | #3428: `str_as_legal_resp_string` (error and simple-string reply text) on bytes; history `pre3428_*` |
 | `Commands.lean`, `Commands2.lean` | The smaller command handlers: constraint, record, copy, bulk, memory, config get, and others |
 | `Telemetry.lean`, `TelemetryReg.lean`, `TelemetryLoop.lean` | `telemetry.rs`: stream names, the query registry, batching, the flusher |
 | `SlowLog.lean` | `slow_log.rs` |
