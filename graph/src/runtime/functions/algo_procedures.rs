@@ -442,6 +442,17 @@ unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
     indices.into_iter().zip(values).collect()
 }
 
+/// Map a node-valued LAGraph result (a component or community representative)
+/// from the compact index space back to the original node id. LAGraph reports
+/// these as vertex indices of the matrix it ran on, so on the `nodeLabels`
+/// path they are compact indices, like the vector's own indices.
+fn compact_to_original(
+    compact_to_id: Option<&[u64]>,
+    idx: i64,
+) -> i64 {
+    compact_to_id.map_or(idx, |m| m[idx as usize] as i64)
+}
+
 /// Extract GrB_Vector entries as (index, i64) pairs.
 unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, i64)> {
     use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_INT64, GrB_Vector_nvals};
@@ -893,7 +904,7 @@ fn register_wcc(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    component_ids.push(comp_id);
+                    component_ids.push(compact_to_original(compact_to_id.as_deref(), comp_id));
                 }
 
                 GrB_Vector_free(&raw mut component);
@@ -1300,7 +1311,7 @@ fn register_cdlp(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    community_ids.push(community_id);
+                    community_ids.push(compact_to_original(compact_to_id.as_deref(), community_id));
                 }
 
                 GrB_Vector_free(&raw mut cdlp);
