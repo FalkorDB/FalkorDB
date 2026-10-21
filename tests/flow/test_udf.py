@@ -1080,6 +1080,28 @@ class testUDF():
         except ResponseError as e:
             self.env.assertContains("unknown option given", str(e).lower())
 
+    def test_load_empty_lib_name_or_script(self):
+        """
+        GRAPH.UDF LOAD rejects an empty library name and an empty script,
+        with or without REPLACE, and registers nothing.
+        """
+
+        script = "falkor.register('f', function() { return 1; });"
+        cases = [
+            (["", script], "empty lib name"),
+            (["REPLACE", "", script], "empty lib name"),
+            (["lib", ""], "empty script"),
+            (["REPLACE", "lib", ""], "empty script"),
+        ]
+        for args, msg in cases:
+            try:
+                self.db.execute_command("GRAPH.UDF", "LOAD", *args)
+                self.env.assertTrue(False, message=f"LOAD {args} should fail")
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        self._assert_any_udfs_missing()
+
     def test_load_udf_lib(self):
         """
         Test successful loading of a UDF library:
