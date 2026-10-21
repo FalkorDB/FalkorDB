@@ -386,3 +386,21 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test17_where_pattern_predicate_reads_the_pre_projection_variable(self):
+        # In WITH ... WHERE, a pattern predicate naming a variable from before
+        # the projection refers to that variable, as a scalar predicate does.
+        g = self.db.select_graph("with_where_pattern_predicate")
+        g.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+        try:
+            cases = [
+                ("MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k", [[1]]),
+                ("MATCH (n) WITH n.v AS k WHERE NOT (n)-->() RETURN k ORDER BY k", [[0], [5]]),
+                ("MATCH (n) WITH n AS m WHERE (n)-->(:B) RETURN m.v", [[1]]),
+                ("MATCH (n) WITH n.v AS k WHERE (n)<--() RETURN k", [[0]]),
+                ("MATCH (n) WITH n AS m WHERE size([(n)-->(x) | x]) > 0 RETURN m.v", [[1]]),
+            ]
+            for q, expected in cases:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()
