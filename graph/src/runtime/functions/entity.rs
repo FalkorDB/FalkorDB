@@ -54,25 +54,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::String,
         fn type_of(_runtime, args) {
-            let type_name = match args.first() {
-                Some(Value::Null) => "Null",
-                Some(Value::Bool(_)) => "Boolean",
-                Some(Value::Int(_)) => "Integer",
-                Some(Value::Float(_)) => "Float",
-                Some(Value::String(_)) => "String",
-                Some(Value::List(_)) => "List",
-                Some(Value::Map(_)) => "Map",
-                Some(Value::Node(_)) => "Node",
-                Some(Value::Relationship(_)) => "Edge",
-                Some(Value::Path(_)) => "Path",
-                Some(Value::VecF32(_)) => "Vectorf32",
-                Some(Value::Point(_)) => "Point",
-                Some(Value::Datetime(_)) => "Datetime",
-                Some(Value::Date(_)) => "Date",
-                Some(Value::Time(_)) => "Time",
-                Some(Value::Duration(_)) => "Duration",
-                None => unreachable!(),
-            };
+            let type_name = args.first().map_or_else(|| unreachable!(), Value::name);
             Ok(Value::String(Arc::new(String::from(type_name))))
         }
     );
