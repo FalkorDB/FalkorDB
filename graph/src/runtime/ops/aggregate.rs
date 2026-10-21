@@ -1164,6 +1164,17 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 combined.merge(&acc);
+                // Every aggregation is evaluated against this same `combined`,
+                // and its output is not written back into it. The binder
+                // numbers each scope from zero and `Row` is keyed by slot id
+                // alone, so an output name can share a slot with a *later*
+                // aggregation's accumulator: once the keys outnumber the
+                // variables bound before the projection, writing `c` of
+                // `count(n) AS c` overwrote the accumulator `sum(n.v)` read
+                // next (the sum came back as the count), and `avg`, whose
+                // accumulator is a list, panicked the server. No aggregation
+                // reads another's output: a projection cannot reference its
+                // own aliases, and ORDER BY is bound separately.
                 let mut agg_outputs: Vec<(&Variable, Value)> = Vec::with_capacity(self.agg.len());
                 for (name, tree) in self.agg {
                     let val = {
@@ -1178,7 +1189,6 @@ impl<'a> Iterator for AggregateOp<'a> {
                         )
                     }?;
                     acc.insert(name, val.clone());
-                    combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
                 // Insert pre-projection key variable values into acc so
