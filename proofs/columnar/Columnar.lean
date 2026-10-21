@@ -14,6 +14,7 @@ import Columnar.VecEval
 import Columnar.CoreOps
 import Columnar.AndOrLane
 import Columnar.CaseLane
+import Columnar.FuncLane
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
