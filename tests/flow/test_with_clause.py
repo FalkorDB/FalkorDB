@@ -386,3 +386,51 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test15_hidden_projection_variables_keep_their_slots(self):
+        # Variables a WITH/RETURN copies in only for its WHERE/ORDER BY/SKIP/
+        # LIMIT, and the locals of a pattern comprehension, go out of scope
+        # after it, but the next variable of that scope must not get their
+        # record slot: it would read their value.
+        g = self.db.select_graph("with_hidden_slots")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            cases = [
+                ("MATCH (n) WITH n.v AS k WHERE n.v = 0 MATCH (x)-->(y) RETURN k, x.v, y.v",
+                 [[0, 1, 0]]),
+                ("MATCH (n) WITH n.v AS k WHERE n.v >= 0 RETURN k, [(x)-->(y) | y.v] AS l ORDER BY k",
+                 [[0, [0]], [1, [0]], [5, [0]]]),
+                ("MATCH (n) WITH n, 1 AS o ORDER BY size([(n)-[r]->(m) | m]) MATCH (x)-->(y) "
+                 "RETURN n.v, x.v, y.v ORDER BY n.v",
+                 [[0, 1, 0], [1, 1, 0], [5, 1, 0]]),
+                ("MATCH (n:A) WHERE size([(n)-[r]->(m) | m]) > 0 MATCH (x)-[s]->(y) "
+                 "WHERE size([(x)-[r2]->(m2) | m2]) > 0 RETURN n.v, x.v, s.w, y.v",
+                 [[1, 1, 2, 0]]),
+            ]
+            for q, expected in cases:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()
+
+    def test16_order_by_variables_do_not_cross_the_projection(self):
+        # A variable ORDER BY reads from before the projection is not
+        # projected: it is not visible after WITH/RETURN, and not returned
+        # from a CALL {} body.
+        g = self.db.select_graph("with_order_by_scope")
+        g.query("CREATE (:A {v:1}), (:B {v:0}), (:B {v:5})")
+        try:
+            try:
+                g.query("MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("'n' not defined", str(e))
+
+            res = g.query("MATCH (n) WITH n.v AS k ORDER BY n.v RETURN *")
+            self.env.assertEqual(res.header[0][1], 'k')
+            self.env.assertEqual(len(res.header), 1)
+            self.env.assertEqual(res.result_set, [[0], [1], [5]])
+
+            res = g.query("MATCH (n) CALL { WITH n RETURN n.v AS k ORDER BY n.v } RETURN k ORDER BY k")
+            self.env.assertEqual(res.result_set, [[0], [1], [5]])
+        finally:
+            g.delete()
