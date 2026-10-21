@@ -1061,7 +1061,7 @@ fn register_betweenness(funcs: &mut Functions) {
 /// while it holds a large share of the unexplored edges (Beamer et al.). The
 /// semiring is structural, so `a` and `at` may differ in element type — which
 /// is why LAGraph, which insists they match, cannot be handed the tensor's
-/// UINT64 forward and BOOL backward bases directly. Returns the INT32 level
+/// UINT64 forward and BOOL backward bases directly. Returns the INT64 level
 /// vector (bitmap), the source at level 0.
 unsafe fn bfs_levels_push_pull(
     a: crate::graph::graphblas::GrB_Matrix,
@@ -1072,9 +1072,9 @@ unsafe fn bfs_levels_push_pull(
     max_level: i64,
 ) -> Result<crate::graph::graphblas::GrB_Vector, String> {
     use crate::graph::graphblas::{
-        GrB_ALL, GrB_BOOL, GrB_DESC_RSC, GrB_DESC_S, GrB_INT32, GrB_Vector,
-        GrB_Vector_assign_INT32, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals,
-        GrB_Vector_setElement_BOOL, GrB_Vector_setElement_INT32, GrB_mxv, GrB_vxm,
+        GrB_ALL, GrB_BOOL, GrB_DESC_RSC, GrB_DESC_S, GrB_INT64, GrB_Vector,
+        GrB_Vector_assign_INT64, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals,
+        GrB_Vector_setElement_BOOL, GrB_Vector_setElement_INT64, GrB_mxv, GrB_vxm,
         GxB_ANY_PAIR_BOOL, GxB_BITMAP, GxB_Option_Field, GxB_SPARSE, GxB_Vector_Option_set_INT32,
     };
     let check = |info: crate::graph::graphblas::GrB_Info, what: &str| -> Result<(), String> {
@@ -1086,17 +1086,32 @@ unsafe fn bfs_levels_push_pull(
     };
     let mut v: GrB_Vector = null_mut();
     let mut q: GrB_Vector = null_mut();
-    check(GrB_Vector_new(&raw mut v, GrB_INT32, n), "level alloc")?;
-    check(GrB_Vector_new(&raw mut q, GrB_BOOL, n), "frontier alloc")?;
     let fail = |mut v: GrB_Vector, mut q: GrB_Vector, e: String| {
-        GrB_Vector_free(&raw mut v);
-        GrB_Vector_free(&raw mut q);
+        if !v.is_null() {
+            GrB_Vector_free(&raw mut v);
+        }
+        if !q.is_null() {
+            GrB_Vector_free(&raw mut q);
+        }
         Err(e)
     };
+    // INT64 levels and an i64 level counter, as LAGraph uses: an i32 `k`
+    // could wrap on a path of 2^31 levels and stop honouring `max_level`.
+    if let Err(e) = check(GrB_Vector_new(&raw mut v, GrB_INT64, n), "level alloc") {
+        return fail(v, q, e);
+    }
+    if let Err(e) = check(GrB_Vector_new(&raw mut q, GrB_BOOL, n), "frontier alloc") {
+        return fail(v, q, e);
+    }
     let sparsity = GxB_Option_Field::GxB_SPARSITY_CONTROL as i32;
     GxB_Vector_Option_set_INT32(v, sparsity, GxB_BITMAP as i32);
-    GrB_Vector_setElement_INT32(v, 0, src);
-    GrB_Vector_setElement_BOOL(q, true, src);
+    // An out-of-range source fails here, as it fails LAGraph
+    // (GrB_INVALID_INDEX), rather than yielding an empty traversal.
+    if let Err(e) = check(GrB_Vector_setElement_INT64(v, 0, src), "source")
+        .and_then(|()| check(GrB_Vector_setElement_BOOL(q, true, src), "source"))
+    {
+        return fail(v, q, e);
+    }
 
     let avg_degree = nvals as f64 / n.max(1) as f64;
     let mut edges_unexplored = nvals as f64;
@@ -1108,9 +1123,9 @@ unsafe fn bfs_levels_push_pull(
     let mut nq: u64 = 1;
     let mut last_nq: u64 = 0;
     let mut push = true;
-    let mut k: i32 = 1;
+    let mut k: i64 = 1;
     loop {
-        if max_level >= 0 && i64::from(k) > max_level {
+        if max_level >= 0 && k > max_level {
             break;
         }
         let frontier_edges = nq as f64 * avg_degree;
@@ -1137,7 +1152,7 @@ unsafe fn bfs_levels_push_pull(
             break;
         }
         edges_unexplored -= nq as f64 * avg_degree;
-        let info = GrB_Vector_assign_INT32(v, q, null_mut(), k, GrB_ALL, n, GrB_DESC_S);
+        let info = GrB_Vector_assign_INT64(v, q, null_mut(), k, GrB_ALL, n, GrB_DESC_S);
         if let Err(e) = check(info, "level assign") {
             return fail(v, q, e);
         }
