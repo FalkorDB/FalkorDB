@@ -135,3 +135,33 @@ class testHashJoin(FlowTestsBase):
         g.query(f"UNWIND range(1, {n}) AS i CREATE (:S {{k: toString(i)}})")
         res = g.query("MATCH (s:S) MATCH (t:S) WHERE s.k = t.k RETURN count(s)")
         self.env.assertEqual(res.result_set, [[n]])
+
+    def test_int_float_keys_above_2_pow_53(self):
+        # `=` compares an Int with a Float as `i as f64`, which rounds above
+        # 2^53: 2^53 + 1 = 2^53.0 is true, while 2^53 + 1 = 2^53 is false. The
+        # join must agree with the Filter it replaces, on every representation
+        # of the table: an all-integer build side (integer fast path), a mixed
+        # one, and build keys `=` cannot group together.
+        g = self.graph
+        g.query("CREATE (:I {x: 9007199254740993}), (:I {x: 9007199254740992}), (:F {x: 9007199254740992.0})")
+
+        def joined(pattern, lhs, rhs):
+            q = f"MATCH {pattern} WHERE {lhs} = {rhs} RETURN count(*)"
+            # the same predicate, hidden from the hash-join rewrite
+            unjoined = f"MATCH {pattern} WHERE ({lhs} = {rhs}) = true RETURN count(*)"
+            self.env.assertContains("Value Hash Join", str(g.explain(q)))
+            self.env.assertNotContains("Value Hash Join", str(g.explain(unjoined)))
+            expected = g.query(unjoined).result_set
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+            return expected
+
+        # Int probe against a Float build, and the reverse
+        self.env.assertEqual(joined("(a:I), (b:F)", "a.x", "b.x"), [[2]])
+        self.env.assertEqual(joined("(a:F), (b:I)", "a.x", "b.x"), [[2]])
+        # all-integer build side: 2^53 + 1 and 2^53 differ
+        self.env.assertEqual(joined("(a:I), (b:I)", "a.x", "b.x"), [[2]])
+        # a build side holding 2^53, 2^53 + 1 and 2^53.0: each probe matches
+        # exactly the keys it is `=` to
+        self.env.assertEqual(joined("(a), (b)", "a.x", "b.x"), [[7]])
+        # the same one level down, inside a list key
+        self.env.assertEqual(joined("(a), (b)", "[a.x]", "[b.x]"), [[7]])
