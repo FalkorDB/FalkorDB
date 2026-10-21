@@ -72,6 +72,15 @@ pub struct MvccGraph {
     write: AtomicBool,
 }
 
+/// Why [`MvccGraph::claim`] refused a fork.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Claim {
+    /// Another writer holds the write slot.
+    Busy,
+    /// Another writer committed after the fork was made.
+    Stale,
+}
+
 unsafe impl Send for MvccGraph {}
 unsafe impl Sync for MvccGraph {}
 
@@ -104,6 +113,8 @@ impl MvccGraph {
         self.graph.clone()
     }
 
+    /// Claim the write slot and fork a private version to build into, in one
+    /// step. For writers that already hold the per-graph write lock.
     #[must_use]
     pub fn write(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
         if self
@@ -111,12 +122,48 @@ impl MvccGraph {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            Some(Arc::new(AtomicRefCell::new(
-                self.graph.borrow().new_version(),
-            )))
+            Some(self.fork())
         } else {
             None
         }
+    }
+
+    /// A private version of the committed graph, *without* claiming the write
+    /// slot.
+    ///
+    /// For a writer that matches as a reader before it mutates anything shared:
+    /// it builds into the fork and claims the slot only when it escalates
+    /// ([`Self::claim`]), so the slot is only ever held by a thread holding the
+    /// per-graph write lock and an inline writer never finds it taken.
+    #[must_use]
+    pub fn fork(&self) -> Arc<AtomicRefCell<Graph>> {
+        Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
+    }
+
+    /// Claim the write slot for a version made by [`Self::fork`].
+    ///
+    /// # Errors
+    ///
+    /// [`Claim::Busy`] if another writer holds the slot. [`Claim::Stale`] if
+    /// another writer committed since the fork was made, so it no longer
+    /// extends the committed version and must be discarded; the slot is left
+    /// free.
+    pub fn claim(
+        &self,
+        fork: &AtomicRefCell<Graph>,
+    ) -> Result<(), Claim> {
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Err(Claim::Busy);
+        }
+        if self.graph.borrow().version + 1 != fork.borrow().version {
+            self.write.store(false, Ordering::Release);
+            return Err(Claim::Stale);
+        }
+        Ok(())
     }
 
     /// Publish `new_graph` as the current version.
@@ -231,7 +278,7 @@ impl Drop for MvccGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::MvccGraph;
+    use super::{Claim, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
     use roaring::RoaringTreemap;
 
@@ -263,5 +310,32 @@ mod tests {
             mvcc.write().is_some(),
             "the refusal must release the write slot, or no write ever succeeds again"
         );
+    }
+
+    /// A fork made while another writer is still free to commit: the slot is
+    /// claimed only at escalation, and a commit in between makes the fork stale
+    /// instead of making the other writer fail (#3093).
+    #[test]
+    fn a_fork_is_claimed_late_and_refused_once_stale() {
+        ensure_init();
+        let mut mvcc = MvccGraph::new(64, 64, 0, "t");
+
+        let fork = mvcc.fork();
+        // The fork holds no slot, so an inline writer still gets it.
+        let inline = mvcc.write().expect("forking does not take the slot");
+        assert_eq!(mvcc.claim(&fork), Err(Claim::Busy));
+        mvcc.commit(inline).expect("an empty version commits");
+
+        assert_eq!(
+            mvcc.claim(&fork),
+            Err(Claim::Stale),
+            "the fork predates the inline commit"
+        );
+        // A stale claim leaves the slot free; a fresh fork claims it.
+        let fresh = mvcc.fork();
+        assert_eq!(mvcc.claim(&fresh), Ok(()));
+        assert!(mvcc.write().is_none(), "the claim holds the slot");
+        mvcc.commit(fresh).expect("the claimed fork commits");
+        assert!(mvcc.write().is_some());
     }
 }
