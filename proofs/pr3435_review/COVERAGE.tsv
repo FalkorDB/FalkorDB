@@ -1,0 +1,6 @@
+# pr3435_review: PR #3435 (perf/bfs-pushpull @ 28ab35368). Rows stay commented out until the PR merges;
+# then fold them into versioned_matrix (tensor.rs) and algo_udf (algo_procedures.rs) and delete this project.
+#graph/src/graph/graphblas/tensor.rs	Tensor::clean_fwd	989	PROVEN	Clean.cleanFwd: cleanFwd_isSome_iff, cleanFwd_some_deltas_empty, cleanFwd_eq_extract (lent base = extract's (m ∖ dm) ∪ dp)
+#graph/src/graph/graphblas/tensor.rs	Tensor::clean_bwd	997	PROVEN	Clean.cleanBwd: cleanBwd_isSome_iff, cleanBwd_eff (base = mt's logical contents); transpose of clean_fwd: clean_transpose_reach (Reach.allInv discharges mt_eff; MtRepr = versioned_matrix's mt abstraction)
+#graph/src/runtime/functions/algo_procedures.rs	bfs_levels_push_pull	1066	PROVEN	Bfs.bfsLevelsPushPull: pushPull_correct (every heuristic), pull_eq_push, run_fuel_any, exit_conditions, overflow_needs_huge_graph (preconditions AT = Aᵀ, src < n, n < 2^31; GBSpec FFI)
+#graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1155	CONDITIONAL	Algo.levelVec: nodes_path_independent, nodes_same_as_main, levelVec_correct (+ algo_udf AlgoBfsReg.*); rests on src < n (source id below the tensor's nrows = node_cap, graph.rs resize; not discharged — pushPull_src_out_of_range shows the paths differ otherwise) and MtRepr
