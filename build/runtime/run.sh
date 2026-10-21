@@ -45,11 +45,9 @@ fix_data_dir_perms() {
 TLS_FILES="ca.key ca.crt ca.txt openssl.cnf server.key server.crt
            client.key client.crt redis.key redis.crt redis.dh"
 
-# falkordb can write to the TLS directory, so before root generates files
-# there, each of those names must be absent or a regular file with a single
-# link: a symlink or hard link would make root write, or chown, a file
-# elsewhere. Nothing runs as falkordb this early, so nothing can change them
-# between this check and gen-certs.sh.
+# Before root chowns those files, or generates them where falkordb cannot
+# write, each name must be absent or a regular file with a single link: a
+# symlink or hard link would make root chown, or write, a file elsewhere.
 check_tls_files() {
     for f in $TLS_FILES; do
         p="${FALKORDB_TLS_PATH}/$f"
@@ -60,8 +58,9 @@ check_tls_files() {
     done
 }
 
-# gen-certs.sh runs as root and writes its keys 0600. Hand falkordb the files it
-# generates, and only those, so a certificate mounted alongside is left alone.
+# gen-certs.sh writes its keys 0600. Hand falkordb the files it generates, and
+# only those, so a certificate mounted alongside is left alone: the ones an
+# older image generated as root, or the ones root generated just now.
 # Returns non-zero when any of them was not handed over.
 fix_tls_perms() {
     rc=0
@@ -107,10 +106,25 @@ if [ "${TLS:-0}" -eq "1" ]; then
     if [ "$(id -u)" = "0" ] && ! check_tls_files; then
         exit 1
     fi
-    # shellcheck disable=SC2086
-    ${FALKORDB_BIN_PATH}/gen-certs.sh
-    if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
-        keep_root
+    # Where falkordb can write the TLS directory, root never writes in it:
+    # anything that can write there could swap a file for a link after the
+    # check above. falkordb is handed what is already there and generates the
+    # rest. Elsewhere, falkordb cannot plant a link, so root generates the
+    # files and then hands them over, as before.
+    # shellcheck disable=SC2016 # $1 is the inner shell's
+    if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] &&
+        gosu "$FALKORDB_USER" sh -c '[ -w "$1" ]' sh "${FALKORDB_TLS_PATH}"; then
+        if fix_tls_perms; then
+            gosu "$FALKORDB_USER" "${FALKORDB_BIN_PATH}/gen-certs.sh"
+        else
+            keep_root
+            "${FALKORDB_BIN_PATH}/gen-certs.sh"
+        fi
+    else
+        "${FALKORDB_BIN_PATH}/gen-certs.sh"
+        if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
+            keep_root
+        fi
     fi
 fi
 
