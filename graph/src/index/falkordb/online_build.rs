@@ -7,6 +7,9 @@
 //! builder reads the graph and how it publishes as a writer. The Redis module's host takes the GIL
 //! and the graph's write lock to publish; an embedded host would take its own lock.
 //!
+//! The rules writers and the indexer follow so that every published version stays correct, in
+//! whatever order they commit, are on `ColumnState` (`falkordb_index.rs`).
+//!
 //! **A turn never makes a writer run again.** Holding no lock, it takes one build step on a new
 //! version of the published graph (`Graph::step_index_build`). Then it publishes through the host
 //! ([`MvccGraph::commit_index_build`]): if nothing has committed since, that version is published

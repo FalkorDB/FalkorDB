@@ -142,13 +142,52 @@ impl IndexColumn {
 /// holds is a no-op. A removed tuple the column never held is a no-op too. This is how C populates
 /// an index (`src/index/index_construct.c`), in batches interleaved with writes.
 ///
-/// A step reads its batch from a version and adds it to the same one, which only it holds. A
-/// writer may commit before that version is published, and the other way round. Neither throws
-/// its work away: a step a writer made stale is taken again on the writer's version
-/// ([`MvccGraph::commit_index_build`](crate::graph::mvcc_graph::MvccGraph::commit_index_build)),
-/// and a writer replays its own changes onto the published columns
-/// ([`adopt_build_progress`](FalkorDbIndex::adopt_build_progress)). For that a version remembers
-/// its own changes to a `Building` column until it is published (`log`).
+/// # Writers and the indexer: the rules
+///
+/// A writer and the indexer each work on a version of their own, made from a published one, and
+/// publish it holding the host's locks. A step reads its batch from its version and adds it to the
+/// same one. These rules keep every published version correct whatever order the commits land in.
+///
+/// **What every published version holds.**
+/// - *Data*: the writers' changes, applied in commit order. An indexer commit never changes data.
+/// - *Columns*: a `Ready` column holds exactly the tuples of the current data. A `Building`
+///   column with cursor `k` holds the current tuples of every entity below `k`, and of every
+///   entity at or above `k` that a writer changed since the column was created, and no tuple of a
+///   value an entity no longer holds.
+///
+/// **A writer** commits a version forked from `B` onto the published `P`
+/// ([`Graph::merge_build_progress`](crate::graph::graph::Graph::merge_build_progress)):
+/// 1. If another writer committed since `B`, the claim is refused and the write runs again: what
+///    it matched may no longer hold.
+/// 2. Otherwise only indexer commits came in, so `P`'s data is `B`'s. Each column still
+///    `Building` in the fork is rebuilt from `P`'s copy, which holds the indexer's progress, with
+///    the writer's own changes to it applied on top; today by replaying the fork's change log
+///    ([`adopt_build_progress`](FalkorDbIndex::adopt_build_progress)). Publishing the fork's copy
+///    as it is would lose that progress.
+/// 3. A column the writer dropped or re-created stays as the writer left it: its generation is
+///    not `P`'s.
+///
+/// Rule 2 relies on a writer never reading a column an indexer changes: a `Building` column
+/// serves no reads, and an indexer never changes a `Ready` one.
+///
+/// **An indexer** commits a step taken on a version made from `B` onto `P`
+/// ([`MvccGraph::commit_index_build`](crate::graph::mvcc_graph::MvccGraph::commit_index_build)):
+/// 1. If nothing committed since `B`, its version is published as it is: the batch was read from
+///    `P`'s data.
+/// 2. Otherwise a writer may have changed values the batch read, so the step is taken again, under
+///    the host's locks, on a new version of `P`, reading the values `P` holds. If `P` has no
+///    column left to build, nothing is published.
+///
+/// The builder runs one turn per graph at a time, so two steps never race on one column.
+///
+/// **Deleted entities** follow the same rules: a delete removes the entity's tuples and adds none.
+/// - A version's change log keeps every removal, including one of a tuple the column does not
+///   hold, as when the deleted entity is past the cursor. An indexer step committed before the
+///   writer may have added that tuple from the entity's old value, and rule 2 of the writer must
+///   remove it ([`record`]).
+/// - A freed id that is reused is a removal of the old entity's tuples and an addition of the new
+///   entity's; both rules end with the new entity's tuples only.
+/// - Removing a label from a node removes its tuples from that label's columns, as a delete does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnState {
     /// Some of the label's entities are not indexed yet — reads fall through to RediSearch. `next`
@@ -736,7 +775,9 @@ fn apply_changes(
 }
 
 /// Note a unit of work's collapsed changes to a `Building` column in its log, removes first as
-/// they are applied.
+/// they are applied. Every removal is noted, including one of a tuple the column does not hold:
+/// replayed onto the published column, it removes the tuple a build step may have added since
+/// (see [`ColumnState`]).
 fn record(
     entry: &mut ColumnEntry,
     removes: &[(u64, u64)],
