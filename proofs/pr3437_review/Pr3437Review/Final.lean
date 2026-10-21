@@ -18,8 +18,8 @@ operations and the runtime's parameters), with the plan computed by `vector_plan
 * **`pr_columnar_sound`** (`list_loop_columnar`, :1550).
 
 The `_of` forms take the runtime record abstractly and need `PropReads`; the headline forms
-take the runtime built from its attribute state (`Runtime.rtOf`, `Runtime.nodeStore`), for
-which `PropReads` is a theorem (`Runtime.propReads`). Their one premise is `hreg`: the trees'
+take the runtime built from its attribute state (`RuntimeReads.rtOf`, `Runtime.nodeStore`), for
+which `PropReads` is a theorem (`RuntimeReads.propReads`, `Runtime.propReads_withStore`). Their one premise is `hreg`: the trees'
 `hasLabels` calls are the registered function (the shape of the trees the parser builds).
 -/
 
@@ -167,16 +167,15 @@ end
 /-! ## Over the runtime's attribute state: no `PropReads` premise -/
 
 section
-variable (s : Runtime.St F) (rt0 : RT F) (c : Compound (V F)) (isLC isBad : Nat → Bool)
+variable (s : Runtime.PSt F) (rt0 : RT F) (c : Compound (V F)) (isLC isBad : Nat → Bool)
   (dbg : Columnar.HasLabelsFn.Ty → String) (envAt : Nat → Option (V F)) (vid : Nat) (pred proj : E (V F))
   (useCol : List (V F) → Bool)
 
 /-- The runtime of the evaluation: its attribute reads are the state's. -/
-abbrev rtS : RT F := Runtime.rtOf s rt0
+abbrev rtS : RT F := Columnar.RuntimeReads.rtOf s.toSt rt0
 abbrev stS : NodeStore F := Runtime.nodeStore s
 
-theorem propReads_S : PropReads (withStore (rtS s rt0) (stS s)) := by
-  rw [Runtime.withStore_rtOf]; exact Runtime.propReads s rt0
+theorem propReads_S : PropReads (withStore (rtS s rt0) (stS s)) := Runtime.propReads_withStore s rt0
 
 variable (hP : Registry (rtS s rt0) (stS s) dbg pred) (hJ : Registry (rtS s rt0) (stS s) dbg proj)
 include hP hJ

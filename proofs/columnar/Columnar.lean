@@ -18,6 +18,8 @@ import Columnar.FuncLane
 import Columnar.HasLabelsFn
 import Columnar.LaneWF
 import Columnar.CoreBridge
+import Columnar.RuntimeReads
+import Columnar.EvalBatch
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
