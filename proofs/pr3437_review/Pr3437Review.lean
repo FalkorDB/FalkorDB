@@ -7,6 +7,7 @@ import Pr3437Review.ValueOfType
 import Pr3437Review.NegFold
 import Pr3437Review.ExactProp
 import Pr3437Review.Discharge
+import Pr3437Review.Final
 
 /-!
 # Review of PR #3437 — "perf: list comprehensions evaluate their body over the list in chunks"
