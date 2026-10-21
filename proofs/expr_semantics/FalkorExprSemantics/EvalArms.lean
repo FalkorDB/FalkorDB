@@ -187,3 +187,75 @@ theorem getElement_index (rt : Except String Unit) (arr i : V) (vs : List V) (j 
   simp [getElem, hl, hi]
 
 end FalkorExpr.Eval
+
+namespace FalkorExpr.Eval
+
+variable {V : Type}
+
+/-! ## `all_equals` / `all_not_equals` (eval.rs:1713, :1736) -/
+
+/-- `all_equals` over a lazy iterator of results. `prev` is the **first** element for every
+comparison (it is never reassigned, eval.rs:1717-1729); a compared null answers `null`,
+NaN / disjoint / unequal answer `false` without evaluating the rest. -/
+def allEqLoop (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (prev : V) :
+    List (Unit → Except String V) → Except String V
+  | [] => .ok (bool true)
+  | n :: ns => do
+    let next ← n ()
+    match cmp prev next with
+    | (_, .comparedNull) => .ok null
+    | (_, .nan) | (_, .disjoint) => .ok (bool false)
+    | (.eq, _) => allEqLoop cmp null bool prev ns
+    | _ => .ok (bool false)
+
+def allEquals (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) :
+    List (Unit → Except String V) → Except String V
+  | [] => .error "Eq operator requires at least two arguments"
+  | first :: rest => do let prev ← first (); allEqLoop cmp null bool prev rest
+
+/-- `all_not_equals` (as C's `AR_NE`: null makes it null; NaN / disjoint / ordered
+operands are unequal; `(Equal, None)` answers `false`). -/
+def allNeqLoop (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (prev : V) :
+    List (Unit → Except String V) → Except String V
+  | [] => .ok (bool true)
+  | n :: ns => do
+    let next ← n ()
+    match cmp prev next with
+    | (_, .comparedNull) => .ok null
+    | (_, .nan) | (_, .disjoint) | (.lt, _) | (.gt, _) => allNeqLoop cmp null bool prev ns
+    | (.eq, .none) => .ok (bool false)
+
+def allNotEquals (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) :
+    List (Unit → Except String V) → Except String V
+  | [] => .error "Eq operator requires at least two arguments"
+  | first :: rest => do let prev ← first (); allNeqLoop cmp null bool prev rest
+
+/-- The binary fast path `all_equals([Ok(lhs), Ok(rhs)])` (eval.rs:446-450). -/
+theorem allEquals_two (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (a b : V) :
+    allEquals cmp null bool [fun _ => .ok a, fun _ => .ok b] =
+      .ok (match (cmp a b).2 with
+        | .comparedNull => null
+        | .nan | .disjoint => bool false
+        | .none => bool ((cmp a b).1 == .eq)) := by
+  simp only [allEquals, allEqLoop, bind, Except.bind]
+  rcases cmp a b with ⟨o, fl⟩
+  cases fl <;> cases o <;> rfl
+
+theorem allNotEquals_two (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (a b : V) :
+    allNotEquals cmp null bool [fun _ => .ok a, fun _ => .ok b] =
+      .ok (match (cmp a b).2 with
+        | .comparedNull => null
+        | .nan | .disjoint => bool true
+        | .none => bool ((cmp a b).1 != .eq)) := by
+  simp only [allNotEquals, allNeqLoop, bind, Except.bind]
+  rcases cmp a b with ⟨o, fl⟩
+  cases fl <;> cases o <;> rfl
+
+/-- `a = b = c` compares `a` with `b` and then `a` with `c` (not `b` with `c`), and stops at
+the first verdict: a later operand's error is never reached after an unequal pair. -/
+theorem allEquals_stops (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (a b : V)
+    (h : cmp a b = (.lt, .none)) (rest : List (Unit → Except String V)) :
+    allEquals cmp null bool ((fun _ => .ok a) :: (fun _ => .ok b) :: rest) = .ok (bool false) := by
+  simp [allEquals, allEqLoop, h, bind, Except.bind]
+
+end FalkorExpr.Eval
