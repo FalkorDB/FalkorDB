@@ -1786,18 +1786,11 @@ impl<'a> Parser<'a> {
             let _alias = self.try_parse_ident();
 
             // Relationship types
-            let mut types = Vec::new();
-            if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.push(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
-            }
+            let types = if optional_match_token!(self.lexer, Colon) {
+                self.parse_relationship_types()?
+            } else {
+                vec![]
+            };
 
             // Variable length * and range
             let (min, max) = if optional_match_token!(self.lexer, Star) {
@@ -3041,6 +3034,18 @@ impl<'a> Parser<'a> {
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
     }
 
+    /// The type alternatives after a relationship's `:`: `A|B`, with the
+    /// legacy `A|:B` spelling. `A:B` is not one of them: an edge has exactly
+    /// one type, so a second `:` is left for the caller to reject.
+    fn parse_relationship_types(&mut self) -> Result<Vec<Arc<String>>, String> {
+        let mut types = vec![self.parse_ident()?];
+        while optional_match_token!(self.lexer, Pipe) {
+            optional_match_token!(self.lexer, Colon);
+            types.push(self.parse_ident()?);
+        }
+        Ok(types)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -3066,15 +3071,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
-                loop {
-                    types.insert(self.parse_ident()?);
-                    let pipe = optional_match_token!(self.lexer, Pipe);
-                    let colon = optional_match_token!(self.lexer, Colon);
-                    if pipe || colon {
-                        continue;
-                    }
-                    break;
-                }
+                types.extend(self.parse_relationship_types()?);
             }
             let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
@@ -3329,6 +3326,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -3388,6 +3386,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A parenthesized `SET`/`REMOVE` target is only allowed as the subject
+    /// of a property lookup, `(n).x`: the grammar has no `(n) = {..}`,
+    /// `(n):L` or `(n.x) = 5`, and C rejects them.
+    fn expect_property_after_paren(&self) -> Result<(), String> {
+        if self.lexer.current()? == Token::Dot {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str()
+            )))
+        }
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3410,6 +3422,7 @@ impl<'a> Parser<'a> {
                 self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
+                self.expect_property_after_paren()?;
             }
             if self.lexer.current()? == Token::Dot {
                 while self.lexer.current()? == Token::Dot {
@@ -4120,6 +4133,38 @@ mod tests {
                 Parser::new(query).parse().is_ok(),
                 "failed to parse: {query}"
             );
+        }
+    }
+
+    // A parenthesized SET/REMOVE target only opens a property lookup, and
+    // an edge's type alternatives are joined by `|`, never by a bare `:`.
+    #[test]
+    fn paren_update_targets_and_colon_joined_types_are_rejected() {
+        with_functions();
+        for query in [
+            "MATCH (n) SET (n.x) = 5",
+            "MATCH (n) SET (n) = {a: 1}",
+            "MATCH (n) SET (n) += {a: 1}",
+            "MATCH (n) SET (n):L",
+            "MATCH (n) REMOVE (n):L",
+            "MATCH ()-[:A:B]->() RETURN 1",
+            "MATCH ()-[r:A:B]->() RETURN 1",
+            "MATCH ()-[:A|B:C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) SET (n).x.y = 5",
+            "MATCH (n) REMOVE (n).x",
+            "MATCH (n) SET n = {a: 1}, n:L",
+            "MATCH ()-[:A]->() RETURN 1",
+            "MATCH ()-[:A|B]->() RETURN 1",
+            "MATCH ()-[:A|:B|C]->() RETURN 1",
+            "MATCH (a), (b) RETURN shortestPath((a)-[:A|:B*]->(b))",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 }

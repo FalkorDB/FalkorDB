@@ -1169,3 +1169,31 @@ class testQueryValidationFlow(FlowTestsBase):
             self.env.assertEqual(actual, [['a', 1], ['b', 0]])
         finally:
             g.delete()
+
+    def test52_paren_update_targets_and_colon_joined_types(self):
+        # a parenthesized SET/REMOVE target only opens a property lookup, and
+        # a relationship's types are joined by '|', never a bare ':'; these
+        # used to run (SET (n.x) = 5 set n.x, [:A:B] matched A or B)
+        g = self.fresh_graph("paren_targets_colon_types")
+        try:
+            g.query("CREATE (:N {x: 1})-[:A]->()")
+            for q in ["MATCH (n:N) SET (n.x) = 5",
+                      "MATCH (n:N) SET (n) = {x: 5}",
+                      "MATCH (n:N) SET (n):L",
+                      "MATCH (n:N) REMOVE (n):N",
+                      "MATCH ()-[:A:B]->() RETURN count(*)",
+                      "MATCH ()-[r:A:B]->() RETURN count(r)"]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False, message=q)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Invalid input", str(e))
+            # nothing was written by the rejected updates
+            res = g.query("MATCH (n:N) RETURN n.x, labels(n)").result_set
+            self.env.assertEqual(res, [[1, ['N']]])
+            # the valid spellings still work
+            g.query("MATCH (n:N) SET (n).x = 2")
+            res = g.query("MATCH (n:N)-[:A|:B]->() RETURN n.x").result_set
+            self.env.assertEqual(res, [[2]])
+        finally:
+            g.delete()
