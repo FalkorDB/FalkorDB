@@ -7,7 +7,7 @@ import Pr3437Review.Bridge
 # PR #3437: discharging `Body.Drops` and `RowAgree` from proofs/expr_semantics' `ExprEval`
 
 The per-element / per-row evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
-(`ExprEval::eval_node`, eval.rs:506 on the PR) over its tree `E`, with the row as
+(`ExprEval::eval_node`, eval.rs:503 on the PR) over its tree `E`, with the row as
 `env : Nat → Option V` (`RowView::value_at`). Values are the engine's `V F`.
 
 * **`Body.Drops` — discharged** (`newBody_drops`). `ListLoop::new` (eval.rs:323-338) drops a
@@ -15,28 +15,35 @@ The per-element / per-row evaluator is proofs/expr_semantics' `FalkorExpr.Eval.e
   owned row `env + {var: v}` the owner's evaluator gives `Bool(true)` and `v` for them.
 * **Frame property — discharged for the owner's fragment** (`evalNode_frame`): `evalNode`
   depends on the row only through the ids of the `var` nodes in the tree.
-* **`RowAgree` for binder-free bodies — discharged** (`rowAgree`): when `vector_plan`
-  succeeds on bodies with no nested comprehension / quantifier / `reduce`, the batch row
-  (`loop_var_column` at the loop id, `broadcast_column`s at the plan's ids) and the owned row
-  agree on every id the bodies read, so the per-row evaluator gives the same result on
-  both. No id-uniqueness premise is needed here: with no nested binder the only bound id
-  is the loop variable's, which both rows hold.
-* **`Col.Sound` for binder-free bodies** (`colSound_binderFree`): with columnar's
-  `Dispatch.Lawful` (whose per-row reference is this `evalNode` on the batch row) the
-  predicate column is main's per-element values.
+* **`RowAgree` — discharged for every body `vector_plan` accepts** (`rowAgree`, a739b990f):
+  an accepted body binds nothing but the loop variable (`Classifier.vectorPlan_broadcasts`),
+  so the batch row (`loop_var_column` at the loop id, `broadcast_column`s at the plan's ids)
+  and the owned row agree on every id the body reads; no id-uniqueness premise. Before
+  a739b990f nested binders were accepted and this needed a binder scoping theorem
+  (`ClassifierPre`, `Classifier.pre_a739b990f_accepts_nested_binder`).
+* **`Col.Sound`'s predicate half** (`colSound_accepted`) from columnar's `Dispatch.eval_sound`,
+  **given `hS`**: columnar's abstract per-row reference `RowSem.rowEval` *is* this `evalNode`
+  on the batch row.
 
-**Not dischargeable from the owners' models: bodies that contain a nested
-`ListComprehension` / `Quantifier` / `Reduce`.** proofs/expr_semantics models every
-`eval_compound` arm as `compound : Nat → List V → Except String V`, a function of the
-child *values* only, but those three arms read the row (`to_owned_row` + `insert`,
-eval.rs:1176-1240), so `E` has no faithful binder arm to prove a frame property with
-binders about. With binders the frame property also needs a *local* scoping fact — no id
-read free in the body is bound by a nested binder elsewhere in the body (it would not be
-broadcast) — which proofs/binder would have to supply as a theorem about `bindNode`'s
-output; its `bindNode_covers` keeps `Env.Covers` through pattern-free expressions, but
-`Covers` at the start of the expression is not a binder invariant
-(`comprehension_cleanup_breaks`, `where_copy_id_reused`), so it is not provable from the
-current binder model either.
+**`hS` is not dischargeable from the owners' models** (`Dispatch.Lawful` would have to be
+instantiated with `RowSem.rowEval := evalNode` and every field proved):
+1. `Dispatch.Lawful` has no concrete instance anywhere: columnar proves each lane against
+   its own operator-level reference (`rowCmp`, `valueArith`, `notRow`, `caseRow`,
+   `foldCall`, `VExpr.colEval`) over its own value type `Columnar.V F` (seven constructors,
+   abstract `FloatModel`), not over a tree evaluator, and never assembles them.
+2. expr_semantics' `E` has a faithful arm only for `const`, `var`, `param`, map literals,
+   `prop`, `+`, `- * / %`, `=`, `<>`, `< > <= >=`; every other arm is the eager, value-only
+   `compound`. That cannot express `AND` / `OR` / `CASE`, which short-circuit
+   (`compound_cannot_short_circuit`; live on main: `RETURN false AND 1/0 = 1` → `false`,
+   `true OR 1/0 = 1` → `true`, `CASE WHEN true THEN 1 ELSE 1/0 END` → `1`). The classifier
+   accepts all three, so they are not routed per element.
+3. The comparison and arithmetic arms that both projects do model are over different value
+   types (`Columnar.V F` vs expr_semantics' abstract `Ops V`), and no owner relates
+   `all_equals` / `all_not_equals` (expr_semantics `evalCmp`) to columnar's
+   `compareValues` / `rowCmp`, or `O.arith` to `valueArith`.
+Needed: a tree-level per-row evaluator shared by both projects (or a translation
+`Columnar.V F ↔ FalkorCore.V F` plus `E` arms for AND/OR/NOT/CASE/function calls with
+their scalar semantics), and an instance of `Dispatch.Lawful` built from columnar's lanes.
 -/
 
 namespace Pr3437.Discharge
@@ -147,72 +154,50 @@ theorem newBody_drops (env : Nat → Option (V F)) (vid : Nat) (pred proj : E (V
       simp only [isLoopVar, beq_iff_eq] at h; subst h
       simp [evalNode, resolveVar, upd]
 
-/-! ## `RowAgree` for binder-free bodies -/
+/-! ## `RowAgree` for every body the classifier accepts -/
 
 -- An `E` tree as `collect_body_vars` sees it. `E`'s `compound` stands for every other
--- `ExprIR` arm; binder-free means none of them is a nested `ListComprehension` /
--- `Quantifier` / `Reduce` / excluded shape, so it is `other`.
+-- `ExprIR` arm; `isBad t` says whether arm `t` is one `collect_body_vars` rejects (a nested
+-- binder, nested plan, pattern, `DISTINCT`, writing or aggregating call): it maps to a
+-- rejected kind, everything else to `other`.
+open Pr3437.ClassifierPre (BK BT varsOf varsAll) in
 mutual
-def toBT : E (V F) → BT
+def toBT (isBad : Nat → Bool) : E (V F) → BT
   | .var id _ => .mk (.var id) []
-  | .map kvs => .mk .other (toBTL kvs)
-  | .key _ ch => .mk .other [toBT ch]
-  | .prop _ e => .mk .other [toBT e]
-  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b => .mk .other [toBT a, toBT b]
-  | .compound _ cs => .mk .other (toBTL cs)
+  | .map kvs => .mk .other (toBTL isBad kvs)
+  | .key _ ch => .mk .other [toBT isBad ch]
+  | .prop _ e => .mk .other [toBT isBad e]
+  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b => .mk .other [toBT isBad a, toBT isBad b]
+  | .compound t cs => .mk (if isBad t then .distinct else .other) (toBTL isBad cs)
   | _ => .mk .other []
-def toBTL : List (E (V F)) → List BT
+def toBTL (isBad : Nat → Bool) : List (E (V F)) → List BT
   | [] => []
-  | ch :: cs => toBT ch :: toBTL cs
+  | ch :: cs => toBT isBad ch :: toBTL isBad cs
 end
 
+open Pr3437.ClassifierPre (varsOf varsAll) in
 mutual
-theorem toBT_collect : ∀ (e : E (V F)) (r b : List Nat),
-    collect (toBT e) r b = (true, r ++ varsE e, b)
-  | .var id _, r, b => by simp [toBT, collect, pre, collectAll, varsE]
-  | .map kvs, r, b => by simp only [toBT, collect, pre, varsE]; exact toBTL_collect kvs r b
-  | .key _ ch, r, b => by
-    simp only [toBT, collect, pre, collectAll, varsE]; rw [toBT_collect ch r b]; try simp [collectAll]
-  | .prop _ e, r, b => by
-    simp only [toBT, collect, pre, collectAll, varsE]; rw [toBT_collect e r b]; try simp [collectAll]
-  | .add x y, r, b | .arith _ x y, r, b | .eq x y, r, b | .neq x y, r, b | .cmp _ x y, r, b => by
-    simp only [toBT, collect, pre, collectAll, varsE]
-    rw [toBT_collect x r b]; simp only; rw [toBT_collect y _ b]; try simp [collectAll]
-  | .compound _ cs, r, b => by simp only [toBT, collect, pre, varsE]; exact toBTL_collect cs r b
-  | .const _, r, b | .param _, r, b => by simp [toBT, collect, pre, collectAll, varsE]
-theorem toBTL_collect : ∀ (cs : List (E (V F))) (r b : List Nat),
-    collectAll (toBTL cs) r b = (true, r ++ varsL cs, b)
-  | [], r, b => by simp [toBTL, collectAll, varsL]
-  | ch :: cs, r, b => by
-    simp only [toBTL, collectAll, varsL]
-    rw [toBT_collect ch r b]; simp only; rw [toBTL_collect cs _ b]; simp
-end
-
-mutual
-theorem varsOf_toBT : ∀ e : E (V F), varsOf (toBT e) = varsE e
+theorem varsOf_toBT (isBad : Nat → Bool) : ∀ e : E (V F), varsOf (toBT isBad e) = varsE e
   | .var id _ => by simp [toBT, varsOf, varsAll, varsE]
-  | .map kvs => by simp only [toBT, varsOf, varsE, List.nil_append]; exact varsAll_toBTL kvs
-  | .key _ ch => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT ch]
-  | .prop _ e => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT e]
+  | .map kvs => by simp only [toBT, varsOf, varsE, List.nil_append]; exact varsAll_toBTL isBad kvs
+  | .key _ ch => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad ch]
+  | .prop _ e => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad e]
   | .add x y | .arith _ x y | .eq x y | .neq x y | .cmp _ x y => by
-    simp [toBT, varsOf, varsAll, varsE, varsOf_toBT x, varsOf_toBT y]
-  | .compound _ cs => by simp only [toBT, varsOf, varsE, List.nil_append]; exact varsAll_toBTL cs
+    simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad x, varsOf_toBT isBad y]
+  | .compound t cs => by
+    have h := varsAll_toBTL isBad cs
+    cases hb : isBad t <;> simp [toBT, varsOf, varsE, hb, h]
   | .const _ | .param _ => by simp [toBT, varsOf, varsAll, varsE]
-theorem varsAll_toBTL : ∀ cs : List (E (V F)), varsAll (toBTL cs) = varsL cs
+theorem varsAll_toBTL (isBad : Nat → Bool) : ∀ cs : List (E (V F)), varsAll (toBTL isBad cs) = varsL cs
   | [] => by simp [toBTL, varsAll, varsL]
-  | ch :: cs => by simp [toBTL, varsAll, varsL, varsOf_toBT ch, varsAll_toBTL cs]
+  | ch :: cs => by simp [toBTL, varsAll, varsL, varsOf_toBT isBad ch, varsAll_toBTL isBad cs]
 end
 
-theorem toBT_map_eq : ∀ es : List (E (V F)), es.map toBT = toBTL es
+theorem varsAll_map (isBad : Nat → Bool) : ∀ es : List (E (V F)),
+    ClassifierPre.varsAll (es.map (toBT isBad)) = varsL es
   | [] => rfl
-  | e :: es => by simp [toBTL, toBT_map_eq es]
-
-theorem collectAll_toBT (es : List (E (V F))) (r b : List Nat) :
-    collectAll (es.map toBT) r b = (true, r ++ varsL es, b) := by
-  rw [toBT_map_eq]; exact toBTL_collect es r b
-
-theorem varsAll_map (es : List (E (V F))) : varsAll (es.map toBT) = varsL es := by
-  rw [toBT_map_eq]; exact varsAll_toBTL es
+  | e :: es => by
+    simp [ClassifierPre.varsAll, varsL, varsOf_toBT isBad e, varsAll_map isBad es]
 
 theorem mem_varsL {e : E (V F)} {es : List (E (V F))} (he : e ∈ es) {id : Nat} (hi : id ∈ varsE e) :
     id ∈ varsL es := by
@@ -254,44 +239,42 @@ theorem lookup_of_mem {V' : Type} (outer : List (Nat × V')) (valueAt : Nat → 
       · simp at he; exact absurd he.1 h
       · exact ih (fun q hq => hall q (by simp [hq])) hm'
 
-/-- The batch row of `list_loop_columnar` (eval.rs:1563-1567) at row `r`, read through
+/-- The batch row of `list_loop_columnar` (eval.rs:1560-1564) at row `r`, read through
 `BatchRow::value_at`: the loop column, then the broadcast columns. -/
 def batchEnv (vid : Nat) (outer : List (Nat × V F)) (chunk : List (V F)) (r : Nat) : Nat → Option (V F) :=
   fun j => if j = vid then some ((Bridge.loopVarColumn chunk).get r)
     else (outer.lookup j).map fun v => (Bridge.broadcastColumn v chunk.length).get r
 
-/-- **`RowAgree`, binder-free bodies.** If `vector_plan` accepted the bodies (none of them
-holding a nested binder), the per-row evaluator on the batch row is main's per-element
-evaluator on `env + {var: chunk[r]}`, for every body and every row. -/
-theorem rowAgree (env : Nat → Option (V F)) (vid : Nat) (bodies : List (E (V F)))
-    (outer : List (Nat × V F)) (hplan : vectorPlan vid (bodies.map toBT) env = some outer)
+/-- **`RowAgree`.** If `vector_plan` accepted the bodies, the per-row evaluator on the batch
+row is main's per-element evaluator on `env + {var: chunk[r]}`, for every body and every row.
+No premise about the bodies: since a739b990f an accepted body binds nothing but the loop
+variable (`vectorPlan_broadcasts`). -/
+theorem rowAgree (isBad : Nat → Bool) (env : Nat → Option (V F)) (vid : Nat) (bodies : List (E (V F)))
+    (outer : List (Nat × V F)) (hplan : vectorPlan vid (bodies.map (toBT isBad)) env = some outer)
     (chunk : List (V F)) (r : Nat) (hr : r < chunk.length) :
     ∀ e ∈ bodies, evalNode O ev c (some (batchEnv vid outer chunk r)) e =
       evalNode O ev c (some (upd env vid chunk[r])) e := by
   intro e he
   apply evalNode_frame
   intro id hid
-  have hb := vectorPlan_broadcasts vid (bodies.map toBT) env outer hplan id
+  have hb := vectorPlan_broadcasts vid (bodies.map (toBT isBad)) env outer hplan id
     (by rw [varsAll_map]; exact mem_varsL he hid)
-  rw [collectAll_toBT] at hb
-  have hall : ∀ p ∈ outer, env p.1 = some p.2 := by
-    unfold vectorPlan at hplan; rw [collectAll_toBT] at hplan
-    exact outer_vals env _ outer hplan
+  have hall := vectorPlan_vals vid (bodies.map (toBT isBad)) env outer hplan
   simp only [batchEnv, upd]
   by_cases hv : id = vid
   · simp [hv, Bridge.loopVar_get chunk r hr]
   · simp only [hv, ite_false]
     rcases hb with hb | ⟨v, hval, hm⟩
-    · simp at hb; exact absurd hb hv
+    · exact absurd hb hv
     · rw [lookup_of_mem outer env hall id v hm, hval]
       simp [Bridge.broadcast_get v chunk.length r hr]
 
-/-- **`Col.Sound`'s predicate half for binder-free bodies**: columnar's `eval_sound`, with
+/-- **`Col.Sound`'s predicate half for every accepted body**: columnar's `eval_sound`, with
 its per-row reference being `evalNode` on the batch row, gives main's per-element values. -/
-theorem colSound_binderFree {C : Type} (A : Columnar.Dispatch.Arms (V F) C)
+theorem colSound_accepted {C : Type} (A : Columnar.Dispatch.Arms (V F) C)
     (S : Columnar.Dispatch.RowSem (V F) C) (L : Columnar.Dispatch.Lawful A S)
-    (n : Columnar.Dispatch.Node (V F)) (env : Nat → Option (V F)) (vid : Nat) (pred : E (V F))
-    (outer : List (Nat × V F)) (hplan : vectorPlan vid [toBT pred] env = some outer)
+    (n : Columnar.Dispatch.Node (V F)) (isBad : Nat → Bool) (env : Nat → Option (V F)) (vid : Nat) (pred : E (V F))
+    (outer : List (Nat × V F)) (hplan : vectorPlan vid [toBT isBad pred] env = some outer)
     (chunk : List (V F))
     (hS : ∀ r, S.rowEval n r = evalNode O ev c (some (batchEnv vid outer chunk r)) pred)
     (col : C) (h : Columnar.Dispatch.eval A n (List.range chunk.length) = .ok col) :
@@ -299,7 +282,21 @@ theorem colSound_binderFree {C : Type} (A : Columnar.Dispatch.Arms (V F) C)
       .ok ((List.range chunk.length).map (S.get col)) := by
   apply Bridge.colSound_pred A S L n _ chunk .null _ col h
   intro r hr
-  rw [hS r, rowAgree O ev c env vid [pred] outer (by simpa using hplan) chunk r hr pred (by simp)]
+  rw [hS r, rowAgree O ev c isBad env vid [pred] outer (by simpa using hplan) chunk r hr pred (by simp)]
   simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hr]
+
+end Pr3437.Discharge
+
+namespace Pr3437.Discharge
+open FalkorCore FalkorExpr.Eval
+
+/-- **Why `E` cannot model `AND`/`OR`/`CASE`.** Whatever value-only semantics `compound`
+gives an operator, an erroring operand is reported before the operator runs — so no
+choice of `compound` yields Rust's `false AND <error>` = `false`. -/
+theorem compound_cannot_short_circuit {F : Type} (O : Ops (V F)) (ev : Ev (V F))
+    (c : Nat → List (V F) → Except String (V F)) (env : Option (Nat → Option (V F)))
+    (t : Nat) (a : V F) (bad : E (V F)) (e : String) (hbad : evalNode O ev c env bad = .error e) :
+    evalNode O ev c env (.compound t [.const a, bad]) = .error e := by
+  simp [evalNode, evalList, hbad, bind, Except.bind]
 
 end Pr3437.Discharge

@@ -4,22 +4,22 @@ import FalkorStrList
 /-!
 # PR #3437: a list comprehension / quantifier body, chunked (`runtime/eval.rs`)
 
-Cites are to the PR branch (`perf/list-comprehension`, 6efd69cd6) unless marked *main*
+Cites are to the PR branch (`perf/list-comprehension`, a739b990f) unless marked *main*
 (origin/main 9212add39).
 
 | Lean | Rust |
 | --- | --- |
-| `isTrue` | `matches!(v, Value::Bool(true))` (eval.rs:1528, :1537, :1631) |
-| `kOf`, `boolMismatch` | the `Bool(true)/Bool(false)/Null/_ => Err` match (eval.rs:1545-1554, :1588-1597; *main* :1013-1023) |
+| `isTrue` | `matches!(v, Value::Bool(true))` (eval.rs:1525, :1534, :1628) |
+| `kOf`, `boolMismatch` | the `Bool(true)/Bool(false)/Null/_ => Err` match (eval.rs:1542-1551, :1585-1594; *main* :1013-1023) |
 | `Sink` | `enum LoopSink` (eval.rs:304-311) |
 | `refStep`, `ref` | *main*'s per-element loops: comprehension eval.rs:1072-1080, quantifier :1010-1025 (`mainCompLoop`, `mainQuantLoop`) |
 | `Body` | `struct ListLoop` (eval.rs:289-300) after `ListLoop::new` (:323-338): `hasPred = false` iff the predicate was the literal `true`, `hasProj = false` iff the projection was the loop variable |
-| `prStep`, `bulk`, `perElem` | the per-element half of `list_loop_chunk` (eval.rs:1497-1549), with the `predicate.is_none() && projection.is_none()` shortcut (:1504-1511) |
+| `prStep`, `bulk`, `perElem` | the per-element half of `list_loop_chunk` (eval.rs:1494-1546), with the `predicate.is_none() && projection.is_none()` shortcut (:1501-1508) |
 | `EC`, `EC.vals` | `ExprColumn` read back through `ExprColumn::get`; `bools` is the `Bools(mask, nulls)` lane |
-| `Col`, `Col.Sound` | `VectorEval::eval` / `eval_values` over the chunk batch (eval.rs:1569, :1630, :1636) and the contract they meet (see `Bridge`) |
-| `countLocal`, `tallyNoProj`, `passedOf`, `columnar` | `list_loop_columnar` (eval.rs:1553-1655) |
-| `chunkStep` | `list_loop_chunk` (eval.rs:1459-1550): columnar first, re-run per element on any error |
-| `prRun` | the `for chunk in …` loops (eval.rs:1350-1359, :1411-1421, :1428-1430) |
+| `Col`, `Col.Sound` | `VectorEval::eval` / `eval_values` over the chunk batch (eval.rs:1566, :1627, :1633) and the contract they meet (see `Bridge`) |
+| `countLocal`, `tallyNoProj`, `passedOf`, `columnar` | `list_loop_columnar` (eval.rs:1550-1652) |
+| `chunkStep` | `list_loop_chunk` (eval.rs:1456-1547): columnar first, re-run per element on any error |
+| `prRun` | the `for chunk in …` loops (eval.rs:1347-1356, :1408-1418, :1425-1427) |
 -/
 
 namespace Pr3437.ListLoop
@@ -87,7 +87,7 @@ def mainCompLoop : List (V F) → List (V F) → Except String (List (V F))
         | .ok y => mainCompLoop (acc ++ [y]) vs
       else mainCompLoop acc vs
 
-/-- *main* eval.rs:1010-1025 (and the PR's short-list loop, eval.rs:1325-1340). -/
+/-- *main* eval.rs:1010-1025 (and the PR's short-list loop, eval.rs:1322-1337). -/
 def mainQuantLoop : Nat → Nat → Nat → List (V F) → Except String (Nat × Nat × Nat)
   | t, f, n, [] => .ok (t, f, n)
   | t, f, n, v :: vs =>
@@ -239,7 +239,7 @@ structure Body.Drops (b : Body F) : Prop where
   predTrue : b.hasPred = false → ∀ v, b.pe v = .ok (.bool true)
   projId : b.hasProj = false → ∀ v, b.pj v = .ok v
 
-/-- The loop body of eval.rs:1513-1549. -/
+/-- The loop body of eval.rs:1510-1546. -/
 def prStep (b : Body F) (s : Sink F) (v : V F) : Except String (Sink F) :=
   (if b.hasPred then b.pe v else pure (.bool true)) >>= fun pass =>
   match s with
@@ -256,7 +256,7 @@ def prStep (b : Body F) (s : Sink F) (v : V F) : Except String (Sink F) :=
     | some k => pure (bump k t f n)
     | none => throw (boolMismatch pass)
 
-/-- eval.rs:1504-1511: no predicate and no projection. -/
+/-- eval.rs:1501-1508: no predicate and no projection. -/
 def bulk : Sink F → List (V F) → Sink F
   | .collect acc, c => .collect (acc ++ c)
   | .count t f n, c => .count (t + c.length) f n

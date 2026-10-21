@@ -21,8 +21,8 @@ between them:
 | `level9Main`, `level9PR` | cypher.rs:2547-2580 on main / on the PR |
 | `rustNegI` | `-i` on `i64` in release (`[profile.release]` has no `overflow-checks`: wraps; debug panics) |
 | `negF` | `-f` on `f64` (`Neg for f64`: flips the sign bit, NaN payload kept) |
-| `evalE` | `ExprEval` on `Constant` / `Negate` (eval.rs:898-910, `checkedNeg` from proofs/expr_semantics) |
-| `evalParam` | `evaluate_param`'s `Negate` (eval.rs:2280-2289) |
+| `evalE` | `ExprEval` on `Constant` / `Negate` (eval.rs:895-907, `checkedNeg` from proofs/expr_semantics) |
+| `evalParam` | `evaluate_param`'s `Negate` (eval.rs:2277-2286) |
 
 **`fold_eq_eval`**: for every tree, the PR's level-9 result evaluates to what main's does
 (`Except`-equal: same value — float bits included — or same error), under both evaluators.
@@ -89,7 +89,7 @@ def evalE (evOther : E → Except String (FalkorCore.V F)) : E → Except String
     | w => .error ("Type mismatch: expected Integer, Float, or Null but was " ++ w.name)
   | e => evOther e
 
-/-- `evaluate_param` (eval.rs:2280-2289): a negated non-number is `Null`. -/
+/-- `evaluate_param` (eval.rs:2277-2286): a negated non-number is `Null`. -/
 def evalParam (evOther : E → Except String (FalkorCore.V F)) : E → Except String (FalkorCore.V F)
   | .const v => .ok v
   | .neg e => evalParam evOther e >>= fun v => match v with

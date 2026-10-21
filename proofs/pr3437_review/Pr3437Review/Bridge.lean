@@ -10,7 +10,7 @@ column, entry `i` is the per-row evaluator on row `rows[i]`* — plus one premis
 the chunk batch is built:
 
 * **`RowAgree`** — the per-row evaluator on batch row `r` (a `BatchRow` over the batch
-  `list_loop_columnar` builds, eval.rs:1563-1567) equals main's per-element evaluator on the
+  `list_loop_columnar` builds, eval.rs:1560-1564) equals main's per-element evaluator on the
   owned row `env + {var: chunk[r]}`. It holds when (a) the batch's columns read back the
   chunk element and the broadcast outer values (`loopVar_get`, `broadcast_get` below;
   `set_column`'s `classify_stored_column` is lossless: columnar `Column.classifyStored_*`),
@@ -60,7 +60,7 @@ theorem eval_rows_mapM (A : Arms Val C) (S : RowSem Val C) (L : Lawful A S) (n :
     exact hs i hi)
   simpa using this
 
-/-- The predicate over the whole chunk (`all = (0..len)`, eval.rs:1568): `Col.Sound.pred`. -/
+/-- The predicate over the whole chunk (`all = (0..len)`, eval.rs:1565): `Col.Sound.pred`. -/
 theorem colSound_pred (A : Arms Val C) (S : RowSem Val C) (L : Lawful A S) (n : Node Val)
     (pe : Val → Except String Val) (xs : List Val) (d : Val)
     (hrow : ∀ r, r < xs.length → S.rowEval n r = pe (xs.getD r d))
@@ -132,13 +132,13 @@ def allNodes {F : Type} : List (V F) → Option (List Nat)
   | .node id :: vs => (allNodes vs).map (id :: ·)
   | _ :: _ => none
 
-/-- `loop_var_column` (eval.rs:408-417). -/
+/-- `loop_var_column` (eval.rs:405-414). -/
 def loopVarColumn {F : Type} (chunk : List (V F)) : Column F :=
   match allNodes chunk with
   | some ids => .nodeIds ids
   | none => .values chunk
 
-/-- `broadcast_column` (eval.rs:420-431). -/
+/-- `broadcast_column` (eval.rs:417-428). -/
 def broadcastColumn {F : Type} (v : V F) (len : Nat) : Column F :=
   match v with
   | .node id => .nodeIds (List.replicate len id)

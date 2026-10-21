@@ -5,12 +5,12 @@ import Pr3437Review.Chunked
 
 | Lean | Rust |
 | --- | --- |
-| `chunkStep` | `list_loop_chunk` (eval.rs:1459-1550); `useCol` = `self.runtime.is_some() && lp.vector_plan(env).is_some()` (:1470-1472), any value |
-| `prRun` | the chunk loops (eval.rs:1350-1359, :1411-1421, :1428-1430) |
-| `chunksOf` | `<[Value]>::chunks(LIST_LOOP_CHUNK)` (eval.rs:1350, :1428) |
-| `streamLoop` | the streaming buffer (eval.rs:1408-1421) |
-| `Source`, `prListComp`, `mainListComp`, `mainSize` | `eval_list_comprehension` (eval.rs:1375-1452) vs *main*'s `ListComprehension` arm (eval.rs:1041-1085) and `size` (functions/list.rs:61-68) |
-| `prQuant`, `mainQuant` | `ExprEval::eval_quantifier` (eval.rs:1313-1366) vs *main*'s `Quantifier` arm (eval.rs:1001-1037) |
+| `chunkStep` | `list_loop_chunk` (eval.rs:1456-1547); `useCol` = `self.runtime.is_some() && lp.vector_plan(env).is_some()` (:1467-1469), any value |
+| `prRun` | the chunk loops (eval.rs:1347-1356, :1408-1418, :1425-1427) |
+| `chunksOf` | `<[Value]>::chunks(LIST_LOOP_CHUNK)` (eval.rs:1347, :1425) |
+| `streamLoop` | the streaming buffer (eval.rs:1405-1418) |
+| `Source`, `prListComp`, `mainListComp`, `mainSize` | `eval_list_comprehension` (eval.rs:1372-1449) vs *main*'s `ListComprehension` arm (eval.rs:1041-1085) and `size` (functions/list.rs:61-68) |
+| `prQuant`, `mainQuant` | `ExprEval::eval_quantifier` (eval.rs:1310-1363) vs *main*'s `Quantifier` arm (eval.rs:1001-1037) |
 -/
 
 namespace Pr3437.ListLoop
@@ -81,7 +81,7 @@ theorem chunksOf_flatten (n : Nat) (hn : 0 < n) (l : List α) : (chunksOf n l).f
         simp; omega
       rw [ih _ this (l.drop n) rfl, List.take_append_drop]
 
-/-- The streaming buffer: push, flush when full, flush the rest at the end (eval.rs:1408-1421). -/
+/-- The streaming buffer: push, flush when full, flush the rest at the end (eval.rs:1405-1418). -/
 def streamLoop (n : Nat) : List α → List α → List (List α)
   | buf, [] => [buf]
   | buf, x :: xs => if (buf ++ [x]).length = n then (buf ++ [x]) :: streamLoop n [] xs
@@ -129,7 +129,7 @@ def sinkOut (count : Bool) : Sink F → V F
   | .tally n => .int n
   | .count .. => .null
 
-/-- `eval_list_comprehension(node, env, _, count)` (eval.rs:1375-1452). -/
+/-- `eval_list_comprehension(node, env, _, count)` (eval.rs:1372-1449). -/
 def prListComp (b : Body F) (c : Col F) (useCol : List (V F) → Bool) (count : Bool) :
     Source F → Except String (V F)
   | .stream r => r >>= fun o => match o with
@@ -225,7 +225,7 @@ def countOut (q : QType) : Sink F → V F
   | .count t f n => quantRes q (t, f, n)
   | _ => .null
 
-/-- `ExprEval::eval_quantifier` (eval.rs:1313-1366): a short list runs main's loop
+/-- `ExprEval::eval_quantifier` (eval.rs:1310-1363): a short list runs main's loop
 verbatim (:1325-1341); a longer one goes through `ListLoop` with no projection (:1345). -/
 def prQuant (b : Body F) (c : Col F) (useCol : List (V F) → Bool) (q : QType) (r : Except String (V F)) :
     Except String (V F) :=

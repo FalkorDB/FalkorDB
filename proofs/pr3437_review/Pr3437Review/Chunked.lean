@@ -3,7 +3,7 @@ import Pr3437Review.ListLoop
 /-!
 # PR #3437: the columnar half and the chunk loop (`list_loop_columnar`, `list_loop_chunk`)
 
-`columnar` is `list_loop_columnar` (eval.rs:1553-1655) with the vector evaluator abstracted
+`columnar` is `list_loop_columnar` (eval.rs:1550-1652) with the vector evaluator abstracted
 to `Col`: `colP` = `ve.eval(predicate, &batch, &all)` (:1569), `colJ` =
 `ve.eval(projection, &batch, &passed)` (:1630), `colJv` = `ve.eval_values(projection, ..)`
 (:1643). Its only assumption is `Col.Sound`: a column the vector evaluator *returns* holds,
@@ -49,7 +49,7 @@ structure Col.Sound (c : Col F) (pe pj : V F → Except String (V F)) : Prop whe
 def filterPass (chunk ps : List (V F)) : List (V F) :=
   ((chunk.zip ps).filter fun q => isTrue q.2).map (·.1)
 
-/-- One quantifier count step on a predicate value (eval.rs:1588-1597). -/
+/-- One quantifier count step on a predicate value (eval.rs:1585-1594). -/
 def cstep : Nat × Nat × Nat → V F → Except String (Nat × Nat × Nat)
   | (t, f, n), v =>
     match kOf v with
@@ -58,7 +58,7 @@ def cstep : Nat × Nat × Nat → V F → Except String (Nat × Nat × Nat)
     | some .n => .ok (t, f, n + 1)
     | none => .error (boolMismatch v)
 
-/-- `local` (eval.rs:1576-1600). -/
+/-- `local` (eval.rs:1573-1597). -/
 def countLocal (len : Nat) : Option (EC F) → Except String (Nat × Nat × Nat)
   | none => .ok (len, 0, 0)
   | some (.bools cs) =>
@@ -67,19 +67,19 @@ def countLocal (len : Nat) : Option (EC F) → Except String (Nat × Nat × Nat)
       if q.2 then (t, f, n + 1) else if q.1 then (t + 1, f, n) else (t, f + 1, n)) (0, 0, 0))
   | some (.vals vs) => vs.foldlM cstep (0, 0, 0)
 
-/-- eval.rs:1607-1618. -/
+/-- eval.rs:1604-1615. -/
 def tallyNoProj (len : Nat) : Option (EC F) → Nat
   | none => len
   | some (.bools cs) => (cs.filter fun q => q.1 && !q.2).length
   | some (.vals vs) => (vs.filter isTrue).length
 
-/-- `passed` (eval.rs:1620-1631). -/
+/-- `passed` (eval.rs:1617-1628). -/
 def passedOf (chunk : List (V F)) : Option (EC F) → List (V F)
   | none => chunk
   | some (.bools cs) => ((chunk.zip cs).filter fun q => q.2.1 && !q.2.2).map (·.1)
   | some (.vals vs) => filterPass chunk vs
 
-/-- `list_loop_columnar` (eval.rs:1553-1655). -/
+/-- `list_loop_columnar` (eval.rs:1550-1652). -/
 def columnar (b : Body F) (c : Col F) (s : Sink F) (chunk : List (V F)) : Except String (Sink F) :=
   (if b.hasPred then (c.colP chunk).map some else pure none) >>= fun tested =>
   match s with

@@ -11,8 +11,9 @@ import Pr3437Review.Discharge
 /-!
 # Review of PR #3437 — "perf: list comprehensions evaluate their body over the list in chunks"
 
-PR branch `perf/list-comprehension` @ 6efd69cd6 (one commit on origin/main 9212add39); every
-cite is to that branch unless marked *main*. No `sorry` / `admit` / `native_decide` / axiom;
+PR branch `perf/list-comprehension` @ a739b990f (6efd69cd6 + a739b990f, which sends bodies with
+a nested binder per element; on origin/main 9212add39); every cite is to a739b990f unless
+marked *main* (or, in `ClassifierPre`, 6efd69cd6). No `sorry` / `admit` / `native_decide` / axiom;
 headline theorems use only `propext`, `Quot.sound`, `Classical.choice`. Definitions are
 imported from proofs/core (`V`, `F`, i64), proofs/columnar (`Dispatch.eval_sound`),
 proofs/value_order (`W.valueOfType`), proofs/functions_str_list (`evalQuantifier`, `K`) and
@@ -20,19 +21,20 @@ proofs/expr_semantics (`checkedNeg`).
 
 | module | Rust |
 | --- | --- |
-| `ListLoop` | main's per-element comprehension / quantifier loops (*main* eval.rs:1010-1025, :1072-1080); `LoopSink`, `ListLoop` (eval.rs:289-311); the per-element half of `list_loop_chunk` (:1497-1549) |
-| `Chunked` | `list_loop_columnar` (eval.rs:1553-1655) |
-| `Drive` | `list_loop_chunk` (:1459-1550), the chunk loops, `eval_list_comprehension` (:1375-1452), `ExprEval::eval_quantifier` (:1313-1366), `size` (functions/list.rs:61) |
-| `Classifier` | `collect_body_vars` (eval.rs:380-405), `ListLoop::vector_plan` (:344-371) |
-| `Bridge` | `VectorEval` over the chunk batch vs columnar's `eval_sound`; `counts_comprehension` (eval.rs:315) and its guard in `VectorEval::eval` (vector_expr.rs:253-269); `loop_var_column` (eval.rs:408), `broadcast_column` (:420) |
+| `ListLoop` | main's per-element comprehension / quantifier loops (*main* eval.rs:1010-1025, :1072-1080); `LoopSink`, `ListLoop` (eval.rs:289-311); the per-element half of `list_loop_chunk` (:1494-1546) |
+| `Chunked` | `list_loop_columnar` (eval.rs:1550-1652) |
+| `Drive` | `list_loop_chunk` (:1456-1547), the chunk loops, `eval_list_comprehension` (:1372-1449), `ExprEval::eval_quantifier` (:1310-1363), `size` (functions/list.rs:61) |
+| `Classifier` | `collect_body_vars` (eval.rs:380-402), `ListLoop::vector_plan` (:344-370) |
+| `ClassifierPre` | HISTORICAL: the 6efd69cd6 classifier, which accepted nested binders |
+| `Bridge` | `VectorEval` over the chunk batch vs columnar's `eval_sound`; `counts_comprehension` (eval.rs:315) and its guard in `VectorEval::eval` (vector_expr.rs:253-269); `loop_var_column` (eval.rs:405), `broadcast_column` (:417) |
 | `ValueOfType` | `value_of_type` (value.rs:1315-1350) |
-| `NegFold` | the unary level of `parse_expr_inner` (cypher.rs:2547-2580), `ExprIR::Negate` (eval.rs:898-910), `evaluate_param` (:2280-2289) |
-| `Discharge` | `ListLoop::new` over expr_semantics' `E`; `RowAgree` for binder-free bodies; `BatchRow` of eval.rs:1563-1567 |
+| `NegFold` | the unary level of `parse_expr_inner` (cypher.rs:2547-2580), `ExprIR::Negate` (eval.rs:895-907), `evaluate_param` (:2277-2286) |
+| `Discharge` | `ListLoop::new` over expr_semantics' `E`; `RowAgree` for every accepted body; `BatchRow` of eval.rs:1560-1564 |
 | `ExactProp` | `materialize_node_property_exact` (runtime.rs:1566-1587), `get_node_int_attributes_by_idx` (graph.rs:2602-2613), `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1186-1216), `eval_property` (vector_expr.rs:337-353) |
 
 ## Verdicts
 
-1. **Chunked = per-element** — CONDITIONAL, now only for bodies with a nested binder (see below; `Body.Drops` discharged, `Col.Sound` discharged for binder-free bodies).
+1. **Chunked = per-element** — CONDITIONAL on one premise, `hS` (columnar's per-row reference = expr_semantics' `evalNode`; see below). `Body.Drops` and `RowAgree` are discharged; no binder premise is left (a739b990f).
    `comprehension_eq_main`: for every source (streamed literal/`range`, stored list, null,
    scalar) the PR's comprehension is `Except`-equal to main's — same list, same order, or the
    same error. `quantifier_eq_main`: `any`/`all`/`none`/`single` likewise (both sides feed
@@ -43,20 +45,21 @@ proofs/expr_semantics (`checkedNeg`).
    partitions the PR uses). `columnar_sound`: a chunk the columnar path finishes gives what
    main's loop gives, through every lane (`Bools` fast paths `passed_bools`, `count_bools`,
    `tally_bools`; the all-pass `extend_from_slice` `filterPass_full`).
-2. **Error behaviour** — CONDITIONAL (same hypotheses). The equalities in 1 are equalities
+2. **Error behaviour** — CONDITIONAL (`hS` only). The equalities in 1 are equalities
    of `Except`, so the reported error is main's. `ref_error_first`: main's error is the
    first element whose step fails, all earlier ones having succeeded;
    `refStep_collect_error`: within an element, the predicate's error, else (only if it
    passed) the projection's. A chunk whose columnar evaluation errors is re-run per element
    from the sink as it was (`chunkStep_eq`; every `?` in `list_loop_columnar` precedes its
    sink write), so no partial result escapes.
-3. **Fallback classifier** — PROVEN. `collect_rejects_iff`: `collect_body_vars` returns
-   `false` iff the body contains `NestedPlan`, `Pattern`, `PatternComprehension`, `Distinct`,
-   a writing or an aggregating function, at any depth; `vectorPlan_no_bad`: no plan (so no
-   columnar path) for such a predicate or projection; `vectorPlan_broadcasts`: every variable
-   the bodies read is the loop variable, bound inside the body, or broadcast with
-   `env.value_at(id)`.
-4. **`size(<comprehension>)`** — CONDITIONAL (same). `size_eq_main`: counting = `size` of
+3. **Fallback classifier** — PROVEN (a739b990f). `collect_rejects_iff`: `collect_body_vars`
+   returns `false` iff the body contains a nested `ListComprehension` / `Quantifier` /
+   `Reduce`, a `NestedPlan`, `Pattern`, `PatternComprehension`, `Distinct`, a writing or an
+   aggregating function, at any depth; `vectorPlan_no_bad`: no plan (so no columnar path)
+   for such a predicate or projection; `vectorPlan_broadcasts`: every variable the bodies
+   read is the loop variable or broadcast with `env.value_at(id)` (`vectorPlan_vals`).
+   History: `pre_a739b990f_accepts_nested_binder` (6efd69cd6 accepted `any(z IN [x] …)`).
+4. **`size(<comprehension>)`** — CONDITIONAL (`hS` only). `size_eq_main`: counting = `size` of
    main's list for every source (null source → null; empty `range` → 0);
    `size_projection_error`: a non-identity projection's error still surfaces; `eval_sound_pr`
    / `counted_goes_per_row`: the new `!counts_comprehension` guard sends the shape to
@@ -79,34 +82,30 @@ proofs/expr_semantics (`checkedNeg`).
 
 ## Hypotheses: what was discharged, what is left (`Discharge.lean`)
 
-* **`Body.Drops` — DISCHARGED** (`newBody_drops`): `ListLoop::new` modelled over
-  proofs/expr_semantics' `E` with main's per-element evaluator `evalNode` on
-  `env + {var: v}`; the dropped literal `true` and loop variable evaluate as required.
-* **ExprEval frame property — DISCHARGED for the owner's fragment** (`evalNode_frame`):
-  expr_semantics' `evalNode` reads the row only through the `var` ids of the tree.
-* **Binder id uniqueness — NOT NEEDED for binder-free bodies** (`rowAgree`): with no nested
-  comprehension / quantifier / `reduce`, the only bound id is the loop variable's, which both
-  rows hold; every other id read is broadcast with `env.value_at(id)`
-  (`vectorPlan_broadcasts`, `outer_vals`, `lookup_of_mem`), and the batch columns read back
-  the element / outer value (`loopVar_get`, `broadcast_get`). So `RowAgree` holds, and
-  `colSound_binderFree` gives `Col.Sound`'s predicate half from columnar's `eval_sound`.
-* **Still CONDITIONAL — bodies with a nested `ListComprehension` / `Quantifier` / `Reduce`**,
-  which `collect_body_vars` *accepts* (eval.rs:388-392), so the classifier does not route
-  them per element. Missing owner models:
-  1. proofs/expr_semantics: `E` has no binder arm — every `eval_compound` arm is
-     `compound : Nat → List V → Except String V`, a function of child values, but the
-     `Quantifier` / `ListComprehension` / `Reduce` arms read the row (`to_owned_row` +
-     `insert`, eval.rs:1176-1240). Needed: those arms over expression trees with `env`.
-  2. proofs/binder: a theorem that in a bound pattern-free expression no id read free is
-     also minted by a nested binder elsewhere in it (otherwise it is not broadcast).
-     `bindNode_covers` gives `Env.Covers` preservation, but `Covers` at the start of an
-     expression is not an invariant of the binder (`comprehension_cleanup_breaks`,
-     `where_copy_id_reused`); needed: either that invariant restricted to *readable* keys,
-     or a direct freshness theorem for `reserve` within one `bindNode` run.
-* **Link between the two evaluator models (also missing):** columnar's `Dispatch.Lawful`
-  fields are proved against columnar's own per-row references (`VExpr.rowEval`, lanes);
-  `colSound_binderFree` takes as premise (`hS`) that `RowSem.rowEval` *is* expr_semantics'
-  `evalNode` on the batch row. No owner proves those two per-row models equal.
+* **`Body.Drops` — DISCHARGED** (`newBody_drops`): `ListLoop::new` over expr_semantics' `E`
+  with main's per-element evaluator `evalNode` on `env + {var: v}`.
+* **ExprEval frame property — DISCHARGED** (`evalNode_frame`) for expr_semantics' evaluator.
+* **`RowAgree` — DISCHARGED for every body `vector_plan` accepts** (`rowAgree`): since
+  a739b990f the only bound variable of a columnar body is the loop variable; every other
+  read is broadcast with `env.value_at(id)` and the batch columns read back the element /
+  outer value (`loopVar_get`, `broadcast_get`). No binder id-uniqueness premise remains.
+* **Left: `hS`** — columnar's abstract per-row reference `Dispatch.RowSem.rowEval` (the
+  premise of `eval_sound`, through `Dispatch.Lawful`) equals expr_semantics' `evalNode` on the
+  batch row (`colSound_accepted` takes it as an argument). Blocked, precisely:
+  1. no owner instantiates `Dispatch.Lawful`: columnar proves each lane against its own
+     operator-level references over `Columnar.V F` and never assembles them;
+  2. expr_semantics' `E` models `AND` / `OR` / `CASE` (and `NOT`, `XOR`, function calls, `IN`,
+     `IS NULL`, …) only as the eager value-only `compound`, which cannot short-circuit
+     (`compound_cannot_short_circuit`; live: `RETURN false AND 1/0 = 1` → `false` on main),
+     and the classifier accepts these forms;
+  3. the arms both projects do model (`=`/`<>`/`<`…, `+ - * / %`, `prop`, `var`, `const`,
+     `param`) are over different value types, and no owner proves expr_semantics'
+     `evalCmp`/`all_equals` equal to columnar's `compareValues`/`rowCmp`, or `O.arith` to
+     `valueArith`.
+  Needed from the owners: a tree-level per-row evaluator shared by columnar and
+  expr_semantics with faithful `AND`/`OR`/`CASE`/`NOT`/call arms (or a translation
+  `Columnar.V F ↔ FalkorCore.V F` plus those arms in `E`), and a `Dispatch.Lawful` instance
+  built from columnar's lane theorems.
 
 ## Proposed parser_grammar re-statements on the PR's parser
 
@@ -128,7 +127,7 @@ theorem bounded_agree :
 ```
 (`-x.p` in `Theorems.lean:85` is unchanged: its child is a `prop` node, not a literal.)
 
-## Live checks (main 9212add39 vs PR 6efd69cd6, release dylibs, ports 6540/6541)
+## Live checks (main 9212add39 vs PR 6efd69cd6 — before a739b990f, which only sends more bodies per element — release dylibs, ports 6540/6541)
 
 ~110 queries, all identical (values and error strings): comprehensions / quantifiers over
 16-3000-element lists with predicate and projection errors at chosen elements
@@ -154,7 +153,7 @@ pattern comprehensions, shadowed and outer variables (`WITH … WHERE`, `ORDER B
   arms moved into `eval_list_comprehension` / `ExprEval::eval_quantifier`; their models of
   main stay true of the PR by `comprehension_eq_main` / `quantifier_eq_main` (under the
   hypotheses above). Their `eval_quantifier` rows (line 1664) no longer resolve: the free fn
-  is now at eval.rs:2112 and a method of the same name was added at :1313.
+  is now at eval.rs:2109 and a method of the same name was added at :1310.
 * **proofs/value_order `W.valueOfType`** lacks the early arm; `vtPR_eq` transfers every theorem.
 * Cite shifts only: vector_expr.rs +3 (`eval_values`..`eval_property`), +12 (from
   `property_values` on); eval.rs +1 (lines 86-231), +166/+170 (276-535), +96 (1150-1196),
