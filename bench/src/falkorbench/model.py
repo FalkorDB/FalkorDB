@@ -54,6 +54,13 @@ class Query(NamedTuple):
             :Person / :KNOWS ring / 5,000 :Tmp, and does not drain a pool
             faster than it is refilled. Running dry does not fail loudly — it
             quietly measures a no-op — hence the explicit opt-in.
+    clients concurrent connections `redis-benchmark` drives the row with
+            (`-c`). Above 1 the row measures readers contending with each
+            other, which a single client cannot show; `ms` is then the
+            inverse of throughput and the counters are the whole server's.
+    raw     a non-graph command to measure instead of the Cypher, e.g.
+            `("DUMP", "{graph}")` for the serialization path; `{graph}` is
+            replaced by the graph's key. `cypher` then only documents it.
     """
 
     name: str
@@ -62,7 +69,15 @@ class Query(NamedTuple):
     reps: int | None = None
     cg: bool = False
     needs: tuple[str, ...] = ()
+    clients: int = 1
+    raw: tuple[str, ...] = ()
 
     @property
     def command(self) -> str:
         return "GRAPH.QUERY" if self.write else "GRAPH.RO_QUERY"
+
+    def argv(self, graph: str) -> list[str]:
+        """The command line one request of this row sends."""
+        if self.raw:
+            return [a.replace("{graph}", graph) for a in self.raw]
+        return [self.command, graph, self.cypher]

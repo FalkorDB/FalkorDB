@@ -203,6 +203,8 @@ class TestCallgrindSubset:
             "Place",
             "UREL",
             "REF",
+            "Fan",
+            "FAN",
         }
         for q in (q for q in qs.QUERIES if q.cg):
             for label in forbidden:
@@ -243,3 +245,14 @@ class TestSetup:
         for name, body in qs.CSV_FILES.items():
             assert name.endswith(".csv")
             assert body.strip()
+
+    def test_concurrent_and_raw_rows_stay_out_of_callgrind(self):
+        """callgrind drives one client through the Cypher text, so it can run
+        neither a multi-client row nor a raw command."""
+        for q in qs.QUERIES:
+            if q.clients != 1 or q.raw:
+                assert not q.cg, q.name
+
+    def test_raw_rows_name_the_graph(self):
+        for q in (q for q in qs.QUERIES if q.raw):
+            assert "{graph}" in q.raw, q.name
