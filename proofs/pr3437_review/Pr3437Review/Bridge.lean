@@ -1,4 +1,5 @@
 import Columnar.Dispatch
+import Columnar.Column
 import FalkorCore.Value
 
 /-!
@@ -113,33 +114,21 @@ theorem counted_goes_per_row (A : Arms Val C) (isLC : Kind Val → Bool) (k : Ki
 
 /-! ## The chunk batch's columns (`loop_var_column`, `broadcast_column`) -/
 
-open FalkorCore
+open FalkorCore (V)
 
-/-- `Column` (batch.rs:321) at the shapes these two build. -/
-inductive Column (F : Type) where
-  | nodeIds (ids : List Nat) | relIds (ids : List Nat) | ints (xs : List Int)
-  | floats (xs : List F) | values (vs : List (V F))
-
-def Column.get {F : Type} : Column F → Nat → V F
-  | .nodeIds ids, i => .node (ids.getD i 0)
-  | .relIds ids, i => .rel (ids.getD i 0)
-  | .ints xs, i => .int (xs.getD i 0)
-  | .floats xs, i => match xs[i]? with | some f => .float f | none => .null
-  | .values vs, i => vs.getD i .null
-
-def allNodes {F : Type} : List (V F) → Option (List Nat)
-  | [] => some []
-  | .node id :: vs => (allNodes vs).map (id :: ·)
-  | _ :: _ => none
-
-/-- `loop_var_column` (eval.rs:405-414). -/
-def loopVarColumn {F : Type} (chunk : List (V F)) : Column F :=
+/-- `loop_var_column` (eval.rs:405-414), as a columnar `Column` (batch.rs:321). -/
+def loopVarColumn {F : Type} (chunk : List (V F)) : Columnar.Column F :=
   match allNodes chunk with
   | some ids => .nodeIds ids
   | none => .values chunk
+where
+  allNodes : List (V F) → Option (List Nat)
+    | [] => some []
+    | .node id :: vs => (allNodes vs).map (id :: ·)
+    | _ :: _ => none
 
 /-- `broadcast_column` (eval.rs:417-428). -/
-def broadcastColumn {F : Type} (v : V F) (len : Nat) : Column F :=
+def broadcastColumn {F : Type} (v : V F) (len : Nat) : Columnar.Column F :=
   match v with
   | .node id => .nodeIds (List.replicate len id)
   | .rel id => .relIds (List.replicate len id)
@@ -147,37 +136,41 @@ def broadcastColumn {F : Type} (v : V F) (len : Nat) : Column F :=
   | .float f => .floats (List.replicate len f)
   | other => .values (List.replicate len other)
 
-theorem allNodes_get {F : Type} : ∀ (chunk : List (V F)) (ids : List Nat), allNodes chunk = some ids →
-    ∀ i (h : i < chunk.length), V.node (ids.getD i 0) = chunk[i]
-  | [], _, _, i, h => by simp at h
-  | .node id :: vs, ids, h, i, hi => by
-    simp only [allNodes] at h
-    cases hv : allNodes vs with
-    | none => simp [hv] at h
-    | some ids' =>
-      simp only [hv, Option.map_some, Option.some.injEq] at h; subst h
-      cases i with
-      | zero => rfl
-      | succ i => simpa using allNodes_get vs ids' hv i (by simpa using hi)
-  | .null :: _, _, h, _, _ | .bool _ :: _, _, h, _, _ | .int _ :: _, _, h, _, _
-  | .float _ :: _, _, h, _, _ | .str _ :: _, _, h, _, _ | .list _ :: _, _, h, _, _
-  | .map _ :: _, _, h, _, _ | .rel _ :: _, _, h, _, _ | .path _ :: _, _, h, _, _
-  | .vec _ :: _, _, h, _, _ | .point .. :: _, _, h, _, _ | .datetime _ :: _, _, h, _, _
-  | .date _ :: _, _, h, _, _ | .time _ :: _, _, h, _, _ | .duration _ :: _, _, h, _, _ => by
-    simp [allNodes] at h
+theorem allNodes_get {F : Type} : ∀ (chunk : List (V F)) (ids : List Nat), loopVarColumn.allNodes chunk = some ids →
+    ids.length = chunk.length ∧ ∀ i (h : i < chunk.length), (ids[i]?).map V.node = some chunk[i]
+  | [], _, h => by simp [loopVarColumn.allNodes] at h; subst h; simp
+  | v :: vs, ids, h => by
+    cases v with
+    | node id =>
+      simp only [loopVarColumn.allNodes] at h
+      cases hv : loopVarColumn.allNodes vs with
+      | none => rw [hv] at h; simp at h
+      | some ids' =>
+        rw [hv] at h; simp only [Option.map_some, Option.some.injEq] at h; subst h
+        obtain ⟨hl, hg⟩ := allNodes_get vs ids' hv
+        refine ⟨by simp [hl], fun i hi => ?_⟩
+        cases i with
+        | zero => rfl
+        | succ i => simpa using hg i (by simpa using hi)
+    | _ => simp [loopVarColumn.allNodes] at h
 
-/-- The loop-variable column reads back the chunk element at every row. -/
-theorem loopVar_get {F : Type} (chunk : List (V F)) (i : Nat) (h : i < chunk.length) :
-    (loopVarColumn chunk).get i = chunk[i] := by
+/-- The loop-variable column reads back the chunk element at every row, and is bound. -/
+theorem loopVar_get {F : Type} (chunk : List (V F)) :
+    (loopVarColumn chunk).isUnbound = false ∧ (loopVarColumn chunk).len = chunk.length ∧
+      ∀ i (h : i < chunk.length), (loopVarColumn chunk).get? i = some chunk[i] := by
   unfold loopVarColumn
-  cases ha : allNodes chunk with
-  | some ids => exact allNodes_get chunk ids ha i h
-  | none => simp [Column.get, h]
+  cases ha : loopVarColumn.allNodes chunk with
+  | some ids =>
+    obtain ⟨hl, hg⟩ := allNodes_get chunk ids ha
+    exact ⟨rfl, hl, fun i h => hg i h⟩
+  | none => exact ⟨rfl, rfl, fun i h => by simp [Columnar.Column.get?, h]⟩
 
 /-- A broadcast column reads back the outer value at every row (`-0.0`/NaN bits included:
 the `f64` is copied, never re-derived). -/
-theorem broadcast_get {F : Type} (v : V F) (len i : Nat) (h : i < len) :
-    (broadcastColumn v len).get i = v := by
-  cases v <;> simp [broadcastColumn, Column.get, h]
+theorem broadcast_get {F : Type} (v : V F) (len : Nat) :
+    (broadcastColumn v len).isUnbound = false ∧ (broadcastColumn v len).len = len ∧
+      ∀ i (h : i < len), (broadcastColumn v len).get? i = some v := by
+  cases v <;> simp [broadcastColumn, Columnar.Column.get?, Columnar.Column.isUnbound, Columnar.Column.len,
+    List.getElem?_replicate]
 
 end Pr3437.Bridge

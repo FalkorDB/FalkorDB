@@ -37,7 +37,7 @@ structure Packed where
   tag : Tag
   payload : Int
 
-variable (entry : Nat → Option Packed) (unpackOther : Packed → V F)
+variable {F : Type} (entry : Nat → Option Packed) (unpackOther : Packed → V F) (zeroF : F)
 
 def unpack (p : Packed) : V F :=
   match p.tag with
@@ -60,7 +60,7 @@ def getIntLoop : Nat → List Int → Bits → List Nat → Option (List Int × 
     | none | some ⟨.null, _⟩ => getIntLoop (i + 1) (out ++ [0]) (fun j => j == i || bm j) ks
     | some _ => none
 
-inductive Column where
+inductive Column (F : Type) where
   | ints (xs : List Int)
   | floats (xs : List F)
   | values (vs : List (V F))
@@ -70,9 +70,10 @@ def toIntN : V F → Option Int
   | .null => some 0
   | _ => none
 
+/-- `zeroF` is `0.0`, the placeholder under a null bit. -/
 def toFloatN : V F → Option F
   | .float f => some f
-  | .null => some (.num 0)
+  | .null => some zeroF
   | _ => none
 
 def isNullB : V F → Bool
@@ -80,11 +81,11 @@ def isNullB : V F → Bool
   | _ => false
 
 /-- `classify_exact_column`: the bitmap of `from_values` and `classify_numeric(.., true, Pure)`. -/
-def classifyExact (vs : List (V F)) : Column × Bits :=
+def classifyExact (vs : List (V F)) : Column F × Bits :=
   let bm : Bits := fun j => match vs[j]? with | some v => isNullB v | none => false
   match vs.mapM toIntN with
   | some xs => (.ints xs, bm)
-  | none => match vs.mapM toFloatN with
+  | none => match vs.mapM (toFloatN zeroF) with
     | some fs => (.floats fs, bm)
     | none => (.values vs, bm)
 
@@ -99,12 +100,12 @@ def matValues (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
 
 /-- `materialize_node_property_exact`. -/
 def exactPR (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
-    (slow : List Nat → List (V F)) (keys : List Nat) : Column × Bits :=
+    (slow : List Nat → List (V F)) (keys : List Nat) : Column F × Bits :=
   if attrIdx.isSome && deletedEmpty && noPendingAttrs then
     match getIntLoop entry 0 [] (fun _ => false) keys with
     | some (ints, bm) => (.ints ints, bm)
-    | none => classifyExact (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
-  else classifyExact (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
+    | none => classifyExact zeroF (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
+  else classifyExact zeroF (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
 
 /-- Loop invariant: what the integer loop returns, element by element. -/
 theorem getIntLoop_spec : ∀ (ks : List Nat) (i : Nat) (out : List Int) (bm : Bits) (out' : List Int) (bm' : Bits),
@@ -176,8 +177,8 @@ theorem getIntLoop_spec : ∀ (ks : List Nat) (i : Nat) (out : List Int) (bm : B
 column and null bits alike, in every case. -/
 theorem exact_eq_main (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
     (slow : List Nat → List (V F)) (keys : List Nat) :
-    exactPR entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys =
-      classifyExact (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys) := by
+    exactPR entry unpackOther zeroF attrIdx deletedEmpty noPendingAttrs slow keys =
+      classifyExact zeroF (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys) := by
   unfold exactPR
   split
   · rename_i hg
@@ -200,18 +201,18 @@ theorem exact_eq_main (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool
 /-- Main's column for an int/null property under the read-only path is the same `Ints`
 lane, so an `eval_property` over a `NodeIds` column is unchanged by the PR. -/
 def evalPropPR (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
-    (slow : List Nat → List (V F)) (keys : List Nat) : Column × Bits :=
-  exactPR entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys
+    (slow : List Nat → List (V F)) (keys : List Nat) : Column F × Bits :=
+  exactPR entry unpackOther zeroF attrIdx deletedEmpty noPendingAttrs slow keys
 
 def evalPropMain (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
-    (slow : List Nat → List (V F)) (keys : List Nat) : Column × Bits :=
-  classifyExact (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
+    (slow : List Nat → List (V F)) (keys : List Nat) : Column F × Bits :=
+  classifyExact zeroF (matValues entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys)
 
 theorem evalProp_eq (attrIdx : Option Nat) (deletedEmpty noPendingAttrs : Bool)
     (slow : List Nat → List (V F)) (keys : List Nat) :
-    evalPropPR entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys =
-      evalPropMain entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys :=
-  exact_eq_main entry unpackOther attrIdx deletedEmpty noPendingAttrs slow keys
+    evalPropPR entry unpackOther zeroF attrIdx deletedEmpty noPendingAttrs slow keys =
+      evalPropMain entry unpackOther zeroF attrIdx deletedEmpty noPendingAttrs slow keys :=
+  exact_eq_main entry unpackOther zeroF attrIdx deletedEmpty noPendingAttrs slow keys
 
 /-- Any non-int, non-null stored value makes the fast loop give up (and the caller
 take main's path). -/
