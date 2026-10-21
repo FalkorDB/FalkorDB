@@ -208,23 +208,16 @@ pub fn graph_memory(
         if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
             return Err(RedisError::Str("ERR expected SAMPLES keyword"));
         }
+        // Any non-negative count, as C's `RedisModule_StringToULongLong`; 0 is
+        // accepted and, like any count, clamped to 1..=10000 by
+        // `memory_usage_report`.
         let count_str = args.next_arg()?;
-        let count_s = count_str.to_string_lossy();
-        // Reject negative values (starts with '-')
-        if count_s.starts_with('-') {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        let count = count_s
-            .parse::<usize>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
-        if count == 0 {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        count
+        count_str
+            .to_string_lossy()
+            .parse::<u64>()
+            .map_err(|_| RedisError::Str("ERR SAMPLES must be a non-negative integer"))?
+            .try_into()
+            .unwrap_or(usize::MAX)
     } else {
         100
     };

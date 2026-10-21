@@ -8,3 +8,9 @@ coverage:
       default:
         # Require at least 70% of new lines to be covered
         target: 70%
+
+ignore:
+  # Build tooling, not the module: it runs inside cargo build and the Docker
+  # dep stages, and its unit tests live in its own workspace, which the
+  # coverage jobs do not run.
+  - "native-deps/**"
