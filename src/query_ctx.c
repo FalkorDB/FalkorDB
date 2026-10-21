@@ -465,21 +465,26 @@ typedef enum {
 static WriteLockAttempt _QueryCtx_TryAcquireWriteLock (
 	QueryCtx *ctx,           // query context
 	GraphContext *gc,        // graph to lock
-	const char *graph_name,  // graph name, for key lookup and error messages
-	int poll_interval        // ms to wait for the lock before yielding the GIL
+	int64_t poll_interval    // ms to wait for the lock before yielding the GIL
 ) {
 	RedisModuleCtx *redis_ctx = ctx->global_exec_ctx.redis_ctx ;
 	WriteLockAttempt result   = WRITE_LOCK_FAILED ;
 	int rc                    = 0 ;
-
-	RedisModuleString *graphID = RedisModule_CreateString (redis_ctx,
-			graph_name, strlen (graph_name)) ;
 
 	//--------------------------------------------------------------------------
 	// lock GIL
 	//--------------------------------------------------------------------------
 
 	_QueryCtx_ThreadSafeContextLock (ctx) ;
+
+	// read the graph name only after taking the GIL. between attempts the GIL
+	// is released, and a RENAME (which runs on the main thread under the GIL)
+	// can free and replace gc->graph_name; capturing it before the GIL - or
+	// reusing a pointer captured once by the caller - would dereference freed
+	// memory on a later attempt. holding the GIL pins the name for this attempt
+	const char *graph_name = GraphContext_GetName (gc) ;
+	RedisModuleString *graphID = RedisModule_CreateString (redis_ctx,
+			graph_name, strlen (graph_name)) ;
 
 	RedisModuleKey *key = RedisModule_OpenKey (redis_ctx, graphID,
 			REDISMODULE_WRITE) ;
@@ -590,8 +595,6 @@ bool QueryCtx_AcquireWriteLock (void) {
 		ctx->internal_exec_ctx.read_locked = false ;
 	}
 
-	const char *graph_name = GraphContext_GetName (gc) ;
-
 	// initial slice: ms to park on the graph lock per attempt before yielding
 	int64_t poll_interval ;
 	Config_Option_get (Config_WRITE_LOCK_POLL_INTERVAL, &poll_interval) ;
@@ -626,11 +629,11 @@ bool QueryCtx_AcquireWriteLock (void) {
 		// blocking call that holds the GIL until granted - the exact behavior
 		// prior to the responsive write-lock change. the server may stall here
 		// until all in-flight readers drain
-		attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, graph_name, -1) ;
+		attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, -1) ;
 	} else {
 		const struct timespec yield = { 0, 1000000 } ;  // 1ms GIL hand-off
-		while ((attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc, graph_name,
-						(int) poll_interval)) == WRITE_LOCK_RETRY) {
+		while ((attempt = _QueryCtx_TryAcquireWriteLock (ctx, gc,
+						poll_interval)) == WRITE_LOCK_RETRY) {
 			// GIL released by the attempt; sleep off-CPU so the main thread runs
 			nanosleep (&yield, NULL) ;
 		}

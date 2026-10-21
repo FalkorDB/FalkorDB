@@ -426,7 +426,7 @@ void GraphContext_AcquireWriteLock
 int GraphContext_TimeAcquireWriteLock
 (
 	GraphContext *gc,  // graph to lock
-	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+	int64_t timeout_ms // maximum time in milliseconds to wait for the lock:
                        // - timeout_ms < 0 : block until the lock is acquired
                        // - timeout_ms = 0 : non-blocking attempt (try-lock)
                        // - timeout_ms > 0 : wait up to timeout_ms milliseconds
@@ -535,7 +535,7 @@ void GraphContext_WriterGateLeave
 int GraphContext_TimeAcquireReadLock
 (
 	GraphContext *gc,   // graph to lock
-	int timeout_ms      // max total time to wait, <= 0 to block
+	int64_t timeout_ms  // max total time to wait, <= 0 to block
 ) {
 	ASSERT (gc != NULL) ;
 
@@ -587,7 +587,7 @@ int GraphContext_TimeAcquireReadLock
 		return ETIMEDOUT ;
 	}
 
-	int rc = rwlock_timedrdlock (&gc->rwlock, (int) remaining_ms) ;
+	int rc = rwlock_timedrdlock (&gc->rwlock, remaining_ms) ;
 	if (rc == 0) {
 		gc->writelocked = false ;
 	}

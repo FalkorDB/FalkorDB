@@ -514,12 +514,15 @@ class testConcurrentQueryFlow(FlowTestsBase):
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # a medium read (~50ms) that holds the graph READ lock
-            read_q  = "UNWIND range(0, 1000000) AS x WITH x WHERE x % 1000001 = 0 RETURN count(x)"
+            # a short read (~20ms) that holds the graph READ lock; kept short so
+            # the in-flight batch drains quickly, keeping the gate's bound on the
+            # writer's wait well-separated from the whole-flood wait even on a
+            # slow / loaded CI runner
+            read_q  = "UNWIND range(0, 500000) AS x WITH x WHERE x % 500001 = 0 RETURN count(x)"
             write_q = "CREATE (:N {v:2}) RETURN 1"
 
             loop = asyncio.get_running_loop()
-            FLOOD_SECONDS = 3.0
+            FLOOD_SECONDS = 6.0
             deadline = loop.time() + FLOOD_SECONDS
             reads    = []
 
@@ -541,11 +544,16 @@ class testConcurrentQueryFlow(FlowTestsBase):
             writer_preempted_flood = loop.time() < deadline
 
             await flood_task
-            await asyncio.gather(*reads, return_exceptions=True)
+            # surface any reader failure: a dead flood must fail the test rather
+            # than silently let the writer "win" an uncontended lock
+            await asyncio.gather(*reads)
 
-            # the gate bounds the wait to the in-flight reads draining - the
-            # writer lands fast and preempts the flood rather than waiting it out
-            self.env.assertLess(writer_elapsed, 1.5)
+            # the gate bounds the writer's wait to the in-flight reads draining,
+            # which is independent of the flood length; without it the writer
+            # waits out the whole flood. assert it landed in well under half the
+            # flood - a margin wide enough to absorb CI load while still catching
+            # a regression (which pushes writer_elapsed toward FLOOD_SECONDS)
+            self.env.assertLess(writer_elapsed, FLOOD_SECONDS / 2.0)
             self.env.assertTrue(writer_preempted_flood)
 
             # the write took effect
@@ -584,15 +592,37 @@ class testConcurrentQueryFlow(FlowTestsBase):
             long_read = "UNWIND range(0, 60000000) AS x WITH x WHERE x % 60000001 = 0 RETURN count(x)"
 
             loop = asyncio.get_running_loop()
-            read_task = asyncio.create_task(g.ro_query(long_read))
-            await asyncio.sleep(0.5)  # let the read acquire and hold the lock
-            write_task = asyncio.create_task(g.query("CREATE (:N {v:2}) RETURN 1"))
-            # give the writer ample time to reach the write-lock acquire and
-            # raise the gate (the first CREATE also pays plan compilation)
-            await asyncio.sleep(0.8)
 
-            # a reader with a 200ms timeout must abort within its budget, not
-            # block for the full ~3s read
+            # synchronize on observable server state instead of fixed sleeps:
+            # poll GRAPH.INFO for the counts of running / waiting queries. the
+            # sync self.conn call runs off the event loop so it doesn't block the
+            # read / write tasks awaiting on their own connections
+            async def inflight():
+                res = await loop.run_in_executor(None, lambda:
+                    self.conn.execute_command(
+                        "GRAPH.INFO", "RunningQueries", "WaitingQueries"))
+                return len(res[1]), len(res[3])  # (running, waiting)
+
+            async def wait_until(pred, timeout=20.0):
+                deadline = loop.time() + timeout
+                while loop.time() < deadline:
+                    if pred(*(await inflight())):
+                        return True
+                    await asyncio.sleep(0.02)
+                return False
+
+            read_task = asyncio.create_task(g.ro_query(long_read))
+            # the long read must actually be executing (holding the READ lock)
+            # before we introduce the writer
+            self.env.assertTrue(await wait_until(lambda r, w: r >= 1))
+
+            write_task = asyncio.create_task(g.query("CREATE (:N {v:2}) RETURN 1"))
+            # the writer must be in-flight behind it (blocked acquiring the write
+            # lock, so the gate is raised) before we probe
+            self.env.assertTrue(await wait_until(lambda r, w: r + w >= 2))
+
+            # a reader with a 200ms timeout must abort at the gate within its
+            # budget, not block for the full read
             t0 = loop.time()
             timed_out = False
             try:
@@ -607,7 +637,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # core property: the reader aborted (timed out) instead of slipping
             # through or hanging for the whole read
             self.env.assertTrue(timed_out)
-            # and it aborted promptly - nowhere near the ~3s read
+            # and it aborted promptly - nowhere near the full read
             self.env.assertLess(probe_wait, 2.0)
 
             await pool.aclose()

@@ -293,9 +293,17 @@ static void _ExecuteQuery
 
 	// in case of an error, rollback any modifications
 	if (ErrorCtx_EncounteredError ()) {
-		QueryCtx_Rollback () ;
-		// the mutations were undone; discard any pending CCH index maintenance
-		GraphContext_CCHClearDirty (gc) ;
+		// only a write has anything to undo. a read reserves no nodes and writes
+		// no undo log, yet QueryCtx_Rollback() unconditionally calls
+		// Graph_ResetReservedNode(), zeroing the GRAPH-GLOBAL reserved-node
+		// counter - so rolling back a read (one that timed out at the writer
+		// gate, or errored mid-execution) would wipe a concurrent CREATE's
+		// reservation and underflow its commit. skip the rollback for reads
+		if (!readonly) {
+			QueryCtx_Rollback () ;
+			// the mutations were undone; discard any pending CCH maintenance
+			GraphContext_CCHClearDirty (gc) ;
+		}
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
