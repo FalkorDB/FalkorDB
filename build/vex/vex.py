@@ -573,18 +573,28 @@ def runtime_roots(src, fs, image, os_name, errors):
             errors.append(f"cannot tell the image's machine type from the runtime programs ({machines})")
             return roots
         machine = machines.pop()
+
+    def loadable_named(match):
+        """The loadable files a matching name is, links followed: a symlink
+        in a module directory can name a library anywhere."""
+        found = set()
+        for p in fs.members:
+            if match(p):
+                real = fs.canonical(p)
+                if real and fs.is_file(real) and an.loadable(real, machine):
+                    found.add(real)
+        return found
+
     for t in trees:
         real = fs.resolve(t)
         if real is None:
             errors.append(f"[runtime] lists the tree {t}, which is not in the {image} image")
             continue
-        roots.update(p for p, _ in fs.files()
-                     if p.startswith(real + "/") and an.loadable(p, machine))
+        roots |= loadable_named(lambda p: p.startswith(real + "/"))
     # Libraries the runtime loads by name: every one that matches counts,
     # whether or not this configuration loads it.
     for pattern in dlopen:
-        roots.update(p for p, _ in fs.files()
-                     if fnmatch.fnmatch(p, pattern) and an.loadable(p, machine))
+        roots |= loadable_named(lambda p: fnmatch.fnmatch(p, pattern))
     return roots
 
 
@@ -630,6 +640,10 @@ def cmd_check(args):
         finding = m.get("Finding", {})
         cve, pkg = finding.get("VulnerabilityID"), finding.get("PkgName")
         hidden_by.setdefault(cve, set()).add(pkg)
+        st = by_cve.get(cve)
+        if st is None or st["status"] != "not_affected" or pkg not in st["packages"]:
+            errors.append(f"{cve} in {pkg} is hidden, but no not_affected statement in statements.toml "
+                          f"names {pkg} for it: the document Trivy applied does not match its source")
         if finding.get("FixedVersion"):
             errors.append(f"{cve} in {pkg} now has a fixed version ({finding['FixedVersion']}), "
                           "but a statement hides it: rebuild with the fix, then drop the statement")

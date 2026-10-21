@@ -45,8 +45,9 @@ We test the documents with Trivy 0.69.
 ### If you supply your own TLS key
 
 With `TLS=1` the image generates RSA keys, and these statements assume them.
-If you put your own key in the TLS directory, or point redis at one through
-`REDIS_ARGS`, two of them depend on its type, both in the RHEL 9 image:
+If you put your own key in the TLS directory, or leave `TLS` unset and turn
+TLS on through `REDIS_ARGS` with a key of your own, two of them depend on its
+type, both in the RHEL 9 image:
 
 - CVE-2026-54872: use an RSA key, or an EC key on P-256, P-384 or P-521, not
   one on Brainpool, secp256k1 or any other curve.
