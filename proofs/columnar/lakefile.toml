@@ -3,3 +3,8 @@ defaultTargets = ["Columnar"]
 
 [[lean_lib]]
 name = "Columnar"
+
+# Shared foundations: the engine Value `V F` (proofs/core).
+[[require]]
+name = "falkor-core"
+path = "../core"

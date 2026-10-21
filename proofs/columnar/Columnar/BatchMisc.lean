@@ -21,6 +21,7 @@ operator-tree plumbing (`set_argument_batch`, `inspect_context`, `BatchOp::next`
 | `OpTree`, `setArg`, `inspectCtx`, `opNext` | `BatchOp::set_argument_batch` (:1590), `inspect_context` (:1722), `Iterator for BatchOp::next` (:1771) |
 -/
 namespace Columnar
+open FalkorCore (V)
 
 variable {F : Type}
 

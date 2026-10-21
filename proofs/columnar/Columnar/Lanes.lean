@@ -15,6 +15,7 @@ import Columnar.Row
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 variable {F : Type} [FloatModel F]
 
@@ -25,14 +26,14 @@ set_option linter.unusedSectionVars false
 def notRow : V F → Except String (V F)
   | .bool b => .ok (.bool !b)
   | .null => .ok .null
-  | _ => .error "Type mismatch: expected Boolean or Null"
+  | v => .error s!"Type mismatch: expected Boolean or Null but was {v.name}"
 
 /-- `negate_bools`: one pass, first bad row errors; mask/null bit per row. -/
 def negate (child : EC F) (len : Nat) : Except String (EC F) :=
   ((List.range len).mapM (fun i => (match child.get i with
     | .bool b => .ok (!b, false)
     | .null => .ok (false, true)
-    | _ => .error "Type mismatch: expected Boolean or Null" : Except String (Bool × Bool)))).map
+    | v => .error s!"Type mismatch: expected Boolean or Null but was {v.name}" : Except String (Bool × Bool)))).map
     (fun ps => .bools (ps.map Prod.fst) (ps.map Prod.snd))
 
 theorem mapM_map_ok {α β γ : Type} (f : α → Except String β) (g : β → γ) :
@@ -49,7 +50,7 @@ theorem negate_agree (child : EC F) (len : Nat) :
   let step : Nat → Except String (Bool × Bool) := fun i => match child.get i with
     | .bool b => .ok (!b, false)
     | .null => .ok (false, true)
-    | _ => .error "Type mismatch: expected Boolean or Null"
+    | v => .error s!"Type mismatch: expected Boolean or Null but was {v.name}"
   let toV : Bool × Bool → V F := fun p => if p.2 then .null else .bool p.1
   have hstep : ∀ i, notRow (child.get i) = (step i).map toV := by
     intro i; simp only [step, toV]; cases child.get i <;> rfl
