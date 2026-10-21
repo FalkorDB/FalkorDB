@@ -124,11 +124,11 @@ The project imports `../core` (the engine value) and `../expr_semantics` (the ex
 
 ## Coverage
 
-`COVERAGE.tsv` has 159 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 21 in `row.rs` and 7 in `vectorized.rs`.
+`COVERAGE.tsv` has 165 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 21 in `row.rs`, 7 in `vectorized.rs`, 4 in `runtime.rs` (the `materialize_*` reads) and 2 in `eval.rs` (`eval_batch`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 141 |
+| PROVEN | 147 |
 | MODELLED | 16 |
 | NOT COVERED | 2 |
 
