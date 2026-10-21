@@ -736,3 +736,92 @@ class testComprehensionFunctions(FlowTestsBase):
 
         finally:
             g.delete()
+
+    # Lists long enough for the chunked, columnar evaluation of a comprehension
+    # body (and spanning several chunks) must give exactly what per-element
+    # evaluation gives: nulls filtered out, mixed types, outer variables, the
+    # first error in element order, and `size()` counting without building.
+    def test25_long_list_comprehension(self):
+        g = self.db.select_graph("long_list_comprehension")
+        try:
+            g.query("""UNWIND range(1, 3000) AS i
+                       CREATE (:N {id: i, v: CASE WHEN i % 7 = 0 THEN null
+                                                  WHEN i % 11 = 0 THEN 'str'
+                                                  ELSE i END})""")
+            ns = "MATCH (n:N) WITH collect(n) AS ns "
+
+            def q(query, params=None):
+                return g.query(query, params).result_set[0][0]
+
+            ids = list(range(1, 3001))
+            ints = [i for i in ids if i % 7 != 0 and i % 11 != 0]
+
+            # A null property never passes; a string is unequal to any int.
+            non_null = [i for i in ids if i % 7 != 0]
+            self.env.assertEqual(
+                q(ns + "RETURN [m IN ns WHERE m.v <> 5 | m.id]"),
+                [i for i in non_null if i != 5])
+            self.env.assertEqual(
+                q(ns + "RETURN size([m IN ns WHERE m.v <> 5])"),
+                len(non_null) - 1)
+            self.env.assertEqual(
+                q(ns + "RETURN size([m IN ns WHERE m.v > 5])"),
+                len([i for i in ints if i > 5]))
+            self.env.assertEqual(
+                q(ns + "RETURN size([m IN ns WHERE m.v IS NULL])"),
+                len([i for i in ids if i % 7 == 0]))
+            self.env.assertEqual(
+                q(ns + "RETURN [m IN ns WHERE m.v = 'str' | m.id][0..3]"),
+                [11, 22, 33])
+            # A negative literal compares like any other constant.
+            self.env.assertEqual(
+                q(ns + "RETURN [m IN ns WHERE m.v > -1 AND m.id < 4 | -m.id]"),
+                [-1, -2, -3])
+
+            # Outer variables and parameters reach the body.
+            self.env.assertEqual(
+                q(ns + "WITH ns, 1000 AS k RETURN size([m IN ns WHERE m.id > k])"),
+                2000)
+            self.env.assertEqual(
+                q(ns + "RETURN size([m IN ns WHERE m.id > $k])", {"k": 2990}),
+                10)
+            self.env.assertEqual(
+                q(ns + "WITH ns, null AS k RETURN size([m IN ns WHERE m.id > k])"),
+                0)
+
+            # Quantifiers count true / false / null over every element.
+            self.env.assertEqual(q(ns + "RETURN all(m IN ns WHERE m.v > 0)"), None)
+            self.env.assertEqual(q(ns + "RETURN any(m IN ns WHERE m.v = 3000)"), True)
+            self.env.assertEqual(q(ns + "RETURN any(m IN ns WHERE m.v = 3001)"), None)
+            self.env.assertEqual(q(ns + "RETURN any(m IN ns WHERE m.id = -1)"), False)
+            self.env.assertEqual(q(ns + "RETURN single(m IN ns WHERE m.id = 2999)"), True)
+            self.env.assertEqual(q(ns + "RETURN none(m IN ns WHERE m.id < 0)"), True)
+
+            # Streamed sources, nested comprehensions.
+            self.env.assertEqual(
+                q("RETURN size([x IN range(1, 5000) WHERE x % 3 = 0])"), 1666)
+            self.env.assertEqual(
+                q("""WITH range(1, 3000) AS l
+                     RETURN [x IN l WHERE size([y IN l WHERE y < x]) = 2]"""),
+                [3])
+
+            # The error raised is the first one in element order, whichever of
+            # the predicate and the projection raises it.
+            for query, error in [
+                ("""WITH range(0, 3000) AS l RETURN [x IN l
+                    WHERE CASE WHEN x = 5 THEN NOT x ELSE true END | 10 / (x - 1)]""",
+                 "Division by zero"),
+                ("""WITH range(0, 3000) AS l RETURN [x IN l
+                    WHERE CASE WHEN x = 1 THEN NOT x ELSE true END | 10 / (x - 5)]""",
+                 "Type mismatch"),
+                # Counting still evaluates the projection.
+                ("WITH range(0, 3000) AS l RETURN size([x IN l | 10 / (x - 2000)])",
+                 "Division by zero"),
+            ]:
+                try:
+                    g.query(query)
+                    self.env.assertTrue(False)
+                except ResponseError as e:
+                    self.env.assertContains(error, str(e))
+        finally:
+            g.delete()

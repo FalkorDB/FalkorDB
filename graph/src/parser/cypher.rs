@@ -2555,6 +2555,21 @@ impl<'a> Parser<'a> {
                         let res = tree!(ExprIR::Constant(Value::Int(i64::MIN)));
                         parse_expr_return!(self, stack, res, 1);
                         continue;
+                    } else if matches!(res.root().data(), ExprIR::Negate)
+                        && let ExprIR::Constant(Value::Int(_) | Value::Float(_)) =
+                            res.root().child(0).data()
+                    {
+                        // A negative literal is a constant, not a `Negate` to
+                        // evaluate on every row: `x = -1` must compare against
+                        // a constant for the same fast paths `x = 1` takes.
+                        let folded = match res.root().child(0).data() {
+                            ExprIR::Constant(Value::Int(i)) => Value::Int(-i),
+                            ExprIR::Constant(Value::Float(f)) => Value::Float(-f),
+                            _ => unreachable!("guarded above"),
+                        };
+                        let res = tree!(ExprIR::Constant(folded));
+                        parse_expr_return!(self, stack, res, 1);
+                        continue;
                     } else if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN))) {
                         // This case should not happen with proper error handling
                         // i64::MIN without negation means the literal was i64::MAX + 1
