@@ -1,0 +1,22 @@
+name = "tensor"
+version = "0.1.0"
+defaultTargets = ["Tensor", "VersionedMatrix"]
+
+[leanOptions]
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
+relaxedAutoImplicit = false
+# Mathlib's house-style linter set (copyright headers, line length, ...) is not
+# applied here: this is a proof of a Rust module, not a mathlib contribution.
+weak.linter.mathlibStandardSet = false
+maxSynthPendingDepth = 3
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.32.0"
+
+[[lean_lib]]
+name = "Tensor"
+
+[[lean_lib]]
+name = "VersionedMatrix"
