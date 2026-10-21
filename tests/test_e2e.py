@@ -1861,6 +1861,30 @@ def test_deep_expression_nesting_is_rejected():
     assert query("RETURN 1").result_set == [[1]]
 
 
+
+def test_long_clause_chains_run():
+    # Every clause stacks an operator on the previous clause's, and the
+    # optimizer and runtime recurse once per operator: 2000 chained UNWINDs,
+    # or about 300 OPTIONAL MATCH ... WHERE / CALL {} clauses, overflowed a
+    # worker's stack and took the server down. C runs these; so must we.
+    query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})", write=True)
+    unwinds = lambda n: " ".join(f"UNWIND [1] AS x{i}" for i in range(n))
+    assert query(f"{unwinds(2000)} RETURN count(*)").result_set == [[1]]
+    q = "MATCH (a) " + " ".join(
+        f"OPTIONAL MATCH (a)-->(b{i}) WHERE b{i}.v > 0" for i in range(400)
+    )
+    assert query(f"{q} RETURN count(*)").result_set == [[2]]
+    q = "UNWIND [1] AS x0 " + " ".join(
+        f"CALL {{ WITH x{i} RETURN x{i} + 1 AS x{i + 1} }}" for i in range(400)
+    )
+    assert query(f"{q} RETURN x400").result_set == [[401]]
+    # far past anything C runs, it is a clean error and the server stays up
+    query_exception(
+        f"{unwinds(10001)} RETURN count(*)",
+        "Query nesting exceeds the maximum depth of 10000",
+    )
+    assert query("RETURN 1").result_set == [[1]]
+
 def test_index():
     res = query(
         "UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})",
