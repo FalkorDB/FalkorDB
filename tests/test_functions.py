@@ -42,7 +42,12 @@ all_types = [
     Type.LIST
 ]
 
-def random_value(type):
+def random_value(type, depth=0):
+    """Generate a type-checking input with at most three populated list levels.
+
+    List elements are rendered strings, so each enclosing list escapes them
+    again. Unbounded nesting can therefore exhaust memory even for narrow lists.
+    """
     if type == Type.NULL:
         return "null"
     elif type == Type.BOOL:
@@ -54,10 +59,29 @@ def random_value(type):
     elif type == Type.STRING:
         return f"\"{''.join(choice(string.ascii_letters + string.digits) for _ in range(choice(range(0, 100))))}\""
     elif type == Type.LIST:
-        return str([random_value(choice(all_types)) for _ in range(choice(range(0, 10)))])
+        if depth >= 3:
+            return "[]"
+        return str([
+            random_value(choice(all_types), depth + 1)
+            for _ in range(choice(range(0, 10)))
+        ])
     elif isinstance(type, Optional):
-        return choice([random_value(type.__args__[0]), None])
+        return choice([random_value(type.__args__[0], depth), None])
     return None
+
+def test_random_list_generation_is_bounded(monkeypatch):
+    """Repeated nested-list choices must terminate with a small test input."""
+    def choose_nested_lists(values):
+        """Force the widest lists and keep requesting further nesting."""
+        if values is all_types:
+            return Type.LIST
+        return values[-1]
+
+    monkeypatch.setitem(globals(), "choice", choose_nested_lists)
+    value = random_value(Type.LIST)
+    assert value.startswith("[") and value.endswith("]")
+    assert len(value) < 100_000
+
 
 def is_valid_type(actual_type, expected_type):
     if isinstance(expected_type, Type):

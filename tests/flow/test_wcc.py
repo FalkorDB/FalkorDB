@@ -5,6 +5,7 @@ GRAPH_ID = "WCC"
 
 # Helper function to extract components from query results
 def get_components(result):
+    """Group node IDs by component and return deterministically sorted groups."""
     components = {}
     for record in result.result_set:
         node = record[0]
@@ -25,14 +26,27 @@ def get_components(result):
 
 class testWCC(FlowTestsBase):
     def __init__(self):
+        """Initialize the test environment and WCC graph handle."""
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
+        """Delete the graph so each test starts with an empty dataset."""
         self.graph.delete()
 
+    def test_wcc_single_node_label_projection(self):
+        """A singleton projection works with no edges and with a self-loop."""
+        self.graph.query("CREATE (:Other), (:Node {id: 'selected'}), (:Other)")
+        query = """CALL algo.WCC({nodeLabels: ['Node']})
+                   YIELD node, componentId RETURN node, componentId"""
+        self.env.assertEqual(get_components(self.graph.query(query)), [['selected']])
+
+        self.graph.query("MATCH (n:Node) CREATE (n)-[:LINK]->(n)")
+        self.env.assertEqual(get_components(self.graph.query(query)), [['selected']])
+
     def test_invalid_invocation(self):
+        """Exercise malformed WCC configuration and unsupported yield fields."""
         invalid_queries = [
                 """CALL algo.WCC({nodeLabels: 'Person'})""",         # non-array nodeLabels parameter
                 """CALL algo.WCC({relationshipTypes: 'KNOWS'})""",   # non-array relationshipTypes parameter
