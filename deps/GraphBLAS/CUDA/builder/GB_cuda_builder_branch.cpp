@@ -2,7 +2,8 @@
 // GraphBLAS/CUDA/builder/GB_cuda_builder_branch
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
@@ -21,59 +22,34 @@ bool GB_cuda_builder_branch
     const uint64_t nvals
 )
 {
+//  printf ("HACK: turn off cuda builder\n") ; return (false) ;
 
-    int jit_control = GB_jitifyer_get_control ( ) ;
-    if (jit_control <= GxB_JIT_PAUSE)
-    { 
-        // JIT is off or paused
-        return (false) ;
-    }
+    if (GB_ngpus_to_use (1) == 0) return (false) ;
 
-    ASSERT (C != NULL && xtype != NULL) ;
+    int data_arena = C->data_arena ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int dev = data_arena - GxB_NARENAS ;
 
-    if (dup != NULL && dup != GxB_IGNORE_DUP && dup->hash == UINT64_MAX)
-    {
-        return (false) ;
-    }
-
-    if (!GB_cuda_pointer_ok (I, "I") ||
-        !GB_cuda_pointer_ok (J, "J") ||
-        !GB_cuda_pointer_ok (X, "X"))
-    {
-        // fixme: better yet, memcpy to GPU-accessible memory
-        printf ("%s: (I,J,X) pointers not accessible by the GPU\n", __FILE__) ;
-        return (false) ;
-    }
-
-    if (C->header_mem == 0)
-    {
-        // fixme arena: check all of C
-        return (false) ;
-    }
-
-    bool ok = (GB_cuda_type_branch (C->type) && GB_cuda_type_branch (xtype)) ;
+    bool use_cuda =
+           (dev >= 0 && dev <= GB_Global_gpu_count_get ( )) // data on GPU
+        && (data_arena == header_arena)                 // header on same GPU
+        && (GB_jitifyer_get_control ( ) >= GxB_JIT_RUN) // JIT is running
+        && GB_cuda_type_branch (xtype)                  // types OK for CUDA
+        && GB_cuda_type_branch (C->type)
+        && GB_cuda_pointer_ok (I, "I")                  // I,J,X on the GPU
+        && GB_cuda_pointer_ok (J, "J")
+        && GB_cuda_pointer_ok (X, "X") ;
 
     if (dup != NULL && dup != GxB_IGNORE_DUP)
     {
-        if (dup->xtype != NULL)
-        {
-            ok = ok && (GB_cuda_type_branch (dup->xtype)) ;
-        }
-        if (dup->ytype != NULL)
-        {
-            ok = ok && (GB_cuda_type_branch (dup->ytype)) ;
-        }
-        if (dup->ztype != NULL)
-        {
-            ok = ok && (GB_cuda_type_branch (dup->ztype)) ;
-        }
+        // check the dup operator
+        use_cuda = use_cuda
+            && dup->hash != UINT64_MAX
+            && GB_cuda_type_branch (dup->xtype)
+            && GB_cuda_type_branch (dup->ytype)
+            && GB_cuda_type_branch (dup->ztype) ;
     }
 
-    double work = nvals ;
-    int gpu_count = GB_ngpus_to_use (work) ;
-    int ngpus_max = GB_Context_gpu_ids (NULL) ;     // fixme: get gpu_ids
-    gpu_count = std::min (gpu_count, ngpus_max) ;
-    ok = ok && (gpu_count > 0);
-    return (ok) ;
+    return (use_cuda) ;
 }
 

@@ -34,6 +34,8 @@ GrB_Info GxB_Scalar_new_arena // create a new GrB_Scalar with no entries
     GB_RETURN_IF_NULL (s) ;
     (*s) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the GrB_Scalar

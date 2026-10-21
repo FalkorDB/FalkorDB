@@ -81,8 +81,9 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     int nthreads = GB_nthreads (nI, chunk, nthreads_max) ;
 
     GB_IPTR (W, W_is_32) ;
+    int64_t k ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (int64_t k = 0 ; k < nI ; k++)
+    for (k = 0 ; k < nI ; k++)
     { 
         // W [k] = k
         GB_ISET (W, k, k) ;

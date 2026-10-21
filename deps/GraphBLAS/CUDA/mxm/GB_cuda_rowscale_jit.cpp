@@ -1,3 +1,12 @@
+//------------------------------------------------------------------------------
+// GB_cuda_rowscale_jit
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #include "mxm/GB_cuda_ewise.hpp"
 
 extern "C"
@@ -15,9 +24,9 @@ GrB_Info GB_cuda_rowscale_jit
     GrB_BinaryOp binaryop,
     bool flipxy,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 )
 { 
 
@@ -28,7 +37,7 @@ GrB_Info GB_cuda_rowscale_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_CUDA_KERNEL_ROWSCALE, false,
+        GB_JIT_CUDA_KERNEL_ROWSCALE,
         /* C_iso: */ false, /* C_in_iso: */ false, GB_sparsity (C), C->type,
         C->p_is_32, C->j_is_32, C->i_is_32,
         /* M: */ NULL, /* Mask_comp: */ false, /* Mask_struct: */ false,
@@ -50,5 +59,6 @@ GrB_Info GB_cuda_rowscale_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, D, B, stream, gridsz, blocksz, &GB_callback)) ;
+    return (GB_jit_kernel (C, D, B, device, stream, gridsz, &GB_callback)) ;
 }
+

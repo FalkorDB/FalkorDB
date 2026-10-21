@@ -71,6 +71,8 @@ GrB_Info GxB_Matrix_new_arena // create a new matrix with no entries
     GB_RETURN_IF_NULL (A) ;
     (*A) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
 
     if (nrows > GB_NMAX || ncols > GB_NMAX)
     { 

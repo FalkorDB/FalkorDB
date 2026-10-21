@@ -10,10 +10,12 @@
 // CPU method for ensuring a pointer p is in a specified arena.
 // CUDA will have its own method.
 
-// If the arena is not initialized, its malloc function will be NULL,
-// and this method safely returns GrB_OUT_OF_MEMORY.
+// If the new arena is not initialized or out of range, this method
+// returns GrB_INVALID_VALUE.
 
 #include "GB.h"
+
+#define GB_FREE_ALL ;
 
 GrB_Info GB_set_arena           // set arena of a block of memory
 (
@@ -32,11 +34,13 @@ GrB_Info GB_set_arena           // set arena of a block of memory
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     if (p_handle == NULL || p_mem_handle == NULL || (*p_handle) == NULL)
     { 
         // nothing to do
         return (GrB_SUCCESS) ;
     }
+    GB_OK (GB_check_arena (new_arena)) ;
 
     //--------------------------------------------------------------------------
     // get the current block

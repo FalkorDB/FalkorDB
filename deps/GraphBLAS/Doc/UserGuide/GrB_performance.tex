@@ -272,11 +272,26 @@ important in graph algorithms.  For example, an unweighted graph is best
 represented as an iso-valued sparse matrix, and unweighted graphs are very
 common.  The burble output, \verb'GxB_print', or \verb'GrB_get'
 can all be used to report whether or not your matrix or
-vector is iso-valued.
+vector is stored in an iso-valued format.
 
 Sometimes a matrix or vector may have values that are all the same, but
-SuiteSparse hasn't detected this.  If this occurs, you can force a matrix
-or vector to be iso-valued by assigning a single scalar to all its entries.
+SuiteSparse hasn't detected this.  In this case, \verb'GrB_get' will not report
+that the matrix is iso-valued, since that method reports on the storage format.
+You can force a matrix or vector to be iso-valued in its storage format via one
+of two methods.
+
+\begin{enumerate}
+
+\item If you are unsure if a matrix has all identical values, and wish to convert
+the matrix in the case that it does but leave it unchanged otherwise,
+the best way to do this is via \verb'GrB_set (A, true, GxB_ISO)'.
+This method will check if all entries in the matrix are the same, and if so,
+it converts the matrix to iso-valued storage.  This methods takes $O(nvals)$
+time if the matrix has \verb'nvals' entries.
+
+\item If you know the matrix has (or should have) all-identical values,
+you can assign a single scalar to all its entries.  This method takes
+$O(1)$ time.
 
     {\footnotesize
     \begin{verbatim}
@@ -291,6 +306,8 @@ structure of \verb'C' does not change.  Of course, any scalar can be used; the
 value 1 is common for unweighted graphs.  SuiteSparse:GraphBLAS performs the
 above assignment in O(1) time and space, independent of the dimension of
 \verb'C' or the number of entries in contains.
+
+\end{enumerate}
 
 %-------------------------------------------------------------------------------
 \subsection{User-defined types and operators: use the JIT}

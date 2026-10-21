@@ -13,7 +13,7 @@
 #define GB_FREE_ALL ;
 
 #if GB_C_ISO
-// fixme
+// fixme: handle C iso
 #error "kernel undefined for C iso"
 #endif
 
@@ -31,6 +31,8 @@
 // with GB_cuda_ek_slice_setup, for example.
 #define CHUNKSIZE      GB_CUDA_DOT3_CHUNKSIZE
 #define LOG2_CHUNKSIZE GB_CUDA_DOT3_CHUNKSIZE_LOG2
+// fixme: make this upper case, move to GB_cuda_geometry.hpp:
+// (call it GB_CUDA_DOT3_MP_CHUNKSIZE or something)
 #define shared_vector_size 256 
 
 //------------------------------------------------------------------------------
@@ -40,9 +42,9 @@
 #if GB_C_ISO
 
     #define GB_DOT_TERMINAL( c ) break
-    #define GB_DOT_MERGE(pA,pB)                                         \
-    {                                                                   \
-        cij_exists = true ;                                             \
+    #define GB_DOT_MERGE(pA,pB,k)                                           \
+    {                                                                       \
+        cij_exists = true ;                                                 \
     }
     #define GB_CIJ_EXIST_POSTCHECK
 
@@ -55,11 +57,11 @@
         // cij += A(k,i) * B(k,j), for merge operation (plus_pair_real semiring)
         #if GB_Z_IGNORE_OVERFLOW
             // plus_pair for int64, uint64, float, or double
-            #define GB_DOT_MERGE(pA,pB) cij++ ;
+            #define GB_DOT_MERGE(pA,pB,k) cij++ ;
             #define GB_CIJ_EXIST_POSTCHECK cij_exists = (cij != 0) ;
         #else
             // plus_pair semiring for small integers
-            #define GB_DOT_MERGE(pA,pB)                                     \
+            #define GB_DOT_MERGE(pA,pB,k)                                   \
             {                                                               \
                 cij_exists = true ;                                         \
                 cij++ ;                                                     \
@@ -70,8 +72,9 @@
     #else
 
         // cij += A(k,i) * B(k,j), for merge operation (general case)
-        #define GB_DOT_MERGE(pA,pB)                                         \
+        #define GB_DOT_MERGE(pA,pB,k)                                       \
         {                                                                   \
+            /* Ax, Bx, i, and j must already be defined */                  \
             GB_GETA ( aki, Ax, pA, ) ;      /* aki = A(k,i) */              \
             GB_GETB ( bkj, Bx, pB, ) ;      /* bkj = B(k,j) */              \
             cij_exists = true ;                                             \
@@ -191,12 +194,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     // get callback functions
     //--------------------------------------------------------------------------
 
-    #ifdef GB_JIT_RUNTIME
-    // get callback functions
     GB_GET_CALLBACKS ;
-    GB_free_memory_f GB_free_memory = my_callback->GB_free_memory_func ;
-    GB_malloc_memory_f GB_malloc_memory = my_callback->GB_malloc_memory_func ;
-    #endif
+    GB_GET_CALLBACK (GB_free_memory) ;
+    GB_GET_CALLBACK (GB_malloc_memory) ;
 
     //--------------------------------------------------------------------------
     // declare workspace
@@ -206,7 +206,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     // dense-dense case requires no workspace
     #else
     // sparse-sparse, sparse-dense, and dense-sparse requires workspace
-    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int data_arena = GxB_NARENAS + device ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
     int64_t *Nanobuckets = NULL ; uint64_t Nb_mem  = mem ;
     int64_t *Blockbucket = NULL ; uint64_t Bb_mem  = mem ;
     int64_t *Bucket = NULL      ; uint64_t Bu_mem  = mem ;
@@ -222,9 +223,6 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     int number_of_blocks_1 = GB_IMIN (nblks_1,  CHUNKSIZE * number_of_sms) ;
 
     // most methods can use these launch geometries:
-    printf ("\nmnz: %ld\n", mnz) ;
-    printf ("number_of_blocks_1: %d\n", number_of_blocks_1) ;
-    printf ("GB_CUDA_TILE_SIZE: %d\n", GB_CUDA_TILE_SIZE) ;
     dim3 grid_1 (number_of_blocks_1) ;
     dim3 block_1 (GB_CUDA_TILE_SIZE) ;
 
@@ -307,9 +305,12 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         int64_t Blockbucket_size = NBUCKETS * (number_of_blocks_1 + 1) ;
         int64_t nanobuckets_size = Blockbucket_size * GB_CUDA_TILE_SIZE ;
 
-        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_mem) ;
-        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size, sizeof (int64_t), &Bb_mem) ;
-        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_mem) ;
+        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size,
+            sizeof (int64_t), &Nb_mem) ;
+        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size,
+            sizeof (int64_t), &Bb_mem) ;
+        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1,
+            sizeof (int64_t), &Bup_mem) ;
         Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_mem) ;
 
 //      memset (Bucketp, 0, (NBUCKETS+1) * sizeof (int64_t)) ;
@@ -325,9 +326,12 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // fixme: do async with streams
         // fixme: do we need any of these?
         // YES! We need at least Blockbucket [(0:4)*(nblocks+1)] = 0
-        CUDA_OK (cudaMemsetAsync(Nanobuckets, 0, nanobuckets_size * sizeof(int64_t), stream));
-        CUDA_OK (cudaMemsetAsync(Blockbucket, 0, Blockbucket_size * sizeof(int64_t), stream));
-        CUDA_OK (cudaMemsetAsync(Bucketp, 0, (NBUCKETS+1) * sizeof(int64_t), stream));
+        CUDA_OK (cudaMemsetAsync(Nanobuckets, 0,
+            nanobuckets_size * sizeof(int64_t), stream));
+        CUDA_OK (cudaMemsetAsync(Blockbucket, 0,
+            Blockbucket_size * sizeof(int64_t), stream));
+        CUDA_OK (cudaMemsetAsync(Bucketp, 0,
+            (NBUCKETS+1) * sizeof(int64_t), stream));
         CUDA_OK (cudaMemsetAsync(Bucket, 0, mnz * sizeof(int64_t), stream));
 
         //----------------------------------------------------------------------
@@ -336,8 +340,10 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
 // fixme: API for CUDA 13.2
 #if 0
-        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t), cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
-        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t), cudaMemAdviseSetAccessedBy, (cudaMemLocation) device));
+        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t),
+            cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
+        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t),
+            cudaMemAdviseSetAccessedBy, (cudaMemLocation) device));
 #endif
 
         CUDA_OK (cudaGetLastError ( )) ;
@@ -363,8 +369,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         //----------------------------------------------------------------------
 
         // # of blocks for phase2:
-//      // number_of_blocks_2 = ceil ((number_of_blocks_1+1) / GB_CUDA_TILE_SIZE)
-//      int number_of_blocks_2 = ((number_of_blocks_1) + GB_CUDA_TILE_SIZE - 1) / GB_CUDA_TILE_SIZE ;
+//      // number_of_blocks_2 = ceil ((number_of_blocks_1+1)/GB_CUDA_TILE_SIZE)
+//      int number_of_blocks_2 =
+//          ((number_of_blocks_1) + GB_CUDA_TILE_SIZE - 1) / GB_CUDA_TILE_SIZE ;
 
 //      number_of_blocks_2 = 1 ;
 //      printf ("number_of_blocks_2: %d\n", number_of_blocks_2) ;
@@ -381,7 +388,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
             printf ("\n\n=================== Bucket: %d\n", b) ;
             for (int64_t tid = 0 ; tid <= number_of_blocks_1 ; tid++)
             {
-                printf ("   %ld: %ld\n", tid, Blockbucket [b * (number_of_blocks_1+1) + tid]) ;
+                printf ("   %ld: %ld\n", tid,
+                    Blockbucket [b * (number_of_blocks_1+1) + tid]) ;
             }
         }
 #endif
@@ -398,7 +406,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
             printf ("\n\n=================== Bucket after cumsum: %d\n", b) ;
             for (int64_t tid = 0 ; tid <= number_of_blocks_1 ; tid++)
             {
-                printf ("   %ld: %ld\n", tid, Blockbucket [b * (number_of_blocks_1+1) + tid]) ;
+                printf ("   %ld: %ld\n", tid,
+                    Blockbucket [b * (number_of_blocks_1+1) + tid]) ;
             }
         }
 #endif
@@ -406,7 +415,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // get the total number of zombies in the zombie bucket
         int64_t s = Blockbucket [number_of_blocks_1] ;
         C->nzombies = s ;
-        printf ("\nzombies: %ld\n", s) ;
+        // printf ("\nzombies: %ld\n", s) ;
 
         // determine location of all other buckets, after the zombie bucket
         bool all_in_one = false ;
@@ -414,18 +423,20 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         {
             Bucketp [bucket] = s ;
             // sb = # of entries in this bucket
-            int64_t sb = Blockbucket [bucket * (number_of_blocks_1+1) + number_of_blocks_1 ] ;
+            int64_t sb = Blockbucket [bucket *
+                (number_of_blocks_1+1) + number_of_blocks_1 ] ;
             s += sb ;
-            printf ("bucket %d: %ld\n", bucket, sb) ;
+            // printf ("bucket %d: %ld\n", bucket, sb) ;
             if (sb == mnz)
             {
                 all_in_one = true ;
             }
         }
         Bucketp [NBUCKETS] = s ;
-        printf ("mnz: %ld in buckets : %ld\n", mnz, s) ;
+        // printf ("mnz: %ld in buckets : %ld\n", mnz, s) ;
         if (mnz != s)
         {
+            // fixme: this cannot happen
             printf ("Abort! Missing %ld entries\n", mnz-s) ;
             fflush (stdout) ;
             fflush (stderr) ;
@@ -490,10 +501,10 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             gridsz = GB_ICEIL (cnz_in_bucket,
                                 work_per_thread*blocksz) ;
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
-                            dim3 grid_3 (gridsz) ;
+                            dim3 grid_vsvs (gridsz) ;
                             dim3 block_for_vsvs (blocksz) ;
                             GB_cuda_AxB_dot3_phase3_vsvs_kernel
-                                <<<grid_3, block_for_vsvs, 0, stream>>>
+                                <<<grid_vsvs, block_for_vsvs, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -519,12 +530,13 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                                 gridsz = number_of_sms ;
                             }
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
-                            dim3 grid_3 (gridsz) ;
-                            // each thread block creates Ai_s and Bj_s; each
-                            // are int64_t arrays of size shared_vector_size
-                            size_t shared_bytes = shared_vector_size * sizeof (int64_t) * 2 ;
+                            dim3 grid_mp (gridsz) ;
+                            // each thread block creates Ai_s and Bi_s; each
+                            // are integer arrays of size shared_vector_size
+                            size_t shared_bytes = shared_vector_size *
+                                (sizeof (GB_Ai_TYPE) + sizeof (GB_Bi_TYPE)) ;
                             GB_cuda_AxB_dot3_phase3_mp_kernel
-                                <<<grid_3, block_1, shared_bytes, stream>>>
+                                <<<grid_mp, block_1, shared_bytes, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;

@@ -32,7 +32,7 @@ GrB_Info GB_apply_bind2nd_jit   // Cx = op (x,B), apply bind2nd via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_APPLYBIND2, /* is_eWiseMult: */ false,
+        GB_JIT_KERNEL_APPLYBIND2,
         /* C_iso: */ false, /* C_in_iso: */ false, GxB_FULL, ctype,
         /* pji is_32: ignored; there is no C matrix: */ false, false, false,
         /* M: */ NULL, /* Mask_struct: */ false, /* Mask_comp: */ false,

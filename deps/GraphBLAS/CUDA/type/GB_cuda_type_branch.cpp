@@ -57,7 +57,7 @@ bool GB_cuda_type_branch            // return true if the type is OK on GPU
 
     if (size % sizeof (uint32_t) == 0)
     {
-        // size is 4, 16, 20, 24, 28, or 32: small ztypes.
+        // size is 4, 8, 16, 20, 24, 28, or 32: small ztypes.
         // If the size is larger than 32 bytes, it still must be a multiple of
         // 4 bytes.  The only difference will be warp-level reductions, which
         // will use GB_cuda_shfl_down_large_ztype instead of tile.shfl_down.

@@ -64,9 +64,10 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     const GB_M_TYPE *__restrict__ Mx = (GB_M_TYPE *) M->x ;
     #endif
     const int64_t mnvec = M->nvec ;
+    const int64_t mnvec1 = mnvec - 1 ;
     // const int64_t mvlen = M->vlen ;
     const GB_M_NVALS (mnz) ;
-    ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
+    // ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
 
     #if GB_A_IS_SPARSE || GB_A_IS_HYPER
     const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
@@ -136,10 +137,10 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
         // This threadblock works on Mi/Mx and Ci/Mx, in positions pfirst to
         // pfirst + my_chunk_size - 1.
-        int64_t my_chunk_size, mnvec1, kfirst, klast ;
+        int64_t my_chunk_size, kfirst ;
         float slope ;
         GB_cuda_ek_slice_setup<GB_Mp_TYPE> (Mp, mnvec, mnz, pfirst, CHUNKSIZE,
-            &kfirst, &klast, &my_chunk_size, &mnvec1, &slope) ;
+            &kfirst, &my_chunk_size, &slope) ;
 
         //----------------------------------------------------------------------
         // assign entries in C(i,j) to the buckets
@@ -158,7 +159,8 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
             // get the pM and k value of Mi,Mx [pM]
             int64_t pM = pfirst + pdelta ;
-            int64_t k = GB_cuda_ek_slice_entry<GB_Mp_TYPE> (pM, pdelta, Mp, mnvec1, kfirst, slope) ;
+            int64_t k = GB_cuda_ek_slice_entry<GB_Mp_TYPE> (pM, pdelta, Mp,
+                mnvec1, kfirst, slope) ;
 
             //------------------------------------------------------------------
             // get C(i,j): zombie if A(:,i) and B(:,j) are empty or M(i,j) false
@@ -270,8 +272,8 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
 //                          // bool vsvs = (ainz < 128) || (bjnz < 128) ;
 //                          bucket = (GB_bucket_code)
-//                             (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSVS)
-//                              + ((int) (!vsvs)) * ((int) GB_BUCKET_MERGEPATH)) ;
+//                           (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSVS)
+//                            + ((int) (!vsvs)) * ((int) GB_BUCKET_MERGEPATH)) ;
 
 
                         }
@@ -316,7 +318,8 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // cumulative sum of each bucket
     //--------------------------------------------------------------------------
 
-    typedef cub::BlockScan<int64_t, GB_CUDA_TILE_SIZE, cub::BLOCK_SCAN_WARP_SCANS> BlockCumSum;
+    typedef cub::BlockScan<int64_t, GB_CUDA_TILE_SIZE,
+        cub::BLOCK_SCAN_WARP_SCANS> BlockCumSum ;
     __shared__ typename BlockCumSum::TempStorage temp_storage ;
 
     // The taskbucket for this thread block is an array of size
