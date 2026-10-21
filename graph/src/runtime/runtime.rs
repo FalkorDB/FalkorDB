@@ -450,9 +450,13 @@ impl<'a> Runtime<'a> {
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
         }
-        // A read query runs on a published version, which is never mutably
-        // borrowed again (writers mutate a private fork), so it can take its
-        // borrow once here instead of on every access.
+        // A read query runs on a published version and can take its borrow once
+        // here instead of on every access. Writers mutate a private fork; the
+        // one `borrow_mut` of a published version, `resync_published_indexes`,
+        // runs under the per-graph write lock, and a read runtime lives entirely
+        // inside its session's read lock, so the two never overlap (proved in
+        // proofs/pr3436_review, `Protocol.reader_guard_sound`). Were that to
+        // change, the `borrow_mut` would panic rather than race.
         //
         // SAFETY: the guard borrows the cell inside `g`'s heap allocation, which
         // this `Runtime` keeps alive through `g` (never reassigned) for longer
