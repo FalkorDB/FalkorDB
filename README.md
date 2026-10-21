@@ -11,7 +11,7 @@
   <a href="https://app.falkordb.cloud/signup">
     <img src="https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge" alt="Try Free" />
   </a><br>
-  <a href="https://discord.com/invite/TJ4SaPTptf" rel="nofollow">
+  <a href="https://discord.com/invite/6M4QwDXn2w" rel="nofollow">
     <img src="https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white" alt="Discord" />
   </a>
   <a href="https://hub.docker.com/r/falkordb/falkordb/">
@@ -53,7 +53,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 * **OpenCypher Support:** Compatible with [OpenCypher](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) query language, including proprietary extensions for advanced querying capabilities.
 
->Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
+>Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/demos).
 
 ## GET STARTED
 
