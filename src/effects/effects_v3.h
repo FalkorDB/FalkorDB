@@ -61,6 +61,18 @@
 #define EFFECTS_V3_WIRE_SEG_SET     1
 #define EFFECTS_V3_WIRE_SEG_REPEAT  2
 
+// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1, cosine
+// 2 (vec_sim_common.h). They are not renumbered anywhere, and must not be: both
+// engines persist the metric as that number in their RDB, so moving one would
+// make every existing file read a different metric than it was written with.
+//
+// Here rather than beside either user: the encoder maps C's option STRING onto
+// these and the apply path maps them back, so a copy in each is two places for
+// one wire fact to drift.
+#define V3_SIMFUNC_L2     0
+#define V3_SIMFUNC_IP     1
+#define V3_SIMFUNC_COSINE 2
+
 #define EFFECTS_V3_SEG_KIND_MASK    0x03
 #define EFFECTS_V3_SEG_VWIDTH_SHIFT 2
 #define EFFECTS_V3_SEG_CWIDTH_SHIFT 4
@@ -492,7 +504,25 @@ void EffectsV3_RecordsFree
 // EffectsV3_Decode and EffectsV3_RecordsFree are defined
 #define EFFECTS_V3_DECODE_READY 1
 
-// EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+// EffectsV3_Encode is DEFINED
+//
+// Exactly that, and nothing more: the flag's only consumer links a round trip
+// against it. A readiness flag answers "will this link", never "is this good" -
+// widening it to something true about a different thing, such as every record
+// having a producing path, would set it while EffectsV3_Encode is undefined.
+#define EFFECTS_V3_ENCODE_READY 1
+
+// every one of the 14 records has a producing path into the accumulator
+//
+// A separate question from linkability, and worth its own flag: a record whose
+// encoder nothing CALLS emits a well-formed EMPTY payload rather than a refusal,
+// so the master stays correct and the replica silently does not - the failure
+// shape that survives every consistency check. This says the accumulator is
+// reachable from the effect writers for all 14.
+//
+// tests/flow/test_effects_v3_emit.py holds it: an unrouted effect logs and
+// refuses to replicate, and that test fails on the log.
+#define EFFECTS_V3_ALL_RECORDS_WIRED 1
 
 // a record declaring count == 0 is refused at the header
 //

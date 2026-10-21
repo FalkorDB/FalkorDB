@@ -8,6 +8,10 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_internal.h"
+#include "writers/effects_writer.h"
+#include "effects_v3_group.h"
+#include "../configuration/config.h"
+#include "../util/identifier_limits.h"
 #include "../query_ctx.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
@@ -15,12 +19,75 @@
 // initial size of a buffer's block
 #define EFFECTS_BUFFER_BLOCK_SIZE 62500
 
+// a byte sink and who owns it
+typedef struct {
+	EffectsBytes *bytes;  // the sink
+	bool owns;            // whether freeing the buffer frees it
+} RecordSink;
+
+// which body a v3 buffer is holding
+typedef enum {
+	BODY_RECORDS,   // bytes, after EffectsBuffer_TakeBody handed the sink over
+	BODY_GROUPING,  // groups, serialized once the query stops producing
+} BodyKind;
+
+// ONE ARM PER PAYLOAD VERSION, because each version's state is its own
+//
+// v2 is a sink and nothing else. v3 adds a flags byte - its header is two
+// bytes where v2's is one (_EffectsBuffer_WriteHeader) - and can hold either
+// a sink or an accumulator, because a v3 record states its count and shape
+// ahead of its rows and so cannot be written as effects arrive.
+//
+// Keyed on 'version', which is the one thing that always answers it. The inner
+// choice is NOT derivable from the version and needs its own tag:
+// EffectsBuffer_TakeBody stamps the version of the payload being reproduced -
+// 3, on the round trip - and then hands back a sink, so a v3 buffer is
+// perfectly able to be holding bytes.
+//
+// A fourth version adds an arm here rather than changing one.
 struct _EffectsBuffer {
-	EffectsBytes *records;  // encoded records
-	uint64_t n;             // number of effects in buffer
-	uint8_t version;        // payload version this buffer emits
-	bool owns_records;      // whether freeing the buffer frees the sink
+	uint64_t n;       // number of effects in buffer
+	uint8_t  version; // payload version this buffer emits, and the arm below
+
+	union {
+		RecordSink v2;
+
+		struct {
+			// zero for everything this build emits - nothing here compresses -
+			// and settable only so EffectsV3_Encode can reproduce the header
+			// of a payload it was handed rather than assert one
+			uint8_t flags;
+
+			BodyKind body;
+			union {
+				RecordSink        records;   // BODY_RECORDS
+				EffectsV3Grouping *grouping; // BODY_GROUPING
+			};
+		} v3;
+	};
+
+	// the write table for the live arm, chosen when the arm is opened so no
+	// writer re-tests it; see writers/effects_writer.h
+	const EffectsWriter *w;
 };
+
+// the sink this buffer writes bytes into, or NULL while it is accumulating
+static const RecordSink *_sink_const
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	if(eb->version < 3)             return &eb->v2;
+	if(eb->v3.body == BODY_RECORDS) return &eb->v3.records;
+
+	return NULL;
+}
+
+static RecordSink *_sink
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	return (RecordSink *)_sink_const(eb);
+}
 
 // forward declarations
 
@@ -70,9 +137,10 @@ static unsigned char *_EffectsBuffer_WriteHeader
 	*dst++ = eb->version;
 
 	if(eb->version >= 3) {
-		// flags; bit 0 = compressed. C does not compress yet, so this is 0,
-		// but the byte is part of the format regardless
-		*dst++ = 0;
+		// flags; bit 0 = compressed. Nothing here compresses, so every buffer
+		// builds carries 0 here - but a re-encode has to reproduce the header
+		// of the payload it decoded, so the value is read rather than assumed
+		*dst++ = eb->v3.flags;
 	}
 
 	return dst;
@@ -89,7 +157,37 @@ void EffectsBuffer_WriteBytes
 	ASSERT (eb  != NULL) ;
 	ASSERT (ptr != NULL) ;
 
-	EffectsBytes_Write (eb->records, ptr, n) ;
+	// A v2 record written while v3 is active means some Add*Effect was never
+	// routed into the accumulator. EffectsBuffer_Buffer serializes the groups
+	// and ignores this stream in v3, so the record would be SILENTLY DROPPED -
+	// worse than a refused payload, because nothing reports it.
+	//
+	// A log AND an assert, because they cover different builds: ASSERT compiles
+	// to nothing without RG_DEBUG, so it stops a debug and CI build at the
+	// offending writer while the log is what a release build leaves behind.
+	if(unlikely(_sink(eb) == NULL)) {
+		// AN EFFECT WITH NO v3 PATH IS A BUG, NOT A CONDITION TO SURVIVE.
+		//
+		// All 14 records have a producing path (EFFECTS_V3_ENCODE_READY), so
+		// nothing reaches here. A fifteenth effect added without routing it
+		// shows up here, and it has to be loud, because both quiet answers are
+		// wrong: dropping the write loses the effect, and replaying the query
+		// text instead is exact between two C engines and silently wrong
+		// against Rust, whose db.idx.fulltext.createNodeIndex takes a single
+		// map where C's is variadic.
+		//
+		// So: assert, stopping a debug and CI build at the writer that forgot
+		// its v3 path, and log at warning in release. The fix is always to
+		// route the effect, never to re-add a fallback.
+		RedisModule_Log(NULL, "warning",
+			"GRAPH.EFFECT an effect (%zu bytes) reached a v3 buffer with no v3 "
+			"encoding path and WILL NOT BE REPLICATED; its writer needs to "
+			"call into EffectsV3Grouping", n);
+		ASSERT(false && "effect has no v3 encoding path");
+		return;
+	}
+
+	EffectsBytes_Write (_sink(eb)->bytes, ptr, n) ;
 }
 
 // write a length-prefixed, NUL-terminated string
@@ -102,10 +200,10 @@ void EffectsBuffer_WriteBytes
 //
 // THIS STILL WRITES strlen + 1, for three reasons that EXPIRE SEPARATELY:
 //
-//   * C cannot express such a value. It does not implement \uXXXX at all -
-//     measured, C reports size 6 for the escape Rust reports 1 for, and 8 where
-//     Rust reports 3 - so no input with an interior NUL can reach here. Ends
-//     the day C implements the unicode escape.
+//   * no value here can express one. The \uXXXX escape is not implemented -
+//     measured, size 6 for the escape Rust reports 1 for, and 8 where Rust
+//     reports 3 - so no input with an interior NUL can reach here. Ends the
+//     day the unicode escape is implemented.
 //
 //   * SIValue has no length for a string. `char *stringval` is the entire
 //     representation (value.h), so the byte length does not exist to be
@@ -285,7 +383,7 @@ static void EffectsBuffer_WriteSIVector
 }
 
 // dump attributes to stream
-static void EffectsBuffer_WriteAttributeSet
+void EffectsBuffer_WriteAttributeSet
 (
 	const AttributeSet attrs,  // attribute set to write to stream
 	EffectsBuffer *buff
@@ -327,6 +425,83 @@ void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
+// the write table the live arm requires
+//
+// The arm is enough TODAY, and only because there are two of each. The rule is
+// two-level: the arm decides which tables are legal at all - a grouping table's
+// arms dereference the grouping, so a records-arm buffer cannot be given one
+// whatever version it is stamped with - and among the legal ones the version
+// picks. A second grouping version separates them, and this is the function
+// that has to grow the version argument; _open_body already holds it.
+//
+// A records-arm buffer never consults the table in the first place: the two
+// that exist, EffectsBuffer_Wrap's and EffectsBuffer_TakeBody's, are written
+// through WriteSIValue and EffectsV3_EncodeRecord, never through an Add*.
+static const EffectsWriter *_writer_for
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		return &EFFECTS_WRITER_V3;
+	}
+
+	return &EFFECTS_WRITER_V2;
+}
+
+// release whichever arm is live
+static void _release_body
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		EffectsV3Grouping_Free(eb->v3.grouping);
+		return;
+	}
+
+	RecordSink *s = _sink(eb);
+	if(s->owns) {
+		EffectsBytes_Free(s->bytes);
+	}
+}
+
+// open the sink arm, borrowing 'sink' when one is supplied
+static void _open_sink
+(
+	EffectsBuffer *eb,   // effects-buffer
+	EffectsBytes *sink   // sink to borrow, or NULL to allocate one
+) {
+	RecordSink rs = {
+		.bytes = (sink != NULL) ? sink : EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE),
+		.owns  = (sink == NULL)
+	};
+
+	if(eb->version >= 3) {
+		eb->v3.body    = BODY_RECORDS;
+		eb->v3.records = rs;
+	} else {
+		eb->v2 = rs;
+	}
+}
+
+// open the arm this emit version calls for
+static void _open_body
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint64_t emit       // version to emit
+) {
+	eb->version = (uint8_t)emit;
+
+	if(emit >= 3) {
+		eb->v3.flags    = 0;
+		eb->v3.body     = BODY_GROUPING;
+		eb->v3.grouping = EffectsV3Grouping_New();
+	} else {
+		_open_sink(eb, NULL);
+	}
+
+	eb->w = _writer_for(eb);
+}
+
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New
 (
@@ -334,15 +509,37 @@ EffectsBuffer *EffectsBuffer_New
 ) {
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
-	eb->n            = 0;
-	eb->records      = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
-	eb->version      = EFFECTS_VERSION_EMIT;
-	eb->owns_records = true;
+	uint64_t emit = EFFECTS_VERSION_EMIT;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit);
+
+	eb->n = 0;
+
+	_open_body(eb, emit);
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
 	// records a buffer holds are only records
 	return eb;
+}
+
+EffectsV3Grouping *EffectsBuffer_V3
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	return (eb->version >= 3 && eb->v3.body == BODY_GROUPING)
+		? eb->v3.grouping
+		: NULL;
+}
+
+const EffectsWriter *EffectsBuffer_Writer
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	return eb->w;
 }
 
 // reset effects-buffer
@@ -352,10 +549,22 @@ void EffectsBuffer_Reset
 ) {
 	ASSERT(buff != NULL);
 
-	EffectsBytes_Clear(buff->records);
+	uint64_t emit = EFFECTS_VERSION_EMIT;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit);
 
-	buff->n       = 0;
-	buff->version = EFFECTS_VERSION_EMIT;
+	// the arm can change between queries, because the version is re-read here
+	// and an operator may have moved it
+	RecordSink *s = _sink(buff);
+
+	if(emit < 3 && buff->version < 3 && s != NULL) {
+		// same arm as last time: retain the first block rather than churn it
+		EffectsBytes_Clear(s->bytes);
+	} else {
+		_release_body(buff);
+		_open_body(buff, emit);
+	}
+
+	buff->n = 0;
 }
 
 // returns number of effects in buffer
@@ -375,6 +584,58 @@ uint64_t EffectsBuffer_Length
 	return buff->n;
 }
 
+// take over a buffer's body so pre-built records can be written into it
+//
+// EffectsBuffer_Buffer has TWO possible bodies: the accumulator's output when
+// one is attached, and eb->records otherwise. EffectsV3_Encode writes records it
+// was handed, so the accumulator has to be out of the way first - otherwise
+// everything written here is serialised over and silently discarded.
+//
+// Refuses a buffer that has already staged effects rather than throwing them
+// away. 'version' and 'flags' come from the payload being reproduced: re-encoding
+// what was decoded must reproduce its header too.
+EffectsBytes *EffectsBuffer_TakeBody
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint8_t version,    // version byte to emit
+	uint8_t flags       // flags byte to emit
+) {
+	ASSERT(eb != NULL);
+
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		if(EffectsV3Grouping_RecordCount(eb->v3.grouping) > 0) {
+			return NULL;
+		}
+
+		// the transition: the accumulator goes and a sink opens in its place,
+		// inside the same v3 arm
+		EffectsV3Grouping_Free(eb->v3.grouping);
+		_open_sink(eb, NULL);
+		eb->w = _writer_for(eb);
+	}
+
+	// MIGRATE THE SINK, do not just move the discriminant. 'version' names an
+	// arm, so a buffer built at v2 and taken over at v3 has to carry its sink
+	// across - assigning eb->version alone leaves the sink in the other arm's
+	// storage, and on a union that is memory corruption rather than a wrong
+	// answer: eb->v3.flags would land on byte 0 of eb->v2.bytes.
+	RecordSink rs = *_sink(eb);
+
+	eb->version = version;
+
+	if(version >= 3) {
+		eb->v3.flags   = flags;
+		eb->v3.body    = BODY_RECORDS;
+		eb->v3.records = rs;
+	} else {
+		eb->v2 = rs;
+	}
+
+	eb->w = _writer_for(eb);
+
+	return _sink(eb)->bytes;
+}
+
 // get a copy of effects-buffer internal buffer
 unsigned char *EffectsBuffer_Buffer
 (
@@ -387,8 +648,22 @@ unsigned char *EffectsBuffer_Buffer
 	// determine required buffer size
 	//--------------------------------------------------------------------------
 
+	// v3 serializes its grouped records here, which is the only point at which
+	// they can be: a record states its count and shape ahead of its rows, so
+	// nothing could be written while effects were still arriving
+	EffectsBytes *body    = NULL;
+	EffectsBytes *v3_body = NULL;
+
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		v3_body = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
+		EffectsV3Grouping_Encode(eb->v3.grouping, v3_body);
+		body = v3_body;
+	} else {
+		body = _sink_const(eb)->bytes;
+	}
+
 	size_t hdr = _EffectsBuffer_HeaderLen(eb->version);
-	size_t l   = hdr + EffectsBytes_Len(eb->records);
+	size_t l   = hdr + EffectsBytes_Len(body);
 
 	//--------------------------------------------------------------------------
 	// allocate buffer and populate
@@ -397,7 +672,9 @@ unsigned char *EffectsBuffer_Buffer
 	unsigned char *buffer = rm_malloc(sizeof(unsigned char) * l);
 	unsigned char *offset = _EffectsBuffer_WriteHeader(eb, buffer);
 
-	EffectsBytes_CopyInto(eb->records, offset);
+	EffectsBytes_CopyInto(body, offset);
+
+	EffectsBytes_Free(v3_body);
 
 	*n = l;
 	return buffer;
@@ -415,14 +692,6 @@ void EffectsBuffer_AddCreateNodeEffect
 	const LabelID *labels,  // node labels
 	ushort label_count      // number of labels
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// label count
-	// labels
-	// attribute count
-	// attributes (id,value) pair
-	//--------------------------------------------------------------------------
 	
 	//--------------------------------------------------------------------------
 	// update query stats
@@ -433,31 +702,7 @@ void EffectsBuffer_AddCreateNodeEffect
 	stats->labels_added   += label_count ;
 	stats->properties_set += AttributeSet_Count (*n->attributes) ;
 
-	EffectType t = EFFECT_CREATE_NODE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
-
-	//--------------------------------------------------------------------------
-	// write label count
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteBytes(&label_count, sizeof(label_count), buff);
-
-	//--------------------------------------------------------------------------
-	// write labels
-	//--------------------------------------------------------------------------
-
-	if(label_count > 0) {
-		EffectsBuffer_WriteBytes(labels, sizeof(LabelID) * label_count, buff);
-	}
-
-	//--------------------------------------------------------------------------
-	// write attribute set
-	//--------------------------------------------------------------------------
-
-	const AttributeSet attrs = GraphEntity_GetAttributes((const GraphEntity*)n);
-	EffectsBuffer_WriteAttributeSet(attrs, buff);
-
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_Writer (buff)->CreateNode(buff, n, labels, label_count) ;
 }
 
 // add a edge creation effect to buffer
@@ -466,55 +711,12 @@ void EffectsBuffer_AddCreateEdgeEffect
 	EffectsBuffer *buff,  // effect buffer
 	const Edge *edge      // edge created
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// relationship count
-	// relationships
-	// src node ID
-	// dest node ID
-	// attribute count
-	// attributes (id,value) pair
-	//--------------------------------------------------------------------------
 	
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->relationships_created++ ;
 	stats->properties_set += AttributeSet_Count (*edge->attributes) ;
 
-	// encoded edge struct
-	#pragma pack(push, 1)
-	struct {
-		EffectType t ;
-		uint16_t rel_count ;
-		RelationID r ;
-		NodeID src_id ;
-		NodeID dest_id ;
-	} _create_edge_desc;
-	#pragma pack(pop)
-
-	//--------------------------------------------------------------------------
-	// populate & write edge
-	//--------------------------------------------------------------------------
-
-	_create_edge_desc.t         = EFFECT_CREATE_EDGE ;
-	_create_edge_desc.rel_count = 1 ;
-	_create_edge_desc.r         = Edge_GetRelationID (edge) ;
-	_create_edge_desc.src_id    = Edge_GetSrcNodeID  (edge) ;
-	_create_edge_desc.dest_id   = Edge_GetDestNodeID (edge) ;
-
-	EffectsBuffer_WriteBytes (&_create_edge_desc, sizeof (_create_edge_desc),
-			buff) ;
-
-	//--------------------------------------------------------------------------
-	// write attribute set 
-	//--------------------------------------------------------------------------
-
-	const AttributeSet attrs =
-		GraphEntity_GetAttributes ((const GraphEntity*)edge) ;
-
-	EffectsBuffer_WriteAttributeSet (attrs, buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->CreateEdge(buff, edge) ;
 }
 
 // add a node deletion effect to buffer
@@ -523,30 +725,12 @@ void EffectsBuffer_AddDeleteNodeEffect
 	EffectsBuffer *buff,  // effect buffer
 	const Node *node      // node deleted
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    node ID
-	//--------------------------------------------------------------------------
 
 	// update query statistics
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->nodes_deleted++ ;
 
-	#pragma pack(push, 1)
-	struct {
-		EffectType t;
-		EntityID id;
-	} _delete_node_desc ;
-	#pragma pack(pop)
-
-	_delete_node_desc.t  = EFFECT_DELETE_NODE ;
-	_delete_node_desc.id = ENTITY_GET_ID (node) ;
-
-	EffectsBuffer_WriteBytes (&_delete_node_desc, sizeof(_delete_node_desc),
-			buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->DeleteNode(buff, node) ;
 }
 
 // add a edge deletion effect to buffer
@@ -555,129 +739,17 @@ void EffectsBuffer_AddDeleteEdgeEffect
 	EffectsBuffer *eb,  // effect buffer
 	const Edge *edge    // edge deleted
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    edge ID
-	//    relation ID
-	//    src ID
-	//    dest ID
-	//--------------------------------------------------------------------------
 
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->relationships_deleted++ ;
 
-	// encoded edge struct
-	#pragma pack(push, 1)
-	struct {
-		EffectType t ;
-		EntityID id;
-		RelationID r ;
-		NodeID src_id ;
-		NodeID dest_id ;
-	} _delete_edge_desc;
-	#pragma pack(pop)
-
-	_delete_edge_desc.t       = EFFECT_DELETE_EDGE ;
-	_delete_edge_desc.id      = ENTITY_GET_ID      (edge) ;
-	_delete_edge_desc.r       = Edge_GetRelationID (edge) ;
-	_delete_edge_desc.src_id  = Edge_GetSrcNodeID  (edge) ;
-	_delete_edge_desc.dest_id = Edge_GetDestNodeID (edge) ;
-
-	EffectsBuffer_WriteBytes (&_delete_edge_desc, sizeof(_delete_edge_desc),
-			eb) ;
-
-	EffectsBuffer_IncEffectCount(eb);
+	EffectsBuffer_Writer (eb)->DeleteEdge(eb, edge) ;
 }
+
 
 // add an entity update effect to buffer
-static void EffectsBuffer_AddNodeUpdateEffect
-(
-	EffectsBuffer *buff,  // effect buffer
-	Node *node,           // updated node
-	AttributeID attr_id,  // updated attribute ID
- 	SIValue value         // value
-) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    entity ID
-	//    attribute id
-	//    attribute value
-	//--------------------------------------------------------------------------
 
-	#pragma pack(push, 1)
-	struct {
-		EffectType t ;
-		EntityID id;
-		AttributeID attr_id ;
-	} _update_node_desc;
-	#pragma pack(pop)
 
-	_update_node_desc.t       = EFFECT_UPDATE_NODE ;
-	_update_node_desc.id      = ENTITY_GET_ID (node) ;
-	_update_node_desc.attr_id = attr_id ;
-
-	EffectsBuffer_WriteBytes (&_update_node_desc, sizeof(_update_node_desc),
-			buff) ;
-
-	//--------------------------------------------------------------------------
-	// write attribute value
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteSIValue (&value, buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
-}
-
-// add an entity update effect to buffer
-static void EffectsBuffer_AddEdgeUpdateEffect
-(
-	EffectsBuffer *buff,  // effect buffer
-	Edge *edge,           // updated edge
-	AttributeID attr_id,  // updated attribute ID
- 	SIValue value         // value
-) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    edge ID
-	//    relation ID
-	//    src ID
-	//    dest ID
-	//    attribute count (=n)
-	//    attributes (id,value) pair
-	//--------------------------------------------------------------------------
-
-	#pragma pack(push, 1)
-	struct {
-		EffectType t ;
-		EntityID id;
-		RelationID r;
-		NodeID s;
-		NodeID d;
-		AttributeID attr_id ;
-	} _update_edge_desc;
-	#pragma pack(pop)
-
-	_update_edge_desc.t       = EFFECT_UPDATE_EDGE ;
-	_update_edge_desc.id      = ENTITY_GET_ID      (edge) ;
-	_update_edge_desc.r       = Edge_GetRelationID (edge) ;
-	_update_edge_desc.s       = Edge_GetSrcNodeID  (edge) ;
-	_update_edge_desc.d       = Edge_GetDestNodeID (edge) ;
-	_update_edge_desc.attr_id = attr_id ;
-
-	EffectsBuffer_WriteBytes (&_update_edge_desc, sizeof (_update_edge_desc),
-			buff) ;
-
-	//--------------------------------------------------------------------------
-	// write attribute value
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteSIValue(&value, buff);
-
-	EffectsBuffer_IncEffectCount(buff);
-}
 
 // add an entity attribute removal effect to buffer
 void EffectsBuffer_AddEntityRemoveAttributeEffect
@@ -687,6 +759,7 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 	AttributeID attr_id,         // updated attribute ID
 	GraphEntityType entity_type  // entity type
 ) {
+
 	// attribute was deleted
 	int n = (attr_id == ATTRIBUTE_ID_ALL)
 		? AttributeSet_Count(*entity->attributes)
@@ -696,11 +769,8 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 	stats->properties_removed += n ;
 
 	SIValue v = SI_NullVal();
-	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, v);
-	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, v);
-	}
+
+	EffectsBuffer_Writer (buff)->UpdateEntity(buff, entity, attr_id, v, entity_type) ;
 }
 
 // add an entity add new attribute effect to buffer
@@ -712,15 +782,12 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
+
 	// attribute was added
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->properties_set++ ;
 
-	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
-	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, value);
-	}
+	EffectsBuffer_Writer (buff)->UpdateEntity(buff, entity, attr_id, value, entity_type) ;
 }
 
 // add an entity update attribute effect to buffer
@@ -732,15 +799,12 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
+
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->properties_set++ ;     // attribute was set
 	stats->properties_removed++ ; // old attribute was deleted
 
-	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
-	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, value);
-	}
+	EffectsBuffer_Writer (buff)->UpdateEntity(buff, entity, attr_id, value, entity_type) ;
 }
 
 // records a SET_LABELS effect into the buffer:
@@ -749,14 +813,13 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 // effect format:
 //   [EffectType]         effect type tag
 //   [GxB serialized]     GxB_Vector_serialize blob of the node vector
+
+
 void EffectsBuffer_AddLabelsEffect
 (
 	EffectsBuffer *buff,  // effect buffer to write into
 	GrB_Vector nodes      // nodes that received the label
 ) {
-	//--------------------------------------------------------------------------
-	// update query statistics
-	//--------------------------------------------------------------------------
 
 	GrB_Index nvals ;
 	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
@@ -764,23 +827,7 @@ void EffectsBuffer_AddLabelsEffect
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->labels_added += nvals ;
 
-	EffectType t = EFFECT_SET_LABELS;
-	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
-
-	//--------------------------------------------------------------------------
-	// encode vector
-	//--------------------------------------------------------------------------
-
-	void *blob ;
-	GrB_Index blob_size ;
-	GrB_OK (GxB_Vector_serialize (&blob, &blob_size, nodes, NULL)) ;
-
-	EffectsBuffer_WriteBytes (&blob_size, sizeof (blob_size), buff) ;
-	EffectsBuffer_WriteBytes (blob, blob_size, buff) ;
-
-	rm_free (blob) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->Labels(buff, nodes, EFFECT_SET_LABELS) ;
 }
 
 // records a REMOVE_LABELS effect into the buffer:
@@ -794,29 +841,13 @@ void EffectsBuffer_AddRemoveLabelsEffect
 	EffectsBuffer *buff,  // effect buffer to write into
 	GrB_Vector     nodes  // nodes that lost the label
 ) {
-	//--------------------------------------------------------------------------
-	// update query statistics
-	//--------------------------------------------------------------------------
 
 	GrB_Index nvals ;
 	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->labels_removed += nvals ;
 
-	EffectType t = EFFECT_REMOVE_LABELS ;
-	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
-
-	// encode vector
-	void *blob ;
-	GrB_Index blob_size ;
-	GrB_OK (GxB_Vector_serialize (&blob, &blob_size, nodes, NULL)) ;
-
-	EffectsBuffer_WriteBytes (&blob_size, sizeof (blob_size), buff) ;
-	EffectsBuffer_WriteBytes (blob, blob_size, buff) ;
-
-	rm_free (blob) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->Labels(buff, nodes, EFFECT_REMOVE_LABELS) ;
 }
 
 // add a schema addition effect to buffer
@@ -826,29 +857,7 @@ void EffectsBuffer_AddNewSchemaEffect
 	const char *schema_name,  // id of the schema
 	SchemaType st             // type of the schema
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    schema type
-	//    schema name
-	//--------------------------------------------------------------------------
-
-	EffectType t = EFFECT_ADD_SCHEMA;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
-
-	//--------------------------------------------------------------------------
-	// write schema type
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteBytes(&st, sizeof(st), buff);
-
-	//--------------------------------------------------------------------------
-	// write schema name
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteString(schema_name, buff);
-
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_Writer (buff)->NewSchema(buff, schema_name, st) ;
 }
 
 // add an attribute addition effect to buffer
@@ -857,22 +866,7 @@ void EffectsBuffer_AddNewAttributeEffect
 	EffectsBuffer *buff,  // effect buffer
 	const char *attr      // attribute name
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// attribute name
-	//--------------------------------------------------------------------------
-
-	EffectType t = EFFECT_ADD_ATTRIBUTE;
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
-
-	//--------------------------------------------------------------------------
-	// write attribute name
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteString(attr, buff);
-
-	EffectsBuffer_IncEffectCount(buff);
+	EffectsBuffer_Writer (buff)->NewAttribute(buff, attr) ;
 }
 
 void EffectsBuffer_Free
@@ -881,9 +875,7 @@ void EffectsBuffer_Free
 ) {
 	if(eb == NULL) return;
 
-	if(eb->owns_records) {
-		EffectsBytes_Free(eb->records);
-	}
+	_release_body(eb);
 
 	rm_free(eb);
 }
@@ -906,10 +898,15 @@ EffectsBuffer *EffectsBuffer_Wrap
 
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
-	eb->n            = 0;
-	eb->records      = sink;
-	eb->version      = EFFECTS_VERSION_EMIT;
-	eb->owns_records = false;
+	eb->n       = 0;
+	eb->version = EFFECTS_VERSION_EMIT;
+
+	if(eb->version >= 3) {
+		eb->v3.flags = 0;
+	}
+
+	_open_sink(eb, sink);
+	eb->w = _writer_for(eb);
 
 	return eb;
 }
