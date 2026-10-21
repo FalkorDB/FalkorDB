@@ -192,7 +192,9 @@ pub fn create_js_node<'js>(
             let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
                 .map_err(|e| format!("JS function error: {e}"))?;
             let factory: Function = ctx
-                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
+                // Forward the caller's arguments as given: an omitted config
+                // must reach `h` as a missing argument, not as `undefined`.
+                .eval("(h) => function(...args) { return h(this.__falkor_node_id, ...args); }")
                 .map_err(|e| format!("JS eval error: {e}"))?;
             let f: Function = factory
                 .call((helper,))
