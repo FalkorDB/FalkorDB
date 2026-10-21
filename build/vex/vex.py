@@ -43,7 +43,6 @@ import tarfile
 import tempfile
 import tomllib
 from pathlib import Path
-from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
 VEX_DIR = ROOT / ".vex"
@@ -368,6 +367,8 @@ def parse_elf(f):
 
 
 TRIPLETS = {62: "x86_64-linux-gnu", 183: "aarch64-linux-gnu"}
+# Where `#!/usr/bin/env NAME` finds NAME: the PATH every one of our images sets.
+PATH_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 
 
 class Analysis:
@@ -427,8 +428,25 @@ class Analysis:
         return (e is not None and e.machine == machine
                 and all(self.find_library(n, posixpath.dirname(real), e) for n in e.needed))
 
+    def interpreters(self, real):
+        """The programs a script's #! line runs: its interpreter and, for
+        `#!/usr/bin/env NAME`, NAME. On RHEL and Amazon Linux, chown, cat and
+        the other coreutils tools are such scripts, run by /usr/bin/coreutils."""
+        if not self.fs.is_file(real):
+            return []
+        line = self.fs.open(real).read(256).split(b"\n")[0]
+        words = line[2:].decode("utf-8", "replace").split() if line.startswith(b"#!") else []
+        if not words:
+            return []
+        if posixpath.basename(words[0]) == "env" and len(words) > 1 and not words[1].startswith("-"):
+            name = words[1]
+            found = [p for p in (posixpath.join(d, name) for d in PATH_DIRS) if self.fs.canonical(p)]
+            return [words[0], found[0] if found else name]
+        return [words[0]]
+
     def closure(self, roots):
-        """Every file the roots load through PT_INTERP and DT_NEEDED, roots included."""
+        """Every file the roots run or load through #!, PT_INTERP and DT_NEEDED,
+        roots included."""
         seen, todo, missing = set(), list(roots), []
         while todo:
             real = todo.pop()
@@ -437,6 +455,12 @@ class Analysis:
             seen.add(real)
             e = self.elf(real)
             if e is None:
+                for prog in self.interpreters(real):
+                    interp = self.fs.canonical(prog)
+                    if interp is None:
+                        missing.append(f"{real} runs {prog}")
+                    else:
+                        todo.append(interp)
                 continue
             deps = [self.fs.canonical(e.interp)] if e.interp else []
             for name in e.needed:
@@ -617,7 +641,8 @@ def cmd_check(args):
                 errors.append(f"the statement for {cve} hid nothing in this scan: Trivy no longer "
                               "reports it, or the statement does not match")
             for pkg in sorted(set(st["packages"]) - hidden_by.get(cve, set())):
-                warnings.append(f"the statement for {cve} names {pkg}, which this scan does not report for it")
+                errors.append(f"the statement for {cve} names {pkg}, which this scan does not report it in: "
+                              "drop the package, or split the statement by image")
         elif cve not in reported:
             errors.append(f"the {st['status']} statement for {cve} matches no finding in this scan")
 
@@ -627,7 +652,7 @@ def cmd_check(args):
         an = Analysis(fs)
         roots = runtime_roots(src, fs, args.image, args.os, errors)
         runtime, missing = an.closure(roots)
-        errors += [f"cannot resolve a runtime library: {m}" for m in missing]
+        errors += [f"cannot resolve what the runtime runs or loads: {m}" for m in missing]
         pkg_files = package_files(fs)
         versions = {}
         for v in remaining + [m.get("Finding", {}) for m in hidden]:

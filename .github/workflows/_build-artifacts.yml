@@ -316,6 +316,7 @@ jobs:
           TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
         run: |
           set -euo pipefail
+          python3 build/vex/vex.py generate --check
           trivy image --quiet --skip-db-update --input "$TAR" --vex .vex/falkordb-server.openvex.json \
             --show-suppressed --format json --output "$RUNNER_TEMP/trivy-vex-${SUFFIX}.json"
           cid=$(docker create "falkordb-server:${SUFFIX}")

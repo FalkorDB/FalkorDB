@@ -247,9 +247,11 @@ jobs:
       IMAGE: ghcr.io/falkordb/${{ matrix.repo }}:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
       PLATFORM: ${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
     steps:
-      # Only the VEX document and its checker are needed.
+      # Only the VEX document and its checker are needed, from the commit the
+      # image was built from.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.commit_sha }}
           persist-credentials: false
           sparse-checkout: |
             .vex
