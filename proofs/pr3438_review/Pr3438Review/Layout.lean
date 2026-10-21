@@ -38,49 +38,49 @@ by changing the bytes of a payload. It does not:
 namespace Pr3438
 open GraphPersist GraphPersist.Persist
 
-variable {M Tn Nm Ix Cn R : Type}
+variable {M Tn Nm Ix Cn : Type}
 
 /-! ## Deleted-ids encoder (claim 3) -/
 
 /-- `Encode for RoaringTreemap::encode_with_range` on the PR. -/
-def encRoarPR (H : RoaringContract R) (r : R) (count offset : Nat) : Stream :=
-  [.bytes ((match H.select r offset with
-    | some first => (H.iterFrom r first).take count
+def encRoarPR (r : RSet) (count offset : Nat) : Stream :=
+  [.bytes ((match r.select offset with
+    | some first => (r.iterFrom first).take count
     | none => []).flatMap le8)]
 
 /-- main's `iter().skip(offset).take(count)`, written straight from the crate's `iter()`. -/
-def encRoarMain (H : RoaringContract R) (r : R) (count offset : Nat) : Stream :=
-  [.bytes ((((H.elems r).drop offset).take count).flatMap le8)]
+def encRoarMain (r : RSet) (count offset : Nat) : Stream :=
+  [.bytes ((((r.elems).drop offset).take count).flatMap le8)]
 
-theorem encRoarMain_eq (H : RoaringContract R) (r : R) (count offset : Nat) :
-    encRoarMain H r count offset = encRoar (H.elems r) count offset := rfl
+theorem encRoarMain_eq (r : RSet) (count offset : Nat) :
+    encRoarMain r count offset = encRoar (r.elems) count offset := rfl
 
 /-- **Claim 3.** The seek writes main's bytes, for every `count` and `offset`. -/
-theorem encRoarPR_eq (H : RoaringContract R) (r : R) (count offset : Nat) :
-    encRoarPR H r count offset = encRoarMain H r count offset := by
+theorem encRoarPR_eq (r : RSet) (count offset : Nat) :
+    encRoarPR r count offset = encRoarMain r count offset := by
   unfold encRoarPR encRoarMain
-  rw [H.select_spec]
-  cases h : (H.elems r)[offset]? with
+  rw [RSet.select_spec]
+  cases h : (r.elems)[offset]? with
   | none =>
-    have hl : (H.elems r).length ≤ offset := List.getElem?_eq_none_iff.1 h
+    have hl : (r.elems).length ≤ offset := List.getElem?_eq_none_iff.1 h
     simp [List.drop_eq_nil_of_le hl]
   | some a =>
     simp only
-    rw [H.iterFrom_spec, filter_ge_select _ (H.sorted r) offset a h]
+    rw [RSet.iterFrom_spec, filter_ge_select _ (r.sorted) offset a h]
 
 /-! ## Attribute slices -/
 
-def encRangePR (H : RoaringContract R) (r : R) (S : Store) (maxId count offset : Nat) : Stream :=
-  (prEncode H id r maxId count offset).flatMap (encEnt S)
+def encRangePR (r : RSet) (S : Store) (maxId count offset : Nat) : Stream :=
+  (prEncode id r maxId count offset).flatMap (encEnt S)
 
 theorem liveL_eq_live (n : Nat) (del : List Nat) (maxId : Nat) (h : maxId + 1 = n + del.length) :
     liveL del maxId = live n del := by
   simp only [liveL, live, h, decide_not]
 
-theorem encRangePR_eq (H : RoaringContract R) (r : R) (S : Store) (n : Nat) (del : List Nat)
-    (hd : H.elems r = del) (maxId : Nat) (hm : maxId + 1 = n + del.length) (count offset : Nat)
+theorem encRangePR_eq (r : RSet) (S : Store) (n : Nat) (del : List Nat)
+    (hd : r.elems = del) (maxId : Nat) (hm : maxId + 1 = n + del.length) (count offset : Nat)
     (hc : 0 < count) :
-    encRangePR H r S maxId count offset = encRange S (live n del) count offset := by
+    encRangePR r S maxId count offset = encRange S (live n del) count offset := by
   unfold encRangePR encRange
   rw [prEncode_spec, if_neg (by omega), hd, liveL_eq_live n del maxId hm, Nat.max_eq_left hc]
   simp
@@ -89,19 +89,19 @@ theorem encRangePR_eq (H : RoaringContract R) (r : R) (S : Store) (n : Nat) (del
 
 /-- `Graph::encode_payload` on the PR; `max_node_id() = node_count + |deleted| - 1`
 as graph_persist's `live` has it. -/
-def encPayloadPR (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
+def encPayloadPR (rn re : RSet) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
     (e : Entry) : Stream :=
   match e.st with
-  | .nodes => encRangePR H rn g.nodes (g.nodeCount + g.delNodes.length - 1) e.count e.offset
-  | .delNodes => encRoarPR H rn e.count e.offset
-  | .edges => encRangePR H re g.edges (g.edgeCount + g.delEdges.length - 1) e.count e.offset
-  | .delEdges => encRoarPR H re e.count e.offset
+  | .nodes => encRangePR rn g.nodes (g.nodeCount + g.delNodes.length - 1) e.count e.offset
+  | .delNodes => encRoarPR rn e.count e.offset
+  | .edges => encRangePR re g.edges (g.edgeCount + g.delEdges.length - 1) e.count e.offset
+  | .delEdges => encRoarPR re e.count e.offset
   | _ => encPayload C g e
 
 /-- The roaring sets behind the graph are its deleted-id lists. -/
-structure Backs (H : RoaringContract R) (rn re : R) (g : G M Tn Nm Ix Cn) : Prop where
-  nodes : H.elems rn = g.delNodes
-  edges : H.elems re = g.delEdges
+structure Backs (rn re : RSet) (g : G M Tn Nm Ix Cn) : Prop where
+  nodes : rn.elems = g.delNodes
+  edges : re.elems = g.delEdges
 
 /-- An entity entry with a positive count inside its kind. -/
 def SliceOK (g : G M Tn Nm Ix Cn) (e : Entry) : Prop :=
@@ -117,42 +117,42 @@ theorem entryOK_slice (g : G M Tn Nm Ix Cn) (e : Entry) (h : EntryOK g e) : Slic
       rcases hm with (hm | hm) | hm | hm <;> (try (split at hm <;> simp at hm)) <;>
       (try subst hm) <;> simp_all
 
-theorem encPayloadPR_eq (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
-    (hb : Backs H rn re g) (e : Entry) (he : SliceOK g e) :
-    encPayloadPR H rn re C g e = encPayload C g e := by
+theorem encPayloadPR_eq (rn re : RSet) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
+    (hb : Backs rn re g) (e : Entry) (he : SliceOK g e) :
+    encPayloadPR rn re C g e = encPayload C g e := by
   obtain ⟨st, count, offset⟩ := e
   cases st with
   | nodes =>
     obtain ⟨hc, ho⟩ := he (Or.inl rfl)
     simp only [kindTotal] at hc ho
     simp only [encPayloadPR, encPayload]
-    exact encRangePR_eq H rn g.nodes g.nodeCount g.delNodes hb.nodes _ (by omega) count offset hc
+    exact encRangePR_eq rn g.nodes g.nodeCount g.delNodes hb.nodes _ (by omega) count offset hc
   | delNodes =>
     simp only [encPayloadPR, encPayload]; rw [encRoarPR_eq, encRoarMain_eq, hb.nodes]
   | edges =>
     obtain ⟨hc, ho⟩ := he (Or.inr (Or.inr (Or.inl rfl)))
     simp only [kindTotal] at hc ho
     simp only [encPayloadPR, encPayload]
-    exact encRangePR_eq H re g.edges g.edgeCount g.delEdges hb.edges _ (by omega) count offset hc
+    exact encRangePR_eq re g.edges g.edgeCount g.delEdges hb.edges _ (by omega) count offset hc
   | delEdges =>
     simp only [encPayloadPR, encPayload]; rw [encRoarPR_eq, encRoarMain_eq, hb.edges]
   | _ => rfl
 
 /-- `encode_graph` on the PR. -/
-def encodeGraphPR (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
+def encodeGraphPR (rn re : RSet) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
     (name : Nm) (ps : List Entry) (k : Nat) : Stream :=
-  C.H.enc (hdrOf g name k) ++ C.S.enc g.sch ++ encDir ps ++ ps.flatMap (encPayloadPR H rn re C g)
+  C.H.enc (hdrOf g name k) ++ C.S.enc g.sch ++ encDir ps ++ ps.flatMap (encPayloadPR rn re C g)
 
-theorem encodeGraphPR_eq (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
-    (hb : Backs H rn re g) (name : Nm) (ps : List Entry) (k : Nat) (hps : ∀ e ∈ ps, SliceOK g e) :
-    encodeGraphPR H rn re C g name ps k = encodeGraph C g name ps k := by
+theorem encodeGraphPR_eq (rn re : RSet) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
+    (hb : Backs rn re g) (name : Nm) (ps : List Entry) (k : Nat) (hps : ∀ e ∈ ps, SliceOK g e) :
+    encodeGraphPR rn re C g name ps k = encodeGraph C g name ps k := by
   unfold encodeGraphPR encodeGraph
   congr 1
   induction ps with
   | nil => rfl
   | cons e es ih =>
     simp only [List.flatMap_cons]
-    rw [encPayloadPR_eq H rn re C g hb e (hps e (by simp)), ih (fun e' he' => hps e' (by simp [he']))]
+    rw [encPayloadPR_eq rn re C g hb e (hps e (by simp)), ih (fun e' he' => hps e' (by simp [he']))]
 
 /-! ## No caller passes `count = 0` -/
 
@@ -177,19 +177,19 @@ theorem encoder_counts_pos (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw 
 
 /-- **Single key** (`vec_save_graph`/`pipe_save_graph`/one-key RDB): graph_persist's
 `load_encode`, for the PR's encoder. -/
-theorem load_encode_pr (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
-    (hw : WF C g) (hb : Backs H rn re g) (dest : Nm) :
-    RT (loadFromReader C dest) (encodeGraphPR H rn re C g g.name (buildPayloads g) 1) (restoreOf g dest) := by
-  rw [encodeGraphPR_eq H rn re C g hb _ _ _ (buildPayloads_slice g)]
+theorem load_encode_pr (rn re : RSet) (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn)
+    (hw : WF C g) (hb : Backs rn re g) (dest : Nm) :
+    RT (loadFromReader C dest) (encodeGraphPR rn re C g g.name (buildPayloads g) 1) (restoreOf g dest) := by
+  rw [encodeGraphPR_eq rn re C g hb _ _ _ (buildPayloads_slice g)]
   exact load_encode C g hw dest
 
 /-- **Multi key, any load order**: graph_persist's `multi_load`, for the PR's encoder. -/
-theorem multi_load_pr [DecidableEq Nm] (H : RoaringContract R) (rn re : R) (C : Codecs M Tn Nm Ix Cn)
-    (g : G M Tn Nm Ix Cn) (hw : WF C g) (hb : Backs H rn re g) (vmax : Nat)
+theorem multi_load_pr [DecidableEq Nm] (rn re : RSet) (C : Codecs M Tn Nm Ix Cn)
+    (g : G M Tn Nm Ix Cn) (hw : WF C g) (hb : Backs rn re g) (vmax : Nat)
     (ht : total g ≤ U64MAX) (hK : 2 ≤ (buildMulti g vmax).length)
     (hH : C.H.good (hdrOf g g.name (buildMulti g vmax).length))
     (ord : List Nat) (hord : ord.Perm (List.range (buildMulti g vmax).length)) (names : Nat → Nm) :
-    (∀ k ∈ ord, RT (rdbKey C) (encodeGraphPR H rn re C g g.name (keyAt (buildMulti g vmax) k) (buildMulti g vmax).length)
+    (∀ k ∈ ord, RT (rdbKey C) (encodeGraphPR rn re C g g.name (keyAt (buildMulti g vmax) k) (buildMulti g vmax).length)
       (hdrOf g g.name (buildMulti g vmax).length, g.sch, (keyAt (buildMulti g vmax) k).map (prOfE g))) ∧
     runKeys C (hdrOf g g.name (buildMulti g vmax).length) g.sch DS.empty
         (ord.map fun k => (names k, (keyAt (buildMulti g vmax) k).map (prOfE g))) =
@@ -198,7 +198,7 @@ theorem multi_load_pr [DecidableEq Nm] (H : RoaringContract R) (rn re : R) (C : 
         (ord.map fun k => (names k, (keyAt (buildMulti g vmax) k).map (prOfE g)))⟩ := by
   obtain ⟨h1, h2⟩ := multi_load C g hw vmax ht hK hH ord hord names
   refine ⟨fun k hk => ?_, h2⟩
-  rw [encodeGraphPR_eq H rn re C g hb _ _ _
+  rw [encodeGraphPR_eq rn re C g hb _ _ _
     (fun e he => entryOK_slice g e ((layout_ok C g hw vmax ht (by omega) k).1 e he))]
   exact h1 k hk
 
@@ -212,10 +212,10 @@ theorem take_drop_concat {α : Type} (L : List α) (off c t : Nat) :
 `cap` (`chunkType`, the per-kind shape of `build_multi_key_payloads`) and
 encoding each chunk with the PR's `encode_with_range` gives, concatenated, the
 single walk over those `total` live ids. -/
-theorem chunk_concat {E : Type} (H : RoaringContract R) (ent : Nat → E) (r : R) (maxId cap : Nat)
+theorem chunk_concat {E : Type} (ent : Nat → E) (r : RSet) (maxId cap : Nat)
     (hcap : 0 < cap) : ∀ total off,
-      (chunkType cap hcap off total).flatMap (fun s => prEncode H ent r maxId s.count s.offset) =
-        ((((liveL (H.elems r) maxId).drop off).take total).map ent) := by
+      (chunkType cap hcap off total).flatMap (fun s => prEncode ent r maxId s.count s.offset) =
+        ((((liveL (r.elems) maxId).drop off).take total).map ent) := by
   intro total
   induction total using Nat.strongRecOn with
   | _ total ih =>
@@ -232,10 +232,10 @@ theorem chunk_concat {E : Type} (H : RoaringContract R) (ent : Nat → E) (r : R
 
 /-- With `off = 0` and `total` = every live id, the concatenation is one full
 `encode_with_range(count = total, offset = 0)`. -/
-theorem chunk_concat_full {E : Type} (H : RoaringContract R) (ent : Nat → E) (r : R) (maxId cap : Nat)
-    (hcap : 0 < cap) (htot : 0 < (liveL (H.elems r) maxId).length) :
-    (chunkType cap hcap 0 (liveL (H.elems r) maxId).length).flatMap (fun s => prEncode H ent r maxId s.count s.offset) =
-      prEncode H ent r maxId (liveL (H.elems r) maxId).length 0 := by
+theorem chunk_concat_full {E : Type} (ent : Nat → E) (r : RSet) (maxId cap : Nat)
+    (hcap : 0 < cap) (htot : 0 < (liveL (r.elems) maxId).length) :
+    (chunkType cap hcap 0 (liveL (r.elems) maxId).length).flatMap (fun s => prEncode ent r maxId s.count s.offset) =
+      prEncode ent r maxId (liveL (r.elems) maxId).length 0 := by
   rw [chunk_concat, prEncode_spec, if_neg (by omega)]
 
 end Pr3438

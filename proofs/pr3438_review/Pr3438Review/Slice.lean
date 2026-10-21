@@ -48,11 +48,11 @@ def walk {E : Type} (ent : Nat → E) (count : Nat) : List Nat → List Nat → 
     else ent id :: walk ent count ids q (enc + 1)
 
 /-- `encode_with_range` on the PR (:1425). -/
-def prEncode {R E : Type} (H : RoaringContract R) (ent : Nat → E) (r : R) (maxId count offset : Nat) : List E :=
+def prEncode {E : Type} (ent : Nat → E) (r : RSet) (maxId count offset : Nat) : List E :=
   if count = 0 then []
-  else match nthLive (H.rank r) maxId offset with
+  else match nthLive (r.rank) maxId offset with
     | none => []
-    | some start => walk ent count (List.range' start (maxId + 1 - start)) (H.iterFrom r start) 0
+    | some start => walk ent count (List.range' start (maxId + 1 - start)) (r.iterFrom start) 0
 
 theorem walk_spec {E : Type} (ent : Nat → E) (count : Nat) (l : List Nat) (hl : l.Pairwise (· < ·)) :
     ∀ (k a enc : Nat), enc < count →
@@ -94,20 +94,20 @@ where
     rw [filter_ge_step l hl a, if_neg ha]
 
 /-- **`prEncode_spec`**: the entities the PR writes. -/
-theorem prEncode_spec {R E : Type} (H : RoaringContract R) (ent : Nat → E) (r : R) (maxId count offset : Nat) :
-    prEncode H ent r maxId count offset =
-      if count = 0 then [] else ((((liveL (H.elems r) maxId).drop offset).take count).map ent) := by
+theorem prEncode_spec {E : Type} (ent : Nat → E) (r : RSet) (maxId count offset : Nat) :
+    prEncode ent r maxId count offset =
+      if count = 0 then [] else ((((liveL (r.elems) maxId).drop offset).take count).map ent) := by
   unfold prEncode
   by_cases hc : count = 0
   · simp [hc]
   · rw [if_neg hc, if_neg hc]
-    cases hn : nthLive (H.rank r) maxId offset with
+    cases hn : nthLive (r.rank) maxId offset with
     | none =>
-      have := nthLive_none H r maxId offset hn
+      have := nthLive_none r maxId offset hn
       simp [List.drop_eq_nil_of_le this]
     | some s =>
       simp only
-      rw [H.iterFrom_spec, walk_spec ent count _ (H.sorted r) _ s 0 (by omega), nthLive_drop H r maxId offset s hn]
+      rw [RSet.iterFrom_spec, walk_spec ent count _ (r.sorted) _ s 0 (by omega), nthLive_drop r maxId offset s hn]
       simp
 
 /-- main's window is the same live list. -/
@@ -116,37 +116,37 @@ theorem window_eq (l : List Nat) (maxId count offset : Nat) :
 
 /-- **`prEncode_eq_main`**: for every deleted set, `max_id`, `offset` and
 `count > 0`, the PR writes exactly main's entity sequence. -/
-theorem prEncode_eq_main {R : Type} (H : RoaringContract R) (r : R) (d : D) (maxId count offset : Nat)
+theorem prEncode_eq_main (r : RSet) (d : D) (maxId count offset : Nat)
     (hc : 0 < count) :
-    prEncode H (fun id => (id, dread d id)) r maxId count offset =
-      encode d (fun i => decide (i ∈ H.elems r)) maxId count offset := by
+    prEncode (fun id => (id, dread d id)) r maxId count offset =
+      encode d (fun i => decide (i ∈ r.elems)) maxId count offset := by
   rw [prEncode_spec, if_neg (by omega), encode_spec, window_eq, Nat.max_eq_left hc]
 
 /-- **`count = 0`**: the PR writes nothing; main writes the first live entity at
 or after `offset`, if there is one. -/
-theorem count_zero_differs {R : Type} (H : RoaringContract R) (r : R) (d : D) (maxId offset : Nat) :
-    prEncode H (fun id => (id, dread d id)) r maxId 0 offset = [] ∧
-      encode d (fun i => decide (i ∈ H.elems r)) maxId 0 offset =
-        (((liveL (H.elems r) maxId).drop offset).take 1).map (fun id => (id, dread d id)) := by
+theorem count_zero_differs (r : RSet) (d : D) (maxId offset : Nat) :
+    prEncode (fun id => (id, dread d id)) r maxId 0 offset = [] ∧
+      encode d (fun i => decide (i ∈ r.elems)) maxId 0 offset =
+        (((liveL (r.elems) maxId).drop offset).take 1).map (fun id => (id, dread d id)) := by
   refine ⟨by simp [prEncode], ?_⟩
   rw [encode_spec, window_eq]; rfl
 
 /-- A concrete difference at `count = 0`: no deleted ids, `max_id = 0`, `offset = 0` —
 main writes entity 0, the PR nothing. -/
 theorem count_zero_witness (d : D) :
-    prEncode listContract (fun id => (id, dread d id)) ⟨[], by simp, by simp⟩ 0 0 0 = [] ∧
-      encode d (fun i => decide (i ∈ listContract.elems ⟨[], by simp, by simp⟩)) 0 0 0 = [(0, dread d 0)] := by
+    prEncode (fun id => (id, dread d id)) ⟨[], by simp, by simp⟩ 0 0 0 = [] ∧
+      encode d (fun i => decide (i ∈ ([] : List Nat))) 0 0 0 = [(0, dread d 0)] := by
   refine ⟨by simp [prEncode], ?_⟩
   rw [encode_spec]; rfl
 
 /-- The round trip pending_commit proves for main's encoder holds verbatim for
 the PR's, for every `count > 0`. -/
-theorem pr_encode_decode_roundtrip {R : Type} (H : RoaringContract R) (r : R) (d : D) (h : SInv d) (hs : SOK d)
+theorem pr_encode_decode_roundtrip (r : RSet) (d : D) (h : SInv d) (hs : SOK d)
     (limit : Nat) (hlim : ∀ id, ∀ e ∈ dread d id, e.1 < limit ∧ e.1 < 65536)
     (hfit : ∀ id, (dread d id).length ≤ 65535) (maxId count offset : Nat) (hc : 0 < count) :
-    ∀ id, dread (decode emptyD limit (prEncode H (fun id => (id, dread d id)) r maxId count offset)) id =
-      if id ∈ window (fun i => decide (i ∈ H.elems r)) maxId count offset then dread d id else [] := by
-  rw [prEncode_eq_main H r d maxId count offset hc]
+    ∀ id, dread (decode emptyD limit (prEncode (fun id => (id, dread d id)) r maxId count offset)) id =
+      if id ∈ window (fun i => decide (i ∈ r.elems)) maxId count offset then dread d id else [] := by
+  rw [prEncode_eq_main r d maxId count offset hc]
   exact encode_decode_roundtrip d h hs limit hlim hfit _ maxId count offset
 
 end Pr3438

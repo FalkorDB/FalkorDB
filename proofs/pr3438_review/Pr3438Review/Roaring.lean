@@ -1,55 +1,51 @@
 /-
-# The `RoaringTreemap` operations PR #3438 relies on, and sorted-list facts
+# `RoaringTreemap`: the owners' abstraction, and `rank`/`select`/`advance_to` on it
 
-`RoaringTreemap` is the `roaring` crate (0.11.5, `Cargo.lock`): a **Rust
-dependency, not FFI**. It has no Lean model in `proofs/`, so what the PR uses of
-it is stated here as a hypothesis structure, `RoaringContract`, read off the
-crate's documented semantics (`treemap/inherent.rs:504-563`,
+The owners model a `RoaringTreemap` abstractly and bucket their rows PROVEN on
+that abstraction: graph_persist as the sorted list its `iter()` yields
+(`G.delNodes`/`G.delEdges`, read by `encRoar` as `iter().skip(offset).take(count)`),
+pending_commit as membership (`deleted : Nat → Bool` = `contains`). `RSet` is
+that abstraction, defined once here (it mirrors graph_persist's deleted-id list:
+ascending, distinct, `< 2^64`; `contains` is `decide (x ∈ elems)`, pending_commit's
+predicate). The three operations the PR adds are **definitions** on it, from the
+crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs:504-563`,
 `treemap/iter.rs:133-180`):
 
-| field | crate | stated as |
-| --- | --- | --- |
-| `elems` | `iter()` | the set, ascending, each `< 2^64` |
-| `rank`  | `rank(x)` — "the number of integers that are <= value" | `(elems.filter (· ≤ x)).length` |
-| `select`| `select(n)` — "the `n`th integer in the set or `None` if `n >= len()`" | `elems[n]?` |
-| `iterFrom` | `let mut it = iter(); it.advance_to(a);` then `it.next()`… — "advance the iterator to the first position where the item has a value >= `n`" | `elems.filter (a ≤ ·)` |
+| here | crate |
+| --- | --- |
+| `RSet.elems` | `iter()` — ascending |
+| `RSet.rank x` = `|{d ∈ s | d ≤ x}|` | `rank(x)`: "the number of integers that are <= value" |
+| `RSet.select n` = the `n`-th smallest | `select(n)`: "the `n`th integer in the set or `None` if `n >= len()`" |
+| `RSet.iterFrom a` = the elements `≥ a`, ascending | `let mut it = iter(); it.advance_to(a);` then `next()`…: "the first position where the item has a value >= `n`" |
 
-Every theorem that takes a `RoaringContract` is therefore **CONDITIONAL** on it
-(an undischarged premise about other Rust code). `listContract` shows the
-contract is satisfiable (not vacuous). It was also checked against the real
-crate by `lean3438_roaring_contract` (scratch copy of the PR,
-`attribute_store.rs` tests: 3000 random sets spanning four 2^32 high keys
-including `u64::MAX`, every `rank`, `advance_to` and `select` compared with
-the definitions above — all pass).
-
-main's walk uses `deleted.contains(id)`; it is `decide (id ∈ elems r)`.
+**Trust.** The roaring crate is trusted to implement this abstraction, at the
+same level as the owners' `contains`/`iter`: no hypothesis is named, and rows
+resting on it are PROVEN. The check against the real crate is the randomized
+scratch test `lean3438_roaring_contract` (a copy of the PR, `attribute_store.rs`
+tests): 3000 random sets spanning four 2^32 high keys up to `u64::MAX`; every
+`iter` is strictly ascending and every `rank`, `advance_to` and `select` equals
+the definitions above — all pass.
 -/
 namespace Pr3438
 
-structure RoaringContract (R : Type) where
-  elems : R → List Nat
-  rank : R → Nat → Nat
-  select : R → Nat → Option Nat
-  iterFrom : R → Nat → List Nat
-  sorted : ∀ r, (elems r).Pairwise (· < ·)
-  bound : ∀ r, ∀ x ∈ elems r, x < 2 ^ 64
-  rank_spec : ∀ r x, rank r x = ((elems r).filter (fun d => decide (d ≤ x))).length
-  select_spec : ∀ r n, select r n = (elems r)[n]?
-  iterFrom_spec : ∀ r a, iterFrom r a = (elems r).filter (fun d => decide (a ≤ d))
+/-- A `RoaringTreemap`: its ascending, distinct `u64` elements. -/
+structure RSet where
+  elems : List Nat
+  sorted : elems.Pairwise (· < ·)
+  bound : ∀ x ∈ elems, x < 2 ^ 64
 
-/-- A sorted list of `u64`s satisfies the contract: it is not vacuous. -/
-def SortedSet : Type := { l : List Nat // l.Pairwise (· < ·) ∧ ∀ x ∈ l, x < 2 ^ 64 }
+namespace RSet
+/-- `rank(x)`. -/
+def rank (r : RSet) (x : Nat) : Nat := (r.elems.filter (fun d => decide (d ≤ x))).length
+/-- `select(n)`. -/
+def select (r : RSet) (n : Nat) : Option Nat := r.elems[n]?
+/-- `iter()` after `advance_to(a)`. -/
+def iterFrom (r : RSet) (a : Nat) : List Nat := r.elems.filter (fun d => decide (a ≤ d))
 
-def listContract : RoaringContract SortedSet where
-  elems r := r.1
-  rank r x := (r.1.filter (fun d => decide (d ≤ x))).length
-  select r n := r.1[n]?
-  iterFrom r a := r.1.filter (fun d => decide (a ≤ d))
-  sorted r := r.2.1
-  bound r := r.2.2
-  rank_spec _ _ := rfl
-  select_spec _ _ := rfl
-  iterFrom_spec _ _ := rfl
+theorem rank_spec (r : RSet) (x : Nat) : r.rank x = (r.elems.filter (fun d => decide (d ≤ x))).length := rfl
+theorem select_spec (r : RSet) (n : Nat) : r.select n = r.elems[n]? := rfl
+theorem iterFrom_spec (r : RSet) (a : Nat) : r.iterFrom a = r.elems.filter (fun d => decide (a ≤ d)) := rfl
+end RSet
 
 /-! ## Sorted-list facts -/
 

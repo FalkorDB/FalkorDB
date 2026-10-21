@@ -11,7 +11,7 @@ Every `file:line` here is the PR branch. Imports, not copies: pending_commit
 
 | Lean | Rust (PR 2fabe1a8a) |
 | --- | --- |
-| `RoaringContract` (`Roaring.lean`) | roaring 0.11.5 `RoaringTreemap::{iter, rank, select}`, `Iter::advance_to` — a Rust dependency, stated as a hypothesis |
+| `RSet`, `RSet.rank`/`select`/`iterFrom` (`Roaring.lean`) | roaring 0.11.5 `RoaringTreemap::{iter, contains, rank, select}`, `Iter::advance_to`, as definitions on the owners' abstraction (the sorted deleted-id list of graph_persist, membership = pending_commit's `deleted`) |
 | `nthLive`, `bsearch` (`NthLive.lean`) | `nth_live_id` attribute_store.rs:1483-1504 |
 | `prEncode`, `walk` (`Slice.lean`) | `AttributeStore::encode_with_range` attribute_store.rs:1425-1474 |
 | `encRoarPR` (`Layout.lean`) | `Encode for RoaringTreemap::encode_with_range` serialization.rs:180-197 |
@@ -21,7 +21,7 @@ Every `file:line` here is the PR branch. Imports, not copies: pending_commit
 
 ## Verdict per claim
 
-1. **Slice encoding = main's — CONDITIONAL on `RoaringContract`.** `prEncode_eq_main`:
+1. **Slice encoding = main's — PROVEN.** `prEncode_eq_main`:
    for every deleted set, `max_id`, `offset` and `count > 0` the PR writes
    exactly main's entity sequence (ids, order, per-entity writes).
    `count = 0` differs (`count_zero_differs`, `count_zero_witness`: main writes
@@ -32,12 +32,12 @@ Every `file:line` here is the PR branch. Imports, not copies: pending_commit
    `nthLive_past_end`; `bsearch_spec` (loop invariant, terminates on `hi - lo`),
    `mid_bounds` (no `u64` overflow), `rank_le`/`liveThrough_no_overflow` (no `u128`
    underflow/overflow), so ids up to `u64::MAX` are fine.
-2. **Slices concatenate to the full walk — CONDITIONAL on `RoaringContract`.**
+2. **Slices concatenate to the full walk — PROVEN.**
    `chunk_concat`/`chunk_concat_full` (greedy `vkey_max` slices concatenate to one
    walk); `encodeGraphPR_eq`: on every layout the encoder builds, the PR's
    stream *is* main's, hence `load_encode_pr` and `multi_load_pr`
    (graph_persist's round trips, premises unchanged).
-3. **Deleted-ids seek = main's skip — CONDITIONAL on `RoaringContract`.**
+3. **Deleted-ids seek = main's skip — PROVEN.**
    `encRoarPR_eq` for every `count`/`offset` (incl. past the end).
 4. **Tensor fast path — PROVEN (FFI hypothesis `MatrixRT`).** `fast_base_eq`:
    with `dp`/`dm` empty and no `me` id, the committed base has exactly the
@@ -64,16 +64,20 @@ Every `file:line` here is the PR branch. Imports, not copies: pending_commit
    already required). graphblas_wrappers `encodeM_spec` (`.2 = m`, self
    restored) becomes `pr_self_never_unloaded`; `decodeC_encodeM` holds for
    `dup m`. versioned_matrix `encVal_roundtrip` still covers the rebuild branch.
-   No owner theorem breaks; the owners' encode rows for attribute_store.rs:1425
-   and serialization.rs:180 would go PROVEN → CONDITIONAL unless the roaring
-   crate gets a model (graph_persist's `roaringRT` and pending_commit's
-   `deleted : Nat → Bool` took `iter`/`contains` as primitives).
+   No owner theorem breaks, and the rows for attribute_store.rs:1425 and
+   serialization.rs:180 stay PROVEN: `rank`/`select`/`advance_to` are defined on
+   the same abstraction the owners already use for `contains`/`iter`.
 
 ## Hypotheses
 
-* `RoaringContract`: Rust dependency (roaring crate), **not FFI**, so rows are
-  CONDITIONAL. Satisfiable (`listContract`); checked against the crate by a
-  randomized scratch test.
+* No hypothesis about the roaring crate. **The roaring crate is trusted to
+  implement the `RSet` abstraction** (ascending `iter`, `contains` = membership,
+  `rank x = |{d ∈ s | d ≤ x}|`, `select n` = the `n`-th smallest, `advance_to a`
+  positions the sorted iterator at the first element `≥ a`), at the same level
+  as the owners' `contains`/`iter` (graph_persist `G.delNodes`/`encRoar`,
+  pending_commit `deleted`). Checked against the real crate by the randomized
+  scratch test `lean3438_roaring_contract` (3000 sets over four 2^32 high keys
+  up to `u64::MAX`; all pass).
 * `MatrixRT`, `UnloadLoad`, `PtrBlind`, `DupSpec`, `step`: GraphBLAS C API (FFI).
 * versioned_matrix `AllInv`/`BlkInv`: the owner's tensor invariants, maintained by
   its mutator theorems (as for `row_degree`).

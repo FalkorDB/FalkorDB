@@ -98,23 +98,23 @@ theorem cntLive_le (l : List Nat) (x : Nat) : cntLive l x ≤ x := by
   simpa [cntLive] using this
 
 /-- `rank(x)` counts the deleted ids `≤ x`, i.e. `< x + 1`. -/
-theorem rank_eq {R : Type} (H : RoaringContract R) (r : R) (x : Nat) :
-    H.rank r x = cntDel (H.elems r) (x + 1) := by
+theorem rank_eq (r : RSet) (x : Nat) :
+    r.rank x = cntDel (r.elems) (x + 1) := by
   have : (fun d => decide (d ≤ x)) = (fun d => decide (d < x + 1)) := by
     funext d; simp only [decide_eq_decide]; omega
-  rw [H.rank_spec, cntDel, this]
+  rw [RSet.rank_spec, cntDel, this]
 
-theorem elems_nodup {R : Type} (H : RoaringContract R) (r : R) : (H.elems r).Nodup :=
-  (H.sorted r).imp (fun h => Nat.ne_of_lt h)
+theorem elems_nodup (r : RSet) : (r.elems).Nodup :=
+  (r.sorted).imp (fun h => Nat.ne_of_lt h)
 
 /-- `rank(x) ≤ x + 1`: the `u128` subtraction in `live_through` never underflows. -/
-theorem rank_le {R : Type} (H : RoaringContract R) (r : R) (x : Nat) : H.rank r x ≤ x + 1 := by
-  rw [rank_eq]; have := cnt_sum (H.elems r) (elems_nodup H r) (x + 1); omega
+theorem rank_le (r : RSet) (x : Nat) : r.rank x ≤ x + 1 := by
+  rw [rank_eq]; have := cnt_sum (r.elems) (elems_nodup r) (x + 1); omega
 
 /-- `live_through(x) = x + 1 - rank(x)` is the number of live ids in `0..=x`. -/
-theorem liveThrough_eq {R : Type} (H : RoaringContract R) (r : R) (x : Nat) :
-    x + 1 - H.rank r x = cntLive (H.elems r) (x + 1) := by
-  rw [rank_eq]; have := cnt_sum (H.elems r) (elems_nodup H r) (x + 1); omega
+theorem liveThrough_eq (r : RSet) (x : Nat) :
+    x + 1 - r.rank x = cntLive (r.elems) (x + 1) := by
+  rw [rank_eq]; have := cnt_sum (r.elems) (elems_nodup r) (x + 1); omega
 
 /-- No `u128` overflow: `x + 1 ≤ 2^64 < 2^128` for every `u64` `x`. -/
 theorem liveThrough_no_overflow (x : Nat) (hx : x < 2 ^ 64) : x + 1 < 2 ^ 128 := by
@@ -173,36 +173,36 @@ def nthLive (rank : Nat → Nat) (maxId n : Nat) : Option Nat :=
 
 /-- The search result `s`: `n` live ids lie below it, it is live itself, and it is
 at most `max_id`. -/
-theorem nthLive_some {R : Type} (H : RoaringContract R) (r : R) (maxId n s : Nat)
-    (h : nthLive (H.rank r) maxId n = some s) :
-    s ≤ maxId ∧ cntLive (H.elems r) s = n ∧ s ∉ H.elems r := by
+theorem nthLive_some (r : RSet) (maxId n s : Nat)
+    (h : nthLive (r.rank) maxId n = some s) :
+    s ≤ maxId ∧ cntLive (r.elems) s = n ∧ s ∉ r.elems := by
   unfold nthLive at h
   split at h
   · cases h
   · rename_i hgt
     simp only [Option.some.injEq] at h
     subst h
-    have hf : ∀ x, x + 1 - H.rank r x = cntLive (H.elems r) (x + 1) := liveThrough_eq H r
-    have hmono : ∀ x y, x ≤ y → (fun x => x + 1 - H.rank r x) x ≤ (fun x => x + 1 - H.rank r x) y := by
+    have hf : ∀ x, x + 1 - r.rank x = cntLive (r.elems) (x + 1) := liveThrough_eq r
+    have hmono : ∀ x y, x ≤ y → (fun x => x + 1 - r.rank x) x ≤ (fun x => x + 1 - r.rank x) y := by
       intro x y hxy; simp only [hf]; exact cntLive_mono _ (by omega)
-    have hlo : ∀ x, x < n → (fun x => x + 1 - H.rank r x) x ≤ n := by
-      intro x hx; simp only [hf]; have := cntLive_le (H.elems r) (x + 1); omega
+    have hlo : ∀ x, x < n → (fun x => x + 1 - r.rank x) x ≤ n := by
+      intro x hx; simp only [hf]; have := cntLive_le (r.elems) (x + 1); omega
     have hle : n ≤ maxId := by
-      have := cntLive_le (H.elems r) (maxId + 1); rw [hf] at hgt; omega
+      have := cntLive_le (r.elems) (maxId + 1); rw [hf] at hgt; omega
     obtain ⟨_, hs, hgt', hbelow⟩ := bsearch_spec _ hmono n n maxId hle hlo (by omega)
-    generalize bsearch (fun x => x + 1 - H.rank r x) n n maxId = s at hs hgt' hbelow
+    generalize bsearch (fun x => x + 1 - r.rank x) n n maxId = s at hs hgt' hbelow
     simp only [hf] at hgt' hbelow
-    have hcs : cntLive (H.elems r) s ≤ n := by
+    have hcs : cntLive (r.elems) s ≤ n := by
       cases s with
       | zero => simp [cntLive]
       | succ k => exact hbelow k (by omega)
-    have hstep := cntLive_succ (H.elems r) s
+    have hstep := cntLive_succ (r.elems) s
     refine ⟨hs, ?_, ?_⟩
-    · have := cntLive_le_succ (H.elems r) s; omega
+    · have := cntLive_le_succ (r.elems) s; omega
     · intro hm; simp [hm] at hstep; omega
 
-theorem nthLive_none {R : Type} (H : RoaringContract R) (r : R) (maxId n : Nat)
-    (h : nthLive (H.rank r) maxId n = none) : (liveL (H.elems r) maxId).length ≤ n := by
+theorem nthLive_none (r : RSet) (maxId n : Nat)
+    (h : nthLive (r.rank) maxId n = none) : (liveL (r.elems) maxId).length ≤ n := by
   unfold nthLive at h
   split at h
   · rename_i hle; rw [liveL_length, ← liveThrough_eq]; exact hle
@@ -218,26 +218,26 @@ theorem range_split (s maxId : Nat) (h : s ≤ maxId) :
 
 /-- **The seek.** When `nth_live_id` returns `some s`, the live ids from
 position `n` on are exactly the live ids of `s..=max_id`. -/
-theorem nthLive_drop {R : Type} (H : RoaringContract R) (r : R) (maxId n s : Nat)
-    (h : nthLive (H.rank r) maxId n = some s) :
-    (liveL (H.elems r) maxId).drop n =
-      (List.range' s (maxId + 1 - s)).filter (fun i => !decide (i ∈ H.elems r)) := by
-  obtain ⟨hs, hc, _⟩ := nthLive_some H r maxId n s h
+theorem nthLive_drop (r : RSet) (maxId n s : Nat)
+    (h : nthLive (r.rank) maxId n = some s) :
+    (liveL (r.elems) maxId).drop n =
+      (List.range' s (maxId + 1 - s)).filter (fun i => !decide (i ∈ r.elems)) := by
+  obtain ⟨hs, hc, _⟩ := nthLive_some r maxId n s h
   rw [liveL, range_split s maxId hs, List.filter_append]
-  have hlen : ((List.range s).filter (fun i => !decide (i ∈ H.elems r))).length = n := hc
+  have hlen : ((List.range s).filter (fun i => !decide (i ∈ r.elems))).length = n := hc
   rw [← hlen, List.drop_left]
 
 /-- **`nthLive_spec`**: `nth_live_id` returns the `n`-th live id of `0..=max_id`,
 or `None` when there are not that many. -/
-theorem nthLive_spec {R : Type} (H : RoaringContract R) (r : R) (maxId n : Nat) :
-    nthLive (H.rank r) maxId n = (liveL (H.elems r) maxId)[n]? := by
-  cases h : nthLive (H.rank r) maxId n with
+theorem nthLive_spec (r : RSet) (maxId n : Nat) :
+    nthLive (r.rank) maxId n = (liveL (r.elems) maxId)[n]? := by
+  cases h : nthLive (r.rank) maxId n with
   | none =>
-    have := nthLive_none H r maxId n h
+    have := nthLive_none r maxId n h
     rw [List.getElem?_eq_none this]
   | some s =>
-    obtain ⟨hs, _, hlive⟩ := nthLive_some H r maxId n s h
-    have hd := nthLive_drop H r maxId n s h
+    obtain ⟨hs, _, hlive⟩ := nthLive_some r maxId n s h
+    have hd := nthLive_drop r maxId n s h
     rw [← List.head?_drop, hd]
     have : List.range' s (maxId + 1 - s) = s :: List.range' (s + 1) (maxId - s) := by
       rw [show maxId + 1 - s = (maxId - s) + 1 by omega]; rfl
@@ -245,8 +245,8 @@ theorem nthLive_spec {R : Type} (H : RoaringContract R) (r : R) (maxId n : Nat) 
 
 /-! Boundary cases, by the spec. -/
 
-theorem nthLive_empty_deleted {R : Type} (H : RoaringContract R) (r : R) (he : H.elems r = [])
-    (maxId n : Nat) : nthLive (H.rank r) maxId n = if n ≤ maxId then some n else none := by
+theorem nthLive_empty_deleted (r : RSet) (he : r.elems = [])
+    (maxId n : Nat) : nthLive (r.rank) maxId n = if n ≤ maxId then some n else none := by
   rw [nthLive_spec, he]
   have hf : (List.range (maxId + 1)).filter (fun i => !decide (i ∈ ([] : List Nat))) = List.range (maxId + 1) :=
     List.filter_eq_self.2 (by simp)
@@ -255,8 +255,8 @@ theorem nthLive_empty_deleted {R : Type} (H : RoaringContract R) (r : R) (he : H
   · rw [if_pos h, List.getElem?_range (by omega)]
   · rw [if_neg h, List.getElem?_eq_none (by simp; omega)]
 
-theorem nthLive_past_end {R : Type} (H : RoaringContract R) (r : R) (maxId n : Nat)
-    (h : (liveL (H.elems r) maxId).length ≤ n) : nthLive (H.rank r) maxId n = none := by
+theorem nthLive_past_end (r : RSet) (maxId n : Nat)
+    (h : (liveL (r.elems) maxId).length ≤ n) : nthLive (r.rank) maxId n = none := by
   rw [nthLive_spec]; exact List.getElem?_eq_none h
 
 end Pr3438
