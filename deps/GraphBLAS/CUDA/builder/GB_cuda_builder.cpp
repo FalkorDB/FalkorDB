@@ -102,6 +102,7 @@ GrB_Info GB_cuda_builder            // build a matrix from tuples
     // output, not defined on input:
     GrB_Matrix *Thandle,    // matrix to build, dynamic header
     // inputs, not modified:
+    const int data_arena,   // arena of T
     const GrB_Type ttype,   // type of output matrix T
     const int64_t vlen,     // length of each vector of T
     const int64_t vdim,     // number of vectors in T
@@ -134,11 +135,14 @@ GrB_Info GB_cuda_builder            // build a matrix from tuples
     //--------------------------------------------------------------------------
 
     GrB_Info info = GrB_NO_VALUE ;
+    cudaStream_t stream = nullptr ;
     ASSERT (Thandle != NULL) ;
     ASSERT (I != NULL || Key_input != NULL) ;
     ASSERT (X != NULL) ;
     ASSERT (ttype != NULL) ;
     ASSERT (xtype != NULL) ;
+
+    int device = data_arena - GxB_NARENAS ;
 
     //--------------------------------------------------------------------------
     // construct the SECOND operator if dup is NULL
@@ -158,14 +162,16 @@ GrB_Info GB_cuda_builder            // build a matrix from tuples
     // get CUDA stream and geometry
     //--------------------------------------------------------------------------
 
-    cudaStream_t stream = nullptr ;
-    GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;
+    GB_OK (GB_cuda_stream_pool_acquire (device, &stream)) ;
 
     // determine the geometry of the CUDA kernel launches
-    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int32_t number_of_sms = GB_Global_gpu_sm_get (device) ;
     int64_t raw_gridsz = GB_ICEIL (nvals, GB_CUDA_BUILDER_CHUNKSIZE) ;
     int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
     gridsz = std::max (gridsz, 1) ;
+
+    GBURBLE ("(cuda builder, device %d, sms: %d, gridsz: %d) ",
+        device, number_of_sms, gridsz) ;
 
     //--------------------------------------------------------------------------
     // build T from the (I,J,X) tuples
@@ -174,7 +180,7 @@ GrB_Info GB_cuda_builder            // build a matrix from tuples
     GB_OK (GB_cuda_builder_jit (Thandle, ttype, vlen, vdim, is_csc, is_matrix,
         Key_input, I, J, X, X_iso, nvals, dup, xtype, I_is_32, J_is_32,
         Tp_is_32, Tj_is_32, Ti_is_32, known_no_duplicates, known_sorted,
-        stream, gridsz)) ;
+        device, stream, gridsz)) ;
 
     //--------------------------------------------------------------------------
     // release the stream

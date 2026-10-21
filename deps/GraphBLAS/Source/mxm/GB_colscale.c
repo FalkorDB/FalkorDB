@@ -161,9 +161,10 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
                 default:  ;
             }
         }
-        GB_OK (GB_apply_op (C->x, C->type, GB_NON_ISO,
+        GB_OK (GB_wait_arenas (C)) ;
+        GB_OK (GB_apply_op (C->x, data_arena, C->type, GB_NON_ISO,
             (GB_Operator) op,   // positional op
-            NULL, false, false, A, data_arena, Werk)) ;
+            NULL, false, false, A, Werk)) ;
         ASSERT_MATRIX_OK (C, "colscale positional: C = A*D output", GB0) ;
         info = GrB_SUCCESS ;
 
@@ -223,7 +224,7 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
         info = GrB_NO_VALUE ;
 
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (GB_cuda_colscale_branch (A, D, semiring, flipxy))
+        if (GB_cuda_mxm_branch (C, NULL, A, D, semiring))
         {
             info = GB_cuda_colscale (C, A, D, semiring, flipxy) ;
             if (info == GrB_SUCCESS)

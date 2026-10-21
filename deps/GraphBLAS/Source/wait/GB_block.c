@@ -39,7 +39,7 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
     double anzmax = ((double) A->vlen) * ((double) A->vdim) ;
     bool many_pending = (npending >= anzmax) ;
     int mode = GB_Global_mode_get ( ) ;
-    bool blocking = (mode == GrB_BLOCKING || mode == GxB_BLOCKING_GPU) ;
+    bool blocking = (mode == GrB_BLOCKING) ;
 
     if (many_pending || blocking)
     { 

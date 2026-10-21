@@ -65,7 +65,7 @@ New arenas can be initialized after \verb'GrB_init' with the
 GrB_Info GxB_arena_init     // create a new arena
 (
     // input
-    int arena,              // 2 to GxB_NARENAS-1
+    int arena,              // 1 to GxB_NARENAS-1
     void * (* user_malloc_function  ) (size_t),         // required
     void * (* user_calloc_function  ) (size_t, size_t), // not used
     void * (* user_realloc_function ) (void *, size_t), // optional, can be NULL
@@ -74,9 +74,9 @@ GrB_Info GxB_arena_init     // create a new arena
 \end{verbatim}
 }\end{mdframed}
 
-Arena 1 is reserved for future use, and arena 0 is only initialized by
+Arena 0 is only initialized by
 \verb'GrB_init' or \verb'GxB_init', so the \verb'arena' parameter in
-\verb'GxB_arena_init' can be in the range 2 to \verb'GxB_NARENAS-1'.
+\verb'GxB_arena_init' can be in the range 1 to \verb'GxB_NARENAS-1'.
 
 Just as in \verb'GxB_init', the \verb'calloc' and \verb'realloc' methods are
 optional.  GraphBLAS currently makes no use of the \verb'calloc' method itself,
@@ -92,6 +92,22 @@ To retrieve these function pointers after the arena is initialized, use the foll
     GrB_Global_get_VOID (GrB_GLOBAL, &calloc_func,  GxB_ARENA_CALLOC  + arena) ;
     GrB_Global_get_VOID (GrB_GLOBAL, &realloc_func, GxB_ARENA_REALLOC + arena) ;
     GrB_Global_get_VOID (GrB_GLOBAL, &free_func,    GxB_ARENA_FREE    + arena) ; \end{verbatim}}
+
+The \verb'GxB_arena_initialized' method can be used to determine if an
+arena has been initialized or not.
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_arena_initialized  // determine if arena has been initialized
+(
+    // output
+    int *flag,              // returns true if the arena has been initialized
+    // input
+    int arena               // 0 to GxB_NARENAS-1
+) ;
+\end{verbatim}
+}\end{mdframed}
 
 %-------------------------------------------------------------------------------
 \subsection{Using arenas via the global or per-thread context}
@@ -154,7 +170,7 @@ while objects with two arenas (matrices, vectors, and scalars) take two extra
 parameters.  The leading input/output parameters are the same.  For methods
 that have a descriptor, the descriptor remains as the last parameter.
 
-In the table below, \verb'h' is an integer in range 0 to \verb'GxB_NARENAS'
+In the table below, \verb'h' is an integer in range 0 to \verb'GxB_NARENAS-1'
 that defines the header arena for the new object.  The methods in the right
 column have identical parameters as the methods in the left column,
 with the addition of the single \verb'h' parameter.
@@ -182,7 +198,7 @@ original method & arena-specific method and parameters \\
 \verb'GxB_Iterator_new'         & \verb'GxB_Iterator_new_arena (&iter, h)' \\
 \hline
 \end{tabular}}
-\vspace{0.1in}
+\vspace{0.05in}
 
 The following table lists constructor methods in the left column that create
 their output objects in the default header and data arenas.  In the right
@@ -213,7 +229,7 @@ original method & arena-specific method and parameters  \\
 \verb'GxB_Vector_deserialize'   & \verb'GxB_Vector_deserialize_arena (&w, t, blob, siz, h, d, desc)' \\
 \hline
 \end{tabular}}
-\vspace{0.1in}
+\vspace{0.05in}
 
 Finally, two new methods are introduced with a single data arena parameter,
 \verb'd', listed in the following table.  These methods create the new
@@ -231,7 +247,7 @@ original method & arena-specific method and parameters  \\
 \verb'GxB_Vector_serialize'     & \verb'GxB_Vector_serialize_arena (&blob, &siz, A, d, desc)' \\
 \hline
 \end{tabular}}
-\vspace{0.1in}
+\vspace{0.05in}
 
 %-------------------------------------------------------------------------------
 \subsection{Changing the arenas of matrices, vectors, and scalars}

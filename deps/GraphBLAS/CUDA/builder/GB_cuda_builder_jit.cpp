@@ -43,6 +43,7 @@ GrB_Info GB_cuda_builder_jit
     bool known_no_duplicates,   // true if tuples known to have no duplicates
     bool known_sorted,          // true if tuples known to be sorted on input
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 )
@@ -80,6 +81,6 @@ GrB_Info GB_cuda_builder_jit
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (Thandle, ttype, vlen, vdim, is_csc,
-        Key_input, I, J, X, nvals, stream, gridsz, &GB_callback)) ;
+        Key_input, I, J, X, nvals, device, stream, gridsz, &GB_callback)) ;
 }
 

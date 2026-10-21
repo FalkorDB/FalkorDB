@@ -18,6 +18,7 @@ GrB_Info GB_cuda_transpose_prep_jit
     // input:
     bool Key_is_32,
     const GrB_Matrix A,
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 ) ;

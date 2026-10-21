@@ -18,7 +18,7 @@
 // vectors coming from both A and B are dense, for any size of N.
 
 // Both the grid and block are 1D, so blockDim.x is the # threads in a
-// threadblock, and the # of threadblocks is grid.x
+// threadblock, and the # of threadblocks is gridDim.x
 
 // Thus, each threadblock owns a semi-ring dot product on a pair of vectors.
 // The work is to load the data, do the multiply and add work and finally
@@ -69,8 +69,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
 
     // total items to be inspected
     int64_t vlen = A->vlen ;
-    ASSERT (vlen == B->vlen) ;
-    ASSERT (vlen > 0) ;
+    // ASSERT (vlen == B->vlen) ;
+    // ASSERT (vlen > 0) ;
 
     //--------------------------------------------------------------------------
     // compute C(i,j) = A(:,i)'*B(:,j) for each entry in M(i,j)
@@ -209,8 +209,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
                 Ci [pM] = GB_ZOMBIE (i) ;
             }
         }
-
-        // __syncthreads ( ) ;
 
         if( threadIdx.x ==0 && zc > 0)
         {

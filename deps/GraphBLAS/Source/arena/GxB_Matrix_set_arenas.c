@@ -9,6 +9,8 @@
 
 #include "GB.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Matrix_set_arenas
 (
     // input/output

@@ -11,7 +11,7 @@
 // not yet used by any methods, even when CUDA is enabled.
 
 // Shallow components of A are not moved by GB_set_arenas.  CUDA cannot access
-// these if they are not in A->data_arena = GxB_ARENA_RMM.  This method returns
+// these if they are not in a data_arena using Rapids.  This method returns
 // false if A has any shallow components not in A->data_arena.  If A is NULL,
 // or if A has no shallow components, or if all shallow components are in
 // A->data_arena, this method returns true.

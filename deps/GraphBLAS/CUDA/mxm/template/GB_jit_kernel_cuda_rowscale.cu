@@ -1,6 +1,19 @@
-#define GB_FREE_ALL ;
+//------------------------------------------------------------------------------
+// CUDA/mxm/template/GB_jit_kernel_cuda_rowscale.cu
+//------------------------------------------------------------------------------
 
-using namespace cooperative_groups ;
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
+// C = D*B, where D is diagonal.
+
+//------------------------------------------------------------------------------
+// GB_cuda_rowscale_kernel
+//------------------------------------------------------------------------------
+
+#define GB_FREE_ALL ;
 
 __global__ void GB_cuda_rowscale_kernel
 (
@@ -37,7 +50,6 @@ __global__ void GB_cuda_rowscale_kernel
     for (int64_t p = tid ; p < bnz ; p += ntasks)
     {
         if (!GBb_B (Bb, p)) { continue ; }
-
         int64_t i = GBi_B (Bi, p, bvlen) ;      // get row index of B(i,j)
         GB_DECLAREA (dii) ;
         GB_GETA (dii, Dx, i, D_iso) ;           // dii = D(i,i)
@@ -47,6 +59,10 @@ __global__ void GB_cuda_rowscale_kernel
     }
 }
 
+//------------------------------------------------------------------------------
+// host JIT kernel for rowscale, C=D*B
+//------------------------------------------------------------------------------
+
 extern "C" {
     GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO (GB_jit_kernel) ;
 }
@@ -54,15 +70,16 @@ extern "C" {
 GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO (GB_jit_kernel)
 {
     GB_GET_CALLBACKS ;
-    ASSERT (GB_JUMBLED_OK (C)) ;
-    ASSERT (!GB_JUMBLED (D)) ;
-    ASSERT (!GB_IS_BITMAP (D)) ;
-    ASSERT (!GB_IS_FULL (D)) ;
-    ASSERT (GB_JUMBLED_OK (B)) ;
-    ASSERT (!C->iso) ;
+    // ASSERT (GB_JUMBLED_OK (C)) ;
+    // ASSERT (!GB_JUMBLED (D)) ;
+    // ASSERT (!GB_IS_BITMAP (D)) ;
+    // ASSERT (!GB_IS_FULL (D)) ;
+    // ASSERT (GB_JUMBLED_OK (B)) ;
+    // ASSERT (!C->iso) ;
 
+    CUDA_OK (cudaSetDevice (device)) ;
     dim3 grid (gridsz) ;
-    dim3 block (blocksz) ;
+    dim3 block (GB_CUDA_SCALE_BLOCKDIM) ;
     
     CUDA_OK (cudaGetLastError ( )) ;
     CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -72,3 +89,4 @@ GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO (GB_jit_kernel)
 
     return (GrB_SUCCESS) ;
 }
+

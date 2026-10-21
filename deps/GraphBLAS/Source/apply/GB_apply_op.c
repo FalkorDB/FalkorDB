@@ -32,6 +32,7 @@
 GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
 (
     GB_void *Cx,                    // output array
+    int Cx_arena,                   // arena of Cx
     const GrB_Type ctype,           // type of C
     const GB_iso_code C_code_iso,   // C non-iso, or code to compute C iso value
         const GB_Operator op_in,    // unary/index-unary/binop to apply
@@ -39,7 +40,6 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         bool binop_bind1st,         // if true, C=binop(s,A), else C=binop(A,s)
         bool flipij,                // if true, flip i,j for user idxunop
     const GrB_Matrix A,             // input matrix
-    const int data_arena,           // arena for workspace
     GB_Werk Werk
 )
 {
@@ -55,7 +55,7 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
     ASSERT (GB_JUMBLED_OK (A)) ;        // A can be jumbled
     ASSERT (!GB_ZOMBIES (A)) ;
 
-    uint64_t mem = GB_mem (data_arena, 0) ;
+    uint64_t mem = GB_mem (Cx_arena, 0) ;
 
     GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
     ASSERT (GB_IMPLIES (op != NULL, ctype == op->ztype)) ;
@@ -187,9 +187,9 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         //----------------------------------------------------------------------
 
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (GB_cuda_apply_unop_branch (ctype, A, op))
+        if (GB_cuda_apply_branch (Cx_arena, ctype, op, A))
         {
-            info = GB_cuda_apply_unop (Cx, ctype, op, flipij, A,
+            info = GB_cuda_apply_unop (Cx, Cx_arena, ctype, op, flipij, A,
                 (GB_void *) &thunk) ;
         }
         #endif
@@ -413,9 +413,10 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         //----------------------------------------------------------------------
 
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (GB_cuda_apply_unop_branch (ctype, A, op))
+        if (GB_cuda_apply_branch (Cx_arena, ctype, op, A))
         {
-            info = GB_cuda_apply_unop (Cx, ctype, op, flipij, A, NULL) ;
+            info = GB_cuda_apply_unop (Cx, Cx_arena, ctype, op, flipij, A,
+                NULL) ;
         }
         #endif
 
@@ -506,7 +507,7 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         //----------------------------------------------------------------------
 
         ASSERT_OP_OK (op, "standard binop for GB_apply_op", GB0) ;
-        ASSERT_SCALAR_OK (scalar, "scalar for GB_apply_op", GB0) ;
+        ASSERT_SCALAR_OK (scalar, "scalar for GB_apply_op, binop case", GB0) ;
 
         GB_Type_code xcode, ycode, zcode ;
         ASSERT (opcode != GB_FIRST_binop_code) ;
@@ -557,10 +558,10 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
             //------------------------------------------------------------------
 
             #if defined ( GRAPHBLAS_HAS_CUDA )
-            if (GB_cuda_apply_binop_branch (ctype, (GrB_BinaryOp) op, A))
+            if (GB_cuda_apply_branch (Cx_arena, ctype, op, A))
             {
-                info = GB_cuda_apply_binop (Cx, ctype, (GrB_BinaryOp) op, A,
-                    scalarx, true) ;
+                info = GB_cuda_apply_binop (Cx, Cx_arena, ctype,
+                    (GrB_BinaryOp) op, A, scalarx, true) ;
             }
             #endif
 
@@ -623,10 +624,10 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
             //------------------------------------------------------------------
 
             #if defined ( GRAPHBLAS_HAS_CUDA )
-            if (GB_cuda_apply_binop_branch (ctype, (GrB_BinaryOp) op, A))
+            if (GB_cuda_apply_branch (Cx_arena, ctype, op, A))
             {
-                info = GB_cuda_apply_binop (Cx, ctype, (GrB_BinaryOp) op, A,
-                    scalarx, false) ;
+                info = GB_cuda_apply_binop (Cx, Cx_arena, ctype,
+                    (GrB_BinaryOp) op, A, scalarx, false) ;
             }
             #endif
 
@@ -760,9 +761,10 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         //----------------------------------------------------------------------
 
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (GB_cuda_apply_unop_branch (ctype, A, op))
+        if (GB_cuda_apply_branch (Cx_arena, ctype, op, A))
         {
-            info = GB_cuda_apply_unop (Cx, ctype, op, flipij, A, ythunk) ;
+            info = GB_cuda_apply_unop (Cx, Cx_arena, ctype, op, flipij, A,
+                ythunk) ;
         }
         #endif
 

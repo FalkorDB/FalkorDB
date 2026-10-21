@@ -9,8 +9,6 @@
 
 #define GB_FREE_ALL ;
 
-using namespace cooperative_groups ;
-
 #include "template/GB_cuda_tile_sum_uint64.cuh"
 #include "template/GB_cuda_threadblock_sum_uint64.cuh"
 
@@ -91,6 +89,7 @@ GB_JIT_CUDA_KERNEL_SELECT_BITMAP_PROTO (GB_jit_kernel)
 {
 
     GB_GET_CALLBACKS ;
+    CUDA_OK (cudaSetDevice (device)) ;
     dim3 grid (gridsz) ;
     dim3 block (GB_CUDA_SELECT_BITMAP_BLOCKDIM) ;
 

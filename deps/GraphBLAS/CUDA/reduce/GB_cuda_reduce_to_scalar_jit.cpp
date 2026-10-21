@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cuda_reduce_to_scalar_jit: reduce a matrix to a scalar, via the CUDA JIT
+// CUDA/reduce/GB_cuda_reduce_to_scalar_jit: reduce matrix to scalar, via CUDA
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,12 +22,13 @@ GrB_Info GB_cuda_reduce_to_scalar_jit   // z = reduce_to_scalar (A) via CUDA JIT
     // input:
     const GrB_Monoid monoid,    // monoid to do the reduction
     const GrB_Matrix A,         // matrix to reduce
+    int32_t *terminal_flag,     // early-exit flag; NULL for non-terminal
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 )
-{ 
+{
 
     //--------------------------------------------------------------------------
     // encodify the problem
@@ -37,9 +38,6 @@ GrB_Info GB_cuda_reduce_to_scalar_jit   // z = reduce_to_scalar (A) via CUDA JIT
     char *suffix ;
     uint64_t hash = GB_encodify_reduce (&encoding, &suffix,
         GB_JIT_CUDA_KERNEL_REDUCE, monoid, A) ;
-
-    // fixme: could get has_cheesburger here, and allocate zscalar
-    // and V accordingly.
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -57,6 +55,7 @@ GrB_Info GB_cuda_reduce_to_scalar_jit   // z = reduce_to_scalar (A) via CUDA JIT
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (z, V, A, stream, gridsz, blocksz, &GB_callback)) ;
+    return (GB_jit_kernel (z, V, A, terminal_flag, device, stream, gridsz,
+        &GB_callback)) ;
 }
 
