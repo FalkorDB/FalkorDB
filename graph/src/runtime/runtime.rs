@@ -1361,6 +1361,12 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
+        // `max_node_id()` is 0 both when id 0 is the only id and when no id
+        // was ever handed out, so `min..=max` would seek a node 0 that was
+        // never created.
+        if self.g.borrow().node_count() == 0 {
+            return Ok(None);
+        }
         let mut result = RoaringTreemap::new();
         result.insert_range(min..=max);
         Ok(Some(result))

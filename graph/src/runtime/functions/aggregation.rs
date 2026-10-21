@@ -254,7 +254,10 @@ pub fn register(funcs: &mut Functions) {
                 unreachable!("Second element of state must be a List")
             };
 
-            *stored_percentile = percentile;
+            // The first row's percentile is the aggregate's, as in C.
+            if collected_values.is_empty() {
+                *stored_percentile = percentile;
+            }
             Arc::make_mut(collected_values).push(Value::Float(val.get_numeric()));
 
             Ok(Value::List(state))
@@ -546,7 +549,10 @@ fn percentile_batch(
     let Value::List(values) = &mut rest[0] else {
         unreachable!("second element of percentile state must be a List");
     };
-    *stored_percentile = inputs[1].get_numeric();
+    // The first row's percentile is the aggregate's, as in C.
+    if values.is_empty() {
+        *stored_percentile = inputs[1].get_numeric();
+    }
     Arc::make_mut(values).push(Value::Float(inputs[0].get_numeric()));
     Ok(Value::List(state))
 }
