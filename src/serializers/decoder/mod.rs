@@ -3,7 +3,7 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader, decode_capacity};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
@@ -56,7 +56,7 @@ pub fn rdb_load_graph(
 
     // --- Key Schema (payload directory) ---
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(decode_capacity(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -445,7 +445,7 @@ fn load_graph_from_reader(
     let schema = Schema::decode(r)?;
 
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(decode_capacity(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;

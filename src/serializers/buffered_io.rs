@@ -210,6 +210,12 @@ impl BufferedReader {
 
     /// Load the next chunk from Redis.
     fn load_chunk(&mut self) -> Result<(), String> {
+        // Readers built with `from_slice` have no Redis IO handle, so there is
+        // no next chunk to load. Reaching this point means the payload ended
+        // early. Calling into Redis with the null handle crashes the server.
+        if self.rdb.is_null() {
+            return Err("BufferedReader: unexpected end of data".to_string());
+        }
         let chunk = raw::load_string_buffer(self.rdb)
             .map_err(|e| format!("BufferedReader: load chunk: {e}"))?;
         self.buf = chunk.as_ref().to_vec();
