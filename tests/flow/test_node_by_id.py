@@ -278,3 +278,28 @@ class testNodeByIDFlow(FlowTestsBase):
             self.env.assertNotContains("All Node Scan", plan, message=q)
             self.env.assertNotContains("Filter", plan, message=q)
             self.env.assertEqual(self.graph.query(q, params).result_set, expected, message=q)
+
+    def test_seek_on_a_graph_without_nodes(self):
+        # #3353: id 0 was sought on a graph that never had a node.
+        g = self.db.select_graph("node_by_id_empty")
+        queries = [
+            "MATCH (n) WHERE id(n) = 0 RETURN n",
+            "MATCH (n) WHERE id(n) >= 0 RETURN n",
+            "MATCH (n) WHERE id(n) < 3 RETURN n",
+            "MATCH (n) WHERE id(n) = 0 DELETE n",
+        ]
+        g.query("RETURN 1")
+        for q in queries:
+            self.env.assertContains("NodeByIdSeek", str(g.explain(q)), message=q)
+            self.env.assertEqual(g.query(q).result_set, [], message=q)
+
+        # Nor once every node it had is deleted.
+        g.query("CREATE (), ()")
+        g.query("MATCH (n) DELETE n")
+        for q in queries:
+            self.env.assertEqual(g.query(q).result_set, [], message=q)
+
+        # A node created in the same query is still found.
+        res = g.query("CREATE (a) WITH a MATCH (n) WHERE id(n) = id(a) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        g.delete()
