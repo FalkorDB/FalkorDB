@@ -74,10 +74,10 @@ Only when no input batch is empty. `concat_obs_eq` proves that, if every input b
 3. **State what each arm promises.** `Lawful` has one field per arm: given children that are sound, that arm's output column is sound. These fields are what the lane theorems above prove (`compareColumns_agree`, `arithmetic_agree`, `caseCol_agree`, …).
 4. **Induction on the tree.** The proof follows the Rust recursion. Children are smaller, so they are sound by induction, and the arm's `Lawful` field finishes the case.
 
-The hypothesis to keep in mind is that `Dispatch.lean` takes `Lawful` as an argument and never builds it. The lane theorems are proven in `VectorExpr.lean`, `Arith.lean` and `Lanes.lean` over their own `V F` model, and `eval_sound` shows that the dispatch around them adds no error. Two further assumptions:
+`Dispatch.lean` takes `Lawful` as an argument. Since 2026-10-21 the walk is also modelled over proofs/expr_semantics' expression tree `E` (`VecEval.lean`), and `CoreBridge.lean` **builds** the `Lawful` instance over a batch: every field is proved from the lane theorems against `ExprEval::eval_node` itself (`AndOrLane.lean`, `CaseLane.lean`, `FuncLane.lean`, `HasLabelsFn.lean`, plus `CoreOps.lean` for the shared comparison/arithmetic forms), so `vec_sound` says: whenever `VectorEval::eval` returns a column, entry `i` is the per-row evaluator on row `i`. The property fast path's runtime contract (bulk fetch = per-row read) is proved in `RuntimeReads.lean`. Two further assumptions:
 
 - `f64` is abstract (`FloatModel`), and its one IEEE fact, `partial_cmp` antisymmetry, is a class field;
-- the `CASE` and function lanes assume their sub-expressions are pure.
+- function calls are pure functions of their arguments (the registry's functions are a parameter of the tree; `hasLabels`, which the dispatch special-cases by name, is modelled, `HasLabelsFn.lean`).
 
 ## Bugs found
 
@@ -100,7 +100,7 @@ This project has no CONDITIONAL rows.
 
 | File | What's in it |
 |---|---|
-| `Column.lean` | `FloatModel`, the restricted `V F`, `Column` and its typed lanes, `NullBitmap` as a bit list, `classify_*`, `extend_active_slice` |
+| `Column.lean` | `FloatModel`, the engine value (proofs/core `FalkorCore.V F`), `Column` and its typed lanes, `NullBitmap` as a bit list, `classify_*`, `extend_active_slice` |
 | `Batch.lean` | `Batch`, its well-formedness `WF`, selection vectors and their producers (Filter, Limit, Skip), gather, `into_compacted`, `set_column`, `write_column`; `skip_u16_wraps` |
 | `Row.lean` | `Row` (`insert`, `take`, `merge`, `clone_with`) and `BatchRow::value_at`/`to_owned_row`; bug 2 |
 | `Concat.lean` | `Batch::concat` and `concat_typed_column` against the per-row `BatchBuilder`; bug 1 |
@@ -111,18 +111,24 @@ This project has no CONDITIONAL rows.
 | `Lanes.lean` | `NOT`, `CASE`, function folding, `eval_variable`, the Filter mask |
 | `BatchMisc.lean` | The rest of `batch.rs`: `compare_at`, builder push paths and merge plan, constructors and accessors, `merge_over_input`, `rows_only`, `has_origins`, `set_argument_batch`, `BatchOp::next` |
 | `CallBoundary.lean` | #2845's columnar side: `rows_only`, `has_origins`, the empty-projection fast path, origins through the emitter (from the retired `pr2845_review`) |
-| `Dispatch.lean` | `VectorEval::eval` and its leaves (`eval_values`, `property_values`, `eval_has_labels`, `eval_per_row`); `eval_sound` |
+| `Dispatch.lean` | `VectorEval::eval` over an abstract `Kind`/`Node` and its leaves (`eval_values`, `property_values`, `eval_has_labels`, `eval_per_row`); `eval_sound` |
+| `VecEval.lean` | `VectorEval::eval` / `eval_values` over expr_semantics' `E`; `eval_sound`, `evalValues_sound` |
+| `CoreOps.lean` | the engine's operations as expr_semantics' `Ops`; `all_equals` / `all_not_equals` / comparisons = `compare_values`, `NOT`, `CASE` test |
+| `AndOrLane.lean`, `CaseLane.lean`, `FuncLane.lean`, `HasLabelsFn.lean`, `LaneWF.lean` | `eval_and_or`, `eval_case`, `eval_function`, `eval_has_labels` (and the registry's `hasLabels`) against `ExprEval`; every lane returns `len` rows |
+| `CoreBridge.lean` | the `Lawful` instance over a batch (`lawful`, `vec_sound`) |
+| `RuntimeReads.lean` | the runtime's attribute reads: bulk fetch = per-row read (`matNode_eq`, `matRel_eq`, `propReads`) |
+| `EvalBatch.lean` | expr_semantics' `BatchLaws` for `eval_batch`, discharged |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The project is self-contained: its `lakefile.toml` has no dependencies, and it does not import `../core`.
+The project imports `../core` (the engine value) and `../expr_semantics` (the expression tree and `ExprEval`) through Lake path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 159 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 21 in `row.rs` and 7 in `vectorized.rs`.
+`COVERAGE.tsv` has 165 rows: 66 in `batch.rs`, 39 in `batched_result_emitter.rs`, 26 in `vector_expr.rs`, 21 in `row.rs`, 7 in `vectorized.rs`, 4 in `runtime.rs` (the `materialize_*` reads) and 2 in `eval.rs` (`eval_batch`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 141 |
+| PROVEN | 147 |
 | MODELLED | 16 |
 | NOT COVERED | 2 |
 

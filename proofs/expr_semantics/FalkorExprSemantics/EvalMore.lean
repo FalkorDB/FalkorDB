@@ -78,7 +78,7 @@ structure BatchLaws (b : BatchM V) (O : Ops V) (toJV : V → JV W) where
 variable (toJV : V → JV W)
 
 /-- `eval_batch_per_row`: `?` stops at the first error. -/
-def evalBatchPerRow (ev : Ev V) (c : Nat → List V → Except String V) (b : BatchM V) (root : E V) :
+def evalBatchPerRow (ev : Ev V) (c : Compound V) (b : BatchM V) (root : E V) :
     Except String (Column W × List Bool) := do
   let vs ← b.rows.mapM fun env => evalNode O ev c (some env) root
   .ok (classifyJoinKeys (vs.map toJV))
@@ -94,7 +94,7 @@ def tryEvalBatchProperty (ev : Ev V) (L : BatchLaws b O toJV) (root : E V) :
     | none => .ok none
   | _ => .ok none
 
-def evalBatch (ev : Ev V) (c : Nat → List V → Except String V) (L : BatchLaws b O toJV) (root : E V) :
+def evalBatch (ev : Ev V) (c : Compound V) (L : BatchLaws b O toJV) (root : E V) :
     Except String (Column W × List Bool) := do
   match ← tryEvalBatchProperty O toJV ev L root with
   | some r => .ok r
@@ -109,7 +109,7 @@ theorem mapM_ok_of_eq {α β : Type} (f : α → Except String β) (g : α → �
 
 /-- **Agreement**: the bulk property path gives exactly what per-row evaluation gives. -/
 theorem evalBatch_eq_perRow (b : BatchM V) (params : String → Option V)
-    (c : Nat → List V → Except String V) (L : BatchLaws b O toJV) (root : E V) :
+    (c : Compound V) (L : BatchLaws b O toJV) (root : E V) :
     evalBatch O toJV (Ev.fromRuntime params) c L root =
       evalBatchPerRow O toJV (Ev.fromRuntime params) c b root := by
   unfold evalBatch tryEvalBatchProperty

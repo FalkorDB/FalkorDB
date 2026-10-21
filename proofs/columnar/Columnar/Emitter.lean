@@ -22,6 +22,7 @@ gathers the parent columns by the packed parent rows.
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 

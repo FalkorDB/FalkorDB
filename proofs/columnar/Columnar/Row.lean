@@ -18,6 +18,7 @@ import Columnar.Batch
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 variable {F : Type}
 
