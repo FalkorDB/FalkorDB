@@ -20,12 +20,8 @@ bool GB_cuda_warmup (int device)
     if (!GB_cuda_set_device (device))
     {
         // invalid device
-        printf ("cuda set device failed\n") ;
         return (false) ;
     }
-
-    // fixme: why do we need this?
-    double gpu_memory_size = GB_Global_gpu_memorysize_get (device) ;
 
     //--------------------------------------------------------------------------
     // allocate two small blocks just to load the drivers
@@ -36,7 +32,6 @@ bool GB_cuda_warmup (int device)
     if (p == NULL)
     {
         // no memory on the device
-        printf ("GB_malloc_memory failed; no memory on device %d\n", device) ;
         return (false) ;
     }
     GB_free_memory (&p, size) ;
@@ -45,7 +40,6 @@ bool GB_cuda_warmup (int device)
     if (p == NULL)
     {
         // no memory on the device
-        printf ("cudaMalloc failed: no memory on device %d\n", device) ;
         return (false) ;
     }
     cudaFree (p) ;
@@ -54,7 +48,6 @@ bool GB_cuda_warmup (int device)
     // return result
     //--------------------------------------------------------------------------
 
-    printf ("cuda warmup %d OK\n", device) ;
     return (true) ;
 }
 

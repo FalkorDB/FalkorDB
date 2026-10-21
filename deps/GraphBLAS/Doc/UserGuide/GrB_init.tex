@@ -199,8 +199,6 @@ typedef enum
 {
     GrB_NONBLOCKING = 0,    // methods may return with pending computations
     GrB_BLOCKING = 1        // no computations are ever left pending
-    GxB_NONBLOCKING_GPU = 7099, // non-blocking mode, allow use of GPU(s)
-    GxB_BLOCKING_GPU = 7098,    // blocking mode, allow use of GPU(s)
 }
 GrB_Mode ;
 \end{verbatim}
@@ -225,10 +223,6 @@ when needed.  Non-blocking mode can be much faster than blocking mode, by many
 orders of magnitude in extreme cases.  Blocking mode should be used only when
 debugging a user application.  The mode cannot be changed once it is set by
 \verb'GrB_init'.
-
-To use the GPU, set the mode to \verb'GxB_NONBLOCKING_GPU' or
-\verb'GxB_BLOCKING_GPU'.  In this case, the memory manager functions will
-be based on the Rapids Memory Manager (RMM), with unified shared memory.
 
 GraphBLAS objects are opaque.  This allows GraphBLAS to
 postpone operations and then do them later in a more efficient manner by

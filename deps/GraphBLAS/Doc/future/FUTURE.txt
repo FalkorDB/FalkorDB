@@ -1,5 +1,13 @@
 FUTURE plans for GraphBLAS:
 
+
+    CUDA kernels, including MATLAB interface for CUDA
+
+    LAGraph algorithms: polish the API, move algos from experimental -> src
+
+    GrB_Field: to solve Ax=b over a field
+        interfaces to CSparse, UMFPACK, KLU, CHOLMOD, SPQR?
+
     select:  exploit the mask for C<M> = select(A) during the select operation;
         currently, if a mask is present, it is exploited only after computing
         T=select(A).
@@ -10,8 +18,6 @@ FUTURE plans for GraphBLAS:
     cumulative sum (or other monoid)
 
     Raye: link-time optimization with binary for operators, for Julia
-
-    pack/unpack COO
 
     kernel fusion
 

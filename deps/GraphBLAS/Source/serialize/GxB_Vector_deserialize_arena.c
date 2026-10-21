@@ -37,6 +37,7 @@ GrB_Info GxB_Vector_deserialize_arena // deserialize blob into a GrB_Vector
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (blob) ;
     GB_RETURN_IF_NULL (w) ;
+
     GB_BURBLE_START ("GxB_Vector_deserialize") ;
 
     GrB_Info info ;

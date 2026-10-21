@@ -34,7 +34,7 @@ GrB_Info GB_colscale_jit      // C=A*D, colscale, via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_COLSCALE, false,
+        GB_JIT_KERNEL_COLSCALE,
         /* C_iso: */ false, /* C_in_iso: */ false, GB_sparsity (C), C->type,
         C->p_is_32, C->j_is_32, C->i_is_32,
         /* M: */ NULL, /* Mask_struct: */ false, /* Mask_comp: */ false,

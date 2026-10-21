@@ -24,6 +24,7 @@ GrB_Info GB_cuda_select_sparse_jit
     const GB_void *ythunk,
     const GrB_IndexUnaryOp op,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 )
@@ -56,5 +57,6 @@ GrB_Info GB_cuda_select_sparse_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, A, ythunk, stream, gridsz, &GB_callback)) ;
+    return (GB_jit_kernel (C, A, ythunk, device, stream, gridsz,
+        &GB_callback)) ;
 }

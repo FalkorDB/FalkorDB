@@ -14,9 +14,13 @@
 
 #include "split/GB_split.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Matrix_split_arena     // split a matrix into 2D array of matrices
 (
+    // output
     GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
+    // input
     const uint64_t m,
     const uint64_t n,
     const uint64_t *Tile_nrows,     // array of size m
@@ -33,10 +37,6 @@ GrB_Info GxB_Matrix_split_arena     // split a matrix into 2D array of matrices
     //--------------------------------------------------------------------------
 
     GB_RETURN_IF_NULL (A) ;
-    GB_WHERE_1 (A, "GxB_Matrix_split_arena (Tiles, m, n, Tile_nrows,"
-        " Tile_ncols, A, header_arena, data_arena, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_split") ;
-
     if (m <= 0 || n <= 0)
     { 
         return (GrB_INVALID_VALUE) ;
@@ -44,6 +44,12 @@ GrB_Info GxB_Matrix_split_arena     // split a matrix into 2D array of matrices
     GB_RETURN_IF_NULL (Tiles) ;
     GB_RETURN_IF_NULL (Tile_nrows) ;
     GB_RETURN_IF_NULL (Tile_ncols) ;
+
+    GB_WHERE_1 (A, "GxB_Matrix_split_arena (Tiles, m, n, Tile_nrows,"
+        " Tile_ncols, A, header_arena, data_arena, desc)") ;
+    GB_OK (GB_check_arena (header_arena)) ;
+    GB_OK (GB_check_arena (data_arena)) ;
+    GB_BURBLE_START ("GxB_Matrix_split") ;
 
     // get the descriptor
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;

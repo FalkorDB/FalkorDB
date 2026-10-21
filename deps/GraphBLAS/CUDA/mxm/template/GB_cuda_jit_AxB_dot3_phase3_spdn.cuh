@@ -17,7 +17,7 @@
 // This version uses an entire threadblock to compute each C(i,j) dot product.
 
 // Both the grid and block are 1D, so blockDim.x is the # threads in a
-// threadblock, and the # of threadblocks is grid.x
+// threadblock, and the # of threadblocks is gridDim.x
 
 //------------------------------------------------------------------------------
 // GB_cuda_AxB_dot3_phase3_spdn_kernel
@@ -105,7 +105,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
         tiled_partition<GB_CUDA_TILE_SIZE> (this_thread_block()) ;
 
     GB_M_NVALS (mnz) ;
-    ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
+    // ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
     int64_t cnz_in_bucket = end - start ;
     int all_in_one = (cnz_in_bucket == mnz) ;
 
@@ -200,7 +200,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
                 if (Ab [pA+k])              // check if A(k,i) exists
                 {
                     // cij += A(k,i) * B(k,j)
-                    GB_DOT_MERGE (pA+k, p) ;
+                    GB_DOT_MERGE (pA+k, p, k) ;
                     GB_DOT_TERMINAL (cij) ;     // break if cij == terminal
                 }
             }
@@ -238,7 +238,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
                 if (Bb [pB+k])              // check if B(k,j) exists
                 {
                     // cij += A(k,i) * B(k,j)
-                    GB_DOT_MERGE (p, pB+k) ;
+                    GB_DOT_MERGE (p, pB+k, k) ;
                     GB_DOT_TERMINAL (cij) ;     // break if cij == terminal
                 }
             }
@@ -283,7 +283,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
                 Ci [pair_id] = GB_ZOMBIE (i) ;
             }
         }
-        //__syncthreads(); 
     }
 
     //--------------------------------------------------------------------------

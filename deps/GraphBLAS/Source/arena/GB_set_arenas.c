@@ -9,8 +9,6 @@
 
 #include "GB.h"
 
-#define GB_FREE_ALL GrB_Matrix_free (Ahandle) ;
-
 GrB_Info GB_set_arenas          // modify all arenas of a matrix
 (
     // input/output
@@ -32,12 +30,11 @@ GrB_Info GB_set_arenas          // modify all arenas of a matrix
         return (GrB_SUCCESS) ;
     }
 
-    if ((GB_Global_malloc_function_get (new_data_arena) == NULL) ||
-        (GB_Global_malloc_function_get (new_header_arena) == NULL))
-    { 
-        // arenas are out of range or not initialized
-        return (GrB_INVALID_VALUE) ;
-    }
+    #define GB_FREE_ALL ;
+    GB_OK (GB_check_arena (new_header_arena)) ;
+    GB_OK (GB_check_arena (new_data_arena)) ;
+    #undef  GB_FREE_ALL
+    #define GB_FREE_ALL GrB_Matrix_free (Ahandle) ;
 
     //--------------------------------------------------------------------------
     // get the input matrix
