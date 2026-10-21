@@ -1399,8 +1399,15 @@ impl<'a> ExprEval<'a> {
         if streams {
             if let Some(items) = self.eval_iter_expr(&source, env)? {
                 // Streamed in chunks, so the body is evaluated a chunk at a
-                // time exactly as for a stored list.
-                let mut chunk = Vec::with_capacity(LIST_LOOP_CHUNK);
+                // time exactly as for a stored list. The buffer is sized by the
+                // source when it reports its length: a short `range(..)` in a
+                // nested comprehension runs once per outer element, and a full
+                // chunk each time was most of what such a query allocated.
+                let cap = items
+                    .size_hint()
+                    .1
+                    .map_or(LIST_LOOP_CHUNK, |n| n.min(LIST_LOOP_CHUNK));
+                let mut chunk = Vec::with_capacity(cap);
                 for value in items {
                     chunk.push(value);
                     if chunk.len() == LIST_LOOP_CHUNK {
