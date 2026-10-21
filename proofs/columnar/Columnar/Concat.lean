@@ -26,6 +26,7 @@ Result: equal whenever every input batch has an active row
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 variable {F : Type} [FloatModel F]
 

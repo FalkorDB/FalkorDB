@@ -1,10 +1,11 @@
+import FalkorCore.Value
 /-
 # Values, typed column lanes, classification, gather
 
 | here | there |
 | --- | --- |
 | `FloatModel` | `f64`: `as f64` (`ofInt`), `partial_cmp` (`pcmp`), `+ - * / %` — abstract; the one IEEE fact used is a field (hypothesis, not an axiom) |
-| `V` | `Value` (`runtime/value.rs`) restricted to the shapes the lanes distinguish (`other t` = String/List/Map/…) |
+| `V` | `Value` (`runtime/value.rs:180`): proofs/core's `FalkorCore.V F`, every variant (since 2026-10-21; was a 7-constructor restriction with an opaque `other t`) |
 | `Column` | `Column` (`runtime/batch.rs:321-334`) |
 | `Column.get?` | `Column::get` (`batch.rs:340-352`); `none` = index-out-of-bounds panic |
 | `Column.len` | `Column::len` (`batch.rs:357-366`) |
@@ -17,6 +18,7 @@
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 /-- The `f64` operations the lanes use, kept abstract. `pcmp_swap` is the IEEE
 fact that `partial_cmp` is antisymmetric (`b.partial_cmp(&a) == a.partial_cmp(&b).map(Ordering::reverse)`),
@@ -31,22 +33,10 @@ class FloatModel (F : Type) where
   rem : F → F → F
   pcmp_swap : ∀ a b, pcmp b a = (pcmp a b).map Ordering.swap
 
-/-- `Value`, restricted. Ints are `Int`s holding an `i64` (arithmetic wraps
-explicitly, see `VectorExpr.wrap`). -/
-inductive V (F : Type) where
-  | null
-  | bool (b : Bool)
-  | int (i : Int)
-  | float (f : F)
-  | node (n : Nat)
-  | rel (n : Nat)
-  | other (tag : Nat)
-
+/-! `Value` is proofs/core's engine value `FalkorCore.V F` (`value.rs:180`), all sixteen
+variants (2026-10-21; it was a seven-constructor restriction with an opaque `other` tag).
+Ints are `Int`s holding an `i64` (arithmetic wraps explicitly, see `Arith.wrap`). -/
 variable {F : Type}
-
-def V.isNull : V F → Bool
-  | .null => true
-  | _ => false
 
 inductive Column (F : Type) where
   | nodeIds (v : List Nat)

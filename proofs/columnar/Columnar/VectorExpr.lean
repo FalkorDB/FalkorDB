@@ -30,6 +30,7 @@ Every lane is compared against the per-row definition: the `Value` operator
 -/
 
 namespace Columnar
+open FalkorCore (V)
 
 variable {F : Type} [FloatModel F]
 
@@ -51,15 +52,17 @@ def compareFloats (a b : F) : Ordering × Flag :=
   | some o => (o, .none)
   | none => (.lt, .nan)
 
-/-- `compare_value`: faithful on `Int`/`Float`/`Null`; `other` stands for every
-remaining arm (strings, lists, maps, points, disjoint types, …). -/
+/-- `compare_value` (value.rs:1255-1303): faithful on `Int`/`Float`/`Null` (the null arms
+order by `OrderedEnum::order`, value.rs:1299-1301); `other` stands for every remaining arm
+(bools, strings, lists, maps, points, temporal, disjoint types, …), which the lanes never
+inspect. -/
 def compareValue (other : V F → V F → Ordering × Flag) : V F → V F → Ordering × Flag
   | .int a, .int b => (compare a b, .none)
   | .float a, .float b => compareFloats a b
   | .int i, .float f => compareFloats (FloatModel.ofInt i) f
   | .float f, .int i => compareFloats f (FloatModel.ofInt i)
-  | .null, _ => (.lt, .comparedNull)
-  | _, .null => (.gt, .comparedNull)
+  | .null, b => (compare (V.null : V F).order b.order, .comparedNull)
+  | a, .null => (compare a.order (V.null : V F).order, .comparedNull)
   | a, b => other a b
 
 /-- `compare_values` (`vectorized.rs:239-272`; `Neq` arm since #2917 7fdf06a0e: NaN and

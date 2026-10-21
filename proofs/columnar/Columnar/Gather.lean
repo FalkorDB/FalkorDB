@@ -26,6 +26,7 @@ cell. Each of the seven Rust impls is then shown lawful by three one-step lemmas
 | `rowIterList` | `RowIter::{one, spread, many}` (:458-470) and its `next` (:478) |
 -/
 namespace Columnar.Gather
+open FalkorCore (V)
 
 /-- The cell kinds the lanes produce (`Column::NodeIds/RelIds/Floats/Values`). -/
 inductive Cell (F W : Type) where

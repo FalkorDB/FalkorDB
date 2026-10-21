@@ -3,3 +3,13 @@ defaultTargets = ["Columnar"]
 
 [[lean_lib]]
 name = "Columnar"
+
+# Shared foundations: the engine Value `V F` (proofs/core).
+[[require]]
+name = "falkor-core"
+path = "../core"
+
+# The ExprIR model `E` and its per-row evaluator `evalNode` (`VecEval`, `CoreBridge`).
+[[require]]
+name = "falkor-expr-semantics"
+path = "../expr_semantics"

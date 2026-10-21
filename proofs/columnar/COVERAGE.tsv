@@ -70,7 +70,7 @@ graph/src/runtime/vectorized.rs	flip	84	PROVEN	VExpr icmp_flip, fcmp_flip
 graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	VExpr kernelI_get, icmp_agree
 graph/src/runtime/vectorized.rs	compare_f64_column	162	PROVEN	VExpr kernelF_get, fcmp_agree_ff/if/fi, fcmp_nan
 graph/src/runtime/vectorized.rs	compare_value_column	229	PROVEN	VExpr kernelV_get
-graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	VExpr compareValues (= per-row rowCmp by definition; Neq arm as #2917); caseMatch_eq_compare_value
+graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	VExpr compareValues (= per-row rowCmp by definition; Neq arm as #2917); caseMatch_eq_compare_value; CoreOps allEq_rowCmp, allNeq_rowCmp, cmpResult_rowCmp (= expr_semantics all_equals / all_not_equals / comparison arms)
 graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	PROVEN	VExpr kernelV_get
 graph/src/runtime/vector_expr.rs	get	80	PROVEN	VExpr EC.get; bools_get, ints_get, floats_get
 graph/src/runtime/vector_expr.rs	into_values	114	PROVEN	VExpr EC.intoValues_get, intoValues_length
@@ -79,22 +79,22 @@ graph/src/runtime/vector_expr.rs	constant_nullness	139	PROVEN	VExpr constNull_sp
 graph/src/runtime/vector_expr.rs	is_null	150	PROVEN	VExpr EC.isNull_eq
 graph/src/runtime/vector_expr.rs	union_nulls	168	PROVEN	VExpr unionNulls_exact, unionNulls_values_inexact (harmless corner), unionNulls_length
 graph/src/runtime/vector_expr.rs	VectorEval::new	202	PROVEN	Dispatch VectorEval.new: new_runtime
-graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	Dispatch eval: eval_sound (every tree; arms = lane theorems; #3335: Paren has no arm, falls to eval_per_row), eval_cmp, eval_param_missing
-graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	PROVEN	Dispatch evalValues: evalValues_sound
-graph/src/runtime/vector_expr.rs	eval_variable	309	PROVEN	Lanes evalVariable_agree, evalVariable_beyond
-graph/src/runtime/vector_expr.rs	eval_property	333	PROVEN	Column classifyExact_exact (fetch itself: runtime, not modelled)
-graph/src/runtime/vector_expr.rs	VectorEval::property_values	356	PROVEN	Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff (bulk materialize = per-row read, Store.Lawful)
-graph/src/runtime/vector_expr.rs	eval_and_or	391	PROVEN	proofs/functions_temporal VExpr.colEval_eq
-graph/src/runtime/vector_expr.rs	eval_case	477	PROVEN	Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value (total sub-exprs; error order may differ)
-graph/src/runtime/vector_expr.rs	eval_function	557	PROVEN	Lanes foldCall_agree
-graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	644	PROVEN	Dispatch hasLabels: hasLabels_sound (incl. unregistered-label shortcut), hasLabels_typecheck_first
-graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	708	PROVEN	Dispatch perRow: perRow_spec, perRow_error (first row error)
-graph/src/runtime/vector_expr.rs	compare_columns	733	PROVEN	VExpr compareColumns_agree, typedLane_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval	211	PROVEN	VecEval.eval (over expr_semantics E, arms and guards in source order): eval_sound; CoreBridge.lawful (Lawful instance from the lane theorems), vec_sound (= ExprEval::eval_node per row; PropReads discharged by RuntimeReads.propReads); Dispatch eval: eval_sound, eval_cmp, eval_param_missing (Kind/Node model)
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	285	PROVEN	VecEval.evalValues: evalValues_sound; Dispatch evalValues: evalValues_sound
+graph/src/runtime/vector_expr.rs	eval_variable	309	PROVEN	Lanes evalVariable_agree, evalVariable_beyond; LaneWF evalVariable_wf; CoreBridge.lawful var field
+graph/src/runtime/vector_expr.rs	eval_property	333	PROVEN	CoreBridge.evalProperty/toEC: toEC_exact (classify_exact_column read back), lawful prop field (= per-row Property arm via RuntimeReads.matNode_eq); Column classifyExact_exact
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	356	PROVEN	CoreBridge.propertyValues (bulk fetch = per-row read: RuntimeReads.matNode_eq/matRel_eq); Dispatch propertyValues: propertyValues_spec, propertyValues_none_iff
+graph/src/runtime/vector_expr.rs	eval_and_or	391	PROVEN	AndOrLane.evalAndOr/loop/scanP: evalAndOr_sound (= per-row andOrLoop at every row; children evaluated over the live rows), scanP_spec, loop_sound; proofs/functions_temporal VExpr.colEval_eq
+graph/src/runtime/vector_expr.rs	eval_case	477	PROVEN	CaseLane.evalCase/armLoop/splitHits/fill: evalCase_sound (= per-row eval_case at every row; WHEN over unclaimed, THEN over claimed rows), armLoop_sound; Lanes caseCol_agree, caseArm_then_only_on_hits, caseMatch_eq_compare_value
+graph/src/runtime/vector_expr.rs	eval_function	557	PROVEN	FuncLane.evalFunction (columns then foldCall of validate_args_type+call): evalFunction_sound; Lanes foldCall_agree
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	644	PROVEN	FuncLane.hasLabelsLane: hasLabelsLane_sound (under HL; HasLabelsFn.hl_hasLabelsFn: the registry hasLabels satisfies HL); Dispatch hasLabels: hasLabels_sound, hasLabels_typecheck_first
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	708	PROVEN	CoreBridge.perRow (ExprEval::eval_node per BatchRow): lawful perRow field; Dispatch perRow: perRow_spec, perRow_error
+graph/src/runtime/vector_expr.rs	compare_columns	733	PROVEN	VExpr compareColumns_agree, typedLane_agree; LaneWF compareColumns_wf; CoreOps allEq_rowCmp/allNeq_rowCmp/cmpResult_rowCmp (= ExprEval comparison arms)
 graph/src/runtime/vector_expr.rs	compare_i64_pairs	797	PROVEN	VExpr kernelI_get (pairs case of typedLane_agree)
 graph/src/runtime/vector_expr.rs	compare_f64_pairs	820	PROVEN	VExpr kernelF_get (pairs case of typedLane_agree)
 graph/src/runtime/vector_expr.rs	mask_out_nulls	842	PROVEN	VExpr maskOut_get
-graph/src/runtime/vector_expr.rs	negate_bools	856	PROVEN	Lanes negate_agree
-graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree)
+graph/src/runtime/vector_expr.rs	negate_bools	856	PROVEN	Lanes negate_agree; LaneWF negate_wf; CoreOps notRow_eq (= ExprEval Not arm)
+graph/src/runtime/vector_expr.rs	arithmetic	880	PROVEN	Arith arithmetic_agree (intStage_agree, floatStage_agree, genericStage_agree); LaneWF arithmetic_wf
 graph/src/runtime/vector_expr.rs	int_lane	955	PROVEN	Arith intLane_spec
 graph/src/runtime/vector_expr.rs	float_lane	967	PROVEN	Arith floatLane_spec
 graph/src/runtime/vector_expr.rs	float_operand	982	PROVEN	Arith floatStage_agree
@@ -158,3 +158,11 @@ graph/src/runtime/ops/batched_result_emitter.rs	reset	747	MODELLED	state cleared
 graph/src/runtime/ops/batched_result_emitter.rs	batch	756	PROVEN	Gather.emBatch: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new	770	PROVEN	Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	780	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
+# runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
+graph/src/runtime/runtime.rs	materialize_node_property	1542	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1556	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1604	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1616	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
+# eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1150	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1166	PROVEN	EvalBatch.laws/evalBatch_sound
