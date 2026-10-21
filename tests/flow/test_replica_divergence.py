@@ -1,5 +1,6 @@
 from common import *
 import os
+import re
 import time
 
 GRAPH_ID = "replica_divergence"
@@ -397,3 +398,193 @@ class testFullSyncMatrixConsistency():
             actual = replica_graph.ro_query(q).result_set
             env.assertEquals(actual, expected)
 
+
+
+# A refusal raised PART WAY THROUGH a payload still reaches the divergence
+# guard, and the replica still converges.
+#
+# WHY THIS IS NOT A COPY OF testReplicaDivergence ABOVE. Until effects v3
+# decoded one record at a time, a payload was decoded whole and then applied, so
+# a refusal happened before the graph was touched at all. Streaming decode
+# applies records 1..k and only then raises the refusal, which is a state that
+# could not previously exist. The guard turns it into a forced resync that
+# overwrites the graph wholesale, so the partial state is real but transient -
+# apply returning false is a report, not a rollback.
+#
+# THE ASSERTION THAT MAKES THIS TEST MEAN ANYTHING IS `k >= 1`. A prefix refused
+# BEFORE any record applies raises sync_full and converges exactly like one
+# refused after - a resync converges by definition, whatever it is repairing. So
+# sync_full and the state comparison cannot tell the new behaviour from the old,
+# and without k this class would silently re-prove what the first class in this
+# file already proves. The log is the only place the distinction survives,
+# because the partial state exists solely in the window the resync erases.
+class testMidStreamRefusal():
+    def __init__(self):
+        # replication timing doesn't play well with Valgrind/sanitizers
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        # Passed as moduleArgs rather than set at runtime: EFFECTS_VERSION is
+        # load-time only, and C still emits v2 by default
+        # (EFFECTS_VERSION_EMIT is 2 in effects.h, deliberately, until every
+        # reader understands v3). Without it this class would exercise the v2
+        # path, which decodes and applies in one pass and has no mid-stream
+        # refusal to find - it would pass while testing nothing it claims to.
+        self.env, self.db = Env(env='oss', useSlaves=True,
+                                 enableDebugCommand=True,
+                                 moduleArgs='EFFECTS_THRESHOLD 0 EFFECTS_VERSION 3')
+
+    @staticmethod
+    def _replica_log(env):
+        """Every slave log in this env's log dir, concatenated.
+
+        Read by scanning rather than through RLTest's _getFileName: the slave's
+        role string has moved between RLTest versions, and a helper that
+        guessed it wrong would return an empty log, which reads as "the line is
+        not there" rather than as "I looked in the wrong file".
+        """
+        parts = []
+        for name in sorted(os.listdir(env.logDir)):
+            if "slave" in name and name.endswith(".log"):
+                with open(os.path.join(env.logDir, name),
+                          errors="replace") as f:
+                    parts.append(f.read())
+        return "\n".join(parts)
+
+    def test_partial_apply_still_reaches_the_guard(self):
+        env      = self.env
+        master   = env.getConnection()
+        replica  = env.getSlaveConnection()
+        graph_id = GRAPH_ID + "_midstream"
+
+        master_graph  = Graph(master, graph_id)
+        replica_graph = Graph(replica, graph_id)
+
+        # WAIT IS NOT THE GUARD HERE, and reaching for it is the trap. A write
+        # issued before the replica finishes its initial sync is not propagated
+        # as a command at all - it is folded into the full-sync RDB, and the
+        # replica ends up holding the data with an empty command stream. WAIT
+        # blocks until the replica is online and acks, so it returns
+        # successfully after that fold has already happened.
+        #
+        # This class cannot survive that: it asserts the payload arrived as a
+        # GRAPH.EFFECT and was refused part way through. A folded write produces
+        # no refusal line, so the failure would be real rather than silent - but
+        # it would point at the applier instead of at the setup.
+        # redis-py parses the slave0 line into a dict, so this reads the
+        # 'state' key rather than matching "state=online" as a substring -
+        # a substring test against a dict silently never matches, which is a
+        # guard that cannot fire
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            slave0 = master.info("replication").get("slave0")
+            state = (slave0.get("state") if isinstance(slave0, dict)
+                     else str(slave0 or ""))
+            if state == "online":
+                break
+            time.sleep(0.2)
+        else:
+            raise Exception("replica never reached state=online")
+
+        master_graph.query("CREATE (:P {v: 1}), (:P {v: 2}), (:P {v: 3})")
+        master.execute_command("WAIT", "1", "0")
+
+        res = master_graph.query(
+            "MATCH (n:P) RETURN id(n) ORDER BY id(n)")
+        target_id = res.result_set[0][0]   # removed on the replica below
+        keep_id   = res.result_set[1][0]   # survives on both, so SET applies
+
+        # diverge the replica: remove one node there and nowhere else
+        replica.config_set("slave-read-only", "no")
+        replica_graph.query(f"MATCH (n) WHERE id(n) = {target_id} DELETE n")
+        replica.config_set("slave-read-only", "yes")
+
+        env.assertEquals(
+            replica_graph.ro_query("MATCH (n:P) RETURN count(n)").result_set[0][0], 2)
+
+        # count the refusals already in the log, so the one this test causes is
+        # distinguishable from any the earlier classes left behind
+        before_refusals = len(re.findall(
+            r"after applying (\d+) record\(s\)", self._replica_log(env)))
+
+        sync_full_before = master.info()["sync_full"]
+
+        # ONE query carrying TWO record groups, ordered so that a record
+        # applies before the one that fails.
+        #
+        # v3 sorts groups by opcode ascending (_cmp_group compares opcode
+        # first), and UPDATE_NODE is 1 while DELETE_NODE is 5. So the property
+        # set lands on the replica, and the delete - targeting the id the replica
+        # no longer has - is refused after it. That ordering is a property of
+        # the format rather than of this query, which is why k is predictable
+        # at all.
+        #
+        # SET rather than CREATE, and the reason is specific to this class's
+        # setup. `... DELETE n CREATE (:Q)` does not work here because the
+        # created node REUSES THE DELETED NODE'S ID - measured: deleting id 0
+        # and creating in the same query yields id 0 again. Sorted by opcode
+        # that payload is CREATE_NODE[0] then DELETE_NODE[0], and this class
+        # has already removed id 0 from the replica, so the create fills the
+        # hole the delete made, both records apply cleanly, and there is no
+        # refusal to measure. On an undiverged replica the same payload is
+        # refused at the create instead, because id 0 still exists there -
+        # reported upstream separately, and not something this class relies on.
+        #
+        # SET touches a node present on both, so it applies; the DELETE of the
+        # id only the master still has is refused after it.
+        master_graph.query(
+            f"MATCH (a:P) WHERE id(a) = {keep_id} SET a.v = 99 "
+            f"WITH count(a) AS _ "
+            f"MATCH (b) WHERE id(b) = {target_id} DELETE b")
+
+        # (1) THE NEW PROPERTY: refused, with at least one record already
+        # applied. Polled because the log is written by the replica.
+        applied = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            hits = re.findall(r"after applying (\d+) record\(s\)",
+                              self._replica_log(env))
+            if len(hits) > before_refusals:
+                applied = int(hits[before_refusals])
+                break
+            time.sleep(0.2)
+
+        env.assertIsNotNone(
+            applied,
+            message="no 'after applying N record(s)' line appeared in the "
+                    "replica log; the payload was not refused, or the refusal "
+                    "did not reach the logging path")
+
+        if applied is not None:
+            env.assertTrue(
+                applied >= 1,
+                message=f"refused after applying {applied} records. This class "
+                        f"exists for the case where records applied BEFORE the "
+                        f"refusal; at 0 it is testing the same thing as "
+                        f"test_forced_full_resync_on_effect_divergence and "
+                        f"should be fixed rather than accepted")
+
+        # (2) the guard fired: a genuine FULLRESYNC, not a reconnect that
+        # continued the stream
+        resynced = False
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            info = master.info()
+            if (info["sync_full"] > sync_full_before and
+                    info.get("connected_slaves", 0) > 0):
+                resynced = True
+                break
+            time.sleep(0.5)
+
+        env.assertTrue(resynced,
+                       message="sync_full did not rise: the refusal did not "
+                               "reach DivergenceGuard_OnFailure")
+
+        # (3) the repair worked. Deliberately last and deliberately weakest:
+        # a resync converges whether or not the mechanism under test did
+        # anything, so this confirms the outcome and cannot establish the cause
+        expected = master_graph.query(
+            "MATCH (n) RETURN labels(n), n.v ORDER BY id(n)").result_set
+        actual = replica_graph.ro_query(
+            "MATCH (n) RETURN labels(n), n.v ORDER BY id(n)").result_set
+        env.assertEquals(expected, actual)
