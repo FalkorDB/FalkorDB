@@ -6,6 +6,7 @@ import Pr3437Review.Bridge
 import Pr3437Review.ValueOfType
 import Pr3437Review.NegFold
 import Pr3437Review.ExactProp
+import Pr3437Review.Discharge
 
 /-!
 # Review of PR #3437 — "perf: list comprehensions evaluate their body over the list in chunks"
@@ -26,11 +27,12 @@ proofs/expr_semantics (`checkedNeg`).
 | `Bridge` | `VectorEval` over the chunk batch vs columnar's `eval_sound`; `counts_comprehension` (eval.rs:315) and its guard in `VectorEval::eval` (vector_expr.rs:253-269); `loop_var_column` (eval.rs:408), `broadcast_column` (:420) |
 | `ValueOfType` | `value_of_type` (value.rs:1315-1350) |
 | `NegFold` | the unary level of `parse_expr_inner` (cypher.rs:2547-2580), `ExprIR::Negate` (eval.rs:898-910), `evaluate_param` (:2280-2289) |
+| `Discharge` | `ListLoop::new` over expr_semantics' `E`; `RowAgree` for binder-free bodies; `BatchRow` of eval.rs:1563-1567 |
 | `ExactProp` | `materialize_node_property_exact` (runtime.rs:1566-1587), `get_node_int_attributes_by_idx` (graph.rs:2602-2613), `get_int_attrs_by_idx_batch_into` (attribute_store.rs:1186-1216), `eval_property` (vector_expr.rs:337-353) |
 
 ## Verdicts
 
-1. **Chunked = per-element** — CONDITIONAL (`Col.Sound`, `Body.Drops`).
+1. **Chunked = per-element** — CONDITIONAL, now only for bodies with a nested binder (see below; `Body.Drops` discharged, `Col.Sound` discharged for binder-free bodies).
    `comprehension_eq_main`: for every source (streamed literal/`range`, stored list, null,
    scalar) the PR's comprehension is `Except`-equal to main's — same list, same order, or the
    same error. `quantifier_eq_main`: `any`/`all`/`none`/`single` likewise (both sides feed
@@ -75,19 +77,56 @@ proofs/expr_semantics (`checkedNeg`).
    read-only int/null path the same `Ints` lane and null bits (`getIntLoop_spec`), otherwise
    it is that call (`getIntLoop_other`: any other stored tag gives up); `evalProp_eq`.
 
-## Hypotheses (undischarged, about other Rust code)
+## Hypotheses: what was discharged, what is left (`Discharge.lean`)
 
-* **`Col.Sound`** (`Chunked.lean`): a column `VectorEval::eval` / `eval_values` *returns* over
-  the chunk batch holds main's per-element values. Derived in `Bridge.colSound_pred` /
-  `eval_rows_mapM` from columnar's `Dispatch.eval_sound` (whose `Lawful` arms are columnar's
-  lane theorems) plus **`RowAgree`**: per-row evaluation on batch row `r` = main's
-  per-element evaluation on `env + {var: chunk[r]}`. Discharged parts: the batch columns
-  read back the element / outer value (`loopVar_get`, `broadcast_get`), and every variable
-  read is broadcast or bound (`vectorPlan_broadcasts`). **Not discharged:** `ExprEval`'s frame
-  property (the result depends on the row only through the variables the expression reads)
-  and binder id uniqueness inside one expression (`fresh_var` = scope length, binder.rs:2255).
-* **`Body.Drops`** (`ListLoop.lean`): `ExprEval` evaluates the literal `true` to `true` and the
-  loop variable to the element — what `ListLoop::new` relies on when it drops them.
+* **`Body.Drops` — DISCHARGED** (`newBody_drops`): `ListLoop::new` modelled over
+  proofs/expr_semantics' `E` with main's per-element evaluator `evalNode` on
+  `env + {var: v}`; the dropped literal `true` and loop variable evaluate as required.
+* **ExprEval frame property — DISCHARGED for the owner's fragment** (`evalNode_frame`):
+  expr_semantics' `evalNode` reads the row only through the `var` ids of the tree.
+* **Binder id uniqueness — NOT NEEDED for binder-free bodies** (`rowAgree`): with no nested
+  comprehension / quantifier / `reduce`, the only bound id is the loop variable's, which both
+  rows hold; every other id read is broadcast with `env.value_at(id)`
+  (`vectorPlan_broadcasts`, `outer_vals`, `lookup_of_mem`), and the batch columns read back
+  the element / outer value (`loopVar_get`, `broadcast_get`). So `RowAgree` holds, and
+  `colSound_binderFree` gives `Col.Sound`'s predicate half from columnar's `eval_sound`.
+* **Still CONDITIONAL — bodies with a nested `ListComprehension` / `Quantifier` / `Reduce`**,
+  which `collect_body_vars` *accepts* (eval.rs:388-392), so the classifier does not route
+  them per element. Missing owner models:
+  1. proofs/expr_semantics: `E` has no binder arm — every `eval_compound` arm is
+     `compound : Nat → List V → Except String V`, a function of child values, but the
+     `Quantifier` / `ListComprehension` / `Reduce` arms read the row (`to_owned_row` +
+     `insert`, eval.rs:1176-1240). Needed: those arms over expression trees with `env`.
+  2. proofs/binder: a theorem that in a bound pattern-free expression no id read free is
+     also minted by a nested binder elsewhere in it (otherwise it is not broadcast).
+     `bindNode_covers` gives `Env.Covers` preservation, but `Covers` at the start of an
+     expression is not an invariant of the binder (`comprehension_cleanup_breaks`,
+     `where_copy_id_reused`); needed: either that invariant restricted to *readable* keys,
+     or a direct freshness theorem for `reserve` within one `bindNode` run.
+* **Link between the two evaluator models (also missing):** columnar's `Dispatch.Lawful`
+  fields are proved against columnar's own per-row references (`VExpr.rowEval`, lanes);
+  `colSound_binderFree` takes as premise (`hS`) that `RowSem.rowEval` *is* expr_semantics'
+  `evalNode` on the batch row. No owner proves those two per-row models equal.
+
+## Proposed parser_grammar re-statements on the PR's parser
+
+`Model.step`, level 9, gains the fold (cypher.rs:2558-2572):
+`| .node .neg [lf (.int n)] => ret (lf (.int (-n))) K ts` (after the `i64::MIN` case, which
+already yields `-2^63`; `Tok.int` is non-negative, so `-n` is exact), and
+`| .node .neg [lf (.float f)] => ret (lf (.float (-f))) K ts` if the leaf alphabet has floats.
+Then:
+```
+theorem neg_binds_tighter_than_pow (a b : Nat) :
+    parseAll 400 [.dash, .int a, .pow, .int b] =
+      .ok (.node .pow [lf (.int (-(a : Int))), lf (.int b)]) [] := by rfl
+theorem sign_sequences :
+    parseAll 400 [.plus, .dash, .int 1] = .ok (lf (.int (-1))) [] ∧ … (other conjuncts unchanged)
+/-- `foldNeg` rewrites, bottom-up, each `node .neg [lf (.int n)]` to `lf (.int (-n))`
+(only a *direct* literal child: `-(1)` keeps its `paren` node, as the parser does). -/
+theorem bounded_agree :
+    ∀ l ∈ lists 3, agreeB (parseAll 400 l) ((G.all 200 l).map foldNeg) = true ∨ known l = true
+```
+(`-x.p` in `Theorems.lean:85` is unchanged: its child is a `prop` node, not a literal.)
 
 ## Live checks (main 9212add39 vs PR 6efd69cd6, release dylibs, ports 6540/6541)
 
