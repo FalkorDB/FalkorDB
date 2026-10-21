@@ -522,6 +522,11 @@ impl<T> Encode<19> for Matrix<T> {
         &self,
         w: &mut dyn Writer,
     ) {
+        // Unloading empties the matrix it is applied to, and a foreground SAVE,
+        // DUMP or GRAPH.COPY encodes the published version while read queries
+        // traverse it lock-free. So unload a private copy — a memcpy of the
+        // arrays — and free it with the container, never touching `self`.
+        let copy = self.dup();
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
@@ -532,7 +537,7 @@ impl<T> Encode<19> for Matrix<T> {
             );
             let container = container.assume_init();
 
-            let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
+            let info = GxB_unload_Matrix_into_Container(copy.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             // Write container struct bytes. Its pointer fields are heap
@@ -561,9 +566,7 @@ impl<T> Encode<19> for Matrix<T> {
             ManuallyDrop::new(Vector::<bool>::from((*container).i)).encode(w);
             ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
 
-            let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
+            // Frees the copy's arrays with the container; `copy` is left empty.
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);

@@ -1482,39 +1482,54 @@ impl Encode<19> for Tensor {
         // inline state. Single-edge pairs store the edge id directly; multi-edge
         // pairs (inline value == MULTI_EDGE) store `(edge_count | MSB)` and push
         // their full id list from `me` into the tensor section below.
-        let mut f_rows: Vec<u64> = Vec::new();
-        let mut f_cols: Vec<u64> = Vec::new();
-        let mut f_vals: Vec<u64> = Vec::new();
+        //
+        // When there is nothing pending in the deltas and no pair holds more than
+        // one edge, the base `m` already *is* that matrix — every value an edge
+        // id with the MSB clear — so it is written as is, the way
+        // `VersionedMatrix::encode` writes its base. Rebuilding it through an
+        // iterator and `build` costs three `u64` per edge in scratch vectors plus
+        // a second matrix (gigabytes, and most of a SAVE, at 10^8 edges).
+        self.wait_fwd();
         let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
-        for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
-            f_rows.push(src);
-            f_cols.push(dst);
-            if inline == MULTI_EDGE {
-                let (block, key) = compound_key(src, dst);
-                let ids: Vec<u64> = self
-                    .me_block(block)
-                    .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
-                    .unwrap_or_default();
-                f_vals.push(ids.len() as u64 | MSB_MASK);
-                multi.push((src, dst, ids));
-            } else {
-                f_vals.push(inline);
-            }
-        }
-
-        // Forward VersionedMatrix layout: base (effective), empty delta-plus,
-        // empty delta-minus. Folding dp into the base keeps the on-disk form
-        // canonical and matches what decode expects.
-        let empty = Matrix::<u64>::new(nrows, ncols);
-        if f_rows.is_empty() {
-            empty.encode(w);
+        if self.dp.nvals() == 0 && self.dm.nvals() == 0 && !self.has_multi_edge() {
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            self.m.encode(w);
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         } else {
-            let mut fm = Matrix::<u64>::new(nrows, ncols);
-            fm.build(&f_rows, &f_cols, &f_vals);
-            fm.encode(w);
+            let mut f_rows: Vec<u64> = Vec::new();
+            let mut f_cols: Vec<u64> = Vec::new();
+            let mut f_vals: Vec<u64> = Vec::new();
+            for (src, dst, inline) in self.fwd_iter(0, u64::MAX) {
+                f_rows.push(src);
+                f_cols.push(dst);
+                if inline == MULTI_EDGE {
+                    let (block, key) = compound_key(src, dst);
+                    let ids: Vec<u64> = self
+                        .me_block(block)
+                        .map(|me| me.iter(key, key).map(|(_, id)| id).collect())
+                        .unwrap_or_default();
+                    f_vals.push(ids.len() as u64 | MSB_MASK);
+                    multi.push((src, dst, ids));
+                } else {
+                    f_vals.push(inline);
+                }
+            }
+
+            // Forward VersionedMatrix layout: base (effective), empty delta-plus,
+            // empty delta-minus. Folding dp into the base keeps the on-disk form
+            // canonical and matches what decode expects.
+            let empty = Matrix::<u64>::new(nrows, ncols);
+            if f_rows.is_empty() {
+                empty.encode(w);
+            } else {
+                let mut fm = Matrix::<u64>::new(nrows, ncols);
+                fm.build(&f_rows, &f_cols, &f_vals);
+                fm.encode(w);
+            }
+            empty.encode(w); // delta-plus
+            empty.encode(w); // delta-minus
         }
-        empty.encode(w); // delta-plus
-        empty.encode(w); // delta-minus
 
         let total = self.edge_count();
         w.write_unsigned(total);
@@ -2491,6 +2506,52 @@ mod tests {
                 _ => Err("tape: expected buffer".to_string()),
             }
         }
+    }
+
+    /// A single-edge tensor with nothing pending in its deltas is written
+    /// straight from its base matrix; one with pending deltas is rebuilt from
+    /// the effective view. Both must decode to the same edges.
+    #[test]
+    fn encode_decode_round_trips_with_and_without_pending_deltas() {
+        ensure_init();
+        let round_trip = |t: &Tensor| {
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            let mut back = Tensor::decode(&mut tape).expect("decode");
+            assert!(tape.ops.is_empty(), "decode left part of the stream");
+            back.rebuild_backward();
+            back.wait();
+            back
+        };
+        let edges = |t: &Tensor| {
+            let mut e: Vec<(u64, u64, u64)> = t.fwd_iter(0, u64::MAX).collect();
+            e.sort_unstable();
+            e
+        };
+
+        let t = Tensor::new(16, 16);
+        let mut t = t.dup();
+        t.set_all_from_slices(&[1, 1, 2, 5, 9], &[2, 3, 2, 5, 0], &[10, 11, 12, 13, 14]);
+        t.remove_all(&[(11, 1, 3)]);
+        t.set_all_from_slices(&[7], &[8], &[15]);
+        t.wait();
+        let expect = vec![(1, 2, 10), (2, 2, 12), (5, 5, 13), (7, 8, 15), (9, 0, 14)];
+        assert_eq!(edges(&t), expect);
+
+        // Whatever `t` holds in its deltas, a decoded tensor holds none: the
+        // second round trip is the one written straight from the base.
+        let once = round_trip(&t);
+        assert_eq!(once.dp.nvals() + once.dm.nvals(), 0);
+        assert!(!once.has_multi_edge());
+        let twice = round_trip(&once);
+        for back in [&once, &twice] {
+            assert_eq!(edges(back), expect);
+            assert_eq!(back.edge_count(), expect.len() as u64);
+            assert_eq!(back.get(1, 3).count(), 0);
+            assert_eq!(back.get(7, 8).collect::<Vec<_>>(), vec![15]);
+        }
+        // Writing unloads and reloads the base in place; it must still be whole.
+        assert_eq!(edges(&once), expect);
     }
 
     /// The round trip has to survive blocks. The blob stores endpoints rather
