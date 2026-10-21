@@ -6,7 +6,8 @@ There is one Lake project per area under `proofs/<area>/` (35 projects, includin
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
 functions_str_list; the PR review projects `pr2845_review` and `pr2917_review` were
 retired on 2026-10-15 after their PRs merged, their theorems folded into the owning
-projects).
+projects). Open PR reviews (2026-10-21, rows commented out until merge): `pr3435_review`,
+`pr3436_review`, `pr3438_review` — see "PR reviews (2026-10-21)" below.
 All projects pin Lean `leanprover/lean4:v4.35.0` (upgraded from v4.34.0 on 2026-10-15).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
@@ -339,6 +340,16 @@ A triage of every open `type:Bug label:rust` issue (live on Rust main 9d3869aa8 
 - #3375 (aggregate/binder ids): count(x)'s output id equals sum(x)'s accumulator id and is written into `combined` first, so sum returns the count (3 vs 6) and avg panics in finalize_avg. Lean bug3375_output_overwrites_next_acc, bug3375_avg_panics; property OutputsOwnAcc.
 - #3380 (udf): algo.betweenness defaults to 16 sources (C 32), never randomises without a seed (C uses the clock), and drops colliding seeded draws (samplingSize 20, seed 7 on 40 nodes → 15 sources). Lean bug3380_default_size_16, bug3380_seedless_deterministic, bug3380_seeded_fewer_sources; property DefaultSizeMatchesC, SeedlessRunVaries, SourcesExact.
 - #3382 (idx): db.idx.vector.queryNodes answers from a half-built index (0 rows, then 3, while UNDER CONSTRUCTION); Indexer::vector_query never checks is_operational, while C refuses until OPERATIONAL. Lean IndexLayer.Meta.Ixr.bug3382_vector_query_ignores_operational; property VectorQueryRequiresOperational.
+
+### PR reviews (2026-10-21)
+Four performance PRs from reproducing the one.semurg.io graph benchmark (SNAP com-Orkut) were reviewed with the proofs before merge, each in `proofs/pr<N>_review/` with its COVERAGE rows commented out until it merges. Each review models the PR's code (cites to the PR branch), proves or refutes its claims, and checks that the owners' theorems still hold (they do; only `file:line` cites shift, listed in each review's header).
+- **#3435** (`algo.BFS`: lend the clean tensor base instead of copying it, bitmap visited set, push/pull over the UINT64 forward and BOOL backward bases): `Clean.cleanFwd_eq_extract`, `Bfs.bfsFull_correct` (exact BFS levels for every push/pull choice sequence), `Algo.nodes_same_as_main`. GraphBLAS/LAGraph C specs only. The review found three defects in the PR, which were fixed in it before merge (a76e66420): an `i32` level counter that wraps on a 2^31-level path (`pre_a76e664_overflow_needs_huge_graph`), an out-of-range source silently giving an empty traversal where LAGraph errors (`pre_a76e664_pushPull_src_out_of_range`), and a leak on allocation failure (`pre_a76e664_frontier_alloc_leaks`).
+- **#3436** (a read query borrows its graph once): `Cell.read_program_same`, `Protocol.reader_guard_sound`, `DropOrder.drop_sound`. It **refuted the PR's stated premise** ("a published version is never mutably borrowed"): `Pending::resync_published_indexes` does (`Protocol.published_borrowed_mut`). The held borrow is still sound because that runs under the per-graph write lock and a read runtime lives inside its session's read lock. The PR's SAFETY comment was corrected (896ba73ef).
+- **#3438** (SAVE: no quadratic per-key attribute walk, direct tensor base encode, `Matrix::encode` unloads a private dup): `prEncode_eq_main`, `encodeGraphPR_eq`, `encRoarPR_eq`, `fast_base_eq`, `pr_self_never_unloaded`. `RoaringTreemap`'s `rank`/`select`/`advance_to` are definitions on the owners' sorted-set abstraction (the crate is trusted to implement it at the same level as `contains`/`iter`; checked by a randomized test against roaring 0.11.5). `Matrix::encode`'s bytes can differ from main's (less allocation slack), but decode to the same matrix (`decode_pr`).
+- **#3437** (columnar list-comprehension bodies): review in progress; see its project when it lands.
+
+Confirmed bug found by these reviews (pre-existing on main, not caused by any of the PRs):
+- **#3439 (srv, crash)**: a queued write calls `release_locks()` (`graph_core.rs:858`) and then serializes its reply with per-access borrows of its now-published version (`reply.rs:428-470`). An inline write inside `MULTI` that fails after a Commit runs `resync_published_indexes` (`pending.rs:1684`), whose `borrow_mut` on that version panics on the main thread ("already immutably borrowed"), killing the server. Repro `proofs/pr3436_review/repro.py P 20 2 1 0` after `CREATE INDEX FOR (n:L) ON (n.v)`: Rust main 9212add39 and b6567cb97 die within ~1 s; C survives (494 failed writes in 20 s, `:L` count 0). Lean `Protocol.writer_reply_race`, `writer_reply_race_rev`. Suggested fix: serialize the reply before `release_locks`, or have resync update the index without `borrow_mut` on the published cell.
 
 ### Merged
 - 2026-10-20 on main (now b6567cb97): #2954 (list comprehension over null is null, over a scalar a type error; closes #2928; fixes W2-strlist-6; `Value::name` spells Edge/Vectorf32 as C and `typeOf` = `name`). Proofs re-targeted: 35 projects green; 2601 PROVEN + 23 CONDITIONAL of 2624 non-FFI, non-test fns (99.1%); 0 unlisted, 0 unmatched.
