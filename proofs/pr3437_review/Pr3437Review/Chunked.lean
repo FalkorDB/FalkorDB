@@ -4,9 +4,11 @@ import Pr3437Review.ListLoop
 # PR #3437: the columnar half and the chunk loop (`list_loop_columnar`, `list_loop_chunk`)
 
 `columnar` is `list_loop_columnar` (eval.rs:1550-1652) with the vector evaluator abstracted
-to `Col`: `colP` = `ve.eval(predicate, &batch, &all)` (:1569), `colJ` =
-`ve.eval(projection, &batch, &passed)` (:1630), `colJv` = `ve.eval_values(projection, ..)`
-(:1643). Its only assumption is `Col.Sound`: a column the vector evaluator *returns* holds,
+to `Col` over the chunk's batch: `colP chunk` = `ve.eval(predicate, &batch, &all)` (:1569),
+`colJ chunk passed` = `ve.eval(projection, &batch, &passed)` (:1630), `colJv chunk passed` =
+`ve.eval_values(projection, &batch, &passed)` (:1643) — `passed` the row indices that passed
+(`passedIdx`, :1617-1628), as in Rust (since 2026-10-21; the model used to hand the
+projection the passed *elements*). Its only assumption is `Col.Sound`: a column the vector evaluator *returns* holds,
 row by row, what the per-element evaluator returns (`Bridge.lean` derives it from columnar's
 `Dispatch.eval_sound`). Nothing is assumed when it errors: `chunkStep` then re-runs the
 chunk per element, which is main's loop (`perElem_eq`).
@@ -36,14 +38,17 @@ def EC.vals' : EC F → List (V F)
 
 structure Col (F : Type) where
   colP : List (V F) → Except String (EC F)
-  colJ : List (V F) → Except String (EC F)
-  colJv : List (V F) → Except String (List (V F))
+  colJ : List (V F) → List Nat → Except String (EC F)
+  colJv : List (V F) → List Nat → Except String (List (V F))
 
-/-- The vector evaluator's contract (see `Bridge.colSound_of_lawful`). -/
+/-- The vector evaluator's contract (`Bridge.colSound`): a column it returns over the chunk's
+batch holds main's per-element values of the elements at those rows. -/
 structure Col.Sound (c : Col F) (pe pj : V F → Except String (V F)) : Prop where
   pred : ∀ xs col, c.colP xs = .ok col → xs.mapM pe = .ok col.vals'
-  proj : ∀ xs col, c.colJ xs = .ok col → ∃ ys, xs.mapM pj = .ok ys
-  projV : ∀ xs ys, c.colJv xs = .ok ys → xs.mapM pj = .ok ys
+  proj : ∀ xs rows col, c.colJ xs rows = .ok col → (∀ r ∈ rows, r < xs.length) →
+    ∃ ys, (rows.map (xs.getD · .null)).mapM pj = .ok ys
+  projV : ∀ xs rows ys, c.colJv xs rows = .ok ys → (∀ r ∈ rows, r < xs.length) →
+    (rows.map (xs.getD · .null)).mapM pj = .ok ys
 
 /-- The elements whose predicate value is `Bool(true)`, in order. -/
 def filterPass (chunk ps : List (V F)) : List (V F) :=
@@ -73,11 +78,20 @@ def tallyNoProj (len : Nat) : Option (EC F) → Nat
   | some (.bools cs) => (cs.filter fun q => q.1 && !q.2).length
   | some (.vals vs) => (vs.filter isTrue).length
 
-/-- `passed` (eval.rs:1617-1628). -/
+/-- `passed` as elements (`passed.iter().map(|&i| chunk[i])`, eval.rs:1639). -/
 def passedOf (chunk : List (V F)) : Option (EC F) → List (V F)
   | none => chunk
   | some (.bools cs) => ((chunk.zip cs).filter fun q => q.2.1 && !q.2.2).map (·.1)
   | some (.vals vs) => filterPass chunk vs
+
+/-- `passed` (eval.rs:1617-1628): `all.retain(|&i| mask[i] && !nulls.is_null(i))` /
+`all.retain(|&i| matches!(column.get(i), Value::Bool(true)))`. -/
+def passedIdx (len : Nat) : Option (EC F) → List Nat
+  | none => List.range len
+  | some (.bools cs) => (List.range len).filter fun i => match cs[i]? with
+    | some q => q.1 && !q.2
+    | none => false
+  | some (.vals vs) => (List.range len).filter fun i => isTrue (vs.getD i .null)
 
 /-- `list_loop_columnar` (eval.rs:1550-1652). -/
 def columnar (b : Body F) (c : Col F) (s : Sink F) (chunk : List (V F)) : Except String (Sink F) :=
@@ -88,14 +102,15 @@ def columnar (b : Body F) (c : Col F) (s : Sink F) (chunk : List (V F)) : Except
   | .tally k =>
     if !b.hasProj then pure (.tally (k + tallyNoProj chunk.length tested))
     else
-      (if (passedOf chunk tested).isEmpty then pure () else (c.colJ (passedOf chunk tested)).map fun _ => ())
-        >>= fun _ => pure (.tally (k + (passedOf chunk tested).length))
+      (if (passedIdx chunk.length tested).isEmpty then pure ()
+       else (c.colJ chunk (passedIdx chunk.length tested)).map fun _ => ())
+        >>= fun _ => pure (.tally (k + (passedIdx chunk.length tested).length))
   | .collect acc =>
     if !b.hasProj then
-      if (passedOf chunk tested).length = chunk.length then pure (.collect (acc ++ chunk))
-      else pure (.collect (acc ++ passedOf chunk tested))
-    else if (passedOf chunk tested).isEmpty then pure (.collect acc)
-    else (c.colJv (passedOf chunk tested)).map fun ys => .collect (acc ++ ys)
+      if (passedIdx chunk.length tested).length = chunk.length then pure (.collect (acc ++ chunk))
+      else pure (.collect (acc ++ (passedIdx chunk.length tested).map (chunk.getD · .null)))
+    else if (passedIdx chunk.length tested).isEmpty then pure (.collect acc)
+    else (c.colJv chunk (passedIdx chunk.length tested)).map fun ys => .collect (acc ++ ys)
 
 /-! ## Main's loop over precomputed predicate values -/
 
@@ -286,6 +301,62 @@ theorem tally_bools : ∀ (chunk : List (V F)) (cs : List (Bool × Bool)), chunk
 
 end
 
+/-! ## `passed` as indices -/
+
+theorem filterIdx_map {α β : Type} (P : β → Bool) (d : α) (dq : β) :
+    ∀ (chunk : List α) (qs : List β), chunk.length = qs.length →
+      ((List.range chunk.length).filter (fun i => P (qs.getD i dq))).map (chunk.getD · d) =
+        ((chunk.zip qs).filter (fun q => P q.2)).map (·.1)
+  | [], _, _ => rfl
+  | _ :: _, [], h => by simp at h
+  | x :: xs, q :: qs, h => by
+    simp only [List.length_cons, Nat.add_right_cancel_iff] at h
+    have ih := filterIdx_map P d dq xs qs h
+    rw [List.length_cons, List.range_succ_eq_map, List.filter_cons, List.filter_map, List.zip_cons_cons,
+      List.filter_cons]
+    have hc : ((fun i => P ((q :: qs).getD i dq)) ∘ Nat.succ) = fun i => P (qs.getD i dq) := by
+      funext i; simp
+    rw [hc]
+    by_cases hp : P q
+    · simp only [List.getD_cons_zero, hp, ite_true, List.map_cons, List.map_map]
+      congr 1
+    · simp only [List.getD_cons_zero, hp, Bool.false_eq_true, ite_false, List.map_map]
+      rw [← ih]; rfl
+
+theorem range_map_getD {α : Type} (d : α) (chunk : List α) :
+    (List.range chunk.length).map (chunk.getD · d) = chunk := by
+  apply List.ext_getElem
+  · simp
+  · intro i h1 h2; simp at h1; simp [List.getElem?_eq_getElem h1]
+
+/-- The passed indices pick out exactly the passed elements. -/
+theorem passedIdx_map (chunk : List (V F)) (tested : Option (EC F))
+    (hlen : ∀ col, tested = some col → col.vals'.length = chunk.length) :
+    (passedIdx chunk.length tested).map (chunk.getD · .null) = passedOf chunk tested := by
+  cases tested with
+  | none => exact range_map_getD _ chunk
+  | some col =>
+    have hl := hlen col rfl
+    cases col with
+    | bools cs =>
+      simp only [EC.vals', List.length_map] at hl
+      simp only [passedIdx, passedOf]
+      have : (fun i => match cs[i]? with | some q => q.1 && !q.2 | none => false) =
+          fun i => (fun q : Bool × Bool => q.1 && !q.2) (cs.getD i (false, true)) := by
+        funext i; simp only [List.getD_eq_getElem?_getD]; cases cs[i]? <;> rfl
+      rw [this]
+      exact filterIdx_map (fun q : Bool × Bool => q.1 && !q.2) .null (false, true) chunk cs hl.symm
+    | vals vs =>
+      simp only [EC.vals'] at hl
+      simp only [passedIdx, passedOf, filterPass]
+      exact filterIdx_map isTrue .null .null chunk vs hl.symm
+
+theorem passedIdx_lt (len : Nat) (tested : Option (EC F)) : ∀ r ∈ passedIdx len tested, r < len := by
+  intro r hr
+  cases tested with
+  | none => exact List.mem_range.1 hr
+  | some col => cases col <;> simp only [passedIdx, List.mem_filter, List.mem_range] at hr <;> exact hr.1
+
 /-! ## The columnar half is sound -/
 
 section
@@ -297,10 +368,11 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
     (h : (if b.hasPred then (c.colP chunk).map some else pure none) = .ok tested) :
     ∃ ps, chunk.mapM b.pe = .ok ps ∧ passedOf chunk tested = filterPass chunk ps ∧
       countLocal chunk.length tested = ps.foldlM cstep (0, 0, 0) ∧
-      tallyNoProj chunk.length tested = (filterPass chunk ps).length := by
+      tallyNoProj chunk.length tested = (filterPass chunk ps).length ∧
+      (∀ col, tested = some col → col.vals'.length = chunk.length) := by
   cases hp : b.hasPred
   · simp only [hp, Bool.false_eq_true, ite_false, pure, Except.pure, Except.ok.injEq] at h; subst h
-    refine ⟨chunk.map fun _ => .bool true, ?_, ?_, ?_, ?_⟩
+    refine ⟨chunk.map fun _ => .bool true, ?_, ?_, ?_, ?_, by simp⟩
     · have : ∀ xs : List (V F), xs.mapM b.pe = .ok (xs.map fun _ => .bool true) := by
         intro xs; induction xs with
         | nil => rfl
@@ -316,7 +388,7 @@ theorem tested_spec (hd : b.Drops) (hc : c.Sound b.pe b.pj) (chunk : List (V F))
       simp only [hcol, Except.map, Except.ok.injEq] at h; subst h
       have hm := hc.pred chunk col hcol
       have hl := mapM_length hm
-      refine ⟨col.vals', hm, ?_, ?_, ?_⟩
+      refine ⟨col.vals', hm, ?_, ?_, ?_, fun c' hc' => by cases hc'; exact hl⟩
       · cases col with
         | bools cs => simp only [passedOf, EC.vals']; exact passed_bools chunk cs
         | vals vs => rfl
@@ -339,7 +411,14 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
   | error e => rw [ht] at h; simp [bind, Except.bind] at h
   | ok tested =>
     rw [ht] at h; simp only [bind, Except.bind] at h
-    obtain ⟨ps, hm, hpass, hcount, htally⟩ := tested_spec b c hd hc chunk tested ht
+    obtain ⟨ps, hm, hpass, hcount, htally, htl⟩ := tested_spec b c hd hc chunk tested ht
+    have hpi : (passedIdx chunk.length tested).map (chunk.getD · .null) = filterPass chunk ps := by
+      rw [passedIdx_map chunk tested htl, hpass]
+    have hplen : (passedIdx chunk.length tested).length = (filterPass chunk ps).length := by
+      rw [← hpi, List.length_map]
+    have hemp : (passedIdx chunk.length tested).isEmpty = (filterPass chunk ps).isEmpty := by
+      rw [← hpi]; cases passedIdx chunk.length tested <;> rfl
+    have hlt := passedIdx_lt chunk.length tested
     cases s with
     | count t f n =>
       simp only [hcount] at h
@@ -352,40 +431,40 @@ theorem columnar_sound (hd : b.Drops) (hc : c.Sound b.pe b.pj) (s : Sink F) (chu
       cases hj : b.hasProj
       · simp only [hj, Bool.not_false, ite_true, pure, Except.pure, Except.ok.injEq] at h
         rw [mapM_id (hd.projId hj)]; simp [Except.map, ← h, htally]
-      · simp only [hj, Bool.not_true, Bool.false_eq_true, ite_false] at h
-        rw [hpass] at h
+      · simp only [hj, Bool.not_true, Bool.false_eq_true, ite_false, hemp, hplen] at h
         by_cases he : (filterPass chunk ps).isEmpty = true
         · simp only [he, ite_true, pure, Except.pure, Except.ok.injEq] at h
           rw [List.isEmpty_iff.1 he] at h ⊢; simp [← h, pure, Except.pure, Except.map]
         · simp only [he, Bool.false_eq_true, ite_false] at h
-          cases hJ : c.colJ (filterPass chunk ps) with
+          cases hJ : c.colJ chunk (passedIdx chunk.length tested) with
           | error e => simp [hJ, Except.map, bind, Except.bind] at h
           | ok col =>
             simp only [hJ, Except.map, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
-            obtain ⟨ys, hys⟩ := hc.proj _ col hJ
+            obtain ⟨ys, hys⟩ := hc.proj _ _ col hJ hlt
+            rw [hpi] at hys
             simp [hys, Except.map, ← h]
     | collect acc =>
       rw [ref_collect_pre _ _ chunk ps acc hm]
       cases hj : b.hasProj
-      · simp only [hj, Bool.not_false, ite_true] at h
+      · simp only [hj, Bool.not_false, ite_true, hplen, hpi] at h
         rw [mapM_id (hd.projId hj)]
-        rw [hpass] at h
         by_cases hlen : (filterPass chunk ps).length = chunk.length
         · simp only [hlen, ite_true, pure, Except.pure, Except.ok.injEq] at h
           rw [filterPass_full chunk ps hlen]; simp [Except.map, ← h]
         · simp only [hlen, ite_false, pure, Except.pure, Except.ok.injEq] at h
           simp [Except.map, ← h]
-      · simp only [hj, Bool.not_true, Bool.false_eq_true, ite_false] at h
-        rw [hpass] at h
+      · simp only [hj, Bool.not_true, Bool.false_eq_true, ite_false, hemp] at h
         by_cases he : (filterPass chunk ps).isEmpty = true
         · simp only [he, ite_true, pure, Except.pure, Except.ok.injEq] at h
           rw [List.isEmpty_iff.1 he]; simp [← h, pure, Except.pure, Except.map]
         · simp only [he, Bool.false_eq_true, ite_false] at h
-          cases hJ : c.colJv (filterPass chunk ps) with
+          cases hJ : c.colJv chunk (passedIdx chunk.length tested) with
           | error e => simp [hJ, Except.map] at h
           | ok ys =>
             simp only [hJ, Except.map, Except.ok.injEq] at h
-            simp [hc.projV _ ys hJ, Except.map, ← h]
+            have := hc.projV _ _ ys hJ hlt
+            rw [hpi] at this
+            simp [this, Except.map, ← h]
 
 end
 
