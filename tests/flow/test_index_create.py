@@ -881,6 +881,12 @@ class testIndexCreationFlow():
              "Invalid vector index configuration"),
             ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2}",
              "Invalid vector index configuration"),
+            # an unknown similarity function is refused whatever the
+            # dimension, including 0 (an index no vector can enter)
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2, similarityFunction:'bogus'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:0, similarityFunction:'bogus'}",
+             "Invalid vector index configuration"),
             ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {foo:1}",
              "unknown option 'foo'"),
             ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {weight:1, foo:1}",
@@ -898,6 +904,9 @@ class testIndexCreationFlow():
         res = graph.query("CREATE VECTOR INDEX FOR (n:C) ON (n.v) OPTIONS {dimension:2, similarityFunction:'COSINE'}")
         self.env.assertEqual(res.indices_created, 1)
         res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
+        self.env.assertEqual(res.indices_created, 1)
+        # dimension 0 is accepted, as in C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:E) ON (n.v) OPTIONS {dimension:0, similarityFunction:'cosine'}")
         self.env.assertEqual(res.indices_created, 1)
 
         # the similarity function is stored normalized

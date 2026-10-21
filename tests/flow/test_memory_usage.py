@@ -1,3 +1,4 @@
+import socket
 import itertools
 
 from common import *
@@ -76,6 +77,17 @@ class testGraphMemoryUsage(FlowTestsBase):
     def _assert_mb_close(self, actual, expected, tolerance_mb=1):
         self.env.assertLessEqual(abs(actual - expected), tolerance_mb)
 
+    def _raw_reply_line(self, args):
+        # First line of the server's raw RESP reply to `args`.
+        kw = self.conn.connection_pool.connection_kwargs
+        req = f"*{len(args)}\r\n" + "".join(f"${len(a)}\r\n{a}\r\n" for a in args)
+        with socket.create_connection((kw.get("host", "localhost"), kw["port"])) as sock:
+            sock.sendall(req.encode())
+            buf = b""
+            while b"\r\n" not in buf:
+                buf += sock.recv(4096)
+        return buf.split(b"\r\n")[0].decode()
+
     def test_invalid_call(self):
         """test error reporting from invalid calls to GRAPH.MEMORY USAGE"""
 
@@ -138,6 +150,17 @@ class testGraphMemoryUsage(FlowTestsBase):
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("SAMPLES must be a non-negative integer", str(e))
+
+        # The error lines exactly as C sends them. redis-py strips a leading
+        # `ERR `, so read the raw reply.
+        for args, expected in [
+                (["USAGE", GRAPH_ID, "SAMPLES", "-20"],
+                 "-SAMPLES must be a non-negative integer"),
+                (["USAGE", GRAPH_ID, "FOO", "3"],
+                 "-ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>"),
+                (["FOO", GRAPH_ID],
+                 "-ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key>")]:
+            self.env.assertEqual(self._raw_reply_line(["GRAPH.MEMORY"] + args), expected)
 
         # zero samples is accepted, as in C (clamped to one sample)
         res = self.conn.execute_command(f"GRAPH.MEMORY USAGE {GRAPH_ID} SAMPLES 0")
