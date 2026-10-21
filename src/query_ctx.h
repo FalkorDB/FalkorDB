@@ -227,6 +227,11 @@ void QueryCtx_PrintQuery(void);
 // acquire graph's read lock
 void QueryCtx_AcquireReadLock (void) ;
 
+// acquire graph's read lock for a reader query, waiting out any pending writer
+// (the writer gate) with the total wait bounded by timeout_ms (<= 0 blocks)
+// returns true if acquired, false if the timeout elapsed first
+bool QueryCtx_TimeAcquireReadLock (int64_t timeout_ms) ;
+
 // acquire graph's write lock
 bool QueryCtx_AcquireWriteLock (void) ;
 
