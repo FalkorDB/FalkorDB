@@ -17,6 +17,7 @@ import Columnar.CaseLane
 import Columnar.FuncLane
 import Columnar.HasLabelsFn
 import Columnar.LaneWF
+import Columnar.CoreBridge
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition
