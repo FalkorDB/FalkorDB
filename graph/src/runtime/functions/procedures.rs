@@ -46,8 +46,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["label"],
         fn db_labels(runtime, _args) {
             let col_label: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_labels()
                 .iter()
                 .map(|l| Value::String(l.clone()))
@@ -63,8 +62,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["relationshipType"],
         fn db_types(runtime, _args) {
             let col_type: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_types()
                 .iter()
                 .map(|t| Value::String(t.clone()))
@@ -80,8 +78,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["propertyKey"],
         fn db_properties(runtime, _args) {
             let col_key: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_attrs()
                 .map(|p| Value::String(p.clone()))
                 .collect();

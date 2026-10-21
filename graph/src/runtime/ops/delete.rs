@@ -254,7 +254,10 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id, &mut self.g.borrow_mut())
+                        .remove_pending_relationships_for_node(
+                            id,
+                            &mut self.graph_cell().borrow_mut(),
+                        )
                         .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());
@@ -408,7 +411,7 @@ impl Runtime<'_> {
                     let (label_ids, attrs, pending_rels) = self
                         .pending
                         .borrow_mut()
-                        .delete_pending_node(id, &mut self.g.borrow_mut())
+                        .delete_pending_node(id, &mut self.graph_cell().borrow_mut())
                         .map_err(|e| e.to_string())?;
                     // Snapshot the cascaded relationships so expressions still
                     // holding them (e.g. `startNode(r)`) can be evaluated after
@@ -449,7 +452,10 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id, &mut self.g.borrow_mut())
+                        .remove_pending_relationships_for_node(
+                            id,
+                            &mut self.graph_cell().borrow_mut(),
+                        )
                         .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());

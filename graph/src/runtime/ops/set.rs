@@ -104,7 +104,7 @@ impl Runtime<'_> {
                     var: var.clone(),
                     labels: labels
                         .iter()
-                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_cell().borrow_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                 },
                 SetItem::Attribute {
@@ -284,8 +284,7 @@ impl Runtime<'_> {
                                     Value::Map(map) => {
                                         if *replace {
                                             let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
+                                                .graph()
                                                 .get_relationship_attrs(target_rel)
                                                 .collect();
                                             for key in keys {
@@ -320,8 +319,7 @@ impl Runtime<'_> {
                                         let attrs = self.get_node_attrs(sid);
                                         if *replace {
                                             let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
+                                                .graph()
                                                 .get_relationship_attrs(target_rel)
                                                 .collect();
                                             for key in keys {
@@ -351,8 +349,7 @@ impl Runtime<'_> {
                                         let attrs = self.get_relationship_attrs(source_rel);
                                         if *replace {
                                             let keys: Vec<Arc<String>> = self
-                                                .g
-                                                .borrow()
+                                                .graph()
                                                 .get_relationship_attrs(target_rel)
                                                 .collect();
                                             for key in keys {

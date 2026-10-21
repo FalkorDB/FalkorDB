@@ -322,12 +322,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         Box::new(g.get_indexed_nodes(self.index, q));
                     it
                 } else {
-                    Box::new(
-                        self.runtime
-                            .g
-                            .borrow()
-                            .get_nodes(&self.node_pattern.labels, 0),
-                    )
+                    Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0))
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {

@@ -107,6 +107,16 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
+/// A read query's borrow of its graph together with an owner of the cell it
+/// borrows. The guard is lifetime-extended to `'static`; it is sound because
+/// `_owner` keeps that cell alive for as long as the guard exists — fields drop
+/// in declaration order, so `guard` is released before `_owner` — whatever
+/// happens to anything else holding the graph.
+struct HeldRead {
+    guard: AtomicRef<'static, Graph>,
+    _owner: Arc<AtomicRefCell<Graph>>,
+}
+
 /// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
 pub enum GraphRef<'r> {
     /// The read query's borrow, taken once for the query's whole life.
@@ -142,12 +152,12 @@ impl std::ops::Deref for GraphRef<'_> {
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// A read query's one borrow of `g`, held for the query's whole life; see
-    /// [`Self::graph`]. Declared before `g` so it is dropped first.
-    read_guard: Option<AtomicRef<'static, Graph>>,
-    /// Graph being queried (shared, thread-safe reference). Read through
-    /// [`Self::graph`]; never reassigned, since `read_guard` borrows it.
-    pub g: Arc<AtomicRefCell<Graph>>,
+    /// A read query's one borrow of its graph, held for the query's whole
+    /// life; see [`Self::graph`].
+    read_guard: Option<HeldRead>,
+    /// Graph being queried. Private, so it cannot be replaced or detached:
+    /// read it through [`Self::graph`], or [`Self::graph_cell`] for the cell.
+    g: Arc<AtomicRefCell<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -458,11 +468,21 @@ impl<'a> Runtime<'a> {
         // proofs/pr3436_review, `Protocol.reader_guard_sound`). Were that to
         // change, the `borrow_mut` would panic rather than race.
         //
-        // SAFETY: the guard borrows the cell inside `g`'s heap allocation, which
-        // this `Runtime` keeps alive through `g` (never reassigned) for longer
-        // than the guard: `read_guard` is declared before `g`, so it drops first.
-        let read_guard = (!write).then(|| unsafe {
-            std::mem::transmute::<AtomicRef<'_, Graph>, AtomicRef<'static, Graph>>(g.borrow())
+        let read_guard = (!write).then(|| {
+            let owner = Arc::clone(&g);
+            // SAFETY: the guard borrows the cell inside `owner`'s allocation,
+            // and `HeldRead` keeps `owner` alive for the guard's whole life
+            // (the guard is declared first, so it drops first). Moving the
+            // `Arc` does not move the cell it points to.
+            let guard = unsafe {
+                std::mem::transmute::<AtomicRef<'_, Graph>, AtomicRef<'static, Graph>>(
+                    owner.borrow(),
+                )
+            };
+            HeldRead {
+                guard,
+                _owner: owner,
+            }
         });
         Self {
             parameters,
@@ -533,9 +553,17 @@ impl<'a> Runtime<'a> {
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
         match &self.read_guard {
-            Some(g) => GraphRef::Held(g),
+            Some(held) => GraphRef::Held(&held.guard),
             None => GraphRef::Borrowed(self.g.borrow()),
         }
+    }
+
+    /// The cell holding this query's graph, for the code that needs the cell
+    /// itself rather than a borrow of it (commit, effects, index DDL, UDFs).
+    /// Read-only: the graph a runtime runs on cannot be replaced.
+    #[must_use]
+    pub fn graph_cell(&self) -> &Arc<AtomicRefCell<Graph>> {
+        &self.g
     }
 
     /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating

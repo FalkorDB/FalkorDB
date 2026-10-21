@@ -127,8 +127,7 @@ impl Runtime<'_> {
                     }
                     if let Some(labels) = labels {
                         let mut current_labels = self
-                            .g
-                            .borrow()
+                            .graph()
                             .get_node_label_ids(node)
                             .collect::<OrderSet<_>>();
                         self.pending
@@ -136,7 +135,7 @@ impl Runtime<'_> {
                             .update_node_labels(node, &mut current_labels);
                         let labels = labels
                             .iter()
-                            .filter_map(|l| self.g.borrow_mut().get_label_id(l.as_str()))
+                            .filter_map(|l| self.graph_cell().borrow_mut().get_label_id(l.as_str()))
                             .filter(|l| current_labels.contains(l))
                             .collect::<Vec<_>>();
                         self.pending.borrow_mut().remove_node_labels(node, &labels);
