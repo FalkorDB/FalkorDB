@@ -80,7 +80,7 @@ class TestQuerySet:
 
         It measures a write against a large edge population, which only exists
         because `bulk edges 200k` built it. Selected alone -- or reordered ahead
-        of the builder -- it measures the same write at SETUP's ~10k edges and
+        of the builder -- it measures the same write at SETUP's ~20k edges and
         reports a number that looks fine, the same way a `cg` row running dry
         quietly measures a no-op. Nothing else in the suite is sensitive to |E|,
         so there is no second row to catch the mistake.
@@ -98,7 +98,7 @@ class TestQuerySet:
         """Selecting the measured row alone must still run its builder.
 
         `_select` keeps only what is named, so without `needs` a run picking
-        `edge create at 200k` measures the same write against SETUP's ~10k edges
+        `edge create at 200k` measures the same write against SETUP's ~20k edges
         and reports a plausible, wrong number -- the failure mode has no symptom.
         """
         from falkorbench.cli import _select
