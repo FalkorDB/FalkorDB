@@ -82,6 +82,7 @@ use reduce_bound_edge::reduce_bound_edge;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
 use reduce_var_len_path::reduce_var_len_path;
+pub(crate) use references::ir_references_variable;
 use reorder_labels::reorder_labels;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
 use select_scan_node::select_scan_node;
