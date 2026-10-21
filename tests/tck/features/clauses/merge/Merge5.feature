@@ -264,7 +264,6 @@ Feature: Merge5 - Merge relationships
       | [:KNOWS {name: 'cd'}] |
     And no side effects
 
-  @skip
   Scenario: [14] Using list properties via variable
     Given an empty graph
     When executing query:

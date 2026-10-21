@@ -1,0 +1,149 @@
+//! `GRAPH.QUERY` command handler.
+//!
+//! Executes read/write Cypher queries, auto-creates graphs when missing,
+//! and supports compact output and memory-tracking flags.
+//!
+//! ## Execution flow
+//! ```text
+//! GRAPH.QUERY key query [--compact] [--track-memory]
+//!        |
+//!        +--> parse flags
+//!        +--> open writable key
+//!        +--> create graph if missing
+//!        +--> delegate to graph_core::query_mut(..., write=true)
+//!        +--> return NoReply (client unblocked asynchronously later)
+//! ```
+//!
+//! The handler is intentionally thin: it validates command arguments and
+//! chooses the target graph, while runtime execution is centralized in
+//! `graph_core`.
+
+use crate::{
+    commands::query_args::{QueryFlags, parse_query_flags},
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{
+        ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
+        reply_invalid_graph_version, up_to_nul,
+    },
+    redis_type::GRAPH_TYPE,
+};
+use parking_lot::RwLock;
+use redis_module::{Context, NextArg, RedisResult, RedisString};
+use std::sync::Arc;
+#[cfg(feature = "fuzz")]
+use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(feature = "fuzz")]
+use std::{fs::File, io::Write};
+
+#[cfg(feature = "fuzz")]
+static FILE_ID: AtomicI32 = AtomicI32::new(0);
+
+#[allow(unused_imports)]
+pub fn graph_query(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let QueryFlags {
+        compact,
+        track_memory,
+        timeout,
+        version: version_check,
+    } = parse_query_flags(&args)?;
+    let mut args = args.into_iter().skip(1);
+    let key_str = args.next_arg()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
+
+    #[cfg(feature = "fuzz")]
+    {
+        let id = FILE_ID.fetch_add(1, Ordering::Relaxed);
+        let mut file = File::create(format!("fuzz/corpus/fuzz_target_runtime/output{id}.txt"))?;
+        file.write_all(query.as_bytes())?;
+    }
+
+    // Try read-only key access first to avoid triggering WATCH on existing graphs.
+    //
+    // `key_name` is the *key* the graph lives at, not C's name for it: replication,
+    // `WATCH` signalling, the registry and telemetry all address Redis by it, and a
+    // write replicated against a name no key answers to leaves a replica that never
+    // reconverges. For a graph that already exists that key is the one the command
+    // named, NUL and all — a `RENAME` can leave a graph sitting at such a key. A graph
+    // this query *creates* lands elsewhere, and rebinds `key_name` below.
+    let read_key = ctx.open_key(&key_str);
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
+
+    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        drop(read_key);
+        return query_mut(
+            ctx,
+            &graph,
+            query,
+            compact,
+            true,
+            track_memory,
+            key_name,
+            timeout,
+            version_check,
+        );
+    }
+
+    // Graph doesn't exist - open writable key to create it.
+    drop(read_key);
+    let key = ctx.open_key_writable(&key_str);
+    // Re-check: another client may have created it between our read and write open.
+    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        return query_mut(
+            ctx,
+            &graph,
+            query,
+            compact,
+            true,
+            track_memory,
+            key_name,
+            timeout,
+            version_check,
+        );
+    }
+
+    // Creating, from here on: `GraphContext_SetKey` puts a new graph at the key rebuilt
+    // from C's name rather than at the addressed one, so that truncated key — which is
+    // the name — is the key this graph lives at.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
+    let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+        *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+        &name,
+    )));
+
+    // For a newly-created graph, the initial schema_version is 0. Checked
+    // here (not in query_mut) so a mismatch doesn't create the graph key.
+    if let Some(provided_version) = version_check
+        && provided_version != 0
+    {
+        reply_invalid_graph_version(ctx, 0);
+        return Ok(redis_module::RedisValue::NoReply);
+    }
+
+    let result = query_mut(
+        ctx,
+        &graph,
+        query,
+        compact,
+        true,
+        track_memory,
+        key_name,
+        timeout,
+        None,
+    );
+    // Stored under the name, not under the key that was looked up — this is
+    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
+    // `a`, replacing whatever graph was there. `key` is dropped unset, leaving the
+    // addressed key absent, exactly as in C.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    drop(key);
+    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    register_graph(name, graph);
+    result
+}

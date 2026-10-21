@@ -1,0 +1,853 @@
+//! Shared batched-result emit: packs per-row expansions into columnar batches.
+//!
+//! Several operators have the same shape: pull a parent batch from the child,
+//! produce a per-active-row iterator of results, then pack up to [`BATCH_SIZE`]
+//! `(parent_row, result)` pairs into one columnar output batch. The operators
+//! differ only in *how* each row's iterator is produced (and any per-row
+//! filtering, which they fold into the produced iterator); the pack-and-gather
+//! emit is identical and lives here.
+//!
+//! The shape of the emitted result columns is chosen by the [`GatherItem`] type
+//! parameter, which knows how to accumulate packed results into typed column
+//! *lanes* ([`push_into`](GatherItem::push_into)) and then install them on the
+//! gathered batch ([`finish`](GatherItem::finish)). A single id
+//! (`NodeId`/`RelationshipId`) binds one column; an emitter built with
+//! [`new_without_alias`](BatchedResultEmitter::new_without_alias) binds none and
+//! just gathers the matched input rows forward; richer items (scored scans,
+//! edge-with-endpoints, unwound values) bind several columns at once.
+//!
+//! ```text
+//!  child BatchOp ──► parent batch ──► seed()
+//!                         │
+//!            for each active parent row (on demand, via the cursor):
+//!              op-specific closure ──► RowIter (One / Spread / Many)
+//!                         │
+//!              ┌──────────┴───────────┐
+//!              │ pack ≤ BATCH_SIZE    │  emit_lazy(closure)
+//!              │ (parent_row, result) │
+//!              └──────────┬───────────┘
+//!                         │
+//!     gather parent columns + origin per result, then install the result
+//!     columns (if any)
+//! ```
+
+use crate::graph::graph::{NodeId, RelationshipId};
+use crate::runtime::batch::{BATCH_SIZE, Batch, Column};
+use crate::runtime::value::Value;
+
+/// A per-row result that knows how to accumulate a packed batch of itself into
+/// one or more output columns. [`Binding`](GatherItem::Binding) carries the
+/// per-operator metadata (which alias slots to bind, and any layout flags).
+///
+/// Results are accumulated directly into typed column *lanes* as they are pulled
+/// ([`push_into`](Self::push_into)) rather than collected into a `Vec<Self>` and
+/// transposed afterward — so a multi-column item (edge endpoints, scored id)
+/// never materializes an intermediate `Vec` of tuples just to split it back into
+/// per-column `Vec`s. [`finish`](Self::finish) installs the completed lanes on
+/// the gathered batch.
+pub trait GatherItem: Sized {
+    /// Per-operator binding metadata consumed by [`new_lanes`](Self::new_lanes),
+    /// [`push_into`](Self::push_into) and [`finish`](Self::finish).
+    type Binding;
+
+    /// Typed column accumulators this item scatters into: one growable `Vec` per
+    /// output column.
+    type Lanes;
+
+    /// Create empty lanes pre-sized for up to `cap` results. Columns the binding
+    /// leaves unbound (an absent score, a self-loop `to`) are left at zero
+    /// capacity so they never allocate.
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes;
+
+    /// Push one result's components into their lanes, applying any per-item
+    /// layout (e.g. the edge transpose swap).
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    );
+
+    /// Install the accumulated lanes as columns on `out`, which has already been
+    /// gathered to one row per result.
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    );
+}
+
+impl GatherItem for NodeId {
+    /// `Some(alias)` binds the node-id column; `None` binds no column.
+    type Binding = Option<u32>;
+    type Lanes = Vec<Self>;
+
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        if let Some(alias) = binding {
+            out.set_column(*alias, Column::NodeIds(lanes));
+        }
+    }
+}
+
+impl GatherItem for RelationshipId {
+    /// `Some(alias)` binds the relationship-id column; `None` binds no column.
+    type Binding = Option<u32>;
+    type Lanes = Vec<Self>;
+
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        if let Some(alias) = binding {
+            out.set_column(*alias, Column::RelIds(lanes));
+        }
+    }
+}
+
+/// Binding for a scan that yields an id plus an optional relevance score
+/// (fulltext / vector index scans).
+pub struct ScoredColumn {
+    /// Alias of the bound entity (node or relationship).
+    pub(crate) id: u32,
+    /// Alias of the score column, when a score yield variable is present.
+    pub(crate) score: Option<u32>,
+}
+
+impl GatherItem for (NodeId, f64) {
+    type Binding = ScoredColumn;
+    type Lanes = (Vec<NodeId>, Vec<f64>);
+
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        // Only allocate the score lane when a score column is bound.
+        let scores = if binding.score.is_some() {
+            Vec::with_capacity(cap)
+        } else {
+            Vec::new()
+        };
+        (Vec::with_capacity(cap), scores)
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (id, score) = self;
+        lanes.0.push(id);
+        if binding.score.is_some() {
+            lanes.1.push(score);
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        let (ids, scores) = lanes;
+        out.set_column(binding.id, Column::NodeIds(ids));
+        if let Some(score_alias) = binding.score {
+            out.set_column(score_alias, Column::Floats(scores));
+        }
+    }
+}
+
+impl GatherItem for (RelationshipId, f64) {
+    type Binding = ScoredColumn;
+    type Lanes = (Vec<RelationshipId>, Vec<f64>);
+
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        let scores = if binding.score.is_some() {
+            Vec::with_capacity(cap)
+        } else {
+            Vec::new()
+        };
+        (Vec::with_capacity(cap), scores)
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (id, score) = self;
+        lanes.0.push(id);
+        if binding.score.is_some() {
+            lanes.1.push(score);
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        let (ids, scores) = lanes;
+        out.set_column(binding.id, Column::RelIds(ids));
+        if let Some(score_alias) = binding.score {
+            out.set_column(score_alias, Column::Floats(scores));
+        }
+    }
+}
+
+/// Binding for an edge scan that yields both endpoints and the edge id. The
+/// per-row iterator yields `(src, dst, edge)` in graph-tensor order;
+/// `transposed` flips which pattern endpoint (from/to) each graph side fills.
+pub struct EdgeEndpoints {
+    /// Alias of the pattern's `from` endpoint.
+    pub(crate) from: u32,
+    /// Alias of the pattern's `to` endpoint, or `None` for a self-loop pattern
+    /// where both endpoints share one alias (bound once, via `from`).
+    pub(crate) to: Option<u32>,
+    /// Alias of the relationship variable.
+    pub(crate) edge: u32,
+    /// When true, the graph `src`/`dst` map to the pattern's `to`/`from`.
+    pub(crate) transposed: bool,
+}
+
+/// Column lanes for an edge scan: the two endpoint node columns plus the edge
+/// column. `tos` stays empty (and unallocated) for a self-loop pattern whose
+/// endpoints share one alias.
+pub struct EdgeLanes {
+    froms: Vec<NodeId>,
+    tos: Vec<NodeId>,
+    edges: Vec<RelationshipId>,
+}
+
+impl GatherItem for (NodeId, NodeId, RelationshipId) {
+    type Binding = EdgeEndpoints;
+    type Lanes = EdgeLanes;
+
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        EdgeLanes {
+            froms: Vec::with_capacity(cap),
+            // A self-loop pattern binds one alias via `from`, so we never build
+            // the `to` column for it — leave its lane unallocated.
+            tos: if binding.to.is_some() {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+            edges: Vec::with_capacity(cap),
+        }
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (src, dst, edge) = self;
+        let (from_node, to_node) = if binding.transposed {
+            (dst, src)
+        } else {
+            (src, dst)
+        };
+        lanes.froms.push(from_node);
+        if binding.to.is_some() {
+            lanes.tos.push(to_node);
+        }
+        lanes.edges.push(edge);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        out.set_column(binding.from, Column::NodeIds(lanes.froms));
+        if let Some(to_alias) = binding.to {
+            out.set_column(to_alias, Column::NodeIds(lanes.tos));
+        }
+        out.set_column(binding.edge, Column::RelIds(lanes.edges));
+    }
+}
+
+/// Binding for a variable-length traverse expansion that yields both path
+/// endpoints and an optional materialized path value. The DFS resolves the
+/// pattern's `from`/`to` (honoring reversal) before packing, so no transpose
+/// flag is needed here.
+pub struct VarLenEndpoints {
+    /// Alias of the pattern's resolved `from` endpoint.
+    pub(crate) from: u32,
+    /// Alias of the pattern's resolved `to` endpoint.
+    pub(crate) to: u32,
+    /// True when `from` and `to` are distinct aliases. When false the pattern
+    /// binds a single shared alias (`(a)-[*]->(a)`); the `to` value wins to match
+    /// the row builder's last-insert-wins semantics, so only one column is bound.
+    pub(crate) distinct: bool,
+    /// Alias of the relationship-list/path variable, when it is read downstream
+    /// (`emit_path`). `None` skips building the path column entirely.
+    pub(crate) path: Option<u32>,
+    /// Alias of a named-path variable bound directly by the traverse (the
+    /// planner elided the `PathBuilder` op); receives a copy of the path lane.
+    pub(crate) path_copy: Option<u32>,
+}
+
+/// Column lanes for a var-length expansion: the two endpoint node columns plus
+/// an optional path column. `tos` stays empty (and unallocated) for a shared
+/// endpoint alias; `paths` stays empty when the path is never read.
+pub struct VarLenLanes {
+    froms: Vec<NodeId>,
+    tos: Vec<NodeId>,
+    paths: Vec<Value>,
+}
+
+impl GatherItem for (NodeId, NodeId, Option<Value>) {
+    type Binding = VarLenEndpoints;
+    type Lanes = VarLenLanes;
+
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        VarLenLanes {
+            froms: Vec::with_capacity(cap),
+            // A shared endpoint alias binds one column (via `from`), so the `to`
+            // lane is never built for it — leave it unallocated.
+            tos: if binding.distinct {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+            // Only allocate the path lane when the path is read downstream.
+            paths: if binding.path.is_some() || binding.path_copy.is_some() {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (from_node, to_node, path) = self;
+        if binding.distinct {
+            lanes.froms.push(from_node);
+            lanes.tos.push(to_node);
+        } else {
+            // Shared alias: the `to` insert would overwrite `from`, so bind the
+            // `to` value into the single column.
+            lanes.froms.push(to_node);
+        }
+        if binding.path.is_some() || binding.path_copy.is_some() {
+            lanes.paths.push(path.unwrap_or(Value::Null));
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        out.set_column(binding.from, Column::NodeIds(lanes.froms));
+        if binding.distinct {
+            out.set_column(binding.to, Column::NodeIds(lanes.tos));
+        }
+        if let Some(copy_alias) = binding.path_copy {
+            out.set_column(copy_alias, Column::Values(lanes.paths.clone()));
+        }
+        if let Some(path_alias) = binding.path {
+            out.set_column(path_alias, Column::Values(lanes.paths));
+        }
+    }
+}
+
+impl GatherItem for Value {
+    /// Alias of the bound variable. `set_column` upgrades the value column to
+    /// the best lossless stored shape (ints/floats), so this preserves the
+    /// column specialization a row builder would have produced.
+    type Binding = u32;
+    type Lanes = Vec<Self>;
+
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        out.set_column(*binding, Column::Values(lanes));
+    }
+}
+
+/// What a single parent row yields: returned by the lazy
+/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure and held in
+/// [`pending`](BatchedResultEmitter::pending) while it is drained. Implements
+/// [`Iterator`], so the emitter drives it for lazy cross-row packing and eager
+/// consumers (e.g. the list-comprehension decomposition) can `for value in
+/// result` over the same `next()`.
+///
+/// `One` is a single value (the scalar-`UNWIND`/single-node-per-row case),
+/// carried in an `Option` so it can be `take`n as the iterator drains; `Spread`
+/// is a small, arity-bounded run of values from a list *literal*
+/// (`UNWIND [a, b, c]`) held inline in a smallvec; `Many` boxes an iterator for
+/// an unbounded or lazy source (a property list, a `range(..)`, a label/index
+/// scan). At most one is ever live, since the emitter holds a single row's
+/// results at a time.
+pub enum RowIter<'a, I> {
+    One(Option<I>),
+    Spread(smallvec::IntoIter<[I; 4]>),
+    Many(Box<dyn Iterator<Item = I> + 'a>),
+}
+
+impl<'a, I> RowIter<'a, I> {
+    /// A row that yields exactly one result, queued inline without allocation.
+    pub(crate) const fn one(item: I) -> Self {
+        Self::One(Some(item))
+    }
+
+    /// A row that yields a small, arity-bounded run of results (a list literal)
+    /// held inline in a smallvec — no per-row heap allocation.
+    pub(crate) const fn spread(iter: smallvec::IntoIter<[I; 4]>) -> Self {
+        Self::Spread(iter)
+    }
+
+    /// A row that yields several results, drained from a boxed iterator.
+    pub(crate) fn many(iter: Box<dyn Iterator<Item = I> + 'a>) -> Self {
+        Self::Many(iter)
+    }
+}
+
+impl<I> Iterator for RowIter<'_, I> {
+    type Item = I;
+
+    #[inline]
+    fn next(&mut self) -> Option<I> {
+        match self {
+            Self::Many(iter) => iter.next(),
+            Self::Spread(iter) => iter.next(),
+            Self::One(item) => item.take(),
+        }
+    }
+}
+
+/// Owns the parent batch being expanded plus the current row's result iterator,
+/// and performs the shared pack-and-gather emit.
+pub struct BatchedResultEmitter<'a, I: GatherItem> {
+    /// Per-operator binding describing how packed results scatter into columns.
+    binding: I::Binding,
+    /// Parent batch currently being expanded. Emitted rows are produced by
+    /// `gather`ing this batch, which replicates every carried-forward parent
+    /// column (and correlation origin) once per result.
+    batch: Option<Batch<'a>>,
+    /// The current parent row's result iterator, keyed by its row index within
+    /// `batch`: `(parent_row, results)`. Any per-row filtering is folded into
+    /// the iterator by the op that produced it.
+    ///
+    /// Filled lazily: [`emit_lazy`](Self::emit_lazy) holds at most one row's
+    /// results at a time — the current row's partially-drained iterator — and
+    /// rebuilds the next on demand using [`cursor`](Self::cursor).
+    pending: Option<(usize, RowIter<'a, I>)>,
+    /// Next active-row position to generate from (an index into the batch's
+    /// active rows, not a raw row index).
+    cursor: usize,
+    /// Upper bound on results packed into one output batch. Defaults to
+    /// [`BATCH_SIZE`]; an operator fed by a downstream `Skip`/`Limit` lowers it
+    /// via the `record_cap` its constructor takes, so a capped query
+    /// produces a small first batch instead of eagerly packing a whole
+    /// `BATCH_SIZE` worth of work.
+    ///
+    /// A lowered ceiling doubles back up towards [`BATCH_SIZE`] after every
+    /// emitted batch, and that is unconditional rather than opt-in.
+    ///
+    /// The lowering is a bet that the downstream `Limit` is satisfied by the
+    /// first small batch. The bet is free when it pays off and unbounded when
+    /// it does not: [`Runtime::record_cap`] walks *through* `CondTraverse`,
+    /// which passes rows 1:0 as readily as 1:N, so a selective traverse between
+    /// this operator and the `Limit` can discard everything the small batch
+    /// produced — and a pinned ceiling then walks the whole input `cap` rows at
+    /// a time.
+    ///
+    /// Growth costs nothing where pinning would have been right. If the budget
+    /// really does bound this operator's output, the `Limit` is satisfied by
+    /// the first batch and the operator is never pulled again, so the ceiling
+    /// never gets the chance to grow. It only ever moves in the cases where
+    /// pinning was the losing bet, and there it bounds the loss to
+    /// `O(log BATCH_SIZE)` extra `emit_lazy` calls and at most 2x the ideal
+    /// packed rows.
+    ///
+    /// Measured on 100,000 nodes where only the last 200 have an outgoing edge.
+    /// `MATCH (a)-[:KNOWS]->(b) ... LIMIT 1` off a label scan cost 8.43 G
+    /// instructions pinned against 91.5 M growing; the same shape fed by
+    /// `UNWIND`, which had the pinned cap from the start, cost 8.36 G against
+    /// 148 M for the identical query with no `LIMIT` at all.
+    pack_ceiling: usize,
+}
+
+impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
+    /// Emitter for an arbitrary [`GatherItem`] binding (multi-column scans,
+    /// unwound values, ...). Id-column operators use the [`new`](Self::new) /
+    /// [`new_without_alias`](Self::new_without_alias) convenience constructors
+    /// instead.
+    ///
+    /// `record_cap` is the downstream `Skip`+`Limit` row budget when one
+    /// applies, and `None` otherwise. It is taken here rather than applied
+    /// afterwards so an operator cannot construct an emitter and forget to pass
+    /// it on — the ceiling is part of what the emitter *is*, and the two-step
+    /// form left every new operator opted out by default. See
+    /// [`pack_ceiling`](Self::pack_ceiling) for what a cap does and why it
+    /// grows.
+    pub(crate) fn with_binding(
+        binding: I::Binding,
+        record_cap: Option<usize>,
+    ) -> Self {
+        let pack_ceiling = match record_cap {
+            Some(cap) if cap < BATCH_SIZE => cap.max(1),
+            _ => BATCH_SIZE,
+        };
+        Self {
+            binding,
+            batch: None,
+            pending: None,
+            cursor: 0,
+            pack_ceiling,
+        }
+    }
+
+    /// Install a parent batch for the lazy expand path: installs the batch but
+    /// builds **no** per-row iterators up front. Resets the active-row
+    /// [`cursor`](Self::cursor) so the next [`emit_lazy`](Self::emit_lazy) starts
+    /// at the first active row. Call this whenever [`emit_lazy`](Self::emit_lazy)
+    /// returns `None` (the previous batch is exhausted, or none was installed).
+    pub(crate) fn seed(
+        &mut self,
+        batch: Batch<'a>,
+    ) {
+        debug_assert!(
+            self.pending.is_none(),
+            "seed requires an empty pending slot"
+        );
+        self.batch = Some(batch);
+        self.cursor = 0;
+    }
+
+    /// Allocate the per-emit accumulators for [`emit_lazy`](Self::emit_lazy):
+    /// the `should_expand` flag (true when the
+    /// parent has columns to replicate), the parent-row index buffer (only sized
+    /// when expanding), and the typed result lanes.
+    ///
+    /// We gather (rather than build a standalone batch) whenever the parent has
+    /// something to replicate per result — a column, or a correlation origin;
+    /// otherwise a no-alias emitter (which never sets a column) would emit an
+    /// empty batch. Origins have to be checked in their own right: a parent can
+    /// carry them with no column at all, as the entry projection of a `CALL {}`
+    /// body that imports nothing does, and dropping them there detaches every
+    /// result from the input row it belongs to. The result lanes accumulate
+    /// straight into typed columns instead of a `Vec<I>`, so a multi-column item
+    /// never materializes an intermediate tuple `Vec` just to transpose it back
+    /// into columns at the end.
+    fn start_batch(&self) -> (bool, Vec<usize>, I::Lanes) {
+        let should_expand = self
+            .batch
+            .as_ref()
+            .is_some_and(|b| b.num_columns() > 0 || b.has_origins());
+        let indices = if should_expand {
+            Vec::with_capacity(self.pack_ceiling)
+        } else {
+            Vec::new()
+        };
+        let lanes = I::new_lanes(&self.binding, self.pack_ceiling);
+        (should_expand, indices, lanes)
+    }
+
+    /// Drain the pending entry's iterator into `lanes` until the batch is full or
+    /// the entry is exhausted (then clear it). A partially-drained entry is kept
+    /// for the next call. Precondition: `pending` is `Some`.
+    fn drain_pending_entry(
+        &mut self,
+        indices: &mut Vec<usize>,
+        lanes: &mut I::Lanes,
+        count: &mut usize,
+        should_expand: bool,
+    ) {
+        let ceiling = self.pack_ceiling;
+        let (row, iter) = self.pending.as_mut().expect("pending is set");
+        let row = *row;
+        let mut drained = false;
+        while *count < ceiling && !drained {
+            if let Some(item) = iter.next() {
+                if should_expand {
+                    indices.push(row);
+                }
+                item.push_into(&self.binding, lanes);
+                *count += 1;
+            } else {
+                drained = true;
+            }
+        }
+        if drained {
+            self.pending = None;
+        }
+    }
+
+    /// Gather the accumulated `lanes`/`indices` into the output batch, or `None`
+    /// when nothing was packed.
+    fn finish_batch(
+        &self,
+        indices: &[usize],
+        lanes: I::Lanes,
+        count: usize,
+        should_expand: bool,
+    ) -> Option<Batch<'a>> {
+        if count == 0 {
+            return None;
+        }
+        let batch = self.batch.as_ref().expect("batch is set while emitting");
+        let mut out = if should_expand {
+            batch.gather(indices)
+        } else {
+            Batch::new(0)
+        };
+        I::finish(lanes, &self.binding, &mut out);
+        Some(out)
+    }
+
+    /// Advance the [`cursor`](Self::cursor) to the next active row and queue its
+    /// results (built on demand by `f` as a [`RowIter`]), skipping rows for
+    /// which `f` yields nothing (including an empty `Spread`). Returns `false`
+    /// when the batch's active rows are exhausted (or no batch is installed),
+    /// signalling the caller to refill via [`seed`](Self::seed).
+    fn refill_from_cursor<F>(
+        &mut self,
+        f: &mut F,
+    ) -> Result<bool, String>
+    where
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowIter<'a, I>>, String>,
+    {
+        let Some(b) = self.batch.as_ref() else {
+            return Ok(false);
+        };
+        let active_len = b.active_len();
+        while self.cursor < active_len {
+            let row = match b.selection() {
+                Some(sel) => sel[self.cursor] as usize,
+                None => self.cursor,
+            };
+            self.cursor += 1;
+            match f(b, row)? {
+                None => {}
+                Some(RowIter::Spread(mut values)) => match values.len() {
+                    // An empty list literal (`UNWIND []`) yields nothing for this
+                    // row; keep scanning rather than queueing an empty iterator.
+                    0 => {}
+                    // A single-element literal (`UNWIND [x]`) takes the lean `One`
+                    // path so it never pays the wider `Spread` payload's drain cost.
+                    1 => {
+                        self.pending = Some((row, RowIter::One(values.next())));
+                        return Ok(true);
+                    }
+                    _ => {
+                        self.pending = Some((row, RowIter::Spread(values)));
+                        return Ok(true);
+                    }
+                },
+                Some(result) => {
+                    self.pending = Some((row, result));
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Packs up to the pack ceiling ([`BATCH_SIZE`] by default) into one columnar
+    /// batch, walking the parent batch's active rows on demand via the
+    /// [`cursor`](Self::cursor), building each row's results with `f` only when
+    /// reached. `f` returns the row's [`RowIter`] (a single inline value, a
+    /// small spread of inline values, or a boxed iterator), or `None` to skip the
+    /// row. At most one row's results are ever live (held in `pending`), so a
+    /// wide parent batch never materializes one iterator per active row. Returns
+    /// `Ok(None)` once the active rows are exhausted (or no batch is installed
+    /// yet), at which point the caller pulls the next child batch and installs it
+    /// via [`seed`](Self::seed).
+    pub(crate) fn emit_lazy<F>(
+        &mut self,
+        mut f: F,
+    ) -> Result<Option<Batch<'a>>, String>
+    where
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowIter<'a, I>>, String>,
+    {
+        let (should_expand, mut indices, mut lanes) = self.start_batch();
+        let mut count = 0usize;
+        while count < self.pack_ceiling {
+            if self.pending.is_none() && !self.refill_from_cursor(&mut f)? {
+                break;
+            }
+            self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
+        }
+        self.pack_ceiling = self.pack_ceiling.saturating_mul(2).min(BATCH_SIZE);
+        Ok(self.finish_batch(&indices, lanes, count, should_expand))
+    }
+
+    /// Drop all queued state. Used by correlated (Apply) plans that re-seed the
+    /// scan with a new argument batch and must not replay stale rows.
+    pub(crate) fn reset(&mut self) {
+        self.pending = None;
+        self.batch = None;
+        self.cursor = 0;
+    }
+
+    /// The currently seeded parent batch, if any. Lets an operator gather
+    /// additional rows from the input it is expanding (e.g. the optional
+    /// traverse's null-padded fallback).
+    pub(crate) const fn batch(&self) -> Option<&Batch<'a>> {
+        self.batch.as_ref()
+    }
+}
+
+/// Convenience constructors for single-id scans (`NodeId` / `RelationshipId`),
+/// whose binding is just the optional alias of the bound column. Defined once
+/// over every such item so `BatchedResultEmitter::new(..)` stays unambiguous at
+/// call sites that pin the item type through the field annotation.
+impl<I> BatchedResultEmitter<'_, I>
+where
+    I: GatherItem<Binding = Option<u32>>,
+{
+    /// Emitter that binds the packed ids to `alias`.
+    pub(crate) fn new(
+        alias: u32,
+        record_cap: Option<usize>,
+    ) -> Self {
+        Self::with_binding(Some(alias), record_cap)
+    }
+
+    /// Emitter that binds no column: the pushed ids only drive how many rows
+    /// each input row yields, and the matched input rows are gathered forward
+    /// unchanged.
+    pub(crate) fn new_without_alias(record_cap: Option<usize>) -> Self {
+        Self::with_binding(None, record_cap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A hinted cap sizes the first batch and then doubles back to
+    /// [`BATCH_SIZE`], so a lowered ceiling can never pin the emitter to a tiny
+    /// batch for the whole scan.
+    ///
+    /// This is the property that makes the hint safe to apply at a leaf scan,
+    /// where a row-reducing operator downstream may discard everything the
+    /// small batch produced. Measured without it, `LIMIT 1` over a selective
+    /// one-hop cost 8.43G instructions against 91.5M with it — 92x.
+    #[test]
+    fn pack_ceiling_grows_back_to_batch_size() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0, Some(10));
+        assert_eq!(e.pack_ceiling, 10, "first batch is sized to the hint");
+
+        // Each emit_lazy doubles the ceiling. Drive it directly: with no batch
+        // seeded, emit_lazy returns None but still advances the ceiling.
+        let mut seen = vec![e.pack_ceiling];
+        for _ in 0..12 {
+            let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+            seen.push(e.pack_ceiling);
+        }
+        assert_eq!(&seen[..5], &[10, 20, 40, 80, 160]);
+        assert_eq!(
+            e.pack_ceiling, BATCH_SIZE,
+            "ceiling saturates at BATCH_SIZE and never exceeds it"
+        );
+    }
+
+    /// A cap at or above a full batch is not a cap at all, and must not switch
+    /// on the growth bookkeeping.
+    #[test]
+    fn cap_at_or_above_batch_size_is_ignored() {
+        for cap in [BATCH_SIZE, BATCH_SIZE + 1, usize::MAX] {
+            let e = BatchedResultEmitter::<NodeId>::new(0, Some(cap));
+            assert_eq!(e.pack_ceiling, BATCH_SIZE);
+        }
+    }
+
+    /// `None` (no usable `Limit` ancestor) leaves the default ceiling.
+    #[test]
+    fn absent_cap_leaves_default_ceiling() {
+        let e = BatchedResultEmitter::<NodeId>::new(0, None);
+        assert_eq!(e.pack_ceiling, BATCH_SIZE);
+    }
+
+    /// `LIMIT 0` still has to run the operator — the downstream slicing op does
+    /// the final truncation — so the ceiling clamps to 1 rather than 0, which
+    /// would make `emit_lazy` spin without ever packing a row.
+    #[test]
+    fn zero_cap_clamps_to_one() {
+        let e = BatchedResultEmitter::<NodeId>::new(0, Some(0));
+        assert_eq!(e.pack_ceiling, 1);
+    }
+
+    /// A cap at or above a full batch leaves the ceiling at [`BATCH_SIZE`],
+    /// where doubling is a no-op — so an uncapped operator is unaffected by the
+    /// growth being unconditional.
+    #[test]
+    fn an_uncapped_emitter_stays_at_batch_size() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0, None);
+        for _ in 0..4 {
+            let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+            assert_eq!(e.pack_ceiling, BATCH_SIZE);
+        }
+    }
+}

@@ -11,8 +11,8 @@ def checkSlaveSynced(env, masterConn, slaveConn, graph_name):
 
 class test_read_only_query(FlowTestsBase):
     def __init__(self):
-        if VALGRIND or SANITIZER:
-            Environment.skip(None) # valgrind is not working correctly with replication
+        if SANITIZER:
+            Environment.skip(None) # sanitizer is not working correctly with replication
 
         self.env, self.db = Env(useSlaves=True)
         global master_con
@@ -31,7 +31,7 @@ class test_read_only_query(FlowTestsBase):
         try:
             graph.ro_query("CREATE()")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains(str(e), "graph.RO_QUERY is to be executed only on read-only queries")
             pass
@@ -56,7 +56,7 @@ class test_read_only_query(FlowTestsBase):
             try:
                 graph.ro_query(query)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains(str(e), "graph.RO_QUERY is to be executed only on read-only queries")
                 pass
@@ -75,7 +75,7 @@ class test_read_only_query(FlowTestsBase):
             # Every GRAPH.QUERY command is a write command, see that replica connection throws an exception.
             slave_graph.query("MATCH (n) RETURN COUNT(n)")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains(str(e), "You can't write against a read only replica.")
             pass
@@ -86,7 +86,7 @@ class test_read_only_query(FlowTestsBase):
         try:
             graph.ro_query("MATCH (n) RETURN n")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains(str(e), "Invalid graph operation on empty key")
             pass

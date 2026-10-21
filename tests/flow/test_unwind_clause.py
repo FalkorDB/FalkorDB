@@ -120,7 +120,7 @@ class testUnwindClause():
                 # should not reach this point
                 self.env.assertTrue(False)
             except Exception as e:
-                self.env.assertTrue("Variable `i` already declared" in str(e))
+                self.env.assertContains("Variable `i` already declared", str(e))
 
     def test06_access_undefined_var(self):
         query = "UNWIND [0, i, 1] AS i RETURN i"

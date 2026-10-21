@@ -46,8 +46,8 @@ class testOpeningNode():
 
         for q in queries:
             plan = str(self.graph.explain(q))
-            self.env.assertIn("Node By Label Scan | (a:A)", plan)
-            self.env.assertIn("Conditional Traverse | (a)->(b:B)", plan)
+            self.env.assertContains("Node By Label Scan | (a:A)", plan)
+            self.env.assertContains("Conditional Traverse | (a)->(b:B)", plan)
 
         # increase number of A nodes
         # number of A nodes: 8
@@ -56,11 +56,11 @@ class testOpeningNode():
         q = "UNWIND range(0, 5) AS x CREATE (:A)"
         self.graph.query(q)
 
-        # expecting B to open the traversal 
+        # expecting B to open the traversal
         for q in queries:
             plan = str(self.graph.explain(q))
-            self.env.assertIn("Node By Label Scan | (b:B)", plan)
-            self.env.assertIn("Conditional Traverse | (b)->(a:A)", plan)
+            self.env.assertContains("Node By Label Scan | (b:B)", plan)
+            self.env.assertContains("Conditional Traverse | (b)<-(a:A)", plan)
 
     # when there are multiple labels to pick from
     # make sure the label with the least number of nodes associated with it is
@@ -120,7 +120,7 @@ class testOpeningNode():
                 for q in queries:
                     plan = self.graph.explain(q)
                     label_scan = plan.collect_operations('Node By Label Scan')[0]
-                    self.env.assertIn(min_lbl, str(label_scan))
+                    self.env.assertContains(min_lbl, str(label_scan))
 
                     res = self.graph.query(q).result_set
                     self.env.assertEqual(len(res), 1)

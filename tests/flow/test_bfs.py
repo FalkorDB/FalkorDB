@@ -27,10 +27,10 @@ class testBFS(FlowTestsBase):
 
     # Verify that the contents of two arrays are equal without respect to order.
     def compare_unsorted_arrays(self, a, b):
-        self.env.assertEquals(len(a), len(b))
+        self.env.assertEqual(len(a), len(b))
         for elem in a:
             # Each element in a should appear in b exactly once.
-            self.env.assertEquals(b.count(elem), 1)
+            self.env.assertEqual(b.count(elem), 1)
 
     def test_invalid_invocation(self):
         invalid_queries = [
@@ -45,15 +45,13 @@ class testBFS(FlowTestsBase):
             """MATCH (a {v: 'a'}) CALL algo.bfs('invalid') YIELD nodes""",
 
             # integer values in relationshipType
-            # FIXME should throw error but does not:
-            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, 0) YIELD nodes""",
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, 0) YIELD nodes""",
 
             # non-existent yield field
             """MATCH (a {v: 'a'}) CALL algo.bfs(null) YIELD nodes, invalidField""",
 
             # max depth is expected to an integer
-            # FIXME should throw error but does not:
-            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, 'hello', NULL)""",
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, 'hello', NULL)""",
         ]
 
         for q in invalid_queries:
@@ -75,7 +73,7 @@ class testBFS(FlowTestsBase):
 
         actual_result = self.graph.query(query)
         expected_result = [[['b', 'c', 'd', 'e']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a {v: 'a'})
                    CALL algo.BFS(a, -1, NULL) YIELD nodes
@@ -91,7 +89,7 @@ class testBFS(FlowTestsBase):
 
         actual_result = self.graph.query(query)
         expected_result = [['a', ['b', 'c', 'd', 'e']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test BFS algorithm for node and edge collection.
         # Parity between nodes and edges can be validated by testing the properties of each for equality,
@@ -101,7 +99,7 @@ class testBFS(FlowTestsBase):
                    RETURN [n IN nodes | n.v], [e IN edges | e.v]"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], actual_result.result_set[0][1])
+        self.env.assertEqual(actual_result.result_set[0][0], actual_result.result_set[0][1])
 
     # Test BFS from a single source traversing a single relationship type.
     def test02_bfs_single_source_restricted_reltype(self):
@@ -120,7 +118,7 @@ class testBFS(FlowTestsBase):
                    RETURN [n IN nodes | n.v], [e IN edges | e.v]"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], actual_result.result_set[0][1])
+        self.env.assertEqual(actual_result.result_set[0][0], actual_result.result_set[0][1])
 
     # Test BFS from all sources traversing a single relationship type, ignoring 0-hop paths.
     def test03_bfs_all_sources_restricted_reltype(self):
@@ -135,7 +133,7 @@ class testBFS(FlowTestsBase):
                            ['b', ['c']],
                            ['d', ['e']]]
         for idx, row in enumerate(actual_result.result_set):
-            self.env.assertEquals(row[0], expected_result[idx][0])
+            self.env.assertEqual(row[0], expected_result[idx][0])
             self.compare_unsorted_arrays(row[1], expected_result[idx][1])
 
         # Test BFS path-tracking algorithm
@@ -149,7 +147,7 @@ class testBFS(FlowTestsBase):
                            ['b', ['c'], ['c']],
                            ['d', ['e'], ['e']]]
         for idx, row in enumerate(actual_result.result_set):
-            self.env.assertEquals(row[0], expected_result[idx][0])
+            self.env.assertEqual(row[0], expected_result[idx][0])
             self.compare_unsorted_arrays(row[1], expected_result[idx][1])
             self.compare_unsorted_arrays(row[2], expected_result[idx][2])
 
@@ -161,12 +159,12 @@ class testBFS(FlowTestsBase):
 
         actual_result = self.graph.query(query)
         expected_result = [[['b']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a {v: 'a'}) CALL algo.BFS(a, 1, NULL) YIELD nodes, edges RETURN [n IN nodes | n.v], [e IN edges | e.v]"""
         actual_result = self.graph.query(query)
         expected_result = [[['b'], ['b']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Test BFS from all sources with a maximum depeth.
     def test05_bfs_all_sources_max_depth(self):
@@ -180,7 +178,7 @@ class testBFS(FlowTestsBase):
                            ['b', ['c', 'd']],
                            ['d', ['e']]]
         for idx, row in enumerate(actual_result.result_set):
-            self.env.assertEquals(row[0], expected_result[idx][0])
+            self.env.assertEqual(row[0], expected_result[idx][0])
             self.compare_unsorted_arrays(row[1], expected_result[idx][1])
 
         query = """MATCH (a)
@@ -193,7 +191,7 @@ class testBFS(FlowTestsBase):
                            ['b', ['c', 'd'], ['c', 'd']],
                            ['d', ['e'], ['e']]]
         for idx, row in enumerate(actual_result.result_set):
-            self.env.assertEquals(row[0], expected_result[idx][0])
+            self.env.assertEqual(row[0], expected_result[idx][0])
             self.compare_unsorted_arrays(row[1], expected_result[idx][1])
             self.compare_unsorted_arrays(row[2], expected_result[idx][2])
 
@@ -204,21 +202,21 @@ class testBFS(FlowTestsBase):
                    CALL algo.BFS(a, -1, 'NONE_EXISTING_RELATION') YIELD nodes"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, empty_result_set)
+        self.env.assertEqual(actual_result.result_set, empty_result_set)
 
         # Leaf node
         query = """MATCH (leaf {v:'e'})
                    CALL algo.BFS(leaf, -1, NULL) YIELD nodes"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, empty_result_set)
+        self.env.assertEqual(actual_result.result_set, empty_result_set)
 
         # NULL node
         query = """OPTIONAL MATCH (n:NONE_EXISTING_LABEL)
                    CALL algo.BFS(n, -1, NULL) YIELD nodes"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, empty_result_set)
+        self.env.assertEqual(actual_result.result_set, empty_result_set)
 
     # test a query which calls BFS multiple times in the same scope
     def test07_multiple_bfs_calls(self):
@@ -231,5 +229,5 @@ class testBFS(FlowTestsBase):
 
         actual_result = self.graph.query(query)
         expected_result = [[['b'], ['e']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 

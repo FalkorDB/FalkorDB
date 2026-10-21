@@ -30,7 +30,6 @@
 
 Feature: Temporal6 - Render Temporal Values as a String
 
-  @skip
   Scenario: [1] Should serialize date
     Given any graph
     When executing query:

@@ -122,7 +122,6 @@ Feature: Set6 - Persistence of set clause side effects
       | +properties | 5 |
       | -properties | 5 |
 
-  @skip
   Scenario: [5] Filtering after setting a property on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -234,7 +233,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [10] Skipping and limiting to a few results after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -259,7 +257,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [11] Skipping zero result and limiting to all results after adding a label on nodes does not affect the result set nor the side effects
     Given an empty graph
     And having executed:
@@ -287,7 +284,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [12] Filtering after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -313,7 +309,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [13] Aggregating in `RETURN` after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -336,7 +331,6 @@ Feature: Set6 - Persistence of set clause side effects
     And the side effects should be:
       | +labels | 1 |
 
-  @skip
   Scenario: [14] Aggregating in `WITH` after adding a label on nodes affects the result set but not the side effects
     Given an empty graph
     And having executed:
@@ -452,7 +446,6 @@ Feature: Set6 - Persistence of set clause side effects
       | +properties | 5 |
       | -properties | 5 |
 
-  @skip
   Scenario: [19] Filtering after setting a property on relationships affects the result set but not the side effects
     Given an empty graph
     And having executed:

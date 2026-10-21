@@ -31,11 +31,11 @@ class testMetaStats():
         result = self.graph.query(query)
 
         # Expect exactly one row
-        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEqual(len(result.result_set), 1)
         record = result.result_set[0]
 
         # Expect record length matches outputs
-        self.env.assertEquals(len(record), len(outputs))
+        self.env.assertEqual(len(record), len(outputs))
 
         # Return dict of column_name → value
         return {k: record[col_map[k]] for k in outputs}
@@ -60,14 +60,14 @@ class testMetaStats():
         labels = record['labels']
         relTypes = record['relTypes']   # relTypes
 
-        self.env.assertEquals(len(labels), 0)
-        self.env.assertEquals(len(relTypes), 0)
+        self.env.assertEqual(len(labels), 0)
+        self.env.assertEqual(len(relTypes), 0)
 
-        self.env.assertEquals(record["nodeCount"], 0)
-        self.env.assertEquals(record["relCount"], 0)
-        self.env.assertEquals(record["labelCount"], 0)
-        self.env.assertEquals(record["relTypeCount"], 0)
-        self.env.assertEquals(record["propertyKeyCount"], 0)
+        self.env.assertEqual(record["nodeCount"], 0)
+        self.env.assertEqual(record["relCount"], 0)
+        self.env.assertEqual(record["labelCount"], 0)
+        self.env.assertEqual(record["relTypeCount"], 0)
+        self.env.assertEqual(record["propertyKeyCount"], 0)
 
     def test_02_populated_graph(self):
         """CALL db.meta.stats() on a graph with data."""
@@ -79,30 +79,30 @@ class testMetaStats():
         relTypes = record["relTypes"]
 
         # Verify expected label counts
-        self.env.assertIn("Person", labels)
-        self.env.assertIn("City", labels)
-        self.env.assertEquals(labels["Person"], 2)
-        self.env.assertEquals(labels["City"], 1)
+        self.env.assertContains("Person", labels)
+        self.env.assertContains("City", labels)
+        self.env.assertEqual(labels["Person"], 2)
+        self.env.assertEqual(labels["City"], 1)
 
         # Verify expected relationship types
-        self.env.assertIn("KNOWS", relTypes)
-        self.env.assertIn("VISITED", relTypes)
-        self.env.assertEquals(relTypes["KNOWS"], 1)
-        self.env.assertEquals(relTypes["VISITED"], 2)
+        self.env.assertContains("KNOWS", relTypes)
+        self.env.assertContains("VISITED", relTypes)
+        self.env.assertEqual(relTypes["KNOWS"], 1)
+        self.env.assertEqual(relTypes["VISITED"], 2)
 
         # Verify global counts
-        self.env.assertEquals(record["nodeCount"], 3)
-        self.env.assertEquals(record["relCount"], 3)
-        self.env.assertEquals(record["labelCount"], 2)
-        self.env.assertEquals(record["relTypeCount"], 2)
+        self.env.assertEqual(record["nodeCount"], 3)
+        self.env.assertEqual(record["relCount"], 3)
+        self.env.assertEqual(record["labelCount"], 2)
+        self.env.assertEqual(record["relTypeCount"], 2)
         self.env.assertGreaterEqual(record["propertyKeyCount"], 3)
 
     def test_03_partial_yield(self):
         """CALL db.meta.stats() YIELD nodeCount, relCount"""
         record = self.meta_stats(["nodeCount", "relCount"])
 
-        self.env.assertEquals(record["nodeCount"], 3)
-        self.env.assertEquals(record["relCount"], 3)
+        self.env.assertEqual(record["nodeCount"], 3)
+        self.env.assertEqual(record["relCount"], 3)
 
     def test_04_invalid_args(self):
         """CALL db.meta.stats(123) should error"""

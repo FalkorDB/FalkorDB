@@ -1,5 +1,6 @@
 from common import *
 from index_utils import *
+import re
 
 GRAPH_ID = "TraversalConstruction"
 
@@ -17,32 +18,32 @@ class testTraversalConstruction():
         # perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Destination is labeled, perform a LabelScan from the destination node.
         query = """MATCH (a)-[]->(b:B) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
         # Destination is filtered, perform an AllNodeScan from the destination node.
         query = """MATCH (a)-[]->(b) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (b)", plan)
+        self.env.assertContains("All Node Scan | (b)", plan)
 
         # Destination is labeled but source is filtered, perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b:B) WHERE a.v = 1 OR a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Both are labeled and source is filtered, perform a LabelScan from the source node.
         query = """MATCH (a:A)-[]->(b:B) WHERE a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (a:A)", plan)
+        self.env.assertContains("Node By Label Scan | (a:A)", plan)
 
         # Both are labeled and dest is filtered, perform a LabelScan from the dest node.
         query = """MATCH (a:A)-[]->(b:B) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
     # make sure traversal begins with labeled entity
     def test_start_with_label(self):
@@ -95,21 +96,139 @@ class testTraversalConstruction():
             self.env.assertTrue("Filter" in ops[3])
 
     def test_filter_as_early_as_possible(self):
+        # The branch point B is two hops from either filtered endpoint, so the
+        # other filtered node is reached by two traverses, not one. This used to
+        # assert it at ops[2] — a single hop away — which only held because the
+        # chain-reversal emitted the far hop at the bottom of the plan, where
+        # neither of its endpoints was bound and the runtime answered it by
+        # enumerating every edge of the type. The property this test is named
+        # for is unchanged: each filtered node is filtered immediately after the
+        # operator that binds it.
         q = """MATCH (A:L {v: 1})-->(B)-->(C), (B)-->(D:L {v: 1}) RETURN 1"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
         ops.reverse()
         self.env.assertTrue("Node By Label Scan" in ops[0]) # scan either A or D
-        self.env.assertTrue("Filter" in ops[1]) # filter either A or D
-        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse from A to D or from D to A
-        self.env.assertTrue("Conditional Traverse" in ops[3]) # traverse from A to D or from D to A
-        self.env.assertTrue("Filter" in ops[4]) # filter either A or D
+        self.env.assertTrue("Filter" in ops[1]) # filter it immediately
+        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse to the branch point
+        self.env.assertTrue("Conditional Traverse" in ops[3]) # traverse to the other filtered node
+        self.env.assertTrue("Filter" in ops[4]) # filter it as soon as it is bound
+        self.env.assertTrue("Conditional Traverse" in ops[5]) # continue traversing
+
+    # Endpoint scoring reads label cardinality and index presence, so the
+    # reversal cases need a graph that holds both — an indexed anchor is the
+    # shape the benchmark measures. A separate graph keeps that data from moving
+    # the plans the tests above assert on an empty one.
+    def _reversal_graph(self):
+        g = self.db.select_graph(GRAPH_ID + "Reversal")
+        # MERGE first: it creates the key, and listing indices on a key that
+        # does not exist yet is an error rather than an empty answer.
+        g.query("MERGE (a:M {v: 0})-[:E]->(b:M {v: 2})-[:E]->(c:M {v: 1})")
+        if not list_indicies(g).result_set:
+            create_node_range_index(g, "M", "v", sync=True)
+        return g
+
+    def _assert_traverses_start_bound(self, graph, q):
+        # Every traverse prints its source alias first, whichever way its arrow
+        # points, so that alias must already be bound by an operator below it. A
+        # traverse whose source nothing binds is not wrong — the runtime answers
+        # it by enumerating every edge of the type, once per input row — but on
+        # the 10k-node benchmark graph that read as 34.4M instructions for
+        # `MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c {id: 1})` against 419k for the
+        # same query on the C engine.
+        plan = str(graph.explain(q))
+        ops = plan.split(os.linesep)
+        ops.reverse()
+        bound = set()
+        for op in ops:
+            body = op.split("|", 1)[1] if "|" in op else ""
+            # one alias per parenthesised endpoint, label suffix dropped; a named
+            # edge prints in brackets and is therefore skipped
+            aliases = [a.split(":")[0].strip() for a in re.findall(r"\(([^)]*)\)", body)]
+            if "Conditional Traverse" in op or "Expand Into" in op:
+                if aliases and aliases[0] not in bound:
+                    print(f"traverse from unbound {aliases[0]!r}:\n{plan}", flush=True)
+                    self.env.assertTrue(False)
+                bound.update(aliases)
+            else:
+                # scans, Argument, Project, Unwind … bind what they name
+                bound.update(aliases)
+
+    def test_reversed_chain_hop_order(self):
+        # Reversing a chain to start from the better endpoint has to reorder the
+        # hops as well, or the bottom of the plan ends up holding the far hop —
+        # the one whose endpoints nothing below it binds.
+        g = self._reversal_graph()
+        for q in ["MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) RETURN count(a)",
+                  "MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN count(a)",
+                  "MATCH (a)-[:E]->(b)-[:E]->(d)-[:E]->(c:M {v: 1}) RETURN count(a)",
+                  "MATCH (c:M {v: 1})-[:E]->(b)-[:E]->(a) RETURN count(a)",
+                  # branching: only the path to the branch point is reversed, so
+                  # the hop leaving it stays in storage direction
+                  "MATCH (A:M {v: 1})-->(B)-->(C), (B)-->(D:M {v: 1}) RETURN 1",
+                  "MATCH (A:M)-->(B)-->(C), (B)-->(D:M {v: 1}) RETURN 1"]:
+            self._assert_traverses_start_bound(g, q)
+
+    def test_selective_hop_runs_first(self):
+        # Among the hops that *can* run next, the one that constrains the most
+        # goes first, so a selective side prunes before an unselective side fans
+        # out. Pattern order decides ties only. This is what the C engine gets
+        # from the label-cardinality tiebreak in its scored search; taking the
+        # pattern's order instead measured 1,712,085 instructions against
+        # 780,735 on a 200-node branch whose two sides reach 50 nodes and 1.
+        g = self.db.select_graph(GRAPH_ID + "Selective")
+        g.query("UNWIND range(0, 19) AS i CREATE (:S {v: i})")
+        g.query("UNWIND range(0, 999) AS i CREATE (:Wide {v: i})")
+        g.query("MATCH (s:S), (w:Wide) WHERE w.v / 50 = s.v CREATE (s)-[:E]->(w)")
+        g.query("CREATE (:Narrow {v: 0})")
+        g.query("MATCH (s:S {v: 0}), (n:Narrow) CREATE (s)-[:E]->(n)")
+
+        # the pattern mentions the wide side first; the plan must not
+        q = "MATCH (s:S {v: 0})-[:E]->(w:Wide), (s)-[:E]->(n:Narrow) RETURN count(*)"
+        ops = str(g.explain(q)).split(os.linesep)
+        ops.reverse()
+        narrow_at = next(i for i, o in enumerate(ops) if "(:Narrow)" in o or "(n:Narrow)" in o)
+        wide_at = next(i for i, o in enumerate(ops) if "(w:Wide)" in o)
+        self.env.assertTrue(narrow_at < wide_at)
+
+        # and every traverse still starts from something bound
+        self._assert_traverses_start_bound(g, q)
+
+    def test_reversed_chain_mid_filter_placement(self):
+        # A filter between the hops of a reversed chain belongs above the hop
+        # that binds the alias it reads, which after reordering is a different
+        # hop than before.
+        q = """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN count(a)"""
+        ops = str(self._reversal_graph().explain(q)).split(os.linesep)
+        ops.reverse()
+        self.env.assertTrue("Node By Index Scan | (c:M)" in ops[0])
+        self.env.assertTrue("Conditional Traverse | (c)<-(b)" in ops[1]) # binds b
+        self.env.assertTrue("Filter" in ops[2])                          # then filters b
+        self.env.assertTrue("Conditional Traverse | (b)<-(a)" in ops[3])
+
+    def test_reversed_chain_results_match(self):
+        # The broken order produced correct rows by brute force, so the guard
+        # against regressing it has to check rows as well as plan shape.
+        g = self._reversal_graph()
+        res = g.query("""MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) RETURN a.v, b.v""")
+        self.env.assertEqual(res.result_set, [[0, 2]])
+        res = g.query(
+            """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN a.v, b.v"""
+        )
+        self.env.assertEqual(res.result_set, [[0, 2]])
+        res = g.query(
+            """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 5 RETURN a.v, b.v"""
+        )
+        self.env.assertEqual(res.result_set, [])
 
     def test_long_pattern(self):
         q = """match (a)--(b)--(c)--(d)--(e)--(f)--(g)--(h)--(i)--(j)--(k)--(l) return *"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
-        self.env.assertEqual(len(ops), 14)
+        # 13, not upstream's 14: the plan is C-equivalent (Project + 11
+        # Conditional Traverses + a scan) but this engine has no root
+        # `Results` operator, which is C's 14th line.
+        self.env.assertEqual(len(ops), 13)
 
     def test_start_with_index_filter(self):
         # TODO: enable this test, once we'll score higher filters that
@@ -164,16 +283,13 @@ class testTraversalConstruction():
         for q in queries:
             plan = self.graph.explain(q)
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue(child.name == "All Node Scan" in child.name or
+            self.env.assertTrue("All Node Scan" in child.name or
                                 "Node By Label Scan" in child.name)
 
             # validate that 'a' == 'b'
@@ -194,16 +310,13 @@ class testTraversalConstruction():
         for q in queries:
             plan = self.graph.explain(q)
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue(child.name == "All Node Scan" in child.name or
+            self.env.assertTrue("All Node Scan" in child.name or
                                 "Node By Label Scan" in child.name)
 
             # validate 'a' was found
@@ -217,12 +330,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
         child = child.children[0]
@@ -237,7 +347,7 @@ class testTraversalConstruction():
         # create a multi label node
         q = "CREATE (:X:Y)"
         result = self.graph.query(q)
-        self.env.assertEquals(result.nodes_created, 1)
+        self.env.assertEqual(result.nodes_created, 1)
 
         # traverse from a multi label node 'a' to itself using a 0 length edge
         q1 = """MATCH (a:X)-[*0]->(b:Y) RETURN a, b"""
@@ -251,17 +361,13 @@ class testTraversalConstruction():
             plan = self.graph.explain(q)
 
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue("Node By Label Scan" in child.name or
-                                "Conditional Traverse" in child.name)
+            self.env.assertTrue("Node By Label Scan" in child.name)
 
             # make sure 'a' == 'b'
             result = self.graph.query(q).result_set
@@ -280,12 +386,9 @@ class testTraversalConstruction():
             plan = self.graph.explain(q)
 
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
@@ -307,12 +410,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue(child.name == "Filter")
 
         child = child.children[0]
@@ -337,12 +437,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue(child.name == "Filter")
 
         child = child.children[0]
@@ -403,3 +500,74 @@ class testTraversalConstruction():
         result = self.graph.query(q).result_set
         self.env.assertTrue(result == expected)
 
+
+    # A variable-length traverse whose bound endpoint is supplied by an operator
+    # other than a directly selectable scan — a WITH barrier or an UNWIND —
+    # must still anchor on that bound endpoint. Before this was handled, the
+    # planner inserted a scan on the *free* endpoint and the runtime seeded its
+    # DFS with every node carrying that endpoint's label, once per input row.
+    def test_var_len_anchor_with_non_leaf_child(self):
+        g = self.db.select_graph("VarLenAnchorNonLeaf")
+        g.query("""CREATE (a:P {id:0})-[:E]->(b:P {id:1})-[:E]->(c:P {id:2})
+                          -[:E]->(d:P {id:3})-[:E]->(e:P {id:4})""")
+
+        # Baseline: the leaf form already anchors on the bound `u`.
+        leaf = """MATCH path=(p:P)-[:E*0..]->(u:P) WHERE u.id=3 RETURN count(path)"""
+        leaf_plan = str(g.explain(leaf))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", leaf_plan)
+        expected = g.query(leaf).result_set
+
+        # A WITH/LIMIT barrier between the scan and the traverse.
+        barrier = """MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                     MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)"""
+        barrier_plan = str(g.explain(barrier))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", barrier_plan)
+        self.env.assertContains("Conditional Variable Length Traverse", barrier_plan)
+        self.env.assertEqual(g.query(barrier).result_set, expected)
+
+        # `u` arriving through an UNWIND chain.
+        unwound = """UNWIND [3] AS wanted
+                     MATCH (u:P) WHERE u.id = wanted
+                     MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)"""
+        unwound_plan = str(g.explain(unwound))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", unwound_plan)
+        self.env.assertEqual(g.query(unwound).result_set, expected)
+
+        # The free endpoint's label is still enforced — by the traverse itself,
+        # as its destination filter — so an unlabeled `p` must match strictly
+        # more rows once a non-P node can reach the same `u`. Attach to the
+        # existing id=3 node so `WITH u LIMIT 1` stays deterministic.
+        g.query("MATCH (d:P {id:3}) CREATE (:Q {id:99})-[:E]->(d)")
+        labeled = g.query("""MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                             MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)""").result_set
+        unlabeled = g.query("""MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                               MATCH path=(p)-[:E*0..]->(u) RETURN count(path)""").result_set
+        self.env.assertGreater(unlabeled[0][0], labeled[0][0])
+
+        # An inline attribute on the free endpoint puts a Filter between the
+        # traverse and the planner's scan. The scan must still go — and the
+        # Filter must not go with it, or `p` loses its predicate.
+        attrs = """MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                    MATCH path=(p:P {id:1})-[:E*0..]->(u) RETURN count(path)"""
+        attrs_plan = str(g.explain(attrs))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", attrs_plan)
+        self.env.assertContains("Filter", attrs_plan)
+        self.env.assertEqual(g.query(attrs).result_set, [[1]])
+        g.delete()
+
+    # `Argument(None)` is opaque about which variables it carries, so a scan
+    # with one anywhere below it cannot be proven redundant and the plan must
+    # be left alone — even though the outer `u` is in fact bound.
+    def test_var_len_anchor_opaque_argument(self):
+        g = self.db.select_graph("VarLenAnchorOpaqueArgument")
+        g.query("CREATE (a:P {id:0})-[:E]->(b:P {id:1})-[:E]->(c:P {id:2})")
+
+        for q in ["MATCH (u:P) WHERE u.id=2 OPTIONAL MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)",
+                  """MATCH (u:P) WHERE u.id=2
+                     CALL { WITH u MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path) AS c }
+                     RETURN c"""]:
+            plan = str(g.explain(q))
+            self.env.assertContains("Argument", plan)
+            self.env.assertContains("Node By Label Scan | (p:P)", plan)
+            self.env.assertEqual(g.query(q).result_set, [[3]])
+        g.delete()

@@ -22,7 +22,7 @@ async def delete_graph(g):
 class testConcurrentQueryFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.conn = redis.Redis("localhost", self.env.port)
+        self.conn = redis.Redis(self.env.host, self.env.port)
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
@@ -31,7 +31,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def run_queries_concurrently(self, queries):
         async def run(self, queries):            
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -108,7 +115,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
     def test_04_concurrent_delete(self):
         async def run(self):
             self.graph.query("RETURN 1")
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -119,7 +133,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Exactly one thread should have successfully deleted the graph.
-            self.env.assertEquals(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
+            self.env.assertEqual(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
 
             # close the connection pool
             await pool.aclose()
@@ -129,8 +143,15 @@ class testConcurrentQueryFlow(FlowTestsBase):
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
         async def run(self):
-            async_conn = AsyncRedis(port=self.env.port)
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -159,7 +180,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEquals(resultset[0][0], 0)
+            self.env.assertEqual(resultset[0][0], 0)
 
             #-------------------------------------------------------------------
             # Delete graph via GRAPH.DELETE.
@@ -183,7 +204,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEquals(resultset[0][0], 0)
+            self.env.assertEqual(resultset[0][0], 0)
 
             # Close the connection
             await async_conn.close()
@@ -197,10 +218,17 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
-            async_conn = AsyncRedis(port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("RETURN 1")
@@ -215,10 +243,13 @@ class testConcurrentQueryFlow(FlowTestsBase):
             result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
-                                       "Encountered an empty key when opened key " + GRAPH_ID]
-                self.env.assertIn(str(result), possible_exceptions)
+                                       "Encountered an empty key when opened key " + GRAPH_ID,
+                                       # The write escalated to writer mode and found the key no
+                                       # longer holds this graph, so it aborted before mutating.
+                                       "graph was deleted or replaced while the query was running, aborting"]
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -232,12 +263,19 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             # single async connection
-            async_conn = AsyncRedis(port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             # Create new empty graph with ID SECONDARY_GRAPH_ID
@@ -267,9 +305,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + new_graph]
-                self.env.assertIn(str(result), possible_exceptions)
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -283,12 +321,19 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             # single async connection
-            async_conn = AsyncRedis(port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("MATCH (n) RETURN n")
@@ -303,10 +348,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
             result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
-                                       "WRONGTYPE Operation against a key holding the wrong kind of value"]
-                self.env.assertIn(str(result), possible_exceptions)
+                                       "WRONGTYPE Operation against a key holding the wrong kind of value",
+                                       "Existing key has wrong Redis type",
+                                       # The write escalated to writer mode and found the key no
+                                       # longer holds this graph, so it aborted before mutating.
+                                       "graph was deleted or replaced while the query was running, aborting"]
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -328,7 +377,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         results = self.run_queries_concurrently(queries)
 
         for result in results:
-            self.env.assertEquals(1000, result.result_set[0][0])
+            self.env.assertEqual(1000, result.result_set[0][0])
 
     def test_10_write_starvation(self):
         # make sure write query do not starve
@@ -347,7 +396,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             self.graph.query("RETURN 1")
 
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -398,7 +454,14 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def test_11_concurrent_resize_zero_matrix(self):
         async def run(self):
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(
+                max_connections=16,
+                timeout=None,
+                host=self.env.host,
+                port=self.env.port,
+                decode_responses=True,
+                socket_timeout=SOCKET_TIMEOUT,
+            )
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -419,4 +482,3 @@ class testConcurrentQueryFlow(FlowTestsBase):
             await pool.aclose()
 
         asyncio.run(run(self))
-

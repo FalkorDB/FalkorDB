@@ -259,7 +259,7 @@ class testCache():
         async def run(self):
             # connection pool with 16 connections
             # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph('cache_eviction')
 
@@ -279,3 +279,20 @@ class testCache():
 
         asyncio.run(run(self))
 
+
+    def test_15_cache_size_survives_rdb_load(self):
+        # a graph loaded from an RDB gets the configured CACHE_SIZE, not the
+        # default 25, just like one created at run-time (issue #3251)
+        self.env.stop()
+        self.env, self.db = Env(moduleArgs='CACHE_SIZE 1', enableDebugCommand=True)
+        conn = self.env.getConnection()
+
+        graph = self.db.select_graph('cache_rdb_load')
+        graph.query("CREATE ()")
+        conn.execute_command("DEBUG", "RELOAD")
+
+        # a single-slot cache: the second query evicts the first
+        self.env.assertFalse(graph.query("RETURN 1").cached_execution)
+        self.env.assertTrue(graph.query("RETURN 1").cached_execution)
+        self.env.assertFalse(graph.query("RETURN 2").cached_execution)
+        self.env.assertFalse(graph.query("RETURN 1").cached_execution)

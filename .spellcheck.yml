@@ -1,6 +1,0 @@
-files:
-  - docs/**/*.md
-no-suggestions: true
-dictionaries:
-  - wordlist  
-quiet: true

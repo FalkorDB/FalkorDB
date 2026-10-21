@@ -1,0 +1,284 @@
+name: Rust Push
+
+on:
+  push:
+    # Mirror rust-pr.yml's filter so post-merge CI on version branches works
+    # the same as on a trunk. Channel-pointer promotion (toolchain :latest,
+    # :edge) is still gated to a TRUNK further down — see the `if:` on those
+    # jobs. The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is
+    # multi-char).
+    #
+    # FalkorDB/FalkorDB, which carries this tree while the C engine keeps
+    # `master`). Both promote the same channels, so the migration doesn't
+    # silently stop publishing the rolling image. Gates below spell this as
+    # github.ref == 'refs/heads/main'.
+    branches:
+      - "main"
+      - "[0-9]*.[0-9]*"
+
+permissions:
+  # `deployments: write` + `contents: write` used to exist only so the benchmark
+  # trend could publish to the gh-pages branch. That job is gone, and every
+  # remaining job either declares its own permissions (find-pr, docker,
+  # promote-edge) or needs read only.
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: 0.13.2
+
+jobs:
+  check-files:
+    runs-on: ubuntu-latest
+    outputs:
+      file_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check if specific file changed
+        id: check
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -qE "^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"; then
+            echo "changed=true"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Promote the toolchain image the MERGE QUEUE built (falkordb-build:mg-<sha>)
+  # to :latest by retagging the existing manifest — no rebuild, so what was
+  # validated is byte-identically what becomes :latest.
+  #
+  # Keyed on the commit SHA, not a PR number. The queue tests the merge
+  # candidate and that commit is what lands, so github.sha here is the same SHA
+  # the queue built under. The old commit->PR lookup existed because squash
+  # merges produced SHAs that were never built; the queue makes that false.
+  # Gated on file_changed because the toolchain only gets a per-PR tag when
+  # build/Dockerfile actually changed in that PR.
+  docker:
+    needs: check-files
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote :mg-${{ github.sha }} → :latest
+        env:
+          CI_KEY: mg-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t ghcr.io/falkordb/falkordb-build:latest \
+            "ghcr.io/falkordb/falkordb-build:${CI_KEY}"
+
+  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>) to the
+  # rolling `:edge` channel on every trunk merge — byte-identical retag.
+  #
+  # Deliberately NOT the PR's own rc-pr-<N> image, even though same-repo PRs
+  # still publish one. That image is built from the PR head; the queue's is
+  # built from the merge candidate, which is what actually lands. Promoting the
+  # PR image would ship bytes that were never tested in the combination that
+  # merged — the staleness this whole change exists to remove. A fork PR has no
+  # rc-pr-<N> at all, so keying on it would simply fail for forks.
+  #
+  # `:edge` serves the Rust engine now that this tree is the default branch.
+  # The C engine's rolling images moved to the `edge-c` family on `master`, and
+  # C never published to GHCR, so there is no contention on either registry.
+  # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
+  # pointer moves only on a release, via release-tag.yml. See issue #2290.
+  promote-edge:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Promote rc-mg-${{ github.sha }} → :edge (${{ matrix.repo }})
+        env:
+          CI_KEY: mg-${{ github.sha }}
+          REPO:   ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          # One imagetools call fans the SAME multi-arch manifest out to both
+          # registries — still a retag, never a rebuild, so the bytes PR CI
+          # validated are the bytes that ship. Same pattern release-tag.yml
+          # uses for semver tags.
+          # `:edge` is the primary rolling channel now that this tree is the
+          # default branch. `:edge-rs` is kept as an alias so anything already
+          # pinned to it keeps working — same manifest, so the extra tags cost
+          # nothing. It is deprecated and will be dropped once consumers move.
+          #
+          # No contention with the C engine: its rolling images moved to the
+          # `edge-c` family on `master`, and C never published to GHCR at all.
+          # See issue #2290.
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:edge" \
+            -t "docker.io/falkordb/${REPO}:edge" \
+            -t "ghcr.io/falkordb/${REPO}:edge-rs" \
+            -t "docker.io/falkordb/${REPO}:edge-rs" \
+            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}"
+
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
+  coverage:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:latest
+    needs: docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Run code coverage
+        run: |
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+          RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # `cargo build` only produces libfalkordb.so's coverage map, which is
+          # blind to code with no caller reachable from the cdylib (e.g.
+          # graph/src/index/falkordb's cow_btree, not wired into the runtime
+          # yet). Locate the `cargo test -p graph` unit-test binary too (cache
+          # hit, same RUSTFLAGS as above, so this doesn't rebuild or re-run
+          # anything) so llvm-cov can also credit coverage recorded by
+          # test-only call paths, not just the shared library's. Cargo prints
+          # "  Executable <target> (<path>)" to stderr for every test binary
+          # it builds (one per test target; today that's just the lib's own
+          # unit tests) — no jq/python needed to find it.
+          TEST_OBJECTS=""
+          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
+            TEST_OBJECTS="$TEST_OBJECTS -object $bin"
+          done
+          echo "Additional coverage objects: $TEST_OBJECTS"
+          # Snapshot coverage here, before the e2e/TCK suites run below, so
+          # cargo test's own profraw can be reported as its own Codecov flag
+          # (unit-tests) instead of being indistinguishable from e2e coverage.
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
+          lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
+          . /data/venv/bin/activate
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov-unit.txt
+          flags: unit-tests
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  build-coverage:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:latest
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Build with coverage
+        run: |
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+      - name: Upload coverage binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-binary
+          path: target/debug/libfalkordb.so
+  coverage-flow:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:latest
+    needs:
+      - docker
+      - flow-test-matrix
+      - build-coverage
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-coverage.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download coverage binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-binary
+          path: target/debug
+      - run: chmod +x target/debug/libfalkordb.so
+      - name: Run coverage - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-flow-logs-${{ strategy.job-index }}
+          path: |
+            tests/flow/logs/
+          if-no-files-found: ignore
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

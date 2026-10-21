@@ -6,12 +6,6 @@ GRAPH_ID = "index_delete"
 
 class testNodeIndexDeletionFlow():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            Environment.skip(None)
-
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
         self.g = Graph(self.redis_con, GRAPH_ID)
@@ -33,7 +27,7 @@ class testNodeIndexDeletionFlow():
     def test_02_drop_unknown_label(self):
         # try to delete an index providing an unknown label/relationship
         result = create_node_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to delete index providing an unknown label
         try:
@@ -44,12 +38,12 @@ class testNodeIndexDeletionFlow():
 
         # remove actual index
         result = drop_node_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_deleted, 1)
+        self.env.assertEqual(result.indices_deleted, 1)
 
     def test_03_drop_unknown_attribute(self):
         # try to delete an index providing an unknown attribute
         result = create_node_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to delete index providing an unknown attribute
         try:
@@ -105,7 +99,7 @@ class testNodeIndexDeletionFlow():
         for create_func in create_funcs:
             # create index
             result = create_func()
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             # try to delete index providing an unknown attribute
             drop_func = drop_funcs.pop(0)
@@ -123,7 +117,7 @@ class testNodeIndexDeletionFlow():
 
             # remove actual index
             result = drop_func[2]()
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
     def test_05_drop_multi_type_node_indices(self):
         # create indices
@@ -133,13 +127,13 @@ class testNodeIndexDeletionFlow():
         # create indices
         for attribute in attributes:
             result = create_node_range_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             result = create_node_fulltext_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             result = create_node_vector_index(self.g, label, attribute, dim=2, sync=True)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
         # validate indices
         result = list_indicies(self.g)
@@ -147,10 +141,10 @@ class testNodeIndexDeletionFlow():
         index_fields = result.result_set[0][1]
         index_fields_types = result.result_set[0][2]
 
-        self.env.assertEquals(index_label, label)
-        self.env.assertEquals(index_fields, attributes)
+        self.env.assertEqual(index_label, label)
+        self.env.assertEqual(index_fields, attributes)
         all_types = ['RANGE', 'VECTOR', 'FULLTEXT']
-        self.env.assertEquals(index_fields_types,
+        self.env.assertEqual(index_fields_types,
                               OrderedDict([('a', all_types),
                                            ('b', all_types),
                                            ('c', all_types)]))
@@ -159,29 +153,29 @@ class testNodeIndexDeletionFlow():
         for attribute in attributes:
             # remove range index
             result = drop_node_range_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
             # validate index does not contains RANGE index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEquals(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
 
             # remove fulltext index
             result = drop_node_fulltext_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
             # validate index does not contains FULLTEXT index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEquals(index_fields_types[attribute], ['VECTOR'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR'])
 
             # remove vector index
             result = drop_node_vector_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
         # validate no indexes in graph
         result = list_indicies(self.g)
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEqual(len(result.result_set), 0)
 
     def test_06_drop_index_during_population(self):
         # 1. populate a graph
@@ -216,10 +210,10 @@ class testNodeIndexDeletionFlow():
             if i < end_idx / 2:
                 # validate execution-plan + indexes report
                 plan = str(self.g.explain(q))
-                self.env.assertIn("Index", plan)
+                self.env.assertContains("Index", plan)
 
                 indicies = list_indicies(self.g).result_set
-                self.env.assertEquals(len(indicies), 1)
+                self.env.assertEqual(len(indicies), 1)
 
             elif i == end_idx / 2:
                 # drop index
@@ -228,10 +222,10 @@ class testNodeIndexDeletionFlow():
             else:
                 # validate execution-plan + indexes report
                 plan = str(self.g.explain(q))
-                self.env.assertNotIn("Index", plan)
+                self.env.assertNotContains("Index", plan)
 
                 indicies = list_indicies(self.g).result_set
-                self.env.assertEquals(len(indicies), 0)
+                self.env.assertEqual(len(indicies), 0)
 
     def test_07_reset_order(self):
         """Tests that the reset order is correct, i.e., that the reading ops are
@@ -262,10 +256,10 @@ class testNodeIndexDeletionFlow():
         )
 
         # validate results
-        self.env.assertEquals(res.nodes_deleted, 1)
-        self.env.assertEquals(res.relationships_deleted, 1)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='X', properties={'uid': '10'}))
 
     def test_08_remove_range_field(self):
@@ -287,14 +281,14 @@ class testNodeIndexDeletionFlow():
                               RETURN [f in info['fields'] | f.name]""")
 
         fields = res.result_set[0][0]
-        self.env.assertEquals(len(fields), 7)
-        self.env.assertIn("range:a", fields)
-        self.env.assertIn("range:b", fields)
-        self.env.assertIn("range:a:string:arr", fields)
-        self.env.assertIn("range:b:string:arr", fields)
-        self.env.assertIn("range:a:numeric:arr", fields)
-        self.env.assertIn("range:b:numeric:arr", fields)
-        self.env.assertIn("NONE_INDEXABLE_FIELDS", fields)
+        self.env.assertEqual(len(fields), 7)
+        self.env.assertContains("range:a", fields)
+        self.env.assertContains("range:b", fields)
+        self.env.assertContains("range:a:string:arr", fields)
+        self.env.assertContains("range:b:string:arr", fields)
+        self.env.assertContains("range:a:numeric:arr", fields)
+        self.env.assertContains("range:b:numeric:arr", fields)
+        self.env.assertContains("NONE_INDEXABLE_FIELDS", fields)
 
         # drop the 'a' field
         drop_node_range_index(self.g, 'N', 'a')
@@ -306,11 +300,11 @@ class testNodeIndexDeletionFlow():
                               RETURN [f in info['fields'] | f.name]""")
 
         fields = res.result_set[0][0]
-        self.env.assertEquals(len(fields), 4)
-        self.env.assertIn("range:b", fields)
-        self.env.assertIn("range:b:string:arr", fields)
-        self.env.assertIn("range:b:numeric:arr", fields)
-        self.env.assertIn("NONE_INDEXABLE_FIELDS", fields)
+        self.env.assertEqual(len(fields), 4)
+        self.env.assertContains("range:b", fields)
+        self.env.assertContains("range:b:string:arr", fields)
+        self.env.assertContains("range:b:numeric:arr", fields)
+        self.env.assertContains("NONE_INDEXABLE_FIELDS", fields)
 
         # drop the last field in the index
         # drop the 'b' field
@@ -322,16 +316,10 @@ class testNodeIndexDeletionFlow():
                               WHERE label = 'N'
                               RETURN [f in info['fields'] | f.name]""")
 
-        self.env.assertEquals(len(res.result_set), 0)
+        self.env.assertEqual(len(res.result_set), 0)
 
 class testEdgeIndexDeletionFlow():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            Environment.skip(None)
-
         self.env, self.db = Env()
         self.g = self.db.select_graph(GRAPH_ID)
 
@@ -352,7 +340,7 @@ class testEdgeIndexDeletionFlow():
     def test_02_drop_unknown_label(self):
         # try to delete an index providing an unknown label/relationship
         result = create_edge_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to delete index providing an unknown relation
         try:
@@ -362,12 +350,12 @@ class testEdgeIndexDeletionFlow():
             self.env.assertContains("Unable to drop index on :missing(age): no such index.", str(e))
 
         result = drop_edge_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_deleted, 1)
+        self.env.assertEqual(result.indices_deleted, 1)
 
     def test_03_drop_unknown_attribute(self):
         # try to delete an index providing an unknown attribute
         result = create_edge_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to delete index providing an unknown attribute
         try:
@@ -423,7 +411,7 @@ class testEdgeIndexDeletionFlow():
         for create_func in create_funcs:
             # create index
             result = create_func()
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             # try to delete index providing an unknown attribute
             drop_func = drop_funcs.pop(0)
@@ -441,7 +429,7 @@ class testEdgeIndexDeletionFlow():
 
             # remove actual index
             result = drop_func[2]()
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
     def test_05_drop_multi_type_edge_indices(self):
         # create indices
@@ -451,13 +439,13 @@ class testEdgeIndexDeletionFlow():
         # create indices
         for attribute in attributes:
             result = create_edge_range_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             result = create_edge_fulltext_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
             result = create_edge_vector_index(self.g, label, attribute, dim=2, sync=True)
-            self.env.assertEquals(result.indices_created, 1)
+            self.env.assertEqual(result.indices_created, 1)
 
         # validate indices
         result = list_indicies(self.g)
@@ -465,38 +453,38 @@ class testEdgeIndexDeletionFlow():
         index_fields = result.result_set[0][1]
         index_fields_types = result.result_set[0][2]
 
-        self.env.assertEquals(index_label, label)
-        self.env.assertEquals(index_fields, attributes)
+        self.env.assertEqual(index_label, label)
+        self.env.assertEqual(index_fields, attributes)
         all_types = ['RANGE', 'VECTOR', 'FULLTEXT']
-        self.env.assertEquals(index_fields_types, OrderedDict([('a', all_types), ('b', all_types), ('c', all_types)]))
+        self.env.assertEqual(index_fields_types, OrderedDict([('a', all_types), ('b', all_types), ('c', all_types)]))
 
         # drop indices
         for attribute in attributes:
             # remove range index
             result = drop_edge_range_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
             # validate index does not contains RANGE index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEquals(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
 
             # remove fulltext index
             result = drop_edge_fulltext_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
             # validate index does not contains FULLTEXT index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEquals(index_fields_types[attribute], ['VECTOR'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR'])
 
             # remove vector index
             result = drop_edge_vector_index(self.g, label, attribute)
-            self.env.assertEquals(result.indices_deleted, 1)
+            self.env.assertEqual(result.indices_deleted, 1)
 
         # validate no indexes in graph
         result = list_indicies(self.g)
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEqual(len(result.result_set), 0)
         # create indices
         relation = "person"
         attributes = ["a", "b", "c"]
@@ -506,7 +494,7 @@ class testEdgeIndexDeletionFlow():
 
         # create an index over 'L', 'age'
         result = create_edge_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to create index over multiple fields: some new to the graph
         # some already indexed

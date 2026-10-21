@@ -21,7 +21,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res, [[0], [1]])
+        self.env.assertEqual(res, [[0], [1]])
 
     def test_update(self):
         # create a single node graph
@@ -33,7 +33,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res, [[0], [1]])
+        self.env.assertEqual(res, [[0], [1]])
 
     def test_merge(self):
         q = """UNWIND [0, 1] AS x
@@ -41,7 +41,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res, [[0], [1]])
+        self.env.assertEqual(res, [[0], [1]])
 
     def test_delete(self):
         # create a single node graph
@@ -53,7 +53,7 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res, [[0], [1]])
+        self.env.assertEqual(res, [[0], [1]])
 
     def test_foreach(self):
         q = """UNWIND [0, 1] AS x
@@ -61,5 +61,5 @@ class testMaintainRecordOrder():
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res, [[0], [1]])
+        self.env.assertEqual(res, [[0], [1]])
 

@@ -1,0 +1,45 @@
+# Pull one engine's module out of a published image.
+#
+# Was duplicated verbatim in the `measure` and `callgrind` jobs, including the
+# side->image mapping, which meant a new side had to be added in two places.
+name: Extract engine module
+description: Copy the FalkorDB module out of a published image onto the runner.
+
+inputs:
+  image:
+    description: Image to extract from.
+    required: true
+  path:
+    description: Where to write the module.
+    required: false
+    default: ./module.so
+  module-path:
+    description: Path to the module inside the image.
+    required: false
+    default: /var/lib/falkordb/bin/falkordb.so
+
+outputs:
+  digest:
+    description: Digest of the image the module came from, for provenance.
+    value: ${{ steps.extract.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - id: extract
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DEST: ${{ inputs.path }}
+        SRC: ${{ inputs.module-path }}
+      run: |
+        set -euo pipefail
+        docker pull -q "$IMAGE"
+        # Recorded so the report can state which image each number came from,
+        # rather than a tag that may since have moved.
+        digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo "$IMAGE")
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        cid=$(docker create "$IMAGE")
+        trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+        docker cp "$cid:$SRC" "$DEST"
+        ls -l "$DEST"

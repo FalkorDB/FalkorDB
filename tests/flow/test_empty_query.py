@@ -10,7 +10,7 @@ class testEmptyQuery(FlowTestsBase):
             # execute empty query
             self.graph.query("")
         except ResponseError as e:
-            self.env.assertIn("Error: empty query.", str(e))
+            self.env.assertContains("Error: empty query.", str(e))
 
     def test02_whitespace_and_semicolon_queries(self):
         for query in [" ", ";"]:
@@ -18,10 +18,10 @@ class testEmptyQuery(FlowTestsBase):
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertIn("Error: empty query.", str(e))
+                self.env.assertContains("Error: empty query.", str(e))
 
     #def test02_query_with_only_params(self):
     #    try:
     #        self.graph.query("CYPHER v=1")
     #    except ResponseError as e:
-    #        self.env.assertIn("Error: could not parse query", str(e))
+    #        self.env.assertContains("Error: could not parse query", str(e))

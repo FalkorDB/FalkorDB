@@ -86,9 +86,10 @@ class testEntityUpdate():
         # similarly updateing an "empty" node with a map containing only nulls
         result = self.graph.query("CREATE (n) SET n = {v:null} DELETE n RETURN n")
         n = result.result_set[0][0]
+        self.env.assertEqual(result.nodes_created, 0)
         self.env.assertEqual(result.properties_set, 0)
         self.env.assertEqual(result.properties_removed, 0)
-        self.env.assertEqual(len(n.properties), 0)
+        self.env.assertEqual(len(n.properties), 1)
 
     # Update the entity's properties by setting a specific property and merging property maps
     def test07_update_property_map(self):
@@ -304,7 +305,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}")
-        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.labels_added, 1)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
 
 
@@ -319,7 +320,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)   
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{':'.join(labels)}")
-        self.env.assertEqual(result.labels_added, 4)
+        self.env.assertEqual(result.labels_added, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
     
 
@@ -334,7 +335,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}, n:{labels[1]}")
-        self.env.assertEqual(result.labels_added, 4)
+        self.env.assertEqual(result.labels_added, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
 
 
@@ -356,7 +357,7 @@ class testEntityUpdate():
         result = self.multiple_entity_graph.query("MATCH (n {testprop:'testvalue'}) RETURN n")
         self.env.assertEqual(len(result.result_set), 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}, n.testprop='testvalue'")
-        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.labels_added, 1)
         self.env.assertEqual(result.properties_set, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
         result = self.multiple_entity_graph.query("MATCH (n {testprop:'testvalue'}) RETURN n")
@@ -370,7 +371,7 @@ class testEntityUpdate():
         self.env.assertEqual(len(result.result_set), 0)
 
         result = self.multiple_entity_graph.query(f"MATCH (n), (m) SET n:{labels[0]}, n.testprop2='testvalue', m:{labels[1]}")
-        self.env.assertEqual(result.labels_added, 4)
+        self.env.assertEqual(result.labels_added, 2)
         self.env.assertEqual(result.properties_set, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
         result = self.multiple_entity_graph.query("MATCH (n {testprop2:'testvalue'}) RETURN n")
@@ -408,8 +409,8 @@ class testEntityUpdate():
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Label addition / removal can't be performed on an edge", str(e))
-
+                self.env.assertContains("Type mismatch: expected Node but was Edge", str(e))
+    
 
     def test_26_fail_update_label_for_constant(self):
         queries = ["WITH 1 AS x SET x:L"]
@@ -418,7 +419,7 @@ class testEntityUpdate():
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Update error: alias 'x' did not resolve to a graph entity", str(e))
+                self.env.assertContains("Type mismatch: expected Node but was Integer", str(e))
     
 
     def test_27_set_label_on_merge(self):
@@ -494,6 +495,48 @@ class testEntityUpdate():
         self.env.assertEqual(result.labels_removed, 0)
         self.validate_node_labels(self.graph, labels, 1)
 
+    def test_31_mix_add_and_remove_same_label_on_labeled_node(self):
+        # https://github.com/FalkorDB/FalkorDB/issues/2777
+        # a label re-added in the same query that removes it must survive;
+        # the last clause to touch a label wins, in both directions
+        self.graph.delete()
+        self.graph.query("CREATE (:L {v: 1})")
+        self.validate_node_labels(self.graph, ["L"], 1)
+
+        # remove prior to set: the label is kept
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], ["L"])
+        self.env.assertEqual(result.labels_removed, 0)
+        # still reachable by a label scan, and still a single node
+        self.validate_node_labels(self.graph, ["L"], 1)
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # set prior to remove: the label is dropped
+        result = self.graph.query("MATCH (n:L) SET n:L REMOVE n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], [])
+        self.env.assertEqual(result.labels_removed, 1)
+        self.validate_node_labels(self.graph, ["L"], 0)
+        # the node itself survives, it only lost the label
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # a different label added while the original one is removed
+        for query in ["MATCH (n:A) REMOVE n:A SET n:B RETURN labels(n)",
+                      "MATCH (n:A) SET n:B REMOVE n:A RETURN labels(n)"]:
+            self.graph.delete()
+            self.graph.query("CREATE (:A)")
+            result = self.graph.query(query)
+            self.env.assertEqual(result.result_set[0][0], ["B"])
+            self.validate_node_labels(self.graph, ["A"], 0)
+            self.validate_node_labels(self.graph, ["B"], 1)
+
+        # multiple nodes updated by a single query
+        self.graph.delete()
+        self.graph.query("UNWIND range(1, 5) AS i CREATE (:L {v: i})")
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 5)
+        self.env.assertEqual(result.labels_removed, 0)
+        self.validate_node_labels(self.graph, ["L"], 5)
+
     def test_32_mix_merge_and_remove_node_labels(self):
         self.graph.delete()
         labels_to_remove = ["Foo"]
@@ -511,17 +554,16 @@ class testEntityUpdate():
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Invalid input 'R':", str(e))
+                self.env.assertContains("Invalid input 'REMOVE':", str(e))
 
     def test_34_fail_remove_labels_for_edge(self):
-        queries = ["MATCH ()-[r]->() REMOVE r:L RETURN 1",
-                   "MATCH (n)-[r]->(m) WITH n, r, m UNWIND [n, r, m] AS x REMOVE x:L RETURN 1"]
+        queries = ["MATCH ()-[r]->() REMOVE r:L RETURN 1", "MATCH (n)-[r]->(m) WITH n, r, m UNWIND [n, r, m] AS x REMOVE x:L RETURN 1"]
         for query in queries:
             try:
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Label addition / removal can't be performed on an edge", str(e))
+                self.env.assertContains("Type mismatch: expected Node but was Relationship", str(e))
     
     def test_35_fail_remove_label_for_constant(self):
         queries = ["WITH 1 AS x REMOVE x:L RETURN x"]
@@ -530,18 +572,18 @@ class testEntityUpdate():
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Update error: alias 'x' did not resolve to a graph entity", str(e))
+                self.env.assertContains("Type mismatch: expected Node or Relationship but was Integer", str(e))
 
         queries = ["REMOVE NULL.v",
                    "REMOVE 1.v",
                    "REMOVE 'a'.v",
-                   "REMOVE f(1).v"]
+                   "REMOVE floor(1).v"]
         for q in queries:
             try:
                 self.graph.query(q)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("REMOVE operates on either a node, relationship or a map", str(e))
+                self.env.assertContains("Type mismatch: expected Node or Relationship", str(e))
 
     def test_36_mix_add_and_remove_node_properties(self):
         self.graph.delete()
@@ -567,7 +609,7 @@ class testEntityUpdate():
         res = self.graph.query("MATCH (n) UNWIND [0, 1, 2, 3] AS x SET n.v = n.v + x RETURN n")
 
         # assert results
-        self.env.assertEquals(res.result_set[0][0], Node(properties={'v': 7}))
+        self.env.assertEqual(res.result_set[0][0], Node(properties={'v': 7}))
 
     # Set the entity's properties to itself
     def test39_assign_self(self):

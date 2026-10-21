@@ -1,10 +1,105 @@
----
-version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
+# Every entry groups its whole ecosystem into a single PR (`patterns: "*"`),
+# matching the pip / uv / docker entries further down. Ungrouped, a weekly run
+# opens one PR per dependency, each of which re-runs the full build+test matrix
+# and has to be reviewed and merged on its own.
+#
+# Grouping is per update entry, so the floor is one PR per ecosystem per target
+# branch, not one PR overall: Dependabot resolves each manifest separately and
+# cannot mix, say, a Cargo.lock bump with an actions pin in one commit.
+#
+# Group names are unique across entries on purpose — the two github-actions
+# entries below would otherwise differ only by the branch segment of the
+# generated branch name.
+#
+# See issue #2868.
+- directory: /
+  ignore:
+  - dependency-name: "github/gh-aw-actions/**" # Managed by gh aw compile. Version-locked to the gh-aw compiler; do not bump.
+  package-ecosystem: github-actions
+  schedule:
+    interval: weekly
+  groups:
+    github-actions:
+      patterns:
+        - "*"
+- directory: /
+  package-ecosystem: cargo
+  schedule:
+    interval: weekly
+  groups:
+    cargo-deps:
+      patterns:
+        - "*"
+# Keep the C engine's GitHub Actions bumps alive on `master`.
+#
+# Dependabot reads .github/dependabot.yml from the DEFAULT branch ONLY. Once this
+# tree is the default branch, master's own copy of the file is never read again
+# and C silently stops receiving dependency PRs — so the entry has to live here,
+# with target-branch pointing at master. Mirrors master's config
+# (github-actions at /, weekly, 7-day cooldown), grouped like the entry above;
+# C has no other ecosystem, because its native dependencies are git submodules,
+# bumped by submodule-update.yml rather than by Dependabot.
+#
+# Two entries may share package-ecosystem + directory as long as target-branch
+# differs — that is the supported way to cover several branches.
+#
+# See issue #2255.
+- directory: /
+  package-ecosystem: github-actions
+  target-branch: master
+  schedule:
+    interval: weekly
+  cooldown:
+    default-days: 7
+  groups:
+    github-actions-master:
+      patterns:
+        - "*"
+# Python test dependencies for the e2e / TCK / flow suites.
+#
+# `redis` in tests/requirements.txt carries an explicit upper bound with a
+# documented reason (redis-py 8.1.0 put `himport_registry` into
+# `connection_kwargs`; falkordb-py < 1.7.0 forwarded it to the sync client).
+# Dependabot honours declared constraints and will not widen the bound, so it
+# holds until someone edits it by hand.
+- directory: /tests
+  package-ecosystem: pip
+  schedule:
+    interval: weekly
+  groups:
+    python-test-deps:
+      patterns:
+        - "*"
 
+# The benchmark harness is a separate uv project (bench/pyproject.toml +
+# bench/uv.lock) rather than part of the tests/ virtualenv, so it needs its
+# own entry; `pip` would not read the lockfile.
+- directory: /bench
+  package-ecosystem: uv
+  schedule:
+    interval: weekly
+  groups:
+    bench-deps:
+      patterns:
+        - "*"
+
+# Base images for the build, runtime and devcontainer images.
+#
+# /bench is deliberately absent: bench/Dockerfile is `FROM ${C_IMAGE}`, an
+# entirely ARG-driven base that Dependabot cannot resolve to a registry tag.
+# build/runtime/Dockerfile is included for its pinned stages (debian, node);
+# its $BUILD_IMAGE and $BROWSER_TAG stages are skipped for the same reason.
+- package-ecosystem: docker
+  directories:
+    - /build
+    - /build/runtime
+    - /.devcontainer
+  schedule:
+    interval: weekly
+  groups:
+    docker-base-images:
+      patterns:
+        - "*"
+
+version: 2

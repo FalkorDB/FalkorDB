@@ -1,0 +1,572 @@
+//! A query's locks, and the Redis side of [`graph::locks::WriteEscalation`].
+//!
+//! [`QuerySession`] is the value that **owns** the locks a query holds: the host
+//! creates one, hands `&session` to the `Runtime`, reaches the locked graph through
+//! it, and drops it when the query ends. No hidden state — if you cannot see a
+//! session, no lock is held.
+//!
+//! * **Reader** — the per-graph read lock only. The match phase runs here,
+//!   concurrently with other readers, without the GIL.
+//! * **Writer** — the GIL *and* the per-graph write lock, entered on the first
+//!   mutation ([`QuerySession::upgrade_to_write`]) and held to the end of the
+//!   query, so later steps — including reads of the shared index — are exclusive.
+//!
+//! The guards are `Arc`-owned (`parking_lot`'s `arc_lock`), which is what lets one
+//! session hold them across a whole query and swap read for write mid-flight.
+//!
+//! The GIL never leaves this module: the FFI that takes it is private, so the only
+//! ways to acquire it anywhere in the process are a [`QuerySession`] and
+//! [`hold_gil`] (telemetry's flush thread). That is what makes the ordering rule
+//! enforceable rather than merely documented — the `graph` crate cannot reach it at
+//! all.
+
+use crate::graph_core::{ThreadedGraph, ffi};
+use atomic_refcell::AtomicRefCell;
+use graph::graph::{graph::Graph, mvcc_graph::Claim};
+use graph::locks::WriteEscalation;
+use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
+use redis_module::{Context, ContextFlags, raw};
+use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
+
+/// Which lock(s) a query holds.
+enum Mode {
+    /// Per-graph read lock only; no GIL.
+    Reader(ArcRwLockReadGuard<RawRwLock, ThreadedGraph>),
+    /// GIL + per-graph write lock. Field order is load-bearing: fields drop in
+    /// declaration order, releasing the write lock before the GIL — the reverse of
+    /// acquisition. `_gil` is never read, only held for its `Drop`.
+    Writer {
+        guard: ArcRwLockWriteGuard<RawRwLock, ThreadedGraph>,
+        _gil: Gil,
+    },
+}
+
+/// Why an escalation to writer mode was refused.
+///
+/// The first two `Display` strings are byte-identical to C's `EMSG_REPLICA_TRAFFIC_PAUSED`
+/// and `EMSG_NOT_MASTER` (`src/errors/error_msgs.h`, PR #2372), so a client or a test can
+/// match either engine. Keeping them in one place is the point of the type: they are a
+/// compatibility contract, not incidental text, and they were previously written inline at
+/// their single use site each.
+#[derive(Debug, thiserror::Error)]
+pub enum WriteAbort {
+    /// A `CLIENT PAUSE` / `FAILOVER` window is open. Committing would propagate inside it.
+    #[error("Write query aborted: replica traffic is currently paused")]
+    ReplicaTrafficPaused,
+    /// This instance is a read-only replica now, whatever it was at admission.
+    #[error("Write query aborted: this instance is not a master")]
+    NotAMaster,
+    /// The graph key was deleted or replaced while no per-graph lock was held.
+    #[error("graph was deleted or replaced while the query was running, aborting")]
+    GraphUnregistered,
+    /// Another writer holds `MvccGraph`'s write slot.
+    ///
+    /// Distinct from the per-graph lock, which `upgrade_to_write` does take:
+    /// holding that one does not reserve the MVCC slot, so a second writer can
+    /// still be mid-commit. Transient by construction — it ends when that writer
+    /// commits — so callers that can retry should.
+    #[error("Write query aborted: another write is in progress")]
+    WriteSlotBusy,
+    /// Another writer committed while this one was still matching as a reader,
+    /// so the version it built no longer extends the committed graph. Nothing
+    /// was mutated or published yet: the caller discards it and runs the write
+    /// again from the start.
+    #[error("Write query aborted: the graph was written while this query was matching")]
+    Stale,
+    /// The version this write produced failed `Graph::validate`, so it was not
+    /// published. An engine fault rather than a reason to retry.
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// The locks held by one query, on one thread. Not `Send`, because the GIL must be
+/// released by the thread that took it.
+pub struct QuerySession {
+    graph: Arc<RwLock<ThreadedGraph>>,
+    /// `RefCell` because escalation goes through `&self` — operators hold the
+    /// session as `&dyn WriteEscalation`. Every borrow is confined to one method, so
+    /// the only misuse is escalating inside a [`Self::with_graph`] closure, which
+    /// panics loudly instead of dangling.
+    mode: RefCell<Option<Mode>>,
+    /// What this write does and where it came from — see [`WriteFacts`]. Moot unless
+    /// the session escalates, so it is unread for a reader and for
+    /// [`Self::begin_writer`].
+    facts: WriteFacts,
+    /// This session's private version, while it does not yet hold
+    /// `MvccGraph`'s write slot — see [`Self::write_version`].
+    fork: RefCell<Option<Arc<AtomicRefCell<Graph>>>>,
+    /// Where this session stands on `MvccGraph`'s write slot.
+    slot: Cell<Slot>,
+}
+
+/// A session's relation to `MvccGraph`'s single write slot.
+///
+/// The slot is only ever *held* by a session in writer mode: a write that
+/// starts as a reader builds into an unclaimed fork and claims the slot when it
+/// escalates. An inline writer, which holds the GIL and the write lock from the
+/// start, therefore never finds the slot taken by a query that is still
+/// matching (#3093) — that query finds its fork stale instead, and re-runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    /// No write version.
+    None,
+    /// A private version, slot not claimed yet.
+    Forked,
+    /// The slot is ours: only commit or rollback releases it.
+    Claimed,
+    /// Another writer committed after the fork was made; the fork is gone.
+    Stale,
+}
+
+/// The two facts about a write that decide which re-checks apply when it escalates.
+///
+/// Both are properties of the *write*, not of the checks, so a call site can answer them
+/// without knowing what the guard does with them — and a path that later starts
+/// replicating flips the field named after replication.
+///
+/// They have to be carried rather than read at the check: escalation runs on a worker
+/// whose only context is the detached one [`Gil::acquire`] made, which has no client
+/// behind it, so `REPLICATED` always reads false there. C reads it straight off the
+/// command's own context instead.
+///
+/// `docs/write-authorization.md` has the states, the coverage table and the call sites.
+#[derive(Clone, Copy, Debug)]
+pub struct WriteFacts {
+    /// It can reach the replication stream from this thread, so a replica-pause window
+    /// open at commit time would be propagated into.
+    pub replicates: bool,
+    /// This instance decided this write, rather than replaying one decided elsewhere.
+    /// Only our own decisions require that we are still a writable master; rejecting a
+    /// replayed one would diverge us from our master.
+    pub originated_here: bool,
+}
+
+impl WriteFacts {
+    /// A client's own write, which will replicate: both re-checks apply. The default,
+    /// and the right answer for every path that has no reason to differ.
+    pub const CLIENT: Self = Self {
+        replicates: true,
+        originated_here: true,
+    };
+}
+
+impl QuerySession {
+    /// Enter **reader** mode: take the per-graph read lock.
+    ///
+    /// Assumes [`WriteFacts::CLIENT`] — if this session escalates, the write is
+    /// re-authorized against live server state. Use [`Self::begin_with`] for a write
+    /// that differs on either fact.
+    pub fn begin(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
+        Self::begin_with(graph, WriteFacts::CLIENT)
+    }
+
+    /// Enter **reader** mode for a write that is not a plain client write — see
+    /// [`WriteFacts`] for the two questions and `docs/write-authorization.md` for how
+    /// each caller answers them.
+    pub fn begin_with(
+        graph: &Arc<RwLock<ThreadedGraph>>,
+        facts: WriteFacts,
+    ) -> Self {
+        Self {
+            graph: Arc::clone(graph),
+            mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
+            facts,
+            fork: RefCell::new(None),
+            slot: Cell::new(Slot::None),
+        }
+    }
+
+    /// Enter **writer** mode immediately — GIL, then the per-graph write lock — for
+    /// callers that write for the whole query and have nothing to escalate. On the
+    /// main thread the GIL acquire is the no-op it must be.
+    pub fn begin_writer(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
+        let gil = Gil::acquire();
+        Self {
+            graph: Arc::clone(graph),
+            mode: RefCell::new(Some(Mode::Writer {
+                guard: RwLock::write_arc(graph),
+                _gil: gil,
+            })),
+            // Moot: already a writer, so `escalate` never runs and this is never read.
+            // These are the inline main-thread paths anyway, where Redis's own dispatch
+            // gated the command and no pause or role-change window can open mid-command.
+            facts: WriteFacts::CLIENT,
+            fork: RefCell::new(None),
+            slot: Cell::new(Slot::None),
+        }
+    }
+
+    /// The facts this session was begun with, to begin another for the same
+    /// write.
+    pub const fn facts(&self) -> WriteFacts {
+        self.facts
+    }
+
+    /// The private version a write builds into.
+    ///
+    /// In writer mode the write slot is claimed now. In reader mode the version
+    /// is an unclaimed fork, and the slot is claimed when the query escalates
+    /// ([`Self::upgrade_to_write`]); if another writer committed in between,
+    /// escalation fails with [`WriteAbort::Stale`] and [`Self::is_stale`]
+    /// reports it.
+    ///
+    /// # Errors
+    ///
+    /// [`WriteAbort::WriteSlotBusy`] in writer mode if the slot is held.
+    pub fn write_version(&self) -> Result<Arc<AtomicRefCell<Graph>>, WriteAbort> {
+        debug_assert_eq!(self.slot.get(), Slot::None, "one write version per session");
+        if self.is_writer() {
+            let version = self
+                .with_graph(|tg| tg.graph.write())
+                .ok_or(WriteAbort::WriteSlotBusy)?;
+            self.slot.set(Slot::Claimed);
+            Ok(version)
+        } else {
+            let version = self.with_graph(|tg| tg.graph.fork());
+            *self.fork.borrow_mut() = Some(Arc::clone(&version));
+            self.slot.set(Slot::Forked);
+            Ok(version)
+        }
+    }
+
+    /// Release the write slot if this session claimed it, discarding the
+    /// private version; otherwise just drop the unclaimed fork. Idempotent.
+    pub fn release_slot(&self) {
+        if self.slot.get() == Slot::Claimed {
+            self.with_graph(|tg| tg.graph.rollback());
+        }
+        self.fork.borrow_mut().take();
+        if self.slot.get() != Slot::Stale {
+            self.slot.set(Slot::None);
+        }
+    }
+
+    /// The private version was committed, which released the slot.
+    pub fn committed(&self) {
+        debug_assert_eq!(self.slot.get(), Slot::Claimed);
+        self.slot.set(Slot::None);
+    }
+
+    /// Whether this session holds the write slot.
+    pub fn holds_slot(&self) -> bool {
+        self.slot.get() == Slot::Claimed
+    }
+
+    /// Whether the write lost its version to a writer that committed while it
+    /// was matching, so it must be run again from the start.
+    pub fn is_stale(&self) -> bool {
+        self.slot.get() == Slot::Stale
+    }
+
+    fn is_writer(&self) -> bool {
+        matches!(*self.mode.borrow(), Some(Mode::Writer { .. }))
+    }
+
+    /// Claim the write slot for the fork made in reader mode. Writer mode only:
+    /// the slot is then held only under the write lock.
+    fn claim_fork(&self) -> Result<(), WriteAbort> {
+        if self.slot.get() != Slot::Forked {
+            return Ok(());
+        }
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a fork for Slot::Forked");
+        match self.with_graph(|tg| tg.graph.claim(&fork)) {
+            Ok(()) => {
+                self.slot.set(Slot::Claimed);
+                Ok(())
+            }
+            Err(Claim::Stale) => {
+                self.slot.set(Slot::Stale);
+                Err(WriteAbort::Stale)
+            }
+            // Unreachable while every claimant holds the write lock, which we
+            // do; kept as the retryable error rather than a panic.
+            Err(Claim::Busy) => {
+                *self.fork.borrow_mut() = Some(fork);
+                Err(WriteAbort::WriteSlotBusy)
+            }
+        }
+    }
+
+    /// Release the locks now, before the session itself goes out of scope.
+    ///
+    /// For the one case where the two must differ: a write's reply is serialized from
+    /// the runtime, which borrows this session for its whole life, so the session
+    /// cannot be dropped before the reply — but the GIL and the write lock should be.
+    /// Idempotent, and `Drop` still covers every other path.
+    ///
+    /// Afterwards this session holds nothing, so [`Self::with_graph`] would panic:
+    /// call it last.
+    pub fn release_locks(&self) {
+        *self.mode.borrow_mut() = None;
+    }
+
+    /// The graph this session locks, as an owned handle.
+    ///
+    /// Lets a caller reach the graph *after* dropping the session — the slow log is
+    /// written once the writer window is closed, so it takes its own brief read lock.
+    pub fn graph_arc(&self) -> Arc<RwLock<ThreadedGraph>> {
+        Arc::clone(&self.graph)
+    }
+
+    /// Run `f` against the locked graph in a **short-lived** borrow.
+    ///
+    /// Short-lived is the point: escalation *replaces* the read guard with a write
+    /// guard, so a `&ThreadedGraph` outliving it would be invalid. `f` must not
+    /// escalate.
+    pub fn with_graph<R>(
+        &self,
+        f: impl FnOnce(&ThreadedGraph) -> R,
+    ) -> R {
+        // Both arms hold a guard that derefs to `&ThreadedGraph`; only the variant
+        // differs.
+        match self.mode.borrow().as_ref().expect("session holds no lock") {
+            Mode::Reader(guard) => f(guard),
+            Mode::Writer { guard, .. } => f(guard),
+        }
+    }
+
+    /// Run `f` against the **mutably** locked graph in a short-lived borrow.
+    ///
+    /// `None` if this query has not escalated; `Some` is proof the write lock is
+    /// held and mutation is allowed.
+    pub fn with_graph_mut<R>(
+        &self,
+        f: impl FnOnce(&mut ThreadedGraph) -> R,
+    ) -> Option<R> {
+        match self.mode.borrow_mut().as_mut()? {
+            Mode::Writer { guard, .. } => Some(f(guard)),
+            Mode::Reader(_) => None,
+        }
+    }
+
+    /// Become a writer, if not one already.
+    ///
+    /// Idempotent. The brief window holding no per-graph lock is safe: the query
+    /// has not yet touched the shared index, so a reader entering the window sees
+    /// a consistent older state; and a writer that commits in it (an inline one,
+    /// which holds the GIL and the write lock throughout) makes this query's
+    /// version stale, which the slot claim below detects before any mutation is
+    /// published.
+    pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
+        if self.escalate() {
+            // The key could have been deleted in the window where we held no
+            // per-graph lock, so re-verify the graph is still reachable before
+            // mutating it — as C does by re-opening the key under WRITE. The locks
+            // stay held; the caller aborts the query and `Drop` releases them.
+            if !crate::graph_core::graph_is_registered(&self.graph) {
+                return Err(WriteAbort::GraphUnregistered);
+            }
+            // Same window, the other half of what C re-validates here: this instance
+            // may no longer be allowed to originate a write at all.
+            reauthorize_write(self.facts)?;
+            // Only now, under the write lock, take the MVCC write slot for the
+            // version built while matching — and find out whether an inline
+            // writer committed in the window, making it stale.
+            self.claim_fork()?;
+        }
+        Ok(())
+    }
+
+    /// Release the read lock, take the GIL, take the write lock — in that order.
+    /// `false` if this query was already a writer, so there was nothing to do.
+    ///
+    /// Separate from [`Self::upgrade_to_write`] so the `mode` borrow ends here, by
+    /// scope, instead of spanning that method's call out to the graph registry.
+    fn escalate(&self) -> bool {
+        let mut mode = self.mode.borrow_mut();
+        if matches!(*mode, Some(Mode::Writer { .. })) {
+            return false;
+        }
+        // Drop the read lock FIRST: holding it across the GIL acquire below is the
+        // #726 inversion, and this assignment is what guarantees we never do.
+        *mode = None;
+
+        // GIL, then the write lock — the order every inline main-thread command
+        // already has.
+        let gil = Gil::acquire();
+        let guard = RwLock::write_arc(&self.graph);
+        *mode = Some(Mode::Writer { guard, _gil: gil });
+        true
+    }
+}
+
+/// Re-check, under the GIL, that this instance may still originate a write.
+///
+/// A write is admitted on the Redis main thread, where the `write` command flag makes
+/// Redis's own dispatch postpone it while `CLIENT PAUSE ... WRITE` is in effect and
+/// reject it on a read-only replica. But it mutates and replicates much later, from a
+/// worker thread — so a `FAILOVER` / `CLIENT PAUSE` window can have opened, or this
+/// instance can have been demoted, in between. Replicating then trips Redis's
+/// `propagateNow()` invariant (`server.c`,
+/// `!(isPausedActions(PAUSE_ACTION_REPLICA) && !server.client_pause_in_transaction)`)
+/// and kills the master — the crash reported in #2359.
+///
+/// Holding the GIL is what makes this race-free: neither the pause state nor the role
+/// can change until it is released. Mirrors C's `QueryCtx_AcquireWriteLock`
+/// (`src/query_ctx.c` on `master`, PR #2372); the first two messages are byte-identical
+/// to its `EMSG_REPLICA_TRAFFIC_PAUSED` / `EMSG_NOT_MASTER` so clients and tests can
+/// match either engine.
+fn reauthorize_write(facts: WriteFacts) -> Result<(), WriteAbort> {
+    // Off the main thread the GIL is held through the detached context `Gil::acquire`
+    // just created. On the main thread there is none — and nothing to re-check either,
+    // since Redis gated the command at dispatch and no window can open mid-command.
+    let Some(ctx) = GIL_CTX.get() else {
+        return Ok(());
+    };
+    // SAFETY: `ctx` is the context this thread locked in `Gil::acquire` and still
+    // holds. `Context` is a borrowing wrapper with no `Drop`, so it frees nothing —
+    // the same construction `telemetry`'s flush thread uses under `hold_gil`.
+    let ctx = Context::new(ctx.as_ptr());
+    let flags = ctx.get_flags();
+
+    // `LOADING` cannot reach here: `dispatch::must_run_inline` contains it, so a command
+    // replaying from AOF/RDB runs inline and never escalates. Assert rather than bypass,
+    // so narrowing that predicate surfaces here instead of silently changing which writes
+    // get authorized.
+    debug_assert!(
+        !flags.contains(ContextFlags::LOADING),
+        "escalated with LOADING set: must_run_inline no longer routes replay inline"
+    );
+
+    if facts.replicates && ctx.avoid_replication_traffic() {
+        return Err(WriteAbort::ReplicaTrafficPaused);
+    }
+    // `READONLY`, not `MASTER`: a replica running `replica-read-only no` accepts writes,
+    // and rejecting them there would break replica-divergence testing. C corrected this
+    // the same way in PR #2372.
+    //
+    // No check for a role that flipped away and back (master -> replica -> master)
+    // between admission and here: the only such flip that matters resynced from the new
+    // master, which frees and re-registers the graph key, so `graph_is_registered` above
+    // has already aborted this write. A flip that resynced nothing left the data
+    // unchanged and the write is still valid.
+    if facts.originated_here && flags.contains(ContextFlags::READONLY) {
+        return Err(WriteAbort::NotAMaster);
+    }
+    Ok(())
+}
+
+impl WriteEscalation for QuerySession {
+    fn upgrade_to_write(&self) -> Result<(), String> {
+        // `graph::locks::WriteEscalation` is defined in the `graph` crate, which knows
+        // nothing about Redis roles or pauses, so its contract stays a plain message and
+        // the typed reason is flattened here at the boundary.
+        Self::upgrade_to_write(self).map_err(|e| e.to_string())
+    }
+}
+
+impl Drop for QuerySession {
+    /// Releases the write lock then the GIL (see [`Mode::Writer`]), or the read lock.
+    fn drop(&mut self) {
+        *self.mode.borrow_mut() = None;
+    }
+}
+
+thread_local! {
+    /// The thread-safe context whose GIL this thread holds, if any. `None` also means
+    /// "not held by us", which is how [`Gil::acquire`] detects a nested acquire.
+    static GIL_CTX: Cell<Option<NonNull<raw::RedisModuleCtx>>> = const { Cell::new(None) };
+}
+
+/// Take the module GIL for the duration of the returned guard.
+///
+/// The one entry point for code that needs the GIL outside a query — telemetry's
+/// flush thread. Keeping it the *only* other caller is what lets the ordering rule be
+/// enforced by construction rather than by convention.
+///
+/// Bind the guard: dropping it immediately would release the GIL in the same statement
+/// that took it.
+#[must_use]
+pub fn hold_gil() -> impl Drop {
+    Gil::acquire()
+}
+
+/// RAII guard for the host's global lock: Redis's module GIL.
+///
+/// `need_release` records whether *this* guard is the one that took the GIL — a
+/// nested guard, or one on the main thread, releases nothing.
+///
+/// Not `Send`: the GIL is released by the thread that took it, which is also what
+/// keeps [`QuerySession`] `!Send`.
+struct Gil {
+    need_release: bool,
+    _not_send: PhantomData<*const ()>,
+}
+
+impl Gil {
+    #[must_use]
+    /// Take the GIL, unless this thread already holds it — the module GIL is not
+    /// recursive, so re-acquiring would self-deadlock. Two ways it can already be
+    /// held: the main thread holds it implicitly for the whole command callback, and a
+    /// nested acquire finds our own context in [`GIL_CTX`].
+    fn acquire() -> Self {
+        if graph::thread_id::is_main_thread() || GIL_CTX.get().is_some() {
+            return Self {
+                need_release: false,
+                _not_send: PhantomData,
+            };
+        }
+        // SAFETY: a null blocked-client yields a detached context, which is what we
+        // want — we need the GIL, not a client to reply to. It is ours, so `Drop`
+        // frees it.
+        let ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
+        let ctx = NonNull::new(ctx).expect("RedisModule_GetThreadSafeContext returned null");
+        // SAFETY: `ctx` was just created and is owned by this thread until `Drop`.
+        unsafe { lock_gil(ctx.as_ptr()) };
+        GIL_CTX.set(Some(ctx));
+        Self {
+            need_release: true,
+            _not_send: PhantomData,
+        }
+    }
+}
+
+impl Drop for Gil {
+    fn drop(&mut self) {
+        if !self.need_release {
+            return; // a nested guard, or the main thread's implicit hold
+        }
+        // `take` rather than `get`: the context leaves the thread-local as it is
+        // released, so no later guard can release it again. Only the guard that took
+        // the GIL gets here, so `None` is unreachable — but this runs from a `Drop`,
+        // where a panic aborts, so leak rather than assert.
+        if let Some(ctx) = GIL_CTX.take() {
+            // SAFETY: `ctx` is the context this thread locked in `acquire`, taken out
+            // of the thread-local so it is released exactly once.
+            unsafe { release_gil(ctx.as_ptr()) };
+        }
+    }
+}
+
+/// Acquire the module GIL through `ctx`. Private on purpose, so [`Gil`] is the only
+/// way to take the GIL anywhere in the process.
+///
+/// # Safety
+/// `ctx` must be a valid thread-safe context this thread does not already hold.
+unsafe fn lock_gil(ctx: *mut raw::RedisModuleCtx) {
+    let f = unsafe { raw::RedisModule_ThreadSafeContextLock }.expect("missing Redis API symbol");
+    unsafe { f(ctx) };
+}
+
+/// Release the GIL taken by [`lock_gil`] and free the context.
+///
+/// Resolves the symbols rather than `expect`ing them: this runs from a `Drop`, where
+/// a panic aborts, and leaking a context beats killing the server.
+///
+/// # Safety
+/// `ctx` must be a valid thread-safe context whose GIL this thread holds, and must
+/// not be used again.
+unsafe fn release_gil(ctx: *mut raw::RedisModuleCtx) {
+    unsafe {
+        if let Some(unlock) = raw::RedisModule_ThreadSafeContextUnlock {
+            unlock(ctx);
+        }
+        if let Some(free) = raw::RedisModule_FreeThreadSafeContext {
+            free(ctx);
+        }
+    }
+}

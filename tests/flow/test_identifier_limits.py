@@ -173,7 +173,7 @@ class testIdentifierLimits:
                 out.writerow(["node1"])
 
             res = runner.invoke(bulk_insert, [
-                '--server-url', f"redis://localhost:{self.port}",
+                '--server-url', f"redis://{self.env.host}:{self.port}",
                 '--nodes-with-label', long_name, 'nodes.csv',
                 bulk_graph,
             ])
@@ -186,7 +186,7 @@ class testIdentifierLimits:
                 out.writerow(["val1"])
 
             res = runner.invoke(bulk_insert, [
-                '--server-url', f"redis://localhost:{self.port}",
+                '--server-url', f"redis://{self.env.host}:{self.port}",
                 '--nodes', 'nodes_long_attr.csv',
                 bulk_graph,
             ])
@@ -205,7 +205,7 @@ class testIdentifierLimits:
                 out.writerow([0, 1])
 
             res = runner.invoke(bulk_insert, [
-                '--server-url', f"redis://localhost:{self.port}",
+                '--server-url', f"redis://{self.env.host}:{self.port}",
                 '--nodes', 'seed.csv',
                 '--relations-with-type', long_name, 'rels.csv',
                 bulk_graph,

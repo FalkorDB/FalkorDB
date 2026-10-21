@@ -65,7 +65,7 @@ class testPathProjections():
         self.env.assertEqual(actual_result.result_set, expected_result)
 
         plan = str(self.graph.explain(query))
-        self.env.assertEquals(2, plan.count("Apply"))
+        self.env.assertEqual(2, plan.count("Apply"))
 
     def test04_variable_length_projection(self):
         query = """MATCH (a {v: 1}) WITH (a)-[*]->({v: 3}) AS paths

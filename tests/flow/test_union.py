@@ -28,22 +28,22 @@ class testUnion(FlowTestsBase):
         q = """RETURN 1 as one UNION ALL RETURN 1 as one"""
         result = self.graph.query(q)
         # Expecting 2 identical records.
-        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEqual(len(result.result_set), 2)
         expected_result = [[1],
                            [1]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         q = """RETURN 1 as one UNION RETURN 1 as one"""
         result = self.graph.query(q)
         # Expecting a single record, duplicate removed.
-        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEqual(len(result.result_set), 1)
         expected_result = [[1]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         q = """MATCH a = () return length(a) AS len UNION ALL MATCH b = () RETURN length(b) AS len"""
         result = self.graph.query(q)
         # 3 records from each sub-query, coresponding to each path matched.
-        self.env.assertEquals(len(result.result_set), 6)
+        self.env.assertEqual(len(result.result_set), 6)
 
     def test02_invalid_union(self):
         try:
@@ -51,7 +51,7 @@ class testUnion(FlowTestsBase):
             q = """RETURN 1 as one UNION RETURN 1 as two"""
             self.graph.query(q)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -65,7 +65,7 @@ class testUnion(FlowTestsBase):
                          UNION
                          MATCH (a)-[]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"""
         union_result = self.graph.query(union_query)
-        self.env.assertEquals(union_result.result_set, non_union_result.result_set)
+        self.env.assertEqual(union_result.result_set, non_union_result.result_set)
 
     # A syntax error should be raised on edge alias reuse in one side of a union.
     def test04_union_invalid_reused_edge(self):
@@ -75,7 +75,7 @@ class testUnion(FlowTestsBase):
                        MATCH ()-[e]->() RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -90,7 +90,7 @@ class testUnion(FlowTestsBase):
 
         expected_result = [["v1_v2"],
                            ["v2_v3"]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     # Union should be capable of collating nodes and edges in a single column.
     def test06_union_nodes_with_edges(self):
@@ -100,7 +100,7 @@ class testUnion(FlowTestsBase):
         union_result = self.graph.query(query)
 
         # All 3 nodes and 2 edges should be returned.
-        self.env.assertEquals(len(union_result.result_set), 5)
+        self.env.assertEqual(len(union_result.result_set), 5)
 
         query = """MATCH ()-[e]->() RETURN e
                    UNION ALL
@@ -108,7 +108,7 @@ class testUnion(FlowTestsBase):
         union_all_result = self.graph.query(query)
 
         # The same results should be produced regardless of whether ALL is specified.
-        self.env.assertEquals(union_result.result_set, union_all_result.result_set)
+        self.env.assertEqual(union_result.result_set, union_all_result.result_set)
 
     # Union should function properly when one of its subqueries is ordered
     # and the other is not.
@@ -120,20 +120,20 @@ class testUnion(FlowTestsBase):
         expected_result = [[2],
                            [1],
                            [3]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # The results should not be modified when variables are aliased
         query = """UNWIND range(1, 2) AS a RETURN a AS b ORDER BY a DESC
                    UNION
                    UNWIND range(1, 3) AS b RETURN b"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         query = """UNWIND range(1, 2) AS a RETURN a AS b ORDER BY b DESC
                    UNION
                    UNWIND range(1, 3) AS b RETURN b"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     def test08_union_with_index_scan(self):
         query = """UNWIND range(10,20) AS i 
@@ -148,7 +148,7 @@ class testUnion(FlowTestsBase):
                    MATCH (s:M {v:'12'}) CREATE (:N {v:'10'})-[:R]->(s) RETURN s.v AS p"""
         result = self.graph.query(query)
         expected_result = [['11'],['12']]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test MATCH, CREATE and MERGE
         query = """MATCH (n:N {v:'10'})-[:R]->(:M) RETURN n.v AS p 
@@ -158,7 +158,7 @@ class testUnion(FlowTestsBase):
                    MERGE(x:N {v:'15'})-[:R]->(:M {v:'18'}) RETURN x.v AS p"""
         result = self.graph.query(query)
         expected_result = [['10'],['12'],['15']]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     def test09_union_write_read(self):
         # test when we have a read operation followed by a write operation
@@ -169,9 +169,9 @@ class testUnion(FlowTestsBase):
         query = """MERGE ()-[:R]->(:N) MERGE (:N:M) RETURN 0 AS n0 UNION MATCH (:N) RETURN 0 AS n0"""
 
         result = self.graph.query(query)
-        self.env.assertEquals(len(result.result_set), 1)
-        self.env.assertEquals(result.result_set, [[0]])
-        self.env.assertEquals(result.nodes_created, 2)
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertEqual(result.result_set, [[0]])
+        self.env.assertEqual(result.nodes_created, 2)
 
     def test10_union_invalid_sub_query(self):
         """

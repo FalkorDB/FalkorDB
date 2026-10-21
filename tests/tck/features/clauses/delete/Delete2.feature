@@ -92,7 +92,6 @@ Feature: Delete2 - Deleting relationships
       | null |
     And no side effects
 
-  @skip
   Scenario: [5] Failing when deleting a relationship type
     Given an empty graph
     And having executed:

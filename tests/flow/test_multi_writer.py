@@ -1,13 +1,10 @@
 from common import *
-import time
 import threading
 from queue import Queue, Empty
 
 WORKER_COUNT = 16
 
-task_queue = Queue()
-
-def worker(thread_id, db):
+def worker(thread_id, db, task_queue, errors):
     while True:
         try:
             graph_name, query = task_queue.get(timeout=5)
@@ -18,9 +15,9 @@ def worker(thread_id, db):
             g = db.select_graph(graph_name)
             g.query(query)
         except Exception as e:
-            print(f"[Worker-{thread_id}] Error on graph {graph_name}: {e}")
-
-        task_queue.task_done()
+            errors.append(f"[Worker-{thread_id}] Error on graph {graph_name}: {e}")
+        finally:
+            task_queue.task_done()
 
 class testMultiWriter():
 
@@ -52,6 +49,9 @@ class testMultiWriter():
         # GRAPH.QUERY A "CREATE ()"
         # ...
 
+        task_queue = Queue()
+        errors = []
+
         for i in range(0, 200):
             for graph_name in GRAPHS:
                 task_queue.put((graph_name, query))
@@ -59,21 +59,25 @@ class testMultiWriter():
         # start workers
         workers = []
         for i in range(WORKER_COUNT):
-            t = threading.Thread(target=worker, args=(i, self.db))
+            t = threading.Thread(target=worker, args=(i, self.db, task_queue, errors))
             t.start()
             workers.append(t)
 
-        # wait for workers to join
+        # wait for all tasks to complete
+        task_queue.join()
+
+        # join threads
         for t in workers:
             t.join()
 
-        task_queue.join()
+        # validate no worker errors occurred
+        self.env.assertEqual(errors, [])
 
         # validate each graph has the expected number of nodes
         for graph_name in GRAPHS:
             g = self.db.select_graph(graph_name)
             node_count = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
-            self.env.assertEquals(node_count, 200)
+            self.env.assertEqual(node_count, 200)
 
     def test_non_sequential(self):
         # Validate writes to different graph aren't held back
@@ -88,6 +92,9 @@ class testMultiWriter():
 
         fast_query = "CREATE ({v: timestamp()})"
 
+        task_queue = Queue()
+        errors = []
+
         # enqueued slow queries first
         for i in range(0, 8):
             task_queue.put(("A", slow_query))
@@ -97,15 +104,19 @@ class testMultiWriter():
 
         workers = []
         for i in range(9):
-            t = threading.Thread(target=worker, args=(i, self.db))
+            t = threading.Thread(target=worker, args=(i, self.db, task_queue, errors))
             t.start()
             workers.append(t)
 
-        # wait for workers to join
+        # wait for all tasks to complete
+        task_queue.join()
+
+        # join threads
         for t in workers:
             t.join()
 
-        task_queue.join()
+        # validate no worker errors occurred
+        self.env.assertEqual(errors, [])
 
         # validate B's timestamp is smaller than A's
         q = "MATCH (n) RETURN max(n.v)"

@@ -1,0 +1,106 @@
+# Build the shared-library (.so) artifacts for every release platform, and the
+# rhel9/amazonlinux2023 server images, WITHOUT releasing anything, so a broken
+# platform shows up on the pull request that broke it instead of at release
+# time. The images are started and queried, never pushed; only the .so files
+# are uploaded, as workflow artifacts.
+#
+# Triggers:
+#   - pull_request → runs when the PR changes something the artifact builds
+#     depend on (PATTERN below), or carries the `verify-artifacts` label. The
+#     per-OS cells (rhel9, amazonlinux2023) build their own toolchain from
+#     source and nothing else in PR CI exercises them, so without this a change
+#     that breaks them (as #3163 did) surfaces only at release time.
+#     Re-runs on each push while either holds.
+#   - workflow_dispatch → a maintainer's check against any branch or tag, with an
+#     optional subset of platforms.
+#
+# The platform list lives in _build-artifacts.yml.
+
+name: Build artifacts (verify)
+
+on:
+  workflow_dispatch:
+    inputs:
+      archs:
+        description: "Comma-separated suffixes (e.g. 'x64,arm64v8'), or 'all'"
+        required: false
+        default: "all"
+  pull_request:
+    types: [opened, labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      commit_sha: ${{ steps.decide.outputs.commit_sha }}
+    steps:
+      - name: Decide whether to build
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'verify-artifacts') }}
+          GH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$GH_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "commit_sha=$PR_SHA" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_LABEL" = "true" ]; then
+            echo "verify-artifacts label present"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # What the artifact Dockerfiles consume beyond ordinary Rust source:
+          # the Cargo manifests, lockfile, build scripts and cargo config (how
+          # new native code and link flags arrive), their own files, the libomp
+          # and native-deps builds, the submodules those build, and the scripts
+          # the per-OS server images run. Plain .rs changes are left out.
+          # build/Dockerfile (the Debian toolchain) is not here: the x64/arm64v8
+          # cells build on the PUBLISHED toolchain, and rust-pr.yml already
+          # rebuilds it when it changes.
+          PATTERN='^(Cargo\.(toml|lock)|graph/Cargo\.toml|(graph/)?build\.rs|\.cargo/config\.toml|build/libomp\.sh|build/runtime/Dockerfile(\.rhel9|\.amazonlinux2023)?|build/runtime/(run|gen-certs|gosu-setpriv)\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/(_build-artifacts|build-artifacts)\.yml)$'
+          # Materialise the list first: `gh ... | grep -q` under pipefail
+          # reports 141 on an early match (see rust-pr.yml).
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' > /tmp/changed-files.txt
+          if grep -E "$PATTERN" /tmp/changed-files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No artifact build inputs changed and no verify-artifacts label; skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: decide
+    if: ${{ needs.decide.outputs.run == 'true' }}
+    uses: ./.github/workflows/_build-artifacts.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      platforms: ${{ github.event.inputs.archs || 'all' }}
+      revision: ${{ needs.decide.outputs.commit_sha }}
+      # On a `pull_request` run the revision is the PR head — untrusted code, so
+      # the build may not write any cache. Only a maintainer dispatch (which can
+      # only target a ref already in this repo) is treated as trusted.
+      trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}
+    # No `secrets: inherit` — the reusable workflow only needs the auto-provided
+    # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
+    # build that compiles untrusted code is deliberate.

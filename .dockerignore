@@ -1,0 +1,41 @@
+target/
+# Host-built native dep OUTPUT that a Linux image build must never link.
+# Only the output is a hazard, not the source: deps/RediSearch/bin is ~2.2GB of
+# host-arch archives, while the ~60MB source it is built from is exactly what
+# the dep stages COPY in (git owns the submodule; nothing clones it any more).
+deps/RediSearch/bin/
+deps/RediSearch/.install/
+# Trees the old graphblas.sh/redisearch.sh left in checkouts that predate the
+# submodules: never inputs, but a stale one would be sent with `COPY . .`.
+lagraph_lib/
+redisearch/
+# All git metadata, at any depth. A submodule's `.git` is normally a small
+# `gitdir:` pointer file, but one bootstrapped by an older redisearch.sh is a
+# full repository (~62MB of objects) -- so leaving these in would make the build
+# context, and what lands in the image, depend on how the developer's checkout
+# happened to be created. Nothing in the image build runs git.
+#
+# RediSearch's redisearch_rs build scripts do need a `.git` ENTRY to exist:
+# build_utils::git_root walks up for one to locate the source root (an existence
+# check -- it never invokes git), and without it the ffi build script panics with
+# "Could not find git root". native-deps handles that itself in
+# recipes::ensure_git_root: it drops an empty marker directory for the duration
+# of the build and removes it afterwards, so every environment (Docker, CI and a
+# local checkout) behaves identically without the Dockerfiles knowing about it.
+.git/
+**/.git
+.github/
+.claude/
+.devcontainer/
+.vscode/
+.idea/
+docs/
+tests/flow/logs/
+*.log
+*.profraw
+*.profdata
+codecov.txt*
+.DS_Store
+
+# A stale restore journal names host paths; replaying it in a build would fail.
+deps/.native-deps/

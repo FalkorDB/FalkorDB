@@ -2,9 +2,8 @@ from common import *
 
 from reversepattern import ReversePattern
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/')
-import social_queries as queries
-import social_utils
+import social.social_queries as queries
+import social.social_utils
 
 
 class testSocialFlow(FlowTestsBase):
@@ -12,8 +11,8 @@ class testSocialFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         redis_con = self.env.getConnection()
-        self.graph = Graph(redis_con, social_utils.graph_name)
-        social_utils.populate_graph(redis_con, self.graph)
+        self.graph = Graph(redis_con, social.social_utils.graph_name)
+        social.social_utils.populate_graph(redis_con, self.graph)
  
     def assert_reversed_pattern(self, query, resultset):
         # Test reversed pattern query.

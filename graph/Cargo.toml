@@ -1,0 +1,68 @@
+[package]
+name = "graph"
+version = "0.1.0"
+edition = "2024"
+description = "Core of the database"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+readme = "../README.md"
+keywords = ["graph", "database"]
+categories = ["data-structures", "database"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
+[features]
+# See root Cargo.toml feature of the same name. Pass-through so the runtime
+# JIT-control choice in matrix.rs is selectable at build time, not from a
+# process env var that could leak into a shipped binary.
+prejit_harvest = []
+
+# Native FalkorDB numeric index (the in-repo replacement for RediSearch). Gates
+# `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
+# wiring. Off by default: the shipped build is byte-for-byte unchanged until this
+# is switched on. The native index does not yet replace RediSearch: a numeric
+# Equal/Range predicate is served natively and everything else — strings, geo,
+# composite predicates, missing columns — still falls through to RediSearch.
+index-falkordb = []
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ahash = "0.8"
+arc-swap = "1"
+atomic_refcell = "0.1.14"
+chrono = "0.4.45"
+crossfire = "3.1.19"
+csv = "1.4.0"
+itertools = "0.15.0"
+json-escape = "0.3.1"
+lru = "0.18.1"
+num_enum = "0.7.6"
+once_cell = "1.21.4"
+parking_lot = "0.12.5"
+phf = { version = "0.14", features = ["macros"] }
+orx-tree = "2.2.0"
+rand = "0.10.2"
+regex = "1.13.0"
+rquickjs = { version = "0.14", features = ["bindgen", "classes", "parallel"] }
+ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
+# Pinned exactly, not caret-matched. Two engines have to serialize the same
+# ids to the same bytes (#2698), and roaring's output is not stable across
+# releases by contract: `optimize()` is path-dependent, and the container
+# heuristics it uses are internal. A patch bump that changes a tie-break
+# changes the wire, silently, on one side only. `predicted_matches_roaring`
+# in `effects/v3/id_list.rs` is the canary; this pin is the seatbelt.
+roaring = "=0.11.5"
+rustc-hash = "2"
+simsimd = "6.5"
+smallvec = "1.15.2"
+thin-vec = "0.2.18"
+thiserror = "2"
+zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
+crc32fast = "1.4"
+stacker = "0.1.25"
+
+[build-dependencies]
+native-deps = { path = "../native-deps" }

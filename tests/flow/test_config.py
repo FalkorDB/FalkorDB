@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 21 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 24 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -21,7 +21,7 @@ class testConfig(FlowTestsBase):
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
 
         # 16 configurations should be reported
-        self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
+        self.env.assertEqual(len(response), NUMBER_OF_CONFIGURATIONS)
 
         # validate default configuration values
 
@@ -33,15 +33,21 @@ class testConfig(FlowTestsBase):
                 ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
                 ("OMP_THREAD_COUNT", os.cpu_count()),
                 ("THREAD_COUNT", os.cpu_count()),
+                ("INDEX_WORKER_THREADS", 0),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
-                ("MAX_QUEUED_QUERIES", 4294967295),
+                ("MAX_QUEUED_QUERIES", 10000),
                 ("QUERY_MEM_CAPACITY", 0),
                 ("DELTA_MAX_PENDING_CHANGES", 10000),
                 ("NODE_CREATION_BUFFER", 16384),
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
-                ("EFFECTS_THRESHOLD", 0),
+                ("EFFECTS_COMPRESSION", 0),
+                # Deprecated and read by nothing, kept settable at its original
+                # default so a config file or client that names it does not
+                # fail. See src/config.rs.
+                ("EFFECTS_THRESHOLD", 300),
+                ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
@@ -54,13 +60,13 @@ class testConfig(FlowTestsBase):
             value = config[1]
 
             # validate config name
-            self.env.assertEquals(name, default_config[i][0])
+            self.env.assertEqual(name, default_config[i][0])
 
             # validate config value
             if type(default_config[i][1]) is list:
-                self.env.assertIn(value, default_config[i][1])
+                self.env.assertContains(value, default_config[i][1])
             else:
-                self.env.assertEquals(value, default_config[i][1])
+                self.env.assertEqual(value, default_config[i][1])
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
@@ -69,7 +75,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_get(fake_config_name)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -121,7 +127,7 @@ class testConfig(FlowTestsBase):
             # a runtime configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 THREAD_COUNT 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("This configuration parameter cannot be set at run-time" in str(e))
 
@@ -130,7 +136,7 @@ class testConfig(FlowTestsBase):
             # configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 FAKE_CONFIG_NAME 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
 
@@ -139,7 +145,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 MAX_QUEUED_QUERIES -1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Failed to set config value" in str(e))
 
@@ -155,7 +161,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_set(fake_config_name, " 5")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -167,7 +173,7 @@ class testConfig(FlowTestsBase):
         try:
             response = self.redis_con.execute_command("GRAPH.CONFIG DREP " + config_name + " 3")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
 
@@ -283,7 +289,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES must be a positive value
             self.db.config_set("MAX_QUEUED_QUERIES", 0)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Failed to set config value MAX_QUEUED_QUERIES to 0" in str(e))
             pass
 
@@ -293,7 +299,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(f"{config}", -1)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert("Failed to set config value %s to -1" % config in str(e))
                 pass
 
@@ -303,7 +309,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(config, "invalid")
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
     def test10_set_get_vkey_max_entity_count(self):
@@ -318,6 +324,26 @@ class testConfig(FlowTestsBase):
         response = self.db.config_get(config_name)
         expected_response = config_value
         self.env.assertEqual(response, expected_response)
+
+        # #3413: any non-negative i64 is accepted, as in C. FalkorDB Cloud loads
+        # the module with VKEY_MAX_ENTITY_COUNT 4611686000000000000, and
+        # CONFIG REWRITE saves it as a native `graph.` line; on restart Redis
+        # applies that line through the same range check `CONFIG SET` uses, so
+        # a narrower range aborted the server.
+        # 0 means no limit (one key); GRAPH.CONFIG SET already accepted it,
+        # so the native config must too, or CONFIG REWRITE saves a line the
+        # restart rejects.
+        for value in [0, 4611686000000000000, 9223372036854775807]:
+            self.env.assertEqual(self.redis_con.execute_command(
+                "CONFIG", "SET", "graph.VKEY_MAX_ENTITY_COUNT", str(value)), "OK")
+            # config_get returns a dict under both RESP2 and RESP3
+            self.env.assertEqual(
+                self.redis_con.config_get("graph.VKEY_MAX_ENTITY_COUNT"),
+                {"graph.VKEY_MAX_ENTITY_COUNT": str(value)})
+            self.env.assertEqual(self.db.config_set(config_name, value), "OK")
+            self.env.assertEqual(self.db.config_get(config_name), value)
+
+        self.env.assertEqual(self.db.config_set(config_name, 100000), "OK")
 
     def test11_set_get_node_creation_buffer(self):
         # flush and stop is needed for memcheck for clean shutdown
@@ -342,6 +368,80 @@ class testConfig(FlowTestsBase):
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
 
+    def test12_set_get_runtime_booleans(self):
+        """CMD_INFO and DELAY_INDEXING are settable at run-time"""
+
+        for config_name in ["CMD_INFO", "DELAY_INDEXING"]:
+            for value, expected in [("no", 0), ("yes", 1), ("NO", 0), ("Yes", 1)]:
+                self.env.assertEqual(self.db.config_set(config_name, value), "OK")
+                self.env.assertEqual(self.db.config_get(config_name), expected)
+
+            # anything but yes/no is rejected,
+            # leaving the config as it was
+            for value in ["maybe", "1", "0", "true", "false"]:
+                try:
+                    self.db.config_set(config_name, value)
+                    assert(False)
+                except redis.ResponseError as e:
+                    assert(("Failed to set config value %s to %s" % (config_name, value)) in str(e))
+            self.env.assertEqual(self.db.config_get(config_name), 1)
+
+        # restore defaults for the tests that follow
+        self.db.config_set("DELAY_INDEXING", "no")
+
+    def test13_set_get_max_info_queries(self):
+        """MAX_INFO_QUERIES is settable at run-time, and clamped to its cap"""
+
+        self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 42), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 42)
+
+        # above the cap the value is clamped, not rejected
+        self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 99999), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
+
+        for invalid in [-1, "invalid"]:
+            try:
+                self.db.config_set("MAX_INFO_QUERIES", invalid)
+                assert(False)
+            except redis.ResponseError as e:
+                assert(("Failed to set config value MAX_INFO_QUERIES to %s" % invalid) in str(e))
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
+
+    def test14_config_validation(self):
+        """GRAPH.CONFIG validates values, arity and names"""
+
+        # ASYNC_DELETE defaults to yes
+        self.env.assertEqual(self.db.config_get("ASYNC_DELETE"), 1)
+
+        prev_conf = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
+        def expect_error(args, err):
+            try:
+                self.redis_con.execute_command("GRAPH.CONFIG", *args)
+                self.env.assertTrue(False, message=str(args))
+            except redis.ResponseError as e:
+                self.env.assertContains(err, str(e))
+
+        expect_error(("SET", "VKEY_MAX_ENTITY_COUNT", "-5"),
+                     "Failed to set config value VKEY_MAX_ENTITY_COUNT to -5")
+        for name in ["JS_HEAP_SIZE", "JS_STACK_SIZE"]:
+            for value in ["5", "0", "-1", "1048575", "x"]:
+                expect_error(("SET", name, value), f"{name} must be at least 1MB (1048576)")
+
+        # arity: GET takes exactly one name, SET name/value pairs
+        expect_error(("GET", "TIMEOUT", "extra"), "wrong number of arguments")
+        expect_error(("SET", "TIMEOUT"), "wrong number of arguments")
+        expect_error(("SET", "TIMEOUT", "0", "RESULTSET_SIZE"), "wrong number of arguments")
+        expect_error(("GET",), "wrong number of arguments")
+
+        # names are ASCII case-insensitive only: a dotless i does not fold to I
+        expect_error(("GET", "tımeout"), "Unknown configuration field")
+        expect_error(("SET", "tımeout", "0"), "Unknown configuration field")
+        self.env.assertEqual(self.db.config_get("timeout"), self.db.config_get("TIMEOUT"))
+
+        # nothing changed
+        self.env.assertEqual(self.redis_con.execute_command("GRAPH.CONFIG GET *"), prev_conf)
+
 import stat
 import shutil
 import tempfile
@@ -349,7 +449,7 @@ import tempfile
 class testConfigTempFolder:
     def __init__(self):
         self.env, self.db = Env()
-        if SANITIZER or VALGRIND:
+        if SANITIZER:
             self.env.skip()
 
     def teardown_method(self):
@@ -365,7 +465,10 @@ class testConfigTempFolder:
     def test_01_temp_folder_is_file(self):
         # try setting TEMP_FOLDER to a file
         # expecting config update to fail
-        fd, file_path = tempfile.mkstemp()
+        # mountable_mkstemp puts the file under the workspace so it is
+        # visible to the docker-per-class spawned container via the
+        # bind-mount logic in common._spawn_falkordb.
+        fd, file_path = mountable_mkstemp()
         os.close(fd)
 
         # try updating TEMP_FOLDER
@@ -396,8 +499,9 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a folder which we can't write to
         # expecting config update to fail, as write access is mandatory
 
-        # create a temp folder with no write access
-        no_perm_dir = tempfile.mkdtemp()
+        # create a temp folder with no write access (workspace-rooted so
+        # spawned sibling containers see it via the bind-mount in common.py)
+        no_perm_dir = mountable_mkdtemp()
         os.chmod(no_perm_dir, stat.S_IREAD)
 
         # check if directory is truly unwritable
@@ -421,7 +525,8 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a valid folder
         # expecting config update to succeed
 
-        valid_dir = tempfile.mkdtemp()
+        # workspace-rooted so the spawned container can see it
+        valid_dir = mountable_mkdtemp()
 
         try:
             self.set_temp_folder(valid_dir)
@@ -489,3 +594,13 @@ class testLoadTimeConfig(FlowTestsBase):
                 val = False
 
             env.assertEqual(db.config_get(name), val)
+
+    def test02_loadtime_max_info_queries(self):
+        """MAX_INFO_QUERIES honours its load-time argument, up to the cap"""
+
+        env, db = Env(moduleArgs="MAX_INFO_QUERIES 500")
+        env.assertEqual(db.config_get("MAX_INFO_QUERIES"), 500)
+
+        # over the cap the value is clamped rather than refused
+        env, db = Env(moduleArgs="MAX_INFO_QUERIES 99999")
+        env.assertEqual(db.config_get("MAX_INFO_QUERIES"), 1000)

@@ -2,8 +2,7 @@ import random
 import string
 from common import *
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
+from tests.flow.query_info import QueryInfo
 
 GRAPH_ID = "params"
 
@@ -269,7 +268,7 @@ class testParams(FlowTestsBase):
             try:
                 result = self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test_expression_on_param(self):
@@ -306,7 +305,7 @@ class testParams(FlowTestsBase):
         try:
             self.graph.query(query, params)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             pass
 
     def test_missing_parameter(self):
@@ -372,7 +371,7 @@ class testParams(FlowTestsBase):
         query_info = QueryInfo(query=query, description="Test id scan with params", expected_result=expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertIn('NodeByIdSeek', plan)
+        self.env.assertContains('NodeByIdSeek', plan)
 
     def test_map_param(self):
         # test passing a map as a parameter value via the Python client dict interface
@@ -430,6 +429,6 @@ class testParams(FlowTestsBase):
                 msg_lower = msg.lower()
                 self.env.assertContains("parameter", msg_lower)
                 self.env.assertContains("properties", msg)
-                self.env.assertNotIn("invalid input", msg_lower)
-                self.env.assertNotIn("expected '='", msg_lower)
+                self.env.assertNotContains("invalid input", msg_lower)
+                self.env.assertNotContains("expected '='", msg_lower)
 

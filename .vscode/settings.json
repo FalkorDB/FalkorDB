@@ -1,0 +1,9 @@
+{
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.check.extraArgs": ["--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::cargo", "-A", "clippy::missing-errors-doc", "-A", "clippy::missing-panics-doc", "-A", "clippy::doc-markdown"],
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

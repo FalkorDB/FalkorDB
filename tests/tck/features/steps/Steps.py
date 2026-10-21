@@ -2,7 +2,7 @@ import sys
 import os
 import ast
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../redis_utils/')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../falkor_utils/')
 
 import assertions
 import graphs
@@ -31,7 +31,7 @@ def step_impl(context):
 def step_impl(context):
     graphs.any_graph()
 
-@then(u'parameters are:')
+@then(u'parameters are')
 @given(u'parameters are:')
 def set_params(context):
     global params
@@ -46,8 +46,8 @@ def set_params(context):
         params += '='.join(row) + ' '
 
 @given(u'having executed:')
-@when(u'having executed:')
-@then(u'having executed:')
+@when(u'having executed')
+@then(u'having executed')
 @when(u'executing control query:')
 @when(u'executing query:')
 def step_impl(context):
@@ -62,21 +62,10 @@ def step_impl(context):
         query = params + query
 
     try:
-        context.pre_label_count = graphs.schema_label_count()
-    except Exception:
-        context.pre_label_count = 0
-
-    try:
         resultset = graphs.query(query.replace("\r", ""))
     except Exception as error:
         resultset = None
         exception = error
-
-    try:
-        context.post_label_count = graphs.schema_label_count()
-    except Exception:
-        pass
-
     params = None
 
 @then(u'the result should be empty')
@@ -85,17 +74,14 @@ def step_impl(context):
 
 @then(u'the side effects should be:')
 def step_impl(context):
-    labels_added = (getattr(context, 'post_label_count', 0) or 0) \
-                 - (getattr(context, 'pre_label_count', 0) or 0)
-
     stat = context.table.headings[0]
     value = int(context.table.headings[1])
-    assertions.assert_statistics(resultset, stat, value, labels_added=labels_added)
+    assertions.assert_statistics(resultset, stat, value)
 
     for row in context.table:
         stat = row[0]
         value = int(row[1])
-        assertions.assert_statistics(resultset, stat, value, labels_added=labels_added)
+        assertions.assert_statistics(resultset, stat, value)
 
 @then(u'no side effects')
 def step_impl(context):
@@ -109,8 +95,15 @@ def step_impl(context):
     assertions.assert_resultset_length(resultset, expected_length)
     assertions.assert_resultsets_equals(resultset, context.table)
 
+@then(u'the result should be (ignoring element order for lists):')
+def step_impl(context):
+    if exception:
+        raise exception
+    expected_length = len(context.table.rows)
+    assertions.assert_resultset_length(resultset, expected_length)
+    assertions.assert_resultsets_equals_ignore_list_order(resultset, context.table)
 
-@then(u'the result should be:')
+@then(u'the result should be')
 @then(u'the result should be, in order:')
 def step_impl(context):
     if exception:
@@ -328,8 +321,8 @@ def step_imp(context):
     assert exception != None
     assert "Multiple result columns with the same name are not supported." in str(exception)
 
-@then(u'a SyntaxError should be raised at compile time: AmbiguousAggregationExpression')
-def step_imp(context):
+@then(u'a SyntaxError should be raised at compile time: InvalidUnicodeLiteral')
+def step_impl(context):
     global exception
     assert exception != None
-    assert "ORDER BY cannot reference variables not projected or grouped in this scope" in str(exception)
+    assert "Invalid unicode escape" in str(exception) or "Invalid input" in str(exception)

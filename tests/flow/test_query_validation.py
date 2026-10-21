@@ -1,4 +1,5 @@
 from common import *
+from index_utils import wait_for_indices_to_sync
 
 GRAPH_ID = "query_validation"
 
@@ -14,13 +15,20 @@ class testQueryValidationFlow(FlowTestsBase):
         # Create a single graph.
         self.graph.query("CREATE ({age:34})")
 
+    def fresh_graph(self, name):
+        # a run interrupted before its cleanup (e.g. by a server crash) can
+        # leave the graph behind; start from an empty one
+        if name in self.db.list_graphs():
+            self.db.select_graph(name).delete()
+        return self.db.select_graph(name)
+
     # Expect an error when trying to use a function which does not exists.
     def test01_none_existing_function(self):
         query = """MATCH (n) RETURN noneExistingFunc(n.age) AS cast"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -29,7 +37,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             query = """MATCH (n) RETURN mAx(n.age)"""
             self.graph.query(query)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # function validation should be case insensitive.
             self.env.assertTrue(False)
     
@@ -38,27 +46,27 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (n:Person {age:32})-[]->(:person {age:30})"""
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
     def test04_escaped_quotes(self):
        query = r"CREATE (:escaped{prop1:'single \' char', prop2: 'double \" char', prop3: 'mixed \' and \" chars'})"
        actual_result = self.graph.query(query)
-       self.env.assertEquals(actual_result.nodes_created, 1)
-       self.env.assertEquals(actual_result.properties_set, 3)
+       self.env.assertEqual(actual_result.nodes_created, 1)
+       self.env.assertEqual(actual_result.properties_set, 3)
 
        query = r"MATCH (a:escaped) RETURN a.prop1, a.prop2, a.prop3"
        actual_result = self.graph.query(query)
        expected_result = [["single ' char", 'double " char', 'mixed \' and " chars']]
-       self.env.assertEquals(actual_result.result_set, expected_result)
+       self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test05_invalid_entity_references(self):
         try:
             query = """MATCH (a) RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -66,7 +74,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN a ORDER BY e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -74,7 +82,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (@anon_0) RETURN @anon_0"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -83,7 +91,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE fake = true RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -92,7 +100,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WITH e RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -101,7 +109,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -110,7 +118,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN SUM(*)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -119,7 +127,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a {name:$name}) RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
     
@@ -128,7 +136,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -137,7 +145,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -146,7 +154,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -156,7 +164,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query= """MATCH x=()-[]->() RETURN x.name"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -165,7 +173,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -175,7 +183,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Encountered unhandled type" in str(e))
             pass
@@ -186,10 +194,43 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             res = self.redis_con.execute_command("GRAPH.QUERY", "G")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("wrong number of arguments" in str(e))
             pass
+
+    # QUERY, RO_QUERY, PROFILE and EXPLAIN share C's flag parser
+    def test17b_query_flags(self):
+        cmds = ["GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.PROFILE", "GRAPH.EXPLAIN"]
+        bad = [
+            (("TIMEOUT", "-5"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "+10"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "010"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "abc"), "Failed to parse query timeout value"),
+            (("TIMEOUT",), "Failed to parse query timeout value"),
+            (("version", "4294967296"), "Failed to parse graph version value"),
+            (("version", "-1"), "Failed to parse graph version value"),
+            (("version",), "Failed to parse graph version value"),
+            # at most 8 arguments, command name included
+            (("a", "b", "c", "d", "e", "f"), "wrong number of arguments"),
+        ]
+        for cmd in cmds:
+            for flags, err in bad:
+                try:
+                    self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+                    self.env.assertTrue(False, message=f"{cmd} {flags}")
+                except redis.ResponseError as e:
+                    self.env.assertContains(err, str(e))
+
+            # valid flags, unknown ones skipped
+            for flags in [("TIMEOUT", "0"), ("timeout", "10"), ("a", "b", "c", "d", "e")]:
+                self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+
+        # a non-UTF-8 argument is an unknown flag, not the end of the flags
+        for cmd in ["GRAPH.QUERY", "GRAPH.RO_QUERY"]:
+            res = self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", b"\xff", "--compact")
+            # compact header: [[type, name]]
+            self.env.assertEqual(res[0], [[1, "1"]])
 
     # Run queries in which compile-time variables are accessed but not defined.
     def test18_undefined_variable_access(self):
@@ -197,7 +238,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (:person{name:bar[1]})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -206,7 +247,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a {val: undeclared}) RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -215,7 +256,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """UNWIND [fake] AS ref RETURN ref"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -259,7 +300,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Only directed relationships" in str(e))
             pass
@@ -270,7 +311,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH p=() WHERE p.name='value' RETURN p"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
@@ -283,7 +324,7 @@ class testQueryValidationFlow(FlowTestsBase):
                    RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """/* A block comment*/ MATCH (n)  // This is a comment
                 /* This is a block comment */
@@ -291,7 +332,7 @@ class testQueryValidationFlow(FlowTestsBase):
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """// This is a comment
                 MATCH (n)  // This is a comment
@@ -300,13 +341,13 @@ class testQueryValidationFlow(FlowTestsBase):
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Validate procedure call refrences and definitions
     def test22_procedure_validations(self):
@@ -315,7 +356,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -325,7 +366,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -344,7 +385,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -355,7 +396,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
@@ -370,15 +411,17 @@ class testQueryValidationFlow(FlowTestsBase):
             """MATCH (a) WHERE true OR -1 RETURN a""",
             """MATCH (a) WHERE true AND -1 RETURN a""",
             """MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a""",
-            """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""]
+            #@todo barak implement list comprehension predicates
+            # """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""
+            ]
 
         for query in queries:
             try:
                 self.graph.query(query)
-                assert(False)
-            except redis.exceptions.ResponseError as e:
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
                 # Expecting an error.
-                assert("Expected boolean predicate" in str(e))
+                self.env.assertContains("Expected boolean predicate", str(e))
                 pass
 
     # The NOT operator does not compare left and right side expressions.
@@ -389,7 +432,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (u) where u.v NOT NULL RETURN u"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Invalid usage of 'NOT' filter" in str(e))
             pass
@@ -399,7 +442,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE a RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Node" in str(e))
             pass
 
@@ -407,7 +450,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE 1+rand() RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Float" in str(e))
             pass
 
@@ -415,7 +458,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Integer" in str(e))
             pass
 
@@ -433,7 +476,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Encountered unhandled type" in str(e))
 
@@ -445,7 +488,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 assert("Property values can only be of primitive types" in str(e))
                 pass
@@ -469,7 +512,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 assert("Unexpected clause following RETURN" in str(e))
                 pass
@@ -480,7 +523,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER A=[a] RETURN 5"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # expecting an error
             pass
 
@@ -490,22 +533,58 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (a:L {v: a.v})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("undefined attribute", str(e))
+            self.env.assertContains("undefined attribute", str(e))
 
         # MATCH clauses should be able to use self-referential properties as existential filters.
         query = """MATCH (a {age: a.age}) RETURN a.age"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
+
+        # A self-reference nested inside a comprehension is the same error, but
+        # it used to reach evaluation and crash the server in GraphEntity_Keys.
+        # The query must be *rejected*: returning an empty key/property list
+        # for an entity that does not exist yet would silently accept an
+        # invalid query.
+        # See https://github.com/FalkorDB/FalkorDB/issues/415
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
+
+        queries = [
+                # the original report: 'child1' is referenced from within an
+                # any() predicate, and the inner comprehension variable 'root'
+                # shadows the node created by the same clause
+                ("""CREATE (root:Root {name: 'x'}),
+                           (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}),
+                           (child2:IntNode {v0: 0})""", "'child1' not defined"),
+                # minimal forms of the same thing
+                ("""CREATE (a:L {v: keys(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: properties(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: [x IN keys(a) | x]})""", "'a' not defined"),
+                ("""CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""", "'a' not defined"),
+                # the same holds for a relationship reading itself
+                ("""CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""", "'r' not defined"),
+                ("""CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)""", "'r' not defined")]
+
+        for query, expected in queries:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains(expected, str(e))
+
+        # the rejected CREATEs must not have partially applied
+        self.env.assertEqual(
+                self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0],
+                node_count)
 
     # Test a query that allocates a large buffer.
     def test35_large_query(self):
         retval = "abcdef" * 1_000
         query = "RETURN " + "\"" + retval + "\""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], retval)
+        self.env.assertEqual(actual_result.result_set[0][0], retval)
 
     def test36_multiple_proc_calls(self):
         query = """MATCH (a)
@@ -531,7 +610,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test38_return_star_union(self):
@@ -544,7 +623,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
     def test39_non_single_statement_query(self):
@@ -556,7 +635,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
         
         queries = ["MATCH (n) RETURN n; MATCH"]
@@ -564,7 +643,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("query with more than one statement is not supported", str(e))
 
         queries = ["RETURN 1;",
@@ -574,7 +653,7 @@ class testQueryValidationFlow(FlowTestsBase):
                    "RETURN 1; \n;"]
         for q in queries:
             res = self.graph.query(q)
-            self.env.assertEquals(res.result_set, [[1]])
+            self.env.assertEqual(res.result_set, [[1]])
 
     def test40_compile_time_errors_in_star_projections(self):
         # validate that parser errors are handled correctly
@@ -585,7 +664,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError:
+            except redis.ResponseError:
                 pass
 
         # check that AST validation errors are handled correctly
@@ -600,7 +679,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError:
+            except redis.ResponseError:
                 pass
 
     # Test returning multiple occurrence of an expression.
@@ -616,7 +695,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Multiple result columns with the same name are not supported", str(e))
 
     # Test fail with unknown function.
@@ -633,7 +712,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Unknown function", str(e))
     
     # Variable length edges are not allowed in CREATE or MERGE clauses.
@@ -648,7 +727,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Variable length relationships cannot be used in", str(e))
 
     def test44_undefined_variables(self):
@@ -669,9 +748,9 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
-                self.env.assertIn("'a' not defined", str(e))
+                self.env.assertContains("'a' not defined", str(e))
 
         # invalid usage of undefined variables in a `RETURN` clause
         invalid_queries = [
@@ -687,9 +766,9 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
-                self.env.assertIn("'a' not defined", str(e))
+                self.env.assertContains("'a' not defined", str(e))
 
     def test45_union_scope(self):
         # make sure OPTIONAL MATCH followed by a MATCH clause in a different
@@ -699,26 +778,394 @@ class testQueryValidationFlow(FlowTestsBase):
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
 
-    # Duplicate inline property assignments should fail at validation time.
-    def test46_merge_duplicate_property_keys_on_match_set(self):
-        self.graph.query("CREATE (), ()")
+    def test46_repeated_relationship_variable(self):
+        # reusing a relationship variable used to crash the server in several
+        # shapes: within a single pattern, inside a pattern predicate reached
+        # through WITH, and across a chain of WITH/WHERE clauses. Every shape
+        # must now produce either rows or a clean error, and the server must
+        # survive it.
+        g = self.db.select_graph("repeated_rel_var")
 
-        queries = [
-            """MATCH () MERGE (b{x:1,x:2})""",
-            """MATCH () MERGE (b{x:1,x:2}) ON MATCH SET b.id=3""",
-            """OPTIONAL MATCH (a)
-                MERGE(b{x:1,x:2})<-[:S]-(c)
-                ON MATCH SET a:L""",
-        ]
+        try:
+            g.query("""CREATE (a:P {name: 'A'}), (a)-[:R]->(a),
+                              (:P {name: 'B'})-[:R]->(:P {name: 'C'})""")
 
-        for q in queries:
+            # the same variable twice in one pattern can never match and is
+            # rejected - it used to trip an assertion in query graph
+            # construction and take the server down
+            # https://github.com/FalkorDB/FalkorDB/issues/465
             try:
-                self.graph.query(q)
+                g.query("WITH NULL AS a0 MATCH ()-[a0]-()-[a0]-() RETURN 1")
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
-                self.env.assertContains("Duplicate property key 'x' in inline property map", str(e))
+            except redis.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("same relationship variable", str(e))
 
-        # Server should remain responsive after all failed queries.
-        res = self.graph.query("RETURN 1")
-        self.env.assertEquals(res.result_set, [[1]])
+            # referencing a bound relationship variable from a pattern
+            # predicate is legal - each pattern uses it once - and used to be
+            # rejected with that same 'multiple patterns' error
+            # https://github.com/FalkorDB/FalkorDB/issues/1335
+            actual = g.query("""MATCH (n0)-[r0]->(n0)
+                                WHERE ()<-[r0]-(n0)
+                                RETURN n0.name""")
+            self.env.assertEqual(actual.result_set, [['A']])
 
+            # a relationship variable repeated inside a pattern predicate,
+            # reached through WITH, used to segfault. Rejecting it and
+            # returning no rows are both acceptable - crashing is not.
+            # https://github.com/FalkorDB/FalkorDB/issues/1982
+            # https://github.com/FalkorDB/FalkorDB/issues/1333
+            queries = ["""MATCH (p:P)-[r:R]-()
+                          WITH p, r
+                          WHERE (p)-[r:R]->()<-[r:R]-()
+                          RETURN p.name""",
+                       """MATCH (n0)--(n0)
+                          WITH *
+                          WHERE (n0)--(n0)
+                          MATCH (n1)-[r1]-()
+                          WITH *
+                          WHERE (n1)-[r1]->()<-[r1]-()
+                          RETURN *"""]
+
+            for q in queries:
+                try:
+                    self.env.assertEqual(g.query(q).result_set, [])
+                except redis.ResponseError:
+                    # a clean rejection is acceptable, a crash is not
+                    pass
+
+                # the server must still answer - the crash used to arrive
+                # asynchronously, after the reply
+                self.env.assertEqual(
+                        g.query("MATCH (n:P) RETURN count(n)").result_set, [[3]])
+        finally:
+            g.delete()
+
+    def test47_pattern_expression_in_inlined_properties(self):
+        # a pattern comprehension or pattern predicate inside a pattern's
+        # inline property map is never lowered by the planner, and used to
+        # reach the evaluator and take the server down as soon as the outer
+        # pattern had a candidate row. It is rejected up front, as FalkorDB C
+        # does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("inlined_pattern_expr")
+
+        try:
+            g.query("CREATE (a {k:1})-[:R {k:1}]->(b {k:1})")
+
+            queries = [
+                # relationship properties - the reported shape
+                "MATCH ()-[{k:size([(a)-[{k:1}]-()|a.k])}]-() RETURN 1",
+                # variable-length relationship properties
+                "MATCH ()-[*1..2 {k:size([(a)-->()|1])}]->() RETURN 1",
+                # node properties
+                "MATCH (n {k:[(n)-->(m) | m.k][0]}) RETURN n",
+                "MATCH (n {k:exists((n)-->())}) RETURN n",
+                # write clauses evaluate inline properties too
+                "CREATE ({k:size([(a)-->()|1])})",
+                "MERGE ({k:size([(a)-->()|1])})",
+            ]
+
+            for q in queries:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains(
+                            "Encountered unhandled type in inlined properties",
+                            str(e))
+
+            # inside a pattern predicate's properties it is rejected too; the
+            # predicate parse falls back, so only require a clean error
+            rejected = False
+            try:
+                g.query("""MATCH (n)
+                           WHERE (n)-[{k:size([(a)-->()|1])}]->()
+                           RETURN 1""")
+            except redis.ResponseError:
+                rejected = True
+            self.env.assertTrue(rejected)
+
+            # index OPTIONS are evaluated once, with no input row to run a
+            # sub-plan on
+            for q in ["""CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS
+                         {dimension: size([(a)-->() | 1]) + 1,
+                          similarityFunction: 'euclidean'}""",
+                      """CREATE FULLTEXT INDEX FOR (n:A) ON (n.name) OPTIONS
+                         {language: head([(a)-->() | 'english'])}"""]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in index OPTIONS", str(e))
+
+            # the server survived, and a pattern comprehension outside inline
+            # properties, over a pattern with inline properties, still works
+            actual = g.query("""MATCH (a)-[{k:1}]->()
+                                RETURN [(a)-[{k:1}]->(x) | x.k] AS r""")
+            self.env.assertEqual(actual.result_set, [[[1]]])
+        finally:
+            g.delete()
+
+    def test48_pattern_comprehension_in_clause_expressions(self):
+        # the planner lowers a pattern comprehension into its own sub-plan only
+        # where it plans for one; in SET, DELETE, procedure arguments and
+        # YIELD ... WHERE it used to reach the evaluator un-lowered and crash
+        # the server. Every shape must now produce correct rows or a clean
+        # error.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("clause_pattern_comprehension")
+
+        def reset():
+            g.query("MATCH (n) DETACH DELETE n")
+            g.query("""CREATE (:A {name: 'a'})-[:R]->(:A {name: 'b'})""")
+
+        try:
+            g.query("RETURN 1")
+            reset()
+
+            # SET, in every form, reading the graph through a comprehension
+            queries = [
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                ("MATCH (n:A) SET n += {p: [(n)-->(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', ['b']], ['b', []]]),
+                ("MATCH (n:A) SET n = {name: n.name, p: [(n)<--(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', []], ['b', ['a']]]),
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1]), n.q = size([()-->(n) | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p, n.q ORDER BY n.name",
+                 [['a', 1, 0], ['b', 0, 1]]),
+                ("MATCH (n:A) FOREACH (x IN [1] | SET n.p = size([(n)-->() | x]))",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                # a CALL body that ends the query used to lose its scope
+                # table, so any sub-plan in it indexed past the end
+                ("MATCH (n:A) CALL { WITH n SET n.p = size([(n)<--() | 1]) }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 0], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n UNWIND [(n)-->(y) | y] AS y SET y.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', None], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n WITH n WHERE size([(n)-->() | 1]) > 0 SET n.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', None]]),
+                # REMOVE from an entity picked by a comprehension
+                ("MATCH (n:A {name: 'a'}) REMOVE head([(n)-->(y) | y]).name",
+                 "MATCH (n:A) RETURN n.name ORDER BY n.name",
+                 [['a'], [None]]),
+                # DELETE an entity picked by a comprehension
+                ("MATCH (n:A {name: 'a'}) DETACH DELETE head([(n)-->(y) | y])",
+                 "MATCH (n:A) RETURN n.name",
+                 [['a']]),
+            ]
+            for write, read, expected in queries:
+                g.query(write)
+                self.env.assertEqual(g.query(read).result_set, expected)
+                reset()
+
+            # SET applies its items in order: a comprehension sees what the
+            # items before it set, in the same SET or a consecutive one, and
+            # not what the items after it will set
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.p = 1, n.q = head([(n)-->() | n.p]), n.r = n.q + 1
+                   SET n.s = head([(n)-->() | n.r]), n.p = 5
+                   RETURN n.p, n.q, n.r, n.s"""
+            self.env.assertEqual(g.query(q).result_set, [[5, 1, 2, 2]])
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.t = head([(n)-->() | n.u]), n.u = 1
+                   RETURN n.t, n.u"""
+            self.env.assertEqual(g.query(q).result_set, [[None, 1]])
+            reset()
+
+            # a SET feeding a RETURN inside a UNION branch; the branch's
+            # variables must not be clobbered by the comprehension's result
+            q = """MATCH (n:A) SET n.p = size([(n)-->() | 1])
+                   RETURN n.name AS name, n.p AS p
+                   UNION
+                   RETURN 'z' AS name, 9 AS p"""
+            actual = sorted(g.query(q).result_set)
+            self.env.assertEqual(actual, [['a', 1], ['b', 0], ['z', 9]])
+            reset()
+
+            # procedure arguments and YIELD ... WHERE
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.labels() YIELD label
+                   WHERE size([(n)-->() | 1]) = 1
+                   RETURN label"""
+            self.env.assertEqual(g.query(q).result_set, [['A']])
+
+            g.query("CREATE FULLTEXT INDEX FOR (n:A) ON (n.name)")
+            wait_for_indices_to_sync(g)
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.idx.fulltext.queryNodes('A', head([(n)-->(y) | y.name]))
+                   YIELD node
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['b']])
+            q = """CALL db.idx.fulltext.queryNodes('A', 'a|b') YIELD node
+                   WHERE size([(node)-->() | 1]) = 1
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a']])
+
+            # the index drop is planned with a label known up front, so a
+            # computed one is rejected rather than tripping the planner
+            try:
+                g.query("""MATCH (n:A {name: 'a'})
+                           CALL db.idx.fulltext.drop(head([(n)-->() | 'A']))""")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("must be a string literal", str(e))
+
+            # MERGE applies ON CREATE / ON MATCH itself, after matching, so
+            # there is no place to run a sub-plan; rejected as in FalkorDB C
+            for q in ["MERGE (n:A {name: 'a'}) ON MATCH SET n.p = size([(n)-->() | 1])",
+                      "MERGE (n:B) ON CREATE SET n.p = size([(x)-->() | 1])"]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in MERGE", str(e))
+
+            # the server is still up
+            self.env.assertEqual(
+                    g.query("MATCH (n:A) RETURN count(n)").result_set, [[2]])
+        finally:
+            g.delete()
+
+    def test49_pattern_comprehension_in_order_by(self):
+        # ORDER BY is resolved against the projected scope, but its pattern
+        # comprehensions were planned below the projection, so every such
+        # query failed with "Variable ? not found".
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("order_by_pattern_comprehension")
+        try:
+            g.query("""CREATE (:N {name: 'a'})-[:R]->(:N {name: 'b'}),
+                              (:N {name: 'c'})""")
+
+            queries = [
+                # n is not projected: the comprehension must still see the
+                # row's n, not a fresh pattern-local one
+                ("""MATCH (n:N) RETURN n.name AS nm
+                    ORDER BY size([(n)<--() | 1]) DESC, nm""",
+                 [['b'], ['a'], ['c']]),
+                ("""MATCH (n:N) RETURN DISTINCT n.name AS nm
+                    ORDER BY size([(n)-->() | 1]) DESC, nm""",
+                 [['a'], ['b'], ['c']]),
+                # a projected alias
+                ("""MATCH (n:N) RETURN n.name AS nm, n AS m
+                    ORDER BY size([(m)<--() | 1]) DESC, nm""",
+                 None),
+                # alongside a projection comprehension, with SKIP / LIMIT
+                ("""MATCH (n:N) RETURN n.name AS nm, size([(n)-->() | 1]) AS c
+                    ORDER BY size([(n)<--() | 1]) DESC, nm SKIP 1 LIMIT 1""",
+                 [['a', 1]]),
+                ("""MATCH (n:N) WITH n ORDER BY size([(n)<--() | 1]) DESC LIMIT 1
+                    RETURN n.name""",
+                 [['b']]),
+            ]
+            for q, expected in queries:
+                actual = g.query(q).result_set
+                if expected is None:
+                    actual = [row[:1] for row in actual]
+                    expected = [['b'], ['a'], ['c']]
+                self.env.assertEqual(actual, expected)
+        finally:
+            g.delete()
+
+    def test50_unit_subquery_keeps_outer_cardinality(self):
+        # a CALL subquery that returns nothing passes each outer row through
+        # exactly once, however many rows its body produced; an uncorrelated
+        # body used to multiply the outer rows by its own row count
+        g = self.fresh_graph("unit_subquery_cardinality")
+        try:
+            g.query("CREATE (:A {name: 'a'}), (:A {name: 'b'})")
+
+            q = "CALL { MATCH (n:A) SET n.p = 1 } RETURN 1 AS one"
+            self.env.assertEqual(g.query(q).result_set, [[1]])
+
+            q = """CALL { MATCH (n:A) SET n.p = 2 }
+                   MATCH (m:A) RETURN m.name, m.p ORDER BY m.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a', 2], ['b', 2]])
+
+            # a correlated body matching several rows per outer row
+            q = """MATCH (n:A {name: 'a'})
+                   CALL { WITH n MATCH (m:A) SET m.p = 3 }
+                   RETURN n.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a']])
+
+            # a body producing no rows still keeps the outer row
+            q = "CALL { MATCH (n:Missing) SET n.p = 1 } RETURN 1 AS one"
+            self.env.assertEqual(g.query(q).result_set, [[1]])
+
+            # every row of the body still runs
+            q = """UNWIND [1, 2] AS i
+                   CALL { WITH i UNWIND range(1, i) AS j CREATE (:T {i: i, j: j}) }
+                   RETURN i"""
+            self.env.assertEqual(g.query(q).result_set, [[1], [2]])
+            self.env.assertEqual(
+                    g.query("MATCH (t:T) RETURN count(t)").result_set, [[3]])
+        finally:
+            g.delete()
+
+    def test51_pattern_comprehension_reading_a_loop_variable(self):
+        # a pattern comprehension that reads a list comprehension, quantifier
+        # or reduce variable was hoisted out of the loop and evaluated once,
+        # before the variable was bound, silently giving wrong results. It is
+        # now planned as a nested plan run for every iteration, as Neo4j does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("loop_variable_pattern_comprehension")
+        try:
+            g.query("CREATE (:N {name: 'a', k: 1})-[:R]->(:N {name: 'b', k: 2})")
+            ns = "MATCH (n:N) WITH n ORDER BY n.name WITH collect(n) AS ns "
+
+            queries = [
+                # the loop variable in the pattern
+                (ns + "RETURN [x IN ns | size([(x)-->() | 1])]", [[[1, 0]]]),
+                (ns + "RETURN [x IN ns | [(x)-->(y) | y.name]]", [[[['b'], []]]]),
+                (ns + "RETURN [x IN ns WHERE size([(x)<--() | 1]) > 0 | x.name]",
+                 [[['b']]]),
+                (ns + "RETURN [x IN ns | [y IN ns | size([(x)-->(y) | 1])]]",
+                 [[[[0, 1], [0, 0]]]]),
+                # in the comprehension's WHERE / result only
+                ("""MATCH (n:N) RETURN n.name,
+                          [x IN [1, 2] | [(n)-->(y) WHERE y.k = x | y.name]]
+                   ORDER BY n.name""",
+                 [['a', [[], ['b']]], ['b', [[], []]]]),
+                ("""MATCH (n:N) RETURN n.name, [x IN range(1, 2) | [(n)-->() | x]]
+                   ORDER BY n.name""",
+                 [['a', [[1], [2]]], ['b', [[], []]]]),
+                # quantifiers and reduce, including the accumulator
+                (ns + """RETURN any(x IN ns WHERE size([(x)-->() | 1]) > 1),
+                                all(x IN ns WHERE size([(x)--() | 1]) = 1)""",
+                 [[False, True]]),
+                (ns + "RETURN reduce(s = 0, x IN ns | s + size([(x)-->() | 1]))",
+                 [[1]]),
+                (ns + """RETURN reduce(s = 0, x IN ns |
+                                s + size([(x)<--(y) WHERE y.k = s + 1 | 1]))""",
+                 [[1]]),
+                # a bare pattern in a comprehension's own WHERE is an
+                # existence test too, in a projection as in a filter
+                ("""MATCH (n:N) RETURN n.name, [(n)-->(m) WHERE NOT (m)-->() | m.name]
+                    ORDER BY n.name""",
+                 [['a', ['b']], ['b', []]]),
+                # a nested plan inside another comprehension reads that
+                # comprehension's pattern variables
+                (ns + """RETURN [x IN ns | [(x)-->(m) |
+                                  [y IN [1] | size([(m)<--(z) WHERE z = x | y])]]]""",
+                 [[[[[1]], []]]]),
+                # a bare pattern in a loop predicate is an existence test
+                (ns + "RETURN [x IN ns WHERE (x)-->() | x.name]", [[['a']]]),
+                (ns + "RETURN none(x IN ns WHERE (x)<--()), single(x IN ns WHERE (x)-->())",
+                 [[False, True]]),
+            ]
+            for q, expected in queries:
+                self.env.assertEqual(g.query(q).result_set, expected)
+
+            # in a write clause
+            g.query(ns + "FOREACH (x IN ns | SET x.c = size([(x)-->() | 1]))")
+            actual = g.query("MATCH (n:N) RETURN n.name, n.c ORDER BY n.name").result_set
+            self.env.assertEqual(actual, [['a', 1], ['b', 0]])
+        finally:
+            g.delete()

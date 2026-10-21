@@ -1,7 +1,8 @@
+import time
+
 from common import *
 from index_utils import *
 from functools import cmp_to_key
-from collections import defaultdict
 import heapq
 import random
 
@@ -13,6 +14,7 @@ GRAPH_ID = "path_algos"
 class testAllShortestPaths():
     def __init__(self):
         self.env, self.db = Env()
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
         self.init()
@@ -123,7 +125,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode are required", str(e))
 
         # all queries should produce a run-time errors
@@ -138,7 +140,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -153,7 +155,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -167,7 +169,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxLen: 'a'})"""
@@ -175,42 +177,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def test01_SSpaths_validations(self):
@@ -219,7 +221,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode is required", str(e))
 
         query = """MATCH (n:L {v: 1}) CALL algo.SSpaths({sourceNode: 1})"""
@@ -227,7 +229,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -242,7 +244,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -256,7 +258,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxLen: 'a'})"""
@@ -264,42 +266,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def sp_query(self, source, target, relTypes, maxLen, maxCost, pathCount, relDirection):
@@ -331,7 +333,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertEqual(len(result.result_set), 1)
 
             all_minimal = [p for p in self.sp_paths if p[1]
                            == self.sp_paths[0][1]]
@@ -343,7 +345,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertEqual(len(result.result_set), 1)
 
             all_minimal = [p for p in self.incoming_sp_paths if p[1]
                            == self.incoming_sp_paths[0][1]]
@@ -357,7 +359,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.sp_paths if p[1] == self.sp_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -368,7 +370,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.incoming_sp_paths if p[1] == self.incoming_sp_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -380,7 +382,7 @@ class testAllShortestPaths():
 
         for result in results:
             expected_len = min(len(self.sp_paths), 5)
-            self.env.assertEquals(len(result.result_set), expected_len)
+            self.env.assertEqual(len(result.result_set), expected_len)
             for i in range(0, expected_len):
                 self.env.assertContains(result.result_set[i], self.sp_paths)
 
@@ -390,7 +392,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), expected_len)
+            self.env.assertEqual(len(result.result_set), expected_len)
             for i in range(0, expected_len):
                 self.env.assertContains(result.result_set[i], self.incoming_sp_paths)
 
@@ -421,9 +423,19 @@ class testAllShortestPaths():
             self.ss_query(self.n, None, 3, self.max_cost, 1, None)
         ]
 
+        # `ss_paths` is sorted by (weight, cost, length); when several paths tie
+        # on all three, which one the search reports is implementation-defined
+        # (depth-first order here, as in the C engine), so assert membership in
+        # the tied set rather than a specific path — the same way test02..test04
+        # already do. Asserting `ss_paths[0]` exactly made this flake whenever
+        # the fixture happened to generate a tie at the minimum.
+        best = self.ss_paths[0]
+        tied = [p for p in self.ss_paths
+                if (p[1], p[2], p[3]) == (best[1], best[2], best[3])]
+
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
-            self.env.assertEquals(result.result_set[0], self.ss_paths[0])
+            self.env.assertEqual(len(result.result_set), 1)
+            self.env.assertContains(result.result_set[0], tied)
 
     def test06_ss_all_minimal_paths(self):
         results = [
@@ -433,7 +445,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.ss_paths if p[1] == self.ss_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -444,7 +456,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 5)
+            self.env.assertEqual(len(result.result_set), 5)
             for i in range(0, 5):
                 self.env.assertContains(result.result_set[i], self.ss_paths)
 
@@ -483,7 +495,7 @@ class testAllShortestPaths():
             ORDER BY pathWeight DESC
         """)
 
-        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEqual(len(result.result_set), 2)
         # first the heavier path (A->C, weight 0.9), then the lighter
         # path (A->B->C, weight 0.2).
         self.env.assertGreater(result.result_set[0][0], result.result_set[1][0])
@@ -507,12 +519,259 @@ class testAllShortestPaths():
             ORDER BY pathWeight DESC
         """)
 
-        self.env.assertEquals(len(ss_result.result_set), 2)
+        self.env.assertEqual(len(ss_result.result_set), 2)
         self.env.assertGreater(ss_result.result_set[0][0], ss_result.result_set[1][0])
         self.env.assertAlmostEqual(ss_result.result_set[0][0], 0.2, delta=1e-9)
         self.env.assertAlmostEqual(ss_result.result_set[1][0], 0.1, delta=1e-9)
 
-    def test09_sp_dijkstra_unconstrained_cost(self):
+    def _populate_branchy_graph(self, g, blob, fanout):
+        """A densely connected blob of `blob` nodes, plus one node nothing points
+        at so that a path into it can never exist.
+
+        The fan-out is a deterministic modular hash rather than rand(), so the
+        hop counts asserted below are stable across runs and across engines."""
+
+        create_node_range_index(g, 'B', 'v', sync=True)
+        g.query(f"UNWIND range(1, {blob}) AS x CREATE (:B {{v: x}})")
+        g.query("CREATE (:B {v: 0})")  # unreachable: no incoming edges
+
+        g.query(f"""
+            UNWIND range(1, {blob}) AS x
+            UNWIND range(1, {fanout}) AS k
+            WITH x, 1 + (x * 7919 + k * 104729) % {blob} AS y
+            MATCH (a:B {{v: x}}), (b:B {{v: y}})
+            CREATE (a)-[:BE]->(b)""")
+
+    def test09_unreachable_target_terminates(self):
+        """Regression: algo.SPpaths used to search over *paths* rather than
+        nodes, holding one heap entry per partial path with its own cloned
+        visited-set and edge-list. With no route to the target it enumerated
+        every simple path in the reachable component, so a 12 MB dataset drove
+        used_memory past 4.9 GB and OOM-killed the server (the FalkorDB
+        benchmark's `shortest_path` query, which passes no maxLen).
+
+        A per-node reachability sweep answers "unreachable" in one pass. Pre-fix
+        this test kills the server outright; the timeout keeps a milder
+        regression from hanging the suite instead of failing it."""
+
+        g = self.db.select_graph("unreachable_target")
+        self._populate_branchy_graph(g, blob=200, fanout=8)
+
+        # (v:0) has no incoming edges, so no path can reach it from the blob.
+        # Each shape takes a different branch: no-maxLen is the single-shortest
+        # path search, the rest go through the enumeration.
+        for extra in ("",
+                      ", maxLen: 12",
+                      ", pathCount: 0",
+                      ", pathCount: 4",
+                      ", maxCost: 500, costProp: 'nonexistent'"):
+            result = g.query(f"""
+                MATCH (s:B {{v: 1}}), (t:B {{v: 0}})
+                CALL algo.SPpaths({{sourceNode: s, targetNode: t,
+                                    relTypes: ['BE'], relDirection: 'outgoing'
+                                    {extra}}})
+                YIELD path
+                RETURN length(path)""", timeout=60000)
+            self.env.assertEqual(result.result_set, [])
+
+    def test10_deep_search_results(self):
+        """Covers the deep-but-reachable case: the half of the benchmark OOM
+        that still returned a correct answer (pre-fix this peaked at +139 MB on
+        this fixture, and at 2.2 GB on pokec-small).
+
+        Asserts the hop counts so the hardcoded pairs cannot quietly drift into
+        no-ops, and so the unbounded-depth search — which no other test in this
+        file reaches, every other one pins maxLen — stays covered."""
+
+        g = self.db.select_graph("deep_search")
+        self._populate_branchy_graph(g, blob=3000, fanout=8)
+
+        def lengths(src, dst, extra=""):
+            return sorted(row[0] for row in g.query(f"""
+                MATCH (s:B {{v: {src}}}), (t:B {{v: {dst}}})
+                CALL algo.SPpaths({{sourceNode: s, targetNode: t,
+                                    relTypes: ['BE'], relDirection: 'outgoing'
+                                    {extra}}})
+                YIELD path
+                RETURN length(path)""", timeout=60000).result_set)
+
+        # unbounded maxLen: the benchmark's own shape, single cheapest path
+        self.env.assertEqual(lengths(1, 137), [6])
+        self.env.assertEqual(lengths(42, 299), [5])
+        self.env.assertEqual(lengths(7, 88), [4])
+
+        # bounded depth reaches the same answers through the enumeration
+        self.env.assertEqual(lengths(1, 137, ", maxLen: 6"), [6])
+        self.env.assertEqual(lengths(42, 299, ", maxLen: 6"), [5])
+        self.env.assertEqual(lengths(7, 88, ", maxLen: 6"), [4])
+
+        # all-minimal and k-minimal
+        self.env.assertEqual(lengths(7, 88, ", maxLen: 5, pathCount: 0"), [4, 4])
+        self.env.assertEqual(lengths(7, 88, ", maxLen: 6, pathCount: 3"), [4, 4, 6])
+        # a shorter cap than the true distance must find nothing
+        self.env.assertEqual(lengths(1, 137, ", maxLen: 5, pathCount: 0"), [])
+
+    def test11_fractional_weights_through_enumeration(self):
+        """Regression: the enumeration accumulates weight source->target while
+        the reachability pre-pass used to sum its seed bound along the reverse
+        parent walk. Float addition is not associative, so the seed could land
+        an ULP below the forward sum of the very same edges and the
+        `weight > bound` prune then dropped the only path — SPpaths silently
+        returned nothing on ordinary decimal weights.
+
+        0.1+0.2+0.3 forward is 0.6000000000000001, reverse is 0.6. Every shape
+        that leaves the single-shortest-path fast path was affected."""
+
+        g = self.db.select_graph("frac_enum")
+        g.query("""
+            CREATE (a:FE {id: 'A'}), (b:FE {id: 'B'}),
+                   (c:FE {id: 'C'}), (d:FE {id: 'D'}),
+                   (a)-[:FE {weight: 0.1}]->(b),
+                   (b)-[:FE {weight: 0.2}]->(c),
+                   (c)-[:FE {weight: 0.3}]->(d)""")
+
+        for extra in ("",
+                      ", maxLen: 10",
+                      ", maxLen: 3",
+                      ", pathCount: 0, maxLen: 10",
+                      ", pathCount: 2, maxLen: 10",
+                      ", maxCost: 100, costProp: 'weight'"):
+            result = g.query(f"""
+                MATCH (s:FE {{id: 'A'}}), (t:FE {{id: 'D'}})
+                CALL algo.SPpaths({{sourceNode: s, targetNode: t,
+                                    weightProp: 'weight'{extra}}})
+                YIELD pathWeight
+                RETURN pathWeight""", timeout=60000)
+            self.env.assertEqual(
+                len(result.result_set), 1,
+                message=f"shape '{extra}' lost the only path")
+            self.env.assertAlmostEqual(result.result_set[0][0], 0.6, delta=1e-9)
+
+        # Same defect reached a second way: restoring the running total by
+        # subtraction on backtrack does not round-trip in f64, so an unrelated
+        # dead-end sibling could push the real path over the bound. The result
+        # then depended on edge insertion order.
+        g2 = self.db.select_graph("frac_sibling")
+        g2.query("""
+            CREATE (s:FS {id: 'S'}), (a:FS {id: 'A'}),
+                   (t:FS {id: 'T'}), (y:FS {id: 'Y'}),
+                   (s)-[:FS {weight: 0.1}]->(a),
+                   (a)-[:FS {weight: 0.5}]->(t),
+                   (a)-[:FS {weight: 0.2}]->(y)""")
+
+        result = g2.query("""
+            MATCH (s:FS {id: 'S'}), (t:FS {id: 'T'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t,
+                               weightProp: 'weight', maxLen: 10})
+            YIELD pathWeight
+            RETURN pathWeight""", timeout=60000)
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertAlmostEqual(result.result_set[0][0], 0.6, delta=1e-9)
+
+    def test12_shortest_path_fast_path_results(self):
+        """The unconstrained single-shortest-path shape (no maxLen, no maxCost,
+        pathCount 1) takes a dedicated Dijkstra branch. Every other behavioural
+        test in this file pins maxLen and so never reaches it, which left the
+        parent-chain walk, the unit-weight default and the cost fold unasserted."""
+
+        g = self.db.select_graph("fast_path")
+        # A->C directly at 0.9, or A->B->C at 0.1+0.1: the cheaper route is the
+        # longer one, so a hop-count search would pick the wrong path.
+        g.query("""
+            CREATE (a:FP {id: 'A'}), (b:FP {id: 'B'}), (c:FP {id: 'C'}),
+                   (a)-[:FR {weight: 0.9, cost: 5}]->(c),
+                   (a)-[:FR {weight: 0.1, cost: 1}]->(b),
+                   (b)-[:FR {weight: 0.1, cost: 1}]->(c)""")
+
+        result = g.query("""
+            MATCH (s:FP {id: 'A'}), (t:FP {id: 'C'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t,
+                               weightProp: 'weight', costProp: 'cost'})
+            YIELD path, pathWeight, pathCost
+            RETURN [n IN nodes(path) | n.id], pathWeight, pathCost,
+                   length(path)""", timeout=60000)
+
+        self.env.assertEqual(len(result.result_set), 1)
+        ids, weight, cost, hops = result.result_set[0]
+        self.env.assertEqual(ids, ['A', 'B', 'C'])
+        self.env.assertAlmostEqual(weight, 0.2, delta=1e-9)
+        self.env.assertEqual(cost, 2)
+        self.env.assertEqual(hops, 2)
+
+        # unweighted: falls back to hop count, so the direct edge wins
+        unweighted = g.query("""
+            MATCH (s:FP {id: 'A'}), (t:FP {id: 'C'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t})
+            YIELD path, pathWeight
+            RETURN [n IN nodes(path) | n.id], pathWeight""", timeout=60000)
+        self.env.assertEqual(unweighted.result_set, [[['A', 'C'], 1]])
+
+        # unreachable in the requested direction, reachable in the other
+        self.env.assertEqual(
+            g.query("""
+                MATCH (s:FP {id: 'C'}), (t:FP {id: 'A'})
+                CALL algo.SPpaths({sourceNode: s, targetNode: t})
+                YIELD path RETURN length(path)""", timeout=60000).result_set,
+            [])
+
+    def test13_rel_direction_both(self):
+        """`relDirection: 'both'` had no behavioural coverage: a swapped branch
+        in the direction handling passed the whole suite. C->A exists only by
+        traversing the two edges backwards."""
+
+        g = self.db.select_graph("dir_both")
+        g.query("""
+            CREATE (a:DB {id: 'A'}), (b:DB {id: 'B'}), (c:DB {id: 'C'}),
+                   (a)-[:DR]->(b), (b)-[:DR]->(c)""")
+
+        def hops(src, dst, direction, extra=""):
+            return g.query(f"""
+                MATCH (s:DB {{id: '{src}'}}), (t:DB {{id: '{dst}'}})
+                CALL algo.SPpaths({{sourceNode: s, targetNode: t,
+                                    relTypes: ['DR'],
+                                    relDirection: '{direction}'{extra}}})
+                YIELD path RETURN length(path)""",
+                timeout=60000).result_set
+
+        self.env.assertEqual(hops('A', 'C', 'outgoing'), [[2]])
+        self.env.assertEqual(hops('C', 'A', 'outgoing'), [])
+        self.env.assertEqual(hops('C', 'A', 'incoming'), [[2]])
+        self.env.assertEqual(hops('C', 'A', 'both'), [[2]])
+        self.env.assertEqual(hops('A', 'C', 'both'), [[2]])
+        # and through the enumeration branch, not just the fast path
+        self.env.assertEqual(hops('C', 'A', 'both', ", maxLen: 5"), [[2]])
+        self.env.assertEqual(hops('C', 'A', 'incoming', ", maxLen: 5"), [[2]])
+
+    def test14_long_enumeration_honours_timeout(self):
+        """The searches poll the query deadline from inside their loops. Without
+        that, an enumeration that cannot finish is uninterruptible and the
+        client-visible symptom is a hang until the server dies, rather than an
+        error.
+
+        `pathCount` this large keeps the pruning bound at infinity, so the
+        depth-first walk cannot terminate on this fixture in any usable time."""
+
+        g = self.db.select_graph("timeout_enum")
+        self._populate_branchy_graph(g, blob=200, fanout=8)
+
+        start = time.time()
+        try:
+            g.query("""
+                MATCH (s:B {v: 1}), (t:B {v: 137})
+                CALL algo.SPpaths({sourceNode: s, targetNode: t,
+                                   relTypes: ['BE'], relDirection: 'outgoing',
+                                   maxLen: 30, pathCount: 1000000})
+                YIELD path RETURN count(path)""", timeout=2000)
+            self.env.assertTrue(
+                False, message="expected the query to hit its timeout")
+        except redis.ResponseError as e:
+            self.env.assertContains("Query timed out", str(e))
+
+        # the deadline must actually cut the search short, not merely be
+        # reported once it finishes on its own
+        self.env.assertLess(time.time() - start, 30)
+
+    def test15_sp_dijkstra_unconstrained_cost(self):
         # pathCount == 1 with no maxCost set routes through the Dijkstra
         # fast path (SPpaths_dijkstra_single) instead of the DFS-based
         # search used everywhere else in this file. Verify it agrees with
@@ -534,10 +793,10 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertEqual(len(result.result_set), 1)
             self.env.assertAlmostEqual(result.result_set[0][1], min_weight, delta=1e-9)
 
-    def test10_sp_unreachable(self):
+    def test16_sp_unreachable(self):
         # two nodes with no path between them at all: the BFS bound
         # pre-pass (finite maxCost) and Dijkstra (unconstrained maxCost)
         # must both report "no path" cleanly rather than erroring or
@@ -557,15 +816,15 @@ class testAllShortestPaths():
             """)
 
         # pathCount==1, unconstrained cost -> Dijkstra "not found" branch
-        self.env.assertEquals(len(ur_query(1, None).result_set), 0)
+        self.env.assertEqual(len(ur_query(1, None).result_set), 0)
         # pathCount==1, finite maxCost -> pre-pass short-circuit
-        self.env.assertEquals(len(ur_query(1, 100).result_set), 0)
+        self.env.assertEqual(len(ur_query(1, 100).result_set), 0)
         # pathCount==0 (all-minimal), finite maxCost -> pre-pass short-circuit
-        self.env.assertEquals(len(ur_query(0, 100).result_set), 0)
+        self.env.assertEqual(len(ur_query(0, 100).result_set), 0)
         # pathCount>1 (k-minimal), finite maxCost -> pre-pass short-circuit
-        self.env.assertEquals(len(ur_query(3, 100).result_set), 0)
+        self.env.assertEqual(len(ur_query(3, 100).result_set), 0)
 
-    def test11_sp_duplicate_edges(self):
+    def test17_sp_duplicate_edges(self):
         # (a) a self-loop combined with relDirection: 'both' can surface
         # the same edge as a candidate via both the outgoing and incoming
         # scan; it must be rejected like any other cycle, not corrupt or
@@ -590,9 +849,9 @@ class testAllShortestPaths():
             RETURN pathWeight, length(path)
         """)
 
-        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEqual(len(result.result_set), 1)
         self.env.assertAlmostEqual(result.result_set[0][0], 1, delta=1e-9)
-        self.env.assertEquals(result.result_set[0][1], 1)
+        self.env.assertEqual(result.result_set[0][1], 1)
 
         # (b) listing the same relationship type twice in relTypes must
         # not double-count a path in the k-minimal results (previously,
@@ -603,23 +862,23 @@ class testAllShortestPaths():
         dup = self.sp_query(self.n, self.m, ["E", "E"], 3, self.max_cost, 3, None)
         single = self.sp_query(self.n, self.m, ["E"], 3, self.max_cost, 3, None)
 
-        self.env.assertEquals(len(dup.result_set), expected_len)
-        self.env.assertEquals(len(single.result_set), expected_len)
+        self.env.assertEqual(len(dup.result_set), expected_len)
+        self.env.assertEqual(len(single.result_set), expected_len)
         for row in dup.result_set:
             self.env.assertContains(row, single.result_set)
 
-    def test12_sp_src_eq_dst(self):
+    def test18_sp_src_eq_dst(self):
         # sourceNode == targetNode is degenerate: minLen==1 requires at
         # least one edge, so this must always return no results, whether
         # or not a self-loop exists, and regardless of which code path
         # handles it (Dijkstra fast path vs. DFS).
         result = self.sp_query(self.n, self.n, ["E"], 3, self.max_cost, 1, None)
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEqual(len(result.result_set), 0)
 
         # unconstrained cost -- this is exactly the case SPpaths_dijkstra_single
         # would otherwise mishandle (trivially "finding" src at distance 0).
         result = self.sp_query(self.n, self.n, None, 3, None, 1, None)
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEqual(len(result.result_set), 0)
 
     #-------------------------------------------------------------------------
     # Dijkstra fast-path (SPpaths_dijkstra_single) correctness on structured
@@ -710,7 +969,7 @@ class testAllShortestPaths():
                     self.env.assertContains(key, actual)
                     self.env.assertAlmostEqual(actual[key], exp_weight, delta=1e-9)
 
-    def test13_dijkstra_line_graph(self):
+    def test19_dijkstra_line_graph(self):
         # simple directed line 0->1->2->...->(n-1) with strictly increasing
         # weights. exactly one path exists between any (src, dst) pair, and
         # only "forward" pairs are reachable at all -- a baseline sanity
@@ -720,7 +979,7 @@ class testAllShortestPaths():
         edges = [(i, i + 1, i + 1) for i in range(n - 1)]
         self._verify_dijkstra_all_pairs("dijkstra_line", n, edges)
 
-    def test14_dijkstra_diamond_graph(self):
+    def test20_dijkstra_diamond_graph(self):
         # a DAG made of two chained "diamonds", each offering a cheap and an
         # expensive parallel route between the same pair of nodes:
         #   0 -> 1 -> 3 -> 4 -> 6 -> 7   (cheap branch: weight 1 each hop)
@@ -735,7 +994,7 @@ class testAllShortestPaths():
         ]
         self._verify_dijkstra_all_pairs("dijkstra_diamond", 8, edges)
 
-    def test15_dijkstra_grid_graph(self):
+    def test21_dijkstra_grid_graph(self):
         # a 4x4 grid with only rightward/downward edges and randomized
         # weights: many equal-length alternative routes exist between any
         # two nodes on the same diagonal, forcing Dijkstra to actually
@@ -757,7 +1016,7 @@ class testAllShortestPaths():
 
         self._verify_dijkstra_all_pairs("dijkstra_grid", rows * cols, edges)
 
-    def test16_dijkstra_dense_cyclic_graph(self):
+    def test22_dijkstra_dense_cyclic_graph(self):
         # a dense graph with edges in both directions between most node
         # pairs, forming many cycles. exercises Dijkstra's finalize-once
         # invariant and lazy heap-deletion under heavy relabeling: many
@@ -772,523 +1031,36 @@ class testAllShortestPaths():
 
         self._verify_dijkstra_all_pairs("dijkstra_dense", n, edges)
 
-    #-------------------------------------------------------------------------
-    # Yen (pathCount > 1) and DAG all-minimal (pathCount == 0) fast paths:
-    # pathCount != 1 with no maxCost and no maxLen routes into Yen's algorithm
-    # (k-shortest) or the shortest-path-DAG enumeration (all-minimal), instead
-    # of the exhaustive DFS. Each test below builds a hand-designed graph,
-    # enumerates every simple src->dst path with an independent Python DFS, and
-    # checks the fast path against that ground truth for every (src, dst) pair.
-    #-------------------------------------------------------------------------
 
-    def _all_simple_paths(self, n_nodes, edges, src, dst):
-        # independent reference: every simple (loopless) directed path from src
-        # to dst, as (tuple(node_ids), total_weight). only tractable on the
-        # small structured graphs used below.
-        adj = [[] for _ in range(n_nodes)]
-        for u, v, w in edges:
-            adj[u].append((v, w))
+    def test23_default_cost_is_one_per_relationship(self):
+        # without costProp (or when an edge lacks it) every relationship costs
+        # 1, as in C, so maxCost alone bounds the number of hops. Rust used to
+        # charge 0, which made maxCost a no-op and reported pathCost 0.
+        g = self.db.select_graph("default_cost")
+        g.query("""CREATE (s:N {id:0})-[:R {w:1}]->(a:N {id:1})-[:R {w:2}]->(b:N {id:2})-[:R {w:3}]->(s),
+                          (b)-[:R {w:4}]->(c:N {id:3}), (s)-[:R {w:10}]->(c),
+                          (a)-[:R {w:1}]->(c), (c)-[:R {w:1}]->(c)""")
 
-        paths = []
-        stack = [(src, (src,), 0.0, frozenset((src,)))]
-        while stack:
-            node, path, wsum, visited = stack.pop()
-            if node == dst:
-                paths.append((path, wsum))
-                continue
-            for v, w in adj[node]:
-                if v in visited:
-                    continue  # keep paths simple
-                stack.append((v, path + (v,), wsum + w, visited | {v}))
+        def sp(extra):
+            return g.query(f"""
+                MATCH (a:N {{id: 0}}), (b:N {{id: 3}})
+                CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['R'],
+                                    weightProp: 'w' {extra}}})
+                YIELD path, pathWeight, pathCost
+                RETURN [n IN nodes(path) | n.id], pathWeight, pathCost
+                ORDER BY pathWeight""").result_set
 
-        return paths
-
-    def _build_dk_graph(self, graph_name, n_nodes, edges):
-        # nodes :DK with 'id' 0..n_nodes-1, edges :DE with a 'weight' property
-        g = self.db.select_graph(graph_name)
-        g.query(f"UNWIND range(0, {n_nodes - 1}) AS x CREATE (:DK {{id: x}})")
-        if edges:
-            rows = ", ".join(f"[{u}, {v}, {w}]" for u, v, w in edges)
-            g.query(f"""
-                UNWIND [{rows}] AS e
-                MATCH (a:DK {{id: e[0]}}), (b:DK {{id: e[1]}})
-                CREATE (a)-[:DE {{weight: e[2]}}]->(b)
-            """)
-        return g
-
-    def _sp_all_pairs(self, g, path_count):
-        # drive algo.SPpaths for every ordered (n, m) pair in one query, with no
-        # maxCost/maxLen so pathCount==0/>1 take the DAG/Yen fast paths. returns
-        # {(src, dst): [(tuple(node_ids), weight), ...]}.
-        result = g.query(f"""
-            MATCH (n:DK), (m:DK)
-            WHERE n.id <> m.id
-            CALL algo.SPpaths({{
-                sourceNode: n,
-                targetNode: m,
-                weightProp: 'weight',
-                pathCount: {path_count}
-            }}) YIELD path, pathWeight
-            RETURN n.id, m.id, [nd IN nodes(path) | nd.id] AS ids, pathWeight
-        """)
-
-        actual = defaultdict(list)
-        for row in result.result_set:
-            actual[(row[0], row[1])].append((tuple(row[2]), row[3]))
-        return actual
-
-    def _verify_yen_all_pairs(self, graph_name, n_nodes, edges, k):
-        g = self._build_dk_graph(graph_name, n_nodes, edges)
-        actual = self._sp_all_pairs(g, k)
-
-        for src in range(n_nodes):
-            for dst in range(n_nodes):
-                if src == dst:
-                    continue
-
-                ref = self._all_simple_paths(n_nodes, edges, src, dst)
-                got = actual.get((src, dst), [])
-
-                # exactly min(k, #simple paths) results
-                self.env.assertEquals(len(got), min(k, len(ref)))
-
-                # the k lightest weights match as a multiset (which specific
-                # paths are chosen among ties at the boundary may differ, but
-                # the weights cannot).
-                expected_w = sorted(w for (_, w) in ref)[:k]
-                got_w = sorted(w for (_, w) in got)
-                for a, b in zip(got_w, expected_w):
-                    self.env.assertAlmostEqual(a, b, delta=1e-9)
-
-                # every returned path is a distinct, valid simple path whose
-                # reported weight matches the reference.
-                ref_map = {ids: w for ids, w in ref}
-                seen = set()
-                for ids, w in got:
-                    self.env.assertEquals(len(ids), len(set(ids)))  # loopless
-                    self.env.assertContains(ids, ref_map)
-                    self.env.assertAlmostEqual(w, ref_map[ids], delta=1e-9)
-                    self.env.assertNotContains(ids, seen)  # no duplicates
-                    seen.add(ids)
-
-    def _verify_all_minimal_all_pairs(self, graph_name, n_nodes, edges):
-        g = self._build_dk_graph(graph_name, n_nodes, edges)
-        actual = self._sp_all_pairs(g, 0)
-
-        for src in range(n_nodes):
-            for dst in range(n_nodes):
-                if src == dst:
-                    continue
-
-                ref = self._all_simple_paths(n_nodes, edges, src, dst)
-                got = actual.get((src, dst), [])
-
-                if not ref:
-                    self.env.assertEquals(len(got), 0)
-                    continue
-
-                min_w = min(w for (_, w) in ref)
-                ref_min = set(ids for ids, w in ref if abs(w - min_w) < 1e-9)
-                got_ids = set(ids for ids, _ in got)
-
-                # the DAG must return exactly the set of all minimum-weight
-                # paths -- no more, no fewer.
-                self.env.assertEquals(got_ids, ref_min)
-                for _, w in got:
-                    self.env.assertAlmostEqual(w, min_w, delta=1e-9)
-
-    def test17_yen_k_shortest_structured(self):
-        # Yen's k-shortest fast path vs. exhaustive enumeration, over the same
-        # hand-designed topologies used for the Dijkstra tests above.
-        line = [(i, i + 1, i + 1) for i in range(7)]
-        self._verify_yen_all_pairs("yen_line", 8, line, 4)
-
-        diamond = [
-            (0, 1, 1), (0, 2, 5),
-            (1, 3, 1), (2, 3, 1),
-            (3, 4, 1), (3, 5, 5),
-            (4, 6, 1), (5, 6, 1),
-            (6, 7, 1),
-        ]
-        self._verify_yen_all_pairs("yen_diamond", 8, diamond, 4)
-
-        grid = self._grid_edges(4, 4)
-        self._verify_yen_all_pairs("yen_grid", 16, grid, 4)
-
-        dense = [(u, v, ((u * 7 + v * 13) % 11) + 1)
-                 for u in range(6) for v in range(6)
-                 if u != v and (u + v) % 3 != 0]
-        self._verify_yen_all_pairs("yen_dense", 6, dense, 4)
-
-    def test18_all_minimal_structured(self):
-        # DAG all-minimal fast path vs. exhaustive enumeration.
-        line = [(i, i + 1, i + 1) for i in range(7)]
-        self._verify_all_minimal_all_pairs("dag_line", 8, line)
-
-        diamond = [
-            (0, 1, 1), (0, 2, 5),
-            (1, 3, 1), (2, 3, 1),
-            (3, 4, 1), (3, 5, 5),
-            (4, 6, 1), (5, 6, 1),
-            (6, 7, 1),
-        ]
-        self._verify_all_minimal_all_pairs("dag_diamond", 8, diamond)
-
-        grid = self._grid_edges(4, 4)
-        self._verify_all_minimal_all_pairs("dag_grid", 16, grid)
-
-        dense = [(u, v, ((u * 7 + v * 13) % 11) + 1)
-                 for u in range(6) for v in range(6)
-                 if u != v and (u + v) % 3 != 0]
-        self._verify_all_minimal_all_pairs("dag_dense", 6, dense)
-
-    def _grid_edges(self, rows, cols):
-        # rightward/downward grid edges with deterministic weights: a locally
-        # seeded RNG keeps the graph identical across runs (and independent of
-        # the global RNG / test ordering), so failures are reproducible.
-        rng = random.Random(20240826)
-        def nid(r, c):
-            return r * cols + c
-        edges = []
-        for r in range(rows):
-            for c in range(cols):
-                if c + 1 < cols:
-                    edges.append((nid(r, c), nid(r, c + 1), rng.randint(1, 9)))
-                if r + 1 < rows:
-                    edges.append((nid(r, c), nid(r + 1, c), rng.randint(1, 9)))
-        return edges
-
-    def test19_yen_classic_example(self):
-        # the textbook Yen's example (Wikipedia): nodes C,D,E,F,G,H mapped to
-        # 0..5. the three shortest C->H paths have weights 5, 7, 8.
-        edges = [
-            (0, 1, 3),  # C->D
-            (0, 2, 2),  # C->E
-            (1, 3, 4),  # D->F
-            (2, 1, 1),  # E->D
-            (2, 3, 2),  # E->F
-            (2, 4, 3),  # E->G
-            (3, 4, 2),  # F->G
-            (3, 5, 1),  # F->H
-            (4, 5, 2),  # G->H
-        ]
-        g = self._build_dk_graph("yen_classic", 6, edges)
+        # the only path within one hop is the direct (heavier) edge
+        self.env.assertEqual(sp(", maxCost: 1, pathCount: 0"), [[[0, 3], 10, 1]])
+        self.env.assertEqual(sp(", maxCost: 2, pathCount: 1"), [[[0, 1, 3], 2, 2]])
+        self.env.assertEqual(sp(", pathCount: 0"), [[[0, 1, 3], 2, 2]])
+        # a costProp missing from the edges also defaults to 1
+        self.env.assertEqual(sp(", maxCost: 1, costProp: 'nope', pathCount: 0"), [[[0, 3], 10, 1]])
 
         result = g.query("""
-            MATCH (s:DK {id: 0}), (t:DK {id: 5})
-            CALL algo.SPpaths({
-                sourceNode: s, targetNode: t,
-                weightProp: 'weight', pathCount: 3
-            }) YIELD pathWeight
-            RETURN pathWeight ORDER BY pathWeight
-        """)
-
-        weights = [row[0] for row in result.result_set]
-        self.env.assertEquals(weights, [5, 7, 8])
-
-    def test20_all_minimal_equal_weight_ties(self):
-        # (a) three equal-weight (4) shortest paths built from *different* edge
-        # weights: A->B->D (2+2), A->C->D (1+3), A->X->D (2+2). the DAG must
-        # return all three, and exclude the direct A->D of weight 5.
-        edges = [
-            (0, 1, 2), (1, 4, 2),  # A->B->D
-            (0, 2, 1), (2, 4, 3),  # A->C->D
-            (0, 3, 2), (3, 4, 2),  # A->X->D
-            (0, 4, 5),             # A->D direct (heavier)
-        ]
-        g = self._build_dk_graph("dag_ties", 5, edges)
-        actual = self._sp_all_pairs(g, 0)
-
-        got = actual.get((0, 4), [])
-        self.env.assertEquals(set(ids for ids, _ in got),
-                              {(0, 1, 4), (0, 2, 4), (0, 3, 4)})
-        for _, w in got:
-            self.env.assertEquals(w, 4)
-
-        # (b) an NxN unit-weight grid corner-to-corner has exactly C(2(N-1),
-        # N-1) shortest paths -- verify the DAG enumerates all of them.
-        N = 5
-        grid = []
-        def nid(r, c):
-            return r * N + c
-        for r in range(N):
-            for c in range(N):
-                if c + 1 < N:
-                    grid.append((nid(r, c), nid(r, c + 1), 1))
-                if r + 1 < N:
-                    grid.append((nid(r, c), nid(r + 1, c), 1))
-        g = self._build_dk_graph("dag_unit_grid", N * N, grid)
-
-        result = g.query(f"""
-            MATCH (s:DK {{id: 0}}), (t:DK {{id: {N * N - 1}}})
-            CALL algo.SPpaths({{
-                sourceNode: s, targetNode: t,
-                weightProp: 'weight', pathCount: 0
-            }}) YIELD path
-            RETURN count(path) AS n
-        """)
-
-        from math import comb
-        self.env.assertEquals(result.result_set[0][0], comb(2 * (N - 1), N - 1))
-
-    #-------------------------------------------------------------------------
-    # Additional fast-path coverage (DAG pc:0 and Yen pc>1) for cases the
-    # structured graphs above don't exercise: multigraph parallel edges,
-    # zero-weight edges, traversal direction, relTypes filtering, costProp
-    # reporting and src == dst.
-    #
-    # Oracle: the exhaustive DFS, reached by setting a finite maxLen (which
-    # takes the query off the Dijkstra/DAG/Yen fast paths). For any graph the
-    # fast-path result set must match the DFS result set exactly. pathCount is
-    # kept to 0 (all co-optimal) or a value >= the number of simple paths, so
-    # both engines return a complete, unambiguous set with no k-th-place tie to
-    # disagree on.
-    #-------------------------------------------------------------------------
-
-    def _fp_rows(self, g, query):
-        r = g.query(query)
-        return sorted((tuple(row[0]), round(row[1], 6)) for row in r.result_set)
-
-    def _fp_match(self, g, src, dst, path_count, rel_dir=None, rel_types=None):
-        cfg = ["sourceNode: u", "targetNode: v", "weightProp: 'w'",
-               f"pathCount: {path_count}"]
-        if rel_dir is not None:
-            cfg.append(f"relDirection: '{rel_dir}'")
-        if rel_types is not None:
-            cfg.append(f"relTypes: {rel_types}")
-        base = ", ".join(cfg)
-        m = f"MATCH (u:V {{id: {src}}}), (v:V {{id: {dst}}})"
-        ret = ("YIELD path, pathWeight "
-               "RETURN [n IN nodes(path) | n.id] AS ids, pathWeight")
-        fast = self._fp_rows(g, f"{m} CALL algo.SPpaths({{{base}}}) {ret}")
-        # maxLen forces the exhaustive DFS instead of the fast path
-        dfs = self._fp_rows(g, f"{m} CALL algo.SPpaths({{{base}, maxLen: 1000}}) {ret}")
-        self.env.assertEquals(fast, dfs)
-        return fast
-
-    def test21_fastpath_parallel_edges(self):
-        # FalkorDB is a multigraph: two edges between the same pair of nodes -
-        # equal or unequal weight - are distinct paths. Both fast paths must
-        # agree with the DFS.
-        g = self.db.select_graph("fp_parallel")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}),
-                   (a)-[:R {w:3}]->(b),
-                   (a)-[:R {w:5}]->(b),
-                   (b)-[:R {w:1}]->(c),
-                   (a)-[:R {w:4}]->(c),
-                   (a)-[:R {w:4}]->(c)
-        """)
-        for pc in (0, 100):
-            self._fp_match(g, 0, 2, pc)
-
-        # all-minimal (weight 4): a-b-c via the w:3 edge, plus both equal
-        # direct a->c edges => three distinct co-optimal paths.
-        allmin = self._fp_match(g, 0, 2, 0)
-        self.env.assertEquals(len(allmin), 3)
-        for _, w in allmin:
-            self.env.assertEquals(w, 4)
-
-    def test22_fastpath_zero_weight_edges(self):
-        # zero-weight edges, including a zero-weight cycle, must not break the
-        # DAG (whose acyclicity relies on strictly positive weights - a
-        # Path_ContainsNode guard covers this) nor Yen. Compare to the DFS.
-        g = self.db.select_graph("fp_zero")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}), (d:V {id:3}),
-                   (a)-[:R {w:0}]->(b),
-                   (b)-[:R {w:0}]->(a),
-                   (b)-[:R {w:2}]->(c),
-                   (a)-[:R {w:2}]->(c),
-                   (c)-[:R {w:0}]->(d)
-        """)
-        for pc in (0, 100):
-            self._fp_match(g, 0, 3, pc)
-
-        # min weight to d is 2, reached both as a-c-d and a-b-c-d.
-        allmin = self._fp_match(g, 0, 3, 0)
-        self.env.assertEquals(len(allmin), 2)
-        for _, w in allmin:
-            self.env.assertEquals(w, 2)
-
-    def test23_fastpath_direction(self):
-        # incoming and both must route through the fast paths identically to
-        # the DFS. (outgoing is already covered by test17/test18.)
-        g = self.db.select_graph("fp_dir")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}), (d:V {id:3}),
-                   (a)-[:R {w:1}]->(b), (b)-[:R {w:1}]->(d),
-                   (a)-[:R {w:1}]->(c), (c)-[:R {w:1}]->(d),
-                   (a)-[:R {w:5}]->(d)
-        """)
-        for pc in (0, 100):
-            self._fp_match(g, 3, 0, pc, rel_dir="incoming")
-            self._fp_match(g, 0, 3, pc, rel_dir="both")
-
-    def test24_fastpath_reltypes(self):
-        # relTypes must restrict traversal on the fast paths just as on the DFS.
-        g = self.db.select_graph("fp_reltypes")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}),
-                   (a)-[:R {w:1}]->(b), (b)-[:R {w:1}]->(c),
-                   (a)-[:S {w:1}]->(c)
-        """)
-        for pc in (0, 100):
-            for rt in (["R"], ["S"], ["R", "S"]):
-                self._fp_match(g, 0, 2, pc, rel_types=rt)
-
-        # relTypes:['R'] excludes the direct a-S->c edge, forcing a-b-c.
-        only_r = self._fp_match(g, 0, 2, 0, rel_types=["R"])
-        self.env.assertEquals([ids for ids, _ in only_r], [(0, 1, 2)])
-
-    def test25_fastpath_costprop(self):
-        # pathCost is summed over each returned path's edges, independent of
-        # the weight objective, for both fast paths.
-        g = self.db.select_graph("fp_cost")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}),
-                   (a)-[:R {w:1, c:10}]->(b),
-                   (b)-[:R {w:1, c:20}]->(c),
-                   (a)-[:R {w:2, c:1}]->(c)
-        """)
-        # both a-b-c and a->c have weight 2 (co-optimal); costs 30 and 1.
-        for pc in (0, 3):
-            r = g.query(f"""
-                MATCH (u:V {{id:0}}), (v:V {{id:2}})
-                CALL algo.SPpaths({{sourceNode:u, targetNode:v, weightProp:'w',
-                  costProp:'c', pathCount:{pc}}})
-                YIELD path, pathWeight, pathCost
-                RETURN [n IN nodes(path)|n.id] AS ids, pathWeight, pathCost
-            """)
-            rows = sorted((tuple(x[0]), x[1], x[2]) for x in r.result_set)
-            self.env.assertEquals(rows,
-                sorted([((0, 1, 2), 2, 30), ((0, 2), 2, 1)]))
-
-    def test26_fastpath_src_eq_dst(self):
-        # src == dst is degenerate (a path needs an edge); every pathCount
-        # must return no results, even with a self-loop present.
-        g = self.db.select_graph("fp_srcdst")
-        g.query("CREATE (a:V {id:0}), (a)-[:R {w:1}]->(a)")
-        for pc in (0, 1, 3):
-            r = g.query(f"""
-                MATCH (u:V {{id:0}})
-                CALL algo.SPpaths({{sourceNode:u, targetNode:u, weightProp:'w',
-                  pathCount:{pc}}}) YIELD path RETURN path
-            """)
-            self.env.assertEquals(len(r.result_set), 0)
-
-    def test27_fastpath_unweighted(self):
-        # with no weightProp every edge defaults to weight 1, so the fast paths
-        # compute hop-count-shortest routes. Compare to the DFS in that mode.
-        g = self.db.select_graph("fp_unweighted")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}), (d:V {id:3}),
-                   (a)-[:R]->(b), (b)-[:R]->(d),
-                   (a)-[:R]->(c), (c)-[:R]->(d),
-                   (a)-[:R]->(d)
-        """)
-        m = "MATCH (u:V {id:0}), (v:V {id:3})"
-        ret = ("YIELD path, pathWeight "
-               "RETURN [n IN nodes(path) | n.id] AS ids, pathWeight")
-        for pc in (0, 100):
-            base = f"sourceNode:u, targetNode:v, pathCount:{pc}"
-            fast = self._fp_rows(g, f"{m} CALL algo.SPpaths({{{base}}}) {ret}")
-            dfs  = self._fp_rows(g, f"{m} CALL algo.SPpaths({{{base}, maxLen:1000}}) {ret}")
-            self.env.assertEquals(fast, dfs)
-
-        # hop-count minimum a->d is the direct edge (weight 1, 1 hop)
-        allmin = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, targetNode:v, pathCount:0}}) {ret}")
-        self.env.assertEquals(allmin, [((0, 3), 1)])
-
-    def test28_fastpath_both_dir_multi_reltypes(self):
-        # relDirection:'both' combined with multiple relTypes exercises the
-        # (direction x relation) iterator indexing in the streamed relaxation
-        # loop (2 directions x 2 relations = 4 iterators). Every fast path must
-        # still agree with the DFS -- guards against any relationIDs[] indexing
-        # / mislabeling regression in that loop.
-        g = self.db.select_graph("fp_both_multi")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}), (d:V {id:3}),
-                   (a)-[:R {w:1}]->(b), (b)-[:S {w:1}]->(d),
-                   (a)-[:S {w:2}]->(c), (c)-[:R {w:1}]->(d),
-                   (d)-[:R {w:1}]->(a)
-        """)
-        for pc in (0, 100):
-            for rd in ("outgoing", "incoming", "both"):
-                self._fp_match(g, 0, 3, pc, rel_dir=rd, rel_types=["R", "S"])
-
-        # a relation type listed more than once is deduplicated at the
-        # procedure level, so duplicate relTypes must return exactly the same
-        # paths as the distinct list -- no double-counting.
-        ret = ("YIELD path, pathWeight "
-               "RETURN [n IN nodes(path) | n.id] AS ids, pathWeight")
-        m = "MATCH (u:V {id:0}), (v:V {id:3})"
-        for rd in ("outgoing", "incoming", "both"):
-            distinct = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, "
-                f"targetNode:v, weightProp:'w', relDirection:'{rd}', "
-                f"pathCount:100, relTypes:['R','S']}}) {ret}")
-            dup = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, "
-                f"targetNode:v, weightProp:'w', relDirection:'{rd}', "
-                f"pathCount:100, relTypes:['R','S','R']}}) {ret}")
-            self.env.assertEquals(dup, distinct)
-
-    def test29_fastpath_pathcost_hopcount_without_costprop(self):
-        # with no costProp, pathCost is the hop count (each edge defaults to 1),
-        # matching the exhaustive DFS -- not 0. Verify across all three fast
-        # paths (pathCount 1 / 0 / >1).
-        g = self.db.select_graph("fp_costhops")
-        g.query("""
-            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}),
-                   (a)-[:R {w:1}]->(b), (b)-[:R {w:1}]->(c),
-                   (a)-[:R {w:5}]->(c)
-        """)
-        for pc in (1, 0, 3):
-            r = g.query(f"""
-                MATCH (u:V {{id:0}}), (v:V {{id:2}})
-                CALL algo.SPpaths({{sourceNode:u, targetNode:v, weightProp:'w',
-                  pathCount:{pc}}}) YIELD path, pathCost
-                RETURN length(path) AS hops, pathCost
-            """)
-            self.env.assertTrue(len(r.result_set) > 0)
-            for hops, cost in r.result_set:
-                # pathCost == number of edges on the path (hop count)
-                self.env.assertEquals(cost, float(hops))
-
-    def test30_kshortest_costprop_tiebreak(self):
-        # among equal-weight paths the k-shortest fast path (Yen) must select by
-        # (weight, cost, length) -- preferring lower cost -- matching the DFS,
-        # not pick a tie arbitrarily by length. three s->t routes:
-        #   P1: s-c-t  weight 3, cost 0   (cheapest weight)
-        #   P2: s-a-t  weight 5, cost 1   } equal weight, differ only on cost
-        #   P3: s-b-t  weight 5, cost 100 }
-        # with k=2 the result must be {P1, P2}; the cost-100 tie (P3) is excluded.
-        g = self.db.select_graph("fp_cost_tie")
-        g.query("""
-            CREATE (s:V {id:0}), (a:V {id:1}), (b:V {id:2}),
-                   (c:V {id:3}), (t:V {id:4}),
-                   (s)-[:R {w:1, c:0}]->(c),   (c)-[:R {w:2, c:0}]->(t),
-                   (s)-[:R {w:2, c:1}]->(a),   (a)-[:R {w:3, c:0}]->(t),
-                   (s)-[:R {w:2, c:100}]->(b), (b)-[:R {w:3, c:0}]->(t)
-        """)
-
-        def rows(dfs):
-            extra = ", maxLen:1000" if dfs else ""
-            r = g.query(f"""
-                MATCH (u:V {{id:0}}), (v:V {{id:4}})
-                CALL algo.SPpaths({{sourceNode:u, targetNode:v, weightProp:'w',
-                  costProp:'c', pathCount:2{extra}}})
-                YIELD path, pathWeight, pathCost
-                RETURN [n IN nodes(path)|n.id] AS ids, pathWeight, pathCost
-                ORDER BY pathWeight, pathCost
-            """)
-            return [(tuple(x[0]), x[1], x[2]) for x in r.result_set]
-
-        fast = rows(dfs=False)
-        dfs  = rows(dfs=True)
-
-        ids = set(t[0] for t in fast)
-        self.env.assertEquals(len(fast), 2)
-        self.env.assertContains((0, 1, 4), ids)       # P2 (cost 1) kept
-        self.env.assertNotContains((0, 2, 4), ids)    # P3 (cost 100) excluded
-        # selection agrees with the DFS
-        self.env.assertEquals(fast, dfs)
+            MATCH (a:N {id: 0})
+            CALL algo.SSpaths({sourceNode: a, relTypes: ['R'], weightProp: 'w',
+                               maxCost: 1, pathCount: 0})
+            YIELD path, pathCost
+            RETURN [n IN nodes(path) | n.id], pathCost""").result_set
+        self.env.assertEqual(result, [[[0, 1], 1]])

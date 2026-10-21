@@ -1,4 +1,4 @@
-from common import Env, Graph
+from common import Env, Graph, SANITIZER, CODE_COVERAGE
 import time
 import random
 import threading
@@ -53,10 +53,14 @@ def BGSAVE_loop(env, conn, stop_event):
         conn.bgsave()
         results = conn.execute_command("INFO", "persistence")
         in_progress = results['rdb_bgsave_in_progress']
-        max_iterations = 50
+        # Under ASAN/coverage instrumentation the parallel stress workload
+        # slows the server ~3-5x; the default 50×100ms=5s wait is too tight
+        # and surfaces as a hard-to-diagnose "True == False" assertion at
+        # line 67. Bump the polling budget to 60s on instrumented builds.
+        max_iterations = 600 if (SANITIZER or CODE_COVERAGE) else 50
 
         # wait for BGSAVE to finish
-        # for 6 seconds max
+        # for 6 seconds max (60 seconds under ASAN/coverage)
         for _ in range(max_iterations):
             results = conn.execute_command("INFO", "persistence")
             in_progress = results['rdb_bgsave_in_progress']

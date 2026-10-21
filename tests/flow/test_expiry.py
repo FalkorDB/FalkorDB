@@ -25,5 +25,5 @@ class testExpiry():
         try:
             slowlog = redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
         except ResponseError as e:
-            env.assertIn("Invalid graph operation on empty key", str(e))
+            env.assertContains("Invalid graph operation on empty key", str(e))
 

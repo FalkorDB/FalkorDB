@@ -1,0 +1,61 @@
+//! `GRAPH.PROFILE` command handler.
+//!
+//! Executes a Cypher query and returns the execution plan annotated with
+//! per-operator statistics (records produced, execution time).
+
+use crate::{
+    commands::query_args::{QueryFlags, parse_query_flags},
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{
+        ThreadedGraph, c_graph_key, c_graph_name, profile_mut, register_graph, up_to_nul,
+    },
+    redis_type::GRAPH_TYPE,
+};
+use parking_lot::RwLock;
+use redis_module::{Context, NextArg, RedisResult, RedisString};
+use std::sync::Arc;
+
+pub fn graph_profile(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let QueryFlags { timeout, .. } = parse_query_flags(&args)?;
+    let mut args = args.into_iter().skip(1);
+    let key_str = args.next_arg()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
+
+    // The key the graph lives at, not C's name for it — see `graph_query`.
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
+
+    // Try read-only key access first.
+    let read_key = ctx.open_key(&key_str);
+    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        drop(read_key);
+        return profile_mut(ctx, &graph, query, &key_name, timeout);
+    }
+
+    // Graph doesn't exist - open writable key to create it.
+    drop(read_key);
+    let key = ctx.open_key_writable(&key_str);
+    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        return profile_mut(ctx, &graph, query, &key_name, timeout);
+    }
+
+    // Creating: a new graph lands at C's key, not the addressed one — see `graph_query`.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
+    let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+        *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+        &name,
+    )));
+    let result = profile_mut(ctx, &graph, query, &key_name, timeout);
+    // Stored under C's key, not the addressed one — see `c_graph_key`.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    drop(key);
+    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    register_graph(name, graph);
+    result
+}
