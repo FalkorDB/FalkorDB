@@ -8,3 +8,8 @@ name = "Columnar"
 [[require]]
 name = "falkor-core"
 path = "../core"
+
+# The ExprIR model `E` and its per-row evaluator `evalNode` (`VecEval`, `CoreBridge`).
+[[require]]
+name = "falkor-expr-semantics"
+path = "../expr_semantics"

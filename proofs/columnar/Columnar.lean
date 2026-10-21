@@ -10,6 +10,7 @@ import Columnar.Gather
 import Columnar.BatchMisc
 import Columnar.Dispatch
 import Columnar.CallBoundary
+import Columnar.VecEval
 
 /-
 # Columnar batch layer: every columnar operation = its row-at-a-time definition

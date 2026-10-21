@@ -32,6 +32,25 @@ def E.varsO : Option (E V) → List Nat
   | some s => E.vars s
 end
 
+mutual
+/-- The functions a tree calls (its `FuncInvocation` nodes' `GraphFn`s). -/
+def E.funcs : E V → List (Fn V)
+  | .const _ | .param _ | .projAll | .projProp _ | .var .. => []
+  | .func f cs => f :: E.funcsL cs
+  | .map cs | .compound _ cs | .and cs | .or cs | .xor cs | .list cs | .distinct cs => E.funcsL cs
+  | .key _ ch | .prop _ ch | .not ch => E.funcs ch
+  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b | .inList a b
+  | .getElement a b => E.funcs a ++ E.funcs b
+  | .case s arms els => E.funcsO s ++ E.funcsL arms ++ E.funcs els
+  | .mapProj b items => E.funcs b ++ E.funcsL items
+def E.funcsL : List (E V) → List (Fn V)
+  | [] => []
+  | ch :: cs => E.funcs ch ++ E.funcsL cs
+def E.funcsO : Option (E V) → List (Fn V)
+  | none => []
+  | some s => E.funcs s
+end
+
 variable (O : Ops V) (ev : Ev V) (c : Compound V) (e1 e2 : Nat → Option V)
 
 theorem resolveVar_frame (id : Nat) (n : String) (h : e1 id = e2 id) :
