@@ -2394,7 +2394,9 @@ fn bfs_find_bound(
     let mut cost = 0.0;
     for edge_id in chain {
         weight += edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+        // C charges 1 per relationship when `costProp` is not given (or the
+        // edge lacks it), so `maxCost` alone bounds the hop count.
+        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
     }
 
     Ok(Some((weight, cost)))
@@ -2515,7 +2517,8 @@ fn enumerate_paths(
             let (weight, cost) = edges.last().map_or((0.0, 0.0), |&(_, _, _, w, c)| (w, c));
             let next_weight =
                 weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+            // Same 1-per-relationship default as C (and `bfs_find_bound`).
+            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
 
             // C gates on `weight + w <= max_weight` (max_weight defaulting to
             // DBL_MAX), which rejects NaN and infinity. The negated `> bound`
