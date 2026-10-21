@@ -395,7 +395,7 @@
         }
       ],
       "status": "not_affected",
-      "justification": "vulnerable_code_not_present",
+      "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "This ECDSA timing leak was fixed before the OpenSSL 3.5 series began, and the OpenSSL 3.5.8 in this image contains the fix. On a host in FIPS mode, OpenSSL signs with its separate FIPS provider instead (openssl-fips-provider-so 3.0.7, the module Red Hat validated), which still has the flaw. That matters only if you give the image a P-521 ECDSA key: TLS is off by default, and TLS=1 generates RSA keys. On a FIPS host, use an RSA key or another curve."
     },
     {

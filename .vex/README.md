@@ -36,7 +36,21 @@ Each statement has one of these statuses:
 - `affected`: it does. The statement says what to do (`action_statement`).
 - `under_investigation`: we have not finished assessing it.
 
+A statement is `not_affected` when the image as we ship it, including its
+documented settings such as `TLS=1`, cannot reach the flaw. When a choice of
+yours could, the statement's `impact_statement` names it.
+
 We test the documents with Trivy 0.69.
+
+### If you supply your own TLS key
+
+With `TLS=1` the image generates RSA keys, and these statements assume them.
+If you put your own key in the TLS directory, or point redis at one through
+`REDIS_ARGS`, two of them depend on its type, both in the RHEL 9 image:
+
+- CVE-2026-54872: use an RSA key, or an EC key on P-256, P-384 or P-521, not
+  one on Brainpool, secp256k1 or any other curve.
+- CVE-2024-13176: on a host in FIPS mode, do not use a P-521 key.
 
 ## Maintaining the documents
 
@@ -57,7 +71,9 @@ that never reads the VEX.
 
 The statements themselves are checked against the images every night and at
 release. Trivy scans each image with its document applied, and
-`build/vex/vex.py check` reads that scan and the image's filesystem. Pull
+`build/vex/vex.py check` reads that scan and the image's filesystem. The same
+runs also apply the fixable HIGH or CRITICAL gate, since a fix can appear
+after an image was built. Pull
 requests skip this because an upstream change alone, such as a new CVE or a
 package update, can fail it, and would then block every one of them.
 
