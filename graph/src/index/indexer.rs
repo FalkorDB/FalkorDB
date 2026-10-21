@@ -533,7 +533,7 @@ impl Indexer {
     /// Execute a KNN vector query against the per-label index and
     /// yield `(entity_id, distance)` pairs ordered by ascending
     /// distance. Returns an empty iterator if no index exists for
-    /// `label`.
+    /// `label`, and an error while its population is pending.
     ///
     /// Takes the vector by `Arc` so the underlying `f32` buffer can be
     /// pinned for the iterator's lifetime — see
@@ -546,6 +546,9 @@ impl Indexer {
         k: usize,
     ) -> Result<VectorScoredIdIter, String> {
         if let Some(index) = self.index.load().get(label) {
+            if !index.is_operational() {
+                return Err("Invalid arguments for procedure 'db.idx.vector.queryNodes'".into());
+            }
             return index.vector_query(field, vector, k);
         }
         Ok(VectorScoredIdIter::empty(vector))
@@ -924,5 +927,45 @@ impl Indexer {
     #[must_use]
     pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
         self.graph.load_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Index, Indexer};
+    use std::{collections::HashMap, sync::Arc};
+    use thin_vec::thin_vec;
+
+    #[test]
+    fn vector_query_rejects_pending_population() {
+        let indexer = Indexer::default();
+        let label = Arc::new(String::from("V"));
+        let index = Arc::new(Index::default());
+        indexer
+            .index
+            .store(Arc::new(HashMap::from([(label.clone(), index)])));
+        let first = indexer.acquire_population_ticket(&label).unwrap();
+        let second = indexer.acquire_population_ticket(&label).unwrap();
+
+        let query = || indexer.vector_query(&label, "e", Arc::new(thin_vec![1.0, 1.0]), 3);
+        let expected = "Invalid arguments for procedure 'db.idx.vector.queryNodes'";
+
+        // No background worker is needed: hold population tickets so the
+        // check cannot race with an index becoming operational.
+        assert!(matches!(query(), Err(error) if error == expected));
+        indexer.release_population_ticket(&first);
+        assert!(matches!(query(), Err(error) if error == expected));
+
+        // Once every ticket completes, queries may reach the index again.
+        // This unit fixture has no RediSearch spec, so it yields no rows.
+        indexer.release_population_ticket(&second);
+        assert_eq!(query().unwrap().count(), 0);
+
+        // A NUL field is rejected by Index::vector_query itself, proving
+        // that the operational path delegates rather than returning early.
+        assert!(matches!(
+            indexer.vector_query(&label, "e\0", Arc::new(thin_vec![1.0, 1.0]), 3),
+            Err(error) if error.contains("nul byte")
+        ));
     }
 }
