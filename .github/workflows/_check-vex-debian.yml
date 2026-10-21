@@ -1,0 +1,88 @@
+# Reusable workflow: check the Debian images against their VEX documents. For
+# falkordb and falkordb-server, on amd64 and arm64, scan the image with
+# .vex/<repo>.openvex.json applied, export its filesystem, and run
+# `build/vex/vex.py check`. It fails when a HIGH or CRITICAL finding with no
+# fix has no statement, when a statement no longer matches the scan, or when
+# its evidence no longer holds (.vex/README.md, "What CI checks").
+#
+# Callers: vex-nightly.yml (the published :edge images) and release-tag.yml
+# (the images a release retags). Pull requests only check that the documents
+# match their source (rust-pr.yml's lint): an upstream change alone, such as
+# a new CVE or a package update, can fail this check, and would block every
+# pull request until .vex was updated.
+#
+# The rhel9/amazonlinux2023 server images are checked where they are built,
+# in _build-artifacts.yml.
+
+name: Check the VEX (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: >-
+          Tag of ghcr.io/falkordb/falkordb and falkordb-server to check: a
+          multi-arch manifest, such as edge or rc-mg-<sha>.
+        required: true
+        type: string
+      revision:
+        description: "Git revision to take .vex/ and build/vex/ from"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+        platform: [linux/amd64, linux/arm64]
+    env:
+      IMAGE: ghcr.io/falkordb/${{ matrix.repo }}:${{ inputs.tag }}
+    steps:
+      # Only the VEX documents and their checker are needed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+          sparse-checkout: |
+            .vex
+            build/vex
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Trivy version and the installer pin match _ci-pipeline.yml's
+      # security-scan, whose trivy-action uses this installer.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.69.2
+
+      # The arm64 image is only read, never run, so no emulation is needed.
+      - name: Check the VEX against ${{ matrix.repo }}:${{ inputs.tag }} (${{ matrix.platform }})
+        env:
+          REPO: ${{ matrix.repo }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          python3 build/vex/vex.py generate --check
+          trivy image --quiet --platform "$PLATFORM" --vex ".vex/${REPO}.openvex.json" --show-suppressed \
+            --format json --output "$RUNNER_TEMP/trivy-vex.json" "$IMAGE"
+          cid=$(docker create --platform "$PLATFORM" "$IMAGE")
+          docker export -o "$RUNNER_TEMP/fs.tar" "$cid"
+          docker container rm "$cid" >/dev/null
+          python3 build/vex/vex.py check --report "$RUNNER_TEMP/trivy-vex.json" --fs "$RUNNER_TEMP/fs.tar" \
+            --image "$REPO" --os debian --summary "$GITHUB_STEP_SUMMARY"

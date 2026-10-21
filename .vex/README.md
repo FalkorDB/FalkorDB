@@ -50,12 +50,29 @@ Bump `version` and `timestamp` in `[document]` whenever a statement changes.
 
 ### What CI checks
 
-Every image build scans the image with Trivy three times: twice without the
-VEX, for the full report and for the gate that fails on a fixable HIGH or
-CRITICAL vulnerability, and once with the image's document applied.
-`build/vex/vex.py check` then reads the last scan and the image's filesystem. The Debian images are checked in
-`_ci-pipeline.yml`'s `security-scan`, the RHEL 9 and Amazon Linux 2023 images
-in `_build-artifacts.yml`. The check fails when:
+Pull requests and the merge queue check only that the documents match
+`statements.toml` (`vex.py generate --check`, in `rust-pr.yml`'s `lint`). Their
+image builds still fail on a fixable HIGH or CRITICAL vulnerability, a gate
+that never reads the VEX.
+
+The statements themselves are checked against the images every night and at
+release. Trivy scans each image with its document applied, and
+`build/vex/vex.py check` reads that scan and the image's filesystem. Pull
+requests skip this because an upstream change alone, such as a new CVE or a
+package update, can fail it, and would then block every one of them.
+
+- **Nightly** (`vex-nightly.yml`): the published Debian `:edge` images, and the
+  RHEL 9 and Amazon Linux 2023 images built from `main`. A failure opens an
+  issue titled "Nightly VEX check failed", or comments on the open one, and the
+  next passing run closes it.
+- **At release** (`release-tag.yml`): the images being released. A failure
+  stops them from being published.
+
+To check a branch before merging it, run `vex-nightly.yml` on the branch
+(`gh workflow run vex-nightly.yml --ref <branch>`), with `-f tag=rc-pr-<N>` to
+check the pull request's Debian images instead of `:edge`.
+
+The check fails when:
 
 | Failure | What to do |
 |---|---|

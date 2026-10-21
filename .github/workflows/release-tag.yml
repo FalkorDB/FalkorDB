@@ -26,12 +26,15 @@
 #   1. guard             — validate tag shape, major >= 6, Cargo.toml version match
 #   2. create-release    — create the GitHub Release (idempotent)
 #   3. build-artifacts   — build the per-platform .so files, and the rhel9 and
-#                          amazonlinux2023 server images (_build-artifacts.yml)
+#                          amazonlinux2023 server images, checked against their
+#                          VEX document (_build-artifacts.yml)
 #   4. publish-artifacts — require the full set, checksum, upload to the release
-#   5. image             — retag the validated rc-mg-<sha> manifest to semver,
+#   5. vex-check         — check the rc-mg-<sha> images against their VEX
+#                          documents (_check-vex-debian.yml)
+#   6. image             — retag the validated rc-mg-<sha> manifest to semver,
 #                          and to :latest if this is the highest release
-#   6. publish-images    — push the per-OS server images as <semver>-<os>-<arch>
-#   7. browser-tests     — exercise the published image
+#   7. publish-images    — push the per-OS server images as <semver>-<os>-<arch>
+#   8. browser-tests     — exercise the published image
 #
 # workflow_dispatch re-runs all of it for an existing tag; every step is
 # idempotent (existing release reused, assets uploaded with --clobber, retag
@@ -211,13 +214,28 @@ jobs:
             dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
             --clobber
 
+  # The images `image` retags, against the VEX documents at this commit. The
+  # merge queue built them, maybe long before this release, and an upstream
+  # change since (a new CVE, a package update) can make a statement wrong. A
+  # failure stops the retag, so the release never publishes images its VEX
+  # documents do not describe.
+  vex-check:
+    needs: guard
+    uses: ./.github/workflows/_check-vex-debian.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      tag: rc-mg-${{ needs.guard.outputs.commit_sha }}
+      revision: ${{ needs.guard.outputs.commit_sha }}
+
   # Runtime images: retag the multi-arch manifest the merge queue built and
   # tested for this commit (rc-mg-<sha>) to the release tags on both registries.
   # No layer rebuild — what CI validated is what ships. That image only exists
   # for a commit that went through the queue, and only for cleanup-rc-images.yml's
   # TTL; otherwise rebuild from source with release-image.yml.
   image:
-    needs: [guard, create-release]
+    needs: [guard, create-release, vex-check]
     runs-on: ubuntu-latest
     permissions:
       contents: read
