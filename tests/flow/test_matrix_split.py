@@ -9,6 +9,11 @@ A file goes to `spawn_files` if ANY Env() invocation passes one of:
   - env='oss-cluster' — needs a multi-node cluster
   - shardsCount      — same as above
 
+A file can also opt in explicitly with a `# flow-matrix: spawn` line, for a
+test that reconfigures the server process-wide (replication settings, a
+replica detached and re-attached) and so cannot share a services container
+with other classes.
+
 NOT spawn-forcing (the services job handles these directly):
   - enableDebugCommand — services container is launched with
                          REDIS_ARGS=--enable-debug-command yes
@@ -64,6 +69,9 @@ IMMUTABLE_MODULE_ARGS = (
     "TIMEOUT",
 )
 
+# Explicit opt-in: a `# flow-matrix: spawn` line anywhere in the file.
+SPAWN_MARKER_RE = re.compile(r"^#\s*flow-matrix:\s*spawn\b", re.MULTILINE)
+
 # `Env(...moduleArgs="...string...")` — capture the literal string content.
 # Handles f-strings (`f"..."`) and both quote styles. re.DOTALL so the
 # literal can span multiple lines.
@@ -115,6 +123,9 @@ def needs_spawn(paths):
                 content = f.read()
         except OSError:
             continue
+        # Explicit opt-in.
+        if SPAWN_MARKER_RE.search(content):
+            return True
         # Cluster topology — always spawn.
         if CLUSTER_RE.search(content):
             return True

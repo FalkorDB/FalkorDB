@@ -45,11 +45,12 @@ use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_grap
 use crate::serializers;
 use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
-use crate::serializers::{DECODE_STATE, VKEY_STATE};
+use crate::serializers::{DECODE_STATE, DecodeState, VKEY_STATE};
 use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
-use parking_lot::RwLock;
+use graph::udf::repository::{UdfLibrary, UdfRepo};
+use parking_lot::{Mutex, RwLock};
 use redis_module::logging::{log_notice, log_warning};
 use redis_module::raw::{
     self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
@@ -58,6 +59,7 @@ use redis_module::raw::{
 use redis_module::{
     Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
 };
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
@@ -109,7 +111,7 @@ unsafe extern "C" fn graph_rdb_load(
             graph_arc.borrow().set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
-            register_graph(key_name, arc.clone());
+            register_loaded_graph(key_name, arc.clone());
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
             Box::into_raw(boxed).cast()
         }
@@ -135,7 +137,7 @@ unsafe extern "C" fn graph_rdb_load(
                     } else {
                         let tg = ThreadedGraph::from_mvcc(mvcc);
                         let arc = Arc::new(RwLock::new(tg));
-                        register_graph(key_name.clone(), arc.clone());
+                        register_loaded_graph(key_name.clone(), arc.clone());
                         arc
                     };
                     let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
@@ -163,7 +165,7 @@ unsafe extern "C" fn graph_rdb_load(
             // treats as the list of live graphs, and would make the pre-save
             // sweep offer it up as a graph to encode.
             if !is_virtual {
-                register_graph(key_name, arc.clone());
+                register_loaded_graph(key_name, arc.clone());
             }
 
             // Hand ownership of a Box<Arc<...>> to Redis.
@@ -301,7 +303,6 @@ unsafe extern "C" fn graph_aux_load(
             return 1;
         };
 
-        let repo = get_udf_repo();
         let mut libs = Vec::with_capacity(count as usize);
         for _ in 0..count {
             let name = match load_string_buffer(rdb) {
@@ -315,19 +316,24 @@ unsafe extern "C" fn graph_aux_load(
             libs.push((name, code));
         }
 
-        repo.deserialize(&libs).map_or(1, |loaded_libs| {
-            graph::runtime::functions::flush_udfs();
-            for lib in &loaded_libs {
-                for qname in &lib.function_names {
-                    let graph_fn = Arc::new(GraphFn::new_udf(qname));
-                    register_udf(qname, graph_fn);
-                }
-            }
-            0
-        })
+        let Ok(staged) = UdfRepo::stage(&libs) else {
+            return 1;
+        };
+        // Loading into Redis' temporary database: the live one -- and the
+        // UDFs its queries call -- stays in service until the swap.
+        if let SwapLoad::Loading { udfs, .. } = &mut *SWAP_LOAD.lock() {
+            *udfs = Some(staged);
+            return 0;
+        }
+        install_udfs(staged);
+        0
     } else {
         // AFTER_RDB: Read placeholder, finalize pending multi-key graphs.
-        let _ = load_unsigned(rdb);
+        // A short read here means the stream was cut: fail the load rather than
+        // finalize what arrived, and let LOADING_FAILED discard it.
+        if load_unsigned(rdb).is_err() {
+            return 1;
+        }
         finalize_pending_graphs();
         0
     }
@@ -760,6 +766,137 @@ pub fn finalize_pending_graphs() {
     }
 }
 
+/// Drop every multi-key graph a failed load left in `DECODE_STATE`.
+///
+/// Unlike `finalize_pending_graphs`, nothing is installed: the load was cut
+/// short, so even a graph whose keys all arrived belongs to a snapshot Redis
+/// is about to throw away. `meta_keys` is kept for `delete_stale_virtual_keys`.
+pub fn discard_pending_graphs() {
+    let mut decode_state = DECODE_STATE.lock();
+    let pending = std::mem::take(&mut decode_state.pending);
+    let finalized = std::mem::take(&mut decode_state.finalized);
+    let placeholders = std::mem::take(&mut decode_state.placeholders);
+    drop(decode_state);
+    let discarded = pending.len() + finalized.len();
+    // Drop off the main Redis thread so Index::drop routes through the
+    // GIL-acquiring path (see register_graph for the rationale).
+    std::thread::spawn(move || {
+        drop(pending);
+        drop(finalized);
+        drop(placeholders);
+    });
+    if discarded > 0 {
+        log_notice(format!(
+            "Discarded {discarded} partially loaded graphs after a failed RDB load"
+        ));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Loads into a temporary database (`repl-diskless-load swapdb`)
+// ---------------------------------------------------------------------------
+
+/// Where a `swapdb` replica load stands.
+///
+/// Redis decodes that snapshot into a temporary database and keeps serving the
+/// current one until the load completes -- with `async_loading`, to clients
+/// whose queries run inline from inside the decode. The graphs it registers
+/// and the UDFs it brings must therefore not replace the live ones: they wait
+/// here, and replace them wholesale on `REPL_ASYNC_LOAD_COMPLETED`, which Redis
+/// fires right after swapping the databases; on `ABORTED` they are dropped
+/// with the temporary database.
+pub enum SwapLoad {
+    Idle,
+    Loading {
+        graphs: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
+        udfs: Option<Vec<UdfLibrary>>,
+    },
+    /// `ABORTED` fired. The `LOADING_FAILED` that follows concerns the
+    /// temporary database Redis already discarded, so it must leave the live
+    /// one -- which still holds the previous snapshot -- untouched.
+    Aborted,
+}
+
+pub static SWAP_LOAD: Mutex<SwapLoad> = Mutex::new(SwapLoad::Idle);
+
+/// Register a graph `graph_rdb_load` decoded: live, or staged during a
+/// `swapdb` load.
+fn register_loaded_graph(
+    name: String,
+    arc: Arc<RwLock<ThreadedGraph>>,
+) {
+    if let SwapLoad::Loading { graphs, .. } = &mut *SWAP_LOAD.lock() {
+        let displaced = graphs.insert(name, arc);
+        debug_assert!(
+            displaced.is_none(),
+            "register_loaded_graph: key loaded twice into the temporary database"
+        );
+        return;
+    }
+    register_graph(name, arc);
+}
+
+/// `REPL_ASYNC_LOAD_STARTED`: Redis is about to load into a temporary database.
+pub fn begin_swap_load() {
+    *SWAP_LOAD.lock() = SwapLoad::Loading {
+        graphs: HashMap::new(),
+        udfs: None,
+    };
+}
+
+/// `REPL_ASYNC_LOAD_COMPLETED`: the loaded database is now the live one, so its
+/// graphs become the registry -- every name the previous snapshot held and
+/// this one does not goes with it -- and its UDFs replace the live ones.
+pub fn commit_swap_load() {
+    let SwapLoad::Loading { graphs, udfs } =
+        std::mem::replace(&mut *SWAP_LOAD.lock(), SwapLoad::Idle)
+    else {
+        return;
+    };
+    let previous = std::mem::replace(&mut *GRAPH_REGISTRY.lock(), graphs);
+    // The previous graphs' keys are freed by Redis along with the old database;
+    // `graph_free` finds nothing left to unregister. Drop the registry's own
+    // references off the main thread (see `register_graph`).
+    std::thread::spawn(move || drop(previous));
+    if let Some(udfs) = udfs {
+        install_udfs(udfs);
+    }
+}
+
+/// `REPL_ASYNC_LOAD_ABORTED`: Redis discards the temporary database; drop what
+/// was staged for it, and everything the decoder accumulated.
+pub fn abort_swap_load() {
+    let staged = std::mem::replace(&mut *SWAP_LOAD.lock(), SwapLoad::Aborted);
+    let decoded = std::mem::replace(&mut *DECODE_STATE.lock(), DecodeState::new());
+    std::thread::spawn(move || {
+        drop(staged);
+        drop(decoded);
+    });
+}
+
+/// True once for the `LOADING_FAILED` that follows an aborted `swapdb` load.
+pub fn take_swap_load_aborted() -> bool {
+    let mut state = SWAP_LOAD.lock();
+    if matches!(*state, SwapLoad::Aborted) {
+        *state = SwapLoad::Idle;
+        return true;
+    }
+    false
+}
+
+/// Replace the live UDFs with libraries `UdfRepo::stage` validated.
+fn install_udfs(staged: Vec<UdfLibrary>) {
+    let names: Vec<String> = staged
+        .iter()
+        .flat_map(|lib| lib.function_names.iter().cloned())
+        .collect();
+    get_udf_repo().install(staged);
+    graph::runtime::functions::flush_udfs();
+    for qname in &names {
+        register_udf(qname, Arc::new(GraphFn::new_udf(qname)));
+    }
+}
+
 /// Install a finalized Graph into the placeholder ThreadedGraph.
 fn install_graph(
     graph_name: &str,
@@ -983,7 +1120,9 @@ unsafe extern "C" fn graphmeta_aux_load(
     _encver: i32,
     when: i32,
 ) -> i32 {
-    let _ = load_unsigned(rdb);
+    if load_unsigned(rdb).is_err() {
+        return 1;
+    }
     if when == raw::Aux::After as i32 {
         finalize_pending_graphs();
     }
