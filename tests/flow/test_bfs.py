@@ -231,3 +231,43 @@ class testBFS(FlowTestsBase):
         expected_result = [[['b'], ['e']]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+
+
+
+class testBFSEdgeChanges(FlowTestsBase):
+    def __init__(self):
+        # enableDebugCommand: dumpAndReload goes through DEBUG RELOAD.
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.graph = self.db.select_graph("proc_bfs_changes")
+
+    def reach(self, max_depth=-1):
+        q = f"""MATCH (s:N {{v: 0}})
+                CALL algo.BFS(s, {max_depth}, 'E') YIELD nodes
+                RETURN [n IN nodes | n.v]"""
+        return sorted(self.graph.query(q).result_set[0][0])
+
+    def test01_bfs_sees_edge_changes(self):
+        # BFS reads the stored relationship matrix in place when it holds no
+        # pending change (as right after a load) and materializes it
+        # otherwise. Each step below flips between the two, and every
+        # committed delete and create must be visible to the next call.
+        g = self.graph
+        g.query("UNWIND range(0, 4) AS i CREATE (:N {v: i})")
+        g.query("""UNWIND range(0, 3) AS i
+                   MATCH (a:N {v: i}), (b:N {v: i + 1})
+                   CREATE (a)-[:E]->(b)""")
+        self.env.assertEqual(self.reach(), [1, 2, 3, 4])
+
+        self.env.dumpAndReload()
+        self.env.assertEqual(self.reach(), [1, 2, 3, 4])
+        self.env.assertEqual(self.reach(2), [1, 2])
+
+        g.query("MATCH (:N {v: 1})-[r:E]->(:N {v: 2}) DELETE r")
+        self.env.assertEqual(self.reach(), [1])
+
+        self.env.dumpAndReload()
+        self.env.assertEqual(self.reach(), [1])
+
+        g.query("MATCH (a:N {v: 1}), (b:N {v: 3}) CREATE (a)-[:E]->(b)")
+        self.env.assertEqual(self.reach(), [1, 3, 4])
+        self.env.assertEqual(self.reach(2), [1, 3])
