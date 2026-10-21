@@ -12,14 +12,14 @@ affects FalkorDB as we ship it, and why.
 
 ## Using a document
 
-Take the document from the release the image comes from (image `6.1.0` is
-release `v6.1.0`), and give it to Trivy:
+Download the document from the release the image comes from (image `6.1.0`
+is release `v6.1.0`), and give it to Trivy. Trivy reads `--vex` from a local
+file, not a URL:
 
 ```sh
 VERSION=6.1.0
-trivy image \
-  --vex "https://raw.githubusercontent.com/FalkorDB/FalkorDB/v$VERSION/.vex/falkordb.openvex.json" \
-  "falkordb/falkordb:$VERSION"
+curl -fsSLO "https://raw.githubusercontent.com/FalkorDB/FalkorDB/v$VERSION/.vex/falkordb.openvex.json"
+trivy image --vex falkordb.openvex.json "falkordb/falkordb:$VERSION"
 ```
 
 Findings a statement covers are left out of the report. Add
@@ -50,10 +50,10 @@ Bump `version` and `timestamp` in `[document]` whenever a statement changes.
 
 ### What CI checks
 
-Every image build scans the image twice with Trivy: once without the VEX, for
-the gate that fails on a fixable HIGH or CRITICAL vulnerability, and once with
-the image's document applied. `build/vex/vex.py check` then reads the second
-scan and the image's filesystem. The Debian images are checked in
+Every image build scans the image with Trivy three times: twice without the
+VEX, for the full report and for the gate that fails on a fixable HIGH or
+CRITICAL vulnerability, and once with the image's document applied.
+`build/vex/vex.py check` then reads the last scan and the image's filesystem. The Debian images are checked in
 `_ci-pipeline.yml`'s `security-scan`, the RHEL 9 and Amazon Linux 2023 images
 in `_build-artifacts.yml`. The check fails when:
 
@@ -61,6 +61,7 @@ in `_build-artifacts.yml`. The check fails when:
 |---|---|
 | A HIGH or CRITICAL finding with no fixed version has no statement | Assess it and add a statement, or remove the package from the image. Lower severities are listed as warnings. |
 | A statement does not name every package Trivy reports the CVE in | Add the package to `packages`. |
+| A statement names a package Trivy does not report the CVE in | Drop the package from `packages`. If the package is in only some of the images, split the statement by image. |
 | A finding a statement hides now has a fixed version | Rebuild so the image gets the fix, then delete the statement. |
 | A statement hid nothing | The CVE is gone from the image (fixed, or its package removed): delete the statement. |
 | A statement's evidence no longer holds | The claim may now be false. Re-assess it before changing anything. |
@@ -94,7 +95,7 @@ build. Use it wherever the claim can be checked mechanically:
 | `{ check = "contains", path = "...", text = "..." }` | the file exists and contains the text: a setting the claim relies on, say |
 | `{ check = "lacks", path = "...", text = "..." }` | the file exists and does not contain the text |
 | `{ check = "no-import", symbols = [...] }` | no ELF file in the image has an undefined dynamic reference to any of the symbols. Calls inside one library (inside glibc, say) are invisible to it. `except = [paths]` leaves out files the claim accounts for, such as the `openssl` tool that gen-certs.sh runs. |
-| `{ check = "not-run", packages = [...] }` | no file of these packages is a program in `[runtime]`, a library in its `dlopen` list, or a library either loads through `DT_NEEDED`. Any other library loaded by name is not seen; account for it in `notes`. |
+| `{ check = "not-run", packages = [...] }` | no file of these packages is a program in `[runtime]`, a library in its `dlopen` list, or what either runs through a script's `#!` line or loads through `DT_NEEDED`. Any other library loaded by name is not seen; account for it in `notes`. |
 | `{ check = "no-setid" }` | no file in the image is setuid, setgid or carries file capabilities, so nothing runs with more privileges than its caller |
 | `{ check = "version", package = "...", is = "..." }` | the package's installed version is exactly this. Use it when the claim depends on the version, so a package update forces a re-assessment. |
 
