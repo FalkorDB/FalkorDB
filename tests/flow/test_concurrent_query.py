@@ -514,12 +514,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # a short read (~20ms) that holds the graph READ lock; kept short so
-            # the in-flight batch drains quickly, keeping the gate's bound on the
-            # writer's wait well-separated from the whole-flood wait even on a
-            # slow / loaded CI runner
-            read_q  = "UNWIND range(0, 500000) AS x WITH x WHERE x % 500001 = 0 RETURN count(x)"
-            write_q = "CREATE (:N {v:2}) RETURN 1"
+            # a short read (~20ms) that holds the graph READ lock, then returns
+            # the SERVER's clock (timestamp()) so we can prove ordering from the
+            # server side instead of trusting client wall-clock. kept short so
+            # the in-flight batch drains quickly
+            read_q  = "UNWIND range(0, 500000) AS x WITH count(x) AS c RETURN timestamp()"
+            write_q = "CREATE (:N {v:2}) RETURN timestamp()"
 
             loop = asyncio.get_running_loop()
             FLOOD_SECONDS = 6.0
@@ -538,23 +538,24 @@ class testConcurrentQueryFlow(FlowTestsBase):
             flood_task = asyncio.create_task(flood())
             await asyncio.sleep(0.3)  # let the flood saturate the read lock
 
-            t0 = loop.time()
-            await g.query(write_q)
-            writer_elapsed = loop.time() - t0
-            writer_preempted_flood = loop.time() < deadline
+            # the writer reports the server-side time at which it committed
+            writer_ts = (await g.query(write_q)).result_set[0][0]
 
             await flood_task
             # surface any reader failure: a dead flood must fail the test rather
             # than silently let the writer "win" an uncontended lock
-            await asyncio.gather(*reads)
+            results = await asyncio.gather(*reads)
 
-            # the gate bounds the writer's wait to the in-flight reads draining,
-            # which is independent of the flood length; without it the writer
-            # waits out the whole flood. assert it landed in well under half the
-            # flood - a margin wide enough to absorb CI load while still catching
-            # a regression (which pushes writer_elapsed toward FLOOD_SECONDS)
-            self.env.assertLess(writer_elapsed, FLOOD_SECONDS / 2.0)
-            self.env.assertTrue(writer_preempted_flood)
+            # prove interleaving from the SERVER clock, not client timing: each
+            # flood read reports when it actually ran. if the gate works the
+            # writer commits *amid* the flood, so some reads run before it and a
+            # large share run after it. without the gate the writer waits the
+            # whole flood out and almost no read would run after it.
+            read_ts = [r.result_set[0][0] for r in results]
+            reads_before = sum(1 for t in read_ts if t < writer_ts)
+            reads_after  = sum(1 for t in read_ts if t > writer_ts)
+            self.env.assertGreater(reads_before, 0)
+            self.env.assertGreater(reads_after, len(read_ts) * 0.3)
 
             # the write took effect
             res = await g.ro_query("MATCH (n:N {v:2}) RETURN count(n)")

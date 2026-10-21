@@ -565,27 +565,38 @@ int GraphContext_TimeAcquireReadLock
 		deadline.tv_nsec -= 1000000000L ;
 	}
 
-	// 1. wait out any pending writer, bounded by the deadline
+	// 1. wait out any pending writer, bounded by the deadline. evaluate the
+	// outcome once, after releasing the mutex, and re-check the predicate:
+	// pthread_cond_timedwait can report ETIMEDOUT in the same wakeup that the
+	// gate cleared, in which case we should proceed rather than spuriously
+	// report a timeout
 	pthread_mutex_lock (&gc->writer_gate_mutex) ;
-	while (gc->writer_waiting) {
-		int rc = pthread_cond_timedwait (&gc->writer_gate_cond,
+	int wait_rc = 0 ;
+	while (gc->writer_waiting && wait_rc != ETIMEDOUT) {
+		wait_rc = pthread_cond_timedwait (&gc->writer_gate_cond,
 				&gc->writer_gate_mutex, &deadline) ;
-		if (rc == ETIMEDOUT) {
-			pthread_mutex_unlock (&gc->writer_gate_mutex) ;
-			return ETIMEDOUT ;
-		}
 	}
+	bool gate_timed_out = (gc->writer_waiting && wait_rc == ETIMEDOUT) ;
 	pthread_mutex_unlock (&gc->writer_gate_mutex) ;
 
-	// 2. acquire the read lock within the time remaining to the deadline
-	struct timespec now ;
-	clock_gettime (CLOCK_REALTIME, &now) ;
-	int64_t remaining_ms =
-		(int64_t)(deadline.tv_sec - now.tv_sec) * 1000 +
-		(deadline.tv_nsec - now.tv_nsec) / 1000000 ;
-	if (remaining_ms <= 0) {
+	if (gate_timed_out) {
 		return ETIMEDOUT ;
 	}
+
+	// 2. acquire the read lock within the time remaining to the deadline.
+	// measure the remaining budget at nanosecond precision and round a positive
+	// remainder up to whole milliseconds: truncating toward zero would turn a
+	// sub-millisecond budget into 0, which rwlock_timedrdlock treats as a single
+	// non-blocking try - inconsistent with the bounded wait promised here
+	struct timespec now ;
+	clock_gettime (CLOCK_REALTIME, &now) ;
+	int64_t remaining_ns =
+		(int64_t)(deadline.tv_sec - now.tv_sec) * 1000000000L +
+		(deadline.tv_nsec - now.tv_nsec) ;
+	if (remaining_ns <= 0) {
+		return ETIMEDOUT ;
+	}
+	int64_t remaining_ms = (remaining_ns + 999999) / 1000000 ;  // round up
 
 	int rc = rwlock_timedrdlock (&gc->rwlock, remaining_ms) ;
 	if (rc == 0) {
