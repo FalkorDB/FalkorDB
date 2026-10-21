@@ -793,6 +793,34 @@ impl Binder {
     /// Bind the inner body of a CALL subquery with scope isolation.
     /// For Query bodies: set env to imported vars, bind normally.
     /// For Union bodies: create binders initialized with imported vars for each branch.
+    ///
+    /// # The body's entry projection
+    ///
+    /// Every body gets one, even a body that imports nothing, because it is
+    /// the record boundary between the outer scope and the body — not merely
+    /// the carrier for imported values.
+    ///
+    /// The body is bound in its own scope, so its variables are numbered from
+    /// 0; a runtime row is a dense array indexed by `Variable.id` alone, with
+    /// `scope_id` never reaching the row. The enclosing `Apply` feeds the
+    /// outer row into the body through an `Argument` leaf, so without a
+    /// boundary the body's variables are written over the outer bindings
+    /// occupying those same slots — a body predicate is then tested against an
+    /// outer value, and a body scan endpoint looks already bound.
+    ///
+    /// `Project` is that boundary: `ProjectOp` builds a fresh batch holding
+    /// only what it projects and drops its input, so nothing below it reaches
+    /// the body. An empty projection still carries row count and `origin_row`,
+    /// which is all a body importing nothing needs from the outer stream.
+    ///
+    /// This mirrors the C engine, where an `Argument` is planted only beneath
+    /// a childless `Project` (`_find_feeding_points`), so the outer record
+    /// likewise only ever enters a body through a projection that rebuilds it.
+    /// C can also omit the `Argument` entirely for a non-importing body, since
+    /// its `Apply` is row-at-a-time and re-runs the body per outer record;
+    /// Rust's `Apply` is batched and needs the `Argument` to carry cardinality
+    /// and `origin_row` correlation, so it takes the projection route for
+    /// every body.
     fn bind_call_body(
         &mut self,
         body: RawQueryIR,
@@ -816,24 +844,25 @@ impl Binder {
                 // the CALL body is isolated, not a child scope)
                 self.env_stack.push(HashMap::new());
 
-                if !imported.is_empty() {
-                    // Allocate fresh inner IDs for imported variables and build
-                    // projection pairs that map outer → inner.
-                    let projections = self.build_import_projections(&imported);
+                // Allocate fresh inner IDs for imported variables and build
+                // projection pairs that map outer → inner. Emitted even when
+                // nothing is imported: this clause is the body's entry
+                // projection, and the body needs it as a record boundary
+                // whether or not it carries a value across. See
+                // `bind_call_body`'s note on why.
+                let projections = self.build_import_projections(&imported);
 
-                    // Emit a bound import WITH as the first clause
-                    bound.push(QueryIR::With {
-                        distinct: false,
-                        all: false,
-                        exprs: projections,
-                        copy_from_parent: vec![],
-                        orderby: vec![],
-                        skip: None,
-                        limit: None,
-                        filter: None,
-                        write: false,
-                    });
-                }
+                bound.push(QueryIR::With {
+                    distinct: false,
+                    all: false,
+                    exprs: projections,
+                    copy_from_parent: vec![],
+                    orderby: vec![],
+                    skip: None,
+                    limit: None,
+                    filter: None,
+                    write: false,
+                });
 
                 // Bind remaining clauses (skip raw import WITH)
                 for clause in clauses.into_iter().skip(skip_count) {
@@ -880,20 +909,20 @@ impl Binder {
                         let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
-                        if !imported.is_empty() {
-                            let projections = binder.build_import_projections(&imported);
-                            bound_clauses.push(QueryIR::With {
-                                distinct: false,
-                                all: false,
-                                exprs: projections,
-                                copy_from_parent: vec![],
-                                orderby: vec![],
-                                skip: None,
-                                limit: None,
-                                filter: None,
-                                write: false,
-                            });
-                        }
+                        // Entry projection for this branch, emitted even when
+                        // the branch imports nothing (see `bind_call_body`).
+                        let projections = binder.build_import_projections(&imported);
+                        bound_clauses.push(QueryIR::With {
+                            distinct: false,
+                            all: false,
+                            exprs: projections,
+                            copy_from_parent: vec![],
+                            orderby: vec![],
+                            skip: None,
+                            limit: None,
+                            filter: None,
+                            write: false,
+                        });
 
                         for clause in clauses.into_iter().skip(skip_count) {
                             bound_clauses.push(binder.bind_ir(clause)?);
@@ -1916,10 +1945,22 @@ impl Binder {
                     return Ok(new_tree);
                 }
 
-                let children = node_ref
+                let mut children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Parentheses only group what the parser reads; the tree it
+                // built already carries that grouping. Returning the single
+                // operand gives `(x)` the same bound tree as `x`, so no bound
+                // tree - and nothing downstream of the binder - ever holds an
+                // `ExprIR::Paren`.
+                if matches!(node_ref.data(), ExprIR::Paren) {
+                    debug_assert_eq!(children.len(), 1, "`(...)` has one operand");
+                    return children
+                        .pop()
+                        .ok_or_else(|| String::from("Empty parenthesised expression"));
+                }
 
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Constant(v) => ExprIR::Constant(v),
@@ -1957,23 +1998,15 @@ impl Binder {
                         // except when the Path comes from a variable-length
                         // relationship pattern (e.g. `[r*]`) — in that case
                         // `r.prop` is treated as a per-edge predicate.
-                        if let Some(first_child) = children.first() {
-                            let root = first_child.root();
-                            let inner = if matches!(root.data(), ExprIR::Paren) {
-                                root.get_child(0)
-                            } else {
-                                Some(root)
-                            };
-                            if let Some(node) = inner
-                                && let ExprIR::Variable(v) = node.data()
-                                && v.ty == Type::Path
-                                && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
-                            {
-                                return Err("Type mismatch: expected Map, Node, Edge, \
-                                             Datetime, Date, Time, Duration, Null, \
-                                             or Point but was Path"
-                                    .to_string());
-                            }
+                        if let Some(first_child) = children.first()
+                            && let ExprIR::Variable(v) = first_child.root().data()
+                            && v.ty == Type::Path
+                            && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                        {
+                            return Err("Type mismatch: expected Map, Node, Edge, \
+                                         Datetime, Date, Time, Duration, Null, \
+                                         or Point but was Path"
+                                .to_string());
                         }
                         ExprIR::Property(prop)
                     }
@@ -2014,7 +2047,7 @@ impl Binder {
                         }
                         ExprIR::FuncInvocation(func)
                     }
-                    ExprIR::Paren => ExprIR::Paren,
+                    ExprIR::Paren => unreachable!("returned above"),
                     ExprIR::NestedPlan(_) => {
                         return Err(String::from(
                             "A nested plan is created by the planner, never parsed",
@@ -2098,6 +2131,14 @@ impl Binder {
                     && let Ok(value) = pure_fn(&args)
                 {
                     return Ok(DynTree::new(ExprIR::Constant(value)));
+                }
+                // AND and OR are associative, so a grouped run of the same
+                // operator - `(a AND b) AND c` - joins its parent's operands
+                // in place. Filters are then split into all their conjuncts.
+                match new_data {
+                    ExprIR::And => return Ok(ExprIR::and_of(children)),
+                    ExprIR::Or => return Ok(ExprIR::or_of(children)),
+                    _ => {}
                 }
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -2280,10 +2321,10 @@ impl Binder {
                 node.children().all(Self::expr_may_return_boolean)
             }
 
-            // Transparent wrappers – recurse into the single child
-            ExprIR::Paren | ExprIR::Distinct => {
-                node.get_child(0).is_some_and(Self::expr_may_return_boolean)
-            }
+            // Transparent wrapper – recurse into the single child
+            ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_boolean),
+
+            ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Function calls – use the registered return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
@@ -2354,10 +2395,10 @@ impl Binder {
             // matches the pre-variant behaviour.
             ExprIR::Case { .. } => true,
 
-            // Transparent wrappers – recurse into the single child
-            ExprIR::Paren | ExprIR::Distinct => {
-                node.get_child(0).is_some_and(Self::expr_may_return_entity)
-            }
+            // Transparent wrapper – recurse into the single child
+            ExprIR::Distinct => node.get_child(0).is_some_and(Self::expr_may_return_entity),
+
+            ExprIR::Paren => unreachable!("the binder removes every Paren"),
 
             // Subscript and property access could produce entities at runtime
             ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
@@ -2819,6 +2860,87 @@ mod tests {
             "MATCH (n:N) RETURN n.i + rand() AS r ORDER BY n.i + rand()",
         ] {
             assert_eq!(project_copies(q), vec![String::from("n")], "{q}");
+        }
+    }
+
+    /// The bound IR of `query`, rendered with `Debug`.
+    fn bound(query: &str) -> String {
+        // Binding a call resolves it against the process-global registry.
+        let _ = init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, _) = Binder::default().bind(raw).expect("bind");
+        format!("{ir:?}")
+    }
+
+    /// Parentheses group the parse; once bound, `(x)` is the same tree as
+    /// `x`, so the optimizer sees the same predicates either way (#3331,
+    /// #3187).
+    #[test]
+    fn parentheses_bind_to_the_same_ir() {
+        let same = [
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7) AND n.s = 1 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE ((n.k = $k) AND ((n.s = $s))) RETURN n",
+                "MATCH (n:A) WHERE n.k = $k AND n.s = $s RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) AND n.t = 2 RETURN n",
+                "MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k = 1 OR (n.s = 2 OR n.t = 3) RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 OR n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE NOT (n.k IN ([1, 2])) RETURN n",
+                "MATCH (n:A) WHERE NOT n.k IN [1, 2] RETURN n",
+            ),
+            (
+                "MATCH (a), (b) WHERE ((id(a) = 1) AND (id(b) = 2)) RETURN a, b",
+                "MATCH (a), (b) WHERE id(a) = 1 AND id(b) = 2 RETURN a, b",
+            ),
+            (
+                "MATCH (a) WHERE ((a)-->()) RETURN a",
+                "MATCH (a) WHERE (a)-->() RETURN a",
+            ),
+            (
+                "MATCH (n:A) SET n.v = (n.k + 1) RETURN n",
+                "MATCH (n:A) SET n.v = n.k + 1 RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in same {
+            assert_eq!(bound(parenthesised), bound(plain), "{parenthesised}");
+        }
+    }
+
+    /// Only the wrapper goes: grouping that changes the meaning still does.
+    #[test]
+    fn parentheses_that_regroup_still_bind_differently() {
+        let different = [
+            (
+                "MATCH (n:A) WHERE (n.k = 1 OR n.s = 2) AND n.t = 3 RETURN n",
+                "MATCH (n:A) WHERE n.k = 1 OR n.s = 2 AND n.t = 3 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE n.k - (n.s - n.t) = 0 RETURN n",
+                "MATCH (n:A) WHERE n.k - n.s - n.t = 0 RETURN n",
+            ),
+            (
+                "MATCH (n:A) WHERE (n.k < n.s) < n.t RETURN n",
+                "MATCH (n:A) WHERE n.k < n.s < n.t RETURN n",
+            ),
+        ];
+        for (parenthesised, plain) in different {
+            assert_ne!(bound(parenthesised), bound(plain), "{parenthesised}");
         }
     }
 }
