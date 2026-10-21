@@ -1,4 +1,4 @@
-import Pr3437Review.Chunked
+import Pr3437Review.ChunkedSound
 
 /-!
 # PR #3437: chunk loop, chunking, and the three evaluators end to end

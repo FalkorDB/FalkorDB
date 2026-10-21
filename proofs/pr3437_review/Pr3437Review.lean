@@ -1,5 +1,6 @@
 import Pr3437Review.ListLoop
 import Pr3437Review.Chunked
+import Pr3437Review.ChunkedSound
 import Pr3437Review.Drive
 import Pr3437Review.Classifier
 import Pr3437Review.Bridge
@@ -23,7 +24,7 @@ proofs/expr_semantics (`checkedNeg`, `E`/`evalNode` and its frame property).
 | module | Rust |
 | --- | --- |
 | `ListLoop` | main's per-element comprehension / quantifier loops (*main* eval.rs:1010-1025, :1072-1080); `LoopSink`, `ListLoop` (eval.rs:289-311); the per-element half of `list_loop_chunk` (:1494-1546) |
-| `Chunked` | `list_loop_columnar` (eval.rs:1550-1652) |
+| `Chunked`, `ChunkedSound` | `list_loop_columnar` (eval.rs:1550-1652); the projection over the passed row indices (`passedIdx`) |
 | `Drive` | `list_loop_chunk` (:1456-1547), the chunk loops, `eval_list_comprehension` (:1372-1449), `ExprEval::eval_quantifier` (:1310-1363), `size` (functions/list.rs:61) |
 | `Classifier` | `collect_body_vars` (eval.rs:380-402), `ListLoop::vector_plan` (:344-370) |
 | `ClassifierPre` | HISTORICAL: the 6efd69cd6 classifier, which accepted nested binders |

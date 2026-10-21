@@ -98,14 +98,18 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 **CONDITIONAL rows.** Four rows are covered but not proven outright, because each rests on a hypothesis about other Rust code:
 
 - `NeighborIter::new` and `new_reversed` assume the graph laws: the adjacency matrix is the union of the relation matrices, and `matrix_t` is the transpose.
-- `eval_batch` and `try_eval_batch_property` assume `BatchLaws`: the bulk `materialize_node_property_values` equals `get_node_attribute` per id. That is `runtime_core`'s `materialize_eq`, which is itself CONDITIONAL.
+- `eval_batch` and `try_eval_batch_property` assume `BatchLaws` here; proofs/columnar `EvalBatch.laws` proves it for the real batch and runtime (`RuntimeReads.matNode_eq`), so they are PROVEN.
 
 ## Files
 
 | File | What's in it |
 |---|---|
 | `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^` (and its pre-#2904 history), `RangeIter` (and its pre-#2899 history), `sign`, `toInteger`, `coalesce`; bugs 1–4 |
-| `Eval.lean` | `ExprEval` entry points and fast paths: `eval`, `eval_operand`, variable resolution, constants and parameters |
+| `EvalSyntax.lean` | The expression tree `E` (every arm a comprehension body can reach), `Ops`, `Fn` (`GraphFn`), the arm helpers |
+| `Eval.lean` | `ExprEval::eval_node` with `eval_compound` / `eval_case` (AND/OR/XOR/NOT/CASE/calls/IN/lists/subscripts/projections, a thunked catch-all), `eval`, `eval_operand` |
+| `Frame.lean` | `E.vars`, `E.funcs`, the frame property `evalNode_frame` |
+| `EvalArms.lean` | short-circuit and error order of the arms; `all_equals` / `all_not_equals` |
+| `EvalParam.lean` | `evaluate_param` |
 | `EvalMore.lean` | Batch evaluation (`eval_batch`), `classify_join_keys`, UNWIND iteration, compiled regex, map projection |
 | `BFS.lean` | `NeighborIter` and the bidirectional BFS behind `shortestPath`; `bfs_sound` |
 | `FnRegistry.lean` | #2724: the registered function names vs. C's user-callable built-ins |
