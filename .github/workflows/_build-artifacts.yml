@@ -1,33 +1,34 @@
-# Reusable workflow: build the falkordb shared library (.so) for one or more
-# architectures and upload each as a workflow artifact. BUILD ONLY — it never
-# uploads to a GitHub Release. Callers (build-artifacts.yml for PR verification,
-# release-artifacts.yml for the release upload) describe the build cells via the
-# `cells` input as a JSON array of {arch, platform, runner, suffix} objects:
+# Reusable workflow: build the falkordb shared library (.so) for every release
+# platform and upload each as a workflow artifact. BUILD ONLY — it never uploads
+# to a GitHub Release. Callers: release-tag.yml (the release, which then
+# publishes what this built) and build-artifacts.yml (pre-release verification).
 #
-#   [
-#     {"suffix":"x64",     "arch":"x64",     "platform":"linux/amd64","runner":"ubuntu-latest"},
-#     {"suffix":"arm64v8", "arch":"arm64v8", "platform":"linux/arm64","runner":"ubuntu-24.04-arm"}
-#   ]
+# The platform list below is the ONLY one: callers pick from it by suffix and
+# never carry their own copy. New platforms (see #608) are added here.
 #
-# Each cell extracts the .so from the `artifact` target of build/runtime/Dockerfile
-# (the exact .so the runtime image ships) and uploads it as `falkordb-<suffix>.so`
-# together with its `.sha256`. Cells are independent (fail-fast: false) and run on
-# native runners (no QEMU) for maximum parallelism.
+# Each cell extracts the .so from the `artifact` target of its Dockerfile (for
+# x64/arm64v8, the exact .so the runtime image ships) and uploads it as
+# `falkordb-<suffix>.so` together with its `.sha256`. Cells are independent
+# (fail-fast: false) and run on native runners (no QEMU) for maximum parallelism.
+#
+# Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
+# `server` target, the falkordb-server image for that OS, and start it to check
+# that the module loads and answers a query. With `export_images` the image is
+# uploaded too, as `image-falkordb-server-<suffix>`, for the release to push.
+# x64/arm64v8 have no such step: the merge queue builds the Debian images.
 
 name: Build artifacts (reusable)
 
 on:
   workflow_call:
     inputs:
-      cells:
+      platforms:
         description: >-
-          JSON array of build cells. Each:
-          {suffix, arch, platform, runner, dockerfile, build_image, cxx}.
-          `dockerfile` provides the `artifact` target; `build_image` is the
-          chef/builder base (Debian toolchain image) or "" for self-contained
-          per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder.
-        required: true
+          Comma-separated platform suffixes to build (e.g. 'x64,arm64v8'), or
+          'all'. A suffix that is not in the platform list is an error.
+        required: false
         type: string
+        default: all
       revision:
         description: "Git revision (commit SHA) to check out and build"
         required: true
@@ -42,9 +43,73 @@ on:
         required: false
         type: boolean
         default: false
+      export_images:
+        description: >-
+          Upload the per-OS server images as workflow artifacts (the release
+          pushes them). Without it they are built and tested, then dropped.
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      suffixes:
+        description: >-
+          JSON array of the suffixes this run built. The release's publish step
+          requires an artifact for every one of them.
+        value: ${{ jobs.cells.outputs.suffixes }}
+      image_suffixes:
+        description: >-
+          JSON array of the suffixes this run built a server image for. The
+          release's image push requires every one of them.
+        value: ${{ jobs.cells.outputs.image_suffixes }}
 
 jobs:
+  cells:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      cells: ${{ steps.select.outputs.cells }}
+      suffixes: ${{ steps.select.outputs.suffixes }}
+      image_suffixes: ${{ steps.select.outputs.image_suffixes }}
+    steps:
+      - name: Select platforms
+        id: select
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          # {suffix, arch, platform, runner, dockerfile, build_image, cxx, image}.
+          # `dockerfile` provides the `artifact` target; `build_image` is the
+          # chef/builder base (Debian toolchain image) or "" for self-contained
+          # per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder;
+          # `image` says the Dockerfile's `server` target is built here too.
+          ALL='[
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23","image":false},
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++","image":true},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19","image":true}
+          ]'
+          if [ -z "${PLATFORMS// /}" ] || [ "$PLATFORMS" = "all" ]; then
+            CELLS=$(printf '%s' "$ALL" | jq -c .)
+          else
+            WANT=$(printf '%s' "$PLATFORMS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s -c .)
+            UNKNOWN=$(jq -rn --argjson all "$ALL" --argjson want "$WANT" '$want - [ $all[].suffix ] | join(",")')
+            if [ -n "$UNKNOWN" ]; then
+              echo "::error::unknown platform(s): $UNKNOWN (known: $(printf '%s' "$ALL" | jq -r '[ .[].suffix ] | join(",")'))"
+              exit 1
+            fi
+            CELLS=$(printf '%s' "$ALL" | jq -c --argjson want "$WANT" '[ .[] | select(.suffix as $s | $want | index($s)) ]')
+          fi
+          SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[].suffix ]')
+          IMAGE_SUFFIXES=$(printf '%s' "$CELLS" | jq -c '[ .[] | select(.image) | .suffix ]')
+          {
+            echo "cells=$CELLS"
+            echo "suffixes=$SUFFIXES"
+            echo "image_suffixes=$IMAGE_SUFFIXES"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building: $SUFFIXES (server images: $IMAGE_SUFFIXES)"
+
   build:
+    needs: cells
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -52,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(inputs.cells) }}
+        include: ${{ fromJson(needs.cells.outputs.cells) }}
     steps:
       # `persist-credentials: false` + read-only `permissions` (above) keep this
       # safe even though it builds caller-supplied (potentially PR) code: no
@@ -63,14 +128,14 @@ jobs:
       # on `cache-to` below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # redisearch.sh builds the deps/RediSearch submodule and no longer
-          # clones it, and the Dockerfile COPYs that source in, so the build
+          # native-deps builds the submodules in-place and never clones them,
+          # and the Dockerfile COPYs that source in, so the build
           # context must carry it.
           submodules: recursive
           ref: ${{ inputs.revision }}
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -79,13 +144,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build the `artifact` stage and export just the .so to ./artifact-out.
+      # Build the `artifact` stage and export just the .so to artifact-out/.
       # The Dockerfile's `builder` stage enforces the single-.so self-containment
       # contract (no dynamic libomp/graphblas/redisearch deps; OpenMP static), so
       # a successful build is also the authoritative dependency check — run in the
       # correct target-arch context, unlike a host-side ldd.
       - name: Build falkordb-${{ matrix.suffix }}.so
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         env:
           # Don't upload the buildx build-record (.dockerbuild) artifact — keep
           # the run's artifact list (and the release asset set) to just the .so.
@@ -95,7 +160,10 @@ jobs:
           file: ${{ matrix.dockerfile }}
           target: artifact
           platforms: ${{ matrix.platform }}
-          outputs: type=local,dest=artifact-out
+          # Outside the checkout, as is dist/ below: the checkout is the build
+          # context, and anything written into it changes what `COPY . .`
+          # copies, so the server image build would compile the module again.
+          outputs: type=local,dest=${{ runner.temp }}/artifact-out
           provenance: false
           build-args: |
             BUILD_IMAGE=${{ matrix.build_image }}
@@ -113,17 +181,78 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
         run: |
           set -euo pipefail
-          test -f "artifact-out/falkordb.so" || { echo "::error::artifact-out/falkordb.so missing"; exit 1; }
-          mkdir -p dist
-          cp "artifact-out/falkordb.so" "dist/falkordb-${SUFFIX}.so"
-          ( cd dist && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
-          echo "Built falkordb-${SUFFIX}.so ($(du -h "dist/falkordb-${SUFFIX}.so" | cut -f1))"
-          cat "dist/falkordb-${SUFFIX}.so.sha256"
+          OUT="$RUNNER_TEMP/artifact-out"
+          DIST="$RUNNER_TEMP/dist"
+          test -f "$OUT/falkordb.so" || { echo "::error::artifact-out/falkordb.so missing"; exit 1; }
+          mkdir -p "$DIST"
+          cp "$OUT/falkordb.so" "$DIST/falkordb-${SUFFIX}.so"
+          ( cd "$DIST" && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "$DIST/falkordb-${SUFFIX}.so" | cut -f1))"
+          cat "$DIST/falkordb-${SUFFIX}.so.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: falkordb-${{ matrix.suffix }}.so
-          path: dist/falkordb-${{ matrix.suffix }}.so*
+          path: ${{ runner.temp }}/dist/falkordb-${{ matrix.suffix }}.so*
           retention-days: 7
+          compression-level: 0
+
+      # The `server` target reuses the `builder` stage the step above just
+      # built, from this runner's build cache, so the module is not compiled
+      # twice and the image ships the same .so as the release asset.
+      - name: Build falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: server
+          platforms: ${{ matrix.platform }}
+          tags: falkordb-server:${{ matrix.suffix }}
+          outputs: type=docker,dest=${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ matrix.build_image }}
+            CXX=${{ matrix.cxx }}
+          cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
+
+      # Start the image as a user would: the module loads, answers a query, and
+      # run.sh has dropped redis-server to the falkordb user (uid 999).
+      - name: Smoke-test falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          TAR: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+        run: |
+          set -euo pipefail
+          docker load --input "$TAR"
+          docker run -d --name smoke "falkordb-server:${SUFFIX}"
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs smoke; fi; docker rm -f smoke >/dev/null' EXIT
+          # Outputs are captured before matching: `docker exec ... | grep -q`
+          # under pipefail reports 141 when grep exits early.
+          for i in $(seq 1 30); do
+            if [ "$(docker exec smoke redis-cli ping 2>/dev/null || true)" = "PONG" ]; then break; fi
+            if [ "$i" -eq 30 ]; then echo "::error::redis-server did not start"; exit 1; fi
+            sleep 1
+          done
+          MODULES=$(docker exec smoke redis-cli MODULE LIST)
+          if ! grep -qx graph <<<"$MODULES"; then echo "::error::the graph module is not loaded"; exit 1; fi
+          GOT=$(docker exec smoke redis-cli GRAPH.QUERY smoke "UNWIND range(1, 10) AS x RETURN sum(x)" | sed -n 2p)
+          if [ "$GOT" != "55" ]; then echo "::error::expected 55, got '$GOT'"; exit 1; fi
+          # PID 1 is redis-server: run.sh and gosu both exec into it.
+          UIDS=$(docker exec smoke sh -c 'while read -r k v _; do if [ "$k" = Uid: ]; then echo "$v"; fi; done < /proc/1/status')
+          if [ "$UIDS" != "999" ]; then echo "::error::redis-server runs as uid '$UIDS', expected 999"; exit 1; fi
+          echo "OK: falkordb-server:${SUFFIX} loads the module, answers, and runs as falkordb"
+
+      - name: Upload falkordb-server image (${{ matrix.suffix }})
+        if: matrix.image && inputs.export_images
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-falkordb-server-${{ matrix.suffix }}
+          path: ${{ runner.temp }}/falkordb-server-${{ matrix.suffix }}.tar
+          retention-days: 1
+          # The tarball's layers are already gzip-compressed.
           compression-level: 0

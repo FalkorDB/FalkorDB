@@ -1,3 +1,4 @@
+import time
 import threading
 from common import *
 from index_utils import *
@@ -389,6 +390,26 @@ class testConstraintNodes():
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
+
+        #-----------------------------------------------------------------------
+        # property count is read as C's string2ll: no sign, no leading zeros
+        #-----------------------------------------------------------------------
+        for count in ["+1", "01", " 1", "1x"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "label", "PROPERTIES", count, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
+
+        #-----------------------------------------------------------------------
+        # the entity type is NODE or RELATIONSHIP, as in C
+        #-----------------------------------------------------------------------
+        for entity in ["LABEL", "EDGE"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", entity, "New_Label", "PROPERTIES", 1, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Invalid constraint entity type", str(e))
 
         #-----------------------------------------------------------------------
         # del constraint on non exsisting label
@@ -1407,3 +1428,93 @@ class testConstraintSchemaRegistration():
 
         after = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
         self.env.assertEqual(after, before)
+
+
+UNIQUE_LOOKUP_GRAPH_ID = "unique_constraint_lookup"
+
+class testUniqueConstraintLookup():
+    """A UNIQUE constraint is enforced by looking each written entity up in the
+       supporting index, not by scanning the label for every written entity (#3330:
+       the scan made a bulk insert quadratic, ~26s for 10k nodes over 10k). The index
+       lags the commit being checked, so these cover the cases where what it holds and
+       what the graph holds differ."""
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(UNIQUE_LOOKUP_GRAPH_ID)
+        self.g = self.db.select_graph(UNIQUE_LOOKUP_GRAPH_ID)
+
+    def _violates(self, q, msg="unique constraint violation on node of type U"):
+        try:
+            self.g.query(q)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(msg, str(e))
+
+    def _count(self, q):
+        return self.g.query(q).result_set[0][0]
+
+    def test01_bulk_insert_is_linear(self):
+        g = self.g
+        create_unique_node_constraint(g, "U", "id", sync=True)
+
+        g.query("UNWIND range(1, 10000) AS i CREATE (:U {id: i})")
+        start = time.time()
+        g.query("UNWIND range(10001, 20000) AS i CREATE (:U {id: i})")
+        self.env.assertLess(time.time() - start, 10)
+
+        # a duplicate of an existing node, and within the batch, still fail
+        self._violates("CREATE (:U {id: 7})")
+        self._violates("UNWIND [30000, 30000] AS i CREATE (:U {id: i})")
+        self.env.assertEqual(self._count("MATCH (n:U) RETURN count(n)"), 20000)
+
+    def test02_set_onto_an_existing_value(self):
+        self._violates("MATCH (n:U {id: 1}) SET n.id = 2")
+        # swapping two values is fine: both are written, neither collides
+        self.g.query("MATCH (a:U {id: 1}), (b:U {id: 2}) SET a.id = 2, b.id = 1")
+        self.env.assertEqual(self._count("MATCH (n:U {id: 1}) RETURN count(n)"), 1)
+        self.env.assertEqual(self._count("MATCH (n:U {id: 2}) RETURN count(n)"), 1)
+
+    def test03_freed_value_is_reusable_in_the_same_query(self):
+        # the index still holds the deleted / unlabelled node
+        self.g.query("MATCH (n:U {id: 3}) DELETE n CREATE (:U {id: 3})")
+        self.g.query("MATCH (n:U {id: 4}) REMOVE n:U CREATE (:U {id: 4})")
+        # re-adding the label collides with the node that took the value
+        self._violates("MATCH (n {id: 4}) WHERE NOT n:U SET n:U")
+        self.env.assertEqual(self._count("MATCH (n:U {id: 4}) RETURN count(n)"), 1)
+
+    def test04_earlier_commit_in_the_same_query(self):
+        # the MATCH forces the first CREATE to commit before the second
+        self._violates("CREATE (:U {id: 40000}) WITH 1 AS x "
+                       "MATCH (m:U {id: 40000}) CREATE (:U {id: 40000})")
+        self.env.assertEqual(self._count("MATCH (n:U {id: 40000}) RETURN count(n)"), 0)
+
+    def test05_values_the_index_cannot_match(self):
+        g = self.g
+        # strings (NUL included) and booleans go through the index; arrays,
+        # large integers, NaN and the empty string are checked by a scan
+        for v in ["'abc'", "'a\\u0000b'", "'\\u0000'", "true", "[1, 2]",
+                  "1152921504606846976", "0.0/0.0", "''"]:
+            g.query(f"CREATE (:U {{id: {v}}})")
+            self._violates(f"CREATE (:U {{id: {v}}})")
+
+    def test06_composite(self):
+        g = self.g
+        create_unique_node_constraint(g, "C", "a", "b", sync=True)
+        g.query("UNWIND range(1, 100) AS i CREATE (:C {a: i, b: 'x'})")
+        g.query("CREATE (:C {a: 1, b: 'y'})")
+        self._violates("CREATE (:C {a: 2, b: 'x'})",
+                       "unique constraint violation on node of type C")
+
+    def test07_edges(self):
+        g = self.g
+        create_unique_edge_constraint(g, "R", "id", sync=True)
+        msg = "unique constraint violation, on edge of relationship-type R"
+        g.query("CREATE (a:E), (b:E) WITH a, b UNWIND range(1, 1000) AS i "
+                "CREATE (a)-[:R {id: i}]->(b)")
+        self._violates("MATCH (a:E) WITH a LIMIT 1 CREATE (a)-[:R {id: 5}]->(a)", msg)
+        self._violates("MATCH ()-[r:R {id: 1}]->() SET r.id = 2", msg)
+        g.query("MATCH ()-[r:R {id: 1}]->() DELETE r WITH 1 AS x "
+                "MATCH (a:E) WITH a LIMIT 1 CREATE (a)-[:R {id: 1}]->(a)")
+        self.env.assertEqual(self._count("MATCH ()-[r:R]->() RETURN count(r)"), 1000)
