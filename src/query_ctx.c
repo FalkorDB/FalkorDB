@@ -435,7 +435,7 @@ bool QueryCtx_TimeAcquireReadLock
 	}
 
 	int rc = GraphContext_TimeAcquireReadLock (QueryCtx_GetGraphCtx (),
-			(int) timeout_ms) ;
+			timeout_ms) ;
 	if (rc == 0) {
 		ctx->internal_exec_ctx.read_locked = true ;
 		return true ;

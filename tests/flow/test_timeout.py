@@ -272,6 +272,16 @@ class testQueryTimeout():
             # expecting to get a timeout error
             self.env.assertIn("Query timed out", str(e))
 
+        # restore an unrestricted timeout before the verification query. the 1ms
+        # budget above exists only to force the PROFILE to time out; leaving it in
+        # place subjects this trivial RETURN to the same 1ms deadline, which it
+        # can miss under scheduling jitter (or brief read-lock contention right
+        # after the heavy timed-out write) - a flake unrelated to the
+        # double-response behavior under test. clear MAX first so DEFAULT=0 isn't
+        # rejected for exceeding it
+        self.db.config_set("TIMEOUT_MAX", 0)
+        self.db.config_set("TIMEOUT_DEFAULT", 0)
+
         # make sure no pending result exists
         res = self.graph.query("RETURN 1")
         self.env.assertEquals(res.result_set[0][0], 1)
