@@ -95,30 +95,40 @@ fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
 
 /// Lazy integer range iterator backing `UNWIND range(a, b, step)`: yields
 /// `Value::Int`s on the fly without materialising an intermediate
-/// `Value::List`. `step` is stored as a positive magnitude and `up` selects the
-/// direction (ascending when the original step was positive). Boxed into a
-/// [`RowIter::many`] by [`ExprEval::eval_iter_expr`].
+/// `Value::List`. Boxed into a [`RowIter::many`] by
+/// [`ExprEval::eval_iter_expr`].
+///
+/// Termination is driven by the element count `remaining` (computed exactly by
+/// the caller), not by comparing `current` against the end: a range whose last
+/// element lies within one `step` of `i64::MAX`/`i64::MIN` would otherwise
+/// overflow when stepping past it.
 struct RangeIter {
     current: i64,
-    end: i64,
     step: i64,
-    up: bool,
+    remaining: u64,
 }
 
 impl Iterator for RangeIter {
     type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.up {
-            if self.current > self.end {
-                return None;
-            }
-        } else if self.current < self.end {
+        if self.remaining == 0 {
             return None;
         }
+        self.remaining -= 1;
         let val = self.current;
-        self.current += if self.up { self.step } else { -self.step };
+        // Advance only while another element is due. That element lies inside
+        // the range, so this add cannot overflow; stepping past the last one
+        // (the only add that could) never happens.
+        if self.remaining > 0 {
+            self.current += self.step;
+        }
         Some(Value::Int(val))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        (n, Some(n))
     }
 }
 
@@ -1032,7 +1042,34 @@ impl<'a> ExprEval<'a> {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
-                    if let Some(result) = self.eval_iter_expr(&node.child(0), env)? {
+                    // A list literal or `range(..)` always yields a list, so
+                    // stream it without materialising (`eval_iter_expr`). Any
+                    // other source is checked here: `eval_iter_expr`'s UNWIND
+                    // fallback would turn null into no rows and a scalar into
+                    // one, where a comprehension gives null / a type error.
+                    let source = node.child(0);
+                    let streams = matches!(source.data(), ExprIR::List)
+                        || matches!(source.data(), ExprIR::FuncInvocation(func) if func.name == "range");
+                    let items = if streams {
+                        self.eval_iter_expr(&source, env)?
+                    } else {
+                        match self.eval_node(&source, env, agg_group_key)? {
+                            Value::List(values) => Some(RowIter::many(Box::new(
+                                Arc::unwrap_or_clone(values).into_iter(),
+                            ))),
+                            Value::Null => {
+                                res.push(Value::Null);
+                                continue;
+                            }
+                            value => {
+                                return Err(format!(
+                                    "Type mismatch: expected List or Null but was {}",
+                                    value.name()
+                                ));
+                            }
+                        }
+                    };
+                    if let Some(result) = items {
                         for value in result {
                             row.insert(var, value);
                             match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
@@ -1225,9 +1262,9 @@ impl<'a> ExprEval<'a> {
                 }
                 let iter = RangeIter {
                     current: start,
-                    end,
-                    step: step.unsigned_abs() as i64,
-                    up: step > 0,
+                    step,
+                    // Bounded by `u32::MAX` above.
+                    remaining: length as u64,
                 };
                 Ok(Some(RowIter::many(Box::new(iter))))
             }
@@ -1803,5 +1840,35 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
             }
         }
         _ => Err(String::from("Invalid parameter expression.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_range(
+        current: i64,
+        step: i64,
+        remaining: u64,
+    ) -> Vec<i64> {
+        RangeIter {
+            current,
+            step,
+            remaining,
+        }
+        .map(|v| match v {
+            Value::Int(i) => i,
+            v => panic!("expected Int, got {v:?}"),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn range_iter_stops_at_i64_bounds() {
+        assert_eq!(collect_range(i64::MAX - 1, 1, 2), [i64::MAX - 1, i64::MAX]);
+        assert_eq!(collect_range(i64::MIN + 1, -1, 2), [i64::MIN + 1, i64::MIN]);
+        assert_eq!(collect_range(0, i64::MIN, 1), [0]);
+        assert_eq!(collect_range(-1, i64::MAX, 2), [-1, i64::MAX - 1]);
     }
 }

@@ -511,6 +511,15 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
+def test_list_range_bound_errors():
+    # A bound that fails to parse used to be read as a missing bound, so the
+    # slice ran as [..2] / [1..] instead of failing.
+    query_exception("RETURN [1, 2, 3][abs()..2]", "Received 0 arguments to function 'abs'")
+    query_exception("RETURN [1, 2, 3][1..abs()]", "Received 0 arguments to function 'abs'")
+    for q in ["RETURN [1, 2, 3][1+..2]", "RETURN [1, 2, 3][1..2+]", "RETURN [1, 2, 3][(1..2]"]:
+        query_exception(q, "Invalid input")
+
+
 @given(st.integers(-10, 10), st.integers(-10, 10))
 def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
@@ -1729,6 +1738,39 @@ def test_list_comprehension():
 
     res = query("RETURN [x IN range(1, 10) WHERE x < -5] AS result")
     assert res.result_set == [[[]]]
+
+
+def test_list_comprehension_non_list_source():
+    # A null source gives null, like reduce() and the quantifiers; it is not
+    # UNWIND, where null means "no rows".
+    for q in [
+        "RETURN [x IN null | x] AS result",
+        "RETURN [x IN null WHERE x > 1] AS result",
+        "WITH null AS l RETURN [x IN l | x + 1] AS result",
+    ]:
+        assert query(q).result_set == [[None]], q
+
+    # A scalar source is a type error, not a one-element list.
+    for q in [
+        "RETURN [x IN 5 | x] AS result",
+        "WITH 'a' AS l RETURN [x IN l | x] AS result",
+    ]:
+        query_exception(q, "Type mismatch: expected List or Null but was")
+
+    # Empty lists and ranges still give [].
+    assert query("RETURN [x IN [] | x] AS result").result_set == [[[]]]
+    assert query("RETURN [x IN range(1, 0) | x] AS result").result_set == [[[]]]
+
+    # The error names the type the way C does (and typeOf() does): Edge and
+    # Vectorf32, not Relationship and VecF32.
+    query("CREATE (:TypeNameA)-[:TYPE_NAME_R]->(:TypeNameB)", write=True)
+    for src, name in [("r", "Edge"), ("vecf32([1.0])", "Vectorf32"), ("n", "Node")]:
+        query_exception(
+            f"MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN [x IN {src} | x]",
+            f"Type mismatch: expected List or Null but was {name}")
+    res = query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN typeOf(r), typeOf(vecf32([1.0])), typeOf(n)")
+    assert res.result_set == [["Edge", "Vectorf32", "Node"]]
+    query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->(m) DELETE r, n, m", write=True)
 
 
 @pytest.mark.extra
