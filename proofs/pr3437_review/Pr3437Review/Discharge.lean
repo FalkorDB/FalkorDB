@@ -1,4 +1,4 @@
-import FalkorExprSemantics.Eval
+import FalkorExprSemantics.EvalArms
 import Pr3437Review.ListLoop
 import Pr3437Review.Classifier
 import Pr3437Review.Bridge
@@ -51,72 +51,10 @@ open FalkorCore FalkorExpr.Eval Pr3437.ListLoop Pr3437.Classifier
 
 variable {F : Type}
 
-/-! ## Variables of an `E` tree -/
+variable (O : Ops (V F)) (ev : Ev (V F)) (c : Compound (V F))
 
-mutual
-def varsE : E (V F) → List Nat
-  | .const _ => []
-  | .var id _ => [id]
-  | .param _ => []
-  | .map kvs => varsL kvs
-  | .key _ c => varsE c
-  | .prop _ e => varsE e
-  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b => varsE a ++ varsE b
-  | .compound _ cs => varsL cs
-def varsL : List (E (V F)) → List Nat
-  | [] => []
-  | c :: cs => varsE c ++ varsL cs
-end
-
-variable (O : Ops (V F)) (ev : Ev (V F)) (c : Nat → List (V F) → Except String (V F))
-
-/-! ## The frame property -/
-
-theorem resolveVar_frame (e1 e2 : Nat → Option (V F)) (id : Nat) (n : String) (h : e1 id = e2 id) :
-    resolveVar (some e1) id n = resolveVar (some e2) id n := by
-  simp [resolveVar, h]
-
-mutual
-/-- **`ExprEval` reads the row only through the variables the expression names.** -/
-theorem evalNode_frame (e1 e2 : Nat → Option (V F)) :
-    ∀ e : E (V F), (∀ id ∈ varsE e, e1 id = e2 id) →
-      evalNode O ev c (some e1) e = evalNode O ev c (some e2) e
-  | .const _, _ => rfl
-  | .var id n, h => by
-    simp only [evalNode]; exact resolveVar_frame e1 e2 id n (h id (by simp [varsE]))
-  | .param _, _ => rfl
-  | .map kvs, h => by
-    simp only [evalNode]; rw [evalKeys_frame e1 e2 kvs (fun id hi => h id (by simpa [varsE] using hi))]
-  | .key _ ch, h => by
-    simp only [evalNode]; exact evalNode_frame e1 e2 ch (fun id hi => h id (by simpa [varsE] using hi))
-  | .prop _ a, h => by
-    simp only [evalNode]; rw [evalNode_frame e1 e2 a (fun id hi => h id (by simpa [varsE] using hi))]
-  | .add a b, h | .arith _ a b, h | .eq a b, h | .neq a b, h | .cmp _ a b, h => by
-    simp only [evalNode]
-    rw [evalNode_frame e1 e2 a (fun id hi => h id (by simp [varsE, hi])),
-      evalNode_frame e1 e2 b (fun id hi => h id (by simp [varsE, hi]))]
-  | .compound _ cs, h => by
-    simp only [evalNode]; rw [evalList_frame e1 e2 cs (fun id hi => h id (by simpa [varsE] using hi))]
-theorem evalKeys_frame (e1 e2 : Nat → Option (V F)) :
-    ∀ kvs : List (E (V F)), (∀ id ∈ varsL kvs, e1 id = e2 id) →
-      evalKeys O ev c (some e1) kvs = evalKeys O ev c (some e2) kvs
-  | [], _ => rfl
-  | .key k ch :: rest, h => by
-    simp only [evalKeys]
-    rw [evalNode_frame e1 e2 ch (fun id hi => h id (by simp [varsL, varsE, hi])),
-      evalKeys_frame e1 e2 rest (fun id hi => h id (by simp [varsL, hi]))]
-  | .const _ :: _, _ | .var .. :: _, _ | .param _ :: _, _ | .map _ :: _, _ | .prop .. :: _, _
-  | .add .. :: _, _ | .arith .. :: _, _ | .eq .. :: _, _ | .neq .. :: _, _ | .cmp .. :: _, _
-  | .compound .. :: _, _ => rfl
-theorem evalList_frame (e1 e2 : Nat → Option (V F)) :
-    ∀ cs : List (E (V F)), (∀ id ∈ varsL cs, e1 id = e2 id) →
-      evalList O ev c (some e1) cs = evalList O ev c (some e2) cs
-  | [], _ => rfl
-  | ch :: rest, h => by
-    simp only [evalList]
-    rw [evalNode_frame e1 e2 ch (fun id hi => h id (by simp [varsL, hi])),
-      evalList_frame e1 e2 rest (fun id hi => h id (by simp [varsL, hi]))]
-end
+/-! The variables of an `E` tree (`E.vars`) and the frame property (`evalNode_frame`) are
+proofs/expr_semantics' (`FalkorExprSemantics.Frame`, every arm of the 2026-10-21 model). -/
 
 /-! ## `ListLoop::new` and `Body.Drops` -/
 
@@ -156,55 +94,78 @@ theorem newBody_drops (env : Nat → Option (V F)) (vid : Nat) (pred proj : E (V
 
 /-! ## `RowAgree` for every body the classifier accepts -/
 
--- An `E` tree as `collect_body_vars` sees it. `E`'s `compound` stands for every other
--- `ExprIR` arm; `isBad t` says whether arm `t` is one `collect_body_vars` rejects (a nested
--- binder, nested plan, pattern, `DISTINCT`, writing or aggregating call): it maps to a
--- rejected kind, everything else to `other`.
+-- An `E` tree as `collect_body_vars` sees it (children in `ExprIR` order: `Case` is
+-- `[subject?, List(arms), else]`, `MapProjection` is `[base, items…]`, a map key / projection key
+-- is a `Constant(String)` node with one child). `E.compound t` stands for every other `ExprIR`
+-- arm; `isBad t` says whether arm `t` is one `collect_body_vars` rejects (a nested binder,
+-- nested plan, pattern, aggregate call): it maps to a rejected kind, everything else to
+-- `other`. A `func` node is a non-aggregate call, rejected iff it writes; `distinct` is `Distinct`.
 open Pr3437.ClassifierPre (BK BT varsOf varsAll) in
 mutual
 def toBT (isBad : Nat → Bool) : E (V F) → BT
   | .var id _ => .mk (.var id) []
-  | .map kvs => .mk .other (toBTL isBad kvs)
-  | .key _ ch => .mk .other [toBT isBad ch]
-  | .prop _ e => .mk .other [toBT isBad e]
-  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b => .mk .other [toBT isBad a, toBT isBad b]
+  | .const _ | .param _ | .projAll | .projProp _ => .mk .other []
+  | .map cs | .and cs | .or cs | .xor cs | .list cs => .mk .other (toBTL isBad cs)
   | .compound t cs => .mk (if isBad t then .distinct else .other) (toBTL isBad cs)
-  | _ => .mk .other []
+  | .func f cs => .mk (.func f.write false) (toBTL isBad cs)
+  | .distinct cs => .mk .distinct (toBTL isBad cs)
+  | .key _ ch | .prop _ ch | .not ch => .mk .other [toBT isBad ch]
+  | .add a b | .arith _ a b | .eq a b | .neq a b | .cmp _ a b | .inList a b
+  | .getElement a b => .mk .other [toBT isBad a, toBT isBad b]
+  | .case s arms els => .mk .other (toBTO isBad s ++ [.mk .other (toBTL isBad arms), toBT isBad els])
+  | .mapProj b items => .mk .other (toBT isBad b :: toBTL isBad items)
 def toBTL (isBad : Nat → Bool) : List (E (V F)) → List BT
   | [] => []
   | ch :: cs => toBT isBad ch :: toBTL isBad cs
+def toBTO (isBad : Nat → Bool) : Option (E (V F)) → List BT
+  | none => []
+  | some s => [toBT isBad s]
 end
+
+theorem varsAll_append : ∀ a b : List ClassifierPre.BT,
+    ClassifierPre.varsAll (a ++ b) = ClassifierPre.varsAll a ++ ClassifierPre.varsAll b
+  | [], _ => rfl
+  | x :: xs, b => by simp [ClassifierPre.varsAll, varsAll_append xs b]
 
 open Pr3437.ClassifierPre (varsOf varsAll) in
 mutual
-theorem varsOf_toBT (isBad : Nat → Bool) : ∀ e : E (V F), varsOf (toBT isBad e) = varsE e
-  | .var id _ => by simp [toBT, varsOf, varsAll, varsE]
-  | .map kvs => by simp only [toBT, varsOf, varsE, List.nil_append]; exact varsAll_toBTL isBad kvs
-  | .key _ ch => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad ch]
-  | .prop _ e => by simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad e]
-  | .add x y | .arith _ x y | .eq x y | .neq x y | .cmp _ x y => by
-    simp [toBT, varsOf, varsAll, varsE, varsOf_toBT isBad x, varsOf_toBT isBad y]
+theorem varsOf_toBT (isBad : Nat → Bool) : ∀ e : E (V F), varsOf (toBT isBad e) = e.vars
+  | .var id _ => by simp [toBT, varsOf, varsAll, E.vars]
+  | .const _ | .param _ | .projAll | .projProp _ => by simp [toBT, varsOf, varsAll, E.vars]
+  | .map cs | .and cs | .or cs | .xor cs | .list cs | .distinct cs => by
+    simp only [toBT, varsOf, E.vars, List.nil_append]; exact varsAll_toBTL isBad cs
+  | .func f cs => by simp only [toBT, varsOf, E.vars, List.nil_append]; exact varsAll_toBTL isBad cs
   | .compound t cs => by
     have h := varsAll_toBTL isBad cs
-    cases hb : isBad t <;> simp [toBT, varsOf, varsE, hb, h]
-  | .const _ | .param _ => by simp [toBT, varsOf, varsAll, varsE]
-theorem varsAll_toBTL (isBad : Nat → Bool) : ∀ cs : List (E (V F)), varsAll (toBTL isBad cs) = varsL cs
-  | [] => by simp [toBTL, varsAll, varsL]
-  | ch :: cs => by simp [toBTL, varsAll, varsL, varsOf_toBT isBad ch, varsAll_toBTL isBad cs]
+    cases hb : isBad t <;> simp [toBT, varsOf, E.vars, hb, h]
+  | .key _ ch | .prop _ ch | .not ch => by simp [toBT, varsOf, varsAll, E.vars, varsOf_toBT isBad ch]
+  | .add x y | .arith _ x y | .eq x y | .neq x y | .cmp _ x y | .inList x y | .getElement x y => by
+    simp [toBT, varsOf, varsAll, E.vars, varsOf_toBT isBad x, varsOf_toBT isBad y]
+  | .case s arms els => by
+    simp [toBT, varsOf, varsAll, varsAll_append, E.vars, varsAll_toBTO isBad s, varsAll_toBTL isBad arms,
+      varsOf_toBT isBad els]
+  | .mapProj b items => by
+    simp [toBT, varsOf, varsAll, E.vars, varsOf_toBT isBad b, varsAll_toBTL isBad items]
+theorem varsAll_toBTL (isBad : Nat → Bool) : ∀ cs : List (E (V F)), varsAll (toBTL isBad cs) = E.varsL cs
+  | [] => by simp [toBTL, varsAll, E.varsL]
+  | ch :: cs => by simp [toBTL, varsAll, E.varsL, varsOf_toBT isBad ch, varsAll_toBTL isBad cs]
+theorem varsAll_toBTO (isBad : Nat → Bool) : ∀ s : Option (E (V F)), varsAll (toBTO isBad s) = E.varsO s
+  | none => by simp [toBTO, varsAll, E.varsO]
+  | some s => by simp [toBTO, varsAll, E.varsO, varsOf_toBT isBad s]
 end
 
 theorem varsAll_map (isBad : Nat → Bool) : ∀ es : List (E (V F)),
-    ClassifierPre.varsAll (es.map (toBT isBad)) = varsL es
+    ClassifierPre.varsAll (es.map (toBT isBad)) = E.varsL es
   | [] => rfl
   | e :: es => by
-    simp [ClassifierPre.varsAll, varsL, varsOf_toBT isBad e, varsAll_map isBad es]
+    simp [ClassifierPre.varsAll, E.varsL, varsOf_toBT isBad e, varsAll_map isBad es]
 
-theorem mem_varsL {e : E (V F)} {es : List (E (V F))} (he : e ∈ es) {id : Nat} (hi : id ∈ varsE e) :
-    id ∈ varsL es := by
+theorem mem_varsL {e : E (V F)} {es : List (E (V F))} (he : e ∈ es) {id : Nat} (hi : id ∈ e.vars) :
+    id ∈ E.varsL es := by
   induction es with
   | nil => simp at he
   | cons x xs ih =>
-    simp only [varsL, List.mem_append]
+    simp only [E.varsL, List.mem_append]
     rcases List.mem_cons.1 he with rfl | h
     · exact .inl hi
     · exact .inr (ih h)
@@ -290,13 +251,27 @@ end Pr3437.Discharge
 namespace Pr3437.Discharge
 open FalkorCore FalkorExpr.Eval
 
-/-- **Why `E` cannot model `AND`/`OR`/`CASE`.** Whatever value-only semantics `compound`
-gives an operator, an erroring operand is reported before the operator runs — so no
-choice of `compound` yields Rust's `false AND <error>` = `false`. -/
-theorem compound_cannot_short_circuit {F : Type} (O : Ops (V F)) (ev : Ev (V F))
-    (c : Nat → List (V F) → Except String (V F)) (env : Option (Nat → Option (V F)))
-    (t : Nat) (a : V F) (bad : E (V F)) (e : String) (hbad : evalNode O ev c env bad = .error e) :
-    evalNode O ev c env (.compound t [.const a, bad]) = .error e := by
-  simp [evalNode, evalList, hbad, bind, Except.bind]
+/-- An eager catch-all: the children evaluated left to right first, then a value-only
+function — the shape `compound` had before 2026-10-21. -/
+def eagerC {F : Type} (g : Nat → List (V F) → Except String (V F)) : Compound (V F) :=
+  fun t ths => (ths.mapM fun th => th ()) >>= g t
+
+/-- **History (closed 2026-10-21): why the old `E` could not model `AND`/`OR`/`CASE`.**
+Whatever value-only semantics an eager catch-all gives an operator, an erroring operand is
+reported before the operator runs — so no choice yields Rust's `false AND <error>` =
+`false`. `E` now has faithful `and` / `or` / `case` arms
+(`FalkorExpr.Eval.and_false_short_circuits`, `case_hit_lazy`) and its catch-all takes thunks. -/
+theorem pre20261021_compound_cannot_short_circuit {F : Type} (O : Ops (V F)) (ev : Ev (V F))
+    (g : Nat → List (V F) → Except String (V F)) (env : Option (Nat → Option (V F)))
+    (t : Nat) (a : V F) (bad : E (V F)) (e : String) (hbad : evalNode O ev (eagerC g) env bad = .error e) :
+    evalNode O ev (eagerC g) env (.compound t [.const a, bad]) = .error e := by
+  simp [evalNode, evalThunks, eagerC, hbad, bind, Except.bind, List.mapM_cons]
+
+/-- …and the faithful arm does short-circuit (live on main: `RETURN false AND 1/0 = 1` →
+`false`). -/
+theorem and_short_circuits {F : Type} (O : Ops (V F)) (ev : Ev (V F)) (c : Compound (V F))
+    (env : Option (Nat → Option (V F))) (a : V F) (ha : O.boolOf a = some (some false)) (bad : E (V F)) :
+    evalNode O ev c env (.and [.const a, bad]) = .ok (O.bool false) :=
+  and_false_short_circuits O ev c env a ha [bad]
 
 end Pr3437.Discharge

@@ -1,4 +1,7 @@
 import FalkorExprSemantics.Eval
+import FalkorExprSemantics.EvalParam
+import FalkorExprSemantics.Frame
+import FalkorExprSemantics.EvalArms
 import FalkorExprSemantics.EvalMore
 import FalkorExprSemantics.BFS
 import FalkorExprSemantics.FnRegistry
