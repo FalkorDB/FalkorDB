@@ -109,17 +109,18 @@ if [ "${TLS:-0}" -eq "1" ]; then
     # Where falkordb can write the TLS directory, root never writes in it:
     # anything that can write there could swap a file for a link after the
     # check above. falkordb is handed what is already there and generates the
-    # rest. Elsewhere, falkordb cannot plant a link, so root generates the
-    # files and then hands them over, as before.
+    # rest; when a file cannot be handed over, the container stops rather than
+    # have root write there. Elsewhere, falkordb cannot plant a link, so root
+    # generates the files and then hands them over, as before.
     # shellcheck disable=SC2016 # $1 is the inner shell's
     if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] &&
         gosu "$FALKORDB_USER" sh -c '[ -w "$1" ]' sh "${FALKORDB_TLS_PATH}"; then
-        if fix_tls_perms; then
-            gosu "$FALKORDB_USER" "${FALKORDB_BIN_PATH}/gen-certs.sh"
-        else
-            keep_root
-            "${FALKORDB_BIN_PATH}/gen-certs.sh"
+        if ! fix_tls_perms; then
+            echo "Error: $FALKORDB_USER can write ${FALKORDB_TLS_PATH}, so root does not generate files there." \
+                "Make the files above writable, or set SKIP_DROP_PRIVS=1 to run as root."
+            exit 1
         fi
+        gosu "$FALKORDB_USER" "${FALKORDB_BIN_PATH}/gen-certs.sh"
     else
         "${FALKORDB_BIN_PATH}/gen-certs.sh"
         if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
