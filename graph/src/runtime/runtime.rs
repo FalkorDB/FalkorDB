@@ -45,7 +45,10 @@ use crate::{
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
-        batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
+        batch::{
+            Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column,
+            classify_exact_column,
+        },
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
@@ -1551,6 +1554,36 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
         classify_column(self.materialize_node_property_values(node_ids, attr))
+    }
+
+    /// `node_ids`' values of `attr`, classified losslessly: what
+    /// `classify_exact_column(self.materialize_node_property_values(..))`
+    /// returns, without the intermediate `Vec<Value>` when the stored values
+    /// are all integers or null — the common shape of a property a predicate
+    /// compares. On the read-only path the integers are read straight out of
+    /// the attribute store into the typed lane; any other shape (or pending
+    /// writes / deletions) takes the `Value` path.
+    pub fn materialize_node_property_exact(
+        &self,
+        node_ids: &[NodeId],
+        attr: &Arc<String>,
+    ) -> (Column, NullBitmap) {
+        {
+            let g = self.g.borrow();
+            if let Some(attr_idx) = self.node_attr_id(&g, attr)
+                && self.deleted_nodes.borrow().is_empty()
+                && !self.pending.borrow().has_node_attrs()
+            {
+                let mut ints = Vec::new();
+                let mut nulls = NullBitmap::none(node_ids.len());
+                if g.get_node_int_attributes_by_idx(node_ids, attr_idx, &mut ints, |i| {
+                    nulls.set(i);
+                }) {
+                    return (Column::Ints(ints), nulls);
+                }
+            }
+        }
+        classify_exact_column(self.materialize_node_property_values(node_ids, attr))
     }
 
     /// Like [`materialize_node_property`](Self::materialize_node_property) but

@@ -1176,6 +1176,45 @@ impl AttributeStore {
         self.data.get(key)?.get(attr_idx)
     }
 
+    /// Integer-lane variant of [`Self::get_attrs_by_idx_batch_into`]: pushes
+    /// one `i64` per key into `out`, calling `on_null(i)` (and pushing a `0`
+    /// placeholder) where key `i` has no value or a null one. Reads the packed
+    /// payload directly, so no `Value` is built, classified or dropped per key.
+    ///
+    /// Returns `false` at the first value that is neither an integer nor null;
+    /// `out` then holds a partial result the caller discards.
+    pub fn get_int_attrs_by_idx_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        out: &mut Vec<i64>,
+        mut on_null: impl FnMut(usize),
+    ) -> bool {
+        out.reserve(keys.len());
+        for (i, &key) in keys.iter().enumerate() {
+            let entry = self.data.get(key).and_then(|span| {
+                let entries = span.entries();
+                entries
+                    .binary_search_by_key(&attr_idx, |attr| attr.id)
+                    .ok()
+                    .map(|pos| entries[pos])
+            });
+            match entry {
+                Some(PackedAttr {
+                    tag: Tag::Int,
+                    payload,
+                    ..
+                }) => out.push(i64::from_le_bytes(payload)),
+                None | Some(PackedAttr { tag: Tag::Null, .. }) => {
+                    on_null(i);
+                    out.push(0);
+                }
+                Some(_) => return false,
+            }
+        }
+        true
+    }
+
     /// Batch variant of `get_attr_by_idx` for a list of keys with the same
     /// `attr_idx`. Pushes one `Value` per key into `out`, substituting
     /// `default` for missing entries.
