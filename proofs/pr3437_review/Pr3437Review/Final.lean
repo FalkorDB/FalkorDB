@@ -1,4 +1,5 @@
 import Pr3437Review.Concrete
+import Pr3437Review.Runtime
 
 /-!
 # PR #3437: the headline theorems with `hS` discharged
@@ -16,8 +17,10 @@ operations and the runtime's parameters), with the plan computed by `vector_plan
 * **`pr_chunkStep_eq`** (`list_loop_chunk`, :1456),
 * **`pr_columnar_sound`** (`list_loop_columnar`, :1550).
 
-Premises: `PropReads` (runtime bulk property read = per-row read; proofs/runtime_core's
-`materialize_eq` premise) and `hreg` (the trees' `hasLabels` calls are the registry's).
+The `_of` forms take the runtime record abstractly and need `PropReads`; the headline forms
+take the runtime built from its attribute state (`Runtime.rtOf`, `Runtime.nodeStore`), for
+which `PropReads` is a theorem (`Runtime.propReads`). Their one premise is `hreg`: the trees'
+`hasLabels` calls are the registered function (the shape of the trees the parser builds).
 -/
 
 namespace Pr3437.Final
@@ -120,7 +123,7 @@ variable (useCol : List (V F) → Bool) (hp : PropReads (withStore rt st))
 include hp hP hJ
 
 /-- **Claims 1/2, comprehension (`eval_list_comprehension`)** — no `hS`. -/
-theorem pr_comprehension_eq_main (src : ListLoop.Source F) :
+theorem pr_comprehension_eq_main_of (src : ListLoop.Source F) :
     ListLoop.prListComp (prBody rt c st envAt vid pred proj) (prCol rt c st isLC isBad envAt vid pred proj)
         useCol false src =
       ListLoop.mainListComp (prBody rt c st envAt vid pred proj).pe (prBody rt c st envAt vid pred proj).pj src :=
@@ -128,7 +131,7 @@ theorem pr_comprehension_eq_main (src : ListLoop.Source F) :
     (prCol_sound rt c st isLC isBad dbg envAt vid pred proj hp hP hJ) src
 
 /-- **Claim 4 (`size(<comprehension>)`)** — no `hS`. -/
-theorem pr_size_eq_main (src : ListLoop.Source F) :
+theorem pr_size_eq_main_of (src : ListLoop.Source F) :
     ListLoop.prListComp (prBody rt c st envAt vid pred proj) (prCol rt c st isLC isBad envAt vid pred proj)
         useCol true src =
       ListLoop.mainSize (ListLoop.mainListComp (prBody rt c st envAt vid pred proj).pe
@@ -137,7 +140,7 @@ theorem pr_size_eq_main (src : ListLoop.Source F) :
     (prCol_sound rt c st isLC isBad dbg envAt vid pred proj hp hP hJ) src
 
 /-- **Claims 1/2, quantifiers (`ExprEval::eval_quantifier`)** — no `hS`. -/
-theorem pr_quantifier_eq_main (q : FalkorStrList.QType) (r : Except String (V F)) :
+theorem pr_quantifier_eq_main_of (q : FalkorStrList.QType) (r : Except String (V F)) :
     ListLoop.prQuant (prBody rt c st envAt vid pred proj) (prCol rt c st isLC isBad envAt vid pred proj)
         useCol q r =
       ListLoop.mainQuant (prBody rt c st envAt vid pred proj).pe q r :=
@@ -145,7 +148,7 @@ theorem pr_quantifier_eq_main (q : FalkorStrList.QType) (r : Except String (V F)
     (prCol_sound rt c st isLC isBad dbg envAt vid pred proj hp hP hJ) q r
 
 /-- **`list_loop_chunk`** = main's loop on the chunk — no `hS`. -/
-theorem pr_chunkStep_eq (s : ListLoop.Sink F) (chunk : List (V F)) :
+theorem pr_chunkStep_eq_of (s : ListLoop.Sink F) (chunk : List (V F)) :
     ListLoop.chunkStep (prBody rt c st envAt vid pred proj) (prCol rt c st isLC isBad envAt vid pred proj)
         useCol s chunk =
       ListLoop.ref (prBody rt c st envAt vid pred proj).pe (prBody rt c st envAt vid pred proj).pj s chunk :=
@@ -153,12 +156,70 @@ theorem pr_chunkStep_eq (s : ListLoop.Sink F) (chunk : List (V F)) :
     (prCol_sound rt c st isLC isBad dbg envAt vid pred proj hp hP hJ) s chunk
 
 /-- **`list_loop_columnar`**: a chunk it finishes gives main's loop's result — no `hS`. -/
-theorem pr_columnar_sound (s : ListLoop.Sink F) (chunk : List (V F)) (s' : ListLoop.Sink F)
+theorem pr_columnar_sound_of (s : ListLoop.Sink F) (chunk : List (V F)) (s' : ListLoop.Sink F)
     (h : ListLoop.columnar (prBody rt c st envAt vid pred proj) (prCol rt c st isLC isBad envAt vid pred proj)
       s chunk = .ok s') :
     ListLoop.ref (prBody rt c st envAt vid pred proj).pe (prBody rt c st envAt vid pred proj).pj s chunk = .ok s' :=
   ListLoop.columnar_sound _ _ (prBody_drops rt c st envAt vid pred proj)
     (prCol_sound rt c st isLC isBad dbg envAt vid pred proj hp hP hJ) s chunk s' h
+end
+
+/-! ## Over the runtime's attribute state: no `PropReads` premise -/
+
+section
+variable (s : Runtime.St F) (rt0 : RT F) (c : Compound (V F)) (isLC isBad : Nat → Bool)
+  (dbg : Columnar.HasLabelsFn.Ty → String) (envAt : Nat → Option (V F)) (vid : Nat) (pred proj : E (V F))
+  (useCol : List (V F) → Bool)
+
+/-- The runtime of the evaluation: its attribute reads are the state's. -/
+abbrev rtS : RT F := Runtime.rtOf s rt0
+abbrev stS : NodeStore F := Runtime.nodeStore s
+
+theorem propReads_S : PropReads (withStore (rtS s rt0) (stS s)) := by
+  rw [Runtime.withStore_rtOf]; exact Runtime.propReads s rt0
+
+variable (hP : Registry (rtS s rt0) (stS s) dbg pred) (hJ : Registry (rtS s rt0) (stS s) dbg proj)
+include hP hJ
+
+/-- **Claims 1/2, comprehension (`ExprEval::eval_list_comprehension`).** The PR's list
+comprehension, columnar chunks included, is main's: same list, same order, or the same error. -/
+theorem pr_comprehension_eq_main (src : ListLoop.Source F) :
+    ListLoop.prListComp (prBody (rtS s rt0) c (stS s) envAt vid pred proj)
+        (prCol (rtS s rt0) c (stS s) isLC isBad envAt vid pred proj) useCol false src =
+      ListLoop.mainListComp (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pe
+        (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pj src :=
+  pr_comprehension_eq_main_of _ c _ isLC isBad dbg envAt vid pred proj useCol (propReads_S s rt0) hP hJ src
+
+/-- **Claim 4 (`size(<comprehension>)`).** -/
+theorem pr_size_eq_main (src : ListLoop.Source F) :
+    ListLoop.prListComp (prBody (rtS s rt0) c (stS s) envAt vid pred proj)
+        (prCol (rtS s rt0) c (stS s) isLC isBad envAt vid pred proj) useCol true src =
+      ListLoop.mainSize (ListLoop.mainListComp (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pe
+        (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pj src) :=
+  pr_size_eq_main_of _ c _ isLC isBad dbg envAt vid pred proj useCol (propReads_S s rt0) hP hJ src
+
+/-- **Claims 1/2, quantifiers (`ExprEval::eval_quantifier`).** -/
+theorem pr_quantifier_eq_main (q : FalkorStrList.QType) (r : Except String (V F)) :
+    ListLoop.prQuant (prBody (rtS s rt0) c (stS s) envAt vid pred proj)
+        (prCol (rtS s rt0) c (stS s) isLC isBad envAt vid pred proj) useCol q r =
+      ListLoop.mainQuant (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pe q r :=
+  pr_quantifier_eq_main_of _ c _ isLC isBad dbg envAt vid pred proj useCol (propReads_S s rt0) hP hJ q r
+
+/-- **`ExprEval::list_loop_chunk`**: a chunk, columnar or per element, is main's loop on it. -/
+theorem pr_chunkStep_eq (sk : ListLoop.Sink F) (chunk : List (V F)) :
+    ListLoop.chunkStep (prBody (rtS s rt0) c (stS s) envAt vid pred proj)
+        (prCol (rtS s rt0) c (stS s) isLC isBad envAt vid pred proj) useCol sk chunk =
+      ListLoop.ref (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pe
+        (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pj sk chunk :=
+  pr_chunkStep_eq_of _ c _ isLC isBad dbg envAt vid pred proj useCol (propReads_S s rt0) hP hJ sk chunk
+
+/-- **`ExprEval::list_loop_columnar`**: a chunk it finishes gives main's loop's result. -/
+theorem pr_columnar_sound (sk : ListLoop.Sink F) (chunk : List (V F)) (sk' : ListLoop.Sink F)
+    (h : ListLoop.columnar (prBody (rtS s rt0) c (stS s) envAt vid pred proj)
+      (prCol (rtS s rt0) c (stS s) isLC isBad envAt vid pred proj) sk chunk = .ok sk') :
+    ListLoop.ref (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pe
+      (prBody (rtS s rt0) c (stS s) envAt vid pred proj).pj sk chunk = .ok sk' :=
+  pr_columnar_sound_of _ c _ isLC isBad dbg envAt vid pred proj (propReads_S s rt0) hP hJ sk chunk sk' h
 end
 
 end Pr3437.Final
