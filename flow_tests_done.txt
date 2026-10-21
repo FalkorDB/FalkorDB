@@ -119,7 +119,6 @@ tests/flow/test_udf_cluster.py
 tests/flow/test_undo_log.py
 tests/flow/test_union
 tests/flow/test_unwind_clause
-tests/flow/test_utf8_errors.py
 tests/flow/test_value_comparisons
 tests/flow/test_variable_length_traversals.py
 tests/flow/test_varlength_traversal
