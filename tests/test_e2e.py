@@ -1096,7 +1096,7 @@ def test_exp():
     assert res.result_set == [[None]]
 
 
-@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=True))
 def test_floor(a):
     res = query("RETURN floor($a)", params={"a": a})
     assert res.result_set == [[math.floor(a) if a is not None else None]]
@@ -1222,7 +1222,7 @@ def round_away_from_zero(num):
         return math.ceil(num - 0.5)
 
 
-@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=True))
 def test_round(a):
     res = query("RETURN round($a)", params={"a": a})
     assert res.result_set == [[round_away_from_zero(a) if a is not None else None]]
@@ -1232,7 +1232,7 @@ def signum(x):
     return (x > 0) - (x < 0)
 
 
-@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=True))
 def test_sign(a):
     res = query("RETURN sign($a)", params={"a": a})
     assert res.result_set == [[signum(a) if a is not None else None]]
@@ -1443,7 +1443,7 @@ def test_avg_integers(a):
             max_value=10.0,
             allow_nan=False,
             allow_infinity=False,
-            allow_subnormal=False,
+            allow_subnormal=True,
         )
     )
 )
@@ -1473,7 +1473,7 @@ def test_avg_floats(a):
             max_value=10.0,
             allow_nan=False,
             allow_infinity=False,
-            allow_subnormal=False,
+            allow_subnormal=True,
         )
     )
 )
@@ -1538,9 +1538,9 @@ def test_avg_inf():
 @pytest.mark.extra
 @given(
     st.lists(
-        st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)
+        st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=True)
     ),
-    st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False),
+    st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=True),
 )
 def test_percentile_disc(values, percentile):
     sorted_values = sorted([x for x in values if x is not None])
@@ -1583,9 +1583,9 @@ def test_percentile_disc_edge_cases():
 @pytest.mark.extra
 @given(
     st.lists(
-        st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)
+        st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=True)
     ),
-    st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False),
+    st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=True),
 )
 def test_percentile_cont(values, percentile):
     sorted_values = sorted([x for x in values if x is not None])
