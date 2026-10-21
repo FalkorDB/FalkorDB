@@ -22,7 +22,7 @@
 //!  output batch (unchanged, mutations in Pending)
 //! ```
 
-use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId};
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -33,6 +33,7 @@ use crate::runtime::{
     value::{DeletedNode, DeletedRelationship, Value},
 };
 use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 fn node_attrs_to_map(
@@ -186,6 +187,25 @@ impl Runtime<'_> {
         Ok(())
     }
 
+    /// A committed node's label ids as this query sees them: the label matrix
+    /// with the query's staged `SET`/`REMOVE` applied, the same view
+    /// [`Runtime::get_node_labels`] gives a live node. A deleted node keeps
+    /// the labels it had at the `DELETE`, not the ones last committed.
+    fn staged_label_ids(
+        &self,
+        g: &Graph,
+        id: NodeId,
+    ) -> HashSet<LabelId> {
+        let mut labels: HashSet<LabelId> = g.get_node_label_ids(id).collect();
+        let pending = self.pending.borrow();
+        let (added, removed) = pending.staged_node_labels(id);
+        labels.extend(added.iter().map(|&l| LabelId(l as usize)));
+        for &l in removed {
+            labels.remove(&LabelId(l as usize));
+        }
+        labels
+    }
+
     /// Bulk delete committed nodes — avoids per-node iterator creation for
     /// relationship lookups, label collection, and attribute snapshotting.
     fn delete_nodes_bulk(
@@ -281,7 +301,7 @@ impl Runtime<'_> {
             deleted_nodes.reserve(committed.len());
             let g = self.g.borrow();
             for &id in &committed {
-                let labels = g.get_node_label_ids(id).collect();
+                let labels = self.staged_label_ids(&g, id);
                 let mut actual =
                     crate::runtime::ordermap::OrderMap::from_unique_keys(g.get_node_all_attrs(id));
                 self.pending.borrow().update_node_attrs(id, &mut actual, &g);
@@ -461,7 +481,7 @@ impl Runtime<'_> {
                     // Mark as implicit — edge cleanup deferred to commit time
                     self.pending.borrow_mut().deleted_node(id);
                     if snapshot {
-                        let labels = self.g.borrow().get_node_label_ids(id).collect();
+                        let labels = self.staged_label_ids(&self.g.borrow(), id);
                         let attrs = self.get_node_attrs(id);
                         self.deleted_nodes
                             .borrow_mut()
