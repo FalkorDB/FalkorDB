@@ -212,24 +212,13 @@ jobs:
   # `:edge` (rust-push.yml) and releases (release-tag.yml) retag the queue's
   # rc-mg-<sha> image rather than rebuilding it.
   #
-  # Both repos are scanned: `full` is FROM `server` plus the bundled browser,
-  # so the gate would see the same packages in `server`, but each image has
-  # its own VEX document to check. The per-arch tags are single-platform
-  # manifests, so one amd64 runner fetches the arm64 image from the registry
-  # with no emulation.
-  #
-  # The rhel9/amazonlinux2023 server images are not built here; the
-  # _build-artifacts.yml cells that build them scan them the same way.
+  # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
+  # both repos. The per-arch tags are single-platform manifests, so one amd64
+  # runner fetches the arm64 image from the registry with no emulation.
   #
   # What Trivy sees here is the Debian packages and the browser's node_modules.
   # It cannot see the Rust crates linked into libfalkordb.so or the
   # redis-server built from source: neither carries package metadata.
-  #
-  # Then the same image is scanned again with its VEX document applied
-  # (.vex/<repo>.openvex.json) and checked by build/vex/vex.py: a HIGH or
-  # CRITICAL finding with no fix needs a statement, and every statement must
-  # still match and its evidence still hold in this image. The gate above
-  # never reads the VEX, so a statement cannot hide a finding that has a fix.
   security-scan:
     needs: [build-rc-image]
     if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
@@ -241,22 +230,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repo: [falkordb, falkordb-server]
         arch: [x64, arm64v8]
     env:
-      IMAGE: ghcr.io/falkordb/${{ matrix.repo }}:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
-      PLATFORM: ${{ matrix.arch == 'x64' && 'linux/amd64' || 'linux/arm64' }}
+      IMAGE: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
     steps:
-      # Only the VEX document and its checker are needed, from the commit the
-      # image was built from.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.commit_sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            .vex
-            build/vex
-
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -266,7 +243,6 @@ jobs:
 
       # Action and Trivy pins match master's security-scan job.
       - name: Scan (full report)
-        id: report
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: ${{ env.IMAGE }}
@@ -279,7 +255,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: trivy-report-${{ matrix.repo }}-${{ matrix.arch }}
+          name: trivy-report-${{ matrix.arch }}
           path: trivy-report.json
           if-no-files-found: ignore
           retention-days: 30
@@ -311,26 +287,6 @@ jobs:
                    | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
               trivy-report.json
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # trivy is on PATH from the first scan, and its database is in the
-      # action's cache directory; --skip-db-update keeps this scan on the
-      # database the gate used. The arm64 image is only read, never run, so
-      # no emulation is needed.
-      - name: Check the VEX against the image
-        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
-        env:
-          REPO: ${{ matrix.repo }}
-          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
-        run: |
-          set -euo pipefail
-          python3 build/vex/vex.py generate --check
-          trivy image --quiet --skip-db-update --vex ".vex/${REPO}.openvex.json" --show-suppressed \
-            --format json --output "$RUNNER_TEMP/trivy-vex.json" "$IMAGE"
-          cid=$(docker create --platform "$PLATFORM" "$IMAGE")
-          docker export -o "$RUNNER_TEMP/fs.tar" "$cid"
-          docker container rm "$cid" >/dev/null
-          python3 build/vex/vex.py check --report "$RUNNER_TEMP/trivy-vex.json" --fs "$RUNNER_TEMP/fs.tar" \
-            --image "$REPO" --os debian --summary "$GITHUB_STEP_SUMMARY"
 
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).

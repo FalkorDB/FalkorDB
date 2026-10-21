@@ -278,6 +278,12 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+      - name: The VEX documents match .vex/statements.toml
+        # Only the documents against their source. The statements are checked
+        # against the images nightly and at release (vex-nightly.yml,
+        # release-tag.yml), not here: an upstream change alone can fail that
+        # check, and would block every pull request until .vex was updated.
+        run: python3 build/vex/vex.py generate --check
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40

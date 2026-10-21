@@ -13,7 +13,8 @@
 #
 # Cells marked `image` (rhel9, amazonlinux2023) also build their Dockerfile's
 # `server` target, the falkordb-server image for that OS, start it to check
-# that the module loads and answers a query, and scan it with Trivy. With
+# that the module loads and answers a query, and scan it with Trivy; with
+# `check_vex`, they also check it against its VEX document. With
 # `export_images` the image is uploaded too, as `image-falkordb-server-<suffix>`,
 # for the release to push.
 # x64/arm64v8 have no such step: the merge queue builds the Debian images.
@@ -51,6 +52,16 @@ on:
         required: false
         type: boolean
         default: false
+      check_vex:
+        description: >-
+          Check the per-OS server images against .vex/falkordb-server.openvex.json.
+          Defaults to TRUE, so the release checks them unless it says otherwise.
+          Pull requests turn it off: an upstream change alone, such as a new CVE
+          or a package update, can fail the check, and would block every pull
+          request until .vex was updated. vex-nightly.yml runs it instead.
+        required: false
+        type: boolean
+        default: true
     outputs:
       suffixes:
         description: >-
@@ -305,10 +316,10 @@ jobs:
               "$REPORT"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Then the VEX document, as _ci-pipeline.yml's security-scan checks it
-      # for the Debian images.
+      # Then the VEX document, as _check-vex-debian.yml checks the Debian
+      # images.
       - name: Check the VEX against falkordb-server image (${{ matrix.suffix }})
-        if: matrix.image
+        if: matrix.image && inputs.check_vex
         env:
           SUFFIX: ${{ matrix.suffix }}
           VEX_OS: ${{ matrix.vex_os }}

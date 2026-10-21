@@ -1,0 +1,92 @@
+# Check the VEX documents against the images every night. An upstream change
+# can make a statement wrong with nothing changing here: a new CVE, a package
+# update, or a fix that leaves a statement hiding nothing. Pull requests do not
+# run this check, since such a change would block every one of them, so this
+# is where it is found, before a release needs it (release-tag.yml runs the
+# same check, and a failure there stops the release).
+#
+#   debian — the published :edge images (_check-vex-debian.yml)
+#   rpm    — the rhel9/amazonlinux2023 server images, built from main, since
+#            nothing publishes them before a release (_build-artifacts.yml)
+#   report — on a scheduled run, open an issue when the check fails, or
+#            comment on the one already open, and close it when the check
+#            passes again. A failed scheduled run alone notifies almost no one.
+#
+# To check a branch, run this on it (`gh workflow run vex-nightly.yml --ref
+# <branch>`). Set `tag` to a pull request's images (rc-pr-<N>) to check those
+# instead of :edge. A dispatched run never touches the issue.
+
+name: VEX check (nightly)
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Debian image tag to check: edge, or rc-pr-<N> for a pull request's images"
+        required: false
+        default: edge
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vex-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  debian:
+    uses: ./.github/workflows/_check-vex-debian.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      tag: ${{ inputs.tag || 'edge' }}
+      revision: ${{ github.sha }}
+
+  rpm:
+    uses: ./.github/workflows/_build-artifacts.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      platforms: rhel9-x64,amazonlinux2023-x64
+      revision: ${{ github.sha }}
+      # The default branch on a schedule, or a branch a maintainer dispatched
+      # this on: code already in this repository.
+      trusted_revision: true
+
+  report:
+    needs: [debian, rpm]
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # Anything but success counts, a timed-out job included.
+          PASSED: ${{ needs.debian.result == 'success' && needs.rpm.result == 'success' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="Nightly VEX check failed"
+          NUM=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ "$PASSED" = "true" ]; then
+            if [ -n "$NUM" ]; then
+              gh issue close "$NUM" --comment "Passed again: $RUN_URL"
+            fi
+          elif [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$TITLE" --body "The nightly VEX check failed: $RUN_URL
+
+          Open the run to see which job and step failed. For a \`vex.py check\` failure, .vex/README.md (What CI checks) says what each one means and what to do.
+
+          Each failing run comments here, and the next passing run closes this issue."
+          fi
