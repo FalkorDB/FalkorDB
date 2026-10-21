@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__subassign_06s__7ffc507f00020110.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -50,7 +50,7 @@
 #define GB_Cj_BITS 32
 #define GB_Ci_BITS 32
 #define GB_DECLAREC(cwork) bool cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)/* atype or ctype null */
 #define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso)
 #define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [0]
 #define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
@@ -141,7 +141,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x5946ced01f2690cb ;
-    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

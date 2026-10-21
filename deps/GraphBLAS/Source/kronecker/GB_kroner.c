@@ -261,7 +261,6 @@ GrB_Info GB_kroner                  // C = kron (A,B)
         #define GB_C_TYPE GB_void
         #define GB_A_ISO A_iso
         #define GB_B_ISO B_iso
-        #define GB_C_ISO C_iso
         const bool A_iso = A->iso ;
         const bool B_iso = B->iso ;
         const int64_t asize = A->type->size ;
@@ -326,6 +325,8 @@ GrB_Info GB_kroner                  // C = kron (A,B)
 
         #define GB_GENERIC
         #include "ewise/include/GB_ewise_shared_definitions.h"
+        #undef  GB_C_ISO
+        #define GB_C_ISO C_iso
         #include "kronecker/template/GB_kroner_template.c"
         info = GrB_SUCCESS ;
     }

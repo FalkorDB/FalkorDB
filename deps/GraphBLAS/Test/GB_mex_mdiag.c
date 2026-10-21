@@ -75,12 +75,18 @@ void mexFunction
     #undef FREE_DEEP_COPY
     #define FREE_DEEP_COPY GrB_Matrix_free_(&C) ;
 
-    // C = diag (v,k), using either GrB_Matrix_diag or GxB_Matrix_diag.
-    // The two methods do the same thing.  This is just to test.
-    if (k % 2 == 0 && ctype == vtype)
+    // C = diag (v,k), using either GrB_Matrix_diag, GxB_Matrix_diag,
+    // or GxB_Matrix_diag_arena
+    // The 3 methods do the same thing.  This is just to test.
+    if (k % 3 == 0 && ctype == vtype)
     {
         // GrB_Matrix_diag does not handle typecasting
         METHOD (GrB_Matrix_diag (&C, (GrB_Vector) V, k)) ;
+    }
+    else if (k % 3 == 1 && ctype == vtype)
+    {
+        METHOD (GxB_Matrix_diag_arena (&C, (GrB_Vector) V, k,
+            GB_ARENA_TEST, GB_ARENA_TEST)) ;
     }
     else
     {

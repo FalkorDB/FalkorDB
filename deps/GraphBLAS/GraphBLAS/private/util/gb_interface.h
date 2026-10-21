@@ -804,7 +804,7 @@ void *gb_malloc (size_t n, int arena) ;
 void gb_free (void **p, int arena) ;
 
 // the arena for mxMalloc/mxFree:
-#define MXARENA 2
+#define MXARENA 1
 
 //------------------------------------------------------------------------------
 // remove access to GraphBLAS polymorphic methods

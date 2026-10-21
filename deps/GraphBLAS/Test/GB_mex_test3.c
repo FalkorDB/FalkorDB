@@ -385,11 +385,52 @@ void mexFunction
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
         (void **) &Ax, Ap_memsize, Ai_memsize, 0, false, jumbled, NULL)) ;
 
+    // Ax_memsize is in bytes, and Ax must hold all 100 entries of C, so one
+    // byte less than 100*sizeof(float) is too small, in any format
+    uint64_t Ax_short = 100 * sizeof (float) - 1 ;
+    ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
+        (void **) &Ax, Ap_memsize, Ai_memsize, Ax_short, false, jumbled,
+        NULL)) ;
+
     OK (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
         (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, false, jumbled,
         NULL)) ;
 
     OK (GxB_Matrix_fprint (C, "C imported non-iso", GxB_SHORT, NULL)) ;
+
+    // export/import as HyperCSC, non-iso
+    OK (GxB_Matrix_export_HyperCSC (&C, &type, &nrows, &ncols,
+        &Ap, &Ah, &Ai, (void **) &Ax,
+        &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, NULL, &nvec,
+        &jumbled, NULL)) ;
+    ERR (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
+        &Ap, &Ah, &Ai, (void **) &Ax,
+        Ap_memsize, Ah_memsize, Ai_memsize, Ax_short, false, nvec, jumbled,
+        NULL)) ;
+    OK (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
+        &Ap, &Ah, &Ai, (void **) &Ax,
+        Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, false, nvec, jumbled,
+        NULL)) ;
+
+    // export/import as BitmapC, non-iso
+    int8_t *Ab = NULL ;
+    uint64_t Ab_memsize ;
+    OK (GxB_Matrix_export_BitmapC (&C, &type, &nrows, &ncols, &Ab,
+        (void **) &Ax, &Ab_memsize, &Ax_memsize, NULL, &nvals, NULL)) ;
+    ERR (GxB_Matrix_import_BitmapC (&C, type, nrows, ncols, &Ab,
+        (void **) &Ax, Ab_memsize, Ax_short, false, nvals, NULL)) ;
+    OK (GxB_Matrix_import_BitmapC (&C, type, nrows, ncols, &Ab,
+        (void **) &Ax, Ab_memsize, Ax_memsize, false, nvals, NULL)) ;
+
+    // export/import as FullC, non-iso
+    OK (GxB_Matrix_export_FullC (&C, &type, &nrows, &ncols, (void **) &Ax,
+        &Ax_memsize, NULL, NULL)) ;
+    ERR (GxB_Matrix_import_FullC (&C, type, nrows, ncols, (void **) &Ax,
+        Ax_short, false, NULL)) ;
+    OK (GxB_Matrix_import_FullC (&C, type, nrows, ncols, (void **) &Ax,
+        Ax_memsize, false, NULL)) ;
+
+    OK (GxB_Matrix_fprint (C, "C imported full", GxB_SHORT, NULL)) ;
     OK (GrB_Matrix_free_(&C)) ;
 
     // export as CSC iso

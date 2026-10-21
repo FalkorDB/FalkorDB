@@ -10,6 +10,12 @@
 #ifndef GB_ARENA_H
 #define GB_ARENA_H
 
+static inline GrB_Info GB_check_arena (int arena)
+{
+    return ((GB_Global_malloc_function_get (arena) == NULL) ?
+        GrB_INVALID_VALUE : GrB_SUCCESS) ;
+}
+
 GrB_Info GB_set_arena           // set arena of a block of memory
 (
     // input/output:

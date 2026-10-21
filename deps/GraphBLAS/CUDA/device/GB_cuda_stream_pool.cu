@@ -1,8 +1,18 @@
+//------------------------------------------------------------------------------
+// CUDA/device/GB_cuda_stream_pool.cu:  stream pools for each CUDA device
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #include "GB_cuda.hpp"
 
 #define STREAMS_PER_DEVICE 32
 
-// fixme: avoid std::
+// fixme: avoid std::, no need for it here; there are at most GxB_NARENAS_GPU
+// gpus.
 struct GB_cuda_stream_pool
 {
     std::vector<std::array<cudaStream_t, STREAMS_PER_DEVICE>> streams ;
@@ -32,18 +42,20 @@ GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream)
     }
 
     int device = 0 ;
-    CUDA_OK (cudaGetDevice (&device)) ;
+    CUDA_OK (cudaStreamGetDevice (*stream, &device)) ;
+    CUDA_OK (cudaSetDevice (device)) ;
+
+    // Fixme: do not sync here: Instead, assert stream already sync'd
+    // with cudaStreamQuery (only when debugging)
     CUDA_OK (cudaStreamSynchronize (*stream)) ;
 
-    // fixme:  assert that device == return value from
-    // cudaStreamGetDevice.
-
-    ASSERT (device < pool.streams.size()) ;
     cudaError_t cuda_error1 = cudaSuccess ;
 
     //--------------------------------------------------------------------------
     // release the stream inside a process-wide critical section
     //--------------------------------------------------------------------------
+
+    // fixme: use one OpenMP lock per GPU
 
     GB_OPENMP_LOCK_SET (4)      // CUDA stream pool
     {
@@ -77,11 +89,11 @@ GrB_Info GB_cuda_stream_pool_release (cudaStream_t *stream)
 // GB_cuda_stream_pool_acquire
 //------------------------------------------------------------------------------
 
-GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream)
+GrB_Info GB_cuda_stream_pool_acquire (int device, cudaStream_t *stream)
 {
 
     //--------------------------------------------------------------------------
-    // check inputs and get current device
+    // check inputs and set current device
     //--------------------------------------------------------------------------
 
     if (stream == nullptr)
@@ -89,15 +101,21 @@ GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream)
         return (GrB_NULL_POINTER) ;
     }
 
-    int device = 0 ;
     (*stream) = nullptr ;
-    CUDA_OK (cudaGetDevice (&device)) ;
-    ASSERT (device < pool.streams.size()) ;
+
+    if (device < 0 || device > GxB_NARENAS_GPU)
+    { 
+        return (GrB_INVALID_VALUE) ;
+    }
+
+    CUDA_OK (cudaSetDevice (device)) ;
     cudaError_t cuda_error1 = cudaSuccess ;
 
     //--------------------------------------------------------------------------
     // acquire the stream inside a process-wide critical section
     //--------------------------------------------------------------------------
+
+    // fixme: use one OpenMP lock per GPU
 
     GB_OPENMP_LOCK_SET (4)      // CUDA stream pool
     {
@@ -130,15 +148,11 @@ GrB_Info GB_cuda_stream_pool_acquire (cudaStream_t *stream)
 
 GrB_Info GB_cuda_stream_pool_init (void)
 {
-    // get the current device
-    int original_device = 0 ;
-    CUDA_OK (cudaGetDevice (&original_device)) ;
-    #undef  GB_FREE_ALL
-    #define GB_FREE_ALL cudaSetDevice (original_device) ;
-
     int ngpus = GB_Global_gpu_count_get ( ) ;
     for (int device = 0 ; device < ngpus ; device++)
     {
+        printf ("CUDA stream pool, device: %d, # streams %d\n",
+            device, STREAMS_PER_DEVICE) ;
         pool.nstreams_avail.push_back (0) ;
         pool.streams.push_back (std::array<cudaStream_t, STREAMS_PER_DEVICE>()) ;
         CUDA_OK (cudaSetDevice (device)) ;
@@ -150,11 +164,6 @@ GrB_Info GB_cuda_stream_pool_init (void)
             pool.nstreams_avail[device]++ ;
         }
     }
-
-    // restore to the original device
-    #undef  GB_FREE_ALL
-    #define GB_FREE_ALL ;
-    CUDA_OK (cudaSetDevice (original_device)) ;
 
     return GrB_SUCCESS ;
 }
@@ -172,6 +181,7 @@ GrB_Info GB_cuda_stream_pool_finalize (void)
         int end = pool.nstreams_avail.back() - 1 ;
         for (int k = end; k >= 0 ; k--)
         {
+            // CUDA_OK (cudaSetDevice (k)) ;
             CUDA_OK (cudaStreamDestroy (curr[k])) ;
         }
         pool.streams.pop_back() ;

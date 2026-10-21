@@ -35,8 +35,7 @@ typedef struct
     // blocking/non-blocking mode, set by GrB_init
     //--------------------------------------------------------------------------
 
-    int mode ;                  // GrB_NONBLOCKING, GrB_BLOCKING
-                                // GxB_NONBLOCKING_GPU, or GxB_BLOCKING_GPU
+    int mode ;                  // GrB_NONBLOCKING or GrB_BLOCKING
     bool init_called ;          // true if GrB_init already called
 
     //--------------------------------------------------------------------------
@@ -61,10 +60,12 @@ typedef struct
     // All threads must use the same malloc/realloc/free functions.
     // They default to the C11 functions, but can be defined by GxB_init.
 
-    GB_malloc_function_t malloc_function [GxB_NARENAS] ;   // required
-    GB_calloc_function_t calloc_function [GxB_NARENAS] ;   // unused
-    GB_realloc_function_t realloc_function [GxB_NARENAS] ; // may be NULL
-    GB_free_function_t free_function [GxB_NARENAS] ;       // required
+    #define GB_NARENAS (GxB_NARENAS + GxB_NARENAS_GPU)
+
+    GB_malloc_function_t malloc_function [GB_NARENAS] ;
+    GB_calloc_function_t calloc_function [GB_NARENAS] ;
+    GB_realloc_function_t realloc_function [GB_NARENAS] ;
+    GB_free_function_t free_function [GB_NARENAS] ;
 
     //--------------------------------------------------------------------------
     // memory usage tracking: for testing and debugging only
@@ -158,7 +159,7 @@ typedef struct
 
     int gpu_count ;                 // # of GPUs in the system
     // properties of each GPU:
-    GB_cuda_device gpu_properties [GB_CUDA_MAX_GPUS] ;
+    GB_cuda_device gpu_properties [GxB_NARENAS_GPU] ;
 
     //--------------------------------------------------------------------------
     // OpenMP locks
@@ -208,25 +209,25 @@ static GB_Global_struct GB_Global =
     // abort function for debugging only
     .abort_function = abort,
 
-    // malloc/realloc/free functions: default to C11 functions in arena 0.
-    // The user application can change arena 0 only using GxB_init.
-    // Arena 1 cannot be changed (GxB_ARENA_RMM, reserved for Rapids).
-    // MATLAB/Octave uses arena 2 for mxMalloc/mxCalloc/mxRealloc/mxFree.
-    #ifdef GRAPHBLAS_HAS_CUDA
-    // CUDA available: use GB_rmm_malloc/GB_rmm_free for arena 1
-    .malloc_function  = { malloc , GB_rmm_malloc,
-                          NULL, NULL, NULL, NULL, NULL, NULL },
-    .calloc_function  = { calloc , NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-    .realloc_function = { realloc, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-    .free_function    = { free   , GB_rmm_free  ,
-                          NULL, NULL, NULL, NULL, NULL, NULL },
-    #else
-    // CUDA not available: use malloc/free for arena 1
-    .malloc_function  = { malloc , malloc, NULL, NULL, NULL, NULL, NULL, NULL },
-    .calloc_function  = { calloc , NULL  , NULL, NULL, NULL, NULL, NULL, NULL },
-    .realloc_function = { realloc, NULL  , NULL, NULL, NULL, NULL, NULL, NULL },
-    .free_function    = { free   , free  , NULL, NULL, NULL, NULL, NULL, NULL },
-    #endif
+    // malloc/realloc/free functions: default to C11 functions in arena 0.  The
+    // user application can change arena 0 only using GxB_init.  MATLAB/Octave
+    // uses arena 1 for mxMalloc/mxCalloc/mxRealloc/mxFree.  arenas 0 is set by
+    // GrB_init/GxB_init.  Arena 1 to 7 are available for the end user
+    // application.  Arenas 8 to 71 are reserved for up to 64 GPUs.
+    #define NULL71 NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    .malloc_function  = { malloc , NULL71 },
+    .calloc_function  = { calloc , NULL71 },
+    .realloc_function = { realloc, NULL71 },
+    .free_function    = { free   , NULL71 },
+    #undef NULL71
 
     // malloc tracking, for testing, statistics, and debugging only
     .malloc_tracking = false,
@@ -560,13 +561,17 @@ void GB_Global_memtable_dump (void)
     #if defined ( GB_MEMTABLE_DEBUG ) && defined ( GB_MEMDUMP )
     GBMDUMP ("\nmemtable dump: %d nmalloc " GBd "\n",
         GB_Global.nmemtable, GB_Global.nmalloc) ;
+    double total_mem = 0 ;
     for (int k = 0 ; k < GB_Global.nmemtable ; k++)
     {
         GBMDUMP ("  %4d: %12p : %ld arena: %d\n", k,
             GB_Global.memtable_p [k],
             GB_Global.memtable_memsize [k],
             GB_Global.memtable_arena   [k]) ;
+        total_mem += GB_Global.memtable_memsize [k] ;
     }
+    total_mem = total_mem / (1024.0 * 1024.0 * 1024.0) ;
+    GBMDUMP ("memtable_dump: total %g GB in use\n", total_mem) ;
     #endif
 }
 
@@ -761,6 +766,100 @@ void GB_Global_memtable_remove (void *p)
 }
 
 //------------------------------------------------------------------------------
+// GB_Global_default_arenas: set all arenas to their default methods
+//------------------------------------------------------------------------------
+
+void GB_Global_default_arenas (void)
+{
+    // clear all arenas
+    for (int arena = 0 ; arena < GB_NARENAS ; arena++)
+    { 
+        GB_Global_malloc_function_set (NULL, arena) ;
+        GB_Global_calloc_function_set (NULL, arena) ;
+        GB_Global_realloc_function_set (NULL, arena) ;
+        GB_Global_free_function_set (NULL, arena) ;
+    }
+
+    // arena 0 default allocators:
+    GB_Global_malloc_function_set (malloc, GrB_DEFAULT) ;
+    GB_Global_calloc_function_set (calloc, GrB_DEFAULT) ;
+    GB_Global_realloc_function_set (realloc, GrB_DEFAULT) ;
+    GB_Global_free_function_set (free, GrB_DEFAULT) ;
+
+    // set up the GPU arenas, using Rapids if CUDA is available, or stubs that
+    // do nothing otherwise.
+
+    #define GB_CUDA_ARENA(id)                                                  \
+        GB_Global_malloc_function_set (GB_rmm_malloc_ ## id, GxB_NARENAS+id) ; \
+        GB_Global_free_function_set   (GB_rmm_free_   ## id, GxB_NARENAS+id) ;
+
+    GB_CUDA_ARENA (0) ;
+    GB_CUDA_ARENA (1) ;
+    GB_CUDA_ARENA (2) ;
+    GB_CUDA_ARENA (3) ;
+    GB_CUDA_ARENA (4) ;
+    GB_CUDA_ARENA (6) ;
+    GB_CUDA_ARENA (7) ;
+    GB_CUDA_ARENA (8) ;
+    GB_CUDA_ARENA (9) ;
+
+    GB_CUDA_ARENA (10) ;
+    GB_CUDA_ARENA (11) ;
+    GB_CUDA_ARENA (12) ;
+    GB_CUDA_ARENA (13) ;
+    GB_CUDA_ARENA (14) ;
+    GB_CUDA_ARENA (16) ;
+    GB_CUDA_ARENA (17) ;
+    GB_CUDA_ARENA (18) ;
+    GB_CUDA_ARENA (19) ;
+
+    GB_CUDA_ARENA (20) ;
+    GB_CUDA_ARENA (21) ;
+    GB_CUDA_ARENA (22) ;
+    GB_CUDA_ARENA (23) ;
+    GB_CUDA_ARENA (24) ;
+    GB_CUDA_ARENA (26) ;
+    GB_CUDA_ARENA (27) ;
+    GB_CUDA_ARENA (28) ;
+    GB_CUDA_ARENA (29) ;
+
+    GB_CUDA_ARENA (30) ;
+    GB_CUDA_ARENA (31) ;
+    GB_CUDA_ARENA (32) ;
+    GB_CUDA_ARENA (33) ;
+    GB_CUDA_ARENA (34) ;
+    GB_CUDA_ARENA (36) ;
+    GB_CUDA_ARENA (37) ;
+    GB_CUDA_ARENA (38) ;
+    GB_CUDA_ARENA (39) ;
+
+    GB_CUDA_ARENA (40) ;
+    GB_CUDA_ARENA (41) ;
+    GB_CUDA_ARENA (42) ;
+    GB_CUDA_ARENA (43) ;
+    GB_CUDA_ARENA (44) ;
+    GB_CUDA_ARENA (46) ;
+    GB_CUDA_ARENA (47) ;
+    GB_CUDA_ARENA (48) ;
+    GB_CUDA_ARENA (49) ;
+
+    GB_CUDA_ARENA (50) ;
+    GB_CUDA_ARENA (51) ;
+    GB_CUDA_ARENA (52) ;
+    GB_CUDA_ARENA (53) ;
+    GB_CUDA_ARENA (54) ;
+    GB_CUDA_ARENA (56) ;
+    GB_CUDA_ARENA (57) ;
+    GB_CUDA_ARENA (58) ;
+    GB_CUDA_ARENA (59) ;
+
+    GB_CUDA_ARENA (60) ;
+    GB_CUDA_ARENA (61) ;
+    GB_CUDA_ARENA (62) ;
+    GB_CUDA_ARENA (63) ;
+}
+
+//------------------------------------------------------------------------------
 // malloc_function
 //------------------------------------------------------------------------------
 
@@ -770,7 +869,7 @@ void GB_Global_malloc_function_set
     int arena
 )
 { 
-    if (arena >= 0 && arena < GxB_NARENAS)
+    if (arena >= 0 && arena < GB_NARENAS)
     { 
         GB_Global.malloc_function [arena] = malloc_function ;
     }
@@ -778,7 +877,7 @@ void GB_Global_malloc_function_set
 
 void * GB_Global_malloc_function_get (int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS)
+    if (arena < 0 || arena >= GB_NARENAS)
     { 
         // arena out of range
         return (NULL) ;
@@ -788,7 +887,7 @@ void * GB_Global_malloc_function_get (int arena)
 
 void * GB_Global_malloc_function (uint64_t memsize, int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS ||
+    if (arena < 0 || arena >= GB_NARENAS ||
         GB_Global.malloc_function [arena] == NULL)
     { 
         // arena not initialized or out of range
@@ -821,7 +920,7 @@ void GB_Global_calloc_function_set
     int arena
 )
 { 
-    if (arena >= 0 && arena < GxB_NARENAS)
+    if (arena >= 0 && arena < GB_NARENAS)
     { 
         GB_Global.calloc_function [arena] = calloc_function ;
     }
@@ -829,7 +928,7 @@ void GB_Global_calloc_function_set
 
 void * GB_Global_calloc_function_get (int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS)
+    if (arena < 0 || arena >= GB_NARENAS)
     { 
         // arena out of range
         return (NULL) ;
@@ -847,7 +946,7 @@ void GB_Global_realloc_function_set
     int arena
 )
 { 
-    if (arena >= 0 && arena < GxB_NARENAS)
+    if (arena >= 0 && arena < GB_NARENAS)
     { 
         GB_Global.realloc_function [arena] = realloc_function ;
     }
@@ -860,7 +959,7 @@ void * GB_Global_realloc_function_get (int arena)
 
 bool GB_Global_realloc_function_have (int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS)
+    if (arena < 0 || arena >= GB_NARENAS)
     { 
         // arena out of range
         return (false) ;
@@ -891,7 +990,7 @@ void * GB_Global_realloc_function (void *p, uint64_t memsize, int arena)
 
 void GB_Global_free_function_set (GB_free_function_t free_function, int arena)
 { 
-    if (arena >= 0 && arena < GxB_NARENAS)
+    if (arena >= 0 && arena < GB_NARENAS)
     { 
         GB_Global.free_function [arena] = free_function ;
     }
@@ -899,7 +998,7 @@ void GB_Global_free_function_set (GB_free_function_t free_function, int arena)
 
 void * GB_Global_free_function_get (int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS)
+    if (arena < 0 || arena >= GB_NARENAS)
     { 
         // arena out of range
         return (NULL) ;
@@ -909,7 +1008,7 @@ void * GB_Global_free_function_get (int arena)
 
 void GB_Global_free_function (void *p, int arena)
 { 
-    if (arena < 0 || arena >= GxB_NARENAS ||
+    if (arena < 0 || arena >= GB_NARENAS ||
         GB_Global.free_function [arena] == NULL)
     { 
         // invalid arena
@@ -1081,23 +1180,22 @@ bool GB_Global_stats_mem_shallow_get (void)
 // CUDA
 //------------------------------------------------------------------------------
 
-void GB_Global_gpu_count_set (bool enable_cuda)
-{ 
+void GB_Global_gpu_count_set (void)
+{
     // set the # of GPUs in the system;
     // this function is only called once, by GB_init.
     memset (GB_Global.gpu_properties, 0,
-            GB_CUDA_MAX_GPUS * sizeof (GB_cuda_device)) ;
+            GxB_NARENAS_GPU * sizeof (GB_cuda_device)) ;
     #if defined ( GRAPHBLAS_HAS_CUDA )
-    if (enable_cuda)
     {
         GB_Global.gpu_count = GB_cuda_get_device_count ( ) ;
     }
-    else
-    #endif
+    #else
     {
         // no GPUs available, or available but not requested
         GB_Global.gpu_count = 0 ;
     }
+    #endif
 }
 
 int GB_Global_gpu_count_get (void)
@@ -1139,34 +1237,6 @@ int GB_Global_gpu_compute_capability_minor_get (int device)
     // get the compute-capability-minor
     GB_GPU_DEVICE_CHECK (0) ;       // zero if invalid GPU
     return (GB_Global.gpu_properties [device].compute_capability_minor) ;
-}
-
-bool GB_Global_gpu_device_pool_memsize_set (int device, uint64_t gpusize)
-{
-    GB_GPU_DEVICE_CHECK (false) ;   // fail if invalid GPU
-    GB_Global.gpu_properties [device].pool_memsize = gpusize ;
-    return (true) ; 
-}
-
-bool GB_Global_gpu_device_max_pool_memsize_set (int device, uint64_t gpusize)
-{
-    GB_GPU_DEVICE_CHECK (false) ;   // fail if invalid GPU
-    GB_Global.gpu_properties [device].max_pool_memsize = gpusize ;
-    return (true) ; 
-}
-
-bool GB_Global_gpu_device_memory_resource_set (int device, void *resource)
-{
-    GB_GPU_DEVICE_CHECK (false) ;   // fail if invalid GPU
-    GB_Global.gpu_properties [device].memory_resource = resource ;
-    return (true) ; 
-}
-
-void* GB_Global_gpu_device_memory_resource_get (int device)
-{
-    GB_GPU_DEVICE_CHECK (NULL) ;   // fail if invalid GPU
-    return  (GB_Global.gpu_properties [device].memory_resource) ;
-    // NOTE: this returns a void*, needs to be cast to be used
 }
 
 bool GB_Global_gpu_device_properties_get (int device)

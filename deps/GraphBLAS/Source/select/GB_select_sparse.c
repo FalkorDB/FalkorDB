@@ -216,11 +216,17 @@ GrB_Info GB_select_sparse
 
         #ifndef GBCOMPACT
         GB_IF_FACTORY_KERNELS_ENABLED
+        if (op->xtype == A->type)
         { 
 
             //------------------------------------------------------------------
             // via the factory kernel (includes user-defined ops)
             //------------------------------------------------------------------
+
+            // The factory workers compare A(i,j) with ythunk in the type of
+            // A.  ythunk has been typecast to op->ytype, so they apply only
+            // when op->xtype (== op->ytype for the VALUE* ops) is the type of
+            // A; otherwise the JIT or generic kernel typecasts.
 
             // define the worker for the switch factory
             #define GB_sel1(opname,aname) GB (_sel_phase1_ ## opname ## aname)
@@ -341,11 +347,15 @@ GrB_Info GB_select_sparse
 
         #ifndef GBCOMPACT
         GB_IF_FACTORY_KERNELS_ENABLED
+        if (op->xtype == NULL || op->xtype == A->type)
         { 
 
             //------------------------------------------------------------------
             // via the factory kernel
             //------------------------------------------------------------------
+
+            // As in phase1: the VALUE* workers need op->xtype to be the type
+            // of A.  NONZOMBIE has no xtype.
 
             // define the worker for the switch factory
             #define GB_SELECT_PHASE2

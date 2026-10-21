@@ -502,16 +502,6 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     // free workspace
     //--------------------------------------------------------------------------
 
-    // printf ("dot2, free workspace\n") ;
-    // GxB_print (Mwork, 5) ;
-    // GB_Matrix_free (&Mwork) ;
-
-    // GxB_print (Awork, 5) ;
-    // GB_Matrix_free (&Awork) ;
-
-    // GxB_print (Bwork, 5) ;
-    // GB_Matrix_free (&Bwork) ;
-
     GB_FREE_WORKSPACE ;
     C->magic = GB_MAGIC ;
     ASSERT_MATRIX_OK (C, "dot2: result C, before expand", GB0) ;

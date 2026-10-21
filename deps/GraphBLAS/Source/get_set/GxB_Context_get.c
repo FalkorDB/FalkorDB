@@ -219,7 +219,7 @@ GrB_Info GxB_Context_get_SIZE
 
     if (field == GxB_CONTEXT_GPU_IDS)
     {
-        (*value) = sizeof (int32_t) * GB_MAX_NGPUS ;
+        (*value) = sizeof (int32_t) * GxB_NARENAS_GPU ;
         return (GrB_SUCCESS) ;
     }
     else if (field == GrB_NAME)
