@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryGraph, SetItem, Variable};
@@ -195,6 +195,44 @@ pub(super) fn ir_references_variable(
         // them. (`optimize` also strips this root before any pass runs.)
         IR::NestedPlans => false,
     }
+}
+
+/// True when an operator outside the subtree rooted at `idx` reads the
+/// variable `(var_id, scope_id)` that the operator at `idx` binds.
+///
+/// Every row `idx` produces flows up through its ancestors, and each ancestor
+/// hands it to its other branches too: `Apply`/`SemiApply`/`ForEach`/`Merge`
+/// run their right-hand sub-plan once per input row, with the row as the
+/// `Argument`. So the readers are not only the ancestors but every node outside
+/// `idx`'s own subtree (whose nodes only produce its input): the body of
+/// `CALL {}`, the right side of an `OPTIONAL MATCH` or pattern-predicate Apply,
+/// a pattern comprehension sub-plan, a `FOREACH` body. Nodes that cannot see
+/// the row (e.g. the other side of a `CartesianProduct`) are included too: they
+/// can only mention the variable if they bind it themselves, which makes the
+/// answer conservative, never wrong.
+pub(super) fn variable_read_outside(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    let mut cur = plan.node(idx);
+    while let Some(parent) = cur.parent() {
+        if ir_references_variable(parent.data(), var_id, scope_id) {
+            return true;
+        }
+        for sibling in parent.children() {
+            if sibling.idx() != cur.idx()
+                && sibling
+                    .walk::<Bfs>()
+                    .any(|ir| ir_references_variable(ir, var_id, scope_id))
+            {
+                return true;
+            }
+        }
+        cur = parent;
+    }
+    false
 }
 
 /// Whether an index query's operands reference the variable. The operands are
