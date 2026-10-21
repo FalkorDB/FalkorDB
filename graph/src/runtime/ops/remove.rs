@@ -143,13 +143,16 @@ impl Runtime<'_> {
                     }
                 }
                 Value::Relationship(rel) => {
-                    if let Some(property) = property {
-                        self.set_pending_relationship_attr(rel, property, Value::Null)?;
-                    }
                     if labels.is_some() {
                         return Err(String::from(
                             "Type mismatch: expected Node but was Relationship",
                         ));
+                    }
+                    if self.is_relationship_deleted(rel) {
+                        continue;
+                    }
+                    if let Some(property) = property {
+                        self.set_pending_relationship_attr(rel, property, Value::Null)?;
                     }
                 }
                 Value::Null => {}
