@@ -3,16 +3,18 @@
 
 A transition system over the graph versions of one graph key. Every event is one atomic
 step of the Rust code; any enabled event may fire (arbitrary interleaving of threads).
-The protocol files are byte-identical on the PR branch (d7d166e82) and origin/main
-(9212add39) — `mvcc_graph.rs`, `query_session.rs`, `graph_core.rs`, `pending.rs` — so the
-cites hold for both.
+Re-cited to the PR branch @ 653f467a9. `mvcc_graph.rs`, `query_session.rs` and
+`pending.rs` are byte-identical to origin/main (9212add39); `graph_core.rs` differs only
+at `:263` (`Arc::clone(&runtime.g)` → `Arc::clone(runtime.graph_cell())`, same line) — so
+the protocol cites hold for both. Since 653f467a9 a `runtime.g` site outside `runtime.rs`
+reaches the cell through `graph_cell()` (`Cell.graph_cell_is_g`: the same cell).
 
 | here | there |
 | --- | --- |
 | `C`, `S.next`          | a version = one `Arc<AtomicRefCell<Graph>>` allocation; `next` = a fresh one |
 | `S.pub`, `S.published` | `MvccGraph.graph` (`mvcc_graph.rs:70`) and every version it has ever held |
 | `S.lock`               | the per-graph `parking_lot::RwLock<ThreadedGraph>` (`QuerySession.mode`, `query_session.rs:31-41`) |
-| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:147`, taken `:460-462`) — the PR's new state |
+| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:471-486`) — the PR's new state |
 | `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()`, and `MvccGraph`'s own borrows of the published version (`fork :140`, `claim :162`, `commit :190-203`) |
 | `S.excl`               | live `AtomicRefMut`s (every `borrow_mut()` on a graph cell, table below) |
 | `S.priv`               | a thread's private version (`QuerySession.fork` / the claimed `write()` fork) |
@@ -25,7 +27,7 @@ cites hold for both.
 | `runlock t`   | dropping a reader session (`Drop` `:464`) or `escalate`'s `*mode = None` (`:387`). Enabled only once `t`'s read runtime is gone: the runtime is a local of `execute_query` / `execute_profile` (`graph_core.rs:635-671`, `:700-716`) that borrows `&session` from its caller (`:1094-1114`, `:1254-1255`, `:1383-1389`, `:1466-1467`), and `record.rs` drops it explicitly (`:142`) before the session (`:61`) |
 | `wlock t`     | `begin_writer` (`:182-201`) / `escalate` (`:379-394`) → `RwLock::write_arc`; `graph.write()` in `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:569` |
 | `wunlock t`   | `release_locks` (`:303`) / session drop |
-| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `g.borrow()` at `runtime.rs:461` |
+| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:479` (`owner = Arc::clone(&g)`) |
 | `readDrop`    | `Runtime` drop: `read_guard` released (`DropOrder`) |
 | `fork t`      | `write_version` in reader mode → `MvccGraph::fork` (`query_session.rs:225`, `mvcc_graph.rs:139-141`) |
 | `claimW t`    | `MvccGraph::write` (`:119-129`) under the write lock: `write_version` writer mode (`query_session.rs:218-222`), `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:335`, `:569` |
@@ -40,9 +42,9 @@ tests/`test_aux.rs`/`emit.rs`/`apply.rs` test modules excluded):
 
 | site | target | model |
 | --- | --- | --- |
-| `runtime.rs:1435,1454` (`set_pending_*_attr`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:139`, `ops/delete.rs:257,411,452`, `ops/merge.rs:171` | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
-| `pending.rs:480,1235-1352` (`Pending::commit`s), `:1799` (`end_segment`), `runtime.rs:555` (`commit_deferred_indexes`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
-| `index_ddl.rs:72,104` | `runtime.g` | write runtime (`:38,:95` refuse `!write`): `mutAcq` |
+| `runtime.rs:1467,1486` (`set_pending_*_attr`, `self.g`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:259,414,457` (all via `graph_cell()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
+| `pending.rs:480,1235-1352` (`Pending::commit`s), `:1799` (`end_segment`), `runtime.rs:593` (`commit_deferred_indexes`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`, `graph_cell()` since 653f467a9) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
+| `index_ddl.rs:70,108` | `runtime.graph_cell()` | write runtime (`:38,:98` refuse `!write`): `mutAcq` |
 | `mvcc_graph.rs:232,235,252` | `new_graph` | still private: `mutAcq`, then `publish` |
 | `pending.rs:1684` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
 | `bulk_insert.rs:854,886,962,1012`, `constraint.rs:338,572`, `effect.rs:70` | `g_arc` from `graph.write()` / `write_version()` before `commit` | private: `mutAcq` |

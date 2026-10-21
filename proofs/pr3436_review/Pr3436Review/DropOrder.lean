@@ -1,22 +1,35 @@
 /-
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
+Cites: PR branch `perf/read-graph-once` @ 653f467a9 unless marked. Since 653f467a9 the
+guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones `g` into
+`_owner` and borrows through it (`:471-486`). The soundness argument therefore rests on
+`HeldRead`'s own `Arc`, not on `Runtime`'s field order.
+
 | here | there |
 | --- | --- |
 | `Alloc`, `H`           | an `Arc<AtomicRefCell<Graph>>` heap allocation: strong count, borrow word (`Cell.B`); `none` = freed |
-| `Field.guard a`        | `Runtime.read_guard = Some(AtomicRef)` into the cell at `a` (`runtime.rs:147`); dropping it is `AtomicBorrowRef::drop` — `fetch_sub(1)` on the cell's borrow word (atomic_refcell `lib.rs:273-283`), a write into the allocation |
-| `Field.arc a`          | `Runtime.g: Arc<…>` (`runtime.rs:150`); dropping it decrements the strong count and frees the allocation at 0 |
-| `Field.other`          | every other field (no access to the cell) |
-| `runtimeFields`        | `struct Runtime` field order (`runtime.rs:142-…`): `parameters`, `read_guard`, `g`, `write`, … |
-| `dropFields`           | Rust's drop glue for a struct without `Drop` impl: fields in declaration order (Reference, "Destructors": *the fields of a struct are dropped in declaration order*). `Runtime` has no `impl Drop` (grep) |
+| `Field.guard a`        | `HeldRead.guard: AtomicRef<'static, Graph>` into the cell at `a` (`runtime.rs:116`); dropping it is `AtomicBorrowRef::drop` — `fetch_sub(1)` on the cell's borrow word (atomic_refcell `lib.rs:273-283`), a write into the allocation |
+| `Field.arc a`          | an `Arc` to the cell: `HeldRead._owner` (`:117`), `Runtime.g` (`:160`), or any other holder (`MvccGraph.graph`, the session's clone, the UDF thread-local, …); dropping it decrements the strong count and frees at 0 |
+| `heldFields a`         | `HeldRead`'s drop glue: `guard` then `_owner` (declaration order) |
+| `runtimeFields`        | `struct Runtime` (`:152-…`): `parameters`, `read_guard: Option<HeldRead>`, `g`, `write`, … |
+| `dropFields`           | Rust drop glue for a struct without `Drop` impl: fields in declaration order (Reference, "Destructors"). Neither `Runtime` nor `HeldRead` has a `Drop` impl (grep) |
+| `GUse`                 | every mention of the field `g` in `runtime.rs` (`g_uses_never_write`) |
 
-Facts checked in the tree at d7d166e82, not by Lean: `Runtime` has no `Drop` impl; there is
-no `&mut Runtime` and no `let mut runtime`/`mut rt` binding anywhere (`grep -rn "&mut
-Runtime\|let mut runtime\|let mut rt\b"` is empty), so the `pub g` field is never
-reassigned after `new`, and `read_guard` is private, so the `AtomicRef<'static>` never
-leaves `Runtime` except as `GraphRef::Held(&'_ Graph)`, bounded by `&self`. A move of
-`Runtime` copies the guard's pointer, which points into the `Arc`'s heap allocation, not
-into `Runtime` — so moves are irrelevant (`move_irrelevant`).
+**`g` is never reassigned** (`g_never_reassigned`). `g` is private since 653f467a9
+(`runtime.rs:160`), and `runtime.rs` declares no child module, so only `runtime.rs` can
+name it; everyone else gets `graph_cell(&self) -> &Arc<…>` (`:565-567`), a shared reference
+through which the field cannot be assigned. In `runtime.rs` the field appears exactly
+seven times (`grep -nE "\.g\b|^\s+g,$"`): the struct literal in `new` (`:490`, the
+initialisation) and six reads, all inside `&self` methods — `graph` `:557`
+(`self.g.borrow()`), `graph_cell` `:566` (`&self.g`), `resync_published_indexes` `:588`,
+`commit_deferred_indexes` `:593`, `set_pending_node_attr` `:1467` and
+`set_pending_relationship_attr` `:1486` (`self.g.borrow_mut()`, a borrow of the *cell*,
+not of the field). `runtime.rs` has no `&mut self` method at all, and the tree has no
+`&mut Runtime` / `let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by
+its constructor (`:483-486`). Since 653f467a9 none of this is needed for soundness
+(`held_survives` holds whatever happens to `g`); it is what makes `graph()` and
+`graph_cell()` name the same cell (`Cell.graph_cell_same`).
 -/
 import Pr3436Review.Cell
 
@@ -32,6 +45,8 @@ structure Alloc where
 abbrev H := Addr → Option Alloc
 
 def H.set (h : H) (a : Addr) (v : Option Alloc) : H := fun x => if x = a then v else h x
+
+theorem H.set_same (h : H) (a : Addr) (v : Option Alloc) : h.set a v a = v := by simp [H.set]
 
 inductive Field where
   | guard (a : Addr)
@@ -55,64 +70,289 @@ def dropFields (h : H) : List Field → Option H
     | some h' => dropFields h' fs
     | none => none
 
-/-- The PR's field order, for a runtime `rt` (`parameters`, `read_guard`, `g`, the rest). -/
-def runtimeFields (rt : Rt) : List Field :=
-  [.other] ++ (match rt.guard with | some a => [.guard a] | none => []) ++ [.arc rt.g, .other]
+theorem dropFields_append (h : H) (fs gs : List Field) :
+    dropFields h (fs ++ gs) = (dropFields h fs).bind (fun h' => dropFields h' gs) := by
+  induction fs generalizing h with
+  | nil => rfl
+  | cons f fs ih =>
+    simp only [List.cons_append, dropFields]
+    cases dropField h f with
+    | none => rfl
+    | some h' => exact ih h'
 
-/-- **Claim 3.** Dropping a `Runtime` whose `g` is live never touches freed memory — even
-when `g` is the *last* strong reference — because the guard (on `g`'s own cell, `Rt.ok`)
-is released before `g`. -/
-theorem drop_sound (rt : Rt) (hr : rt.ok) (h : H) (al : Alloc) (ha : h rt.g = some al) :
-    ∃ h', dropFields h (runtimeFields rt) = some h' := by
+/-! ### The cell's liveness, as a count of strong references -/
+
+/-- `n` strong references to the cell at `a` are live (`n = 0`: freed). -/
+def live (h : H) (a : Addr) (n : Nat) : Prop :=
+  (n = 0 ∧ h a = none) ∨ (1 ≤ n ∧ ∃ al, h a = some al ∧ al.strong = n)
+
+/-- Fields that touch only the cell at `a` through an `Arc` (other holders' drops) or not
+at all. -/
+def OnlyArcs (a : Addr) : List Field → Prop
+  | [] => True
+  | .arc b :: fs => b = a ∧ OnlyArcs a fs
+  | .other :: fs => OnlyArcs a fs
+  | .guard _ :: _ => False
+
+def arcs : List Field → Nat
+  | [] => 0
+  | .arc _ :: fs => arcs fs + 1
+  | _ :: fs => arcs fs
+
+/-- Dropping `k ≤ n` of the `n` live `Arc`s is defined and leaves `n - k` live. -/
+theorem drop_arcs (a : Addr) : ∀ (fs : List Field) (h : H) (n : Nat), OnlyArcs a fs →
+    live h a n → arcs fs ≤ n → ∃ h', dropFields h fs = some h' ∧ live h' a (n - arcs fs)
+  | [], h, n, _, hl, _ => ⟨h, rfl, by simpa [arcs] using hl⟩
+  | .other :: fs, h, n, ho, hl, hk => by
+    simp only [OnlyArcs] at ho
+    simpa [dropFields, dropField, arcs] using drop_arcs a fs h n ho hl (by simpa [arcs] using hk)
+  | .guard _ :: _, _, _, ho, _, _ => by simp [OnlyArcs] at ho
+  | .arc b :: fs, h, n, ho, hl, hk => by
+    simp only [OnlyArcs] at ho
+    obtain ⟨rfl, ho⟩ := ho
+    simp only [arcs] at hk
+    rcases hl with ⟨rfl, _⟩ | ⟨hn, al, ha, hs⟩
+    · omega
+    · by_cases h1 : al.strong ≤ 1
+      · have hn1 : n = 1 := by omega
+        subst hn1
+        have hk0 : arcs fs = 0 := by omega
+        have hl' : live (h.set b none) b 0 := Or.inl ⟨rfl, H.set_same _ _ _⟩
+        obtain ⟨h', hd, hl''⟩ := drop_arcs b fs (h.set b none) 0 ho hl' (by omega)
+        refine ⟨h', ?_, ?_⟩
+        · simp only [dropFields, dropField, ha, h1, ite_true]; exact hd
+        · simp only [arcs]; rw [hk0] at hl''; simpa using hl''
+      · have hl' : live (h.set b (some { al with strong := al.strong - 1 })) b (n - 1) :=
+          Or.inr ⟨by omega, _, H.set_same _ _ _, by simp; omega⟩
+        obtain ⟨h', hd, hl''⟩ := drop_arcs b fs _ (n - 1) ho hl' (by omega)
+        refine ⟨h', ?_, ?_⟩
+        · simp only [dropFields, dropField, ha, h1, ite_false]; exact hd
+        · simp only [arcs]; have : n - 1 - arcs fs = n - (arcs fs + 1) := by omega
+          rw [← this]; exact hl''
+
+/-! ### Since 653f467a9: `HeldRead` owns its cell -/
+
+/-- `HeldRead`'s drop glue: `guard` (declared first, `runtime.rs:116`), then `_owner`. -/
+def heldFields (a : Addr) : List Field := [.guard a, .arc a]
+
+/-- **Claim 3 (653f467a9).** The guard never dangles, whatever happens to every *other*
+`Arc` of the cell: with `pre` and `post` any drops of the other holders (`Runtime.g`,
+`MvccGraph.graph`, the session's clone, …; all of them, in any order, before or after
+the `HeldRead` goes), `HeldRead`'s own drop is defined — `_owner` is the one strong
+reference no one else can release. -/
+theorem held_survives (a : Addr) (pre post : List Field) (hpre : OnlyArcs a pre)
+    (hpost : OnlyArcs a post) (h : H) (hl : live h a (arcs pre + arcs post + 1)) :
+    ∃ h', dropFields h (pre ++ heldFields a ++ post) = some h' := by
+  obtain ⟨h₁, hd₁, hl₁⟩ := drop_arcs a pre h _ hpre hl (by omega)
+  have hn : arcs pre + arcs post + 1 - arcs pre = arcs post + 1 := by omega
+  rw [hn] at hl₁
+  rcases hl₁ with ⟨h0, _⟩ | ⟨_, al, ha, hs⟩
+  · omega
+  · -- the guard writes into a live allocation, then `_owner` drops one reference
+    let h₂ := h₁.set a (some { al with b := release al.b })
+    have hl₂ : live h₂ a (arcs post + 1) := Or.inr ⟨by omega, _, H.set_same _ _ _, by simpa using hs⟩
+    obtain ⟨h₃, hd₃, -⟩ := drop_arcs a [.arc a] h₂ _ ⟨rfl, trivial⟩ hl₂ (by simp [arcs])
+    have hl₃ : live h₃ a (arcs post) := by
+      obtain ⟨h₃', hd₃', hl₃'⟩ := drop_arcs a [.arc a] h₂ _ ⟨rfl, trivial⟩ hl₂ (by simp [arcs])
+      rw [hd₃] at hd₃'; cases hd₃'; simpa [arcs] using hl₃'
+    obtain ⟨h₄, hd₄, -⟩ := drop_arcs a post h₃ _ hpost hl₃ (Nat.le_refl _)
+    refine ⟨h₄, ?_⟩
+    rw [dropFields_append, dropFields_append, hd₁]
+    simp only [Option.bind_some, heldFields]
+    have : dropFields h₁ [.guard a, .arc a] = dropFields h₂ [.arc a] := by
+      simp [dropFields, dropField, ha, h₂]
+    rw [this, hd₃]; exact hd₄
+
+/-- Even if `Runtime.g` were replaced by another graph (the reviewers' scenario: the old
+`Arc` dropped while the guard still points into its cell) — modelled as `g`'s `Arc` of
+`a` dropped first, every other holder gone too — the `HeldRead` drop is still defined. -/
+theorem held_sound_even_if_g_replaced (a : Addr) (h : H) (al : Alloc) (ha : h a = some al)
+    (hs : al.strong = 2) :
+    ∃ h', dropFields h ([.arc a] ++ heldFields a) = some h' := by
+  have := held_survives a [.arc a] [] ⟨rfl, trivial⟩ trivial h
+    (Or.inr ⟨by simp [arcs], al, ha, by simp [arcs, hs]⟩)
+  simpa using this
+
+/-- What remains load-bearing is the order *inside* `HeldRead`: had `_owner` been declared
+before `guard`, dropping the last reference would free the cell under the guard. -/
+def heldSwapped (a : Addr) : List Field := [.arc a, .guard a]
+
+theorem held_swapped_unsound :
+    let h : H := fun x => if x = 0 then some { strong := 1, b := .shared 1 } else none
+    dropFields h (heldSwapped 0) = none := by
+  decide
+
+/-- The PR's `Runtime` (653f467a9): `parameters`, `read_guard: Option<HeldRead>`, `g`, … -/
+def runtimeFields (rt : Rt) : List Field :=
+  [.other] ++ (match rt.guard with | some a => heldFields a | none => []) ++ [.arc rt.g, .other]
+
+/-- `g` declared before `read_guard` — no longer matters. -/
+def swappedFields (rt : Rt) : List Field :=
+  [.other, .arc rt.g] ++ (match rt.guard with | some a => heldFields a | none => []) ++ [.other]
+
+/-- A read runtime holds two strong references (`g` and `HeldRead._owner`, the clone made
+in `new`, `:472`); a write runtime one. -/
+def ownRefs (rt : Rt) : Nat := if rt.write then 1 else 2
+
+theorem only_app (a : Addr) : ∀ (xs ys : List Field), OnlyArcs a xs → OnlyArcs a ys →
+    OnlyArcs a (xs ++ ys)
+  | [], _, _, hy => hy
+  | .arc _ :: fs, ys, hx, hy => ⟨hx.1, only_app a fs ys hx.2 hy⟩
+  | .other :: fs, ys, hx, hy => only_app a fs ys hx hy
+  | .guard _ :: _, _, hx, _ => absurd hx (by simp [OnlyArcs])
+
+theorem arcs_app : ∀ (xs ys : List Field), arcs (xs ++ ys) = arcs xs + arcs ys
+  | [], ys => by simp [arcs]
+  | .arc _ :: fs, ys => by simp only [List.cons_append, arcs, arcs_app fs ys]; omega
+  | .other :: fs, ys => by simp only [List.cons_append, arcs, arcs_app fs ys]
+  | .guard _ :: fs, ys => by simp only [List.cons_append, arcs, arcs_app fs ys]
+
+/-- **Claim 3, `Runtime` (653f467a9).** Dropping a `Runtime` is defined in either field
+order, interleaved with any drops of the `k` other holders of its cell — the field order
+of `Runtime` is no longer part of the argument. -/
+theorem drop_sound (rt : Rt) (hr : rt.ok) (pre post : List Field) (hpre : OnlyArcs rt.g pre)
+    (hpost : OnlyArcs rt.g post) (h : H) (hl : live h rt.g (arcs pre + arcs post + ownRefs rt)) :
+    (∃ h', dropFields h (pre ++ runtimeFields rt ++ post) = some h') ∧
+    (∃ h', dropFields h (pre ++ swappedFields rt ++ post) = some h') := by
   unfold Rt.ok at hr
   cases hw : rt.write with
   | true =>
     simp [hw] at hr
-    simp [runtimeFields, hr, dropFields, dropField, ha]
+    simp only [ownRefs, hw, ite_true] at hl
+    have e1 : pre ++ runtimeFields rt ++ post = pre ++ ([.other, .arc rt.g, .other] ++ post) := by
+      simp [runtimeFields, hr]
+    have e2 : pre ++ swappedFields rt ++ post = pre ++ ([.other, .arc rt.g, .other] ++ post) := by
+      simp [swappedFields, hr]
+    have hall : OnlyArcs rt.g (pre ++ ([.other, .arc rt.g, .other] ++ post)) :=
+      only_app _ _ _ hpre (only_app _ [.other, .arc rt.g, .other] post ⟨rfl, trivial⟩ hpost)
+    have hcount : arcs (pre ++ ([.other, .arc rt.g, .other] ++ post)) = arcs pre + arcs post + 1 := by
+      rw [arcs_app, arcs_app]; simp [arcs]; omega
+    obtain ⟨h', hd, -⟩ := drop_arcs rt.g _ h _ hall hl (by omega)
+    exact ⟨⟨h', e1 ▸ hd⟩, ⟨h', e2 ▸ hd⟩⟩
   | false =>
     simp [hw] at hr
-    simp [runtimeFields, hr, dropFields, dropField, ha, H.set]
+    simp only [ownRefs, hw] at hl
+    -- both orders: the `g` drop is just one more "other holder" around `heldFields`
+    have e1 : pre ++ runtimeFields rt ++ post = (pre ++ [.other]) ++ heldFields rt.g ++ ([.arc rt.g, .other] ++ post) := by
+      simp [runtimeFields, hr]
+    have e2 : pre ++ swappedFields rt ++ post = (pre ++ [.other, .arc rt.g]) ++ heldFields rt.g ++ ([.other] ++ post) := by
+      simp [swappedFields, hr]
+    refine ⟨?_, ?_⟩
+    · rw [e1]
+      apply held_survives
+      · exact only_app _ _ _ hpre trivial
+      · exact only_app _ [.arc rt.g, .other] post ⟨rfl, trivial⟩ hpost
+      · rw [show arcs (pre ++ [Field.other]) + arcs ([Field.arc rt.g, Field.other] ++ post) + 1 =
+            arcs pre + arcs post + 2 by rw [arcs_app, arcs_app]; simp [arcs]; omega]
+        exact hl
+    · rw [e2]
+      apply held_survives
+      · exact only_app _ _ _ hpre ⟨rfl, trivial⟩
+      · exact only_app _ [.other] post trivial hpost
+      · rw [show arcs (pre ++ [Field.other, Field.arc rt.g]) + arcs ([Field.other] ++ post) + 1 =
+            arcs pre + arcs post + 2 by rw [arcs_app, arcs_app]; simp [arcs]; omega]
+        exact hl
 
-/-- The order is load-bearing: had `g` been declared before `read_guard`, dropping a
-read runtime holding the last strong reference would write into freed memory. -/
-def swappedFields (rt : Rt) : List Field :=
+/-- After the drop the cell's borrow word is back where it was before `new` (the guard gave
+back exactly its one shared borrow), when someone else still holds the cell. -/
+theorem drop_restores_borrow (rt : Rt) (hr : rt.ok) (hw : rt.write = false) (h : H) (n s : Nat)
+    (ha : h rt.g = some { strong := s + 3, b := .shared (n + 1) }) :
+    (dropFields h (runtimeFields rt)).bind (fun h' => h' rt.g) =
+      some { strong := s + 1, b := .shared n } := by
+  unfold Rt.ok at hr; simp [hw] at hr
+  simp [runtimeFields, heldFields, hr, dropFields, dropField, ha, H.set, release]
+
+/-- A `Runtime` value holds addresses into the heap, never into itself: moving it (a
+bitwise copy to a new location) leaves every field — and so the drop sequence — unchanged.
+Likewise moving `owner` into `HeldRead` after `owner.borrow()` (`:478-485`) moves the
+`Arc` pointer, not the cell the guard points into. -/
+theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
+    runtimeFields moved = runtimeFields rt := by rw [hm]
+
+/-! ### `g` is never reassigned (653f467a9) -/
+
+/-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
+inductive GUse where
+  | borrowShared      -- `graph`, `:557`: `self.g.borrow()`
+  | cellRef           -- `graph_cell`, `:566`: `&self.g`
+  | resyncRef         -- `resync_published_indexes`, `:588`: `&self.g`
+  | deferredRef       -- `commit_deferred_indexes`, `:593`: `&self.g`
+  | borrowMutNode     -- `set_pending_node_attr`, `:1467`: `self.g.borrow_mut()`
+  | borrowMutRel      -- `set_pending_relationship_attr`, `:1486`: `self.g.borrow_mut()`
+  deriving DecidableEq, Repr
+
+/-- Each use, as it acts on the `Runtime` record: all six are `&self` reads of the field
+(a `borrow`/`borrow_mut` acts on the *cell*, modelled in `Cell`/`Protocol`, not on which
+cell `g` names). -/
+def GUse.apply (_ : GUse) (rt : Rt) : Rt := rt
+
+/-- The `g` and `read_guard` a runtime ends with are the ones `new` gave it, whatever
+uses run. Together with privacy (only `runtime.rs` can name `g`; outsiders get
+`graph_cell(&self) -> &Arc`) this is "`g` is never reassigned". -/
+theorem g_never_reassigned (rt : Rt) (us : List GUse) :
+    (us.foldl (fun r u => u.apply r) rt).g = rt.g ∧
+    (us.foldl (fun r u => u.apply r) rt).guard = rt.guard := by
+  induction us generalizing rt with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons u us ih => exact ih (u.apply rt)
+
+theorem g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List GUse) :
+    (us.foldl (fun r u => u.apply r) rt).ok := by
+  induction us generalizing rt with
+  | nil => exact hr
+  | cons u us ih => exact ih (u.apply rt) hr
+
+/-! ### History: d7d166e82, before 653f467a9 (`read_guard: Option<AtomicRef>`, `pub g`) -/
+
+/-- d7d166e82's `Runtime`: `parameters`, `read_guard` (a bare guard), `g`, … -/
+def pre653f467_runtimeFields (rt : Rt) : List Field :=
+  [.other] ++ (match rt.guard with | some a => [.guard a] | none => []) ++ [.arc rt.g, .other]
+
+def pre653f467_swappedFields (rt : Rt) : List Field :=
   [.other, .arc rt.g] ++ (match rt.guard with | some a => [.guard a] | none => []) ++ [.other]
 
-theorem swapped_unsound :
+/-- d7d166e82: sound only because `read_guard` was declared before `g` and `g` was never
+reassigned (then checked by grep only). -/
+theorem pre653f467_drop_sound (rt : Rt) (hr : rt.ok) (h : H) (al : Alloc) (ha : h rt.g = some al) :
+    ∃ h', dropFields h (pre653f467_runtimeFields rt) = some h' := by
+  unfold Rt.ok at hr
+  cases hw : rt.write with
+  | true =>
+    simp [hw] at hr
+    simp [pre653f467_runtimeFields, hr, dropFields, dropField, ha]
+  | false =>
+    simp [hw] at hr
+    simp [pre653f467_runtimeFields, hr, dropFields, dropField, ha, H.set]
+
+/-- d7d166e82: the field order was load-bearing. -/
+theorem pre653f467_swapped_unsound :
     let rt : Rt := { g := 0, write := false, guard := some 0 }
     let h : H := fun x => if x = 0 then some { strong := 1, b := .shared 1 } else none
-    dropFields h (swappedFields rt) = none := by
+    dropFields h (pre653f467_swappedFields rt) = none := by
   decide
 
-/-- With another strong reference alive (a read runtime's version is also held by
-`MvccGraph.graph` while its session holds the read lock, since `commit` needs the write
-lock), either order is safe — so even an unwind out of the middle of `Runtime::new`'s
-struct literal, which drops the already-built operands, cannot dangle. -/
-theorem swapped_ok_if_shared (rt : Rt) (hr : rt.ok) (h : H) (al : Alloc)
+/-- d7d166e82: either order was safe only while another holder kept the cell alive. -/
+theorem pre653f467_swapped_ok_if_shared (rt : Rt) (hr : rt.ok) (h : H) (al : Alloc)
     (ha : h rt.g = some al) (hs : 2 ≤ al.strong) :
-    ∃ h', dropFields h (swappedFields rt) = some h' := by
+    ∃ h', dropFields h (pre653f467_swappedFields rt) = some h' := by
   unfold Rt.ok at hr
   have h1 : ¬ al.strong ≤ 1 := by omega
   cases hw : rt.write with
   | true =>
     simp [hw] at hr
-    simp [swappedFields, hr, dropFields, dropField, ha, h1]
+    simp [pre653f467_swappedFields, hr, dropFields, dropField, ha, h1]
   | false =>
     simp [hw] at hr
-    simp [swappedFields, hr, dropFields, dropField, ha, h1, H.set]
+    simp [pre653f467_swappedFields, hr, dropFields, dropField, ha, h1, H.set]
 
-/-- After the drop, the cell's borrow word is back where it was before `new` (the guard
-gave back exactly its one shared borrow), when `g` was not the last reference. -/
-theorem drop_restores_borrow (rt : Rt) (hr : rt.ok) (hw : rt.write = false) (h : H) (n s : Nat)
-    (ha : h rt.g = some { strong := s + 2, b := .shared (n + 1) }) :
-    (dropFields h (runtimeFields rt)).bind (fun h' => h' rt.g) =
-      some { strong := s + 1, b := .shared n } := by
-  unfold Rt.ok at hr; simp [hw] at hr
-  simp [runtimeFields, hr, dropFields, dropField, ha, H.set, release]
-
-/-- A `Runtime` value holds addresses into the heap, never into itself: moving it (a
-bitwise copy to a new location) leaves every field — and so the drop sequence — unchanged. -/
-theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
-    runtimeFields moved = runtimeFields rt := by rw [hm]
+/-- d7d166e82, the reviewers' point: with `pub g`, safe code could replace `g` (dropping
+its `Arc` of cell `0`, the last one) while the bare guard still pointed into cell `0` —
+the guard's drop then writes into freed memory. -/
+theorem pre653f467_g_replaced_unsound :
+    let h : H := fun x => if x = 0 then some { strong := 1, b := .shared 1 }
+      else if x = 1 then some { strong := 1, b := .shared 0 } else none
+    -- `runtime.g = other` drops the old `Arc` (cell 0); the runtime then drops `[guard 0, arc 1]`
+    dropFields h ([.arc 0] ++ [.other, .guard 0, .arc 1, .other]) = none := by
+  decide
 
 end Pr3436.Drop
