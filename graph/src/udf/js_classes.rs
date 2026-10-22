@@ -151,8 +151,9 @@ pub fn create_js_node<'js>(
     obj.set("id", node_id)
         .map_err(|e| format!("JS set error: {e}"))?;
 
-    // .labels and .attributes
-    if let Some(rt) = runtime {
+    // .labels and .attributes: through the runtime only when it can change
+    // the answer, otherwise straight from the committed graph.
+    if let Some(rt) = runtime.filter(|rt| rt.node_differs_from_committed(nid)) {
         set_node_labels(ctx, &obj, rt.get_node_labels(nid).into_iter())?;
         set_node_attrs(
             ctx,

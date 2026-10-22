@@ -746,6 +746,28 @@ impl Pending {
         None
     }
 
+    /// Whether this query has staged a label or attribute change for node
+    /// `id`, i.e. whether [`Self::update_node_labels`] or
+    /// [`Self::update_node_attrs`] would change what the committed graph says.
+    /// O(1): an empty map is skipped before hashing.
+    #[must_use]
+    pub fn node_has_changes(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        fn has<V>(
+            m: &FxHashMap<u64, V>,
+            id: u64,
+        ) -> bool {
+            !m.is_empty() && m.contains_key(&id)
+        }
+        let raw_id: u64 = id.into();
+        has(&self.set_labels, raw_id)
+            || has(&self.remove_labels, raw_id)
+            || has(&self.new_nodes_attrs, raw_id)
+            || has(&self.existing_nodes_attrs, raw_id)
+    }
+
     /// Overlay this query's staged label changes onto `labels`.
     ///
     /// Adds are applied before removals, but the two sets are disjoint per node
