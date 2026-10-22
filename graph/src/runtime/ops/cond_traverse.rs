@@ -32,7 +32,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
-use crate::graph::graphblas::matrix::Matrix;
+use crate::graph::graphblas::matrix::{Dup, Matrix};
 use crate::graph::graphblas::tensor::Tensor;
 use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
 use crate::parser::ast::{QueryRelationship, Variable};
@@ -49,9 +49,9 @@ use orx_tree::{Dyn, NodeIdx};
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
 /// Base matrix for the batched mxm path. Relationship matrices store inline
-/// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
-/// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
-/// semiring), so both traverse identically. Cloning either variant is cheap
+/// edge ids (`u64`) while the adjacency matrix is `bool`; traversal only
+/// consumes the sparsity pattern (`ANY_PAIR` semiring), so both traverse
+/// identically. Cloning either variant is cheap
 /// (`Arc` handle clones, no data copy).
 // One instance lives per traversal operator (never in collections), so the
 // size gap between the variants costs nothing; boxing would add indirection
@@ -62,6 +62,13 @@ enum TraversalMatrix {
     /// A single relationship `Tensor` (shallow clone, shared handles); only
     /// its forward layers are consumed.
     U64(Tensor),
+    /// Several relationship types, kept apart: `F * (A1 + A2)` is computed as
+    /// `F*A1 + F*A2`, the distribution C FalkorDB's algebraic-expression
+    /// optimizer applies. The union `A1 + A2` used to be materialized per
+    /// execution — a copy of the whole first matrix sized to node capacity —
+    /// even when `F` held one row; the per-type products are only as large as
+    /// the frontier. Shallow clones, like `U64`.
+    Union(Vec<Tensor>),
 }
 
 impl TraversalMatrix {
@@ -69,6 +76,9 @@ impl TraversalMatrix {
         match self {
             Self::Bool(m) => m.ncols(),
             Self::U64(t) => t.fwd_m().ncols(),
+            // Every relationship tensor is sized to the node capacity, so any
+            // one of them has the shared column count.
+            Self::Union(ts) => ts.first().map_or(0, |t| t.fwd_m().ncols()),
         }
     }
 
@@ -80,6 +90,24 @@ impl TraversalMatrix {
         match self {
             Self::Bool(vm) => f.delta_lmxm(vm.m(), vm.dp(), vm.dm()),
             Self::U64(t) => f.delta_lmxm(t.fwd_m(), t.fwd_dp(), t.fwd_dm()),
+            Self::Union(ts) => {
+                // `f` is the frontier: keep a copy as the left operand of the
+                // remaining products, then OR them into the first one. Union
+                // of patterns, so a pair joined by several types appears once
+                // — exactly what the materialized union produced.
+                let Some((first, rest)) = ts.split_first() else {
+                    return;
+                };
+                let frontier = (!rest.is_empty()).then(|| f.dup());
+                f.delta_lmxm(first.fwd_m(), first.fwd_dp(), first.fwd_dm());
+                if let Some(frontier) = frontier {
+                    for t in rest {
+                        let mut ft = frontier.dup();
+                        ft.delta_lmxm(t.fwd_m(), t.fwd_dp(), t.fwd_dm());
+                        f.element_wise_add(None, None, Some(&ft), None);
+                    }
+                }
+            }
         }
     }
 }
@@ -96,6 +124,11 @@ struct CtState {
     /// replaces what would otherwise be a full edge-matrix scan per input
     /// row (O(V·E) for the whole query).
     bwd_iter: Option<std::cell::RefCell<Iter>>,
+    /// Multi-type patterns only: per-type iterators streamed as a union
+    /// (`fwd_iter`/`rev_iter`/`bwd_iter` then stay empty and unused). Boxed and
+    /// optional so single-type operators — the common case — keep exactly
+    /// their previous state and per-row code.
+    union: Option<Box<PairIters<UnionIter>>>,
     fwd_src_label_ids: Vec<LabelId>,
     fwd_dst_label_ids: Vec<LabelId>,
     rev_src_label_ids: Vec<LabelId>,
@@ -189,48 +222,139 @@ pub struct CondTraverseOp<'a> {
     batched_eligible: bool,
 }
 
-/// Build an `EdgeIter` over the union of relationship matrices for `types`,
-/// avoiding the dup+merge cost of materializing a fresh `Matrix`.
+/// The union of several relationship types' `(src, dst)` pairs, streamed.
+///
+/// Each layer iterator yields its pairs in ascending `(row, col)` order (see
+/// `versioned_matrix::Iter`), so a k-way merge that emits the smallest head
+/// and advances every iterator sitting on it yields the sorted union with each
+/// pair once — the same pairs, in the same order, as iterating the merged
+/// matrix this replaces. That matrix was rebuilt per execution: a copy of the
+/// first type's whole matrix plus a pattern merge per further type, ~3.6 MB
+/// and ~1 ms on the benchmark graph even when the traversal seeks one row.
+/// `k` is the number of types in the pattern, so the linear scan over heads is
+/// cheaper than a heap.
+struct UnionIter {
+    iters: Vec<Iter>,
+    heads: Vec<Option<(u64, u64)>>,
+}
+
+impl UnionIter {
+    fn new(mut iters: Vec<Iter>) -> Self {
+        let heads = iters.iter_mut().map(Iterator::next).collect();
+        Self { iters, heads }
+    }
+
+    fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        for (it, head) in self.iters.iter_mut().zip(&mut self.heads) {
+            it.seek(min_row, max_row);
+            *head = it.next();
+        }
+    }
+}
+
+impl Iterator for UnionIter {
+    type Item = (u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let min = self.heads.iter().flatten().min().copied()?;
+        for (it, head) in self.iters.iter_mut().zip(&mut self.heads) {
+            if *head == Some(min) {
+                *head = it.next();
+            }
+        }
+        Some(min)
+    }
+}
+
+/// The per-row iterators of a multi-type pattern.
+struct PairIters<I> {
+    fwd: std::cell::RefCell<I>,
+    rev: Option<std::cell::RefCell<I>>,
+    /// Transposed (dst-major) counterpart, built lazily on the first expansion
+    /// where only the matrix-destination is bound — see `CtState::bwd_iter`.
+    bwd: Option<std::cell::RefCell<I>>,
+}
+
+/// The forward tensors of `types` that exist in the schema, or `None` when
+/// none of them do (the caller short-circuits to an empty result). Shallow
+/// clones: shared handles, no data copied.
+fn relationship_tensors(
+    g: &crate::graph::graph::Graph,
+    types: &[Arc<String>],
+) -> Option<Vec<Tensor>> {
+    let tensors: Vec<Tensor> = types
+        .iter()
+        .filter_map(|t| g.get_relationship_matrix(t))
+        .cloned()
+        .collect();
+    (!tensors.is_empty()).then_some(tensors)
+}
+
+/// Build an `Iter` over the pair matrix for an untyped or single-type
+/// pattern; `None` when the type does not exist.
 fn build_unrestricted_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
 ) -> Option<Iter> {
-    if types.is_empty() {
-        return Some(g.adjacency_matrix().iter(0, u64::MAX));
+    debug_assert!(types.len() <= 1, "several types stream through UnionIter");
+    match types.first() {
+        None => Some(g.adjacency_matrix().iter(0, u64::MAX)),
+        Some(t) => g
+            .get_relationship_matrix(t)
+            .map(|t| t.structural_iter(0, u64::MAX)),
     }
-    if types.len() == 1 {
-        return g
-            .get_relationship_matrix(&types[0])
-            .map(|t| t.structural_iter(0, u64::MAX));
-    }
-    let merged = g.build_relationship_matrix_unrestricted(types)?;
-    Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
+}
+
+/// Stream the union of several types' pair matrices without materializing
+/// it; `None` when none of the types exist.
+fn build_union_iter(
+    g: &crate::graph::graph::Graph,
+    types: &[Arc<String>],
+) -> Option<UnionIter> {
+    let iters = relationship_tensors(g, types)?
+        .iter()
+        .map(|t| t.structural_iter(0, u64::MAX))
+        .collect();
+    Some(UnionIter::new(iters))
 }
 
 fn empty_edge_iter() -> Iter {
     VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
-/// Build an `EdgeIter` over the TRANSPOSED (dst → src) pair matrix for
-/// `types`, for expansions where only the destination is bound. Tensors
-/// maintain their transpose (`mt`) incrementally, so the single-type case is
-/// free; the untyped/multi-type cases pay one O(E) GraphBLAS transpose —
-/// amortized over the whole operator, unlike the per-row full scan this
-/// replaces.
+/// Build an `Iter` over the TRANSPOSED (dst → src) pair matrix, for
+/// expansions where only the destination is bound. Tensors maintain their
+/// transpose (`mt`) incrementally, so the single-type case is free; the
+/// untyped case pays one O(E) GraphBLAS transpose — amortized over the whole
+/// operator, unlike the per-row full scan this replaces.
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
 ) -> Option<Iter> {
-    if types.is_empty() {
-        return Some(g.adjacency_matrix().transpose().iter(0, u64::MAX));
+    debug_assert!(types.len() <= 1, "several types stream through UnionIter");
+    match types.first() {
+        None => Some(g.adjacency_matrix().transpose().iter(0, u64::MAX)),
+        Some(t) => g
+            .get_relationship_matrix(t)
+            .map(|t| t.matrix_t().iter(0, u64::MAX)),
     }
-    if types.len() == 1 {
-        return g
-            .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix_t().iter(0, u64::MAX));
-    }
-    let merged = g.build_relationship_matrix_unrestricted(types)?;
-    Some(VersionedMatrix::from_matrix(merged.transpose()).iter(0, u64::MAX))
+}
+
+/// The transposed counterpart of `build_union_iter`: every type's
+/// incrementally maintained transpose, merged the same way.
+fn build_transposed_union_iter(
+    g: &crate::graph::graph::Graph,
+    types: &[Arc<String>],
+) -> Option<UnionIter> {
+    let iters = relationship_tensors(g, types)?
+        .iter()
+        .map(|t| t.matrix_t().iter(0, u64::MAX))
+        .collect();
+    Some(UnionIter::new(iters))
 }
 
 impl<'a> CondTraverseOp<'a> {
@@ -379,11 +503,32 @@ impl<'a> CondTraverseOp<'a> {
             (Some(Vec::new()), Some(Vec::new()))
         };
 
-        let fwd_iter_opt = build_unrestricted_iter(&g, &rp.types);
-        let rev_iter_opt = if rp.bidirectional {
-            build_unrestricted_iter(&g, &rp.types)
+        // Several types stream their union through `union`; the plain
+        // iterators are then left empty. A missing type makes the builder
+        // return `None`, and so `no_match` below.
+        let multi_type = rp.types.len() > 1;
+        let (fwd_iter_opt, rev_iter_opt, union) = if multi_type {
+            let fwd = build_union_iter(&g, &rp.types);
+            let rev = rp.bidirectional.then(|| build_union_iter(&g, &rp.types));
+            let fwd_ok = fwd.is_some().then(empty_edge_iter);
+            let rev_ok = rev
+                .as_ref()
+                .and_then(|r| r.as_ref().map(|_| empty_edge_iter()));
+            let empty = || UnionIter::new(Vec::new());
+            let union = PairIters {
+                fwd: std::cell::RefCell::new(fwd.unwrap_or_else(empty)),
+                rev: rev.map(|r| std::cell::RefCell::new(r.unwrap_or_else(empty))),
+                bwd: None,
+            };
+            (fwd_ok, rev_ok, Some(Box::new(union)))
         } else {
-            None
+            let fwd = build_unrestricted_iter(&g, &rp.types);
+            let rev = if rp.bidirectional {
+                build_unrestricted_iter(&g, &rp.types)
+            } else {
+                None
+            };
+            (fwd, rev, None)
         };
 
         let no_match = fwd_src_label_ids.is_none()
@@ -399,7 +544,9 @@ impl<'a> CondTraverseOp<'a> {
         let rev_dst_label_ids = rev_dst_label_ids.unwrap_or_default();
 
         let fwd_iter = fwd_iter_opt.unwrap_or_else(empty_edge_iter);
-        let rev_iter = if rp.bidirectional {
+        // Multi-type: the union carries the reverse half, so `rev_iter` stays
+        // `None` and the single-type reverse block never runs.
+        let rev_iter = if rp.bidirectional && !multi_type {
             Some(rev_iter_opt.unwrap_or_else(empty_edge_iter))
         } else {
             None
@@ -418,6 +565,7 @@ impl<'a> CondTraverseOp<'a> {
             fwd_iter: std::cell::RefCell::new(fwd_iter),
             rev_iter: rev_iter.map(std::cell::RefCell::new),
             bwd_iter: None,
+            union,
             fwd_src_label_ids,
             fwd_dst_label_ids,
             rev_src_label_ids,
@@ -481,8 +629,8 @@ impl<'a> CondTraverseOp<'a> {
                     return true;
                 }
             } else {
-                if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
+                if let Some(ts) = relationship_tensors(&g, &rp.types) {
+                    TraversalMatrix::Union(ts)
                 } else {
                     state.no_match = true;
                     if self.optional {
@@ -511,8 +659,8 @@ impl<'a> CondTraverseOp<'a> {
                         return true;
                     }
                 } else {
-                    if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
+                    if let Some(ts) = relationship_tensors(&g, &hop.types) {
+                        TraversalMatrix::Union(ts)
                     } else {
                         state.no_match = true;
                         if self.optional {
@@ -659,9 +807,9 @@ impl<'a> CondTraverseOp<'a> {
                 // alone cannot decide this. Storage matrix orientation:
                 // src=F's seed (matrix-src), dst=F*A result (matrix-dst),
                 // regardless of self.transposed (which only affects
-                // alias→storage mapping, not the underlying matrix orientation
-                // since build_relationship_matrix_unrestricted is
-                // non-transposed).
+                // alias→storage mapping, not the underlying matrix orientation:
+                // every `TraversalMatrix` variant multiplies by forward
+                // layers).
                 let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                     continue;
                 };
@@ -814,98 +962,120 @@ impl<'a> CondTraverseOp<'a> {
         // (quadratic across input rows). Build the shared transposed
         // iterator once, lazily.
         let need_bwd_fwd = fwd_src_id.is_none() && fwd_dst_id.is_some();
-        let need_bwd_rev = state.rev_iter.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
-        if (need_bwd_fwd || need_bwd_rev) && state.bwd_iter.is_none() {
-            state.bwd_iter = Some(std::cell::RefCell::new(
-                build_transposed_iter(&g, &rp.types).unwrap_or_else(empty_edge_iter),
-            ));
-        }
-
-        // Reuse the persistent forward iterator: seek the row range
-        // instead of allocating a fresh GxB_Iterator per input row.
-        let start = out.len();
-        {
-            let mut fwd_borrow;
-            let mut bwd_borrow;
-            let pairs = if need_bwd_fwd {
-                let d = u64::from(fwd_dst_id.expect("need_bwd_fwd implies dst bound"));
-                bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
-                bwd_borrow.seek(d, d);
-                Either::Left(
-                    (&mut *bwd_borrow).map(|(dest, src)| (NodeId::from(src), NodeId::from(dest))),
-                )
-            } else {
-                fwd_borrow = state.fwd_iter.borrow_mut();
-                let (min_row, max_row) =
-                    fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
-                fwd_borrow.seek(min_row, max_row);
-                let fwd_dst_filter = fwd_dst_id.map(u64::from);
-                Either::Right(
-                    (&mut *fwd_borrow)
-                        .filter(move |(_, dest)| fwd_dst_filter.is_none_or(|d| d == *dest))
-                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest))),
-                )
-            };
-            Self::process_pairs(
-                pairs,
+        let start;
+        if state.union.is_some() {
+            start = out.len();
+            Self::expand_union_row(
+                state,
+                &g,
+                rp,
                 transposed,
-                from_id,
-                to_id,
-                &g,
-                rp,
+                (from_id, to_id),
+                (fwd_src_id, fwd_dst_id),
+                (rev_src_id, rev_dst_id),
+                need_bwd_fwd,
                 batch,
                 row_idx,
                 out,
                 emit_relationship,
                 sibling_edges,
-                &state.edge_type_indices,
-                &state.fwd_src_label_ids,
-                &state.fwd_dst_label_ids,
             );
-        }
+        } else {
+            let need_bwd_rev =
+                state.rev_iter.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
+            if (need_bwd_fwd || need_bwd_rev) && state.bwd_iter.is_none() {
+                state.bwd_iter = Some(std::cell::RefCell::new(
+                    build_transposed_iter(&g, &rp.types).unwrap_or_else(empty_edge_iter),
+                ));
+            }
 
-        // Process reverse relationships for bidirectional patterns.
-        if let Some(ref rev_iter_cell) = state.rev_iter {
-            let mut rev_borrow;
-            let mut bwd_borrow;
-            let pairs = if need_bwd_rev {
-                let d = u64::from(rev_dst_id.expect("need_bwd_rev implies dst bound"));
-                bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
-                bwd_borrow.seek(d, d);
-                Either::Left(
-                    (&mut *bwd_borrow)
-                        .map(|(dest, src)| (NodeId::from(src), NodeId::from(dest)))
-                        .filter(|(s, d)| s != d),
-                )
-            } else {
-                rev_borrow = rev_iter_cell.borrow_mut();
-                let (min_row, max_row) =
-                    rev_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
-                rev_borrow.seek(min_row, max_row);
-                let rev_dst_filter = rev_dst_id.map(u64::from);
-                Either::Right(
-                    (&mut *rev_borrow)
-                        .filter(move |(_, dest)| rev_dst_filter.is_none_or(|d| d == *dest))
-                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)))
-                        .filter(|(s, d)| s != d),
-                )
-            };
-            Self::process_pairs(
-                pairs,
-                !transposed,
-                from_id,
-                to_id,
-                &g,
-                rp,
-                batch,
-                row_idx,
-                out,
-                emit_relationship,
-                sibling_edges,
-                &state.edge_type_indices,
-                &state.rev_src_label_ids,
-                &state.rev_dst_label_ids,
-            );
+            // Reuse the persistent forward iterator: seek the row range
+            // instead of allocating a fresh GxB_Iterator per input row.
+            start = out.len();
+            {
+                let mut fwd_borrow;
+                let mut bwd_borrow;
+                let pairs = if need_bwd_fwd {
+                    let d = u64::from(fwd_dst_id.expect("need_bwd_fwd implies dst bound"));
+                    bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
+                    bwd_borrow.seek(d, d);
+                    Either::Left(
+                        (&mut *bwd_borrow)
+                            .map(|(dest, src)| (NodeId::from(src), NodeId::from(dest))),
+                    )
+                } else {
+                    fwd_borrow = state.fwd_iter.borrow_mut();
+                    let (min_row, max_row) =
+                        fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                    fwd_borrow.seek(min_row, max_row);
+                    let fwd_dst_filter = fwd_dst_id.map(u64::from);
+                    Either::Right(
+                        (&mut *fwd_borrow)
+                            .filter(move |(_, dest)| fwd_dst_filter.is_none_or(|d| d == *dest))
+                            .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest))),
+                    )
+                };
+                Self::process_pairs(
+                    pairs,
+                    transposed,
+                    from_id,
+                    to_id,
+                    &g,
+                    rp,
+                    batch,
+                    row_idx,
+                    out,
+                    emit_relationship,
+                    sibling_edges,
+                    &state.edge_type_indices,
+                    &state.fwd_src_label_ids,
+                    &state.fwd_dst_label_ids,
+                );
+            }
+
+            // Process reverse relationships for bidirectional patterns.
+            if let Some(ref rev_iter_cell) = state.rev_iter {
+                let mut rev_borrow;
+                let mut bwd_borrow;
+                let pairs = if need_bwd_rev {
+                    let d = u64::from(rev_dst_id.expect("need_bwd_rev implies dst bound"));
+                    bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
+                    bwd_borrow.seek(d, d);
+                    Either::Left(
+                        (&mut *bwd_borrow)
+                            .map(|(dest, src)| (NodeId::from(src), NodeId::from(dest)))
+                            .filter(|(s, d)| s != d),
+                    )
+                } else {
+                    rev_borrow = rev_iter_cell.borrow_mut();
+                    let (min_row, max_row) =
+                        rev_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                    rev_borrow.seek(min_row, max_row);
+                    let rev_dst_filter = rev_dst_id.map(u64::from);
+                    Either::Right(
+                        (&mut *rev_borrow)
+                            .filter(move |(_, dest)| rev_dst_filter.is_none_or(|d| d == *dest))
+                            .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)))
+                            .filter(|(s, d)| s != d),
+                    )
+                };
+                Self::process_pairs(
+                    pairs,
+                    !transposed,
+                    from_id,
+                    to_id,
+                    &g,
+                    rp,
+                    batch,
+                    row_idx,
+                    out,
+                    emit_relationship,
+                    sibling_edges,
+                    &state.edge_type_indices,
+                    &state.rev_src_label_ids,
+                    &state.rev_dst_label_ids,
+                );
+            }
         }
 
         // When both this CT and its child are anonymous bidirectional,
@@ -937,6 +1107,124 @@ impl<'a> CondTraverseOp<'a> {
         drop(g);
 
         Ok(())
+    }
+
+    /// `expand_row`'s expansion for a multi-type pattern: the single-type
+    /// forward/reverse code run over the union iterators. Out of line on
+    /// purpose — single-type traversals never take it, and a second inlined
+    /// copy in `expand_row` measured +2.5–12% instructions on them.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn expand_union_row(
+        state: &mut CtState,
+        g: &crate::graph::graph::Graph,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        transposed: bool,
+        (from_id, to_id): (Option<NodeId>, Option<NodeId>),
+        (fwd_src_id, fwd_dst_id): (Option<NodeId>, Option<NodeId>),
+        (rev_src_id, rev_dst_id): (Option<NodeId>, Option<NodeId>),
+        need_bwd_fwd: bool,
+        batch: &Batch<'a>,
+        row_idx: usize,
+        out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
+        emit_relationship: bool,
+        sibling_edges: &[u32],
+    ) {
+        let iters = state.union.as_deref_mut().expect("multi-type state");
+        let need_bwd_rev = iters.rev.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
+        if (need_bwd_fwd || need_bwd_rev) && iters.bwd.is_none() {
+            iters.bwd = Some(std::cell::RefCell::new(
+                build_transposed_union_iter(g, &rp.types)
+                    .unwrap_or_else(|| UnionIter::new(Vec::new())),
+            ));
+        }
+        let state = &*state;
+        let iters = state.union.as_deref().expect("multi-type state");
+        // Reuse the persistent forward iterator: seek the row range
+        // instead of allocating a fresh GxB_Iterator per input row.
+        {
+            let mut fwd_borrow;
+            let mut bwd_borrow;
+            let pairs = if need_bwd_fwd {
+                let d = u64::from(fwd_dst_id.expect("need_bwd_fwd implies dst bound"));
+                bwd_borrow = iters.bwd.as_ref().expect("built above").borrow_mut();
+                bwd_borrow.seek(d, d);
+                Either::Left(
+                    (&mut *bwd_borrow).map(|(dest, src)| (NodeId::from(src), NodeId::from(dest))),
+                )
+            } else {
+                fwd_borrow = iters.fwd.borrow_mut();
+                let (min_row, max_row) =
+                    fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                fwd_borrow.seek(min_row, max_row);
+                let fwd_dst_filter = fwd_dst_id.map(u64::from);
+                Either::Right(
+                    (&mut *fwd_borrow)
+                        .filter(move |(_, dest)| fwd_dst_filter.is_none_or(|d| d == *dest))
+                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest))),
+                )
+            };
+            Self::process_pairs(
+                pairs,
+                transposed,
+                from_id,
+                to_id,
+                g,
+                rp,
+                batch,
+                row_idx,
+                out,
+                emit_relationship,
+                sibling_edges,
+                &state.edge_type_indices,
+                &state.fwd_src_label_ids,
+                &state.fwd_dst_label_ids,
+            );
+        }
+
+        // Process reverse relationships for bidirectional patterns.
+        if let Some(ref rev_iter_cell) = iters.rev {
+            let mut rev_borrow;
+            let mut bwd_borrow;
+            let pairs = if need_bwd_rev {
+                let d = u64::from(rev_dst_id.expect("need_bwd_rev implies dst bound"));
+                bwd_borrow = iters.bwd.as_ref().expect("built above").borrow_mut();
+                bwd_borrow.seek(d, d);
+                Either::Left(
+                    (&mut *bwd_borrow)
+                        .map(|(dest, src)| (NodeId::from(src), NodeId::from(dest)))
+                        .filter(|(s, d)| s != d),
+                )
+            } else {
+                rev_borrow = rev_iter_cell.borrow_mut();
+                let (min_row, max_row) =
+                    rev_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                rev_borrow.seek(min_row, max_row);
+                let rev_dst_filter = rev_dst_id.map(u64::from);
+                Either::Right(
+                    (&mut *rev_borrow)
+                        .filter(move |(_, dest)| rev_dst_filter.is_none_or(|d| d == *dest))
+                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)))
+                        .filter(|(s, d)| s != d),
+                )
+            };
+            Self::process_pairs(
+                pairs,
+                !transposed,
+                from_id,
+                to_id,
+                g,
+                rp,
+                batch,
+                row_idx,
+                out,
+                emit_relationship,
+                sibling_edges,
+                &state.edge_type_indices,
+                &state.rev_src_label_ids,
+                &state.rev_dst_label_ids,
+            );
+        }
     }
 
     /// Processes relationship pairs from an iterator without materializing them.
