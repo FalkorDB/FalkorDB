@@ -40,6 +40,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::planner::binder::removed_node_labels;
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
@@ -3210,6 +3211,18 @@ impl Planner {
                 res.expect("SET has at least one item")
             }
             QueryIR::Remove(mut items) => {
+                // The REMOVE strips the labels from the node, so a later
+                // operator reading it must check them again. Dropped for
+                // every variable, since the node may be bound under several.
+                for item in &items {
+                    if let Some(labels) = removed_node_labels(item) {
+                        for verified in self.verified_labels.values_mut() {
+                            for label in &labels {
+                                verified.remove(label);
+                            }
+                        }
+                    }
+                }
                 let chain = self.extract_clause_expr_comprehensions(&mut items, None);
                 let mut res = tree!(IR::Remove(items));
                 if let Some(chain) = chain {

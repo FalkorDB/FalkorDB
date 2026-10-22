@@ -181,6 +181,34 @@ class testLabelUpdate():
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
+    def test_match_after_remove_label_and_with(self):
+        # Regression for #3450: WITH commits the REMOVE, so a MATCH after it
+        # sees the node without the removed label. Neither the label the
+        # binder accumulated for the variable nor the one the planner had
+        # already verified may survive the REMOVE.
+        # the unlabeled MATCH must not be tightened to (a:A)
+        unlabeled = [
+            "MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b) RETURN labels(a), labels(b)",
+            "MATCH (a:A) REMOVE a:A WITH * MATCH (a)-[:R]->(b) RETURN labels(a), labels(b)",
+            "MATCH (a:A) REMOVE a:A WITH a CALL { WITH a MATCH (a)-[:R]->(b) RETURN b } RETURN labels(a), labels(b)",
+            "MATCH (a:A) CALL { WITH a REMOVE a:A } WITH a MATCH (a)-[:R]->(b) RETURN labels(a), labels(b)",
+            "MATCH (n:A) WITH n AS a, n AS c REMOVE c:A WITH a MATCH (a)-[:R]->(b) RETURN labels(a), labels(b)",
+        ]
+        # the explicit :A must be checked, not taken as already verified
+        labeled = [
+            "MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b) RETURN labels(a), labels(b)",
+            "MATCH (n:A), (b:B) WITH n AS a, n AS c, b REMOVE c:A WITH a, b MATCH (a:A)-[:R]->(b) RETURN labels(a), labels(b)",
+        ]
+
+        for q, expected in [(q, [[[], ['B']]]) for q in unlabeled] + [(q, []) for q in labeled]:
+            self.query_master_and_wait("MATCH (n) DETACH DELETE n")
+            self.query_master_and_wait("CREATE (:A)-[:R]->(:B)")
+            res = self.query_master_and_wait(q)
+            self.env.assertEqual(res.labels_removed, 1, message=q)
+            self.env.assertEqual(res.result_set, expected, message=q)
+
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
     def test_constraint_violation_rollback(self):
         # A unique-constraint violation raised inside _LabelNodes_Single must
         # cause a full rollback: no labels are permanently added to any node
