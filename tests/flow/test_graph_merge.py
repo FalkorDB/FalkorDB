@@ -842,3 +842,33 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test39_merge_edge_of_detach_deleted_node(self):
+        """
+        DETACH DELETE defers a node's edges to commit, but a MERGE later in
+        the same query must not match one of them: the endpoint is gone, so
+        the MERGE has to create, and creating on a deleted node is an error
+        https://github.com/FalkorDB/FalkorDB/issues/3452
+        """
+
+        queries = ["""MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE b
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]-(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[:R]->(b)"""]
+
+        con = self.env.getConnection()
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+            msg = assert_error_reply(self.env, con, "GRAPH.QUERY", GRAPH_ID, q)
+            self.env.assertContains("endpoint was not found", msg or "")
+
+            # the failed query left the graph as it was
+            actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
+                                         RETURN count(r)""")
+            self.env.assertEqual(actual.result_set, [[1]])
