@@ -237,6 +237,7 @@ class ImageFS:
     def __init__(self, tar_path):
         self.tar = tarfile.open(tar_path)
         self.members = {member_path(m.name): m for m in self.tar.getmembers()}
+        self._names = None
 
     def resolve(self, path, depth=0):
         """The path with every symlink followed, or None when it does not exist."""
@@ -278,6 +279,28 @@ class ImageFS:
         if m is None or m.issym() or m.isdir():
             return None
         return self.canonical(member_path(m.linkname)) if m.islnk() else member_path(m.name)
+
+    def names(self):
+        """Every path a member can be opened by: its own name, and the same name
+        through each symlink to a directory on the way (/lib/x for /usr/lib/x).
+        A link into a directory it is itself in is left out, so this ends."""
+        if self._names is None:
+            links = []
+            for p, m in self.members.items():
+                if m.issym():
+                    t = self.resolve(p)
+                    if (t and t != "/" and not p.startswith(t + "/")
+                            and self.members.get(t) is not None and self.members[t].isdir()):
+                        links.append((p, t))
+            names, new = set(self.members), set(self.members)
+            for _ in range(8):  # names that pass through more than one link
+                added = {link + n[len(t):] for link, t in links for n in new if n.startswith(t + "/")} - names
+                if not added:
+                    break
+                names |= added
+                new = added
+            self._names = names
+        return self._names
 
     def member(self, real):
         return self.members.get(real)
@@ -575,10 +598,10 @@ def runtime_roots(src, fs, image, os_name, errors):
         machine = machines.pop()
 
     def loadable_named(match):
-        """The loadable files a matching name is, links followed: a symlink
-        in a module directory can name a library anywhere."""
+        """The loadable files a matching name is, links followed: a module
+        directory, or a symlink in it, can lead to a library anywhere."""
         found = set()
-        for p in fs.members:
+        for p in fs.names():
             if match(p):
                 real = fs.canonical(p)
                 if real and fs.is_file(real) and an.loadable(real, machine):
