@@ -398,6 +398,7 @@ impl Drop for MvccGraph {
 mod tests {
     use super::{CommitError, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
+    use crate::index::index_docs::IndexDocs;
     use roaring::RoaringTreemap;
     use std::sync::Arc;
 
@@ -414,7 +415,7 @@ mod tests {
         let holed: RoaringTreemap = [0u64, 5].into_iter().collect();
         invalid
             .borrow_mut()
-            .create_nodes(&holed)
+            .create_nodes(&holed, &mut IndexDocs::default())
             .expect("neither id is live, so the graph takes them");
         assert!(
             matches!(mvcc.commit(invalid), Err(CommitError::Invalid(_))),

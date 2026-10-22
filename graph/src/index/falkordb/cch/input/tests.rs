@@ -49,7 +49,8 @@ impl Builder {
             .into_iter()
             .collect();
         assert_eq!(ids, (0..nodes).collect(), "a fresh graph hands out 0..n");
-        g.create_nodes(&ids).expect("creatable");
+        g.create_nodes(&ids, &mut IndexDocs::default())
+            .expect("creatable");
         let weight_attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
         Self { g, weight_attr }
     }
@@ -73,7 +74,7 @@ impl Builder {
         let srcs: Vec<u64> = edges.iter().map(|e| e.0).collect();
         let dsts: Vec<u64> = edges.iter().map(|e| e.1).collect();
         self.g
-            .create_relationships_bulk(&name, &srcs, &dsts, &ids)
+            .create_relationships_bulk(&name, &srcs, &dsts, &ids, &mut IndexDocs::default())
             .expect("creatable");
 
         let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();

@@ -430,8 +430,8 @@ impl IndexDocs {
         // documents are folded for publishing; anything still here would be dropped.
         #[cfg(feature = "index-falkordb")]
         debug_assert!(
-            other.native.is_empty(),
-            "native index writes must be applied before the documents are folded"
+            other.native.is_empty() && other.cch.is_empty(),
+            "native index and CCH writes must be applied before the documents are folded"
         );
         for (slot, ids) in other.node_adds.drain() {
             *self.node_adds.entry(slot).or_default() |= ids;
@@ -1341,7 +1341,7 @@ impl Pending {
     ) -> Result<(), String> {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            g.create_nodes(&self.created_nodes)
+            g.create_nodes(&self.created_nodes, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
@@ -1355,7 +1355,7 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids)
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids, &mut self.index_docs)
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -1468,6 +1468,11 @@ impl Pending {
         // the mutations from this transaction (writes apply immediately to
         // the private MVCC graph).
         self.enforce_constraints(g)?;
+
+        // The CCH indexes this `Commit` touched, once its writes are all in and checked. On the
+        // private version, before the first `Commit` escalates, so the rebuild is outside the
+        // writer window; a later `Commit` and a procedure reading the index see it.
+        g.apply_cch_writes(&mut self.index_docs)?;
 
         // Index operations are deferred — they will be applied only after
         // the full query succeeds to avoid stale RediSearch entries on
@@ -1938,7 +1943,10 @@ impl Pending {
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
         #[cfg(feature = "index-falkordb")]
-        self.index_docs.native.clear();
+        {
+            self.index_docs.native.clear();
+            self.index_docs.cch = Default::default();
+        }
 
         // Close this segment's batch and open the next at the boundary the
         // commit just left. Closing is where the batch's shape is owed —
@@ -2278,10 +2286,10 @@ mod native_unique_tests {
             .node_id_space()
             .reserve(rows.len(), &RoaringTreemap::new())
             .expect("reserved");
-        g.create_nodes(&ids.iter().copied().collect())
+        let mut docs = IndexDocs::default();
+        g.create_nodes(&ids.iter().copied().collect(), &mut docs)
             .expect("freshly reserved ids are creatable");
         let label = g.get_label_id_mut("U");
-        let mut docs = IndexDocs::default();
         g.set_nodes_labels_bulk(&ids, &vec![label.0 as u64; ids.len()], &mut docs, false);
         let mut attrs = FxHashMap::default();
         for (&id, row) in ids.iter().zip(rows) {
@@ -2562,13 +2570,14 @@ mod native_unique_tests {
             .node_id_space()
             .reserve(2, &RoaringTreemap::new())
             .expect("reserved");
-        g.create_nodes(&ends.iter().copied().collect())
+        let mut docs = IndexDocs::default();
+        g.create_nodes(&ends.iter().copied().collect(), &mut docs)
             .expect("freshly reserved ids are creatable");
         let ids = g
             .relationship_id_space()
             .reserve(3, &RoaringTreemap::new())
             .expect("reserved");
-        g.create_relationships_bulk(&ty, &[ends[0]; 3], &[ends[1]; 3], &ids)
+        g.create_relationships_bulk(&ty, &[ends[0]; 3], &[ends[1]; 3], &ids, &mut docs)
             .expect("freshly reserved ids are creatable");
         let attr = g.get_or_create_rel_attr_id(&arc("id"));
         let attrs: FxHashMap<u64, Vec<(u16, Value)>> = ids
@@ -2576,7 +2585,6 @@ mod native_unique_tests {
             .zip([1, 1, 2])
             .map(|(&id, v)| (id, vec![(attr, Value::Int(v))]))
             .collect();
-        let mut docs = IndexDocs::default();
         g.import_relationship_attrs(&attrs, &mut docs);
         g.apply_index_writes(&mut docs);
 
