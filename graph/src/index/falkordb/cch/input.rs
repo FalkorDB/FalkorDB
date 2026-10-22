@@ -27,8 +27,7 @@ use crate::graph::graphblas::matrix::{Descriptor, Matrix};
 use crate::runtime::value::Value;
 
 use super::{CchError, CchIndexDef, CchInput, id_index};
-pub(crate) use pair_weights::PairWeights;
-#[cfg(test)]
+pub(crate) use pair_weights::{PairWeights, cheapest_edge};
 pub(super) use weight_ops::edge_weight;
 use weight_ops::{WeightContext, WeightOps};
 

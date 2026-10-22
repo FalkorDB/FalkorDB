@@ -392,6 +392,32 @@ class testCchWeightConstraint():
             self.env.assertContains("edge weights must be >= 0 (+inf marks a closed edge)",
                                     str(e))
 
+    def test04_a_closed_edge_is_routed_around(self):
+        # 0 -> 1 -> 2 costs 2, the direct 0 -> 2 costs 10.
+        g = self.db.select_graph("cch_closed_route")
+        g.query("CREATE (a:N {id: 0}), (b:N {id: 1}), (c:N {id: 2}), "
+                "(a)-[:ROAD {time: 1.0}]->(b), (b)-[:ROAD {time: 1.0}]->(c), "
+                "(a)-[:ROAD {time: 10.0}]->(c)")
+        g.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        q = ("MATCH (a:N {id: $s}), (b:N {id: $t}) "
+             "CALL db.idx.cch.query({sourceNode: a, targetNode: b, relTypes: ['ROAD'], "
+             "weightProp: 'time'}) YIELD pathWeight, path "
+             "RETURN pathWeight, [n IN nodes(path) | n.id]")
+        route = lambda: g.ro_query(q, {"s": 0, "t": 2}).result_set
+        self.env.assertEquals(route(), [[2.0, [0, 1, 2]]])
+        # Close 1 -> 2: the detour is taken.
+        g.query("MATCH (:N {id: 1})-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0 / 0.0")
+        self.env.assertEquals(route(), [[10.0, [0, 2]]])
+        # A finite edge parallel to the closed one wins the pair.
+        g.query("MATCH (b:N {id: 1}), (c:N {id: 2}) CREATE (b)-[:ROAD {time: 3.0}]->(c)")
+        self.env.assertEquals(route(), [[4.0, [0, 1, 2]]])
+        # Every way into 2 closed: no row.
+        g.query("MATCH ()-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0 / 0.0")
+        self.env.assertEquals(route(), [])
+        # Reopen every edge into 2 at 1.0: the direct edge now wins.
+        g.query("MATCH ()-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0")
+        self.env.assertEquals(route(), [[1.0, [0, 2]]])
+
 
 #-----------------------------------------------------------------------------
 # 3. The hierarchy is built in the background
@@ -400,10 +426,9 @@ class testCchWeightConstraint():
 
 class testCchBackgroundBuild():
     """CREATE CCH INDEX checks the weights and returns; the index builder builds
-    the hierarchy afterwards, off the GIL, as it builds a column. Nothing lists a
-    CCH index's state yet (db.indexes does from the procedure's PR on), so the
-    build is observed through GRAPH.MEMORY USAGE, which counts a hierarchy once
-    it is adopted."""
+    the hierarchy afterwards, off the GIL, as it builds a column. The build is
+    observed through GRAPH.MEMORY USAGE, which counts a hierarchy once it is
+    adopted, and through db.indexes, which lists its state."""
 
     GRAPH = "cch_background_build"
 
@@ -462,3 +487,130 @@ class testCchBackgroundBuild():
         self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
         self.env.assertEqual(self._indices_mb(), 0)
         self.env.assertTrue(self.con.ping())
+
+    def _status(self):
+        rows = self.graph.ro_query("CALL db.indexes()").result_set
+        return [r[7] for r in rows
+                if r[2] and any(v == ["CCH"] for v in r[2].values())]
+
+    def test03_listed_by_state_and_queried_in_any(self):
+        # Whatever the build's state, the query answers: from the hierarchy once
+        # OPERATIONAL, by searching the graph while UNDER CONSTRUCTION.
+        q = ("MATCH (a), (b) WHERE id(a) = 0 AND id(b) = $t "
+             "CALL db.idx.cch.query({sourceNode: a, targetNode: b, relTypes: ['ROAD'], "
+             "weightProp: 'time'}) YIELD pathWeight RETURN pathWeight")
+        self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertContains(self._status()[0], ["UNDER CONSTRUCTION", "OPERATIONAL"])
+        corner = 100 * 100 - 1
+        self.env.assertEquals(self.graph.ro_query(q, {"t": corner}).result_set, [[198.0]])
+        deadline = time.time() + 30
+        while self._status() != ["OPERATIONAL"]:
+            self.env.assertLess(time.time(), deadline)
+            time.sleep(0.05)
+        self.env.assertEquals(self.graph.ro_query(q, {"t": corner}).result_set, [[198.0]])
+        self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+
+
+#-----------------------------------------------------------------------------
+# 4. Writes maintain the index through its change set
+#-----------------------------------------------------------------------------
+
+
+QUERY = ("MATCH (a:N {{id: $s}}), (b:N {{id: $t}}) "
+         "CALL db.idx.cch.query({{sourceNode: a, targetNode: b, relTypes: {types}, "
+         "weightProp: '{weight}'}}) YIELD pathWeight RETURN pathWeight")
+
+
+def _dijkstra(n, edges, s):
+    """Cheapest weights from `s` over `edges` [(u, v, w)]; +inf weights are closed."""
+    import heapq
+    adj = {}
+    for u, v, w in edges:
+        if w != float("inf"):
+            adj.setdefault(u, []).append((v, w))
+    dist = {s: 0.0}
+    heap = [(0.0, s)]
+    while heap:
+        d, u = heapq.heappop(heap)
+        if d > dist.get(u, float("inf")):
+            continue
+        for v, w in adj.get(u, []):
+            if d + w < dist.get(v, float("inf")):
+                dist[v] = d + w
+                heapq.heappush(heap, (d + w, v))
+    return dist
+
+
+class testCchChangeSet():
+    """GRAPH.BULK appends of edges and of nodes with edges keep the index answering
+    like Dijkstra on the graph as it stands: the bulk command reaches the change set as
+    Cypher writes do (those are the unit tests' random writes). Most appends are absorbed
+    by a scoped recustomization of the held hierarchy; an edge between nodes it does not
+    join, an edge onto a node past its capacity included, sends it back to the builder,
+    and the query searches the graph until the rebuilt hierarchy is adopted. A node alone
+    changes nothing."""
+
+    def __init__(self):
+        if not INDEX_FALKORDB:
+            Environment.skip(None)
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+
+    def _edges(self, g):
+        return [(u, v, w) for u, v, w in g.ro_query(
+            "MATCH (a:N)-[r:ROAD]->(b:N) RETURN a.id, b.id, "
+            "CASE WHEN r.time IS NULL THEN 1.0 ELSE toFloat(r.time) END").result_set]
+
+    def _check(self, g, ids, rng, what):
+        edges = self._edges(g)
+        q = QUERY.format(types="['ROAD']", weight="time")
+        for s in rng.sample(ids, 6):
+            dist = _dijkstra(len(ids), edges, s)
+            for t in rng.sample(ids, 8):
+                got = g.ro_query(q, {"s": s, "t": t}).result_set
+                want = dist.get(t)
+                if want is None:
+                    self.env.assertEquals(got, [], message=f"{what}: {s}->{t}")
+                else:
+                    self.env.assertEquals(len(got), 1, message=f"{what}: {s}->{t}")
+                    if got:
+                        self.env.assertAlmostEqual(got[0][0], want, 1e-9,
+                                                   message=f"{what}: {s}->{t}")
+
+    def test01_bulk_appends(self):
+        import random
+        rng = random.Random(11)
+        g = self.db.select_graph("cch_change_set_bulk")
+        n = 40
+        g.query(f"UNWIND range(0, {n - 1}) AS i CREATE (:N {{id: i}})")
+        g.query("UNWIND range(0, 38) AS i MATCH (a:N {id: i}), (b:N {id: i + 1}) "
+                "CREATE (a)-[:ROAD {time: 2.0}]->(b), (b)-[:ROAD {time: 2.0}]->(a)")
+        g.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        ids = list(range(n))
+        self._check(g, ids, rng, "after create")
+
+        def edges_token(pairs):
+            out = b"ROAD\0" + struct.pack("=I", 1) + b"time\0"
+            for u, v, w in pairs:
+                out += struct.pack("=QQ", u, v) + struct.pack("=Bd", 2, w)
+            return out
+
+        # Edges between joined pairs (the reverse of a path edge): absorbed.
+        self.con.execute_command("GRAPH.BULK", "cch_change_set_bulk", 0, 3, 0, 1,
+                                 edges_token([(5, 4, 0.5), (9, 10, 0.25), (20, 19, float("inf"))]))
+        self._check(g, ids, rng, "bulk joined")
+        # Edges between unjoined pairs: back to the builder.
+        self.con.execute_command("GRAPH.BULK", "cch_change_set_bulk", 0, 2, 0, 1,
+                                 edges_token([(0, 39, 1.0), (39, 0, 1.0)]))
+        self._check(g, ids, rng, "bulk unjoined")
+        # New nodes (ids 40.., `N` with an `id`) and edges onto them, in one insert.
+        k = 30
+        nodes = b"N\0" + struct.pack("=I", 1) + b"id\0"
+        for i in range(k):
+            nodes += struct.pack("=Bq", 4, n + i)
+        rels = edges_token([(n + i, (n + i * 7) % (n + k), 1.0) for i in range(k)
+                            if n + i != (n + i * 7) % (n + k)] + [(0, n, 3.0)])
+        cnt = sum(1 for i in range(k) if n + i != (n + i * 7) % (n + k)) + 1
+        self.con.execute_command("GRAPH.BULK", "cch_change_set_bulk", k, cnt, 1, 1, nodes, rels)
+        ids += list(range(n, n + k))
+        self._check(g, ids, rng, "bulk new nodes")

@@ -11,17 +11,21 @@
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `maint.rs`     keeping the indexes correct after writes (#3214), and the write-time weight check
+//! - `procedure.rs` `db.idx.cch.query` and the CCH rows of `db.indexes()`
+//! - `fallback.rs`  the graph search a query falls back to while the hierarchy cannot answer
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
 
 mod customize;
+pub(crate) mod fallback;
 mod input;
 pub(crate) mod maint;
 mod nd;
 mod order;
 mod partial;
+pub(crate) mod procedure;
 mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
