@@ -437,9 +437,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      # Submodules: this job compiles the engine, and native-deps builds
+      # GraphBLAS/LAGraph/RediSearch from deps/ whenever the toolchain image's
+      # prebuilt archives do not match the current key — e.g. after a dep bump.
+      # Without them it panics "deps/GraphBLAS is empty" before any query runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
 
       # coverage is the one job that cannot use the prebaked measurement image: it
       # needs cargo and llvm-tools to build an instrumented module, which only the
