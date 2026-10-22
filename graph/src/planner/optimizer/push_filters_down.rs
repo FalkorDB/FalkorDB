@@ -45,7 +45,7 @@ use crate::{
 };
 
 use super::super::{IR, subtree_contains};
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::{collect_expr_variables_with, collect_subtree_variables};
 
 /// Variables a filter hoisted directly above `node` is allowed to reference,
 /// for the env-resetting operators only.
@@ -99,10 +99,16 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
 /// Each conjunct is routed to the child whose variables fully cover the
 /// conjunct's referenced variables. Conjuncts that span multiple children
 /// remain at the current level.
-pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
+pub(super) fn push_filters_down(
+    optimized_plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
     loop {
         let mut changed = false;
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        let indices = optimized_plan
+            .root()
+            .indices_with(traverser)
+            .collect::<Vec<_>>();
         for idx in indices {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
                 continue;
@@ -262,7 +268,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             let mut remaining: Vec<DynTree<ExprIR<Variable>>> = vec![];
 
             for conjunct in conjuncts {
-                let conj_vars = collect_expr_variables(&conjunct);
+                let conj_vars = collect_expr_variables_with(&conjunct, traverser);
                 let mut matched_any = false;
                 for (i, (_, child_vars, _)) in children.iter().enumerate() {
                     if conj_vars.iter().all(|v| child_vars.contains(v)) {
@@ -289,7 +295,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let mut split_idx = None;
 
                 for (ci, conjunct) in remaining.iter().enumerate() {
-                    let conj_vars = collect_expr_variables(conjunct);
+                    let conj_vars = collect_expr_variables_with(conjunct, traverser);
                     // Find solving branches: children that contribute >=1
                     // variable referenced by this conjunct.
                     let solving: Vec<usize> = children
@@ -483,7 +489,7 @@ mod tests {
         let raw = parser.parse().expect("parse");
         let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
         let mut plan = Planner::new(scope_vars).plan(ir);
-        push_filters_down(&mut plan);
+        push_filters_down(&mut plan, &mut orx_tree::Traversal.bfs());
 
         plan.root()
             .indices::<Bfs>()
