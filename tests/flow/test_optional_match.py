@@ -419,3 +419,41 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 10)
 
+    def test29_optional_cond_traverse_reset_before_init(self):
+        """
+        regression for a crash introduced by #1329 ("optional conditional
+        traverse"): CondTraverseReset unconditionally cleared op->w / op->e,
+        which are allocated lazily on the op's first consume. a reset can reach
+        an OPTIONAL MATCH's conditional-traverse before it was ever consumed -
+        here on the unconsumed RHS of a nested CALL whose bound branch produced
+        no rows, reset by the enclosing Apply - leaving the vectors NULL. the
+        resulting GrB_Vector_clear(NULL) tripped the GrB_OK assert and aborted
+        the server on debug builds. verify the query runs without crashing.
+        """
+        self.graph.delete()
+        self.graph.query("CREATE (:A {v: 1})-[:R]->(:C {v: 2})")
+
+        # the inner MATCH over a non-existent relationship type yields no rows,
+        # so the nested CALL's bound branch is empty and its OPTIONAL MATCH
+        # conditional-traverse is reset before it is ever consumed / initialized
+        query = """MATCH (a:A)
+                   CALL {
+                       WITH a
+                       MATCH (a)-[:NOEDGE]->(b)
+                       CALL {
+                           WITH b
+                           OPTIONAL MATCH (b)-[:R]->(c)
+                           RETURN c
+                       }
+                       RETURN c
+                   }
+                   RETURN a.v"""
+        # the inner MATCH is empty for every a, so the subquery yields nothing
+        # and every outer row is filtered out; the point is that it must not crash
+        res = self.graph.query(query).result_set
+        self.env.assertEquals(res, [])
+
+        # the server must still be responsive afterwards
+        res = self.graph.query("MATCH (n) RETURN count(n)").result_set
+        self.env.assertEquals(res[0][0], 2)
+

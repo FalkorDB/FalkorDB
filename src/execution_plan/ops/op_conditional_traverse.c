@@ -338,8 +338,14 @@ static OpResult CondTraverseReset
 	op->record_count = 0 ;
 
 	if (op->optional) {
-		GrB_OK (GrB_Vector_clear (op->w)) ;
-		GrB_OK (GrB_Vector_clear (op->e)) ;
+		// op->w / op->e are allocated lazily in CondTraverseInit (on this op's
+		// first consume). a reset can reach the op before it was ever consumed -
+		// e.g. an OPTIONAL MATCH on the unconsumed RHS of a correlated subquery
+		// whose bound branch produced no rows, reset by an enclosing Apply - in
+		// which case they are still NULL. GrB_Vector_clear(NULL) returns an error
+		// that trips the GrB_OK assertion, so skip the clear when uninitialized
+		if (op->w != NULL) GrB_OK (GrB_Vector_clear (op->w)) ;
+		if (op->e != NULL) GrB_OK (GrB_Vector_clear (op->e)) ;
 
 		for (uint i = 0; i < arr_len (op->optional_records); i++) {
 			OpBase_DeleteRecord (op->optional_records+i) ;
