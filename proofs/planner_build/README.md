@@ -98,6 +98,7 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 | #2744 | `bug2744_bound_path_unfed_argument` | `MATCH (n0:A) WITH n0 MATCH p=(n0) RETURN n0.k8, p`: Rust 0 rows, C 1 row. Plan `Project(ExpandInto(Argument(Project(Scan))))`, as the live EXPLAIN | **Open** |
 | #2727 | `bug2727_alias_path_drops_rows` | `MATCH (n0:A) WITH n0 AS alias4 MATCH (alias4), p1=(alias4) RETURN alias4.k0`: Rust 0 rows, C `'x'` | **Open** |
 | #2725 | `bug2725_call_then_bound_path_loses_var` | `MATCH (n0) CALL db.labels() YIELD label MATCH (n0), p0=(n0) RETURN …`: Rust `Variable n0 not found`, C `1, A, [(0)]`. Plan `Project(Argument(ProcedureCall(Scan)))`: one empty row | **Open** |
+| #3450 | `bug3450_remove_keeps_verified_label` (property `RemoveKeepsVerifiedSound`, `RemoveVerified.lean`) | `REMOVE a:A` leaves `A` in `verified_labels`, `WITH` carries it, and the next MATCH skips the `hasLabels` check on the bound `a`: `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b)` returns 1 row `[] [B]`, C 0. `specRemove_sound`, `project_sound` prove the fixed REMOVE and the WITH carry keep `VerifiedSound` | **Open** |
 
 Also: `where_scan_indistinguishable` shows why bug 3 happened (a planner-built `Filter` over a scan looks the same as the shape the optimizer rebuilds). `planFilter_correct` assumes all patterns of one WHERE start in one scope, because the planner keys inline patterns by variable id only; no query breaking that was found.
 
@@ -127,6 +128,7 @@ There are no CONDITIONAL rows in this project.
 | `Misc.lean`, `Rename.lean`, `Fmt.lean` | Plan-tree helpers, `rename_projection_outputs`, EXPLAIN text |
 | `Ast.lean`, `Ast2.lean` | `parser/ast.rs`: variables, query graphs, connected components, validation, `Display` |
 | `PathBind.lean` | Named paths over an already-bound node: `BindsAllPaths`, `planMatchArm` (the MATCH arm), `Plan.argIsLeaf`, bugs #2311, #2727, #2737, #2743, #2744, #2725 |
+| `RemoveVerified.lean` | #3450: `VerifiedSound` (verified labels are on the node), REMOVE / WITH effect on `verified_labels`, `bug3450_remove_keeps_verified_label` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.

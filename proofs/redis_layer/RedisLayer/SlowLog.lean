@@ -10,6 +10,7 @@
 | `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
 | `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:181` |
 | `replyLen`            | `SlowLog::reply` `:191` (5-element rows) |
+| `MinCache`, `SlowestKept`, `addFixed` | #3442: the `min_latency` cache (`:77`, `:114`, `:172-177`); `add`'s update arm `:120-132` skips the recompute |
 
 **Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
 used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
@@ -326,5 +327,93 @@ theorem reset_empty (s : SL) : (reset s).entries = [] := rfl
 /-- `reply`: one 5-element row per entry. -/
 def replyLen (s : SL) : List Nat := s.entries.map fun _ => 5
 theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by simp [replyLen]
+
+/-! ## Gap closed: #3442 — the update arm leaves `min_latency` stale
+
+`SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raises the entry's
+latency and `return`s before the recompute at `:172-177`; `add`'s `some _` arm above is that
+branch (it leaves `minLat` alone). Once the cached minimum is below the real one, the
+pre-check at `:114` admits a query faster than every retained entry and the replace path
+(`:153-170`) evicts the real fastest entry. C (`SlowLog_Add`) sends the update path through
+`cleanup`, which recomputes the minimum. -/
+
+/-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
+def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries
+
+instance (s : SL) : Decidable (MinCache s) := by unfold MinCache; infer_instance
+
+/-- Replay a trace of `(hash, latency_ms)` additions. -/
+def run (s : SL) (tr : List (Nat × Nat)) : SL := tr.foldl (fun s p => add s p.1 p.2) s
+
+/-- Worst latency the trace logged for hash `h` (only latencies ≥ `MIN_LATENCY` count). -/
+def best (tr : List (Nat × Nat)) (h : Nat) : Nat :=
+  tr.foldl (fun m p => if p.1 = h ∧ MIN_LATENCY ≤ p.2 then max m p.2 else m) 0
+
+/-- Spec (`SlowestKept`, what C keeps): a query the trace logged that is no longer in the
+log was no slower than any query still in it. -/
+def slowestKeptB (tr : List (Nat × Nat)) (s : SL) : Bool :=
+  tr.all fun p => !(MIN_LATENCY ≤ p.2) || s.entries.any (·.hash = p.1) ||
+    s.entries.all fun e => decide (best tr p.1 ≤ e.latency)
+def SlowestKept (tr : List (Nat × Nat)) (s : SL) : Prop := slowestKeptB tr s = true
+
+instance (tr : List (Nat × Nat)) (s : SL) : Decidable (SlowestKept tr s) := by
+  unfold SlowestKept; infer_instance
+
+/-- The issue's trace: `Q1..Q10` at 20..110 ms, `Q1` again at 200 ms, then `Q11` at 25 ms. -/
+def trace3442 : List (Nat × Nat) :=
+  (List.range 10).map (fun i => (i + 1, 20 + 10 * i)) ++ [(1, 200), (11, 25)]
+
+/-- After ten distinct entries the cache is right; the update of `Q1` to 200 ms leaves it at
+20 while the real minimum is 30 (`MinCache` broken by the `some _` arm). -/
+theorem bug3442_update_breaks_min_cache :
+    let s := run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
+    MinCache s ∧ ¬ MinCache (add s 1 200) ∧ (add s 1 200).minLat = 20 ∧
+      minOf (add s 1 200).entries = 30 := by
+  decide
+
+/-- **#3442**: `Q11` (25 ms) is admitted and evicts `Q2` (30 ms): the log keeps a query
+faster than one it dropped (`SlowestKept` fails on main). -/
+theorem bug3442_faster_evicts_slower :
+    let s := run SL.new trace3442
+    s.entries.any (·.hash = 11) = true ∧ s.entries.any (·.hash = 2) = false ∧
+      ¬ SlowestKept trace3442 s := by
+  decide
+
+/-- The fix: recompute the minimum on the update arm too (C's `cleanup`). -/
+def addFixed (s : SL) (h lat : Nat) : SL :=
+  if lat < MIN_LATENCY then s
+  else if s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat then s
+  else match s.entries.find? (·.hash = h) with
+    | some _ =>
+      let es := s.entries.map fun e =>
+        if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e
+      ⟨es, minOf es⟩
+    | none =>
+      let es := if s.entries.length < MAX_ENTRIES then s.entries ++ [⟨h, lat⟩]
+        else s.entries.set (argmin s.entries) ⟨h, lat⟩
+      ⟨es, minOf es⟩
+
+/-- `addFixed` agrees with `add` on the entries; only the cached minimum differs. -/
+theorem addFixed_entries (s : SL) (h lat : Nat) :
+    (addFixed s h lat).entries = (add s h lat).entries := by
+  unfold addFixed add; split; · rfl
+  split; · rfl
+  split <;> rfl
+
+/-- The fixed `add` preserves the cache invariant, for every state and input. -/
+theorem addFixed_minCache (s : SL) (h lat : Nat) (hs : MinCache s) :
+    MinCache (addFixed s h lat) := by
+  unfold addFixed; split; · exact hs
+  split; · exact hs
+  split <;> exact fun _ => rfl
+
+def runFixed (s : SL) (tr : List (Nat × Nat)) : SL := tr.foldl (fun s p => addFixed s p.1 p.2) s
+
+/-- With the fix the issue's trace keeps `Q2` and rejects `Q11`, as C does. -/
+theorem fixed3442_trace :
+    let s := runFixed SL.new trace3442
+    s.entries.any (·.hash = 11) = false ∧ s.entries.any (·.hash = 2) = true ∧
+      SlowestKept trace3442 s := by
+  decide
 
 end RedisLayer.SlowLog

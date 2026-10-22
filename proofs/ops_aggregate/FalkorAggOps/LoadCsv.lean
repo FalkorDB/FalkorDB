@@ -23,6 +23,7 @@ structure V4 where
   b : Nat
   c : Nat
   d : Nat
+  deriving DecidableEq
 
 /-- load_csv.rs:48-63 (std `is_loopback`/`is_private`/… spelled out on the octets). -/
 def v4Forbidden (ip : V4) : Bool :=
@@ -47,6 +48,7 @@ theorem v4Forbidden_examples :
 inductive IP where
   | v4 (ip : V4)
   | v6 (forbidden : Bool)   -- the v6 checks of :124-130 (incl. a forbidden v4-mapped address)
+  deriving DecidableEq
 
 def ipForbidden : IP → Bool
   | .v4 ip => v4Forbidden ip

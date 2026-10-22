@@ -79,6 +79,9 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | #2776 | `replace_keeps_staged` | `SET x = m` / `SET r = {…}` keeps attributes staged earlier in the query instead of replacing them | **Open** (#2776) |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a GRAPH.BULK header with that many columns or a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | Bulk side fixed by #3063 (`normResolved_fits`); the malformed-RDB side remains, not reproduced |
 | #3063 | `pre3063_resolved_duplicate` | A GRAPH.BULK header naming a property twice stored two entries for one id | Fixed by #3063 (`resolved_duplicate_fixed`: the first column wins, as in C) |
+| #3448 | `bug3448_remove_of_staged_label` (property `RemLCommitted`), `bug3448_cancelled_node_keeps_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). The inflated `Labels removed` stat is the same in C | **Open** (#3448) |
+| #3453 | `bug3453_pendingWithLabels_yields_deleted` (property `PendingWithLabelsLive`) | `deleted_node` keeps `set_labels` and `get_pending_nodes_with_labels` does not filter deleted ids, so `SET n:B DELETE n MERGE (m:B)` matches the deleted node. The composed MERGE scan property is in ops_aggregate | **Open** (#3453) |
+| #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 | #3339 | `pre3339_isValid_any_depth` | Property validation accepted lists nested to any depth | Fixed by #3339 (`validate_depth`: accepted values have depth ≤ 4096) |
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.
@@ -107,6 +110,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `UniqueIndex.lean` | #3334's index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
+| `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447, #3448, #3453 counterexamples, `deletePendingNode_keeps_remL` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependency (`lakefile.toml`): [`../graph_queries`](../graph_queries), for its model of the graph's id spaces (`GQ.IdS`, `GQ.rCancel`), which `CancelRust.lean` uses to prove the cancel contract instead of assuming it.

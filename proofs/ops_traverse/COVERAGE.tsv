@@ -14,7 +14,7 @@ graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::out_alias_id	1053	PROVEN	
 graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::null_pad	1065	PROVEN	CTGlue.nullPad: nullPad_spec
 graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::next	1086	PROVEN	CTGlue.ctPack + Drive.capDrive: ctNext_stream, capDrive_flatten; BidirDedup.dedupBatches (bug)
 graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::new	72	PROVEN	CTGlue.eiNew: eiNew_spec
-graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	125	PROVEN	CondTraverse.expandInto: mem_expandInto_emit; expandInto_bidir_collapse_two_rows (bug); #2390: no edge-attr filter, collapse iff !emit_relationship (planner sets emit for an edge predicate: planner_build E.firstRel_edge_pred)
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	125	PROVEN	CondTraverse.expandInto: mem_expandInto_emit; expandInto_bidir_collapse_two_rows (bug); #2390: no edge-attr filter, collapse iff !emit_relationship (planner sets emit for an edge predicate: planner_build E.firstRel_edge_pred); relationship mode with Pending deletes: EIP.expandIntoP (= expandInto when nothing pending, expandIntoP_empty), property LiveExpandInto, bug3452_main_violates (pending-deleted endpoint not checked), fix expandIntoFix_live; synthetic_label branch (:155-166) reads committed labels only, modelled in prose only (no valid-Cypher route to pending labels)
 graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::next	244	PROVEN	Drive.capDrive: eiNext_stream, capDrive_flatten
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::path_value	139	PROVEN	VarLenGlue.pathValue: pathValue_spec, Alt.reverse
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::begin_start_node	152	PROVEN	VarLen.varLen 0-hop branch: varLen_sound, varLen_complete, zero_zero
@@ -33,7 +33,7 @@ graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::new	59	PROVEN	CT
 graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::expand_row	85	PROVEN	ASP.bfs/relax/back/asp: asp_minimal (length = true shortest distance), asp_complete' (every shortest walk ≤ max_hops returned), asp_nodup (exactly once), fin_drained (BFS terminates), asp_sound; directed_cycle_backtrack_order + directed_cycle_not_a_walk (bug), undirected_cycle_repeats_edge (shared with C)
 graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::next	311	PROVEN	Drive.drive: uncapped_stream, drive_flatten
 graph/src/runtime/ops/path_builder.rs	PathBuilderOp::new	44	PROVEN	CTGlue.pathBuilderNew: pathBuilderNew_spec
-graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle; Value::Path reversed-VLT branch NOT COVERED (tested only)
+graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle; Value::Path branch PathVlt.vltMain: revWalk_reconstructs, vltMain_follows_of_ne (right on non-cyclic walks), property PathFollowsPattern violated on cycles bug3451_main_violates, fix vltFix_follows
 graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1929	NOT COVERED	config parsing (tested against C: defaults differ, see bug 6)
 graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	NOT COVERED	config parsing
 graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	NOT COVERED	config parsing

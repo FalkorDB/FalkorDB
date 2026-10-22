@@ -15,6 +15,8 @@ import OpsTraverse.ASPFinal
 import OpsTraverse.ASPMain
 import OpsTraverse.ASPFuel
 import OpsTraverse.SlotFeed
+import OpsTraverse.PathVlt
+import OpsTraverse.ExpandIntoPending
 
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
@@ -34,7 +36,7 @@ operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pi
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-176 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+197 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
@@ -53,6 +55,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
+| `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-139`, direction inferred at `:102-105`) |
+| `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:176-228`; `pending.rs:1115-1134`) |
 | `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs:77`, `node_by_id_seek.rs:55`, `node_by_label_and_id_scan.rs:59` |
 | `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs:141-265` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack `:278-304` |
 | `Drive.drive`, `capDrive`, `driveE` | the emitter-driven `next` loops (scans, CondTraverse with `trim_to_cap`, ExpandInto, CondVarLenTraverse, AllShortestPaths) |
@@ -152,6 +156,28 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    Rust 0 rows (expected 4). Property `SlotFeed.ScopedRow`; Lean
    `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`,
    `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes`.
+
+9. **#3451: incoming var-length cycle in a named path is not reversed**
+   (`path_builder.rs:102-110`: the direction is inferred by comparing the VLT path's
+   first node with the previous path node; on a cycle `n = m` it says "forward").
+   `MATCH p=(a {id:0})<-[:R*3..3]-(a)` on `0→1→2→0`: Rust `[0,1,2,0]`/`[1,2,3]`,
+   expected `[0,2,1,0]`/`[3,2,1]` (C `[0,2,1,0]`/`[1,2,3]`). Property
+   `PathVlt.PathFollowsPattern`; Lean `bug3451_main_violates`,
+   `bug3451_cycle_not_reversed`, `bug3451_expected`, `bug3451_noncyclic_ok`; main is
+   right on every non-cyclic walk (`vltMain_follows_of_ne`); recording the direction
+   at plan time fixes it (`vltFix_follows`).
+
+10. **#3452: ExpandInto matches an edge whose endpoint is pending-deleted**
+   (`expand_into.rs:197-228` checks only `is_relationship_deleted`; `DETACH DELETE`
+   of a committed node defers its edges to commit, `delete.rs:191-216`).
+   `MATCH (a:A),(b:B) DETACH DELETE a MERGE (a)-[r:R]->(b) RETURN count(r)`: Rust 1,
+   0 relationships created (C creates a dangling edge). Property
+   `EIP.LiveExpandInto`; Lean `bug3452_main_violates`, `bug3452_matches_doomed_edge`,
+   `bug3452_collapse_matches_doomed_edge`; fix `expandIntoFix_live`.
+
+Gaps closed 2026-10-22: PathBuilder's `Value::Path` (var-length) branch is modelled
+(`PathVlt.lean`, catches #3451); ExpandInto reads pending deletes (`ExpandIntoPending.lean`,
+catches #3452; `expandIntoP_empty` keeps the earlier theorems as its no-pending case).
 
 Gap closed 2026-10-20: operator composition across `WITH` (Aggregate → CondTraverse)
 is now modelled at slot level (`SlotFeed.lean`), which catches #3372.

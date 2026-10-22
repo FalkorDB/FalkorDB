@@ -140,12 +140,12 @@ graph/src/runtime/pending.rs	update_node_attrs	632	PROVEN	PS.updA_spec
 graph/src/runtime/pending.rs	stage_node_labels	661	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
 graph/src/runtime/pending.rs	set_node_labels	678	PROVEN	Labels.stage
 graph/src/runtime/pending.rs	set_nodes_labels	686	PROVEN	Labels.stage per id
-graph/src/runtime/pending.rs	remove_node_labels	699	PROVEN	Labels.removeLabels_closed, overlay_eq_ref
+graph/src/runtime/pending.rs	remove_node_labels	699	PROVEN	Labels.removeLabels_closed, overlay_eq_ref; (query-time view only) pushes a label that is only staged (created node, earlier SET) into remove_labels: RemLCommitted refuted by StagedBugs.bug3448_remove_of_staged_label (BUG #3448)
 graph/src/runtime/pending.rs	node_has_label	725	PROVEN	Labels.nodeHas_eq_ref
 graph/src/runtime/pending.rs	update_node_labels	754	PROVEN	Labels.overlay_eq_ref
-graph/src/runtime/pending.rs	deleted_node	772	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	delete_pending_node	788	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
-graph/src/runtime/pending.rs	remove_pending_relationships_for_node	839	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust)
+graph/src/runtime/pending.rs	deleted_node	772	PROVEN	PS.sets_spec; leaves set_labels, so a deleted node stays a pending labelled node: PendingWithLabelsLive refuted by StagedBugs.bug3453_pendingWithLabels_yields_deleted (BUG #3453)
+graph/src/runtime/pending.rs	delete_pending_node	788	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); remove_labels is not cleared: StagedBugs.deletePendingNode_keeps_remL, RemLLive refuted by bug3448_cancelled_node_keeps_remL (BUG #3448; replica side effects_emit_apply bug3448_removeLabels_before_create_refused)
+graph/src/runtime/pending.rs	remove_pending_relationships_for_node	839	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); drops an emptied created_rels_by_type group, so commit never registers a type whose every edge was cascaded: CancelledTypeRegistered refuted by StagedBugs.bug3447_cascade_drops_type_key (BUG #3447; replica id gap effects_emit_apply bug3447_cancelled_edge_id_gap)
 graph/src/runtime/pending.rs	created_relationship	899	PROVEN	PS.createdRel_spec
 graph/src/runtime/pending.rs	set_relationship_attributes	916	PROVEN	PS.setAttrs_spec
 graph/src/runtime/pending.rs	set_relationship_attribute	942	PROVEN	PS.setAttr_spec
@@ -155,7 +155,7 @@ graph/src/runtime/pending.rs	deleted_relationship	1005	PROVEN	PS.sets_spec
 graph/src/runtime/pending.rs	deleted_relationships_bulk	1012	PROVEN	PS.sets_spec
 graph/src/runtime/pending.rs	get_relationship_type	1022	PROVEN	PS.sets_spec, createdRel_spec
 graph/src/runtime/pending.rs	is_node_created	1030	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_pending_nodes_with_labels	1040	PROVEN	PS.pendingWithLabels_spec
+graph/src/runtime/pending.rs	get_pending_nodes_with_labels	1040	PROVEN	PS.pendingWithLabels_spec (per-function spec only) no deleted filter, committed labels ignored: StagedBugs.bug3453_pendingWithLabels_yields_deleted; composed IncludePendingExact refuted in proofs/ops_aggregate (BUG #3453)
 graph/src/runtime/pending.rs	nodes_with_pending_label_removes	1060	PROVEN	PS.withLabelRemoves_spec
 graph/src/runtime/pending.rs	is_relationship_created	1078	PROVEN	PS.sets_spec
 graph/src/runtime/pending.rs	get_created_relationship_endpoints	1087	PROVEN	PS.createdEndpoints_spec

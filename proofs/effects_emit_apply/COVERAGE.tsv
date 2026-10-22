@@ -5,14 +5,14 @@ graph/src/effects/v3/emit.rs	build_constraint_buffer	111	PROVEN	EmitDDL.buildCon
 graph/src/effects/v3/emit.rs	encode_all	187	PROVEN	EmitDDL.encodeAll: encodeAll_ok, encodeAll_failed
 graph/src/effects/v3/emit.rs	index_field_flags	205	PROVEN	EmitDDL.indexFieldFlags: indexFieldFlags_spec
 graph/src/effects/v3/emit.rs	build_index_buffer	227	PROVEN	EmitDDL.buildIndexRec/resolveRefs + encodeAll: buildIndexRec_verifies, encodeAll_ok
-graph/src/effects/v3/emit.rs	for_each_record	325	PROVEN	Emit.gate_zero_stream, Emit.commitShips_eq_iff (record-opcode granularity)
-graph/src/effects/v3/emit.rs	digest_cancelled	397	PROVEN	Digests.digestCancelledF: digestCancelled_pairs; Emit.digestCancelled (gate)
+graph/src/effects/v3/emit.rs	for_each_record	325	PROVEN	Emit.gate_zero_stream, Emit.commitShips_eq_iff (record-opcode granularity); emit-then-apply with cancellation (CancelGap): RemoveLabels for a created/cancelled node precedes its CREATE_NODE and the replica refuses it, ReplayApplies refuted: bug3448_removeLabels_before_create_refused (BUG #3448; control agree3448_without_stale_remL); every allocated relationship id reaches a CREATE_EDGE iff types registered: relIdsCovered_of_registered, refuted on main by bug3447_cancelled_edge_id_gap (BUG #3447)
+graph/src/effects/v3/emit.rs	digest_cancelled	397	PROVEN	Digests.digestCancelledF: digestCancelled_pairs; Emit.digestCancelled (gate); digestCancelled_pairs only covers cancelled edges of registered types: a type whose every edge was cascaded away has no id, the pair is skipped and the replica IdSpace has a hole: RelIdsCovered refuted by CancelGap.bug3447_cancelled_edge_id_gap (BUG #3447), fix property relIdsCovered_of_registered
 graph/src/effects/v3/emit.rs	digest_created_nodes	499	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq, Basic.groupBy_flat, Basic.groupBy_keyed (+ proofs/replication emit/apply roundtrip over groupBy)
 graph/src/effects/v3/emit.rs	digest_created_edges	576	PROVEN	Digests.digestCreatedEdges/mkEdgeRec: digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape (FxHashMap order abstracted; theorems order-insensitive)
 graph/src/effects/v3/emit.rs	digest_deleted_edges	637	PROVEN	Digests.digestDeletedEdges: digestDeletedEdges_perm
 graph/src/effects/v3/emit.rs	digest_updates	688	PROVEN	Digests.digestUpdates/updKey: digestUpdates_perm, digestUpdates_shape
 graph/src/effects/v3/emit.rs	digest_deleted_nodes	793	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq (the ascending cursor walk over deleted_node_labels is not modelled)
-graph/src/effects/v3/emit.rs	digest_labels	855	PROVEN	Digests.digestLabels: digestLabels_perm, digestLabels_nonempty
+graph/src/effects/v3/emit.rs	digest_labels	855	PROVEN	Digests.digestLabels: digestLabels_perm, digestLabels_nonempty; called with skip=None for remove_labels (emit.rs:372), so a stale remove_labels entry of a cancelled node ships before its CREATE_NODE: CancelGap.bug3448_removeLabels_before_create_refused (BUG #3448)
 graph/src/effects/v3/emit.rs	gather_rows	923	PROVEN	Emit.mergeRow_eq_lookup, Emit.gatherRows_length (+ unsorted counterexample example)
 graph/src/effects/v3/apply.rs	from	44	PROVEN	ApplyHelpers.ofString: ofString_spec
 graph/src/effects/v3/apply.rs	apply_effects	54	PROVEN	ApplyHelpers.applyEffects (records then g.validate() then g.commit_index_docs, #2846/#3307): applyEffects_ok, applyEffects_validate_refused, validateG_ok (verify_id_batches then verify_created_relationships, #3022) (BUG W2-effects-4: not atomic for CREATE_INDEX, still present at 2c874022a, live repro)

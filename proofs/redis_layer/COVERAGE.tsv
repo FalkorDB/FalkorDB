@@ -89,8 +89,8 @@ src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
 src/reply.rs	format_g	123	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
-src/reply.rs	reply_compact_value	145	PROVEN	Resp.encC call stream: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed
-src/reply.rs	reply_verbose_value	357	PROVEN	Resp.encVb: verbose_emits (node/edge postponed arrays closed with exact counts); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
+src/reply.rs	reply_compact_value	145	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
+src/reply.rs	reply_verbose_value	357	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel, OPEN BUG #3449 pending/unsnapshotted rel panics (bug3449_record_renders_dead_rel; verboseRelFixed_total); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
 src/reply.rs	reply_stats	543	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
 src/reply.rs	reply_result	632	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
 src/reply.rs	reply_verbose	681	PROVEN	Resp.resultCalls false: verbose_reply
@@ -215,7 +215,7 @@ src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, pre
 src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3; pre3234_truncate_panics kept)
 src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3; pre3234_entry_hash_panics kept)
 src/slow_log.rs	SlowLog::new	81	PROVEN	SlowLog.SL.new: new_empty
-src/slow_log.rs	SlowLog::add	97	PROVEN	SlowLog.add: add_bounded, add_nodup, add_repeat_max, add_fast
+src/slow_log.rs	SlowLog::add	97	PROVEN	SlowLog.add: add_bounded, add_nodup, add_repeat_max, add_fast; OPEN BUG #3442 update arm leaves minLat stale: bug3442_update_breaks_min_cache, bug3442_faster_evicts_slower (MinCache/SlowestKept fail; fix shape addFixed_minCache, fixed3442_trace)
 src/slow_log.rs	SlowLog::reset	181	PROVEN	SlowLog.reset: reset_empty
 src/slow_log.rs	SlowLog::reply	191	PROVEN	SlowLog.replyLen: replyLen_len
 src/slow_log.rs	unix_now	228	AXIOMATISED	SystemTime::now (OS clock)
@@ -281,7 +281,7 @@ src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memT
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
 src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
-src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two (+ GraphCore.writeSteps; write_version: QuerySession.reader_takes_no_slot)
+src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.reader_takes_no_slot); rendering of recorded rows: RelLookup.recordDelete/s3449abort, OPEN BUG #3449 bug3449_record_renders_dead_rel (RecordedLive fails; fixed3449_record_snapshot)
 src/commands/record.rs	graph_record	174	PROVEN	Commands.recordKey: recordKey_creates
 src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
 src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39): four_commands_share, garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes

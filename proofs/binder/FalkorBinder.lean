@@ -4,7 +4,7 @@
 A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
-most on `propext`, `Quot.sound`, `Classical.choice`. 182 theorems. Rust source: origin/main `0f45a8685`
+most on `propext`, `Quot.sound`, `Classical.choice`. 185 theorems. Rust source: origin/main `0f45a8685`
 (binder.rs re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR
 bind flat via `and_of`/`or_of` — `bind_andOr_paren`, `flatB_assoc`; planner/mod.rs cites
 re-targeted across #2390).
@@ -31,6 +31,15 @@ in two places while the removed ids are still in the IR
 The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/ops_aggregate
 `SlotReuse.lean` (`projLayout` = this binder's per-scope minting fed to the aggregate).
 
+## Gap closed 2026-10-22: REMOVE does not clear accumulated labels (#3450)
+`LClause` gains `.remove` (`bind_ir` QueryIR::Remove, b84473a7f binder.rs:477-482, leaves `node_labels`
+alone); `bind_projection` copies the parent's label set to the `WITH` child (:1132-1141/:1159-1168) and
+`update_all_node_labels` (:122-134) stamps it on the next MATCH. Property `StampedLabelsHeld` (a stamped
+label is written by that MATCH or still held, point-in-time via `held`); `specStamp_held` proves the fix
+satisfies it, `bug3450_remove_label_kept_across_with` refutes it on main: `MATCH (a:A) REMOVE a:A WITH a
+MATCH (a)-[:R]->(b)` stamps `(a:A)` — Rust 0 rows, C 1. (RemoveLabels.lean; the planner half is in
+proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not reproduce.)
+
 ## Lean ↔ Rust
 
 | here | there |
@@ -50,6 +59,7 @@ The slot-reuse family (#3333, #3369, #3375, #3368, #3150) is modelled in proofs/
 | `compScope`/`compCleaned` | cleanup in `bind_expr_node` :1922 and :2097 |
 | `callBodyScope` | `bind_call_body` :845 (Query) vs :897-905 (UNION) |
 | `accumulate` / `specScanLabels` | `node_labels` accumulation :1356-1360, `update_all_node_labels` :122 |
+| `held`, `rsStamp`, `specStamp` (RemoveLabels.lean) | REMOVE arm :477 (b84473a7f), WITH label copy :1159-1168, stamp :122-134 |
 | `unionCheck` | UNION arm :267-292 |
 | `validateImport` | `validate_import_with` :1003 |
 | `BSt`, `sortedScopeVars`, `updNode` (Stack.lean) | `env_stack` & co., `default` :74, `scope_vars` :114, `current_env(_mut)` :239/245, `push_scope` :251, `commit_scope` :256, `sorted_scope_vars` :2686, `update_graph_labels` :160 |
@@ -175,6 +185,7 @@ import FalkorBinder.Resolve
 import FalkorBinder.Projection
 import FalkorBinder.Pattern
 import FalkorBinder.Scopes
+import FalkorBinder.RemoveLabels
 import FalkorBinder.Stack
 import FalkorBinder.BindExpr
 import FalkorBinder.BindIR

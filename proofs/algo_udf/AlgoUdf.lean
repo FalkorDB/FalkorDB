@@ -33,6 +33,7 @@ Every `bug_*` test asserts C's answer and fails today.
 | `AlgoUdf.AlgoBfsReg` | `algo_bfs` result assembly, `register` and every `register_*` |
 | `AlgoUdf.UdfTraverse`| `js_traverse_impl` (`graph.traverse`) |
 | `AlgoUdf.UdfClasses` | `CURRENT_GRAPH` slot, `create_js_node/edge/path`, `getNodeById`, `iterateNodes/Edges`, the native entry points |
+| `AlgoUdf.UdfNodeView` | #3454: which view (`Runtime` vs committed `Graph`) `create_js_node` reads labels/attributes from |
 | `AlgoUdf.UdfContext` | `caught_error_message`, timeouts, `validate_script`, `ensure_context_current`, `rebuild_context`, `call_udf_bridge` |
 | `AlgoUdf.UdfGlobals` | the JS `falkor.register` bodies, `collect_*`, `js_value_to_log_string` |
 | `AlgoUdf.UdfRepoOps` | `UdfRepo::{new,default,version,bump_version,flush,list,get_all_libraries,serialize,deserialize}`, `init_udf_repo`, `get_udf_repo` |
@@ -207,6 +208,16 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
 * #3349 `LagContract`: the LAGraph contract now has the `LAGRAPH_INVALID_GRAPH` (-1000)
   outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
   1×1, by column). `bug3349_one_node_projection_fails`; property `ProjectionTotal`.
+
+## Gap closed 2026-10-22 (live-checked on main b84473a7f vs C; **Open**)
+* #3454 `UdfNodeView`: `jsNode` took labels/attrs as free parameters, hiding the data
+  source. Now `rsJsNode` reads the committed graph (`create_js_node` js_classes.rs:129,
+  :151, :161; `type_convert.rs:184` drops the runtime) while `labels(n)` reads
+  `Runtime::get_node_labels` (runtime.rs:1666, deleted-node snapshot :1671).
+  `bug3454_deleted_node_empty` (UDF `labels = []`, `labels(n) = [P]`),
+  `bug3454_edge_source_empty` (`r.source` after DETACH DELETE, js_classes.rs:257);
+  properties `RuntimeFirstNode`, `RuntimeFirstEdgeEnds` (`spec_runtime_first`,
+  `spec_edge_ok` prove the fixed spec satisfies them).
 -/
 import AlgoUdf.Value
 import AlgoUdf.Config
@@ -235,6 +246,7 @@ import AlgoUdf.AlgoGlue
 import AlgoUdf.AlgoBfsReg
 import AlgoUdf.UdfTraverse
 import AlgoUdf.UdfClasses
+import AlgoUdf.UdfNodeView
 import AlgoUdf.UdfContext
 import AlgoUdf.UdfGlobals
 import AlgoUdf.UdfRepoOps

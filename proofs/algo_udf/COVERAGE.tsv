@@ -64,8 +64,8 @@ graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
 graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
 graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear
 graph/src/udf/js_classes.rs	collect_edges	97	PROVEN	Neighbors.outgoing_ok, self_loop_twice
-graph/src/udf/js_classes.rs	create_js_node	129	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED)
-graph/src/udf/js_classes.rs	create_js_edge	213	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first
+graph/src/udf/js_classes.rs	create_js_node	129	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode reads the committed graph: bug3454_deleted_node_empty (open #3454, property RuntimeFirstNode)
+graph/src/udf/js_classes.rs	create_js_edge	213	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node without runtime: UdfNodeView.bug3454_edge_source_empty (open #3454, property RuntimeFirstEdgeEnds)
 graph/src/udf/js_classes.rs	create_js_path	289	PROVEN	UdfClasses.jsPath_length
 graph/src/udf/js_classes.rs	js_get_neighbors_entry	349	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
 graph/src/udf/js_classes.rs	js_get_neighbors	368	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes

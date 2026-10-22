@@ -6,7 +6,7 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-516 theorems. Rust source: origin/main `b84473a7f` (re-targeted across #2390, d2c42e032
+522 theorems. Rust source: origin/main `b84473a7f` (re-targeted across #2390, d2c42e032
 "plan an inline property map once", and #3335: `ExprIR::and_of`/`or_of` flattening —
 `AndOf.lean`, `tv_andOf`/`tv_orOf` — and no `Paren` past the binder: `expr_to_plan` no
 longer unwraps one, `PatternMode::descend` no longer treats it as a connective; #3297: the
@@ -33,6 +33,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust r
 | `.forEach e x [b]` | FOREACH arm mod.rs:3416-3479 |
 | `.optional vs [m]`, `.apply [.optional vs [m]]`, `.apply [m]` | MATCH arm mod.rs:3034-3083 |
 | `isPlannerScanSubtree` | optimizer/select_scan_node.rs:239-252 |
+| `E.rsRemove`, `E.specRemove`, `E.project`, `E.VerifiedSound` (RemoveVerified.lean) | REMOVE arm mod.rs:3212-3218, `carried_verified` in `plan_project` mod.rs:2479-2492 |
 | `E.Ex`, `E.D`, `E.QG`, `E.V` (Expr.lean) | `DynTree<ExprIR<Variable>>`, `QueryGraph`, `(id, scope_id)` |
 | `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | mod.rs:933, 822, 1223, 660-689, 1247, 543, 574, 1128 |
 | `E.tv` (Decomp.lean) | openCypher three-valued WHERE (Kleene AND/OR/NOT; pattern = has a match) |
@@ -193,6 +194,17 @@ predicate — `MATCH (a:A) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → 
 `firstRel_lowers_to`/`chainRel_lowers_to`; the optimizer moves it below, see the working variants'
 EXPLAIN).
 
+## Gap closed 2026-10-22: `verified_labels` survive REMOVE (#3450, RemoveVerified.lean)
+`MSt.verified` was only ever unioned and `remove_correct` keeps REMOVE's graph effect opaque
+(`specWrite`), so no property tied a verified label to the graph. Now: `VerifiedSound st gl` (every
+verified label is on the node in the graph the next operator reads) and the property
+`RemoveKeepsVerifiedSound`; `specRemove_sound` (dropping the removed labels preserves it),
+`project_sound` (`plan_project`'s `carried_verified`, mod.rs:2479-2492, preserves it).
+`bug3450_remove_keeps_verified_label`: the REMOVE arm (mod.rs:3212-3218) leaves `verified_labels`
+alone, so `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b)` plans the bound `a` with no
+`hasLabels` filter (`boundLabelFilters`, mod.rs:1840-1856 / `unverified_labels` :1793): Rust 1 row,
+C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
+
 ## Open PRs touching planner/mod.rs (model = origin/main)
 * #3101 (MERGE p=… as last clause): adds `PathBuilder` to the first walk and steps over it in the FOREACH /
   CALL body walk — fixes bug 1 (`merge_path_last_misplaced` no longer applies: `walkFirst` would pass it).
@@ -247,6 +259,7 @@ import PlannerBuild.Nested2
 import PlannerBuild.Misc
 import PlannerBuild.PlanMatch
 import PlannerBuild.PlanMatch2
+import PlannerBuild.RemoveVerified
 import PlannerBuild.HopOrder
 import PlannerBuild.Fmt
 import PlannerBuild.Rename

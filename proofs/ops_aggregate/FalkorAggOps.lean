@@ -11,12 +11,14 @@ import FalkorAggOps.StreamOps
 import FalkorAggOps.LoadCsv
 import FalkorAggOps.Discharge
 import FalkorAggOps.SlotReuse
+import FalkorAggOps.LoadCsvRedirect
+import FalkorAggOps.IncludePendingExact
 
 /-!
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
 Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
-No `sorry` / `admit` / `axiom`. 211 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
+No `sorry` / `admit` / `axiom`. 228 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 (graph/tests/lean_ops_aggregate.rs; the `bug_*` tests for open findings fail, the 3 `agrees_*` pass;
 `bug_list_literal_of_aggregates_collapses` passes since #2951).
@@ -144,4 +146,22 @@ public addresses (`validateRemote_spec`) and never more than the byte limit (`er
 paths stay inside the import folder (`resolvePath_spec`).
 Fixed by #2912 (b033aecc6): ORDER BY over floats with NaN crashed the server (float lane
 `unwrap_or(Less)`); main's lane is `sort_cmp_f64` (sort.rs:364; proofs/columnar `compareAt_spec`).
+## Gaps closed 2026-10-22 (#3443, #3453; b84473a7f)
+**#3443 (`LoadCsvRedirect.lean`).** `LoadCsv.lean` treated a remote LOAD CSV as one request to the
+validated URL. The ureq 3.4.2 agent (load_csv.rs:369-378) follows redirects: `http_config` (:217-225)
+sets only timeouts, so `max_redirects = 10`, `https_only = false`; `PinnedResolver::resolve`
+(:193-214) ignores the URI. `fetch` models the request loop. Property `EachHopValidated` (every
+connection is https, to an address validated for its own host) is refuted:
+`bug3443_redirect_uses_first_host_ip` (cross-host redirect connects to the first host's IP; live: TLS
+name mismatch), `bug3443_redirect_downgrades_to_http` (live: `http status: 400`). Fix property:
+`fixed_eachHopValidated` (https_only + per-request validate-and-pin, any server, any budget);
+`noRedirect_single` (C: no redirects followed). `pinned_spec`/`httpConfig_spec` stand but cover only the
+address bound / OnceLock idempotence (COVERAGE reasons say so). `V4`/`IP` now derive `DecidableEq`.
+**#3453 (`IncludePendingExact.lean`).** `includePending_spec` proved each phase against whatever lists
+it is handed; composed with `get_pending_nodes_with_labels` (pending.rs:1040-1055: `set_labels` only,
+no deleted filter), `deleted_node` (:772, keeps `set_labels`) and `stage_node_labels` (:661, reached
+from set.rs:403 without a committed-label check), property `IncludePendingExact` (duplicate-free, exactly
+the live nodes whose effective labels contain the pattern) is refuted by the three live repros:
+`bug3453_yields_deleted_node`, `bug3453_duplicate_row`, `bug3453_misses_split_multilabel`. Fix property:
+`includePendingFixed_exact` (Phase 2 filtered by liveness/effective labels, minus Phase 1's nodes).
 -/

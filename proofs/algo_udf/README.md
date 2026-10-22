@@ -112,6 +112,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
 | 19 | `bug3121_fastpath_missing_cost_zero` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks costs 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne`; the enumeration path satisfies it (`rust_enum_ok`) | **Open** (#3121) |
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
+| 21 | `bug3454_deleted_node_empty`, `bug3454_edge_source_empty` (`UdfNodeView.lean`) | `create_js_node` reads the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` sees `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE is likewise empty. Properties `RuntimeFirstNode`, `RuntimeFirstEdgeEnds` (the runtime-first spec satisfies both) | **Open** (#3454) |
 
 Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
 
@@ -150,6 +151,7 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `Neighbors.lean` | `collect_edges`, `getNeighbors` filters |
 | `UdfTraverse.lean` | `graph.traverse` |
 | `UdfClasses.lean` | The JS `graph`/`node`/`edge`/`path` objects and native entry points |
+| `UdfNodeView.lean` | #3454: the runtime vs committed-graph view `create_js_node` reads; property `RuntimeFirstNode` |
 | `UdfContext.lean` | Error messages, timeouts, script validation, context rebuild, the call bridge |
 | `UdfGlobals.lean` | The JS `falkor.register` bodies, globals, log strings |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

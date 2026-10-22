@@ -95,6 +95,9 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W4-plan-3 | `order_by_wrong_aggregate`, `const_kinds_conflated` | `expr_ir_eq` treats all Int/Float/Null/Bool/String constants as equal, so `ORDER BY max(n.v % 4.0)` sorts by the alias of `max(n.v % 3)`; C rejects the query | **Open**; PR #3011 would widen it to non-aggregate ORDER BY, so fix this first |
 | W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C errors ("Unable to locate a value with alias n1") | **Open** |
+| #3450 | `bug3450_remove_label_kept_across_with` (property `StampedLabelsHeld`, `RemoveLabels.lean`) | `REMOVE a:A` leaves `A` in the accumulated label set, which `WITH a` copies and `update_all_node_labels` stamps on the next MATCH: `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` gives 0 rows, C 1. The fixed stamp `specStamp` satisfies the property (`specStamp_held`). The issue's CREATE/MERGE back-propagation half does not reproduce | **Open** |
+
+**Gap closed 2026-10-22.** `StampedLabelsHeld` (in `RemoveLabels.lean`) states that a label stamped on a MATCH node after `WITH` is one that MATCH wrote or one the node still carries (`held`: REMOVE clears); `bug3450_remove_label_kept_across_with` refutes it. The planner's half (`verified_labels`) is in [`../planner_build`](../planner_build).
 
 **Gap closed 2026-10-20.** `PatternPredDeclaresNothing` (in `BindExpr.lean`) states that an accepted pattern predicate names only variables that are already visible; `bug1334_pattern_predicate_declares_var` refutes it on main. The slot-reuse family (#3333, #3369, #3375, #3368, #3150) comes from this binder's per-scope numbering, but it is modelled and refuted in [`../ops_aggregate`](../ops_aggregate) (`SlotReuse.lean`), where the colliding ids are consumed.
 
@@ -112,6 +115,7 @@ There are no CONDITIONAL rows in this project.
 | `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, the ORDER BY and WHERE-copy counterexamples |
 | `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind`, the clause `fold`, `q2923_cause` |
 | `Scopes.lean` | `mergeSV`, `foreachRestore`, comprehension cleanup, `callBodyScope`, label accumulation, `unionCheck`, `validateImport` |
+| `RemoveLabels.lean` | #3450: `held` (point-in-time label set, REMOVE clears), `rsStamp`/`specStamp`, property `StampedLabelsHeld` |
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
 | `BindExpr.lean` | Expression binding (`NE`, `BE`, `bindNode`), comprehension locals, AND/OR flattening, `bindSetItems`, self-reference checks |
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |

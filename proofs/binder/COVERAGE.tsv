@@ -2,7 +2,7 @@ file	function	line	bucket	lean_name_or_reason
 graph/src/planner/binder.rs	Binder::default	74	PROVEN	Stack.default_spec (one empty scope, no parent lookup)
 graph/src/planner/binder.rs	Binder::bind	99	PROVEN	mergeSV_ge, mergeSV_covers (bind merges live + retired scope_vars)
 graph/src/planner/binder.rs	Binder::scope_vars	114	PROVEN	Stack.scopeVars_lengths (one sorted table per live scope, lengths preserved); sortedScopeVars_spec
-graph/src/planner/binder.rs	Binder::update_all_node_labels	122	PROVEN	accumulate/specScanLabels: labels_agree_match_only, labels_leak (counterexample, bug)
+graph/src/planner/binder.rs	Binder::update_all_node_labels	122	PROVEN	accumulate/specScanLabels: labels_agree_match_only, labels_leak (counterexample, bug); REMOVE ignored, RemoveLabels.bug3450_remove_label_kept_across_with (open #3450, property StampedLabelsHeld)
 graph/src/planner/binder.rs	Binder::update_graph_labels	160	PROVEN	Stack.updNode_replace (MATCH: accumulated set), updNode_union (OPTIONAL: own labels kept + accumulated added), updNode_none, updNode_idem
 graph/src/planner/binder.rs	Binder::current_env	239	PROVEN	Stack.BSt.current, current_setCurrent
 graph/src/planner/binder.rs	Binder::current_env_mut	245	PROVEN	Stack.current_setCurrent, setCurrent_outer (only the innermost table changes)

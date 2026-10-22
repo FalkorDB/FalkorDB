@@ -19,6 +19,7 @@ import RedisLayer.SlowLog
 import RedisLayer.MultiDb
 import RedisLayer.KeyName
 import RedisLayer.ErrorText
+import RedisLayer.RelLookup
 
 /-!
 # The Redis-facing layer (`src/`, excluding `redis_type.rs`)
@@ -147,6 +148,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `GraphCore` | `src/graph_core.rs` |
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
+| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449) |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every
@@ -273,4 +275,22 @@ non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toU
 history `pre3428_legalResp`, `pre3428_cjk_panics` (`一` → NUL → `CString::new(..).unwrap()`
 panic), `pre3428_latin1_garbled` (`é` → lone 0xE9). `Resp.Call.err s` / `respT (.err s)`
 take `s` to be that already-scrubbed text.
+
+## Gap closed 2026-10-22 (all **Open** on b84473a7f)
+* #3442 `SlowLog`: `add`'s `some _` arm (`slow_log.rs:120-132`) keeps the stale `minLat`
+  (the recompute is at `:172-177`). `bug3442_update_breaks_min_cache` (property `MinCache`),
+  `bug3442_faster_evicts_slower` (the issue's trace: Q11 at 25 ms evicts Q2 at 30 ms; property
+  `SlowestKept`). Fix shape: `addFixed` recomputes on both arms — `addFixed_entries`,
+  `addFixed_minCache` (preserved for every input), `fixed3442_trace`.
+* #3447 `RelLookup` (compact-reply part): the reply's type id of a deleted edge is a
+  *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
+  `commitCascade` registers only surviving edge types (`pending.rs:872-873`, `:1242-1251`);
+  `bug3447_compact_cancelled_new_type_panics` (compact `none` = panic, verbose renders;
+  `RegisteredTypes`, `ReplyTotal` fail); `replyTotal_of_registered` — after commit,
+  `RegisteredTypes` makes both encoders total; `s3447_survivor_ok`.
+* #3449 `RelLookup`: `recordDelete` (no snapshot under a bare `Commit`, `delete.rs:69-81,99`)
+  and `s3449abort` (pending edge rendered after `abandon_write`, `record.rs:106-132`).
+  `bug3449_record_renders_dead_rel` (property `RecordedLive` fails; endpoints panic
+  `graph.rs:3381`; pending edge's type lookup panics `reply.rs:487` → `graph.rs:3348`);
+  fix shapes `fixed3449_record_snapshot`, `verboseRelFixed_total`.
 -/

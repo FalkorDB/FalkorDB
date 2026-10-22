@@ -66,6 +66,7 @@ Not for indexes, and this is still open (W2-effects-4). `apply_effects` applies 
 | `buildIndexRec_verifies`, `buildConstraintRec_verifies` | Emitted index/constraint DDL always passes the replica's checks | `EmitDDL.lean` |
 | `applyAddSchema_eq_applyAddName` | The real get-or-create-and-verify of a name is the replication model's `applyAddName` | `ApplyHelpers.lean` |
 | `applyEffects_ok` | `apply_effects` succeeds only if every record applied in order and `validate` passed | `ApplyHelpers.lean` |
+| `relIdsCovered_of_registered` | When every created and cancelled relationship's type is registered, every relationship id the master allocated reaches the replica in a `CREATE_EDGE` (the property #3447 breaks) | `CancelGap.lean` |
 
 ### How `apply_wf` is proved
 
@@ -85,6 +86,8 @@ All four were reproduced in Rust and against a live server (see [`../FINDINGS.md
 | W2-effects-2 | `pre3022_update_dead_breaks_wf`, `pre3022_update_dead_not_wf`, `pre3022_setlabels_dead_not_wf` | `UPDATE_NODE`/`UPDATE_EDGE`/`SET_LABELS`/`REMOVE_LABELS` on a dead id were accepted; the next node to recycle the id inherited the property or label | Fixed by #3022 (`wf_updateNode_live`, `wf_setLabels_live`, `apply_wf`) |
 | W2-effects-3 | `pre3022_delete_endpoint_not_wf` | `DELETE_NODE` of a node with edges was accepted; the edge dangled and the next node with that id inherited it | Fixed by #3022 (`wf_deleteNode`, `apply_wf`) |
 | #3247 | `pre3298_repeated_id_applies` | A `CREATE_NODE` naming the same id twice (`[2, 3, 2]`) applied: the id set created one node where the record named two, and the repeated id's row had no node of its own | Fixed by #3298 (`2bb51088b`): `createNode_repeat_refused`, `createNode_ok_nodup`, `a_repeated_node_id_in_one_create_is_refused` |
+| #3447 | `bug3447_cancelled_edge_id_gap` (property `RelIdsCovered`) | An edge of a new type cascaded away by `DETACH DELETE` never registers its type, so `digest_cancelled` drops its id. With a surviving edge above it in the same segment the replica's relationship id space has a hole: `IdSpace::verify` refuses and forces a full resync. C stays in sync | **Open** (#3447) |
+| #3448 | `bug3448_removeLabels_before_create_refused` (property `ReplayApplies`) | `CREATE (n:Foo) REMOVE n:Foo DELETE n` leaves `n` in `remove_labels`; the stream emits `RemoveLabels [0]` before the cancelled pair's `CreateNode [0]`, and the replica refuses node 0 as not live (full resync). C stays in sync | **Open** (#3448) |
 | W2-effects-4 | none (the model has no indexes) | A refused buffer's `CREATE_INDEX` is not rolled back, because the `Indexer` is shared by `Arc` across versions | **Open** (PR #3235) |
 
 #2924 (`CREATE_EDGE` between non-live ids) was fixed by the same PR #3022, and `apply_wf` covers it: `edge_to_dead_refused` replays the Rust test.
@@ -105,6 +108,7 @@ One smaller observation, not filed:
 | `Apply.lean` | The pre-#3022 apply arms over a simple replica (`Apply.RG`), its well-formedness, the W2-effects-2/3 counterexamples |
 | `ApplyHelpers.lean` | `apply.rs`'s checks function by function: `verify_id`, `require_live`, `check_attr_shape`, error mapping, `apply_effects` |
 | `Liveness.lean` | The apply side on main (#3022): `Live.G`, `applyRec`, `BInv`, `apply_wf`, the Rust tests replayed by `decide` |
+| `CancelGap.lean` | Emit then apply with cancellation: `RelIdsCovered` (#3447) and `ReplayApplies` (#3448), refuted on main; `relIdsCovered_of_registered` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies. [`../replication`](../replication) requires it as a path dependency to import the memo loop.
@@ -117,7 +121,7 @@ The project has no Lake dependencies. [`../replication`](../replication) require
 |---|---|
 | PROVEN | 36 |
 
-Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for cancelled and schema-only writes.
+Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for cancelled and schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models, and `CancelGap.lean` proves that what they emit is wrong for #3447 and #3448.
 
 ## What the model does not cover
 
@@ -126,7 +130,7 @@ Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model 
 - **Indexes and rollback.** W2-effects-4 is outside the model.
 - **Index and constraint DDL apply** is checked only by a live Rust-vs-C differential (18 steps, all agree), not by a theorem.
 - **`IdSpace` and `first_node_with_relationships`** are specs here, proven in `id_space` and `graph_queries`.
-- The `rel_bound` gap documented at `emit.rs:450-456`: a cancelled edge of a never-registered type moves only the master's relationship bound. Seen as tolerated in 200 random runs; not proven harmless.
+- The `rel_bound` gap documented at `emit.rs:450-456` is no longer a gap: it is #3447, proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`). The replica's `IdSpace::verify` is modelled there only as its hole check (`verifyRange`).
 
 ## Build and check
 

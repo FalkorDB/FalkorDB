@@ -136,9 +136,9 @@ graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_
 graph/src/runtime/ops/filter.rs	next	121	PROVEN	StreamOps.filterNext: filterNext_skips
 graph/src/runtime/ops/include_pending.rs	new	49	PROVEN	StreamOps.IpSt.new: ipNew_spec
 graph/src/runtime/ops/include_pending.rs	capture_argument	72	PROVEN	StreamOps.captureArg: captureArg_spec
-graph/src/runtime/ops/include_pending.rs	init_pending_state	83	PROVEN	StreamOps.initPending: initPending_spec
+graph/src/runtime/ops/include_pending.rs	init_pending_state	83	PROVEN	StreamOps.initPending: initPending_spec; composed with Pending (IncludePendingExact.lean): IncludePendingExact refuted by bug3453_yields_deleted_node, bug3453_duplicate_row, bug3453_misses_split_multilabel (BUG #3453); fixed Phase 2 proven: includePendingFixed_exact
 graph/src/runtime/ops/include_pending.rs	emit_pending_batch	110	PROVEN	StreamOps.pendingRows: includePending_spec
-graph/src/runtime/ops/include_pending.rs	next	161	PROVEN	StreamOps.childRows + pendingRows: includePending_spec
+graph/src/runtime/ops/include_pending.rs	next	161	PROVEN	StreamOps.childRows + pendingRows: includePending_spec (PROVEN per phase only; the composed Phase1+Phase2 property IncludePendingExact is refuted on main: bug3453_yields_deleted_node, bug3453_duplicate_row, bug3453_misses_split_multilabel, BUG #3453; fix property includePendingFixed_exact)
 graph/src/runtime/ops/procedure_call.rs	new	59	PROVEN	StreamOps.pcNew/srcPosOf/maskOf: pcNew_spec, srcPos_named
 graph/src/runtime/ops/procedure_call.rs	reset_state	115	PROVEN	StreamOps.pcReset: pcReset_spec
 graph/src/runtime/ops/procedure_call.rs	emit_pending_rows	125	PROVEN	StreamOps.pcRows: pcRows_ok
@@ -149,10 +149,10 @@ graph/src/runtime/ops/load_csv.rs	ipv4_is_forbidden	48	PROVEN	LoadCsv.v4Forbidde
 graph/src/runtime/ops/load_csv.rs	validate_remote_url	81	PROVEN	LoadCsv.validateRemote (DNS = FFI parameter): validateRemote_spec
 graph/src/runtime/ops/load_csv.rs	new	153	PROVEN	LoadCsv.erNew: erNew_spec
 graph/src/runtime/ops/load_csv.rs	read	167	PROVEN	LoadCsv.erRead/erRun: erRun_le
-graph/src/runtime/ops/load_csv.rs	resolve	194	PROVEN	LoadCsv.pinned: pinned_spec
-graph/src/runtime/ops/load_csv.rs	http_config	218	PROVEN	LoadCsv.httpConfig: httpConfig_spec
+graph/src/runtime/ops/load_csv.rs	resolve	194	PROVEN	LoadCsv.pinned: pinned_spec (PROVEN for the address bound only; the URI is ignored, so a redirect hop connects to the first host IP: LoadCsvRedirect.fetch/pinnedRes, EachHopValidated refuted by bug3443_redirect_uses_first_host_ip, BUG #3443; fix fixed_eachHopValidated)
+graph/src/runtime/ops/load_csv.rs	http_config	218	PROVEN	LoadCsv.httpConfig: httpConfig_spec (PROVEN for OnceLock idempotence only; leaves ureq defaults max_redirects=10, https_only=false: LoadCsvRedirect.httpCfgMain, bug3443_redirect_downgrades_to_http, BUG #3443)
 graph/src/runtime/ops/load_csv.rs	next	253	PROVEN	LoadCsv.csvNext/headerPlan: csvNext_spec, headerPlan_example
 graph/src/runtime/ops/load_csv.rs	new	321	PROVEN	LoadCsv.LcSt.new: lcNew_spec
-graph/src/runtime/ops/load_csv.rs	open_csv_records	350	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example
+graph/src/runtime/ops/load_csv.rs	open_csv_records	350	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example; with the agent redirect loop (LoadCsvRedirect.loadRemote): EachHopValidated refuted by bug3443_redirect_uses_first_host_ip, bug3443_redirect_downgrades_to_http (BUG #3443); noRedirect_single (C: no redirects followed)
 graph/src/runtime/ops/load_csv.rs	next	438	PROVEN	LoadCsv.resolvePath/lcRowArgs: resolvePath_spec, lcRowArgs_spec
 graph/src/runtime/ops/sort.rs	tiebreak	237	PROVEN	SortCmp.tiebreak/tbCols: tiebreak_strict (distinct rows never tie), tiebreak_swap (antisymmetric given antisymmetric compare_at/compare_rows_at = sort_cmp: Discharge.lawful_main)

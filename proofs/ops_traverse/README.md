@@ -63,6 +63,8 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `asp_sound`, `asp_minimal`, `asp_complete'`, `asp_nodup` | allShortestPaths (source ≠ destination) returns every shortest path, once, and nothing else | `ShortestPaths.lean`, `ASPMain.lean`, `ASPFuel.lean` |
 | `fin_drained` | The allShortestPaths BFS terminates within node-count + 1 steps | `ASPFuel.lean` |
 | `buildNodes_walk` | PathBuilder's "other endpoint" rule rebuilds a walk's nodes, given unique edge ids | `ShortestPaths.lean` |
+| `revWalk_reconstructs`, `vltFix_follows` | PathBuilder's reversed var-length branch rebuilds any walk backwards; with the pattern direction as input it always follows the pattern | `PathVlt.lean` |
+| `expandIntoFix_live` | ExpandInto that also rejects pending-deleted endpoints only matches live edges | `ExpandIntoPending.lean` |
 | `drive_flatten`, `capDrive_flatten` | Output batching never loses, duplicates or reorders rows; LIMIT is exact | `Drive.lean` |
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
@@ -93,6 +95,8 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-traverse-4 | `directed_cycle_backtrack_order`, `directed_cycle_not_a_walk` | allShortestPaths on a directed cycle returns the edge list backwards (`all_shortest_paths.rs:284-288`): on `0→1→2→0`, `(a)-[*]->(a)` gives edges `[3,2,1]` instead of `[1,2,3]`. C is also wrong | **Open** (shared with C) |
 | W2-traverse-5 | none (Cypher repro only) | `algo.SPpaths`/`algo.SSpaths` charged cost 0 per relationship without `costProp`; C charges 1 | Fixed by #3113 (the single-path shortcut still charges 0, as C does) |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
+| #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
+| #3452 | `bug3452_main_violates`, `bug3452_matches_doomed_edge` | ExpandInto skips pending-deleted edges but never checks pending-deleted endpoints (`expand_into.rs:197-228`), and `DETACH DELETE` defers a node's edges to commit: `MATCH (a:A),(b:B) DETACH DELETE a MERGE (a)-[r:R]->(b) RETURN count(r)` gives 1 with nothing created (C creates a dangling edge). Property `LiveExpandInto`; fix `expandIntoFix_live` | **Open** |
 | W2-strlist-6 | none (out of target; see `proofs/functions_str_list`) | `[x IN null \| x]` returned `[]`; C returns `null` | Fixed by #2954 (`b6567cb97`, closes #2928) |
 
 ### Shared with C, not filed as Rust bugs
@@ -116,6 +120,8 @@ Every bug was reproduced against a live server and compared with C before it was
 | `ASPFold.lean`, `ASPInv.lean`, `ASPStep.lean`, `ASPFinal.lean`, `ASPMain.lean`, `ASPFuel.lean` | The allShortestPaths proof: relaxation, the invariant `Inv`, one BFS step, the backtrack, minimality/completeness/no duplicates, termination |
 | `Scans.lean` | Label scan, id seek, label + id-range scan |
 | `IndexScan.lean` | Node and edge index scans under the `IndexSound` contract, fulltext and vector scans, undirected edge orientation |
+| `PathVlt.lean` | PathBuilder's `Value::Path` branch (splicing a var-length segment, reversed for `<-`); property `PathFollowsPattern` and the #3451 counterexample |
+| `ExpandIntoPending.lean` | ExpandInto with pending deletes; property `LiveExpandInto` and the #3452 counterexample |
 | `SlotFeed.lean` | How an Aggregate output row feeds a later CondTraverse across `WITH`: binder slot ids, the Aggregate row, the endpoint reads; property `ScopedRow` and the #3372 counterexamples |
 | `Drive.lean` | The emitter-driven `next` loops and LIMIT propagation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -145,6 +151,7 @@ Every operator file under `runtime/ops/` in scope is fully PROVEN, apart from th
 ## What the model does not cover
 
 - **Labels and WHERE edge filters** are pure filters and are abstracted away; relationship types are a pre-filtered edge list. A variable-length walk still prunes on its edge's own attributes; the model treats that like the WHERE filter.
+- **ExpandInto's `synthetic_label` branch** (`expand_into.rs:155-166`) reads committed labels only and is not modelled: no valid Cypher reaches it with pending label changes (#3452). Pending *deletes* are modelled (`ExpandIntoPending.lean`).
 - **Emission order.** Iterator `seek` is modelled as a filter of the full pair list, and the order rows come out in (stack vs recursion, `swap_remove`) is not modelled. The theorems are about which rows come out and how many.
 - **`get_nodes`** (label-matrix intersection) is assumed to return ids in ascending order.
 - **allShortestPaths cycles.** Minimality and completeness are proven for source ≠ destination only.

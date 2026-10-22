@@ -3,6 +3,7 @@ import FalkorEffectsEmitApply.Emit
 import FalkorEffectsEmitApply.Apply
 import FalkorEffectsEmitApply.EmitDDL
 import FalkorEffectsEmitApply.Liveness
+import FalkorEffectsEmitApply.CancelGap
 
 /-!
 # effects v3: emit / apply (wave 2) — report
@@ -196,12 +197,41 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 ## Suspected, unconfirmed
 
-* The documented `rel_bound` gap (`emit.rs:450-456`): a cancelled edge of a
-  never-registered type moves the master's relationship bound only. Tolerated in
-  the differential; not seen to escalate in 200 random runs.
+* ~~The documented `rel_bound` gap (`emit.rs:450-456`)~~ — **confirmed as #3447**
+  (2026-10-22): when the same segment also creates a surviving edge above the
+  cancelled id, the replica's relationship `IdSpace::verify` refuses the hole and
+  forces a full resync. Proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`).
 * C master (`bin/macos-arm64v8-release/falkordb.so`, Redis 8.6.2) aborts on
   `OPTIONAL MATCH (n:Nope) SET n:L6` (`blocked.c:346 'server.also_propagate.numops
   == 0'`), with or without a replica. C-side; not investigated further.
+
+## Gaps closed 2026-10-22: emit then apply, with cancellation (`CancelGap.lean`)
+
+The emitter and the replica were proven separately; no theorem related what the
+master emits for a segment with cancelled entities to what a replica at the
+master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
+
+| Lean | Rust (b84473a7f) |
+| --- | --- |
+| `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs:737-790) |
+| `CancelGap.typesAfterCommit` | `Pending::commit` → `create_relationships_bulk` → `get_type_id_mut` (pending.rs:1239-1253, graph.rs:2610/:1265): only `created_rels_by_type` keys are registered |
+| `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:359-360) |
+
+* **#3447** (property `RelIdsCovered`: every relationship id allocated in the
+  segment reaches a `CREATE_EDGE`): `digest_cancelled` skips a cancelled edge
+  whose type has no id (emit.rs:457), and a type whose only edges were cascaded
+  is never registered. `bug3447_cancelled_edge_id_gap` (live repro `CREATE
+  (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`): payload has
+  `CreateEdge [2]` and nothing for 1; master's id space verifies, replica's has a
+  hole. Fix property `relIdsCovered_of_registered` (holds for every `Pending`
+  once all created and cancelled types are registered).
+* **#3448** (property `ReplayApplies`): `digest_labels(&p.remove_labels, None,
+  …)` (emit.rs:372) precedes `digest_cancelled` (:376); `delete_pending_node`
+  keeps the node's `remove_labels` (pending_commit
+  `bug3448_cancelled_node_keeps_remL`). `bug3448_removeLabels_before_create_refused`:
+  `CREATE (n:Foo) REMOVE n:Foo DELETE n` → `AddLabel Foo, RemoveLabels [0],
+  CreateNode [0], DeleteNode [0]`, refused `NotLive node 0`; control
+  `agree3448_without_stale_remL`.
 
 ## Gaps / assumptions
 

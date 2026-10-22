@@ -129,6 +129,8 @@ inductive LClause
   | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2090-2092)
   | create (labels : List Name)        -- CREATE (n:L)-[..]->(): not saved
   | comprehension (labels : List Name) -- [(n:L)-->() | …]: not saved
+  | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
+                                       -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
 
 /-- The accumulated label set of one node variable after the clauses. -/
@@ -136,7 +138,7 @@ def accumulate (acc : List Name) : List LClause → List Name
   | [] => acc
   | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
     accumulate (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r => accumulate acc r
+  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulate acc r
 
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH

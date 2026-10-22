@@ -4,7 +4,7 @@
 A Lean model of how a FalkorDB-rs write query stages mutations in
 `runtime::pending::Pending`, reads them back, and applies them at `Commit`; of
 the attribute store they land in; and of the deleted-entity snapshots later
-clauses read through. 363 theorems, no `sorry`/`admit`/`axiom`. Coverage per
+clauses read through. 370 theorems, no `sorry`/`admit`/`axiom`. Coverage per
 Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66) is PROVEN;
 of `pending.rs` (67 non-test) 65 are PROVEN and `check_node_constraint` /
 `check_edge_constraint` are CONDITIONAL on the supporting index's completeness (#3334). Repros: `graph/tests/lean_pending_commit.rs`
@@ -256,6 +256,25 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 * `FxHashMap`/`RoaringTreemap` are duplicate-free association lists / lists.
 * Relationship tensors, id spaces and effects emission are other projects
   (proofs/versioned_matrix, proofs/id_space, proofs/replication).
+## Gaps closed 2026-10-22: staged state that outlives what it describes (`StagedBugs.lean`, b84473a7f)
+
+The query-time views were proven (`overlay_eq_ref`, `pendingWithLabels_spec`,
+`deletePendingNode_spec`); that the staged maps only name entities existing at
+commit/replay was never stated. Properties and refutations:
+* **#3448** `RemLCommitted` (a staged removal is of a committed label):
+  `bug3448_remove_of_staged_label` (`CREATE (n:Foo) REMOVE n:Foo`, `SET n:B REMOVE n:B`:
+  `remove_node_labels`, pending.rs:699-711, pushes an only-staged label). `RemLLive` (no
+  created/cancelled node in `remove_labels`): `deletePendingNode_keeps_remL` (general),
+  `bug3448_cancelled_node_keeps_remL` (+ `_reached`); replica consequence in
+  effects_emit_apply `bug3448_removeLabels_before_create_refused`.
+* **#3453** `PendingWithLabelsLive`: `bug3453_pendingWithLabels_yields_deleted` (`deleted_node`
+  :772 keeps `set_labels`; `get_pending_nodes_with_labels` :1040 has no deleted filter). Composed
+  property `IncludePendingExact` in ops_aggregate.
+* **#3447** `CancelledTypeRegistered`: `bug3447_cascade_drops_type_key`
+  (`remove_pending_relationships_for_node` :839-896 drops the emptied group, so `commit`
+  :1239-1253 never registers the type); replica id gap in effects_emit_apply
+  `bug3447_cancelled_edge_id_gap`.
+No existing definition or theorem changed.
 -/
 import PendingCommit.Span
 import PendingCommit.Arena
@@ -285,3 +304,4 @@ import PendingCommit.UniqueIndex
 import PendingCommit.PendingCancel
 import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext
+import PendingCommit.StagedBugs
