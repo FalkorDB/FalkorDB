@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -9,6 +9,8 @@
 //------------------------------------------------------------------------------
 
 #include "include/GB_jit_kernel.h"
+
+#define GB_SET_INTERSECTION 1
 
 // op: LG_MF_Relabel32, ztype: int32_t, xtype: int32_t, ytype: LG_MF_resultTuple32
 
@@ -30,8 +32,6 @@ void LG_MF_Relabel32(int32_t *z, const int32_t *x, const LG_MF_resultTuple32 *y)
 "void LG_MF_Relabel32(int32_t *z, const int32_t *x, const LG_MF_resultTuple32 *y) { if((*x) < y->d+1){ (*z) = y->d + 1; } else { (*z) = (*x); } }"
 #endif
 #define GB_BINOP(z,x,y,i,j)  LG_MF_Relabel32 (&(z), &(x), &(y))
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: sparse
 #define GB_C_IS_HYPER  0
@@ -145,7 +145,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x3b8a0e7c69fd9679 ;
-    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_LG_MF_Relabel32_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = NULL ;

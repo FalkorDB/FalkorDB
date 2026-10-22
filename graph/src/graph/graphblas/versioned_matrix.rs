@@ -1528,6 +1528,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::atomic::Ordering;
 
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;

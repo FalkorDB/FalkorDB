@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__subassign_06s__7ffc507f00020111.c
+// GB_jit__subassign_01__7f006d7f00000100.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -10,11 +10,11 @@
 
 #include "include/GB_jit_kernel.h"
 
-// subassign: C<M,struct> = A 
+// subassign: C(I,J) = scalar 
 #define GB_ASSIGN_KIND GB_SUBASSIGN
-#define GB_SCALAR_ASSIGN 0
-#define GB_I_KIND GB_ALL
-#define GB_J_KIND GB_ALL
+#define GB_SCALAR_ASSIGN 1
+#define GB_I_KIND GB_LIST
+#define GB_J_KIND GB_RANGE
 #define GB_I_TYPE uint64_t
 #define GB_J_TYPE uint64_t
 #define GB_I_IS_32 0
@@ -50,63 +50,48 @@
 #define GB_Cj_BITS 32
 #define GB_Ci_BITS 32
 #define GB_DECLAREC(cwork) bool cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso)
-#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [0]
-#define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
-#define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = (*((GB_A_TYPE *) scalar))
+#define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,pA,A_iso) /* unused */
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) /* unused */
 
-// M matrix: sparse
-#define GB_M_IS_HYPER  0
-#define GB_M_IS_SPARSE 1
-#define GB_M_IS_BITMAP 0
-#define GB_M_IS_FULL   0
-#define GBp_M(Mp,k,vlen) Mp [k]
-#define GBh_M(Mh,k)      (k)
-#define GBi_M(Mi,p,vlen) Mi [p]
-#define GBb_M(Mb,p)      1
-// structural mask:
+// M matrix: none
 #define GB_M_TYPE void
 #define GB_MCAST(Mx,p,msize) 1
 #define GB_MASK_STRUCT 1
 #define GB_MASK_COMP   0
-#define GB_NO_MASK     0
-#define GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED
-#define GB_M_NVALS(e) int64_t e = M->nvals
-#define GB_M_NHELD(e) GB_M_NVALS(e)
-#define GB_Mp_TYPE uint32_t
-#define GB_Mj_TYPE uint32_t
-#define GB_Mj_SIGNED_TYPE int32_t
-#define GB_Mi_TYPE uint32_t
-#define GB_Mi_SIGNED_TYPE int32_t
-#define GB_Mp_BITS 32
-#define GB_Mj_BITS 32
-#define GB_Mi_BITS 32
+#define GB_NO_MASK     1
+#define GB_Mp_TYPE uint64_t
+#define GB_Mj_TYPE uint64_t
+#define GB_Mj_SIGNED_TYPE int64_t
+#define GB_Mi_TYPE uint64_t
+#define GB_Mi_SIGNED_TYPE int64_t
+#define GB_Mp_BITS 64
+#define GB_Mj_BITS 64
+#define GB_Mi_BITS 64
 
-// A matrix: sparse
-#define GB_A_IS_HYPER  0
-#define GB_A_IS_SPARSE 1
-#define GB_A_IS_BITMAP 0
-#define GB_A_IS_FULL   0
-#define GBp_A(Ap,k,vlen) Ap [k]
-#define GBh_A(Ah,k)      (k)
-#define GBi_A(Ai,p,vlen) Ai [p]
-#define GBb_A(Ab,p)      1
-#define GB_A_NVALS(e) int64_t e = A->nvals
-#define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
+// scalar:
 #define GB_A_TYPE bool
-#define GB_A2TYPE void
-#define GB_DECLAREA(a)
-#define GB_GETA(a,Ax,p,iso)
-#define GB_Ap_TYPE uint32_t
-#define GB_Aj_TYPE uint32_t
-#define GB_Aj_SIGNED_TYPE int32_t
-#define GB_Ai_TYPE uint32_t
-#define GB_Ai_SIGNED_TYPE int32_t
-#define GB_Ap_BITS 32
-#define GB_Aj_BITS 32
-#define GB_Ai_BITS 32
+
+// A matrix: unused
+#define GB_A_IS_HYPER  0
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   1
+#define GBp_A(Ap,k,vlen) 0
+#define GBh_A(Ah,k)      (k)
+#define GBi_A(Ai,p,vlen) 0
+#define GBb_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = 1 ; /* unused */
+#define GB_A_NHELD(e) int64_t e = 1 ; /* unused */
+#define GB_Ap_TYPE uint64_t
+#define GB_Aj_TYPE uint64_t
+#define GB_Aj_SIGNED_TYPE int64_t
+#define GB_Ai_TYPE uint64_t
+#define GB_Ai_SIGNED_TYPE int64_t
+#define GB_Ap_BITS 64
+#define GB_Aj_BITS 64
+#define GB_Ai_BITS 64
 #define GB_COPY_scalar_to_ywork(ywork,scalar) /* unused */
 #define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) /* unused */
 
@@ -133,15 +118,15 @@
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__subassign_06s__7ffc507f00020111
-#define GB_jit_query  GB_jit__subassign_06s__7ffc507f00020111_query
+#define GB_jit_kernel GB_jit__subassign_01__7f006d7f00000100
+#define GB_jit_query  GB_jit__subassign_01__7f006d7f00000100_query
 #endif
-#include "template/GB_jit_kernel_subassign_06s.c"
+#include "template/GB_jit_kernel_subassign_01.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xe37cfc60835d35af ;
-    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
+    (*hash) = 0xb08a42326d8baf2b ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;
