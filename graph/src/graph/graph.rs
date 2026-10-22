@@ -5346,7 +5346,7 @@ impl Graph {
     /// The index held for exactly `def`, if it is ready to answer: a building index is not
     /// returned.
     #[must_use]
-    pub fn cch_index(
+    pub(crate) fn cch_index(
         &self,
         def: &CchIndexDef,
     ) -> Option<&CchIndex> {

@@ -826,6 +826,117 @@ mod blocks {
     }
 }
 
+/// [`super::cheapest_edge`] on edges whose answers are written out: the
+/// cheapest of a pair's edges, ties to the earlier type and then the lowest
+/// edge id, through committed, pending and deleted edges.
+mod cheapest_edge {
+    use std::sync::Arc;
+
+    use roaring::RoaringTreemap;
+
+    use super::{Builder, f};
+    use crate::graph::graph::NodeId;
+    use crate::index::index_docs::IndexDocs;
+    use crate::runtime::value::Value;
+
+    fn types(names: &[&str]) -> Vec<Arc<String>> {
+        names.iter().map(|t| Arc::new(String::from(*t))).collect()
+    }
+
+    fn cheapest(
+        b: &Builder,
+        names: &[&str],
+        src: u64,
+        dst: u64,
+    ) -> Option<(u64, f64)> {
+        super::super::cheapest_edge(
+            &b.g,
+            &types(names),
+            b.weight_attr,
+            NodeId::from(src),
+            NodeId::from(dst),
+        )
+        .map(|(id, w)| (u64::from(id), w))
+    }
+
+    /// `A`: three parallel `0 -> 1` edges, two tied at 2 (a float and an
+    /// integer), and `0 -> 2` with no weight (1.0) tied with a 1.0. `B`: one
+    /// `0 -> 1` edge at 2 and a closed `1 -> 2`. Committed, so the parallel
+    /// pairs are read from `me`.
+    fn fixture() -> (Builder, Vec<u64>, Vec<u64>) {
+        let mut b = Builder::new("cch_in_cheapest", 4);
+        let a = b.add(
+            "A",
+            &[
+                (0, 1, f(3.0)),
+                (0, 1, f(2.0)),
+                (0, 1, Some(Value::Int(2))),
+                (0, 2, None),
+                (0, 2, f(1.0)),
+            ],
+        );
+        let bb = b.add("B", &[(0, 1, f(2.0)), (1, 2, f(f64::INFINITY))]);
+        b.g.flush_for_bulk();
+        (b, a, bb)
+    }
+
+    #[test]
+    fn the_cheapest_edge_wins_and_ties_go_to_the_lowest_id() {
+        let (b, a, _) = fixture();
+        assert_eq!(cheapest(&b, &["A"], 0, 1), Some((a[1], 2.0)));
+        assert_eq!(
+            cheapest(&b, &["A"], 0, 2),
+            Some((a[3], 1.0)),
+            "missing weighs 1.0"
+        );
+    }
+
+    #[test]
+    fn a_tie_across_types_goes_to_the_earlier_type() {
+        let (b, a, bb) = fixture();
+        assert_eq!(cheapest(&b, &["A", "B"], 0, 1), Some((a[1], 2.0)));
+        assert_eq!(cheapest(&b, &["B", "A"], 0, 1), Some((bb[0], 2.0)));
+        // No types means every type, in the graph's own order.
+        assert_eq!(cheapest(&b, &[], 0, 1), Some((a[1], 2.0)));
+    }
+
+    #[test]
+    fn no_edge_is_none_and_a_closed_edge_is_found() {
+        let (b, _, bb) = fixture();
+        assert_eq!(
+            cheapest(&b, &["A", "B"], 1, 2),
+            Some((bb[1], f64::INFINITY))
+        );
+        assert_eq!(cheapest(&b, &["A", "B"], 1, 0), None, "edges are directed");
+        assert_eq!(cheapest(&b, &["A", "B"], 2, 3), None);
+        assert_eq!(
+            cheapest(&b, &["A"], 1, 2),
+            None,
+            "the edge is of another type"
+        );
+        assert_eq!(cheapest(&b, &["C"], 0, 1), None, "no such type");
+    }
+
+    /// Deleting the tied edges inside the committed multi-edge pair (`me`'s
+    /// `dm`) leaves the 3.0 edge; a pending cheaper `B` edge (`dp`) then wins,
+    /// and the answers hold once everything is folded.
+    #[test]
+    fn pending_and_deleted_edges_are_seen() {
+        let (mut b, a, bb) = fixture();
+        let del: RoaringTreemap = [a[1], a[2], bb[0]].into_iter().collect();
+        b.g.delete_relationships(&del, &mut IndexDocs::default())
+            .expect("delete");
+        assert_eq!(cheapest(&b, &["A", "B"], 0, 1), Some((a[0], 3.0)));
+
+        let new = b.add("B", &[(0, 1, f(0.5))]);
+        assert_eq!(cheapest(&b, &["A", "B"], 0, 1), Some((new[0], 0.5)));
+
+        b.g.flush_for_bulk();
+        assert_eq!(cheapest(&b, &["A", "B"], 0, 1), Some((new[0], 0.5)));
+        assert_eq!(cheapest(&b, &["A"], 0, 1), Some((a[0], 3.0)));
+    }
+}
+
 /// A tensor narrower than the input's dimension (`n` is the widest tensor in
 /// play) is scored through a resized matrix of the pass's own, in both forms
 /// of the effective matrix: the weights land on their pairs, and the tensor

@@ -152,7 +152,6 @@ impl<T: Copy> WeightArr<T> {
     }
 
     /// Heap bytes of the values. The struct itself is counted by whoever holds it.
-    #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
         self.values.capacity() * size_of::<T>()
     }
@@ -178,7 +177,6 @@ impl Metric {
     }
 
     /// Heap bytes of the four arrays; the inline headers are counted by the owning `Cch`.
-    #[cfg(test)]
     pub(crate) fn memory_usage(&self) -> usize {
         self.up_w.memory_usage()
             + self.dn_w.memory_usage()
@@ -495,7 +493,6 @@ impl Cch {
         self.topo.node_count()
     }
 
-    #[cfg(test)]
     pub(super) fn memory_usage_impl(&self) -> usize {
         // `size_of::<Self>()` already covers `Metric`'s four inline headers
         size_of::<Self>() + self.topo.memory_usage() + self.metric.memory_usage()

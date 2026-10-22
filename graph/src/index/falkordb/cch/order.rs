@@ -303,15 +303,14 @@ impl Topology {
     }
 
     /// Bytes held by the topology: the struct itself (it lives on the heap, behind the
-    /// `Arc` every version of the index shares) and its six arrays.
-    #[cfg(test)]
+    /// `Arc` every version of the index shares) and its six arrays, by what they allocated.
     pub(crate) fn memory_usage(&self) -> usize {
         let words = self.perm.len()
             + self.iperm.len()
-            + self.up.p.len()
-            + self.up.i.len()
-            + self.down.p.len()
-            + self.down.i.len();
+            + self.up.p.capacity()
+            + self.up.i.capacity()
+            + self.down.p.capacity()
+            + self.down.i.capacity();
         size_of::<Self>() + words * size_of::<u64>()
     }
 }

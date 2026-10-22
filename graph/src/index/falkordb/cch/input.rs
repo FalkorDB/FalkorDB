@@ -28,10 +28,10 @@ mod tests;
 use std::mem::transmute;
 use std::os::raw::c_void;
 use std::ptr::{self, null_mut};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::graph::attribute_store::AttributeStore;
-use crate::graph::graph::Graph;
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::{Descriptor, Matrix, grb};
 use crate::graph::graphblas::tensor::{MULTI_EDGE, MeBlock, Tensor, compound_key_inverse};
 use crate::graph::graphblas::vector::Vector;
@@ -120,20 +120,36 @@ unsafe fn cch_edge_weight(
     // No null check on `attrs`: the only caller sets it from a live
     // `&AttributeStore` held for the whole apply, so it cannot be null, and a
     // null check would not catch the one real risk (a dangling pointer).
-    let w = match unsafe { (*ctx.attrs).get_attr_by_idx(edge_id, ctx.attr_idx) } {
-        Some(Value::Float(f)) => f,
-        #[allow(clippy::cast_precision_loss)]
-        Some(Value::Int(k)) => k as f64,
-        _ => DEFAULT_WEIGHT,
-    };
+    let w = edge_weight(unsafe { &*ctx.attrs }, ctx.attr_idx, edge_id);
     // NaN fails the comparison; `+inf` and `-0.0` pass it.
     if w >= 0.0 { w } else { INVALID_WEIGHT }
 }
 
-/// Whether `value`, as an edge's weight attribute, is a weight an index takes: a number that
-/// is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A missing or non-numeric value
-/// weighs [`DEFAULT_WEIGHT`], so only a negative number (`-inf` included) or NaN is refused.
-/// The rule the weight operators score by ([`cch_edge_weight`]) and the write-time check
+/// The weight attribute of one edge as a number, [`DEFAULT_WEIGHT`] when it
+/// is missing or not a number. The one reading shared by the index build and
+/// by [`cheapest_edge`]. It does not check the value: the build checks it
+/// ([`cch_edge_weight`] maps a negative or NaN weight to [`INVALID_WEIGHT`]),
+/// and a write is refused before it can store one
+/// ([`check_edge_weights`](super::maint::check_edge_weights)), so the edges
+/// a held index answers over carry only valid weights.
+pub(crate) fn edge_weight(
+    attrs: &AttributeStore,
+    attr_idx: u16,
+    edge_id: u64,
+) -> f64 {
+    match attrs.get_attr_by_idx(edge_id, attr_idx) {
+        Some(Value::Float(f)) => f,
+        #[allow(clippy::cast_precision_loss)]
+        Some(Value::Int(k)) => k as f64,
+        _ => DEFAULT_WEIGHT,
+    }
+}
+
+/// Whether `value`, as an edge's weight attribute, is a weight an index takes: what
+/// [`edge_weight`] reads it as is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A
+/// missing or non-numeric value reads as [`DEFAULT_WEIGHT`], so only a negative number
+/// (`-inf` included) or NaN is refused. The rule the weight operators score by and the
+/// write-time check
 /// ([`check_edge_weights`](super::maint::check_edge_weights)) refuses by.
 pub(crate) fn is_valid_weight(value: &Value) -> bool {
     match value {
@@ -142,6 +158,30 @@ pub(crate) fn is_valid_weight(value: &Value) -> bool {
         Value::Int(k) => *k >= 0,
         _ => true,
     }
+}
+
+/// The cheapest edge from `src` to `dst` among `types`, by [`edge_weight`],
+/// as `(edge id, weight)`; `None` when there is none.
+///
+/// The edges are [`Graph::get_src_dest_relationships`]: the pair's own edges
+/// in each type, never a row scan. An empty `types` means every type. Ties go
+/// to the earlier type in `types`, then to the lowest edge id.
+pub(crate) fn cheapest_edge(
+    g: &Graph,
+    types: &[Arc<String>],
+    attr_idx: u16,
+    src: NodeId,
+    dst: NodeId,
+) -> Option<(RelationshipId, f64)> {
+    let attrs = g.relationship_attrs();
+    let mut best: Option<(RelationshipId, f64)> = None;
+    for id in g.get_src_dest_relationships(src, dst, types) {
+        let w = edge_weight(attrs, attr_idx, u64::from(id));
+        if best.is_none_or(|(_, best_w)| w < best_w) {
+            best = Some((id, w));
+        }
+    }
+    best
 }
 
 // The operators below take the types they mean, and are cast to GraphBLAS's

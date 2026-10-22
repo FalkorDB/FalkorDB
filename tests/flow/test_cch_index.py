@@ -219,3 +219,70 @@ class testCchWeightConstraint():
         except ResponseError as e:
             self.env.assertContains("edge weights must be >= 0 (+inf marks a closed edge)",
                                     str(e))
+
+    def test04_a_closed_edge_is_routed_around(self):
+        # 0 -> 1 -> 2 costs 2, the direct 0 -> 2 costs 10.
+        g = self.db.select_graph("cch_closed_route")
+        g.query("CREATE (a:N {id: 0}), (b:N {id: 1}), (c:N {id: 2}), "
+                "(a)-[:ROAD {time: 1.0}]->(b), (b)-[:ROAD {time: 1.0}]->(c), "
+                "(a)-[:ROAD {time: 10.0}]->(c)")
+        g.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        q = ("MATCH (a:N {id: $s}), (b:N {id: $t}) "
+             "CALL db.idx.cch.query({sourceNode: a, targetNode: b, relTypes: ['ROAD'], "
+             "weightProp: 'time'}) YIELD pathWeight, path "
+             "RETURN pathWeight, [n IN nodes(path) | n.id]")
+        route = lambda: g.ro_query(q, {"s": 0, "t": 2}).result_set
+        self.env.assertEquals(route(), [[2.0, [0, 1, 2]]])
+        # Close 1 -> 2: the detour is taken.
+        g.query("MATCH (:N {id: 1})-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0 / 0.0")
+        self.env.assertEquals(route(), [[10.0, [0, 2]]])
+        # A finite edge parallel to the closed one wins the pair.
+        g.query("MATCH (b:N {id: 1}), (c:N {id: 2}) CREATE (b)-[:ROAD {time: 3.0}]->(c)")
+        self.env.assertEquals(route(), [[4.0, [0, 1, 2]]])
+        # Every way into 2 closed: no row.
+        g.query("MATCH ()-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0 / 0.0")
+        self.env.assertEquals(route(), [])
+        # Reopen every edge into 2 at 1.0: the direct edge now wins.
+        g.query("MATCH ()-[r:ROAD]->(:N {id: 2}) SET r.time = 1.0")
+        self.env.assertEquals(route(), [[1.0, [0, 2]]])
+
+
+#-----------------------------------------------------------------------------
+# 3. GRAPH.MEMORY USAGE counts the hierarchy
+#-----------------------------------------------------------------------------
+
+
+class testCchMemoryUsage():
+    """A CCH index's hierarchy counts in indices_sz_mb, and DROP CCH INDEX releases it."""
+
+    def __init__(self):
+        if not INDEX_FALKORDB:
+            Environment.skip(None)
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.graph = self.db.select_graph("cch_memory_usage")
+
+    def _indices_mb(self):
+        res = self.con.execute_command("GRAPH.MEMORY", "USAGE", "cch_memory_usage")
+        return dict(zip(res[0::2], res[1::2]))['indices_sz_mb']
+
+    def test01_counted_and_released(self):
+        # A 100 x 100 grid: its hierarchy takes a few MiB, enough to show in whole MiB.
+        side = 100
+        params = {'n': side * side, 'side': side}
+        self.graph.query("UNWIND range(0, $n - 1) AS x CREATE (:J)", params)
+        self.graph.query("""UNWIND range(0, $n - 1) AS x
+                            MATCH (a) WHERE id(a) = x
+                            MATCH (b) WHERE id(b) = x + 1 AND x % $side <> $side - 1
+                            CREATE (a)-[:ROAD {time: 1.0}]->(b)""", params)
+        self.graph.query("""UNWIND range(0, $n - $side - 1) AS x
+                            MATCH (a) WHERE id(a) = x
+                            MATCH (b) WHERE id(b) = x + $side
+                            CREATE (a)-[:ROAD {time: 1.0}]->(b)""", params)
+        self.env.assertEqual(self._indices_mb(), 0)
+
+        self.graph.query("CREATE CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertGreater(self._indices_mb(), 0)
+
+        self.graph.query("DROP CCH INDEX FOR ()-[e:ROAD]->() ON (e.time)")
+        self.env.assertEqual(self._indices_mb(), 0)
