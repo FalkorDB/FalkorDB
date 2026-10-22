@@ -48,7 +48,7 @@ use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
 
 /// C's reply for a name it does not know, in GET and SET alike.
-const UNKNOWN_FIELD: &str = "Unknown configuration field";
+pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
 
 /// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
 const JS_MIN_SIZE: i64 = 1_048_576;
@@ -111,7 +111,7 @@ fn config_get_one(
 }
 
 /// Validate and parse a config SET request. Returns the parsed value or error.
-fn validate_config_set(
+pub(crate) fn validate_config_set(
     name: &str,
     value: &str,
 ) -> Result<ConfigValue, String> {
@@ -201,36 +201,46 @@ fn validate_config_set(
     }
 }
 
-/// Cross-validate timeout configuration constraints.
+/// Cross-validate timeout configuration constraints against the current
+/// `TIMEOUT_DEFAULT` / `TIMEOUT_MAX`.
+fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
+    let mut timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
+    let mut timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
+    check_timeout_constraints(&mut timeout_default, &mut timeout_max, validated)
+}
+
+/// Cross-validate timeout configuration constraints, starting from
+/// `timeout_default` / `timeout_max` and updating them to the values `validated`
+/// would leave behind.
 ///
 /// Rules:
 /// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
 /// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
 /// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
-fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
-    // Compute what the new values will be after applying.
-    let mut new_timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
-    let mut new_timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
-
+pub(crate) fn check_timeout_constraints(
+    timeout_default: &mut i64,
+    timeout_max: &mut i64,
+    validated: &[(&str, ConfigValue)],
+) -> Result<(), String> {
     let mut setting_timeout = false;
     for (name, val) in validated {
         match *name {
             "TIMEOUT" => {
                 setting_timeout = true;
             }
-            "TIMEOUT_DEFAULT" => new_timeout_default = val.as_i64(),
-            "TIMEOUT_MAX" => new_timeout_max = val.as_i64(),
+            "TIMEOUT_DEFAULT" => *timeout_default = val.as_i64(),
+            "TIMEOUT_MAX" => *timeout_max = val.as_i64(),
             _ => {}
         }
     }
 
     // Cannot set deprecated TIMEOUT when new configs are active
-    if setting_timeout && (new_timeout_default > 0 || new_timeout_max > 0) {
+    if setting_timeout && (*timeout_default > 0 || *timeout_max > 0) {
         return Err("The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead".to_string());
     }
 
     // TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
-    if new_timeout_default > 0 && new_timeout_max > 0 && new_timeout_default > new_timeout_max {
+    if *timeout_default > 0 && *timeout_max > 0 && *timeout_default > *timeout_max {
         // Determine which one is being set to produce the right error message
         let setting_default = validated.iter().any(|(n, _)| *n == "TIMEOUT_DEFAULT");
         if setting_default {
@@ -242,13 +252,13 @@ fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Resu
     Ok(())
 }
 
-enum ConfigValue {
+pub(crate) enum ConfigValue {
     Int(i64),
     Uint(u64),
 }
 
 /// Apply a validated config value.
-fn apply_config_set(
+pub(crate) fn apply_config_set(
     ctx: &Context,
     name: &str,
     val: &ConfigValue,

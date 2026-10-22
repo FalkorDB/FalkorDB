@@ -9,7 +9,7 @@ exclude = ["native-deps"]
 
 [package]
 name = "falkordb-rs"
-version = "6.0.2"
+version = "6.0.3"
 edition = "2024"
 description = "Graph database"
 license = "SSPL-1.0"
@@ -32,7 +32,7 @@ graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
 libc = "0.2"
 parking_lot = { version = "0.12.5", features = ["arc_lock"] }
-redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
+redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "fix/resp-string-bytes" }
 # Pinned exactly, not caret-matched. Two engines have to serialize the same
 # ids to the same bytes (#2698), and roaring's output is not stable across
 # releases by contract: `optimize()` is path-dependent, and the container
@@ -46,7 +46,7 @@ thin-vec = "0.2.18"
 orx-tree = "2.2.0"
 
 [build-dependencies]
-redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
+redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "fix/resp-string-bytes" }
 
 [profile.dev]
 opt-level = 2
@@ -80,6 +80,9 @@ strip = false
 
 [features]
 fuzz = []
+# Pass-through for graph's native numeric index. Enables `index::falkordb` in the
+# shipped `.so`; off by default. See graph/Cargo.toml for the full contract.
+index-falkordb = ["graph/index-falkordb"]
 # Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
 # JIT cache populates as we exercise the test suite. Consumed by graph's
 # matrix.rs and forwarded by `native-deps prejit`; never enable in shipped builds —
