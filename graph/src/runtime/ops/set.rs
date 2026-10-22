@@ -104,7 +104,7 @@ impl Runtime<'_> {
                     var: var.clone(),
                     labels: labels
                         .iter()
-                        .map(|l| self.graph_cell().borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                 },
                 SetItem::Attribute {

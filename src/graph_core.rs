@@ -260,7 +260,7 @@ impl WriteQueryOk {
         Self {
             // The MVCC version this query built, taken from the runtime that
             // built it rather than passed alongside, so the two cannot differ.
-            graph: Arc::clone(runtime.graph_cell()),
+            graph: runtime.graph_arc(),
             effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.

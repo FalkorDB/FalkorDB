@@ -67,13 +67,9 @@ pub(crate) fn create_index<'a>(
     // and calls host FFI that needs the global lock, so become a writer first —
     // same contract as `CommitOp`.
     runtime.write_escalation().upgrade_to_write()?;
-    runtime.graph_cell().borrow_mut().create_index(
-        index_type,
-        entity_type,
-        label,
-        attrs,
-        index_options,
-    )?;
+    runtime
+        .graph_mut()
+        .create_index(index_type, entity_type, label, attrs, index_options)?;
     runtime.stats.borrow_mut().indexes_created += attrs.len();
     emit_effect(
         runtime,
@@ -102,11 +98,9 @@ pub(crate) fn drop_index<'a>(
     }
     // See `create_index`: DDL runs in writer mode.
     runtime.write_escalation().upgrade_to_write()?;
-    let dropped =
-        runtime
-            .graph_cell()
-            .borrow_mut()
-            .drop_index(index_type, entity_type, label, attrs)?;
+    let dropped = runtime
+        .graph_mut()
+        .drop_index(index_type, entity_type, label, attrs)?;
     runtime.stats.borrow_mut().indexes_dropped += dropped;
     emit_effect(runtime, false, label, attrs, index_type, entity_type, None)?;
     Ok(BatchOp::Once(None))
@@ -133,7 +127,7 @@ fn emit_effect(
     let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
     buf.build_index(
         &runtime.pending.borrow(),
-        runtime.graph_cell(),
+        &runtime.graph(),
         create,
         &AnnouncedIndex {
             entity_type: *entity_type,

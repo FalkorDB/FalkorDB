@@ -62,7 +62,7 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::{AtomicRef, AtomicRefCell};
+use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
@@ -156,7 +156,8 @@ pub struct Runtime<'a> {
     /// life; see [`Self::graph`].
     read_guard: Option<HeldRead>,
     /// Graph being queried. Private, so it cannot be replaced or detached:
-    /// read it through [`Self::graph`], or [`Self::graph_cell`] for the cell.
+    /// read it through [`Self::graph`] / [`Self::graph_mut`], or keep it with
+    /// [`Self::graph_arc`].
     g: Arc<AtomicRefCell<Graph>>,
     /// Whether this is a write query
     pub write: bool,
@@ -458,7 +459,7 @@ impl<'a> Runtime<'a> {
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
-            pending.borrow_mut().set_schema_baseline(&g);
+            pending.borrow_mut().set_schema_baseline(&g.borrow());
         }
         // A read query runs on a published version and can take its borrow once
         // here instead of on every access. Writers mutate a private fork; the
@@ -558,12 +559,29 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// The cell holding this query's graph, for the code that needs the cell
-    /// itself rather than a borrow of it (commit, effects, index DDL, UDFs).
-    /// Read-only: the graph a runtime runs on cannot be replaced.
+    /// The graph this write query mutates, borrowed exclusively.
+    ///
+    /// # Panics
+    ///
+    /// On a read query: its graph is a published version, which a reader
+    /// only ever borrows shared (it holds that borrow for its whole life, see
+    /// [`Self::graph`]). Plans that write are run as write queries, so this
+    /// is a planner bug, reported by name rather than as the cell's
+    /// "already immutably borrowed".
     #[must_use]
-    pub fn graph_cell(&self) -> &Arc<AtomicRefCell<Graph>> {
-        &self.g
+    pub fn graph_mut(&self) -> AtomicRefMut<'_, Graph> {
+        assert!(self.write, "graph_mut on a read query");
+        self.g.borrow_mut()
+    }
+
+    /// An owner of this query's graph, for code that keeps the graph past
+    /// the call that needs it: the version a write query publishes, and the
+    /// JS UDF context's callbacks. Everything else reads through
+    /// [`Self::graph`] / [`Self::graph_mut`]. The handle is a clone, so the
+    /// graph this runtime runs on cannot be replaced through it.
+    #[must_use]
+    pub fn graph_arc(&self) -> Arc<AtomicRefCell<Graph>> {
+        Arc::clone(&self.g)
     }
 
     /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
@@ -585,12 +603,14 @@ impl<'a> Runtime<'a> {
     ) {
         self.pending
             .borrow_mut()
-            .resync_published_indexes(committed, &self.g);
+            .resync_published_indexes(committed, &self.graph());
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(&self) {
-        self.pending.borrow_mut().commit_deferred_indexes(&self.g);
+        self.pending
+            .borrow_mut()
+            .commit_deferred_indexes(&mut self.graph_mut());
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
@@ -1464,7 +1484,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_node_attr_id(key);
             Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
             attr_id
         });
@@ -1483,7 +1503,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_rel_attr_id(key);
             Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);
             attr_id
         });

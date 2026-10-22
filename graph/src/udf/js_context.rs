@@ -311,12 +311,13 @@ pub fn call_udf_bridge(
                 .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
 
             // Set graph reference for JS classes that need it
-            crate::udf::js_classes::set_current_graph(rt.graph_cell().clone());
+            let graph = rt.graph_arc();
+            crate::udf::js_classes::set_current_graph(graph.clone());
 
             // Convert arguments
             let js_args: Vec<rquickjs::Value> = args
                 .iter()
-                .map(|v| type_convert::value_to_js(&ctx, v, rt.graph_cell(), Some(rt)))
+                .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
                 .collect::<Result<Vec<_>, _>>()?;
 
             // Call the function
