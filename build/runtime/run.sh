@@ -111,11 +111,12 @@ if [ "${TLS:-0}" -eq "1" ]; then
     # check above. falkordb is handed what is already there and generates the
     # rest; when a file cannot be handed over, the container stops rather than
     # have root write there. Elsewhere, falkordb cannot plant a link, so root
-    # generates the files and then hands them over, as before.
+    # generates the files and then hands them over, as before. SKIP_FIX_PERMS
+    # skips only the handing over.
     # shellcheck disable=SC2016 # $1 is the inner shell's
-    if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] &&
+    if [ -n "$drop_privs" ] &&
         gosu "$FALKORDB_USER" sh -c '[ -w "$1" ]' sh "${FALKORDB_TLS_PATH}"; then
-        if ! fix_tls_perms; then
+        if [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
             echo "Error: $FALKORDB_USER can write ${FALKORDB_TLS_PATH}, so root does not generate files there." \
                 "Make the files above writable, or set SKIP_DROP_PRIVS=1 to run as root."
             exit 1
