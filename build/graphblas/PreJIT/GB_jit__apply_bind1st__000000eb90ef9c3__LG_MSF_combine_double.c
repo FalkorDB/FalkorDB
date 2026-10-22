@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -30,8 +30,6 @@ void LG_MSF_combine_double ( LG_MSF_tuple_double *z, const double *x, const uint
 "void LG_MSF_combine_double ( LG_MSF_tuple_double *z, const double *x, const uint64_t *y ) { z->wInt = *x; z->idx = *y; }"
 #endif
 #define GB_BINOP(z,x,y,i,j)  LG_MSF_combine_double (&(z), &(x), &(y))
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: full
 #define GB_C_IS_HYPER  0
@@ -108,7 +106,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x3fa9cee2a81f260b ;
-    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_LG_MSF_combine_double_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MSF_tuple_double_USER_DEFN ;

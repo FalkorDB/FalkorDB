@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.2, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -30,8 +30,6 @@ void lg_hll_delta(double *z, const HLL *x, const HLL *y) { *z = 0; _Bool diff = 
 "void lg_hll_delta(double *z, const HLL *x, const HLL *y) { *z = 0; _Bool diff = 0 != memcmp(x->registers, y->registers, (1 << 10)) ; if (diff) { uint32_t i; double alpha_mm = 0.7213 / (1.0 + 1.079 / (double)((1 << 10))) ; alpha_mm *= ((double)((1 << 10)) * (double)((1 << 10))) ; double sum = 0; for (uint32_t i = 0; i < ((1 << 10)); i++) { sum += 1.0 / (1 << x->registers[i]); } double estimate = alpha_mm / sum; if (estimate <= 5.0 / 2.0 * (double)((1 << 10))) { int zeros = 0; for (i = 0; i < ((1 << 10)); i++) zeros += (x->registers[i] == 0); if (zeros) estimate = (double)((1 << 10)) * log((double)((1 << 10)) / zeros); } else if (estimate > (1.0 / 30.0) * 4294967296.0) { estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0)) ; } *z = estimate; sum = 0; for (uint32_t i = 0; i < ((1 << 10)); i++) { sum += 1.0 / (1 << y->registers[i]); } estimate = alpha_mm / sum; if (estimate <= 5.0 / 2.0 * (double)((1 << 10))) { int zeros = 0; for (i = 0; i < ((1 << 10)); i++) zeros += (y->registers[i] == 0); if (zeros) estimate = (double)((1 << 10)) * log((double)((1 << 10)) / zeros); } else if (estimate > (1.0 / 30.0) * 4294967296.0) { estimate = -4294967296.0 * log(1.0 - (estimate / 4294967296.0)) ; } *z -= estimate; } }"
 #endif
 #define GB_BINOP(z,x,y,i,j)  lg_hll_delta (&(z), &(x), &(y))
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: full
 #define GB_C_IS_HYPER  0
@@ -133,7 +131,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x17d3a0ab42411e90 ;
-    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 2 ;
     defn [0] = GB_lg_hll_delta_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = NULL ;
