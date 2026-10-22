@@ -909,12 +909,13 @@ impl Tensor {
                 let mut new_m = Matrix::<u64>::new(nrows, ncols);
                 match (fold_dp, fold_dm) {
                     // new_m<!dm, replace> = m ⊕ dp (dp wins on shadowed
-                    // pairs); dp ∩ dm = ∅, so no pending add is lost.
+                    // pairs); dp ∩ dm = ∅, so no pending add is lost. The
+                    // mask is structural
                     (true, true) => new_m.element_wise_add(
                         Some(&self.dm),
                         Some(&self.m),
                         Some(&*self.dp),
-                        Some(Descriptor::RC),
+                        Some(Descriptor::RSC),
                     ),
                     (true, false) => {
                         new_m.element_wise_add(None, Some(&self.m), Some(&*self.dp), None);
