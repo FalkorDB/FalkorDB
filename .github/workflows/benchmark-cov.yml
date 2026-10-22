@@ -469,7 +469,13 @@ jobs:
           # `rustup default stable`: the toolchain image ships rustup without a
           # default, so a bare `cargo` fails with "could not choose a version of
           # cargo to run".
-          docker run --rm -e CXX=clang++ -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
+          #
+          # No `-e CXX`: the image sets CC/CXX to its versioned LLVM
+          # (clang-23 / clang++-23, build/Dockerfile) and ships no bare
+          # `clang++`. Overriding it to `clang++` broke the first build that had
+          # to compile a native dep from source: LAGraph's CMake could not find
+          # the C++ compiler.
+          docker run --rm -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
             set -e
             # /w/.bin, not /w: prepending the checkout root would put every
             # root-level script ahead of /usr/bin for cargo and all its children.
