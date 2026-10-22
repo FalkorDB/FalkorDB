@@ -1011,6 +1011,33 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test41_return_cascaded_edge_of_a_new_type(self):
+        # The edge's type is new and its only edge is cascaded away by the
+        # DETACH DELETE in the same statement. The compact reply (what this
+        # client asks for) states the type by id, so the type has to be
+        # registered even though no edge of it survives; it used to panic the
+        # server on an unregistered type.
+        # https://github.com/FalkorDB/FalkorDB/issues/3447
+        self.graph.delete()
+
+        res = self.graph.query(
+            "CREATE (a {n: 1})-[r:NEW_TYPE {w: 5}]->(b {n: 2}) DETACH DELETE a RETURN r")
+        self.env.assertEqual(len(res.result_set), 1)
+        r = res.result_set[0][0]
+        self.env.assertEqual(r.relation, "NEW_TYPE")
+        self.env.assertEqual(r.properties, {"w": 5})
+
+        # as in C, the type stays registered with no edge carrying it
+        res = self.graph.query("CALL db.relationshipTypes()")
+        self.env.assertEqual(res.result_set, [["NEW_TYPE"]])
+        res = self.graph.query("MATCH ()-[e]->() RETURN count(e)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # a later edge of the type resolves the same, registered id
+        self.graph.query("CREATE ()-[:NEW_TYPE]->()")
+        res = self.graph.query("MATCH ()-[e]->() RETURN type(e), count(e)")
+        self.env.assertEqual(res.result_set, [["NEW_TYPE", 1]])
+
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):

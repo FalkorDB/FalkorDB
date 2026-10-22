@@ -469,6 +469,53 @@ class testEffects_02_HarderShapes(_EffectsBase):
             [[50, 1001, 1050]])
         self.assert_graph_eq()
 
+    def test07_a_cascaded_edge_of_a_new_type_beside_a_surviving_edge(self):
+        # `r1` is the only edge of a type this graph has never seen, and the
+        # DETACH DELETE of its source cascades it away; `r2` survives with an
+        # id above it. The cancelled pair for `r1` states its type id, so the
+        # type has to be registered at commit — it used to be skipped, the
+        # buffer named `r2` and nothing below it, and the replica's id space
+        # refused the hole with a forced full resync.
+        # https://github.com/FalkorDB/FalkorDB/issues/3447
+        self.set_effects_config()
+        self.query_and_sync("CREATE ()-[:EXISTING]->()")
+        failures_before = self.effect_failures()
+        diverged_before = self.replica_log_diverged()
+        full_before = self.master.info()["sync_full"]
+
+        self.query_and_sync(
+            """CREATE (a:Cascade)-[r1:CASCADED_TYPE]->(b:Cascade),
+                      (c:Cascade)-[r2:EXISTING]->(d:Cascade)
+               DETACH DELETE a""")
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused the buffer")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="the cancelled edge forced a resync")
+        if diverged_before is not None:
+            self.env.assertEqual(self.replica_log_diverged(), diverged_before)
+        self.assert_agree(
+            "MATCH (n:Cascade) RETURN count(n)", [[3]])
+        self.assert_agree(
+            "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e)", [[0]])
+
+        # Both sides registered the type, and both hand the next edge the same
+        # id: the cancelled one, recycled.
+        self.assert_agree(
+            "CALL db.relationshipTypes() YIELD relationshipType "
+            "WHERE relationshipType = 'CASCADED_TYPE' RETURN relationshipType",
+            [["CASCADED_TYPE"]])
+        self.query_and_sync(
+            "MATCH (b:Cascade) WITH b LIMIT 1 CREATE (b)-[:CASCADED_TYPE]->(b)")
+        self.assert_agree(
+            "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e), collect(id(e))",
+            self.master_graph.ro_query(
+                "MATCH ()-[e:CASCADED_TYPE]->() RETURN count(e), collect(id(e))"
+            ).result_set)
+        self.env.assertEqual(self.effect_failures(), failures_before)
+        self.env.assertEqual(self.master.info()["sync_full"], full_before)
+        self.assert_graph_eq()
+
 
 #-----------------------------------------------------------------------------
 # 4g. several kinds of record from one statement
