@@ -1,0 +1,6 @@
+# pr3435_review: PR #3435 (perf/bfs-pushpull @ a76e66420). Rows stay commented out until the PR merges;
+# then fold them into versioned_matrix (tensor.rs) and algo_udf (algo_procedures.rs) and delete this project.
+#graph/src/graph/graphblas/tensor.rs	Tensor::clean_fwd	989	PROVEN	Clean.cleanFwd: cleanFwd_isSome_iff, cleanFwd_some_deltas_empty, cleanFwd_eq_extract (lent base = extract's (m ∖ dm) ∪ dp)
+#graph/src/graph/graphblas/tensor.rs	Tensor::clean_bwd	997	PROVEN	Clean.cleanBwd: cleanBwd_isSome_iff, cleanBwd_eff (base = mt's logical contents); transpose of clean_fwd: clean_transpose_reach (Reach.allInv discharges mt_eff; MtRepr = versioned_matrix's mt abstraction)
+#graph/src/runtime/functions/algo_procedures.rs	bfs_levels_push_pull	1066	PROVEN	Bfs.bfsFull: bfsFull_correct (every heuristic; pushPull_correct, pull_eq_push), bfsFull_src_out_of_range, bfsFull_no_leak, k_increment_no_overflow (i64), run_fuel_any, exit_conditions (precondition AT = Aᵀ; GBSpec FFI); history pre_a76e664_*
+#graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1170	PROVEN	Algo.levelVec: nodes_path_independent, nodes_same_as_main, levelVec_correct, src_out_of_range_all_err (+ algo_udf AlgoBfsReg.*); LagSpec/GBSpec FFI; transpose via MtRepr (versioned_matrix's mt abstraction)

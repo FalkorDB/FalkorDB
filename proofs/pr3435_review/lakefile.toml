@@ -1,0 +1,15 @@
+name = "pr3435-review"
+defaultTargets = ["Pr3435Review"]
+
+[[lean_lib]]
+name = "Pr3435Review"
+
+# Tensor layers, per-pair invariant `Inv.mt_eff`, `extract`: proofs/versioned_matrix.
+[[require]]
+name = "falkor-versioned-matrix"
+path = "../versioned_matrix"
+
+# `algo_bfs` result assembly (`levelBranch`, `edgesBranch`, `algoBfs`): proofs/algo_udf.
+[[require]]
+name = "algo-udf"
+path = "../algo_udf"

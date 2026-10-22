@@ -1,0 +1,10 @@
+name = "falkor-functions-str-list"
+defaultTargets = ["FalkorStrList"]
+
+[[lean_lib]]
+name = "FalkorStrList"
+
+# Shared foundations (i64 range and wrap): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"

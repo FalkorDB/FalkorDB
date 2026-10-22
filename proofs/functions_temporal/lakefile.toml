@@ -1,0 +1,5 @@
+name = "falkor-temporal"
+defaultTargets = ["FalkorTemporal"]
+
+[[lean_lib]]
+name = "FalkorTemporal"

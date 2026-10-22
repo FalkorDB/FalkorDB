@@ -1,0 +1,5 @@
+name = "falkor-core"
+defaultTargets = ["FalkorCore"]
+
+[[lean_lib]]
+name = "FalkorCore"
