@@ -548,9 +548,8 @@ impl<T> Delta<T> {
 // `Matrix::set` is element-typed (`impl Matrix<bool>` / `impl Matrix<u64>`),
 // so the counted insert is too.
 impl Delta<bool> {
-    /// Add `(i, j)` and count it. A `bool` layer carries only a pattern — a
-    /// stored `false` reads as absent to the valued masks these layers are used
-    /// with — so there is no value to pass.
+    /// Add `(i, j)` and count it. A `bool` layer carries only a pattern (the
+    /// masks it is used as are structural), so there is no value to pass.
     pub(super) fn insert(
         &mut self,
         i: u64,
@@ -591,8 +590,12 @@ impl Delta<bool> {
         mask: &Matrix<bool>,
         base: &Matrix<TV>,
     ) {
-        self.layer_mut()
-            .element_wise_multiply(Some(mask), Some(mask), Some(base), None);
+        self.layer_mut().element_wise_multiply(
+            Some(mask),
+            Some(mask),
+            Some(base),
+            Some(matrix::Descriptor::S),
+        );
         self.resync();
     }
 }
@@ -1100,12 +1103,13 @@ impl VersionedMatrix<bool> {
                 match (fold_dp, fold_dm) {
                     // new_m<!dm, replace> = m ∪ dp: REPLACE drops the dm
                     // entries, the complemented mask lets everything else
-                    // through (dp ∩ dm = ∅, so no pending add is lost).
+                    // through (dp ∩ dm = ∅, so no pending add is lost). The
+                    // mask is structural
                     (true, true) => new_m.element_wise_add(
                         Some(&self.dm),
                         Some(&self.m),
                         Some(&*self.dp),
-                        Some(matrix::Descriptor::RC),
+                        Some(matrix::Descriptor::RSC),
                     ),
                     (true, false) => {
                         new_m.element_wise_add(None, Some(&self.m), Some(&*self.dp), None);
@@ -1524,6 +1528,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::atomic::Ordering;
 
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
