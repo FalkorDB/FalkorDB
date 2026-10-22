@@ -652,10 +652,16 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
 /// Represents patterns like `p = (a)-[*]->(b)` where:
 /// - `var` is the path variable `p`
 /// - `vars` contains all variables in the path pattern
+/// - `incoming` has one entry per relationship of the path, in pattern order:
+///   whether it was written `<-`. The parser stores such a relationship with
+///   `from`/`to` swapped, so its variable-length binding runs against the
+///   path. Recorded here because the endpoints cannot tell it apart when both
+///   are the same node, as in `p = (a)<-[*]-(a)`.
 #[derive(Debug)]
 pub struct QueryPath<TVar> {
     pub var: TVar,
     pub vars: Vec<TVar>,
+    pub incoming: Vec<bool>,
 }
 
 impl<TVar> QueryPath<TVar> {
@@ -663,8 +669,22 @@ impl<TVar> QueryPath<TVar> {
     pub const fn new(
         var: TVar,
         vars: Vec<TVar>,
+        incoming: Vec<bool>,
     ) -> Self {
-        Self { var, vars }
+        Self {
+            var,
+            vars,
+            incoming,
+        }
+    }
+
+    /// Whether the relationship at `vars[var_idx]` was written `<-`.
+    #[must_use]
+    pub fn is_incoming(
+        &self,
+        var_idx: usize,
+    ) -> bool {
+        self.incoming.get(var_idx / 2).copied().unwrap_or(false)
     }
 }
 

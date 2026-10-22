@@ -1113,15 +1113,24 @@ impl Planner {
                 // placeholder integer.
                 let path_var = self.fresh_var(scope_id, Type::Path);
                 let mut path_component_vars = Vec::new();
+                let mut incoming = Vec::new();
                 let nodes = graph.nodes();
                 let rels = graph.relationships();
                 for i in 0..nodes.len() {
                     path_component_vars.push(nodes[i].alias.clone());
                     if i < rels.len() {
                         path_component_vars.push(rels[i].alias.clone());
+                        // Written `<-`: stored with `from`/`to` swapped.
+                        incoming.push(
+                            !rels[i].bidirectional && rels[i].from.alias.id != nodes[i].alias.id,
+                        );
                     }
                 }
-                let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
+                let query_path = Arc::new(QueryPath::new(
+                    path_var.clone(),
+                    path_component_vars,
+                    incoming,
+                ));
 
                 let comprehension = ExtractedComprehension {
                     var,
@@ -2334,7 +2343,9 @@ impl Planner {
             if !paths.is_empty() {
                 // A named path covering exactly one forward var-len pattern is
                 // bound directly by the CondVarLenTraverse (which already
-                // materializes the full path value), skipping PathBuilder.
+                // materializes the full path value), skipping PathBuilder. An
+                // incoming one (`(a)<-[*]-(a)` too) needs PathBuilder to
+                // reverse it.
                 let mut remaining = Vec::with_capacity(paths.len());
                 for path in paths {
                     let rel = relationships.first();
@@ -2343,6 +2354,7 @@ impl Planner {
                             rel.min_hops.is_some()
                                 && rel.all_shortest_paths == AllShortestPaths::No
                                 && path.vars.len() == 3
+                                && !path.is_incoming(1)
                                 && path.vars[0].id == rel.from.alias.id
                                 && path.vars[1].id == rel.alias.id
                                 && path.vars[2].id == rel.to.alias.id

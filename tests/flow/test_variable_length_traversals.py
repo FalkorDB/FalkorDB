@@ -630,3 +630,51 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         self.env.assertEqual(without_path, [[4]])
         self.env.assertEqual(with_path, without_path)
+
+    def test19_incoming_path_follows_pattern(self):
+        # a named path over an incoming var-len pattern lists its nodes and
+        # relationships in pattern order, also when both ends are the same
+        # node (#3451)
+        g = self.db.select_graph("vlt_incoming_cycle")
+        g.query("""CREATE (a:N {id: 0})-[:R {w: 1}]->(b:N {id: 1}),
+                          (b)-[:R {w: 2}]->(c:N {id: 2}),
+                          (c)-[:R {w: 3}]->(a)""")
+
+        ret = "RETURN [n IN nodes(p) | n.id], [r IN relationships(p) | r.w]"
+        incoming = [[[0, 2, 1, 0], [3, 2, 1]]]
+        outgoing = [[[0, 1, 2, 0], [1, 2, 3]]]
+        queries = [
+            # one variable at both ends
+            ("MATCH p = (a:N {id: 0})<-[:R*3..3]-(a) " + ret, incoming),
+            ("MATCH p = (a:N {id: 0})-[:R*3..3]->(a) " + ret, outgoing),
+            # two variables bound to the same node
+            ("MATCH (a:N {id: 0}), (b:N {id: 0}) "
+             "MATCH p = (a)<-[:R*3..3]-(b) " + ret, incoming),
+            # the cycle after a fixed-length hop
+            ("MATCH p = (x:N {id: 1})<-[:R]-(a:N {id: 0})<-[:R*3..3]-(a) " + ret,
+             [[[1, 0, 2, 1, 0], [1, 3, 2, 1]]]),
+            # not a cycle
+            ("MATCH p = (a:N {id: 0})<-[:R*2..2]-() " + ret,
+             [[[0, 2, 1], [3, 2]]]),
+        ]
+        for q, expected in queries:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        # the same paths built inside a pattern comprehension
+        queries = [
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p = (a)<-[:R*3..3]-(a) | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1, 0]]]]),
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p = (a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1]]]]),
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p = (a)<-[:R]-()<-[:R]-() | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1]]]]),
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p IN (a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1]]]]),
+        ]
+        for q, expected in queries:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        g.delete()
