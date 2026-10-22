@@ -88,7 +88,6 @@ impl<'a> IncludePendingOp<'a> {
             .iter()
             .filter_map(|l| g.get_label_id(l))
             .collect();
-        drop(g);
 
         let pending = self.runtime.pending.borrow();
 
@@ -96,12 +95,13 @@ impl<'a> IncludePendingOp<'a> {
         self.label_removed_nodes = Some(pending.nodes_with_pending_label_removes(&label_ids));
 
         let pending_nodes = if label_ids.len() == self.node_pattern.labels.len() {
-            pending.get_pending_nodes_with_labels(&label_ids)
+            pending.get_pending_nodes_with_labels(&label_ids, &g)
         } else {
             RoaringTreemap::new()
         };
 
         drop(pending);
+        drop(g);
 
         self.pending_extra = Some(Box::new(pending_nodes.into_iter().map(NodeId::from)));
     }
