@@ -122,6 +122,7 @@ trait IndexSubject: Clone {
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
         label: Arc<String>,
+        traverser: &mut Bfs,
     ) -> Scan<Self>;
 
     /// Recognize the IR variant that's a candidate for an index scan
@@ -172,8 +173,17 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
         label: Arc<String>,
+        traverser: &mut Bfs,
     ) -> Scan<Self> {
-        try_distance_index_scan(subject, attr, filter, attr_side, constant_node, label)
+        try_distance_index_scan(
+            subject,
+            attr,
+            filter,
+            attr_side,
+            constant_node,
+            label,
+            traverser,
+        )
     }
     fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
         let IR::NodeByLabelScan { node } = ir else {
@@ -239,6 +249,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         _attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         _constant_node: DynTree<ExprIR<Variable>>,
         _label: Arc<String>,
+        _traverser: &mut Bfs,
     ) -> Scan<Self> {
         None
     }
@@ -357,8 +368,9 @@ fn build_op_query(
 fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    traverser: &mut Bfs,
 ) -> Option<Arc<String>> {
-    for idx in tree.node(root_idx).indices::<Bfs>() {
+    for idx in tree.node(root_idx).indices_with(traverser) {
         let node = tree.node(idx);
         if let ExprIR::Property(attr) = node.data() {
             return Some(attr.clone());
@@ -376,6 +388,7 @@ fn extract_attribute_from_subtree(
 fn extract_attribute_and_expression_from_filter(
     filter: &DynTree<ExprIR<Variable>>,
     target_alias: Option<&Variable>,
+    traverser: &mut Bfs,
 ) -> Option<(
     Arc<String>,
     NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -388,17 +401,17 @@ fn extract_attribute_and_expression_from_filter(
         // Check which side has a property of the target node.
         // If both sides reference the target (e.g. `n.age > n.salary`),
         // we can't use the index — it can only accelerate one property lookup.
-        let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, alias);
-        let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, alias);
+        let lhs_has_target_property = subtree_has_property_of(filter, lhs_idx, alias, traverser);
+        let rhs_has_target_property = subtree_has_property_of(filter, rhs_idx, alias, traverser);
 
         match (lhs_has_target_property, rhs_has_target_property) {
             (true, true) => None,
             (true, _) => {
-                let attr = extract_attribute_from_subtree(filter, lhs_idx)?;
+                let attr = extract_attribute_from_subtree(filter, lhs_idx, traverser)?;
                 Some((attr, lhs_idx, rhs_idx))
             }
             (_, true) => {
-                let attr = extract_attribute_from_subtree(filter, rhs_idx)?;
+                let attr = extract_attribute_from_subtree(filter, rhs_idx, traverser)?;
                 Some((attr, rhs_idx, lhs_idx))
             }
             _ => None,
@@ -406,8 +419,8 @@ fn extract_attribute_and_expression_from_filter(
     } else {
         // Fallback: no target alias, use original logic
         match (
-            extract_attribute_from_subtree(filter, lhs_idx),
-            extract_attribute_from_subtree(filter, rhs_idx),
+            extract_attribute_from_subtree(filter, lhs_idx, traverser),
+            extract_attribute_from_subtree(filter, rhs_idx, traverser),
         ) {
             (Some(_), Some(_)) => None,
             (Some(attr), _) => Some((attr, lhs_idx, rhs_idx)),
@@ -425,6 +438,7 @@ fn try_distance_index_scan(
     attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
     constant_node: DynTree<ExprIR<Variable>>,
     label: Arc<String>,
+    traverser: &mut Bfs,
 ) -> Scan<Arc<QueryNode<Arc<String>, Variable>>> {
     let operand = filter.root().data();
     // distance() must be on the "less than" side of the comparison:
@@ -446,8 +460,8 @@ fn try_distance_index_scan(
     let child_0_idx = filter.node(attribute_side).child(0).idx();
     let child_1_idx = filter.node(attribute_side).child(1).idx();
     match (
-        extract_attribute_from_subtree(filter, child_0_idx),
-        extract_attribute_from_subtree(filter, child_1_idx),
+        extract_attribute_from_subtree(filter, child_0_idx, traverser),
+        extract_attribute_from_subtree(filter, child_1_idx, traverser),
     ) {
         (Some(_), None) => Some((
             node.clone(),
@@ -548,8 +562,9 @@ fn subtree_has_property_of(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     alias: &Variable,
+    traverser: &mut Bfs,
 ) -> bool {
-    for idx in tree.node(root_idx).indices::<Bfs>() {
+    for idx in tree.node(root_idx).indices_with(traverser) {
         let node = tree.node(idx);
         if let ExprIR::Property(_) = node.data() {
             // Check if the Variable child of this Property matches the alias
@@ -569,8 +584,9 @@ fn subtree_has_property_of(
 fn subtree_has_any_property(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    traverser: &mut Bfs,
 ) -> bool {
-    for idx in tree.node(root_idx).indices::<Bfs>() {
+    for idx in tree.node(root_idx).indices_with(traverser) {
         if let ExprIR::Property(_) = tree.node(idx).data() {
             return true;
         }
@@ -603,6 +619,7 @@ fn try_in_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) -> Scan<T> {
     if !matches!(filter.root().data(), ExprIR::In) {
         return None;
@@ -611,8 +628,8 @@ fn try_in_filter_scan<T: IndexSubject>(
     let lhs_idx = filter.root().child(0).idx();
     let rhs_idx = filter.root().child(1).idx();
 
-    let lhs_has_target = subtree_has_property_of(filter, lhs_idx, subject.alias());
-    let rhs_has_target = subtree_has_property_of(filter, rhs_idx, subject.alias());
+    let lhs_has_target = subtree_has_property_of(filter, lhs_idx, subject.alias(), traverser);
+    let rhs_has_target = subtree_has_property_of(filter, rhs_idx, subject.alias(), traverser);
 
     // Exactly one side must reference the target subject for index utilization:
     //   property IN [list]   →  attr on left  (is_property_in_list = true)
@@ -623,7 +640,7 @@ fn try_in_filter_scan<T: IndexSubject>(
         _ => return None,
     };
 
-    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    let attr = extract_attribute_from_subtree(filter, attr_side, traverser)?;
     let label = subject
         .all_labels()
         .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
@@ -636,7 +653,7 @@ fn try_in_filter_scan<T: IndexSubject>(
         if list_has_nested_list(filter, expr_side) {
             return None;
         }
-        if subtree_has_any_property(filter, expr_side) {
+        if subtree_has_any_property(filter, expr_side, traverser) {
             return None;
         }
         IndexQuery::InList {
@@ -659,9 +676,10 @@ fn try_single_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) -> Scan<T> {
     if matches!(filter.root().data(), ExprIR::In) {
-        return try_in_filter_scan(subject, filter, graph);
+        return try_in_filter_scan(subject, filter, graph, traverser);
     }
     if !matches!(
         filter.root().data(),
@@ -670,7 +688,7 @@ fn try_single_filter_scan<T: IndexSubject>(
         return None;
     }
     let (attr, attr_side, constant_side) =
-        extract_attribute_and_expression_from_filter(filter, Some(subject.alias()))?;
+        extract_attribute_and_expression_from_filter(filter, Some(subject.alias()), traverser)?;
     let label = subject
         .all_labels()
         .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
@@ -678,7 +696,15 @@ fn try_single_filter_scan<T: IndexSubject>(
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
             let constant_node = filter.node(constant_side).clone_as_tree();
-            T::try_func_scan(subject, &attr, filter, attr_side, constant_node, label)
+            T::try_func_scan(
+                subject,
+                &attr,
+                filter,
+                attr_side,
+                constant_node,
+                label,
+                traverser,
+            )
         }
         ExprIR::Property(attr_ref) => {
             let constant_node = filter.node(constant_side).clone_as_tree();
@@ -728,6 +754,7 @@ fn try_filter_pushdown<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) -> Option<FilterPushdown> {
     match filter.root().data() {
         ExprIR::And => {
@@ -735,7 +762,9 @@ fn try_filter_pushdown<T: IndexSubject>(
             let mut remaining = Vec::new();
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
-                if let Some((_, label, query)) = try_single_filter_scan(subject, &conjunct, graph) {
+                if let Some((_, label, query)) =
+                    try_single_filter_scan(subject, &conjunct, graph, traverser)
+                {
                     merged = Some(match merged {
                         None => (label, query),
                         Some((prev_label, prev_q)) => {
@@ -753,7 +782,9 @@ fn try_filter_pushdown<T: IndexSubject>(
             let mut or_label: Option<Arc<String>> = None;
             for child in filter.root().children() {
                 let branch = child.clone_as_tree();
-                if let Some((_, label, q)) = try_single_filter_scan(subject, &branch, graph) {
+                if let Some((_, label, q)) =
+                    try_single_filter_scan(subject, &branch, graph, traverser)
+                {
                     if or_label.is_none() {
                         or_label = Some(label);
                     }
@@ -766,13 +797,23 @@ fn try_filter_pushdown<T: IndexSubject>(
                 (!or_queries.is_empty()).then(|| (label, IndexQuery::Or(or_queries), Vec::new()))
             })
         }
-        _ => try_single_filter_scan(subject, filter, graph).map(|(_, label, q)| {
+        _ => try_single_filter_scan(subject, filter, graph, traverser).map(|(_, label, q)| {
             // For "value IN property" (array-contains), keep the filter
             // as a post-filter — the index may return false positives
             // for non-indexable array elements.
             let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
-                && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
+                && !subtree_has_property_of(
+                    filter,
+                    filter.root().child(0).idx(),
+                    subject.alias(),
+                    traverser,
+                )
+                && subtree_has_property_of(
+                    filter,
+                    filter.root().child(1).idx(),
+                    subject.alias(),
+                    traverser,
+                );
             if is_array_contains {
                 (label, q, vec![filter.root().clone_as_tree()])
             } else {
@@ -802,6 +843,7 @@ fn try_filter_pushdown<T: IndexSubject>(
 fn needs_post_filter(
     filter: &QueryExpr<Variable>,
     scan_alias_id: u32,
+    traverser: &mut Bfs,
 ) -> bool {
     // Whitelist the RHS subtree of `property IN [literal, ...]` only
     // when the list is non-empty *and* every direct element is a
@@ -835,11 +877,11 @@ fn needs_post_filter(
             _ => false,
         });
     let skip_descendants: std::collections::HashSet<_> = if rhs_is_scalar_literal_list {
-        filter.node(rhs.idx()).indices::<Bfs>().collect()
+        filter.node(rhs.idx()).indices_with(traverser).collect()
     } else {
         std::collections::HashSet::new()
     };
-    filter.root().indices::<Bfs>().any(|i| {
+    filter.root().indices_with(traverser).any(|i| {
         if skip_descendants.contains(&i) {
             return false;
         }
@@ -880,15 +922,16 @@ fn is_non_indexable_subexpr(
 /// change.
 fn rewrite_until_stable<F>(
     plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
     mut try_rewrite: F,
 ) where
-    F: FnMut(&mut DynTree<IR>, NodeIdx<Dyn<IR>>) -> bool,
+    F: FnMut(&mut DynTree<IR>, NodeIdx<Dyn<IR>>, &mut Bfs) -> bool,
 {
     loop {
         let mut changed = false;
-        let indices = plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        let indices = plan.root().indices_with(traverser).collect::<Vec<_>>();
         for idx in indices {
-            if try_rewrite(plan, idx) {
+            if try_rewrite(plan, idx, traverser) {
                 changed = true;
                 break;
             }
@@ -981,10 +1024,12 @@ fn apply_filter_pushdown<T: IndexSubject>(
     filter_idx: NodeIdx<Dyn<IR>>,
     over_pending: bool,
     metadata: T::Metadata,
+    traverser: &mut Bfs,
 ) {
     // `over_pending`: rows injected by `IncludePending` bypass the index, so
     // the filter has to stay and re-check them. See `governing_filter`.
-    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().id);
+    let keep_filter =
+        over_pending || needs_post_filter(original_filter, subject.alias().id, traverser);
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
     *plan.node_mut(idx).data_mut() = scan_ir;
@@ -1018,10 +1063,12 @@ fn try_index_rewrite<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) -> bool {
     if let Some((subject, filter, filter_idx, over_pending, metadata)) =
         match_scan_with_filter::<T>(plan, idx)
-        && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
+        && let Some((label, query, remaining)) =
+            try_filter_pushdown(&subject, &filter, graph, traverser)
     {
         apply_filter_pushdown(
             plan,
@@ -1034,6 +1081,7 @@ fn try_index_rewrite<T: IndexSubject>(
             filter_idx,
             over_pending,
             metadata,
+            traverser,
         );
         return true;
     }
@@ -1051,6 +1099,7 @@ fn try_index_rewrite<T: IndexSubject>(
 fn prune_all_node_scan_child(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
+    traverser: &mut Bfs,
 ) -> bool {
     let IR::EdgeByIndexScan { query, .. } = plan.node(idx).data() else {
         return false;
@@ -1066,7 +1115,7 @@ fn prune_all_node_scan_child(
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
+    if index_query_references_variable(&query, child_alias_id, child_scope_id, traverser) {
         return false;
     }
     plan.node_mut(child_idx).prune();
@@ -1080,6 +1129,7 @@ fn prune_all_node_scan_child(
 fn add_to_labels_filter(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
+    _traverser: &mut Bfs,
 ) -> bool {
     let IR::EdgeByIndexScan {
         relationship: rel, ..
@@ -1120,17 +1170,18 @@ fn add_to_labels_filter(
 pub(super) fn utilize_index(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) {
-    rewrite_until_stable(optimized_plan, |plan, idx| {
-        try_index_rewrite::<Arc<QueryNode<Arc<String>, Variable>>>(plan, idx, graph)
+    rewrite_until_stable(optimized_plan, traverser, |plan, idx, traverser| {
+        try_index_rewrite::<Arc<QueryNode<Arc<String>, Variable>>>(plan, idx, graph, traverser)
     });
-    rewrite_until_stable(optimized_plan, |plan, idx| {
+    rewrite_until_stable(optimized_plan, traverser, |plan, idx, traverser| {
         try_index_rewrite::<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>(
-            plan, idx, graph,
+            plan, idx, graph, traverser,
         )
     });
-    rewrite_until_stable(optimized_plan, prune_all_node_scan_child);
-    rewrite_until_stable(optimized_plan, add_to_labels_filter);
+    rewrite_until_stable(optimized_plan, traverser, prune_all_node_scan_child);
+    rewrite_until_stable(optimized_plan, traverser, add_to_labels_filter);
 }
 
 /// Returns true when `filter` is a `hasLabels(variable, [...])` call whose

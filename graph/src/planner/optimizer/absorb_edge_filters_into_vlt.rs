@@ -48,7 +48,7 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 use crate::parser::ast::{ExprIR, Variable};
 
 use super::super::IR;
-use super::collect_expr_variables;
+use super::collect_expr_variables_with;
 
 /// Find a CondVarLenTraverse node that is a direct child of the given filter,
 /// or is the only child chain below the filter (e.g., Filter → VLT or Filter → PathBuilder → VLT).
@@ -84,10 +84,16 @@ fn find_descendant_vlt(
 ///
 /// For AND filters where some conjuncts reference the edge and others don't,
 /// only the edge-referencing conjuncts are absorbed.
-pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
+pub(super) fn absorb_edge_filters_into_vlt(
+    optimized_plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
     loop {
         let mut changed = false;
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        let indices = optimized_plan
+            .root()
+            .indices_with(traverser)
+            .collect::<Vec<_>>();
 
         for idx in indices {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
@@ -123,7 +129,7 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
             let mut remaining = Vec::new();
 
             for conjunct in conjuncts {
-                let vars = collect_expr_variables(&conjunct);
+                let vars = collect_expr_variables_with(&conjunct, traverser);
                 if !vars.is_empty() && vars.iter().all(|v| *v == edge_alias_id) {
                     edge_conjuncts.push(conjunct);
                 } else {

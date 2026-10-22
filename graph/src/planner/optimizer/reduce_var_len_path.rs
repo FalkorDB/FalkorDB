@@ -24,8 +24,11 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 use super::super::IR;
 use super::references::ir_references_variable;
 
-pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
-    let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
+pub(super) fn reduce_var_len_path(
+    plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
+    let indices: Vec<_> = plan.root().indices_with(traverser).collect();
     for idx in indices {
         let (alias_id, alias_scope_id) = match plan.node(idx).data() {
             IR::CondVarLenTraverse {
@@ -40,7 +43,7 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
+            if ir_references_variable(parent.data(), alias_id, alias_scope_id, traverser) {
                 referenced = true;
                 break;
             }
@@ -77,10 +80,10 @@ mod tests {
         let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
         let mut plan = Planner::new(scope_vars).plan(ir);
 
-        reduce_var_len_path(&mut plan);
-        replace_cartesian_with_hash_join(&mut plan);
-        absorb_edge_filters_into_vlt(&mut plan);
-        reduce_var_len_path(&mut plan);
+        reduce_var_len_path(&mut plan, &mut orx_tree::Traversal.bfs());
+        replace_cartesian_with_hash_join(&mut plan, &mut orx_tree::Traversal.bfs());
+        absorb_edge_filters_into_vlt(&mut plan, &mut orx_tree::Traversal.bfs());
+        reduce_var_len_path(&mut plan, &mut orx_tree::Traversal.bfs());
         plan
     }
 

@@ -16,8 +16,9 @@ use super::super::IR;
 pub fn reorder_labels(
     plan: &mut DynTree<IR>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) {
-    let indices: Vec<NodeIdx<_>> = plan.root().indices::<Bfs>().collect();
+    let indices: Vec<NodeIdx<_>> = plan.root().indices_with(traverser).collect();
     for idx in indices {
         if let IR::NodeByLabelScan { node } = plan.node(idx).data() {
             let mut labeled: Vec<(Arc<String>, usize)> = node
