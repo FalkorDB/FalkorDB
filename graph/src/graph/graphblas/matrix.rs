@@ -956,6 +956,7 @@ impl<T> Matrix<T> {
         self.has_pending.store(false, Ordering::Relaxed);
     }
 
+    /// `self = self - struct(b)`
     pub fn remove_all<U>(
         &mut self,
         b: &Matrix<U>,
@@ -966,7 +967,7 @@ impl<T> Matrix<T> {
                 b.inner(),
                 null_mut(),
                 self.inner(),
-                GrB_DESC_RCT0,
+                GrB_DESC_RSCT0,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -997,6 +998,8 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    // NOTE: despite the name this is a set difference, not a selection:
+    // `self<¬mask, replace> = a`, i.e. `self = a - struct(mask)`.
     pub fn select(
         &mut self,
         mask: &Matrix<bool>,
@@ -1008,7 +1011,7 @@ impl<T> Matrix<T> {
                 mask.inner(),
                 null_mut(),
                 a.inner(),
-                GrB_DESC_RCT0,
+                GrB_DESC_RSCT0,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
