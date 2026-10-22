@@ -1,27 +1,31 @@
 /-
 # pr3436_review: PR #3436 "perf: a read query borrows its graph once, not on every access"
 
-PR branch `perf/read-graph-once` @ 653f467a9 (d7d166e82 + 896ba73ef + 653f467a9 on
-origin/main 9212add39), fixes #3431. Re-cited from d7d166e82 on 2026-10-21 after review
-(cubic, Copilot, CodeRabbit) made 653f467a9: the guard now lives in `HeldRead { guard,
-_owner }` with its own `Arc` of the cell, `g` is private behind a read-only
-`graph_cell()`, and nine split-line `.g`/`.borrow()` sites now go through `graph()`. Build: `lake build` (Lean 4.35, no Mathlib, no `sorry`/`admit`/`axiom`). Imports
-`runtime_core` (owner of `runtime.rs`) and `redis_layer` (owner of `graph_core.rs` /
-`query_session.rs`) through Lake path dependencies. COVERAGE rows are commented out until
-the PR merges.
+PR branch `perf/read-graph-once` @ e30861ea3 (d7d166e82, 896ba73ef, 653f467a9, merge
+of origin/main b97da5a1c = 30f8d7cff, e30861ea3; main b84473a7f differs from b97da5a1c only
+in Cargo files), fixes #3431. History of re-cites: d7d166e82 → 653f467a9 (2026-10-21,
+review by cubic/Copilot/CodeRabbit: the guard lives in `HeldRead { guard, _owner }` with
+its own `Arc`, `g` private, nine split-line sites through `graph()`) → e30861ea3
+(2026-10-22, Dvir's review: `graph_cell()` removed; `graph_mut()` (asserts `write`) for
+every exclusive borrow; `graph_arc()` (an owned clone) for the two places that keep the
+graph; the commit/effects functions take `&mut Graph` / `&Graph`). Build: `lake build`
+(Lean 4.35, no Mathlib, no `sorry`/`admit`/`axiom`). Imports `runtime_core` (owner of
+`runtime.rs`) and `redis_layer` (owner of `graph_core.rs` / `query_session.rs`) through
+Lake path dependencies. COVERAGE rows are commented out until the PR merges.
 
 The PR adds `Runtime.read_guard: Option<HeldRead>` (`runtime.rs:157`; `HeldRead`
-`:115-118`), taken once in `Runtime::new` for `!write` (`:471-486`: clone `g` into
+`:115-118`), taken once in `Runtime::new` for `!write` (`:472-487`: clone `g` into
 `_owner`, borrow through it, lifetime extended with `transmute`), `Runtime::graph() ->
-GraphRef` (`:554-559`; `GraphRef` + `Deref` `:121-137`) and `Runtime::graph_cell()`
-(`:565-567`); `g` is private (`:160`). Outside `runtime.rs`, 30 sites swap
-`X.g.borrow()` → `X.graph()` and 24 swap `X.g` → `X.graph_cell()` (list in `Cell`).
+GraphRef` (`:555-560`; `GraphRef` + `Deref` `:121-137`), `Runtime::graph_mut() ->
+AtomicRefMut` (`:572-575`) and `Runtime::graph_arc()` (`:583-585`); `g` is private
+(`:161`). Every other file only swaps how it reaches the graph (list in `Cell`).
 
 | module | claim | Rust |
 | --- | --- | --- |
-| `Cell`      | 1, 4 | atomic_refcell-0.1.14 borrow word; `Runtime::new` guard, `GraphRef`, `Deref`, `graph()`, `graph_cell()`, every rewritten site |
+| `Cell`      | 1, 4 | atomic_refcell-0.1.14 borrow word; `Runtime::new` guard, `GraphRef`, `Deref`, `graph()`, `graph_mut()`, every rewritten site |
+| `Hold`      | 1 (e30861ea3) | the commit/effects functions now run under one caller-held borrow |
 | `Protocol`  | 2    | `MvccGraph` (`mvcc_graph.rs:112-270`), `QuerySession` (`query_session.rs:159-394`), read-runtime construction (`graph_core.rs:632,698`, `record.rs:84`), every `borrow_mut()` on a graph cell |
-| `DropOrder` | 3    | `HeldRead` / `Runtime` drop glue, strong counts; every use of `g` in `runtime.rs` |
+| `DropOrder` | 3    | `HeldRead` / `Runtime` drop glue, strong counts; every use of `g` in `runtime.rs`; `graph_arc()` |
 | `Reuse`     | 2 (premise), 5 | `RedisLayer.Ro` (parser `write` flag + planner `Commit`), `RuntimeCore.Accessors` |
 
 ## Verdicts
@@ -36,13 +40,32 @@ GraphRef` (`:554-559`; `GraphRef` + `Deref` `:121-137`) and `Runtime::graph_cell
    for any list of rewritten sites — the d7d166e82 sites and the nine 653f467a9 added
    (`procedures.rs:49,65,81`, `node_by_index_scan.rs:325`,
    `node_by_label_and_id_scan.rs:78`, `remove.rs:130`, `set.rs:287,322,352`).
-   `graph_cell()` sites: `graph_cell_is_g` (it is `&self.g`), `graph_cell_borrowMut_same`,
-   `graph_cell_borrow_same` (same cell, same outcome as main's `X.g`), `graph_cell_same`
-   (`graph()` and `graph_cell()` name the same cell).
+   **`graph_mut()` (e30861ea3)**: `graph_mut_write_same` (on a write runtime it is main's
+   `g.borrow_mut()`: same cell, panic, borrow word), `graph_mut_read_asserts` (on a read
+   runtime the `assert!` fires before the cell is touched — unreachable, since a read plan
+   has no such site), `graph_mut_same_cell` (it borrows the cell `graph()` reads).
+   **Caller-held borrows (e30861ea3, `Hold`)**: `Pending::commit`, `end_segment`,
+   `IndexDocs::commit`/`commit_deferred_indexes` now run under one `&mut graph_mut()`, the
+   `&Graph` readers (`set_schema_baseline`, `enforce_constraints`, resync's `private`, the
+   effects builders) under one `&graph()`. `Hold.commit_same`, `single_mut_same`,
+   `single_rd_same`: for every external borrow state and every pending state, the result
+   (panic / error / committed graph) is main's — because main's `Pending::commit` always
+   reaches its unconditional `apply_index_writes` `borrow_mut` before any shared borrow
+   (`commitSteps_head_mut`), and the external state is constant for the call:
+   `Protocol.priv_borrows_owner_only` proves every live borrow of a private version is its
+   owner's (the indexer's `Arc` only ever points at a published version; the population
+   thread's borrows are modelled as borrows of any published version). **No
+   refutation** — nothing inside `Pending::commit` borrows the cell through another
+   handle. `Hold.empty_body_differs` records the only shape that would differ (a body
+   with no borrow on main), which none of the converted functions has. Live (e30861ea3
+   build, 90 s): indexed CREATE ×2, SET/REMOVE, DETACH DELETE, failing writes, `MULTI`
+   failing writes, range-index CREATE/DROP loops (population threads), 4 reader threads —
+   2 772 + 1 358 + 1 388 + 1 365 + 7 011 + 1 438 writes, 23 422 read queries, no panic.
+   History (653f467a9): `Cell.pre_e30861e_graph_cell_*`.
 2. **Soundness of holding the read borrow — PROVEN; the PR's stated premise is REFUTED.**
    d7d166e82 said "a published version is never mutably borrowed again (writers mutate a
    private fork)" (896ba73ef has since rewritten the comment to state the lock invariant
-   proven here, `runtime.rs:463-469`). False: `Pending::resync_published_indexes` (`pending.rs:1684`) calls
+   proven here, `runtime.rs:464-470`). False: `Pending::resync_published_indexes` (`pending.rs:1670`) calls
    `committed.borrow_mut()` on the *published* version, reached from `abandon_write`
    (`graph_core.rs:1558-1561`) whenever a write that already ran a `Commit` fails
    (`Protocol.published_borrowed_mut`; live: the crash backtrace below panics inside it).
@@ -69,12 +92,16 @@ GraphRef` (`:554-559`; `GraphRef` + `Deref` `:121-137`) and `Runtime::graph_cell
    field order (`runtimeFields` and `swappedFields`), interleaved with any drops of the
    other holders. What stays load-bearing is the order inside `HeldRead`
    (`held_swapped_unsound`: `_owner` before `guard` would free the cell under the guard).
-   `drop_restores_borrow`, `move_irrelevant`. **`g` is never reassigned** — now a
-   modelled fact: `g` is private and `runtime.rs` has no child module, so only
-   `runtime.rs` names it; its seven mentions there are the initialisation (`:490`) and six
-   `&self` reads (`:557,566,588,593,1467,1486`), with no `&mut self` method in the file;
-   `GUse` enumerates them and `g_never_reassigned` / `g_uses_keep_ok` show they leave `g`
-   and `read_guard` (and `Rt.ok`) as `new` set them. That enumeration is exhaustive by a
+   `drop_restores_borrow`, `move_irrelevant`. **`g` is never reassigned** — a modelled
+   fact: `g` is private and `runtime.rs` has no child module, so only `runtime.rs` names
+   it; since e30861ea3 its four mentions there are the initialisation (`:491`) and three
+   `&self` reads — `graph` `:558`, `graph_mut` `:574`, `graph_arc` `:584` — with no
+   `&mut self` method in the file; `GUse` enumerates them and `g_never_reassigned` /
+   `g_uses_keep_ok` show they leave `g` and `read_guard` (and `Rt.ok`) as `new` set them
+   (653f467a9's six-use enumeration kept as `pre_e30861e_GUse`). **`graph_arc()`**:
+   `graph_arc_keeps_g` — it returns a clone of `g`'s `Arc` (same cell, strong count + 1)
+   and leaves the runtime record untouched; dropping the clone is one more "other
+   holder" for `held_survives`. That enumeration is exhaustive by a
    grep of `runtime.rs` (not by Lean), and each use's action on the record is the
    identity by construction, so the theorem's content is the enumeration plus privacy.
    History (d7d166e82, bare guard, `pub g`): `pre653f467_drop_sound`,
@@ -87,16 +114,22 @@ GraphRef` (`:554-559`; `GraphRef` + `Deref` `:121-137`) and `Runtime::graph_cell
 5. **Existing theorems — unaffected.** runtime_core's accessor models are functions of the
    world `W`, not of how the graph is borrowed (`Reuse.accessor_unchanged`,
    `materialize_unchanged`); `Plan.rtNew_spec` still holds (it does not model the new
-   field). Cite shifts at 653f467a9 (proofs cite b6567cb97; 9212add39's own +6 after
-   `evaluate_id_filter` included): all 48 runtime_core rows on `runtime.rs` (+33 for
-   `get_variables`…`new`, +58 for `check_timeout`, +82 for `write_escalation`…
-   `evaluate_id_filter`, +88 after); search_concurrency `map_to_index_options`
-   1881 → 1969; value_math's 18 `functions/procedures.rs` rows from `db_types` on (−1 to
-   −3: 64→63, 81→79, then −3) and `index_ddl.rs` `drop_index` 88→91, `emit_effect`
-   116→120; ops_apply and pending_commit `delete.rs` `delete_relationships_bulk`
-   297→300, `delete_entity` 393→396. No other rewritten file moves a cited line. New fns
-   needing rows at fold time: `GraphRef::deref` (:131), `Runtime::graph` (:554),
-   `Runtime::graph_cell` (:565); `Runtime::new` gains the guard (fold `Cell.new` into
+   field). No project models the cell parameter e30861ea3 removed from `pending.rs` /
+   effects (grep `AtomicRefCell|borrow_mut` in pending_commit, effects_*, replication,
+   index_layer: none), so their theorems carry over; only cites move. Cite shifts at
+   e30861ea3 against the proofs' main b84473a7f (rows that resolve there): runtime_core
+   all 48 `runtime.rs` rows (+34 for `get_variables`…`new`, +59, +100, then +102 from
+   `write_escalation` on); search_concurrency `map_to_index_options` 1887 → 1989;
+   value_math 18 `procedures.rs` rows (−1 to −3) and `index_ddl.rs` `drop_index` 88→87,
+   `emit_effect` 116→114; pending_commit 53 `pending.rs` rows (−1/−2 up to `commit`
+   1228→1226, −13/−14 after: `enforce_constraints` 1385→1372, `resync_published_indexes`
+   1635→1621, `commit_deferred_indexes` 1690→1676, `end_segment` 1731→1717,
+   `effects_count` 1804→1790); index_layer `resync_published_indexes` 1635→1621;
+   effects_codec 35 rows in `effects/mod.rs` (−1) and `effects/v3/format.rs` (−2);
+   effects_emit_apply 16 and replication 24 rows in `effects/v3/emit.rs` (−1/−2),
+   `format.rs` (−2), `pending.rs`. New fns needing rows at fold time:
+   `GraphRef::deref` (:131), `Runtime::graph` (:555), `Runtime::graph_mut` (:572),
+   `Runtime::graph_arc` (:583); `Runtime::new` gains the guard (fold `Cell.new` into
    runtime_core's `Plan.rtNew`).
 
 ## Pre-existing bug found (main and PR alike; not caused by #3436) — CONFIRMED live
@@ -127,8 +160,8 @@ cell (the indexer locks it already takes are what guard the index).
   drop = strong count − 1, free at 0.
 * The protocol model over-approximates the interleavings (any enabled event fires); its
   enabling conditions transcribe the Rust (cites in `Protocol`); the `borrow_mut` audit
-  table there is a grep over `graph/src` + `src` at 653f467a9 (re-run: same sites, now
-  reached through `graph_cell()`).
+  table there is a grep over `graph/src` + `src` at e30861ea3 (re-run: same sites; the
+  runtime ones now through `graph_mut()` or a caller-held `graph_mut()`).
 * redis_layer's `RedisLayer.Ro` is itself a model of the parser/planner write
   classification, proven there.
 -/
@@ -136,3 +169,4 @@ import Pr3436Review.Cell
 import Pr3436Review.Protocol
 import Pr3436Review.DropOrder
 import Pr3436Review.Reuse
+import Pr3436Review.Hold

@@ -1,35 +1,35 @@
 /-
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
-Cites: PR branch `perf/read-graph-once` @ 653f467a9 unless marked. Since 653f467a9 the
+Cites: PR branch `perf/read-graph-once` @ e30861ea3 unless marked. Since 653f467a9 the
 guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones `g` into
-`_owner` and borrows through it (`:471-486`). The soundness argument therefore rests on
+`_owner` and borrows through it (`:472-487`). The soundness argument therefore rests on
 `HeldRead`'s own `Arc`, not on `Runtime`'s field order.
 
 | here | there |
 | --- | --- |
 | `Alloc`, `H`           | an `Arc<AtomicRefCell<Graph>>` heap allocation: strong count, borrow word (`Cell.B`); `none` = freed |
 | `Field.guard a`        | `HeldRead.guard: AtomicRef<'static, Graph>` into the cell at `a` (`runtime.rs:116`); dropping it is `AtomicBorrowRef::drop` — `fetch_sub(1)` on the cell's borrow word (atomic_refcell `lib.rs:273-283`), a write into the allocation |
-| `Field.arc a`          | an `Arc` to the cell: `HeldRead._owner` (`:117`), `Runtime.g` (`:160`), or any other holder (`MvccGraph.graph`, the session's clone, the UDF thread-local, …); dropping it decrements the strong count and frees at 0 |
+| `Field.arc a`          | an `Arc` to the cell: `HeldRead._owner` (`:117`), `Runtime.g` (`:161`), or any other holder (`MvccGraph.graph`, the session's clone, the UDF thread-local, …); dropping it decrements the strong count and frees at 0 |
 | `heldFields a`         | `HeldRead`'s drop glue: `guard` then `_owner` (declaration order) |
 | `runtimeFields`        | `struct Runtime` (`:152-…`): `parameters`, `read_guard: Option<HeldRead>`, `g`, `write`, … |
 | `dropFields`           | Rust drop glue for a struct without `Drop` impl: fields in declaration order (Reference, "Destructors"). Neither `Runtime` nor `HeldRead` has a `Drop` impl (grep) |
 | `GUse`                 | every mention of the field `g` in `runtime.rs` (`g_uses_never_write`) |
 
-**`g` is never reassigned** (`g_never_reassigned`). `g` is private since 653f467a9
-(`runtime.rs:160`), and `runtime.rs` declares no child module, so only `runtime.rs` can
-name it; everyone else gets `graph_cell(&self) -> &Arc<…>` (`:565-567`), a shared reference
-through which the field cannot be assigned. In `runtime.rs` the field appears exactly
-seven times (`grep -nE "\.g\b|^\s+g,$"`): the struct literal in `new` (`:490`, the
-initialisation) and six reads, all inside `&self` methods — `graph` `:557`
-(`self.g.borrow()`), `graph_cell` `:566` (`&self.g`), `resync_published_indexes` `:588`,
-`commit_deferred_indexes` `:593`, `set_pending_node_attr` `:1467` and
-`set_pending_relationship_attr` `:1486` (`self.g.borrow_mut()`, a borrow of the *cell*,
-not of the field). `runtime.rs` has no `&mut self` method at all, and the tree has no
-`&mut Runtime` / `let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by
-its constructor (`:483-486`). Since 653f467a9 none of this is needed for soundness
-(`held_survives` holds whatever happens to `g`); it is what makes `graph()` and
-`graph_cell()` name the same cell (`Cell.graph_cell_same`).
+**`g` is never reassigned** (`g_never_reassigned`). `g` is private (`runtime.rs:161`) and
+`runtime.rs` declares no child module, so only `runtime.rs` can name it. Since e30861ea3
+the field appears there exactly four times (`grep -nE "\.g\b|^\s+g,$"`): the struct
+literal in `new` (`:491`, the initialisation) and three reads, all inside `&self` methods —
+`graph` `:558` (`self.g.borrow()`), `graph_mut` `:574` (`self.g.borrow_mut()`, after
+`assert!(self.write)`; a borrow of the *cell*, not of the field) and `graph_arc` `:584`
+(`Arc::clone(&self.g)`). Everyone else gets a `GraphRef`, an `AtomicRefMut<Graph>` or an
+owned `Arc` *clone* (`graph_arc_keeps_g`) — none of which can assign the field.
+`runtime.rs` has no `&mut self` method at all, and the tree has no `&mut Runtime` /
+`let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by its constructor
+(`:483-486`). Since 653f467a9 none of this is needed for soundness (`held_survives` holds
+whatever happens to `g`); it is what makes `graph()`, `graph_mut()` and `graph_arc()` name
+the same cell. The 653f467a9 enumeration (six uses incl. `graph_cell`) is kept as
+`pre_e30861e_GUse`.
 -/
 import Pr3436Review.Cell
 
@@ -269,10 +269,56 @@ Likewise moving `owner` into `HeldRead` after `owner.borrow()` (`:478-485`) move
 theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
     runtimeFields moved = runtimeFields rt := by rw [hm]
 
-/-! ### `g` is never reassigned (653f467a9) -/
+/-! ### `g` is never reassigned (e30861ea3) -/
 
 /-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
 inductive GUse where
+  | borrowShared      -- `graph`, `:558`: `self.g.borrow()`
+  | borrowMut         -- `graph_mut`, `:574`: `self.g.borrow_mut()` (after `assert!(self.write)`)
+  | arcClone          -- `graph_arc`, `:584`: `Arc::clone(&self.g)`
+  deriving DecidableEq, Repr
+
+/-- Each use, as it acts on the `Runtime` record: all three are `&self` reads of the field
+(a `borrow`/`borrow_mut` acts on the *cell*, modelled in `Cell`/`Protocol`; the clone on
+the cell's strong count, `graphArc`), none on which cell `g` names. -/
+def GUse.apply (_ : GUse) (rt : Rt) : Rt := rt
+
+/-- The `g` and `read_guard` a runtime ends with are the ones `new` gave it, whatever
+uses run. Together with privacy this is "`g` is never reassigned". -/
+theorem g_never_reassigned (rt : Rt) (us : List GUse) :
+    (us.foldl (fun r u => u.apply r) rt).g = rt.g ∧
+    (us.foldl (fun r u => u.apply r) rt).guard = rt.guard := by
+  induction us generalizing rt with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons u us ih => exact ih (u.apply rt)
+
+theorem g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List GUse) :
+    (us.foldl (fun r u => u.apply r) rt).ok := by
+  induction us generalizing rt with
+  | nil => exact hr
+  | cons u us ih => exact ih (u.apply rt) hr
+
+/-- `Runtime::graph_arc` (`runtime.rs:583-585`): a new strong reference to `g`'s cell,
+handed to the caller (graph_core's published version `src/graph_core.rs:263`, the JS UDF
+context `udf/js_context.rs:314`). The runtime record is untouched. -/
+def graphArc (h : H) (rt : Rt) : Option (Addr × H × Rt) :=
+  match h rt.g with
+  | some al => some (rt.g, h.set rt.g (some { al with strong := al.strong + 1 }), rt)
+  | none => none
+
+/-- **`graph_arc()` cannot replace `g`.** It returns a clone of `g`'s `Arc` (same cell,
+one more strong reference) and leaves the runtime's `g` and guard as they were; the
+clone's eventual drop is one more "other holder" for `held_survives`. -/
+theorem graph_arc_keeps_g (h : H) (rt : Rt) (al : Alloc) (ha : h rt.g = some al) :
+    ∃ h', graphArc h rt = some (rt.g, h', rt) ∧ h' rt.g = some { al with strong := al.strong + 1 } ∧
+      ∀ x, x ≠ rt.g → h' x = h x := by
+  refine ⟨h.set rt.g (some { al with strong := al.strong + 1 }), by simp [graphArc, ha],
+    H.set_same _ _ _, fun x hx => by simp [H.set, hx]⟩
+
+/-! ### History: `g`'s uses at 653f467a9 (before e30861ea3) -/
+
+/-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
+inductive pre_e30861e_GUse where
   | borrowShared      -- `graph`, `:557`: `self.g.borrow()`
   | cellRef           -- `graph_cell`, `:566`: `&self.g`
   | resyncRef         -- `resync_published_indexes`, `:588`: `&self.g`
@@ -284,19 +330,19 @@ inductive GUse where
 /-- Each use, as it acts on the `Runtime` record: all six are `&self` reads of the field
 (a `borrow`/`borrow_mut` acts on the *cell*, modelled in `Cell`/`Protocol`, not on which
 cell `g` names). -/
-def GUse.apply (_ : GUse) (rt : Rt) : Rt := rt
+def pre_e30861e_GUse.apply (_ : pre_e30861e_GUse) (rt : Rt) : Rt := rt
 
 /-- The `g` and `read_guard` a runtime ends with are the ones `new` gave it, whatever
 uses run. Together with privacy (only `runtime.rs` can name `g`; outsiders get
 `graph_cell(&self) -> &Arc`) this is "`g` is never reassigned". -/
-theorem g_never_reassigned (rt : Rt) (us : List GUse) :
+theorem pre_e30861e_g_never_reassigned (rt : Rt) (us : List pre_e30861e_GUse) :
     (us.foldl (fun r u => u.apply r) rt).g = rt.g ∧
     (us.foldl (fun r u => u.apply r) rt).guard = rt.guard := by
   induction us generalizing rt with
   | nil => exact ⟨rfl, rfl⟩
   | cons u us ih => exact ih (u.apply rt)
 
-theorem g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List GUse) :
+theorem pre_e30861e_g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List pre_e30861e_GUse) :
     (us.foldl (fun r u => u.apply r) rt).ok := by
   induction us generalizing rt with
   | nil => exact hr

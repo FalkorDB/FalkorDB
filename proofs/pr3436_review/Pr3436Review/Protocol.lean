@@ -3,19 +3,20 @@
 
 A transition system over the graph versions of one graph key. Every event is one atomic
 step of the Rust code; any enabled event may fire (arbitrary interleaving of threads).
-Re-cited to the PR branch @ 653f467a9. `mvcc_graph.rs`, `query_session.rs` and
-`pending.rs` are byte-identical to origin/main (9212add39); `graph_core.rs` differs only
-at `:263` (`Arc::clone(&runtime.g)` → `Arc::clone(runtime.graph_cell())`, same line) — so
-the protocol cites hold for both. Since 653f467a9 a `runtime.g` site outside `runtime.rs`
-reaches the cell through `graph_cell()` (`Cell.graph_cell_is_g`: the same cell).
+Re-cited to the PR branch @ e30861ea3. `mvcc_graph.rs`, `query_session.rs`,
+`record.rs` and the `src/commands` write paths are byte-identical to origin/main;
+`graph_core.rs` differs only at `:263` (`runtime.graph_arc()`, same line) — so the protocol
+cites hold for both. `pending.rs` changed signatures only (e30861ea3: `&mut Graph` /
+`&Graph` instead of the cell; `Hold`). Since e30861ea3 a runtime's exclusive borrow of
+its graph is `graph_mut()` (`Cell.graph_mut_write_same`: main's `g.borrow_mut()`).
 
 | here | there |
 | --- | --- |
 | `C`, `S.next`          | a version = one `Arc<AtomicRefCell<Graph>>` allocation; `next` = a fresh one |
 | `S.pub`, `S.published` | `MvccGraph.graph` (`mvcc_graph.rs:70`) and every version it has ever held |
 | `S.lock`               | the per-graph `parking_lot::RwLock<ThreadedGraph>` (`QuerySession.mode`, `query_session.rs:31-41`) |
-| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:471-486`) — the PR's new state |
-| `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()`, and `MvccGraph`'s own borrows of the published version (`fork :140`, `claim :162`, `commit :190-203`) |
+| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:472-487`) — the PR's new state |
+| `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()` on their own version, and anyone's borrow of *any* published version — `MvccGraph`'s own (`fork :140`, `claim :162`, `commit :190-203`) and the index-population thread's `indexer.get_graph().borrow()` (`graph.rs:582,609,696,712`): the indexer's graph is set only by `set_indexer_graph`, called with a version being published (`mvcc_graph.rs:261`) or a freshly built one before registration (`redis_type.rs:109,125,771`, `copy.rs:152`, `restore.rs:54`), never with a private fork |
 | `S.excl`               | live `AtomicRefMut`s (every `borrow_mut()` on a graph cell, table below) |
 | `S.priv`               | a thread's private version (`QuerySession.fork` / the claimed `write()` fork) |
 | `S.slot`               | `MvccGraph.write: AtomicBool` (`:72`) |
@@ -27,14 +28,14 @@ reaches the cell through `graph_cell()` (`Cell.graph_cell_is_g`: the same cell).
 | `runlock t`   | dropping a reader session (`Drop` `:464`) or `escalate`'s `*mode = None` (`:387`). Enabled only once `t`'s read runtime is gone: the runtime is a local of `execute_query` / `execute_profile` (`graph_core.rs:635-671`, `:700-716`) that borrows `&session` from its caller (`:1094-1114`, `:1254-1255`, `:1383-1389`, `:1466-1467`), and `record.rs` drops it explicitly (`:142`) before the session (`:61`) |
 | `wlock t`     | `begin_writer` (`:182-201`) / `escalate` (`:379-394`) → `RwLock::write_arc`; `graph.write()` in `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:569` |
 | `wunlock t`   | `release_locks` (`:303`) / session drop |
-| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:479` (`owner = Arc::clone(&g)`) |
+| `readNew t`   | `Runtime::new(g = tg.graph.read(), write = false)` — the only three: `graph_core.rs:632→635`, `:698→700`, `record.rs:84→86`, each under its reader session; `owner.borrow()` at `runtime.rs:480` (`owner = Arc::clone(&g)`) |
 | `readDrop`    | `Runtime` drop: `read_guard` released (`DropOrder`) |
 | `fork t`      | `write_version` in reader mode → `MvccGraph::fork` (`query_session.rs:225`, `mvcc_graph.rs:139-141`) |
 | `claimW t`    | `MvccGraph::write` (`:119-129`) under the write lock: `write_version` writer mode (`query_session.rs:218-222`), `effect.rs:62`, `bulk_insert.rs:847`, `constraint.rs:335`, `:569` |
 | `claimFork t` | `claim_fork` → `MvccGraph::claim` (`query_session.rs:267-298`, `mvcc_graph.rs:151-167`), writer mode only (`:373`) |
 | `dropPriv t`  | `release_slot` (`query_session.rs:234-242`) / `rollback` (`mvcc_graph.rs:268`) / a stale claim |
 | `mutAcq t c`  | `borrow_mut()` on `t`'s own private version, see the audit table |
-| `mutAcqPub t` | `Pending::resync_published_indexes` (`pending.rs:1684`: `committed.borrow_mut()`), reached only from `abandon_write` (`graph_core.rs:1558-1561`) when `session.holds_slot()`, i.e. in writer mode |
+| `mutAcqPub t` | `Pending::resync_published_indexes` (`pending.rs:1670`: `committed.borrow_mut()`), reached only from `abandon_write` (`graph_core.rs:1558-1561`) when `session.holds_slot()`, i.e. in writer mode |
 | `publish t c` | `MvccGraph::commit` (`mvcc_graph.rs:186-266`): its `borrow_mut`s `:232,:235,:252` are on `new_graph` *before* `self.graph = new_graph` (`:263`); called under the write lock (`graph_core.rs:1587`, `bulk_insert.rs:887,1015`, `constraint.rs:340,598`, `effect.rs:≈80`) |
 
 **`borrow_mut()` audit** (every call on a graph cell in `graph/src` + `src`, PR branch;
@@ -42,11 +43,11 @@ tests/`test_aux.rs`/`emit.rs`/`apply.rs` test modules excluded):
 
 | site | target | model |
 | --- | --- | --- |
-| `runtime.rs:1467,1486` (`set_pending_*_attr`, `self.g`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:259,414,457` (all via `graph_cell()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
-| `pending.rs:480,1235-1352` (`Pending::commit`s), `:1799` (`end_segment`), `runtime.rs:593` (`commit_deferred_indexes`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`, `graph_cell()` since 653f467a9) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
-| `index_ddl.rs:70,108` | `runtime.graph_cell()` | write runtime (`:38,:98` refuse `!write`): `mutAcq` |
+| `runtime.rs:1487,1506` (`set_pending_*_attr`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:257,411,452` (all `graph_mut()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
+| `ops/commit.rs:89` (`Pending::commit`), `:139` (`end_segment`), `runtime.rs:613` (`commit_deferred_indexes` → `IndexDocs::commit`): one `graph_mut()` held across each call (main borrowed inside, `pending.rs:480,1235-1366,1799` there; `Hold`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
+| `index_ddl.rs:71,102` | `runtime.graph_mut()` | write runtime (`:38,:94` refuse `!write`; `graph_mut` asserts it too): `mutAcq` |
 | `mvcc_graph.rs:232,235,252` | `new_graph` | still private: `mutAcq`, then `publish` |
-| `pending.rs:1684` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
+| `pending.rs:1670` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
 | `bulk_insert.rs:854,886,962,1012`, `constraint.rs:338,572`, `effect.rs:70` | `g_arc` from `graph.write()` / `write_version()` before `commit` | private: `mutAcq` |
 
 So the PR's comment "a published version is never mutably borrowed again" is **false**
@@ -166,7 +167,7 @@ def step (s : S) : Ev → Out
     else .blocked
   | .mutRel t c => if (t, c) ∈ s.excl then .ok { s with excl := s.excl.erase (t, c) } else .blocked
   | .sAcq t c =>
-    if (t, c) ∈ s.priv ∨ (t, c) ∈ s.done ∨ c = s.pub then
+    if (t, c) ∈ s.priv ∨ (t, c) ∈ s.done ∨ c ∈ s.published then
       if onC s.excl c then .panic else .ok { s with shared := (t, c) :: s.shared }
     else .blocked
   | .sRel t c => if (t, c) ∈ s.shared then .ok { s with shared := s.shared.erase (t, c) } else .blocked
@@ -521,6 +522,203 @@ theorem mutAcqPub_panic_iff {s : S} (hr : Reach s) {t : Tid}
   · simp only [not_or, Bool.not_eq_true] at h
     simp [step, hc.1, hc.2, hg, h.1, h.2]
 
+/-! ### Borrows of a private version are its owner's (e30861ea3)
+
+Since e30861ea3 the commit/effects functions run under one `graph_mut()`/`graph()` held
+across the call (`Hold`). That is main's behaviour only if no *other* thread can borrow
+the private version meanwhile — in particular not the index-population thread through
+the indexer's `Arc`, nor anything inside `Pending::commit` (`apply_index_writes`,
+`commit_index`, … take `&mut self`; the only graph-cell borrows in `graph/src/graph` and
+`graph/src/index` are the population thread's, on `indexer.get_graph()`, a published
+version). -/
+
+structure Inv2 (s : S) : Prop where
+  priv_uniq : ∀ p ∈ s.priv, ∀ q ∈ s.priv, p.2 = q.2 → p.1 = q.1
+  shared_lt : ∀ x ∈ s.shared, x.2 < s.next
+  done_pub : ∀ d ∈ s.done, d.2 ∈ s.published
+  sh_owner : ∀ x ∈ s.shared, ∀ p ∈ s.priv, x.2 = p.2 → x.1 = p.1
+  ex_owner : ∀ x ∈ s.excl, ∀ p ∈ s.priv, x.2 = p.2 → x.1 = p.1
+
+theorem inv2_init : Inv2 init := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> simp [init]
+
+theorem inv2_step {s s' : S} (e : Ev) (h : Inv s) (h2 : Inv2 s) (hs : step s e = .ok s') : Inv2 s' := by
+  obtain ⟨h1, hpl, h3, h4, h5⟩ := h
+  obtain ⟨u1, u2, u3, u4, u5⟩ := h2
+  -- the cells of `excl` are below `next`
+  have exlt : ∀ x ∈ s.excl, x.2 < s.next := by
+    intro x hx; rcases h5 x hx with hp | ⟨he, _⟩
+    · exact (h3 x hp).1
+    · rw [he]; exact hpl _ h1
+  cases e with
+  | rlock t =>
+    simp only [step] at hs; split at hs <;> first | (simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩) | cases hs
+  | runlock t =>
+    simp only [step] at hs; split at hs
+    · split at hs
+      · simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩
+      · cases hs
+    · cases hs
+  | wlock t =>
+    simp only [step] at hs; split at hs <;> first | (simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩) | cases hs
+  | wunlock t =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩
+    · cases hs
+  | readNew t =>
+    simp only [step] at hs; split at hs
+    · split at hs
+      · cases hs
+      · simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩
+    · cases hs
+  | readDrop t c =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩
+    · cases hs
+  | fork t =>
+    simp only [step] at hs; split at hs
+    · split at hs
+      · cases hs
+      · simp at hs; subst hs
+        refine ⟨?_, fun x hx => Nat.lt_succ_of_lt (u2 x hx), u3, ?_, ?_⟩
+        · intro p hp q hq hpq; simp at hp hq
+          rcases hp with rfl | hp <;> rcases hq with rfl | hq
+          · rfl
+          · exact absurd hpq (Nat.ne_of_gt (h3 q hq).1)
+          · exact absurd hpq (Nat.ne_of_lt (h3 p hp).1)
+          · exact u1 p hp q hq hpq
+        · intro x hx p hp hxp; simp at hp
+          rcases hp with rfl | hp
+          · exact absurd hxp (Nat.ne_of_lt (u2 x hx))
+          · exact u4 x hx p hp hxp
+        · intro x hx p hp hxp; simp at hp
+          rcases hp with rfl | hp
+          · exact absurd hxp (Nat.ne_of_lt (exlt x hx))
+          · exact u5 x hx p hp hxp
+    · cases hs
+  | claimW t =>
+    simp only [step] at hs; split at hs
+    · split at hs
+      · cases hs
+      · simp at hs; subst hs
+        refine ⟨?_, fun x hx => Nat.lt_succ_of_lt (u2 x hx), u3, ?_, ?_⟩
+        · intro p hp q hq hpq; simp at hp hq
+          rcases hp with rfl | hp <;> rcases hq with rfl | hq
+          · rfl
+          · exact absurd hpq (Nat.ne_of_gt (h3 q hq).1)
+          · exact absurd hpq (Nat.ne_of_lt (h3 p hp).1)
+          · exact u1 p hp q hq hpq
+        · intro x hx p hp hxp; simp at hp
+          rcases hp with rfl | hp
+          · exact absurd hxp (Nat.ne_of_lt (u2 x hx))
+          · exact u4 x hx p hp hxp
+        · intro x hx p hp hxp; simp at hp
+          rcases hp with rfl | hp
+          · exact absurd hxp (Nat.ne_of_lt (exlt x hx))
+          · exact u5 x hx p hp hxp
+    · cases hs
+  | claimFork t =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs; exact ⟨u1, u2, u3, u4, u5⟩
+    · cases hs
+  | dropPriv t =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs
+      exact ⟨fun p hp q hq => u1 p (List.mem_filter.1 hp).1 q (List.mem_filter.1 hq).1, u2, u3,
+        fun x hx p hp => u4 x hx p (List.mem_filter.1 hp).1,
+        fun x hx p hp => u5 x hx p (List.mem_filter.1 hp).1⟩
+    · cases hs
+  | mutAcq t c =>
+    simp only [step] at hs; split at hs
+    · rename_i hp
+      split at hs
+      · cases hs
+      · simp at hs; subst hs
+        refine ⟨u1, u2, u3, u4, ?_⟩
+        intro x hx q hq hxq; simp at hx
+        rcases hx with rfl | hx
+        · exact u1 _ hp q hq hxq
+        · exact u5 x hx q hq hxq
+    · cases hs
+  | mutAcqPub t =>
+    simp only [step] at hs; split at hs
+    · split at hs
+      · cases hs
+      · simp at hs; subst hs
+        refine ⟨u1, u2, u3, u4, ?_⟩
+        intro x hx q hq hxq; simp at hx
+        rcases hx with rfl | hx
+        · exact absurd (hxq ▸ h1) (h3 q hq).2
+        · exact u5 x hx q hq hxq
+    · cases hs
+  | mutRel t c =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs
+      exact ⟨u1, u2, u3, u4, fun x hx => u5 x (List.mem_of_mem_erase hx)⟩
+    · cases hs
+  | sAcq t c =>
+    simp only [step] at hs; split at hs
+    · rename_i hc
+      split at hs
+      · cases hs
+      · simp at hs; subst hs
+        refine ⟨u1, ?_, u3, ?_, u5⟩
+        · intro x hx; simp at hx
+          rcases hx with rfl | hx
+          · rcases hc with hp | hd | hpub
+            · exact (h3 _ hp).1
+            · exact hpl _ (u3 _ hd)
+            · exact hpl _ hpub
+          · exact u2 x hx
+        · intro x hx q hq hxq; simp at hx
+          rcases hx with rfl | hx
+          · rcases hc with hp | hd | hpub
+            · exact u1 _ hp q hq hxq
+            · exact absurd (hxq ▸ u3 _ hd) (h3 q hq).2
+            · exact absurd (hxq ▸ hpub) (h3 q hq).2
+          · exact u4 x hx q hq hxq
+    · cases hs
+  | sRel t c =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs
+      exact ⟨u1, fun x hx => u2 x (List.mem_of_mem_erase hx), u3,
+        fun x hx => u4 x (List.mem_of_mem_erase hx), u5⟩
+    · cases hs
+  | publish t c =>
+    simp only [step] at hs; split at hs
+    · rename_i hc
+      simp at hs; subst hs
+      refine ⟨fun p hp q hq => u1 p (List.mem_filter.1 hp).1 q (List.mem_filter.1 hq).1, u2, ?_,
+        fun x hx p hp => u4 x hx p (List.mem_filter.1 hp).1,
+        fun x hx p hp => u5 x hx p (List.mem_filter.1 hp).1⟩
+      intro d hd; simp at hd
+      rcases hd with rfl | hd
+      · simp
+      · exact List.mem_cons_of_mem _ (u3 d hd)
+    · cases hs
+  | doneDrop t c =>
+    simp only [step] at hs; split at hs
+    · simp at hs; subst hs
+      exact ⟨u1, u2, fun d hd => u3 d (List.mem_of_mem_erase hd), u4, u5⟩
+    · cases hs
+
+theorem reach_inv2 {s : S} (h : Reach s) : Inv2 s := by
+  induction h with
+  | init => exact inv2_init
+  | step e hr hs ih => exact inv2_step e (reach_inv hr) ih hs
+
+/-- **Claim (e30861ea3).** In every reachable state, every live borrow of a private version
+— shared, exclusive or a read guard — belongs to that version's owner. So while the owner
+runs `Pending::commit` (or `end_segment`, `IndexDocs::commit`, an effects build) under one
+`graph_mut()`/`graph()`, the cell's borrow word changes only by the owner's own steps:
+the "external" borrow state `Hold` quantifies over is constant for the call. -/
+theorem priv_borrows_owner_only {s : S} (hr : Reach s) {t : Tid} {c : C} (hp : (t, c) ∈ s.priv) :
+    (∀ x ∈ s.shared, x.2 = c → x.1 = t) ∧ (∀ x ∈ s.excl, x.2 = c → x.1 = t) ∧
+    onC s.guards c = false := by
+  have h2 := reach_inv2 hr
+  exact ⟨fun x hx hxc => h2.sh_owner x hx _ hp hxc, fun x hx hxc => h2.ex_owner x hx _ hp hxc,
+    priv_unguarded hr hp⟩
+
 /-! ### Traces -/
 
 def run : S → List Ev → Out
@@ -541,7 +739,7 @@ theorem run_reach : ∀ {s : S} (es : List Ev) {s' : S}, Reach s → run s es = 
 /-- **Refutes the PR's literal premise.** A published version *is* mutably borrowed again:
 writer 1 publishes version 1, writer 2 claims the slot, its query fails after a `Commit`
 published index documents, and `abandon_write` → `resync_published_indexes` calls
-`committed.borrow_mut()` on version 1 (`pending.rs:1684`). Harmless to readers only
+`committed.borrow_mut()` on version 1 (`pending.rs:1670`). Harmless to readers only
 because of the write lock (`reader_guard_sound`). -/
 def resyncTrace : List Ev :=
   [.wlock 1, .claimW 1, .publish 1 1, .wunlock 1, .wlock 2, .claimW 2, .mutAcqPub 2]
