@@ -242,7 +242,8 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(ids.len(), edges.n as u64, "a fresh graph hands out 0..n");
-        g.create_nodes(&ids).expect("creatable");
+        g.create_nodes(&ids, &mut IndexDocs::default())
+            .expect("creatable");
         let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from(W)));
 
         let mut weights: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
@@ -256,8 +257,14 @@ mod tests {
                 .expect("reserved");
             let srcs: Vec<u64> = mine.iter().map(|e| e.0).collect();
             let dsts: Vec<u64> = mine.iter().map(|e| e.1).collect();
-            g.create_relationships_bulk(&Arc::new(format!("T{t}")), &srcs, &dsts, &rel_ids)
-                .expect("creatable");
+            g.create_relationships_bulk(
+                &Arc::new(format!("T{t}")),
+                &srcs,
+                &dsts,
+                &rel_ids,
+                &mut IndexDocs::default(),
+            )
+            .expect("creatable");
             for (e, &id) in mine.iter().zip(&rel_ids) {
                 if e.2 != 1.0 {
                     weights.insert(id, vec![(attr, Value::Float(e.2))]);

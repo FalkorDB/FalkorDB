@@ -1549,7 +1549,8 @@ mod real_index_tests {
             .into_iter()
             .collect();
         assert_eq!(ids.len(), edges.n as u64, "a fresh graph hands out 0..n");
-        g.create_nodes(&ids).expect("creatable");
+        g.create_nodes(&ids, &mut IndexDocs::default())
+            .expect("creatable");
         let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
 
         let rel_ids: Vec<u64> = g
@@ -1558,8 +1559,14 @@ mod real_index_tests {
             .expect("reserved");
         let srcs: Vec<u64> = edges.edges.iter().map(|e| e.0).collect();
         let dsts: Vec<u64> = edges.edges.iter().map(|e| e.1).collect();
-        g.create_relationships_bulk(&Arc::new(String::from("R")), &srcs, &dsts, &rel_ids)
-            .expect("creatable");
+        g.create_relationships_bulk(
+            &Arc::new(String::from("R")),
+            &srcs,
+            &dsts,
+            &rel_ids,
+            &mut IndexDocs::default(),
+        )
+        .expect("creatable");
 
         let mut weights: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
         for (e, &id) in edges.edges.iter().zip(&rel_ids) {

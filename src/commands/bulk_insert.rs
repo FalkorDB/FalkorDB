@@ -442,7 +442,8 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
+    g.create_nodes(&nodes_bitmap, docs)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     g.set_nodes_labels_bulk(&label_rows, &label_cols, docs, true);
@@ -526,7 +527,7 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids, docs)
         .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
@@ -862,6 +863,8 @@ pub fn graph_bulk_insert(
                 ctx.ctx,
                 &mut docs,
             )
+            // The CCH indexes every token touched, once for the whole insert.
+            .and_then(|()| g.apply_cch_writes(&mut docs))
         };
         // The commit joins the token result rather than sitting in the `Ok` arm
         // below. `commit` validates before publishing, and returning its refusal
@@ -971,6 +974,9 @@ pub fn graph_bulk_insert(
                         rel_token_count,
                         &mut docs,
                     )
+                    // The CCH indexes every token touched, once for the whole insert: still
+                    // GIL-free, before escalation.
+                    .and_then(|()| g.apply_cch_writes(&mut docs))
                 };
                 if let Err(e) = inserted {
                     session.release_slot();

@@ -280,6 +280,7 @@ impl Drop for MvccGraph {
 mod tests {
     use super::{Claim, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
+    use crate::index::index_docs::IndexDocs;
     use roaring::RoaringTreemap;
 
     /// A refused version must leave the write slot free.
@@ -299,7 +300,7 @@ mod tests {
         let holed: RoaringTreemap = [0u64, 5].into_iter().collect();
         version
             .borrow_mut()
-            .create_nodes(&holed)
+            .create_nodes(&holed, &mut IndexDocs::default())
             .expect("neither id is live, so the graph takes them");
 
         assert!(
