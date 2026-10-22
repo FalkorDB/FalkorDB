@@ -158,9 +158,16 @@ jobs:
                           | sort_by(.run_number) | last | .id // empty')
             if [ -n "$RUN" ]; then
               # `build-rc-image` calls a reusable workflow, so its jobs surface as
-              # "build-rc-image / build (...)" — match on the prefix.
+              # "build-rc-image / build (...)" — and rust-pr.yml now reaches it
+              # through `_ci-pipeline.yml`, which adds one more caller prefix:
+              # "ci-pipeline / build-rc-image / build (...)". Match it as a path
+              # segment, so the wait survives being nested one level deeper (or
+              # less) again. A bare prefix match on the old name found nothing,
+              # read that as "not scheduled yet", and polled to the timeout with
+              # the image already published (#3472). The segment form does not
+              # match `build-rc-asan-image`, a different image.
               STATES=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
-                         --jq '[.jobs[] | select(.name | startswith("build-rc-image"))
+                         --jq '[.jobs[] | select(.name | test("(^|/ )build-rc-image / "))
                                 | .conclusion // "pending"] | join(",")')
               case "$STATES" in
                 "")            echo "run $RUN has not scheduled build-rc-image yet" ;;
