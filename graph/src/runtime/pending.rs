@@ -354,8 +354,15 @@ pub struct Pending {
     pub(crate) existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Labels to add: node_id → [label_ids]
     pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
-    /// Labels to remove: node_id → [label_ids]
+    /// Labels to remove: node_id → [label_ids]. Only labels the committed
+    /// node carries: a removal of a label this query staged itself just
+    /// cancels the add (see [`Self::remove_node_labels`]), so no created or
+    /// cancelled node ever has an entry here.
     pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
+    /// Removals that cancelled an add staged by this query rather than staging
+    /// a removal. They change nothing at commit, but C counts them in
+    /// `Labels removed`, and so does this.
+    pub(crate) staged_labels_removed: usize,
     /// Index documents this `Commit` produced.
     pub(crate) index_docs: IndexDocs,
     /// Index documents accumulated across the query's commits, applied only
@@ -509,6 +516,7 @@ impl Pending {
             existing_relationships_attrs: FxHashMap::default(),
             set_labels: FxHashMap::default(),
             remove_labels: FxHashMap::default(),
+            staged_labels_removed: 0,
             index_docs: IndexDocs::default(),
             published: IndexDocs::default(),
             deferred_docs: IndexDocs::default(),
@@ -696,22 +704,38 @@ impl Pending {
     /// Stage label removals for `id`, cancelling any add of those same labels
     /// staged earlier in this query — the mirror image of
     /// [`Self::stage_node_labels`], keeping the two sets disjoint per node.
+    ///
+    /// `labels` must all be on the node as this query sees it. A label the
+    /// query only staged (any label of a created node, or a `SET n:L` of a
+    /// label the committed node lacks) has nothing to remove at commit, so
+    /// cancelling the add is the whole effect: staging a removal too would
+    /// ship a `RemoveLabels` for a node the replica may not have yet.
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
         labels: &[LabelId],
+        g: &Graph,
     ) {
         let raw_id: u64 = id.into();
         for label in labels {
             let label_id = usize::from(*label) as u64;
             // Remove from pending set labels
+            let mut was_staged = false;
             if let Some(set) = self.set_labels.get_mut(&raw_id) {
+                let len = set.len();
                 set.retain(|&l| l != label_id);
+                was_staged = set.len() != len;
                 if set.is_empty() {
                     self.set_labels.remove(&raw_id);
                 }
             }
-            self.remove_labels.entry(raw_id).or_default().push(label_id);
+            if was_staged
+                && (self.created_nodes.contains(raw_id) || !g.node_has_label_id(id, *label))
+            {
+                self.staged_labels_removed += 1;
+            } else {
+                self.remove_labels.entry(raw_id).or_default().push(label_id);
+            }
         }
     }
 
@@ -808,6 +832,7 @@ impl Pending {
         let mut label_ids = OrderSet::default();
         self.update_node_labels(id, &mut label_ids);
         self.set_labels.remove(&id.into());
+        self.remove_labels.remove(&id.into());
 
         // Collect pending attrs
         let attrs = self
@@ -1264,6 +1289,7 @@ impl Pending {
             g.borrow_mut()
                 .set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
+        stats.borrow_mut().labels_removed += self.staged_labels_removed;
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
@@ -1775,6 +1801,7 @@ impl Pending {
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
         self.cancelled_nodes.clear();
+        self.staged_labels_removed = 0;
         self.taken_relationship_ids.clear();
         self.cancelled_relationships.clear();
         self.index_docs.node_adds.clear();
@@ -1820,6 +1847,9 @@ impl Pending {
                 .values()
                 .map(|v| v.len() as u64)
                 .sum::<u64>()
+            // No record of its own, but the cancelled add may have registered
+            // its label, and the buffer that ships that is gated on this count.
+            + self.staged_labels_removed as u64
     }
 }
 
@@ -1901,13 +1931,13 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
 
         assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
     }
 
-    /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
-    /// emptied `set_labels` entry goes with it.
+    /// `SET n:L REMOVE n:L` on a node without a committed `L`: the removal
+    /// cancels the staged add, and the emptied `set_labels` entry goes with it.
     ///
     /// Two layers keep the cancelled add off the wire, and this checks both.
     /// The map assertion is the one this fix owns: dropping the emptied entry
@@ -1915,24 +1945,32 @@ mod label_effect_tests {
     /// assertion is the outcome, which `digest_labels` also defends by
     /// suppressing an empty label set — so it holds even if the cleanup here
     /// regresses, and only the map assertion would catch that.
+    ///
+    /// Nor is a removal staged (#3448): there is no committed `L` to remove,
+    /// and a `RemoveLabels` for a node the replica lacks is refused.
     #[test]
     fn cancelled_add_emits_no_set_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
         pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
 
         assert!(
             !pending.set_labels.contains_key(&NODE),
             "the emptied set_labels entry must be dropped, not left empty"
         );
+        assert!(
+            !pending.remove_labels.contains_key(&NODE),
+            "a label that was only staged must not be staged for removal"
+        );
         assert_eq!(
             records(&pending, &g),
-            vec![labelled(false, &[l])],
-            "the cancelled add must leave no SetLabels behind"
+            vec![],
+            "the cancelled add must leave no label record behind"
         );
-        assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
+        assert_eq!(pending.node_has_label(NODE.into(), l), None);
+        assert_eq!(pending.staged_labels_removed, 1);
     }
 
     /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
@@ -1943,7 +1981,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
         pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
 
         assert!(
@@ -1970,13 +2008,10 @@ mod label_effect_tests {
         let (l, m) = (labels[0], labels[1]);
 
         pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g.borrow());
 
         assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
-        assert_eq!(
-            records(&pending, &g),
-            vec![labelled(true, &[m]), labelled(false, &[l])]
-        );
+        assert_eq!(records(&pending, &g), vec![labelled(true, &[m])]);
     }
 }
 
