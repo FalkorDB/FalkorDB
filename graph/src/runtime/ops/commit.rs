@@ -86,7 +86,7 @@ impl<'a> Iterator for CommitOp<'a> {
                 .runtime
                 .pending
                 .borrow_mut()
-                .commit(&self.runtime.g, &self.runtime.stats)
+                .commit(&mut self.runtime.graph_mut(), &self.runtime.stats)
             {
                 return Some(Err(e));
             }
@@ -113,7 +113,7 @@ impl<'a> Iterator for CommitOp<'a> {
                         // buffer cannot carry. Failing the write is the point:
                         // the alternative is a commit that succeeded locally
                         // and shipped a payload the replica reads differently.
-                        let n_effects = match buf.build(&pending, &self.runtime.g) {
+                        let n_effects = match buf.build(&pending, &self.runtime.graph()) {
                             Ok(n) => n,
                             Err(e) => return Some(Err(e)),
                         };
@@ -136,7 +136,7 @@ impl<'a> Iterator for CommitOp<'a> {
                 .runtime
                 .pending
                 .borrow_mut()
-                .end_segment(&self.runtime.g)
+                .end_segment(&mut self.runtime.graph_mut())
             {
                 return Some(Err(e.to_string()));
             }
@@ -145,7 +145,7 @@ impl<'a> Iterator for CommitOp<'a> {
             self.runtime
                 .pending
                 .borrow_mut()
-                .set_schema_baseline(&self.runtime.g);
+                .set_schema_baseline(&self.runtime.graph());
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }

@@ -46,8 +46,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["label"],
         fn db_labels(runtime, _args) {
             let col_label: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_labels()
                 .iter()
                 .map(|l| Value::String(l.clone()))
@@ -63,8 +62,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["relationshipType"],
         fn db_types(runtime, _args) {
             let col_type: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_types()
                 .iter()
                 .map(|t| Value::String(t.clone()))
@@ -80,8 +78,7 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["propertyKey"],
         fn db_properties(runtime, _args) {
             let col_key: Vec<Value> = runtime
-                .g
-                .borrow()
+                .graph()
                 .get_attrs()
                 .map(|p| Value::String(p.clone()))
                 .collect();
@@ -95,7 +92,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["label", "properties", "types", "options", "language", "stopwords", "entitytype", "status", "info"],
         fn db_indexes(runtime, _args) {
-            let infos = runtime.g.borrow().index_info();
+            let infos = runtime.graph().index_info();
             let mut col_label = Vec::with_capacity(infos.len());
             let mut col_properties = Vec::with_capacity(infos.len());
             let mut col_types = Vec::with_capacity(infos.len());
@@ -290,7 +287,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["labels", "relTypes", "relCount", "nodeCount", "labelCount", "relTypeCount", "propertyKeyCount"],
         fn db_meta_stats(runtime, _args) {
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
 
             // Build labels map: label_name -> node count for that label
             let mut labels_map = OrderMap::default();
@@ -401,7 +398,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["type", "label", "properties", "entitytype", "status"],
         fn db_constraints(runtime, _args) {
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             let constraints = g.constraints();
             let mut col_type = Vec::with_capacity(constraints.len());
             let mut col_label = Vec::with_capacity(constraints.len());

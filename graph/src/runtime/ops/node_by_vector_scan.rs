@@ -96,7 +96,7 @@ impl<'a> Iterator for NodeByVectorScanOp<'a> {
                     &view,
                     "db.idx.vector.queryNodes",
                 )?;
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(g.vector_query_nodes(&label_str, &attr_str, vec_arc, k_val)?)
                     as Box<dyn Iterator<Item = (NodeId, f64)>>;
                 Ok(Some(RowIter::many(iter)))

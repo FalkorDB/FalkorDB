@@ -75,8 +75,7 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                 let max = range.max().expect("range has a min, so it has a max");
                 let iter = self
                     .runtime
-                    .g
-                    .borrow()
+                    .graph()
                     .get_nodes(&self.node_pattern.labels, min)
                     .take_while(move |nid| u64::from(*nid) <= max)
                     .filter(move |nid| range.contains(u64::from(*nid)));

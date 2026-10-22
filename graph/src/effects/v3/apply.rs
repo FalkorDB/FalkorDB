@@ -1839,7 +1839,9 @@ mod tests {
         }
 
         let mut buf = crate::effects::v3::new_buffer();
-        crate::effects::v3::emit::for_each_record(&p, &master, |r| r.encode(&mut buf).unwrap());
+        crate::effects::v3::emit::for_each_record(&p, &master.borrow(), |r| {
+            r.encode(&mut buf).unwrap()
+        });
         assert_eq!(
             crate::effects::v3::test_aux::read_buffer(&buf)
                 .unwrap()

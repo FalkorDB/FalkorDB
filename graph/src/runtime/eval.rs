@@ -1385,7 +1385,7 @@ impl<'a> ExprEval<'a> {
         };
 
         let rt = self.rt()?;
-        let g = rt.g.borrow();
+        let g = rt.graph();
 
         // min_hops == 0: if src == dest, return single-node path
         if min_hops == 0 && src_id == dst_id {
