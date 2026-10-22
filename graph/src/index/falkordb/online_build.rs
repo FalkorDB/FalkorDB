@@ -18,27 +18,27 @@
 //!
 //! **When the builder runs.** [`MvccGraph::commit`] queues its graph when the version it publishes
 //! starts a build — it has a `Building` column, and the version it replaces has none — which covers
-//! every way a `CREATE INDEX` can arrive. A worker takes the graph with the earliest start time,
-//! runs one turn, and queues it again — not before as long as the turn took — until it has no
-//! `Building` column left, so the commits made meanwhile need not queue it. A graph is therefore
-//! queued once per build and has one turn at a time, unless every building column is dropped and a
-//! new one created while a turn runs: that commit starts a build and queues the graph a second
-//! time, and two turns at once publish nothing wrong ([`run_turn`]). The work per `CREATE INDEX`
-//! is the same however many graphs there are.
+//! every way a `CREATE INDEX` can arrive. Each turn is a task on the builder's own [`ThreadPool`],
+//! whose workers serve no queries. The pool only runs tasks; a turn decides what comes next: it
+//! submits the graph's next turn, until the graph has no `Building` column left, so the commits
+//! made meanwhile need not queue it. A graph is therefore queued once per build and has one turn
+//! at a time, unless every building column is dropped and a new one created while a turn runs:
+//! that commit starts a build and queues the graph a second time, and two turns at once publish
+//! nothing wrong ([`run_turn`]). The work per `CREATE INDEX` is the same however many graphs there
+//! are.
 
-use std::cmp::{Ordering as CmpOrdering, Reverse};
-use std::collections::BinaryHeap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread;
+use std::time::Duration;
 
 use atomic_refcell::AtomicRefCell;
 
 use super::graph_writes::BUILD_STEP_ENTITIES;
 use crate::graph::graph::Graph;
 use crate::graph::mvcc_graph::{BuildCommit, MvccGraph};
+use crate::threadpool::ThreadPool;
 
 /// How the builder reaches one graph. Implemented by the host that owns the graph, and registered
 /// with it through [`MvccGraph::set_build_host`].
@@ -129,63 +129,25 @@ pub(crate) fn run_turn_within(
     if published { turn } else { Turn::Gone }
 }
 
-// ---- The worker pool ----
+// ---- Running the turns ----
 
-/// One graph waiting for its next turn.
-struct Queued {
-    /// When its next turn may start.
-    not_before: Instant,
-    /// Breaks ties in queue order.
-    seq: u64,
-    host: Arc<dyn BuildHost>,
+/// The builder's pool while it runs, and before [`start`] the graphs a commit queued, which wait
+/// for it.
+struct Builder {
+    pool: Option<Arc<ThreadPool>>,
+    waiting: Vec<Arc<dyn BuildHost>>,
 }
 
-impl PartialEq for Queued {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
-        (self.not_before, self.seq) == (other.not_before, other.seq)
-    }
-}
-
-impl Eq for Queued {}
-
-impl PartialOrd for Queued {
-    fn partial_cmp(
-        &self,
-        other: &Self,
-    ) -> Option<CmpOrdering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Queued {
-    fn cmp(
-        &self,
-        other: &Self,
-    ) -> CmpOrdering {
-        (self.not_before, self.seq).cmp(&(other.not_before, other.seq))
-    }
-}
-
-struct Pool {
-    /// Graphs waiting for a turn, earliest start first.
-    queue: BinaryHeap<Reverse<Queued>>,
-    next_seq: u64,
-    workers: Vec<JoinHandle<()>>,
-}
-
-static POOL: Mutex<Pool> = Mutex::new(Pool {
-    queue: BinaryHeap::new(),
-    next_seq: 0,
-    workers: Vec::new(),
+static BUILDER: Mutex<Builder> = Mutex::new(Builder {
+    pool: None,
+    waiting: Vec::new(),
 });
 
-/// Signalled when a graph is queued, and at stop.
-static WORK: Condvar = Condvar::new();
+/// Turns submitted to the pool that have not started yet.
+static QUEUED: AtomicUsize = AtomicUsize::new(0);
 
-/// Set while the pool is stopping: workers exit, and a turn gives up rather than publish.
+/// Set while the builder is stopping: a turn that has not started gives up, and one that has
+/// gives up rather than publish.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
 /// Whether the builder is stopping. A host that has waited for what publishing needs checks it
@@ -195,45 +157,46 @@ pub fn stopping() -> bool {
     STOPPING.load(Ordering::Relaxed)
 }
 
-fn pool() -> MutexGuard<'static, Pool> {
-    POOL.lock().unwrap_or_else(|e| e.into_inner())
+fn builder() -> MutexGuard<'static, Builder> {
+    BUILDER.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Start the pool's `threads` workers (at least one). Idempotent while they run.
+/// Start the builder's pool with `threads` workers (at least one), and submit the graphs queued
+/// before it started. Idempotent while it runs.
 pub fn start(threads: usize) {
-    let mut pool = pool();
-    if !pool.workers.is_empty() {
-        return;
-    }
-    STOPPING.store(false, Ordering::Relaxed);
-    for i in 0..threads.max(1) {
-        pool.workers.push(
-            thread::Builder::new()
-                .name(format!("falkordb-index-build-{i}"))
-                .spawn(work)
-                .expect("spawn an index build worker"),
-        );
+    let waiting = {
+        let mut builder = builder();
+        if builder.pool.is_some() {
+            return;
+        }
+        STOPPING.store(false, Ordering::Relaxed);
+        builder.pool = Some(Arc::new(ThreadPool::named(
+            threads.max(1),
+            "falkordb-index-build",
+        )));
+        std::mem::take(&mut builder.waiting)
+    };
+    for host in waiting {
+        submit(host);
     }
 }
 
-/// Stop the pool's workers, waiting up to [`STOP_WAIT`] for them to exit. A turn that has not
-/// started publishing drops its batch. One waiting for what its host needs to publish may be
-/// waiting on the caller — the Redis shutdown handler calls this holding the GIL — so it is left
-/// behind; its host gives up once it gets the lock ([`stopping`]). Graphs still queued are
-/// dropped from the build for good.
+/// Stop the builder's pool, waiting up to [`STOP_WAIT`] for its workers to exit
+/// ([`ThreadPool::shutdown_within`]). A turn that has not started publishing drops its batch. One
+/// waiting for what its host needs to publish may be waiting on the caller — the Redis shutdown
+/// handler calls this holding the GIL — so it is left behind; its host gives up once it gets the
+/// lock ([`stopping`]). Graphs still queued are dropped from the build for good.
 pub fn stop() {
     STOPPING.store(true, Ordering::Relaxed);
-    let workers = std::mem::take(&mut pool().workers);
-    WORK.notify_all();
-    let deadline = Instant::now() + STOP_WAIT;
-    while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
-        thread::sleep(Duration::from_millis(1));
+    let pool = {
+        let mut builder = builder();
+        builder.waiting.clear();
+        builder.pool.take()
+    };
+    if let Some(pool) = pool {
+        pool.shutdown_within(STOP_WAIT);
     }
-    for worker in workers {
-        if worker.is_finished() {
-            drop(worker.join());
-        }
-    }
+    QUEUED.store(0, Ordering::Relaxed);
 }
 
 /// How long [`stop`] waits for the workers.
@@ -242,93 +205,84 @@ const STOP_WAIT: Duration = Duration::from_secs(2);
 /// Graphs waiting for a turn. For tests.
 #[must_use]
 pub fn pending() -> usize {
-    pool().queue.len()
+    builder().waiting.len() + QUEUED.load(Ordering::Relaxed)
 }
 
 /// Queue `host`'s graph for its first turn. Never blocks for long: it is called from
 /// [`MvccGraph::commit`], which holds the host's locks.
 pub(crate) fn enqueue(host: Arc<dyn BuildHost>) {
-    requeue(
-        Queued {
-            not_before: Instant::now(),
-            seq: 0,
-            host,
-        },
-        &mut pool(),
-    );
+    submit(host);
 }
 
-fn requeue(
-    mut graph: Queued,
-    pool: &mut Pool,
-) {
-    graph.seq = pool.next_seq;
-    pool.next_seq += 1;
-    pool.queue.push(Reverse(graph));
-    WORK.notify_one();
+/// Submit `host`'s next turn. Before the builder starts, the graph waits for it; once it has
+/// stopped, the graph is dropped.
+fn submit(host: Arc<dyn BuildHost>) {
+    let pool = {
+        let mut builder = builder();
+        match &builder.pool {
+            Some(pool) => Arc::clone(pool),
+            None => {
+                if !stopping() {
+                    builder.waiting.push(host);
+                }
+                return;
+            }
+        }
+    };
+    QUEUED.fetch_add(1, Ordering::Relaxed);
+    pool.spawn(move || take_turn(host), None);
 }
 
-/// How long a graph waits for its next turn after one that committed: as long as the turn
-/// took, so a build takes at most half of one worker's time per graph, and the graph's write lock
-/// at most once per that long.
-fn pace(turn: Duration) -> Duration {
-    turn.max(Duration::from_millis(1))
+/// One turn of `host`'s graph, on a builder worker, then the decision on its next one.
+fn take_turn(host: Arc<dyn BuildHost>) {
+    QUEUED.fetch_sub(1, Ordering::Relaxed);
+    if stopping() {
+        return;
+    }
+    let turn = catch_unwind(AssertUnwindSafe(|| run_turn(host.as_ref()))).unwrap_or(Turn::Failed);
+    if turn == Turn::Failed {
+        eprintln!("index build: a build step failed; it will be retried");
+    }
+    let Some(wait) = next_turn(&turn) else {
+        return;
+    };
+    // Only after a failure, which is a bug: holding this worker for it costs nothing that
+    // matters.
+    if !wait.is_zero() {
+        thread::sleep(wait);
+    }
+    submit(host);
+}
+
+/// How long to wait before a graph's next turn, after a turn that went `turn`; `None` when the
+/// graph is done — a commit that starts another build queues it again.
+fn next_turn(turn: &Turn) -> Option<Duration> {
+    match turn {
+        Turn::Committed { more: true } => Some(Duration::ZERO),
+        Turn::Failed => Some(FAILED_RETRY),
+        Turn::Committed { more: false } | Turn::Idle | Turn::Gone => None,
+    }
 }
 
 /// How long a graph waits before retrying after a turn failed: its step panicked, or its version
 /// was refused.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
-/// A worker: take the graph whose turn is due first, run it, queue it again if it has more.
-fn work() {
-    loop {
-        let mut graph = {
-            let mut pool = pool();
-            loop {
-                if stopping() {
-                    return;
-                }
-                let now = Instant::now();
-                let due = match pool.queue.peek() {
-                    Some(Reverse(next)) if next.not_before <= now => None,
-                    Some(Reverse(next)) => Some(next.not_before - now),
-                    None => {
-                        pool = WORK.wait(pool).unwrap_or_else(|e| e.into_inner());
-                        continue;
-                    }
-                };
-                match due {
-                    None => {
-                        let Reverse(graph) = pool.queue.pop().expect("peeked");
-                        break graph;
-                    }
-                    Some(wait) => {
-                        pool = WORK
-                            .wait_timeout(pool, wait)
-                            .unwrap_or_else(|e| e.into_inner())
-                            .0;
-                    }
-                }
-            }
-        };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let started = Instant::now();
-        let turn = catch_unwind(AssertUnwindSafe(|| run_turn(graph.host.as_ref())))
-            .unwrap_or(Turn::Failed);
-        let again = match turn {
-            Turn::Committed { more: true } => Some(pace(started.elapsed())),
-            Turn::Failed => {
-                eprintln!("index build: a build step failed; it will be retried");
-                Some(FAILED_RETRY)
-            }
-            // Done: a commit that starts another build queues the graph again.
-            Turn::Committed { more: false } | Turn::Idle => None,
-            Turn::Gone => None,
-        };
-
-        if let Some(wait) = again {
-            graph.not_before = Instant::now() + wait;
-            requeue(graph, &mut pool());
+    /// After a turn that committed with more to build, the next one runs right away; after a
+    /// failed one, a second later; after any other, there is none.
+    #[test]
+    fn a_turn_decides_when_the_next_one_runs() {
+        assert_eq!(
+            next_turn(&Turn::Committed { more: true }),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(next_turn(&Turn::Failed), Some(FAILED_RETRY));
+        for done in [Turn::Committed { more: false }, Turn::Idle, Turn::Gone] {
+            assert_eq!(next_turn(&done), None, "{done:?}");
         }
     }
 }
