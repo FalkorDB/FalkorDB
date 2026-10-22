@@ -2119,4 +2119,103 @@ mod tests {
             .map(|(s, t, id)| (id, (s, t)))
             .collect()
     }
+
+    /// 0 -> 1 -> 2 at 1.0 each and a direct 0 -> 2 at 5.0, type `T0`; `0 -> 1` again at 1.0
+    /// as type `T1`. Indexes over `T0` and over `T1`.
+    fn triangle(db: &mut Db) -> (CchIndexDef, CchIndexDef) {
+        let edges = [
+            (0, 1, Some(1.0), INDEXED[0]),
+            (1, 2, Some(1.0), INDEXED[0]),
+            (0, 2, Some(5.0), INDEXED[0]),
+            (0, 1, Some(1.0), INDEXED[1]),
+        ];
+        load(db, 3, &edges);
+        (db.create_index(&[0], "w"), db.create_index(&[1], "w"))
+    }
+
+    /// `db.idx.cch.query` from node 0 to node 2 over `T0`, as the rest of a query.
+    const QUERY_0_2: &str = "WITH 1 AS one MATCH (s), (t) WHERE id(s) = 0 AND id(t) = 2 \
+        CALL db.idx.cch.query({sourceNode: s, targetNode: t, relTypes: ['T0'], weightProp: 'w'}) \
+        YIELD pathWeight RETURN pathWeight";
+
+    /// A procedure reading an index the same write query has touched sees that query's
+    /// writes: the `Commit` the `WITH` plans rebuilt it, once, and nothing is rebuilt at the end.
+    /// With the cheap edge deleted earlier in the query, the procedure answers without it
+    /// rather than failing the query on a hierarchy that still holds it.
+    #[test]
+    fn a_procedure_sees_the_writes_earlier_in_its_query() {
+        let mut db = Db::new("cch_maint_inquery_set");
+        triangle(&mut db);
+        let start = flushes();
+        let rows = db.rows(&format!("{} SET r.w = 10.0 {QUERY_0_2}", pair(0, 1)));
+        assert_eq!(
+            rows,
+            Ok(vec![vec![Value::Float(5.0)]]),
+            "read the pre-write hierarchy"
+        );
+        assert_eq!(
+            flushes() - start,
+            1,
+            "one rebuild, by the Commit before the read"
+        );
+
+        let rows = db.rows(&format!("{} DELETE r {QUERY_0_2}", pair(0, 1)));
+        assert_eq!(rows, Ok(vec![vec![Value::Float(5.0)]]), "after a delete");
+    }
+
+    /// The procedure adds no rebuild of its own: the count is one per `Commit` that touched an
+    /// index, with or without the procedure, none for a query that touched nothing indexed, and
+    /// a read of one index does not rebuild another.
+    #[test]
+    fn the_procedure_adds_no_rebuild_of_its_own() {
+        let mut db = Db::new("cch_maint_inquery_count");
+        let (zero, one) = triangle(&mut db);
+
+        let start = flushes();
+        db.ok(&format!("{} SET r.w = 2.0", pair(0, 1)));
+        assert_eq!(
+            flushes() - start,
+            1,
+            "a write without the procedure: its one Commit"
+        );
+
+        let start = flushes();
+        let rows = db.rows(&format!(
+            "MATCH (n:N) WHERE id(n) = 0 SET n.x = 1 {QUERY_0_2}"
+        ));
+        assert_eq!(rows, Ok(vec![vec![Value::Float(3.0)]]));
+        assert_eq!(
+            flushes() - start,
+            0,
+            "a node property touches no index: no flush"
+        );
+
+        let start = flushes();
+        let rows = db.rows(&QUERY_0_2.replacen("WITH 1 AS one ", "", 1));
+        assert_eq!(rows, Ok(vec![vec![Value::Float(3.0)]]));
+        assert_eq!(
+            flushes() - start,
+            0,
+            "a query writing nothing does not flush"
+        );
+
+        let (zero_before, one_before) = (db.cch(&zero), db.cch(&one));
+        let start = flushes();
+        let q = format!(
+            "MATCH ()-[r:T1]->() SET r.w = 7.0 {} WITH pathWeight \
+             MATCH ()-[q:T1]->() SET q.w = 8.0 RETURN pathWeight",
+            QUERY_0_2.trim_end_matches(" RETURN pathWeight")
+        );
+        assert_eq!(db.rows(&q), Ok(vec![vec![Value::Float(3.0)]]));
+        assert_eq!(
+            flushes() - start,
+            2,
+            "T1 is written before and after the read: one rebuild per Commit"
+        );
+        assert!(
+            Arc::ptr_eq(&zero_before, &db.cch(&zero)),
+            "T0 was never touched"
+        );
+        assert!(!Arc::ptr_eq(&one_before, &db.cch(&one)), "T1 was rebuilt");
+    }
 }
