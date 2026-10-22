@@ -131,6 +131,79 @@ class testEffects_01_RecordCommand(_EffectsBase):
         self.query_and_sync("CREATE (:AfterFailure {v: 1})")
         self.assert_agree("MATCH (n:AfterFailure) RETURN count(n)", [[1]])
 
+    @staticmethod
+    def recorded_entities(trace, key):
+        """Every verbose entity in the trace's rows that has the field `key`
+        ("type" for an edge, "labels" for a node), as a dict of its fields."""
+        found = []
+        for row in trace:
+            if row[1] != 1:
+                continue
+            for value in row[2]:
+                if (isinstance(value, list) and value
+                        and all(isinstance(f, list) and len(f) == 2 for f in value)):
+                    fields = dict(value)
+                    if key in fields:
+                        found.append(fields)
+        return found
+
+    def test05_a_recorded_delete_renders_what_it_deleted(self):
+        # The trace is rendered after commit, so a deleted entity is only
+        # describable from its snapshot. A top-level DELETE skips the snapshot
+        # when nothing reads its rows, but RECORD does read them: the edge used
+        # to panic the server ("relationship 0 not found") and the node to come
+        # back with no labels or properties.
+        # https://github.com/FalkorDB/FalkorDB/issues/3449
+        self.set_effects_config()
+        self.query_and_sync(
+            "CREATE (:Rec {name: 'a'})-[:RT {w: 1}]->(:Rec {name: 'b'})")
+
+        trace, _plan = self.record("MATCH ()-[r:RT]->() DELETE r")
+        edges = self.recorded_entities(trace, "type")
+        self.env.assertGreater(len(edges), 0)
+        for e in edges:
+            self.env.assertEqual(e["type"], "RT")
+            self.env.assertEqual(e["properties"], [["w", 1]])
+
+        # the scan before the filter records `b` too; every row, `a` included,
+        # renders with its labels and properties
+        trace, _plan = self.record("MATCH (n:Rec {name: 'a'}) DELETE n")
+        nodes = self.recorded_entities(trace, "labels")
+        self.env.assertContains(["name", "a"], [p for n in nodes for p in n["properties"]])
+        for n in nodes:
+            self.env.assertEqual(n["labels"], ["Rec"])
+            self.env.assertEqual(len(n["properties"]), 1)
+
+        self.wait_for_replica_offset()
+        self.assert_agree("MATCH (n:Rec) RETURN count(n)", [[1]])
+        self.assert_agree("MATCH ()-[r:RT]->() RETURN count(r)", [[0]])
+        self.assert_graph_eq()
+
+    def test06_a_recorded_failure_renders_its_uncommitted_edge(self):
+        # The error comes before Commit, so the edge is still pending when the
+        # trace is rendered: its type has to come from the pending view, not
+        # the committed graph (it used to panic, "relationship must have a type
+        # in type_matrix"). And nothing ships.
+        # https://github.com/FalkorDB/FalkorDB/issues/3449
+        self.set_effects_config()
+        self.query_and_sync("CREATE (:Anchor)")
+        self.monitor_mark()
+        trace, _plan = self.record("CREATE (a)-[r:RT_PENDING]->(b) SET a.x = 1/0")
+        failures = [row for row in trace if row[1] == 0]
+        self.env.assertGreater(len(failures), 0)
+        for f in failures:
+            self.env.assertContains("Division by zero", f[2])
+        edges = self.recorded_entities(trace, "type")
+        self.env.assertGreater(len(edges), 0)
+        for e in edges:
+            self.env.assertEqual(e["type"], "RT_PENDING")
+
+        self.wait_for_replica_offset()
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 0)
+        self.assert_agree("MATCH ()-[r:RT_PENDING]->() RETURN count(r)", [[0]])
+        self.assert_graph_eq()
+
 
 #-----------------------------------------------------------------------------
 # 4e. the commands that still replicate verbatim
