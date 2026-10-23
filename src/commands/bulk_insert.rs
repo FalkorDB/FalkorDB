@@ -533,7 +533,7 @@ fn process_edge_token(
 
     if !resolved_rel_attrs.is_empty() {
         // Same as the node path: collect now, publish once the whole insert has succeeded.
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, docs);
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, docs)?;
         g.apply_index_writes(docs);
         unsafe { maybe_yield(raw_ctx) };
     }

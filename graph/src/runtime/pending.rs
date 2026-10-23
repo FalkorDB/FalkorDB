@@ -1396,8 +1396,10 @@ impl Pending {
         if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
         {
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g
-                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
+                let nset = g.import_relationship_attrs(
+                    &self.new_relationships_attrs,
+                    &mut self.index_docs,
+                )?;
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
@@ -2585,7 +2587,8 @@ mod native_unique_tests {
             .zip([1, 1, 2])
             .map(|(&id, v)| (id, vec![(attr, Value::Int(v))]))
             .collect();
-        g.import_relationship_attrs(&attrs, &mut docs);
+        g.import_relationship_attrs(&attrs, &mut docs)
+            .expect("an integer is no CCH weight to refuse");
         g.apply_index_writes(&mut docs);
 
         assert!(looked_up(

@@ -270,7 +270,7 @@ fn create_index_builds_the_column_from_live_edges() {
         .zip(1..)
         .map(|(&eid, w)| (eid, vec![(aid, Value::Int(w))]))
         .collect();
-    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w)).expect("stored");
 
     graph_writes::create_index(
         &mut g,
@@ -537,7 +537,7 @@ fn edge_writes_maintain_the_index() {
     for (i, &id) in ids.iter().enumerate() {
         attrs.insert(id, vec![(aid, Value::Int(((i as i64) + 1) * 10))]);
     }
-    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w)).expect("stored");
 
     let scan = |g: &Graph, lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
@@ -828,7 +828,8 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     };
     let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
     applied!(g, |w| g
-        .import_relationship_attrs(&with_w(&initial), &mut w));
+        .import_relationship_attrs(&with_w(&initial), &mut w))
+    .expect("stored");
 
     g.falkordb_index
         .create_building(EntityType::Relationship, &ty, &attr);
@@ -863,7 +864,8 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     g.create_relationships_bulk(&ty, &[a], &[b], &[added], &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g
-        .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w));
+        .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w))
+    .expect("stored");
     assert_eq!(
         held(&g),
         vec![eids[0], eids[2], added],
@@ -915,7 +917,8 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     };
     let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
     applied!(g, |w| g
-        .import_relationship_attrs(&with_w(&initial), &mut w));
+        .import_relationship_attrs(&with_w(&initial), &mut w))
+    .expect("stored");
     g.falkordb_index
         .create_building(EntityType::Relationship, &ty, &attr);
 
@@ -982,7 +985,8 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
         };
         let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
         applied!(g, |w| g
-            .import_relationship_attrs(&with_w(&initial), &mut w));
+            .import_relationship_attrs(&with_w(&initial), &mut w))
+        .expect("stored");
         g.falkordb_index
             .create_building(EntityType::Relationship, &ty, &attr);
 
@@ -1007,7 +1011,8 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
         let reused = eids[0];
         g.create_relationships_bulk(&ty, &[d], &[a], &[reused], &mut IndexDocs::default())
             .expect("a freed id is creatable");
-        g.import_relationship_attrs(&with_w(&[(reused, new_w)]), &mut w);
+        g.import_relationship_attrs(&with_w(&[(reused, new_w)]), &mut w)
+            .expect("stored");
         g.apply_index_writes(&mut w);
         assert!(
             held(&g).is_empty(),
@@ -1045,7 +1050,7 @@ fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>)
     for (i, &eid) in eids.iter().enumerate() {
         attrs.insert(eid, vec![(aid, Value::Int(i as i64))]);
     }
-    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w)).expect("stored");
     let mut del = RoaringTreemap::new();
     del.insert(ids[4]);
     applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
@@ -1995,7 +2000,8 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
             };
             let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
             applied!(g, |w| g
-                .import_relationship_attrs(&with_w(&initial), &mut w));
+                .import_relationship_attrs(&with_w(&initial), &mut w))
+            .expect("stored");
             g.falkordb_index
                 .create_building(EntityType::Relationship, &ty, &attr);
             let mvcc = &mut MvccGraph::from_graph(g);
@@ -2013,7 +2019,8 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                     &mut w,
                 )
                 .expect("a freed id is creatable");
-                g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w);
+                g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w)
+                    .expect("stored");
                 g.apply_index_writes(&mut w);
             };
             let what = format!("edge {deleted} reused, writer first: {writer_first:?}");
@@ -2146,7 +2153,8 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
         };
         let initial: Vec<(u64, i64)> = eids.iter().copied().zip((1..=3).chain(101..)).collect();
         applied!(g, |w| g
-            .import_relationship_attrs(&with_w(&initial), &mut w));
+            .import_relationship_attrs(&with_w(&initial), &mut w))
+        .expect("stored");
         g.falkordb_index
             .create_building(EntityType::Relationship, &ty, &attr);
         let mvcc = &mut MvccGraph::from_graph(g);
@@ -2160,7 +2168,8 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
             g.delete_relationships(&del, &mut w).unwrap();
             g.create_relationships_bulk(&other, &[a], &[a], &[eids[0]], &mut w)
                 .expect("a freed id is creatable");
-            g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w);
+            g.import_relationship_attrs(&with_w(&[(eids[0], 9)]), &mut w)
+                .expect("stored");
             g.apply_index_writes(&mut w);
         };
         let what = format!("writer first: {writer_first:?}");
@@ -2787,7 +2796,7 @@ fn add_edges(
         .zip(first..)
         .map(|(&eid, w)| (eid, vec![(aid, Value::Int(w))]))
         .collect();
-    applied!(g, |d| g.import_relationship_attrs(&values, &mut d));
+    applied!(g, |d| g.import_relationship_attrs(&values, &mut d)).expect("stored");
     eids
 }
 
