@@ -100,8 +100,10 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
                 continue;
             };
 
-            let edge_alias_id = match optimized_plan.node(vlt_idx).data() {
-                IR::CondVarLenTraverse { relationship, .. } => relationship.alias.id,
+            let edge_alias = match optimized_plan.node(vlt_idx).data() {
+                IR::CondVarLenTraverse { relationship, .. } => {
+                    (relationship.alias.id, relationship.alias.scope_id)
+                }
                 _ => continue,
             };
 
@@ -124,7 +126,7 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
 
             for conjunct in conjuncts {
                 let vars = collect_expr_variables(&conjunct);
-                if !vars.is_empty() && vars.iter().all(|v| *v == edge_alias_id) {
+                if !vars.is_empty() && vars.iter().all(|v| *v == edge_alias) {
                     edge_conjuncts.push(conjunct);
                 } else {
                     remaining.push(conjunct);
