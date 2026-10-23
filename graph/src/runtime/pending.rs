@@ -41,6 +41,7 @@ use crate::{
     },
     index::{
         Index,
+        cch::CchDirty,
         indexer::{IndexQuery, IndexType},
     },
     runtime::{
@@ -370,6 +371,15 @@ pub struct Pending {
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
     published: IndexDocs,
+    /// What this query touched that a CCH index might care about, accumulated across all of
+    /// its `Commit`s for the end-of-query maintenance hook (#3214).
+    ///
+    /// Like [`Self::published`], deliberately **not** reset by [`Self::end_segment`]: the hook runs
+    /// once, after the whole query, so it must see every `Commit`'s changes, not just the last.
+    /// Never read yet; nothing writes to it either, so it stays `Default`
+    /// for every query and costs one empty struct per `Pending`.
+    #[allow(dead_code)]
+    cch_dirty: CchDirty,
     /// Schema baseline: number of labels when the current commit window started.
     pub(crate) schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -511,6 +521,7 @@ impl Pending {
             remove_labels: FxHashMap::default(),
             index_docs: IndexDocs::default(),
             published: IndexDocs::default(),
+            cch_dirty: CchDirty::default(),
             deferred_docs: IndexDocs::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
@@ -1722,7 +1733,8 @@ impl Pending {
     ///
     /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
     /// has to undo the documents *all* of this query's `Commit`s published, not just
-    /// the last one's.
+    /// the last one's. Same for `cch_dirty`, which the end-of-query maintenance hook
+    /// reads once for the whole query.
     ///
     /// # Errors
     ///
