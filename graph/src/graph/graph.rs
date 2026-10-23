@@ -83,6 +83,7 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
+    cch::{self, CchError, CchIndex, CchIndexDef},
     falkordb_index::FalkorDbIndex,
     graph_writes::{self, index_only_writes},
 };
@@ -5038,6 +5039,71 @@ impl Graph {
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
+    }
+}
+
+/// CCH shortest-path indexes. They live in the native index's state
+/// (`FalkorDbIndex::cch_indexes`), so they share its feature gate; the logic is in
+/// [`cch::index`].
+#[cfg(feature = "index-falkordb")]
+impl Graph {
+    /// Build a CCH index for `def` and hold it on this version of the graph. Synchronous:
+    /// unlike the RediSearch indexes there is no background population pass.
+    ///
+    /// # Errors
+    /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
+    /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
+    /// definition, and whatever [`Cch::build`](cch::Cch::build) reports.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn create_cch_index(
+        &mut self,
+        def: CchIndexDef,
+    ) -> Result<(), CchError> {
+        cch::index::create(self, def)
+    }
+
+    /// # Errors
+    /// [`CchError::NotFound`] if no index with this definition is held.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn drop_cch_index(
+        &mut self,
+        def: &CchIndexDef,
+    ) -> Result<(), CchError> {
+        cch::index::drop_index(self, def)
+    }
+
+    /// Every CCH index definition held by this version, in no guaranteed order.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
+        cch::index::defs(self)
+    }
+
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    #[must_use]
+    pub fn cch_index(
+        &self,
+        def: &CchIndexDef,
+    ) -> Option<&CchIndex> {
+        cch::index::find(self, def)
+    }
+
+    /// Rebuild every CCH index from the current graph. Used by RDB load (the hierarchy is not
+    /// persisted, only the definition) and by maintenance.
+    ///
+    /// # Errors
+    /// Whatever [`Cch::build`](cch::Cch::build) reports for any held definition.
+    ///
+    /// # Panics
+    /// Always — unimplemented until #3212. Nothing calls it yet.
+    pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
+        cch::index::rebuild_all(self)
     }
 }
 
