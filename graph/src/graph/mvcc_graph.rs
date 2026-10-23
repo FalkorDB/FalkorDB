@@ -30,6 +30,11 @@
 //!  Failed writer ──write()──▶ CAS fails ──▶ returns None
 //! ```
 //!
+//! With the `index-falkordb` feature, a background index-build step commits too
+//! (`MvccGraph::commit_index_build`), and changes only the index. A writer whose fork is stale only
+//! because build steps committed since it was made does not run again: [`MvccGraph::claim`] gives
+//! its fork their progress, and it commits.
+//!
 //! ## Version Lifecycle
 //!
 //! ```text
@@ -52,6 +57,8 @@
 //! where mutable access to the committed graph is needed (e.g., indexer
 //! graph reference updates on commit).
 
+#[cfg(feature = "index-falkordb")]
+use std::sync::OnceLock;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -60,6 +67,8 @@ use std::sync::{
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::online_build::{self, BuildHost};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -70,6 +79,22 @@ pub struct MvccGraph {
     graph: Arc<AtomicRefCell<Graph>>,
     /// Write lock (true = write in progress)
     write: AtomicBool,
+    /// How the online index builder reaches this graph; set by its host.
+    #[cfg(feature = "index-falkordb")]
+    build_host: OnceLock<Arc<dyn BuildHost>>,
+}
+
+/// What [`MvccGraph::commit_index_build`] published.
+#[cfg(feature = "index-falkordb")]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildCommit {
+    /// The prepared version: nothing had committed since the version it was made from.
+    Prepared,
+    /// Something had committed since: the step was taken again on a new version of the current
+    /// one, which was published.
+    Redone,
+    /// Something had committed since, and the current version has nothing left to build: nothing.
+    Nothing,
 }
 
 /// Why [`MvccGraph::claim`] refused a fork.
@@ -77,7 +102,7 @@ pub struct MvccGraph {
 pub enum Claim {
     /// Another writer holds the write slot.
     Busy,
-    /// Another writer committed after the fork was made.
+    /// A commit that changed graph data was made after the fork was.
     Stale,
 }
 
@@ -92,10 +117,7 @@ impl MvccGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        Self {
-            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
-            write: AtomicBool::new(false),
-        }
+        Self::from_graph(Graph::new(n, e, cache_size, 0, name))
     }
 
     /// Create an `MvccGraph` from an already-constructed `Graph`.
@@ -105,12 +127,36 @@ impl MvccGraph {
         Self {
             graph: Arc::new(AtomicRefCell::new(graph)),
             write: AtomicBool::new(false),
+            #[cfg(feature = "index-falkordb")]
+            build_host: OnceLock::new(),
         }
     }
 
     #[must_use]
     pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
         self.graph.clone()
+    }
+
+    /// Register how the online index builder reaches this graph. Until a host is set, a commit
+    /// that starts a build queues nothing. The first host set is kept.
+    #[cfg(feature = "index-falkordb")]
+    pub fn set_build_host(
+        &self,
+        host: Arc<dyn BuildHost>,
+    ) {
+        let _ = self.build_host.set(host);
+    }
+
+    /// Take over `old`'s online-build host, for a coordinator that replaces `old` in place.
+    /// Without it, a `CREATE INDEX` on the replacement would never be built.
+    #[cfg(feature = "index-falkordb")]
+    pub fn inherit_build(
+        &self,
+        old: &Self,
+    ) {
+        if let Some(host) = old.build_host.get() {
+            let _ = self.build_host.set(Arc::clone(host));
+        }
     }
 
     /// Claim the write slot and fork a private version to build into, in one
@@ -142,10 +188,15 @@ impl MvccGraph {
 
     /// Claim the write slot for a version made by [`Self::fork`].
     ///
+    /// With the `index-falkordb` feature, a fork that is stale only because index-build commits
+    /// were made since it was is not refused: they changed no graph data, so what its writer
+    /// matched still holds. The fork takes their progress and becomes the next version
+    /// (`Graph::merge_build_progress`).
+    ///
     /// # Errors
     ///
     /// [`Claim::Busy`] if another writer holds the slot. [`Claim::Stale`] if
-    /// another writer committed since the fork was made, so it no longer
+    /// a commit that changed graph data was made since the fork, so it no longer
     /// extends the committed version and must be discarded; the slot is left
     /// free.
     pub fn claim(
@@ -159,7 +210,16 @@ impl MvccGraph {
         {
             return Err(Claim::Busy);
         }
-        if self.graph.borrow().version + 1 != fork.borrow().version {
+        let published = self.graph.borrow();
+        if published.version + 1 != fork.borrow().version {
+            // A fork that is borrowed, which no claimant's is, is refused rather than panicked on.
+            #[cfg(feature = "index-falkordb")]
+            if fork
+                .try_borrow_mut()
+                .is_ok_and(|mut fork| fork.merge_build_progress(&published))
+            {
+                return Ok(());
+            }
             self.write.store(false, Ordering::Release);
             return Err(Claim::Stale);
         }
@@ -186,6 +246,54 @@ impl MvccGraph {
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
+    ) -> Result<(), NodeOpError> {
+        self.commit_version(new_graph, true)
+    }
+
+    /// Commit an index-build step. `prepared` is a new version of a published one with the step
+    /// already taken (`step`), made with no lock held. If that published version is still the
+    /// current one, `prepared` holds every write and is published as it is. If anything has
+    /// committed since, `prepared` holds older data and is not published: `step` is taken again
+    /// on a new version of the current one, reading the values it holds, and that is published
+    /// instead. Either way the commit changes no graph data, so a writer whose fork it makes stale
+    /// may still [`claim`](Self::claim) it.
+    ///
+    /// `prepared` is borrowed so that, if it is not published, the caller frees it once it no
+    /// longer holds the host's locks: freeing a version frees what its step copied.
+    ///
+    /// The caller holds what a writer holds to publish, so the write slot is free. `None` if it
+    /// was taken all the same, or the version was refused.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn commit_index_build(
+        &mut self,
+        prepared: &Arc<AtomicRefCell<Graph>>,
+        step: impl FnOnce(&mut Graph) -> bool,
+    ) -> Option<BuildCommit> {
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return None;
+        }
+        let (version, how) = if self.graph.borrow().version + 1 == prepared.borrow().version {
+            (Arc::clone(prepared), BuildCommit::Prepared)
+        } else {
+            let current = Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()));
+            if !step(&mut current.borrow_mut()) {
+                self.rollback();
+                return Some(BuildCommit::Nothing);
+            }
+            (current, BuildCommit::Redone)
+        };
+        self.commit_version(version, false).ok().map(|()| how)
+    }
+
+    /// [`Self::commit`]; `writer` for a writer's version, `false` for an index build's.
+    fn commit_version(
+        &mut self,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+        writer: bool,
     ) -> Result<(), NodeOpError> {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
 
@@ -233,6 +341,7 @@ impl MvccGraph {
         }
 
         new_graph.borrow_mut().trim_attr_stores();
+        new_graph.borrow_mut().prepare_publish(writer);
 
         // Fold away any delta that has grown comparable to its base, then
         // materialize every committed base before publishing. The transaction
@@ -260,8 +369,19 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
+        // A version that starts a build — it has a `Building` column, and the one it replaces has
+        // none — queues this graph for the online index builder. The builder keeps the graph until
+        // no column is `Building`, so a commit made during the build, the builder's own included,
+        // queues nothing.
+        #[cfg(feature = "index-falkordb")]
+        let starts_build = new_graph.borrow().starts_index_build(&self.graph.borrow());
+
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
+        #[cfg(feature = "index-falkordb")]
+        if starts_build && let Some(host) = self.build_host.get() {
+            online_build::enqueue(Arc::clone(host));
+        }
         Ok(())
     }
 

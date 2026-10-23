@@ -43,6 +43,8 @@ use crossfire::{
     MTx, Rx,
     mpsc::{List, unbounded_blocking},
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build::{self, BuildHost};
 use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
@@ -57,6 +59,8 @@ use graph::{
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
+#[cfg(feature = "index-falkordb")]
+use std::sync::Weak;
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -141,6 +145,11 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
+    // How the online index builder reaches this graph. No caller holds the graph's lock here.
+    #[cfg(feature = "index-falkordb")]
+    arc.read()
+        .graph
+        .set_build_host(Arc::new(RedisBuildHost(Arc::downgrade(&arc))));
     // Invariant: every registered name must have been removed from the
     // registry before being re-inserted. `graph_free` removes entries on
     // Redis key delete/overwrite/expire, and the RDB multi-key load path
@@ -562,6 +571,18 @@ impl ThreadedGraph {
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
         }
+    }
+
+    /// Replace the graph's coordinator in place, keeping everything else — the write queue, the
+    /// slow log — and the coordinator's online-build registration, which a `CREATE INDEX` on the
+    /// replacement needs to be built.
+    pub fn replace_graph(
+        &mut self,
+        graph: MvccGraph,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        graph.inherit_build(&self.graph);
+        self.graph = graph;
     }
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
@@ -1610,6 +1631,51 @@ fn commit_and_replicate(
     // about it. What the bytes are, and what still has to happen to them, is
     // the format's.
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
+}
+
+// ---- Online FalkorDB index build: the Redis host (feature: index-falkordb) ----
+//
+// The build itself — when steps run, on which threads, and how they share the write slot — is the
+// graph crate's (`graph::index::falkordb::online_build`). This is only how a build reaches a Redis
+// graph: `register_graph` registers a `RedisBuildHost` with each graph, and module init starts the
+// build pool.
+
+/// A registered graph, as the online index builder reaches it. Holds the graph weakly: a deleted
+/// graph is not kept alive by a build.
+#[cfg(feature = "index-falkordb")]
+struct RedisBuildHost(Weak<RwLock<ThreadedGraph>>);
+
+#[cfg(feature = "index-falkordb")]
+impl BuildHost for RedisBuildHost {
+    /// The graph's read lock.
+    fn read(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        let Some(tg) = self.0.upgrade() else {
+            return false;
+        };
+        f(&tg.read().graph);
+        true
+    }
+
+    /// What every Redis writer holds to publish: the GIL, then the graph's write lock, in that
+    /// order. Refused once the graph is no longer the one registered under its key, and once the
+    /// builder is stopping: the shutdown handler stops it holding the GIL, so a turn that was
+    /// waiting for the GIL gets it only after the builder stopped.
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&mut MvccGraph),
+    ) -> bool {
+        let Some(tg) = self.0.upgrade() else {
+            return false;
+        };
+        let session = QuerySession::begin_writer(&tg);
+        if online_build::stopping() || !graph_is_registered(&tg) {
+            return false;
+        }
+        session.with_graph_mut(|g| f(&mut g.graph)).is_some()
+    }
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {

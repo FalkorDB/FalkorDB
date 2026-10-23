@@ -23,6 +23,8 @@
 //! can reject loading an incomplete module.
 
 use crate::commands::constraint::{Settling, settle_constraint};
+#[cfg(feature = "index-falkordb")]
+use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT,
@@ -32,6 +34,8 @@ use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{
@@ -414,6 +418,11 @@ pub fn graph_init(
         }
     }
 
+    // The online index build pool: builds the `Building` columns `CREATE INDEX` leaves, however
+    // the `CREATE INDEX` arrived. Its own workers, so builds never take a query thread.
+    #[cfg(feature = "index-falkordb")]
+    online_build::start(*CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx) as usize);
+
     Status::Ok
 }
 
@@ -458,6 +467,10 @@ unsafe extern "C" fn on_shutdown(
     // thread-safe context, which races with Redis tearing down server state
     // and produces a SIGSEGV under ASAN if left running.
     telemetry::shutdown_flusher_thread();
+    // Stop the index builder before the pool and GraphBLAS: a build step reads a graph, and must
+    // not be doing so while GraphBLAS is torn down under it.
+    #[cfg(feature = "index-falkordb")]
+    online_build::stop();
     threadpool::shutdown();
     graph::graph::graphblas::matrix::shutdown();
     unsafe { RediSearch_CleanupModule() };
