@@ -43,12 +43,13 @@ impl Manifest {
 }
 
 impl Ctx<'_> {
-    /// The manifest for `dep`. LAGraph needs `graphblas_key`: it links the
-    /// archive of that exact GraphBLAS build.
+    /// The manifest for `dep`. A dep with an [`upstream`](Dep::upstream) needs
+    /// that build's key: LAGraph links the archive of that exact GraphBLAS
+    /// build, METIS is compiled against that exact GKlib.
     pub fn manifest(
         &self,
         dep: Dep,
-        graphblas_key: Option<&str>,
+        upstream_key: Option<&str>,
     ) -> Result<Manifest> {
         let mut m = Manifest::default();
         m.set("dep", dep.name());
@@ -74,8 +75,14 @@ impl Ctx<'_> {
             }
             Dep::LaGraph => m.set(
                 "graphblas",
-                graphblas_key.expect("lagraph key requires the graphblas key"),
+                upstream_key.expect("lagraph key requires the graphblas key"),
             ),
+            Dep::Metis => m.set(
+                "gklib",
+                upstream_key.expect("metis key requires the gklib key"),
+            ),
+            // Plain C, no OpenMP and no C++: the common inputs above say it all.
+            Dep::GkLib => {}
             // Not rustc: CI's fuzz job links the image's stable-built archive
             // into a nightly-built target, a pairing that works and that a
             // rustc-keyed lookup would turn into a rebuild with no sources.

@@ -14,7 +14,7 @@
 name = "native-deps"
 version = "0.1.0"
 edition = "2024"
-description = "Builds and caches FalkorDB's native dependencies (GraphBLAS, LAGraph, RediSearch)"
+description = "Builds and caches FalkorDB's native dependencies (GraphBLAS, LAGraph, METIS, RediSearch)"
 license = "SSPL-1.0"
 repository = "https://github.com/FalkorDB/FalkorDB"
 publish = false

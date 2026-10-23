@@ -24,7 +24,9 @@ prejit_harvest = []
 # is switched on. The native index does not yet replace RediSearch: a numeric
 # Equal/Range predicate is served natively and everything else — strings, geo,
 # composite predicates, missing columns — still falls through to RediSearch.
-index-falkordb = []
+# The CCH shortest-path index (`index::falkordb::cch`) is part of it, and its
+# C METIS ordering binding is the only user of the optional `libc` below.
+index-falkordb = ["dep:libc"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -38,6 +40,8 @@ crossfire = "3.1.19"
 csv = "1.4.0"
 itertools = "0.15.0"
 json-escape = "0.3.1"
+# sigaction, to put back the signal handlers METIS rewrites (index::falkordb::cch::metis).
+libc = { version = "0.2", optional = true }
 lru = "0.18.1"
 num_enum = "0.7.6"
 once_cell = "1.21.4"

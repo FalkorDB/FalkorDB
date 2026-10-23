@@ -70,6 +70,7 @@ COPY deps/native-deps.lock /data/deps/native-deps.lock
 COPY build/graphblas       /data/build/graphblas
 COPY deps/GraphBLAS        /data/deps/GraphBLAS
 COPY deps/LAGraph          /data/deps/LAGraph
+COPY deps/KarypisLab       /data/deps/KarypisLab
 COPY deps/RediSearch       /data/deps/RediSearch
 RUN cd /data && \
     FALKORDB_DEPS_CACHE=/opt/falkordb-deps \

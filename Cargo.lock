@@ -501,6 +501,7 @@ dependencies = [
  "csv",
  "itertools 0.15.0",
  "json-escape",
+ "libc",
  "lru",
  "native-deps",
  "num_enum",
