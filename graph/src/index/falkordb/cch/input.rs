@@ -130,6 +130,20 @@ unsafe fn cch_edge_weight(
     if w >= 0.0 { w } else { INVALID_WEIGHT }
 }
 
+/// Whether `value`, as an edge's weight attribute, is a weight an index takes: a number that
+/// is `>= 0`, `+inf` (a closed edge) and `-0.0` included. A missing or non-numeric value
+/// weighs [`DEFAULT_WEIGHT`], so only a negative number (`-inf` included) or NaN is refused.
+/// The rule the weight operators score by ([`cch_edge_weight`]) and the write-time check
+/// ([`check_edge_weights`](super::maint::check_edge_weights)) refuses by.
+pub(crate) fn is_valid_weight(value: &Value) -> bool {
+    match value {
+        // NaN fails the comparison; `+inf` and `-0.0` pass it.
+        Value::Float(f) => *f >= 0.0,
+        Value::Int(k) => *k >= 0,
+        _ => true,
+    }
+}
+
 // The operators below take the types they mean, and are cast to GraphBLAS's
 // `void *` function types where they are registered (as LAGraph does in C).
 // The cast is sound: raw pointers to sized types are ABI-compatible, so
