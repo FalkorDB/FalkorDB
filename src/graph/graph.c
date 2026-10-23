@@ -671,16 +671,21 @@ void Graph_CreateNode
 	}
 }
 
-// create multiple nodes
-// all nodes share the same set of labels
-void Graph_CreateNodes
+// shared body for the two node-creation entry points
+//
+// 'items' decides where each node's storage comes from: NULL allocates an id
+// per node the ordinary way, non-NULL uses slots already claimed at the ids the
+// nodes carry. Everything after that - label matrices, statistics - is
+// identical, and is shared rather than copied so the two cannot drift.
+static void _Graph_CreateNodes
 (
 	Graph *g,            // graph
 	Node **nodes,        // array of nodes to create
 	AttributeSet *sets,  // nodes attributes
 	uint node_count,     // number of nodes
 	LabelID *labels,     // labels, same set of labels applied to all nodes
-	uint label_count     // number of labels
+	uint label_count,    // number of labels
+	void **items         // pre-claimed storage slots, or NULL to allocate ids
 ) {
 	ASSERT (g     != NULL) ;
 	ASSERT (sets  != NULL) ;
@@ -701,11 +706,18 @@ void Graph_CreateNodes
 		NodeID id = n->id ;  // save node ID
 
 		// set attributes
-		n->attributes  = DataBlock_AllocateItem (g->nodes, &n->id) ;
+		if (items != NULL) {
+			n->attributes = (AttributeSet *)items[i] ;
+		} else {
+			n->attributes = DataBlock_AllocateItem (g->nodes, &n->id) ;
+		}
 		*n->attributes = (sets == NULL) ? NULL : sets[i] ;
 
 		// node ID was reserved, make sure reserved ID was assigned
-		if (id != INVALID_ENTITY_ID) {
+		//
+		// only meaningful when the id was allocated here: when the id came
+		// from the wire there is no local reservation to settle
+		if (items == NULL && id != INVALID_ENTITY_ID) {
 			// NodeID was preallocated via reservation
 			// so now that it’s used we decrement the counter
 			ASSERT (id == n->id) ;
@@ -730,6 +742,70 @@ void Graph_CreateNodes
 		LabelID l = labels[i] ;
 		GraphStatistics_IncNodeCount (&g->stats, l, node_count) ;
 	}
+
+}
+
+// create multiple nodes, allocating an id for each
+// all nodes share the same set of labels
+void Graph_CreateNodes
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+) {
+	_Graph_CreateNodes (g, nodes, sets, node_count, labels, label_count,
+			NULL) ;
+}
+
+// claim storage for 'n' node ids stated by a primary
+//
+// SEPARATE FROM CREATION, and that separation is the point. Claiming walks the
+// free list once per call, so it is done ONCE PER RECORD while the creation
+// below still runs in bounded chunks. Folding it into the chunk loop makes the
+// free list be walked once per chunk, which is the same quadratic in a smaller
+// coat: a 128,000-node record over 4,096-node chunks walks a 128,000-entry list
+// 31 times, measured at 32 ms of the record's 57 ms.
+//
+// returns false if any id is already live, or the batch names one twice
+bool Graph_ClaimNodeIds
+(
+	Graph *g,
+	const uint64_t *ids,  // ids the primary stated
+	uint32_t n,           // how many
+	void **items          // out: 'n' storage slots, caller allocated
+) {
+	ASSERT (g != NULL) ;
+	return DataBlock_AllocateItemsAtIdx (g->nodes, ids, n, items) ;
+}
+
+// create multiple nodes AT THE IDS THE CALLER STATES
+//
+// The replica does not infer an id and then check its guess - it accepts the
+// primary's. Those look alike and are not: C reuses the most recently freed id
+// and Rust reuses the smallest, so a check of "the id I would have picked"
+// fails on two engines that are both behaving correctly, and the pair falls
+// back to a full resync once per delete-then-create cycle, indefinitely.
+//
+// What is still checked is LIVENESS, which is a property of this graph rather
+// than a guess about the other one.
+//
+// 'items' are the slots Graph_ClaimNodeIds already returned for these ids
+void Graph_CreateNodesAtIds
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create; each carries its id
+	void **items,        // storage slots from Graph_ClaimNodeIds
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set of labels applied to all nodes
+	uint label_count     // number of labels
+) {
+	ASSERT (items != NULL) ;
+	_Graph_CreateNodes (g, nodes, sets, node_count, labels, label_count,
+			items) ;
 }
 
 // label node with each label in 'lbls'
@@ -913,12 +989,19 @@ static int _edge_src_dest_cmp
 }
 
 // create multiple edges
-void Graph_CreateEdges
+// shared body for the two edge-creation entry points
+//
+// 'items' decides where each edge's storage comes from: NULL allocates an id
+// per edge the ordinary way, non-NULL uses slots already claimed at the ids the
+// edges carry. The rest - adjacency, the relation tensor, the statistics - is
+// identical, and is shared rather than copied so the two cannot drift.
+static void _Graph_CreateEdges
 (
-	Graph *g,           // graph on which to operate
-	RelationID r,       // relationship type
-	Edge **edges,       // edges to create
-	AttributeSet *sets  // [optional] attribute sets
+	Graph *g,            // graph on which to operate
+	RelationID r,        // relationship type
+	Edge **edges,        // edges to create
+	AttributeSet *sets,  // [optional] attribute sets
+	void **items         // pre-claimed storage slots, or NULL to allocate ids
 ) {
 	ASSERT (g != NULL) ;
 	ASSERT (r < Graph_RelationTypeCount (g)) ;
@@ -950,6 +1033,8 @@ void Graph_CreateEdges
 	// make sure we have room for 'edge_count' edges
 	DataBlock_Accommodate (g->edges, edge_count) ;
 
+
+
 	// sync matrices
 	Tensor       R   = Graph_GetRelationMatrix  (g, r, false) ;
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix (g, false) ;
@@ -962,7 +1047,12 @@ void Graph_CreateEdges
 		Edge *e = edges_copy[i] ;
 
 		// TODO: switch to batch allocation of items
-		AttributeSet *set = DataBlock_AllocateItem (g->edges, &e->id) ;
+		AttributeSet *set ;
+		if (items != NULL) {
+			set = (AttributeSet *)items[i] ;
+		} else {
+			set = DataBlock_AllocateItem (g->edges, &e->id) ;
+		}
 		*set = (sets != NULL) ? sets[i] : NULL ;
 
 		e->relationID = r ;
@@ -986,6 +1076,51 @@ void Graph_CreateEdges
 	GraphStatistics_IncEdgeCount (&g->stats, r, edge_count) ;
 
 	rm_free (edges_copy) ;
+}
+
+// create edges, allocating an id for each
+void Graph_CreateEdges
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create
+	AttributeSet *sets  // [optional] attribute sets
+) {
+	_Graph_CreateEdges (g, r, edges, sets, NULL) ;
+}
+
+// claim storage for 'n' edge ids stated by a primary
+//
+// see Graph_ClaimNodeIds - separate from creation so the free list is walked
+// once per record rather than once per chunk
+bool Graph_ClaimEdgeIds
+(
+	Graph *g,
+	const uint64_t *ids,  // ids the primary stated
+	uint32_t n,           // how many
+	void **items          // out: 'n' storage slots, caller allocated
+) {
+	ASSERT (g != NULL) ;
+	return DataBlock_AllocateItemsAtIdx (g->edges, ids, n, items) ;
+}
+
+// create edges AT THE IDS THE CALLER STATES
+//
+// the edge counterpart of Graph_CreateNodeAtId, and it exists for the same
+// reason: a replica accepts the primary's ids rather than allocating its own
+// and checking the guess. See that function for why the two engines disagree.
+//
+// 'items' are the slots Graph_ClaimEdgeIds already returned for these ids
+void Graph_CreateEdgesAtIds
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create; each edge's id is the id to use
+	void **items,       // storage slots from Graph_ClaimEdgeIds
+	AttributeSet *sets  // [optional] attribute sets
+) {
+	ASSERT (items != NULL) ;
+	_Graph_CreateEdges (g, r, edges, sets, items) ;
 }
 
 // forward declaration

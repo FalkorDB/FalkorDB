@@ -76,3 +76,8 @@ redis.conf
 
 # ctags
 tags
+
+# per-worktree agent briefing and investigation scratch (.handover/ROLE.md,
+# fixtures pulled for local runs, probe scripts). Never meant to be committed -
+# ignored so that a `git add -A` cannot sweep it into a commit.
+.handover/

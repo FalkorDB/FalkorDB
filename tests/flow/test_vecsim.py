@@ -294,3 +294,55 @@ class testVecsim():
         g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
         self.env.assertEqual(knn_tags(v), ['B'])
 
+class testVectorSimilarityFunctionIP():
+    """`similarityFunction: 'ip'` builds a genuine inner-product index.
+
+    The storage layer always held all three metrics - the RDB decoder stores
+    the metric code unvalidated (decode_graph_schema.c) and index.c hands it
+    straight to VecSim - but this parser had no string for inner product, so
+    the only way to get one was to load an RDB that already contained it.
+    proc_list_indexes.c still reports every non-L2 metric as "cosine", which is
+    a separate display bug in the same family.
+
+    THE VECTORS ARE THE TEST. Direction and magnitude have to DISAGREE or every
+    metric returns the same order and the test proves nothing:
+
+        query [1,0,0,0]   near [0.2,0,0,0]  aligned but small
+                          big  [5,5,0,0]    45 degrees off but large
+
+        euclidean  near first   (0.8 vs 6.4)
+        cosine     near first   (1.0 vs 0.707)
+        ip         BIG first    (5.0 vs 0.2)   <- only IP reorders
+
+    So asserting 'big' first distinguishes inner product from both other
+    metrics, which asserting "it was accepted" would not.
+    """
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    def _build(self, name, sim):
+        g = Graph(self.conn, name)
+        g.create_node_vector_index("P", "e", dim=4, similarity_function=sim)
+        g.query("CREATE (:P {n:'near', e: vecf32([0.2,0,0,0])}), "
+                "       (:P {n:'big',  e: vecf32([5,5,0,0])})")
+        return g
+
+    def _order(self, g):
+        res = g.query(
+            "CALL db.idx.vector.queryNodes('P','e',2,vecf32([1,0,0,0])) "
+            "YIELD node RETURN node.n")
+        return [row[0] for row in res.result_set]
+
+    def test01_ip_ranks_by_inner_product(self):
+        self.env.assertEquals(self._order(self._build("ip_g", "ip")),
+                              ["big", "near"])
+
+    def test02_the_other_two_metrics_disagree_with_it(self):
+        # the control: without these the first test could pass on any metric
+        self.env.assertEquals(self._order(self._build("euc_g", "euclidean")),
+                              ["near", "big"])
+        self.env.assertEquals(self._order(self._build("cos_g", "cosine")),
+                              ["near", "big"])
+
