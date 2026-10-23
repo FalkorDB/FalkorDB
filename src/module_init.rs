@@ -136,6 +136,40 @@ unsafe extern "C" fn on_fork_child() {
     }
 }
 
+/// Point this module's view of `environ` at the process's live environment.
+///
+/// Valkey `dlopen`s modules with `RTLD_DEEPBIND`, so the module and its
+/// dependencies (notably libomp) bind `environ` to libc's own definition
+/// before the global scope. When the server executable copy-relocates
+/// `environ` (Ubuntu's valkey-server package does), libc's startup code and
+/// `setenv` only ever update that copy, leaving libc's original NULL. libomp
+/// iterates `environ` directly during its first initialization and segfaults
+/// on the NULL.
+///
+/// When both views are already the same object (Redis, or a valkey-server
+/// without the copy relocation) this is a no-op.
+unsafe fn sync_deepbind_environ() {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+    unsafe {
+        // `dlopen(NULL)` searches the global scope starting at the executable,
+        // which yields the copy-relocated `environ` that libc keeps updated.
+        let main = libc::dlopen(std::ptr::null(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if main.is_null() {
+            return;
+        }
+        let live = libc::dlsym(main, c"environ".as_ptr()).cast::<*mut *mut libc::c_char>();
+        libc::dlclose(main);
+        let ours = &raw mut environ;
+        if !live.is_null() && live != ours {
+            // SAFETY: both point to `char **environ` objects; this runs on the
+            // main thread during module load, before any thread reads it.
+            *ours = *live;
+        }
+    }
+}
+
 pub fn graph_init(
     ctx: &Context,
     args: &[redis_module::RedisString],
@@ -204,6 +238,9 @@ pub fn graph_init(
         if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
             ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
         }
+        // Must run after the `KMP_*` `set_var` calls above and before
+        // GraphBLAS starts libomp, which reads `environ` once at init.
+        sync_deepbind_environ();
         if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,
