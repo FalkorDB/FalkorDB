@@ -75,7 +75,7 @@ pub trait Ordering {
     /// [`OrderError::Backend`] for any other backend failure.
     fn order(
         &self,
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
     ) -> Result<Vec<u32>, OrderError>;
 }
 
@@ -97,7 +97,7 @@ pub struct IdentityOrdering;
 impl Ordering for IdentityOrdering {
     fn order(
         &self,
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
     ) -> Result<Vec<u32>, OrderError> {
         if skeleton.n > i32::MAX as usize {
             return Err(OrderError::TooLarge);
@@ -109,7 +109,7 @@ impl Ordering for IdentityOrdering {
 impl Ordering for MetisOrdering {
     fn order(
         &self,
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
     ) -> Result<Vec<u32>, OrderError> {
         let n = skeleton.n;
         if n == 0 {
@@ -121,11 +121,15 @@ impl Ordering for MetisOrdering {
             return Err(OrderError::TooLarge);
         }
 
+        // Checked here, once, so that the component search below can index freely: a
+        // malformed skeleton is refused rather than read out of bounds.
+        let (col_ptr, row_idx) = csc_view(skeleton);
+        CscPattern::new(n, col_ptr, row_idx).ok_or(REJECTED)?;
+
         let comps = Components::of(skeleton);
         if comps.count() == 1 {
-            let (col_ptr, row_idx) =
-                csc_pattern(skeleton, 0..n as u32, |r| r).ok_or(OrderError::TooLarge)?;
-            let perm = metis_perm(n, &col_ptr, &row_idx)?;
+            // One connected component: the backend reads the skeleton as it is.
+            let perm = metis_perm(n, col_ptr, row_idx)?;
             return perm
                 .into_iter()
                 .map(|p| u32::try_from(p).map_err(|_| NEGATIVE_ID))
@@ -211,6 +215,7 @@ impl Ordering for MetisOrdering {
     }
 }
 
+const REJECTED: OrderError = OrderError::Backend("skeleton rejected by CscPattern::new");
 const OUT_OF_RANGE: OrderError = OrderError::Backend("node id out of range in perm");
 const NEGATIVE_ID: OrderError = OrderError::Backend("negative node id in perm");
 
@@ -220,8 +225,7 @@ fn metis_perm(
     col_ptr: &[i32],
     row_idx: &[i32],
 ) -> Result<Vec<i32>, OrderError> {
-    let pattern = CscPattern::new(n, col_ptr, row_idx)
-        .ok_or(OrderError::Backend("skeleton rejected by CscPattern::new"))?;
+    let pattern = CscPattern::new(n, col_ptr, row_idx).ok_or(REJECTED)?;
     metis_order(&pattern).map_err(|e| match e {
         OrderingError::IndexOverflow => OrderError::TooLarge,
         OrderingError::MalformedInput => OrderError::Backend("malformed CSC pattern"),
@@ -244,7 +248,7 @@ struct Components {
 }
 
 impl Components {
-    fn of(skeleton: &Csr) -> Self {
+    fn of(skeleton: &Csr<u32>) -> Self {
         let n = skeleton.n;
         // Depth-first labelling; `label` is reused below to hold the local ids.
         let mut label = vec![NONE; n];
@@ -301,45 +305,52 @@ impl Components {
     }
 }
 
-/// Copy `skeleton` into the `i32` CSC arrays `feral-metis` wants.
+/// View `skeleton` as the `i32` CSC arrays `feral-metis` wants, without copying it.
 ///
-/// The skeleton is symmetric, so its CSR *is* its CSC and no transpose is needed. The copy
-/// is not avoidable: [`Csr`] stores `u64` offsets and `u32` indices, the contract type
-/// stores `i32` of both. Returns `None` if an `i32` would overflow; the largest offset is
-/// `skeleton.i.len()`, so that is the [`MAX_SKELETON_ENTRIES`](super::MAX_SKELETON_ENTRIES)
-/// ceiling, which [`MetisOrdering::order`] has already checked and [`check_size`] enforces
-/// before any of this runs.
+/// The skeleton is symmetric, so its CSR *is* its CSC and no transpose is needed. Its offsets
+/// and ids are both `u32`, and `bytemuck::cast_slice` reinterprets them as `i32` in place
+/// (same size and alignment, every bit pattern valid). That is lossless for every value below
+/// `2^31`, which covers every value a valid skeleton holds: an id is below `n <= MAX_NODES`
+/// and an offset at most `i.len() <= MAX_SKELETON_ENTRIES`, both `i32::MAX` (checked by
+/// [`MetisOrdering::order`] before this, and by [`check_size`] before that). A value at or
+/// above `2^31` can only come from a malformed `Csr`; it reads back negative, and
+/// `CscPattern::new` refuses it (it checks that the offsets start at 0 and never decrease and
+/// that every id is in `0..n`), so it is reported, never misread
+/// (`a_skeleton_value_past_i32_is_refused_not_misread`).
 ///
-/// A converted-as-is copy: self-loops and duplicate entries, which the [`Csr`] contract
-/// rules out, are *not* filtered here. They would be harmless: `feral-metis` drops the
-/// diagonal and adjacent duplicates itself when it builds its graph
-/// (`Graph::from_csc_pattern`; the rows are sorted, which `CscPattern::new` checks), and the
-/// rest of Phase 1 ignores both, so an unclean skeleton produces the same order and the same
-/// hierarchy (`an_unclean_skeleton_orders_like_a_clean_one`).
-///
-/// `nodes` picks the columns, in order, and `local` renames a row id into the pattern's
-/// own numbering: the identity for the whole graph, or a component's local ids for one
-/// component. `nodes` must be closed under adjacency — every neighbour of a listed node is
-/// listed too — which a whole connected component is. The renaming must keep each row
-/// sorted, which a rename by position in an ascending member list does.
+/// Self-loops and duplicate entries, which the [`Csr`] contract rules out, are passed through
+/// as they are. They would be harmless: `feral-metis` drops the diagonal and adjacent
+/// duplicates itself when it builds its graph (`Graph::from_csc_pattern`; the rows are
+/// sorted, which `CscPattern::new` checks), and the rest of Phase 1 ignores both, so an
+/// unclean skeleton produces the same order and the same hierarchy
+/// (`an_unclean_skeleton_orders_like_a_clean_one`).
 ///
 /// [`check_size`]: super::check_size
-fn csc_pattern(
-    skeleton: &Csr,
-    nodes: impl ExactSizeIterator<Item = u32>,
-    local: impl Fn(u32) -> u32,
-) -> Option<(Vec<i32>, Vec<i32>)> {
-    let mut col_ptr = vec![0];
-    let mut row_idx = Vec::new();
-    append_columns(skeleton, nodes, local, &mut col_ptr, &mut row_idx)?;
-    Some((col_ptr, row_idx))
+fn csc_view(skeleton: &Csr<u32>) -> (&[i32], &[i32]) {
+    debug_assert_eq!(
+        skeleton.p.len(),
+        skeleton.n + 1,
+        "Csr::p must hold n + 1 offsets"
+    );
+    (
+        bytemuck::cast_slice(&skeleton.p),
+        bytemuck::cast_slice(&skeleton.i),
+    )
 }
 
 /// Append one CSC column per node of `nodes` to `col_ptr`/`row_idx`, which must already
 /// hold a valid prefix (at least the leading `0`). Appending is what lets several
-/// components share one pattern.
+/// components share one pattern. Unlike [`csc_view`] this copies, because a component's
+/// rows are renamed into its own numbering.
+///
+/// `nodes` picks the columns, in order, and `local` renames a row id into the pattern's
+/// own numbering. `nodes` must be closed under adjacency — every neighbour of a listed node
+/// is listed too — which a whole connected component is. The renaming must keep each row
+/// sorted, which a rename by position in an ascending member list does. Self-loops and
+/// duplicates are copied as they are, as in [`csc_view`]. `None` if a value would not fit
+/// an `i32`.
 fn append_columns(
-    skeleton: &Csr,
+    skeleton: &Csr<u32>,
     nodes: impl ExactSizeIterator<Item = u32>,
     local: impl Fn(u32) -> u32,
     col_ptr: &mut Vec<i32>,
@@ -416,7 +427,7 @@ impl Topology {
     /// [`check_size`](super::check_size) applies, so through `Cch::build` this is a
     /// backstop), and
     /// [`CchError::Internal`] if the backend fails for any other reason.
-    pub(crate) fn build(skeleton: &Csr) -> Result<Self, CchError> {
+    pub(crate) fn build(skeleton: &Csr<u32>) -> Result<Self, CchError> {
         Self::build_with(skeleton, &MetisOrdering)
     }
 
@@ -431,7 +442,7 @@ impl Topology {
     /// # Errors
     /// As [`Self::build`].
     pub(crate) fn build_with(
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
         ordering: &dyn Ordering,
     ) -> Result<Self, CchError> {
         let perm = match ordering.order(skeleton) {
@@ -449,7 +460,7 @@ impl Topology {
 
     /// The elimination game itself: everything after the order is fixed.
     fn from_perm(
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
         perm: Vec<u32>,
     ) -> Result<Self, CchError> {
         let n = skeleton.n;
@@ -625,7 +636,7 @@ fn invert(
 /// union-by-size is needed for the near-linear bound: ranks are processed in increasing
 /// order, so every union already attaches a lower rank under a strictly higher one.
 fn elimination_tree(
-    skeleton: &Csr,
+    skeleton: &Csr<u32>,
     perm: &[u32],
     iperm: &[u32],
 ) -> Vec<u32> {
@@ -673,7 +684,7 @@ fn elimination_tree(
 /// is also why a single flat buffer works where C needed an array-of-arrays: every child's
 /// row is already final and contiguous in `cch_i` when its parent reads it.
 fn chordal_supergraph(
-    skeleton: &Csr,
+    skeleton: &Csr<u32>,
     perm: &[u32],
     iperm: &[u32],
     parent: &[u32],
@@ -782,8 +793,8 @@ fn invert_adjacency(
 #[cfg(test)]
 mod tests {
     use super::{
-        CchError, Csr, IdentityOrdering, MetisOrdering, OrderError, Ordering, Topology,
-        csc_pattern, invert, metis_perm,
+        CchError, Csr, IdentityOrdering, MetisOrdering, OrderError, Ordering, Topology, csc_view,
+        invert, metis_perm,
     };
     use crate::index::cch::testkit::{
         EdgeList, disconnected_components, empty, grid, path, random_sparse, single_node, star,
@@ -796,10 +807,10 @@ mod tests {
     impl Ordering for WholeGraphMetis {
         fn order(
             &self,
-            skeleton: &Csr,
+            skeleton: &Csr<u32>,
         ) -> Result<Vec<u32>, OrderError> {
             let n = skeleton.n;
-            let (col_ptr, row_idx) = csc_pattern(skeleton, 0..n as u32, |r| r).unwrap();
+            let (col_ptr, row_idx) = csc_view(skeleton);
             Ok(metis_perm(n, &col_ptr, &row_idx)?
                 .into_iter()
                 .map(|p| p as u32)
@@ -833,7 +844,7 @@ mod tests {
     /// them failing means the elimination game is wrong, whatever the weights later say.
     fn check_invariants(
         topo: &Topology,
-        skeleton: &Csr,
+        skeleton: &Csr<u32>,
     ) {
         let n = skeleton.n;
         assert_eq!(topo.node_count(), n);
@@ -1005,7 +1016,7 @@ mod tests {
     #[test]
     #[ignore = "timing; run in release"]
     fn padded_skeleton_orders_in_linear_time() {
-        let time = |o: &dyn Ordering, s: &Csr| {
+        let time = |o: &dyn Ordering, s: &Csr<u32>| {
             let t = std::time::Instant::now();
             let perm = o.order(s).expect("order");
             (perm, t.elapsed().as_secs_f64())
@@ -1033,11 +1044,11 @@ mod tests {
         build_both(&with_self_loops(grid(3, 4), &[0, 5, 11], 2.0));
     }
 
-    /// `csc_pattern` hands the skeleton to `feral-metis` as it is, without removing
+    /// `csc_view` hands the skeleton to `feral-metis` as it is, without removing
     /// self-loops or duplicates, so this pins that the backend (and the rest of Phase 1) is
     /// indifferent to them: same permutation, same chordal supergraph, and the same again on
     /// a second run. If a `feral-metis` upgrade started to trust its input, this fails and
-    /// `csc_pattern` has to filter again.
+    /// `csc_view` has to filter again.
     #[test]
     fn an_unclean_skeleton_orders_like_a_clean_one() {
         for g in [
@@ -1062,7 +1073,7 @@ mod tests {
                 }
                 row.sort_unstable();
                 dirty.i.extend_from_slice(&row);
-                dirty.p.push(dirty.i.len() as u64);
+                dirty.p.push(dirty.i.len() as u32);
             }
             assert!(
                 dirty.i.len() > clean.i.len(),
@@ -1141,7 +1152,7 @@ mod tests {
         impl Ordering for HubLast {
             fn order(
                 &self,
-                skeleton: &Csr,
+                skeleton: &Csr<u32>,
             ) -> Result<Vec<u32>, OrderError> {
                 let n = skeleton.n as u32;
                 Ok((1..n).chain(std::iter::once(0)).collect())
@@ -1199,7 +1210,7 @@ mod tests {
 
     /// The ordering backend is `i32`-indexed, so its ceiling is below the contract's
     /// `u32::MAX`. Refuse, do not panic — and do it before touching the (here deliberately
-    /// truncated) offset array, which is what makes this testable without 17 GB of RAM.
+    /// truncated) offset array, which is what makes this testable without 8.6 GB of RAM.
     #[test]
     fn a_graph_past_the_backend_ceiling_is_refused() {
         let too_big = Csr {
@@ -1216,6 +1227,34 @@ mod tests {
         );
     }
 
+    /// The skeleton reaches `feral-metis` as a reinterpreted `i32` view of its `u32`
+    /// arrays. A value at or above `2^31` cannot come from a valid skeleton (see
+    /// `csc_view`), but if a malformed one carried it, it must be refused rather than
+    /// ordered as some other graph. Both arrays are covered: an id and an offset.
+    #[test]
+    fn a_skeleton_value_past_i32_is_refused_not_misread() {
+        let refused = Err(OrderError::Backend("skeleton rejected by CscPattern::new"));
+
+        // 0 - 1, plus an id of 2^31 in row 1
+        let bad_id = Csr {
+            n: 2,
+            p: vec![0u32, 1, 3],
+            i: vec![1u32, 0, 1 << 31],
+        };
+        let (col_ptr, row_idx) = csc_view(&bad_id);
+        assert_eq!(col_ptr, &[0, 1, 3], "a valid value is read as it is");
+        assert_eq!(row_idx[2], i32::MIN, "the view is bit for bit, not a copy");
+        assert_eq!(MetisOrdering.order(&bad_id), refused);
+
+        // an offset of 2^31 in the middle of an otherwise valid path 0 - 1 - 2
+        let bad_offset = Csr {
+            n: 3,
+            p: vec![0u32, 1 << 31, 3, 4],
+            i: vec![1u32, 0, 2, 1],
+        };
+        assert_eq!(MetisOrdering.order(&bad_offset), refused);
+    }
+
     /// A backend failure is a hard error carrying the backend's reason — not a fallback to
     /// some other order, which would hide a bug behind a slower index.
     #[test]
@@ -1224,7 +1263,7 @@ mod tests {
         impl Ordering for AlwaysFails {
             fn order(
                 &self,
-                _skeleton: &Csr,
+                _skeleton: &Csr<u32>,
             ) -> Result<Vec<u32>, OrderError> {
                 Err(OrderError::Backend("deliberate test failure"))
             }
@@ -1244,7 +1283,7 @@ mod tests {
         impl Ordering for Duplicates {
             fn order(
                 &self,
-                skeleton: &Csr,
+                skeleton: &Csr<u32>,
             ) -> Result<Vec<u32>, OrderError> {
                 Ok(vec![0; skeleton.n])
             }

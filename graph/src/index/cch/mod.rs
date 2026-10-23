@@ -37,9 +37,10 @@ use thiserror::Error;
 /// rather than a lower one with the backend's as a backstop; the `u32` id width sits above
 /// it.
 ///
-/// A limit, not a promise: the CSR offset arrays are dense, `n + 1` `u64`s each (about
-/// `8 * n` bytes, ~16 GiB per array at the ceiling), and the hierarchy holds several
-/// arrays of that length, so in practice memory is what stops a graph well before this.
+/// A limit, not a promise: the CSR offset arrays are dense, `n + 1` offsets each (`4 * n`
+/// bytes for the input's `u32` offsets, `8 * n` for the hierarchy's `u64` ones, ~16 GiB
+/// per array at the ceiling), and the hierarchy holds several arrays of that length, so in
+/// practice memory is what stops a graph well before this.
 pub const MAX_NODES: usize = i32::MAX as usize;
 
 /// The largest number of entries (`skeleton.i.len()`) the skeleton may hold; above it
@@ -59,8 +60,9 @@ pub const MAX_NODES: usize = i32::MAX as usize;
 ///   several indexed types between the same two nodes collapse into one pair, and
 ///   self-loops are not counted at all (see [`CchInput`]). A graph with more relationships
 ///   than this is accepted if it has fewer connected pairs.
-/// * **Not a CSR limit.** [`Csr::p`] holds `u64` offsets and has no such cap; the limit
-///   comes from the ordering backend alone, so a backend with 64-bit indices would lift it.
+/// * **Not a CSR limit.** It does fit the input's `u32` offsets ([`CchInput`] stores
+///   `Csr<u32>`), but the limit comes from the ordering backend alone; a backend with
+///   64-bit indices would lift it, and the input would then need `u64` offsets.
 ///
 /// So, to the question "are graphs with this many edges rejected?": yes, with
 /// [`CchError::GraphTooLarge`], through [`check_size`]. As with [`MAX_NODES`] it is a
@@ -86,20 +88,66 @@ pub fn check_size(
     Ok(())
 }
 
-/// Compressed sparse row. Node ids are `u32`; a graph above [`MAX_NODES`] nodes, or a
-/// skeleton above [`MAX_SKELETON_ENTRIES`] entries, is refused with
-/// [`CchError::GraphTooLarge`]. Offsets are `u64`, so the `Csr` type itself is not what caps
-/// the arc count (the ordering backend is, see [`MAX_SKELETON_ENTRIES`]); the chordal
-/// supergraph built on top may hold more arcs than the skeleton does.
-pub struct Csr {
+/// Compressed sparse row, generic over its two integer widths: offsets `P` (see
+/// [`CsrOffset`]) and column ids `I` (see [`CsrIndex`]).
+///
+/// The defaults are the widths that always fit: `u64` offsets and `u32` node ids (a graph
+/// above [`MAX_NODES`] nodes is refused with [`CchError::GraphTooLarge`]). [`CchInput`]
+/// narrows the offsets to `u32`, which holds because a skeleton above
+/// [`MAX_SKELETON_ENTRIES`] (below `2^31`) entries is refused too. The chordal supergraph
+/// built on top keeps `u64` offsets: fill-in can take it past `2^32` arcs on a skeleton
+/// far below that ceiling.
+pub struct Csr<P = u64, I = u32> {
     pub n: usize,
     /// `n + 1` offsets into `i`.
-    pub p: Vec<u64>,
+    pub p: Vec<P>,
     /// Column ids, sorted and duplicate-free within each row.
-    pub i: Vec<u32>,
+    pub i: Vec<I>,
 }
 
-impl Csr {
+/// An unsigned integer type a [`Csr`] stores its offsets (`p`) in: `u32` when the entry
+/// count is known to stay below `2^32`, `u64` otherwise.
+pub trait CsrOffset: Copy + Ord + Into<u64> + 'static {
+    /// The offset as a slice index into `i`. Lossless: an offset never exceeds the entry
+    /// count, which is a `usize`.
+    fn to_usize(self) -> usize;
+}
+
+/// An unsigned integer type a [`Csr`] stores its column ids (`i`) in. Every CCH array uses
+/// `u32`, the node id width; `u64` is there so the type is not tied to it.
+pub trait CsrIndex: Copy + Ord + Into<u64> + 'static {
+    /// The column id as a slice index (a row of a [`Csr`] with `n` rows). Lossless: a
+    /// column id is below `n`, which is a `usize`.
+    fn to_usize(self) -> usize;
+}
+
+impl CsrOffset for u32 {
+    fn to_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl CsrOffset for u64 {
+    #[allow(clippy::cast_possible_truncation)]
+    fn to_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl CsrIndex for u32 {
+    fn to_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl CsrIndex for u64 {
+    #[allow(clippy::cast_possible_truncation)]
+    fn to_usize(self) -> usize {
+        self as usize
+    }
+}
+
+impl<P: CsrOffset, I: CsrIndex> Csr<P, I> {
     /// The column ids of row `u`: `i[p[u]..p[u + 1]]`, sorted and duplicate-free.
     ///
     /// `u` is a `usize` because it indexes `p`, like every other slice index here; callers
@@ -114,14 +162,14 @@ impl Csr {
     pub fn row(
         &self,
         u: usize,
-    ) -> &[u32] {
-        &self.i[self.p[u] as usize..self.p[u + 1] as usize]
+    ) -> &[I] {
+        &self.i[self.p[u].to_usize()..self.p[u + 1].to_usize()]
     }
 }
 
 /// Directed weights: same shape as a [`Csr`], with one weight per entry.
 pub struct WeightCsr {
-    pub csr: Csr,
+    pub csr: Csr<u32>,
     pub w: Vec<f64>,
 }
 
@@ -131,7 +179,7 @@ pub struct CchInput {
     /// Symmetric, no self-loops. Phase 1 only. At most [`MAX_SKELETON_ENTRIES`] entries
     /// (`skeleton.i.len()`, counting each connected pair twice); more is
     /// [`CchError::GraphTooLarge`].
-    pub skeleton: Csr,
+    pub skeleton: Csr<u32>,
     /// Directed. One entry per node pair: the cheapest weight over all parallel edges and all
     /// indexed relationship types. A missing or non-numeric attribute counts as 1.0.
     /// An absent entry means "no edge". Weights must be finite and >= 0.
@@ -351,7 +399,7 @@ mod tests {
     #[test]
     fn csr_row_slices_one_row() {
         // 0: [1, 2]   1: []   2: [0]
-        let csr = Csr {
+        let csr: Csr = Csr {
             n: 3,
             p: vec![0, 2, 2, 3],
             i: vec![1, 2, 0],
