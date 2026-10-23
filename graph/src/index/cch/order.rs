@@ -25,6 +25,8 @@
 use feral_metis::{CscPattern, MetisOptions, OrderingError, metis_order};
 
 use std::ffi::CString;
+use std::ops::Range;
+use std::ptr::null_mut;
 
 use super::{CchError, Csr};
 use crate::index::redisearch::redis::RedisModule_Log;
@@ -492,7 +494,6 @@ impl Topology {
     }
 
     /// `perm[rank]`.
-    #[allow(dead_code)] // the query change (#3210) maps ranks back to node ids with it
     pub(crate) fn node_of(
         &self,
         rank: u32,
@@ -522,7 +523,7 @@ impl Topology {
     pub(crate) fn up_range(
         &self,
         rank: u32,
-    ) -> std::ops::Range<usize> {
+    ) -> Range<usize> {
         self.cch_p[rank as usize] as usize..self.cch_p[rank as usize + 1] as usize
     }
 
@@ -552,7 +553,8 @@ impl Topology {
         self.up(lo).binary_search(&hi).ok().map(|i| base + i)
     }
 
-    /// Heap bytes held by the six structural arrays.
+    /// Bytes held by the topology: the struct itself (it lives on the heap, behind the
+    /// `Arc` every version of the index shares) and its six arrays.
     pub(crate) fn memory_usage(&self) -> usize {
         size_of::<Self>()
             + (self.perm.capacity() + self.iperm.capacity()) * size_of::<u32>()
@@ -567,7 +569,7 @@ impl Topology {
 ///
 /// A backend failure in [`Topology::build_with`] must not be silent in a release build: it
 /// cannot be reached by user input, so seeing it at all means a bug.
-fn log_warning(msg: &str) {
+pub(super) fn log_warning(msg: &str) {
     // SAFETY: reading a `static mut` function pointer the module loader filled in, and
     // calling it with a NULL context -- exactly what the panic hook does. `Option<fn>` is
     // `Copy`, so no reference to the static is created.
@@ -576,7 +578,7 @@ fn log_warning(msg: &str) {
             && let Ok(c_msg) = CString::new(msg.replace('\0', " "))
         {
             log(
-                std::ptr::null_mut(),
+                null_mut(),
                 c"warning".as_ptr(),
                 c"%s".as_ptr(),
                 c_msg.as_ptr(),
