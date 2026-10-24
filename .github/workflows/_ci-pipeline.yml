@@ -488,11 +488,12 @@ jobs:
         # dies without running its tests would otherwise let its ledger entries reconcile
         # silently, and the check cannot tell "did not run" from "passed" on its own.
         #
-        # `set +e` is load-bearing and was missing. GitHub runs `run:` under `bash -e -o pipefail`,
-        # so `flow.sh | tee` takes RLTest's exit status and `-e` aborted the whole step on the
-        # FIRST suite with a failing test — before its `SUITE_EXIT` was recorded and before the
-        # reconciliation step ran at all. The job reported "exit code 2" and the ledger it exists
-        # to validate was never checked in CI even once.
+        # `shell: bash` is load-bearing. Without it this container job ran the step as `sh -e`, and
+        # the image's `sh` (dash) has no `PIPESTATUS`: the step died with "Bad substitution" right
+        # after the first suite, the other five never ran, and the reconciliation step was
+        # skipped. `set +e` is then needed because an explicit `bash` runs with `-e -o pipefail`,
+        # and a suite with failing tests would abort the step the same way.
+        shell: bash
         run: |
           set +e
           . /data/venv/bin/activate
@@ -507,6 +508,9 @@ jobs:
           done
           exit $rc
       - name: Reconcile against the xfail ledger
+        # Also after the suites step failed: that failure means a suite died, and the ledger
+        # check is what reports which entries it left unreconciled.
+        if: ${{ !cancelled() }}
         run: |
           . /data/venv/bin/activate
           python3 tests/flow/check_xfail_ledger.py \
