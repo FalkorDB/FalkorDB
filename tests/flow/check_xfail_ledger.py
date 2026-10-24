@@ -115,7 +115,11 @@ def main() -> int:
     args = ap.parse_args()
 
     ledger, ignored = read_ledger(args.ledger)
-    text = open(args.results, encoding="utf-8").read() if args.results else sys.stdin.read()
+    if args.results:
+        with open(args.results, encoding="utf-8") as fh:
+            text = fh.read()
+    else:
+        text = sys.stdin.read()
     failed, seen = parse_results(text)
 
     if not seen:
