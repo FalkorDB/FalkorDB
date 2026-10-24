@@ -40,7 +40,7 @@ test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
 # String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
 #   errors: "equality on `x` with a non-numeric value"
 #           "range on `x` with a non-numeric bound"
-#           "a union of N members on `x` that is not all-numeric"
+#           "an IN list on `x` with a non-numeric value"
 # RediSearch owns strings today; there is no native text kind yet (docs 10-13). This is by far the
 # largest group, and one text kind closes all of it.
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 # collapses without any doc-stream intersection machinery.
 # ---------------------------------------------------------------------------
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
+test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
 
 # ---------------------------------------------------------------------------
 # IGNORED in both directions (`!` prefix) — NOT a native-index gap.
