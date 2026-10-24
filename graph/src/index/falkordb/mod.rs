@@ -78,23 +78,28 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                 format!("range on `{key}` with a non-numeric bound")
             }
         }
-        // Two reasons a union is declined, and naming the wrong one sends whoever reads the
-        // ledger entry looking for a missing value kind that isn't the problem. A union spanning
-        // attributes needs a real cross-column intersection/merge; one with a non-numeric member
-        // needs that member's index kind.
+        // Three reasons a union is declined, and naming the wrong one sends whoever reads the
+        // ledger entry after work that isn't the problem. A union spanning attributes needs a real
+        // cross-column merge; one with a range or other non-equality member (`x = 1 OR x > 5`)
+        // needs the union to serve that member kind; a union of equalities on one attribute has a
+        // non-numeric member, which needs that value's index kind.
         Q::Or(children) => {
-            let mut keys = Vec::new();
-            let all_same_key = union_keys(children, &mut keys)
-                && keys.first().is_some_and(|f| keys.iter().all(|k| k == f));
+            let mut members = Vec::new();
+            union_members(children, false, &mut members);
             let n = children.len();
             let plural = if n == 1 { "" } else { "s" };
-            if all_same_key {
-                format!(
-                    "a union of {n} member{plural} on `{}` that is not all-numeric",
-                    keys[0]
-                )
-            } else {
-                format!("a union of {n} member{plural} spanning more than one attribute")
+            let one_key = members
+                .first()
+                .map(|&(key, _)| key)
+                .filter(|&first| members.iter().all(|&(key, _)| key == first));
+            match one_key {
+                None => format!("a union of {n} member{plural} spanning more than one attribute"),
+                Some(key) if members.iter().all(|&(_, is_equality)| is_equality) => {
+                    format!("a union of {n} member{plural} on `{key}` that is not all-numeric")
+                }
+                Some(key) => {
+                    format!("a union of {n} member{plural} on `{key}` with a non-equality member")
+                }
             }
         }
         // Name the children, not just the count. "a conjunction of 2 predicates" cannot
@@ -116,23 +121,28 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
     }
 }
 
-/// Collect the attributes a (possibly nested) union's `Equal` members target. `false` when a
-/// member is neither an `Equal` nor a nested union, in which case the keys collected so far say
-/// nothing about the shape.
+/// Collect the attribute of every member of a (possibly nested) union, paired with whether the
+/// member is an `Equal`, the only member kind the native union serves. Nested unions are
+/// flattened the same way the router flattens them; the children of a conjunction inside the
+/// union count as non-equality members.
 #[cfg(feature = "index-falkordb")]
-fn union_keys<'a>(
+fn union_members<'a>(
     children: &'a [crate::index::IndexQuery<crate::runtime::value::Value>],
-    out: &mut Vec<&'a std::sync::Arc<String>>,
-) -> bool {
+    in_conjunction: bool,
+    out: &mut Vec<(&'a std::sync::Arc<String>, bool)>,
+) {
     use crate::index::IndexQuery as Q;
-    children.iter().all(|child| match child {
-        Q::Equal { key, .. } => {
-            out.push(key);
-            true
+    for child in children {
+        match child {
+            Q::Equal { key, .. } => out.push((key, !in_conjunction)),
+            Q::Or(nested) => union_members(nested, in_conjunction, out),
+            Q::And(nested) => union_members(nested, true, out),
+            Q::Range { key, .. }
+            | Q::Point { key, .. }
+            | Q::InList { key, .. }
+            | Q::ArrayContains { key, .. } => out.push((key, false)),
         }
-        Q::Or(nested) => union_keys(nested, out),
-        _ => false,
-    })
+    }
 }
 
 #[cfg(all(test, feature = "index-falkordb"))]
@@ -153,9 +163,23 @@ mod tests {
         }
     }
 
-    /// The ledger's whole value is that the message names the gap. A union is declined for two
-    /// different reasons and they need different work to close — a missing index kind, or a real
-    /// cross-column merge — so reporting one as the other sends the reader after the wrong thing.
+    fn gt(
+        attr: &str,
+        v: i64,
+    ) -> Q<Value> {
+        Q::Range {
+            key: Arc::new(attr.to_string()),
+            min: Some(Value::Int(v)),
+            max: None,
+            include_min: false,
+            include_max: false,
+        }
+    }
+
+    /// The ledger's whole value is that the message names the gap. A union is declined for three
+    /// different reasons and they need different work to close — a missing index kind, a member
+    /// kind the union does not serve, or a real cross-column merge — so reporting one as another
+    /// sends the reader after the wrong thing.
     #[test]
     fn a_declined_union_says_which_reason_applies() {
         let mixed = Q::Or(vec![
@@ -181,6 +205,20 @@ mod tests {
         assert!(
             describe_predicate(&nested_cross).contains("more than one attribute"),
             "nesting must not hide the second attribute"
+        );
+
+        // `a = 1 OR a > 5`: one attribute, declined because the union serves only equalities.
+        let with_range = Q::Or(vec![eq("a", 1), gt("a", 5)]);
+        let msg = describe_predicate(&with_range);
+        assert!(msg.contains("non-equality member"), "{msg}");
+        assert!(msg.contains("`a`"), "names the attribute: {msg}");
+
+        // A range on a second attribute still makes it a cross-attribute union.
+        let range_cross = Q::Or(vec![eq("a", 1), gt("b", 5)]);
+        assert!(
+            describe_predicate(&range_cross).contains("more than one attribute"),
+            "{}",
+            describe_predicate(&range_cross)
         );
     }
 }
