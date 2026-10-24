@@ -34,6 +34,8 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
+use super::falkordb_index::{BuildBatch, BuildCursor, ColumnState, IndexColumn, IndexKey};
+use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
@@ -398,6 +400,10 @@ pub fn edges_deleted(
 /// soon as CREATE INDEX returns. Only a Range index has native columns; any other type does
 /// nothing.
 ///
+/// Each column is created `Building` and filled by one build step with no limit on its batch
+/// ([`read_build_batch_of`]), which reaches the end and flips it `Ready`. A step into an empty
+/// column bulk-builds its tree, so this costs what building the column in one pass does.
+///
 /// Built here on the write thread, with the graph borrowed. It is never built through the
 /// RediSearch populate, which reaches the graph through the `Indexer`'s back-pointer. This index
 /// is part of the graph version, and keeping that reference out is the point.
@@ -410,8 +416,75 @@ pub fn create_index(
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
-            build_column(g, entity, label, attr);
+            g.falkordb_index.create_building(entity, label, attr);
+            g.step_column_build(entity, &(label.clone(), attr.clone()), usize::MAX);
         }
+    }
+}
+
+// ---- Build steps ----
+//
+// A `Building` column is filled by steps. Each reads the next batch of the label's entities, at
+// their values in a version, and adds them to the column in that same version. See `ColumnState`.
+
+/// One build step: index the next batch of one `Building` column's entities, at most `entities`
+/// of them, at their current values, and move its cursor past them, or flip the column `Ready` if
+/// the batch reached the end. Returns whether a column is still `Building` afterwards,
+/// i.e. whether to run another step. Tests pass small batches to force cursors through every
+/// boundary.
+#[cfg(test)]
+pub(crate) fn build_step(
+    g: &mut Graph,
+    entities: usize,
+) -> bool {
+    g.step_index_build(entities);
+    g.falkordb_index.has_building_columns()
+}
+
+/// [`read_build_batch_of`] of the first `Building` column. For tests of one column.
+#[cfg(test)]
+pub(crate) fn read_build_batch(
+    g: &Graph,
+    entities: usize,
+) -> Option<BuildBatch> {
+    let (entity, key, from) = g.falkordb_index.next_building()?;
+    Some(read_batch(g, entity, key, from, entities))
+}
+
+/// Read a build step's batch of column `key` of `entity` from `g`: its next `entities` nodes or
+/// edges, at their values in `g`, encoded and sorted. `None` if the column is not `Building`.
+/// The step adds it to `g` itself (`Graph::step_column_build`).
+pub(crate) fn read_build_batch_of(
+    g: &Graph,
+    entity: EntityType,
+    key: &IndexKey,
+    entities: usize,
+) -> Option<BuildBatch> {
+    let ColumnState::Building { next } = g.falkordb_index.column_state(entity, &key.0, &key.1)?
+    else {
+        return None;
+    };
+    Some(read_batch(g, entity, key.clone(), next, entities))
+}
+
+/// The batch of column `key` of `entity` from cursor `from` on.
+fn read_batch(
+    g: &Graph,
+    entity: EntityType,
+    key: IndexKey,
+    from: BuildCursor,
+    entities: usize,
+) -> BuildBatch {
+    let column = g
+        .falkordb_index
+        .column(entity, &key.0, &key.1)
+        .expect("a Building column exists");
+    let (tuples, next) = scan(g, &key.0, &key.1, from, entities, column);
+    BuildBatch {
+        entity,
+        key,
+        tuples,
+        next,
     }
 }
 
@@ -464,8 +537,9 @@ fn remove_node_under_label(
 ///
 /// One attribute at a time: the `(value, id)` pairs live only until their column is built.
 /// Collecting every attribute first would hold one `Value` per entity per attribute at once,
-/// multiplying the peak for no benefit.
-fn build_column(
+/// multiplying the peak for no benefit. The build steps' tests use it as their reference: it
+/// shares no code with them.
+pub(crate) fn build_column(
     g: &mut Graph,
     entity: EntityType,
     label: &Arc<String>,
@@ -549,4 +623,116 @@ fn collect_edge_entries(
                 .map(|value| (value, eid))
         })
         .collect()
+}
+
+/// The tuples of `column` for up to `entities` `label` nodes, or `label`-typed edges, from `from`
+/// on, as `g` holds them: sorted and unique, the tuples each `attr` value takes in the column
+/// ([`IndexColumn::push_encoded`]). Also returns where the next batch resumes, or `None` when the
+/// scan reached the end.
+///
+/// Each value is encoded as it is read and dropped straight away, so the scan never holds the
+/// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
+/// Range index) costs nothing past the read.
+fn scan(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    from: BuildCursor,
+    entities: usize,
+    column: &IndexColumn,
+) -> (EncodedTuples, Option<BuildCursor>) {
+    let mut tuples = EncodedTuples::default();
+    let next = match from {
+        BuildCursor::Node(from) => {
+            scan_nodes(g, label, attr, from, entities, column, &mut tuples).map(BuildCursor::Node)
+        }
+        BuildCursor::Edge { src, dst } => {
+            scan_edges(g, label, attr, (src, dst), entities, column, &mut tuples)
+                .map(|(src, dst)| BuildCursor::Edge { src, dst })
+        }
+    };
+    tuples.sort_dedup();
+    (tuples, next)
+}
+
+/// Append to `out` the tuples of node column `(label, attr)` for up to `budget` `label` nodes from
+/// node `from` on, in id order: what each node's current `attr` value takes in `column`. Unsorted.
+/// Returns the node to resume from, or `None` when no `label` node is left.
+fn scan_nodes(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    from: NodeId,
+    budget: usize,
+    column: &IndexColumn,
+    out: &mut EncodedTuples,
+) -> Option<NodeId> {
+    // No such label, or no entity ever had the attribute: nothing to index. A later write that
+    // gives one the attribute is indexed by the write path.
+    let (Some(lm), Some(idx)) = (g.get_label_matrix(label), g.get_node_attribute_id(attr)) else {
+        return None;
+    };
+    let idx = idx as u16;
+    let mut nodes = lm
+        .iter(u64::from(from), u64::MAX)
+        .map(|(n, _)| n)
+        .peekable();
+    for n in nodes.by_ref().take(budget) {
+        if let Some(value) = g.get_node_attribute_by_idx(NodeId::from(n), idx) {
+            column.push_encoded(&value, n, out);
+        }
+    }
+    nodes.peek().copied().map(NodeId::from)
+}
+
+/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from pair `from` on,
+/// in `(src, dst)` order, plus the rest of the multi-edge pair the batch stops in, so no pair is
+/// ever split between steps. Edges of `from`'s source with a destination below `from`'s are
+/// skipped: an earlier step indexed them. Returns the pair to resume from, or `None` when no edge
+/// is left.
+///
+/// Resuming partway through a source's edges re-walks its earlier destinations, as C's populate
+/// does, so a step that resumes inside a source with very many edges pays for the part already
+/// done.
+fn scan_edges(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    (from_src, from_dst): (NodeId, NodeId),
+    budget: usize,
+    column: &IndexColumn,
+    out: &mut EncodedTuples,
+) -> Option<(NodeId, NodeId)> {
+    let (Some(t), Some(idx)) = (
+        g.get_relationship_matrix(label),
+        g.get_relationship_attribute_id(attr),
+    ) else {
+        return None;
+    };
+    let idx = idx as u16;
+    let mut index = |eid: u64| {
+        if let Some(value) = g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx) {
+            column.push_encoded(&value, eid, out);
+        }
+    };
+    let (from_src, from_dst) = (u64::from(from_src), u64::from(from_dst));
+    let mut edges = t.iter(from_src, u64::MAX, false).peekable();
+    while edges
+        .next_if(|&(src, dst, _)| src == from_src && dst < from_dst)
+        .is_some()
+    {}
+    let mut read = 0usize;
+    while let Some((src, dst, eid)) = edges.next() {
+        index(eid);
+        read += 1;
+        if read >= budget {
+            while let Some((_, _, eid)) = edges.next_if(|&(s, d, _)| s == src && d == dst) {
+                index(eid);
+            }
+            break;
+        }
+    }
+    edges
+        .peek()
+        .map(|&(src, dst, _)| (NodeId::from(src), NodeId::from(dst)))
 }

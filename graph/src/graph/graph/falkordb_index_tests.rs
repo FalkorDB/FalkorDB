@@ -1,11 +1,13 @@
 //! The native index as the graph maintains it: each test drives a real `Graph` write path
-//! and checks the index column it should have changed.
+//! and checks the index column it should have changed. The build's tests drive build steps
+//! between writes.
 
-use super::Graph;
+use super::{Graph, NodeId};
 use crate::entity_type::EntityType;
-use crate::index::IndexType;
+use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
 use crate::index::falkordb::graph_writes;
 use crate::index::index_docs::IndexDocs;
+use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -33,6 +35,32 @@ fn reserve_nodes(
     g.node_id_space()
         .reserve(n, &RoaringTreemap::new())
         .expect("reserved")
+}
+
+/// Run build steps of at most `entities` nodes or edges on `g` itself until no column is
+/// `Building`. Returns how many steps it took.
+fn build_to_end(
+    g: &mut Graph,
+    entities: usize,
+) -> usize {
+    let mut steps = 0;
+    while g.falkordb_index.has_building_columns() {
+        graph_writes::build_step(g, entities);
+        steps += 1;
+        assert!(steps < 100_000, "the build never finishes");
+    }
+    steps
+}
+
+/// `attr = v`, as the read path asks it.
+fn eq(
+    attr: &Arc<String>,
+    v: i64,
+) -> IndexQuery<Value> {
+    IndexQuery::Equal {
+        key: attr.clone(),
+        value: Value::Int(v),
+    }
 }
 
 /// `Graph::new` builds GraphBLAS matrices, which need GraphBLAS initialized
@@ -87,12 +115,13 @@ fn new_version_isolates_the_falkordb_index() {
     assert_eq!(writer.version, committed.version + 1);
 }
 
-/// CREATE INDEX bulk-builds the column from real graph state: three
+/// CREATE INDEX builds the column from real graph state: three
 /// `:Person {age}` nodes, then a range scan returns the right ids in
-/// `(value, id)` order. Drives the native half of `Graph::create_index`
-/// (`graph_writes::create_index` and its `get_label_matrix` →
-/// `get_node_attribute_by_idx` reads) directly, bypassing the RediSearch FFI
-/// (uninitialised in a unit test).
+/// `(value, id)` order. The column is built by one build step over every node
+/// (its `get_label_matrix` → `get_node_attribute_by_idx` reads), so it is
+/// `Ready` and serves reads when CREATE INDEX returns. Drives the native half of
+/// `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised
+/// in a unit test).
 #[test]
 fn create_index_builds_the_column_from_live_nodes() {
     ensure_graphblas();
@@ -134,6 +163,17 @@ fn create_index_builds_the_column_from_live_nodes() {
         EntityType::Node,
         &label,
         std::slice::from_ref(&attr),
+    );
+    assert_eq!(
+        g.falkordb_index
+            .column_state(EntityType::Node, &label, &attr),
+        Some(ColumnState::Ready)
+    );
+    assert!(
+        g.falkordb_index
+            .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
+            .is_some(),
+        "a Ready column serves reads"
     );
 
     let scan = |lo: Option<i64>, hi: Option<i64>| -> Vec<u64> {
@@ -420,6 +460,461 @@ fn edge_writes_maintain_the_index() {
         scan(&g, 0, 100).is_empty(),
         "the cascade removes what the explicit delete did not"
     );
+}
+
+// --- Build steps ---
+
+/// `:Person` nodes carrying `attr` with `values`, set before any index exists, so build steps are
+/// their only way into the column.
+fn people_with(
+    attr: &Arc<String>,
+    values: &[i64],
+) -> (Graph, Arc<String>, Vec<u64>) {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let label = Arc::new("Person".to_string());
+    let lid = g.get_label_id_mut("Person");
+    let ids = reserve_nodes(&mut g, values.len());
+    g.create_nodes(&ids.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &ids,
+        &vec![lid.0 as u64; ids.len()],
+        &mut w,
+        false
+    ));
+    for (&id, &v) in ids.iter().zip(values) {
+        set_attr(&mut g, id, attr, Value::Int(v));
+    }
+    (g, label, ids)
+}
+
+/// One more `:Person` node with `attr = value`, created through the write path.
+fn add_person(
+    g: &mut Graph,
+    attr: &Arc<String>,
+    value: i64,
+) -> u64 {
+    let lid = g.get_label_id_mut("Person");
+    let id = reserve_nodes(g, 1)[0];
+    g.create_nodes(&std::iter::once(id).collect())
+        .expect("freshly reserved ids are creatable");
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &[id],
+        &[lid.0 as u64],
+        &mut w,
+        false
+    ));
+    set_attr(g, id, attr, Value::Int(value));
+    id
+}
+
+/// Column `(:Person, attr)` created `Building`, with no step taken yet: what `CREATE INDEX` does
+/// before its build steps.
+fn create_index_on(
+    g: &mut Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) {
+    g.falkordb_index
+        .create_building(EntityType::Node, label, attr);
+}
+
+/// DROP INDEX on `(:Person, attr)`, the native half: what `Graph::drop_index` does to this index
+/// once RediSearch has confirmed the drop.
+fn drop_index_on(
+    g: &mut Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) {
+    g.falkordb_index.drop_index(
+        &IndexType::Range,
+        EntityType::Node,
+        label,
+        std::slice::from_ref(attr),
+    );
+}
+
+/// The cursor of column `(entity, label, attr)`, or `None` once it is `Ready`.
+fn cursor(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+) -> Option<BuildCursor> {
+    match g
+        .falkordb_index
+        .column_state(entity, label, attr)
+        .expect("the column exists")
+    {
+        ColumnState::Building { next } => Some(next),
+        ColumnState::Ready => None,
+    }
+}
+
+/// Column `(entity, label, attr)` as the ids it answers for each of `values`, plus all its ids in
+/// value order: enough to tell two columns apart over the values a test uses.
+fn contents(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    values: &[i64],
+) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+    let idx = g
+        .falkordb_index
+        .numeric(entity, label, attr)
+        .expect("the column exists");
+    let per_value = values
+        .iter()
+        .map(|&v| {
+            let v_ref = Value::Int(v);
+            (
+                v,
+                idx.range(Some(&v_ref), Some(&v_ref), true, true).collect(),
+            )
+        })
+        .collect();
+    (per_value, idx.range(None, None, true, true).collect())
+}
+
+/// What a one-pass build of `g` as it stands now gives column `(entity, label, attr)`: the column
+/// rebuilt on a copy of `g` by the RDB-load populate, which collects every value and bulk-builds,
+/// and shares no code with the build steps.
+fn one_pass(
+    g: &Graph,
+    entity: EntityType,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    values: &[i64],
+) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+    let mut copy = g.new_version();
+    graph_writes::build_column(&mut copy, entity, label, attr);
+    contents(&copy, entity, label, attr, values)
+}
+
+/// A build in small steps, with writes landing between the steps both on nodes the steps already
+/// indexed and on nodes they have not reached, ends with exactly the column a one-pass build of the
+/// final graph has: nothing deleted or re-valued survives, and nothing is missed. Writes between
+/// steps need only the write path: a step reads current values, and skips the entities written
+/// since the last step, whose tuples the writes already set.
+#[test]
+fn stepped_build_matches_a_one_pass_build_under_concurrent_node_writes() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[10, 20, 30, 40, 50, 60]);
+    create_index_on(&mut g, &label, &attr);
+
+    // The first step indexes ids[0] and ids[1], and stops at ids[2].
+    assert!(graph_writes::build_step(&mut g, 2));
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::Node(NodeId::from(ids[2])))
+    );
+    assert_eq!(range_scan(&g, &label, &attr, 0, 100), vec![ids[0], ids[1]]);
+
+    // Writes between steps. Behind the cursor, ids[1] is deleted and ids[0] goes 10 -> 15. Ahead
+    // of it, ids[3] is deleted and ids[4] goes 50 -> 55. And a new node gets 70.
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[1]);
+    del.insert(ids[3]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    set_attr(&mut g, ids[0], &attr, Value::Int(15));
+    set_attr(&mut g, ids[4], &attr, Value::Int(55));
+    let created = add_person(&mut g, &attr, 70);
+
+    build_to_end(&mut g, 2);
+    let values = [10, 15, 20, 30, 40, 50, 55, 60, 70];
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &attr, &values),
+        one_pass(&g, EntityType::Node, &label, &attr, &values)
+    );
+    assert_eq!(
+        range_scan(&g, &label, &attr, 0, 100),
+        vec![ids[0], ids[2], ids[4], ids[5], created]
+    );
+}
+
+/// The edge counterpart: steps stop inside a source's edges, finishing the multi-edge pair they stop
+/// in, and writes land between them behind and ahead of the cursor — including a new edge of the
+/// source being resumed, at a destination the steps have already passed, which only the write path
+/// indexes.
+#[test]
+fn stepped_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let ty = Arc::new("R".to_string());
+    let attr = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&attr);
+    let nodes = reserve_nodes(&mut g, 4);
+    g.create_nodes(&nodes.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
+
+    // a->b three times (one multi-edge pair), then a->c, a->d, b->c and c->d; w = 1..=7.
+    let (srcs, dsts) = ([a, a, a, a, a, b, c], [b, b, b, c, d, c, d]);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+        pairs
+            .iter()
+            .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+            .collect()
+    };
+    let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+    applied!(g, |w| g
+        .import_relationship_attrs(&with_w(&initial), &mut w));
+
+    g.falkordb_index
+        .create_building(EntityType::Relationship, &ty, &attr);
+
+    // A two-edge step stops inside the a->b pair, so it finishes the pair: three edges, and the
+    // next step resumes at a->c.
+    assert!(graph_writes::build_step(&mut g, 2));
+    assert_eq!(
+        cursor(&g, EntityType::Relationship, &ty, &attr),
+        Some(BuildCursor::Edge {
+            src: NodeId::from(a),
+            dst: NodeId::from(c)
+        })
+    );
+    let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
+    assert_eq!(held(&g), eids[..3].to_vec());
+
+    // Writes between steps: behind the cursor, delete the second a->b edge and add a fourth a->b
+    // edge with w = 8 (a destination the steps have passed); ahead of it, a->d goes 5 -> 55 and
+    // b->c is deleted.
+    let mut del = RoaringTreemap::new();
+    del.insert(eids[1]);
+    del.insert(eids[5]);
+    applied!(g, |w| g.delete_relationships(&del, &mut w)).unwrap();
+    applied!(g, |w| g
+        .set_relationships_attributes(&with_w(&[(eids[4], 55)]), &mut w))
+    .unwrap();
+    let added = g
+        .relationship_id_space()
+        .reserve(1, &RoaringTreemap::new())
+        .expect("reserved")[0];
+    g.create_relationships_bulk(&ty, &[a], &[b], &[added])
+        .expect("freshly reserved ids are creatable");
+    applied!(g, |w| g
+        .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w));
+
+    build_to_end(&mut g, 2);
+    let values = [1, 2, 3, 4, 5, 6, 7, 8, 55];
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &values),
+        one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
+    );
+    assert_eq!(
+        held(&g),
+        vec![eids[0], eids[2], eids[3], eids[6], added, eids[4]],
+        "w = 1, 3, 4, 7, 8, 55"
+    );
+}
+
+/// `Person` nodes 0..10 with `v = 10 * id`, node 4 deleted (a gap in the rows), and `R` edges with
+/// several per source node and one multi-edge pair, so steps stop inside and between rows and
+/// inside the pair. Both columns are created, and `Building`.
+fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>) {
+    let v = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&v, &(0..10).map(|i| i * 10).collect::<Vec<_>>());
+    let ty = Arc::new("R".to_string());
+    let w = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&w);
+    // Five edges out of node 1 (three of them 1->2), two out of node 7, one out of node 8.
+    let (srcs, dsts) = ([1u64, 1, 1, 1, 1, 7, 7, 8], [2u64, 2, 2, 3, 9, 8, 9, 9]);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+    for (i, &eid) in eids.iter().enumerate() {
+        attrs.insert(eid, vec![(aid, Value::Int(i as i64))]);
+    }
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[4]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    for (entity, l, a) in [
+        (EntityType::Node, &label, &v),
+        (EntityType::Relationship, &ty, &w),
+    ] {
+        g.falkordb_index.create_building(entity, l, a);
+    }
+    (g, label, v, ty, w)
+}
+
+/// Stepping with any batch size ends with the column a one-pass build has: nothing dropped or
+/// doubled where a step stops, for nodes (with a gap in the ids) and for edges (with steps stopping
+/// inside rows and inside a multi-edge pair).
+#[test]
+fn any_batch_size_builds_the_one_pass_column() {
+    let node_values: Vec<i64> = (0..10).map(|i| i * 10).collect();
+    let edge_values: Vec<i64> = (0..8).collect();
+    for batch in [1usize, 2, 3, 7, 64] {
+        let (mut g, label, v, ty, w) = scan_fixture();
+        let nodes = one_pass(&g, EntityType::Node, &label, &v, &node_values);
+        let edges = one_pass(&g, EntityType::Relationship, &ty, &w, &edge_values);
+        assert_eq!(nodes.1.len(), 9, "ten nodes, one deleted");
+        assert_eq!(edges.1.len(), 8);
+
+        build_to_end(&mut g, batch);
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, &v, &node_values),
+            nodes,
+            "nodes, {batch} per step"
+        );
+        assert_eq!(
+            contents(&g, EntityType::Relationship, &ty, &w, &edge_values),
+            edges,
+            "edges, {batch} per step"
+        );
+    }
+}
+
+/// A node step reads at most its batch: nine nodes take exactly `ceil(9 / batch)` steps, the last
+/// of which flips the column `Ready`.
+#[test]
+fn a_node_step_reads_at_most_its_batch() {
+    let attr = Arc::new("v".to_string());
+    for (batch, steps) in [(1usize, 9usize), (2, 5), (4, 3), (9, 1), (10, 1)] {
+        let (mut g, label, _) = people_with(&attr, &(1..=9).collect::<Vec<_>>());
+        create_index_on(&mut g, &label, &attr);
+        assert_eq!(build_to_end(&mut g, batch), steps, "batch {batch}");
+        assert_eq!(range_scan(&g, &label, &attr, 0, 100).len(), 9);
+    }
+}
+
+/// The same unit of work against a `Building` column, on a node the steps already indexed and on
+/// one they have not reached: neither the old value nor the SET's value may survive the DELETE.
+#[test]
+fn set_then_delete_in_one_batch_during_a_build() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[1, 2, 3]);
+    create_index_on(&mut g, &label, &attr);
+    assert!(graph_writes::build_step(&mut g, 1));
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[0]]);
+
+    // SET ids[0].v = 5, ids[2].v = 5, then DELETE both, as `Pending::commit` orders them.
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, Value::Int(5))]);
+    attrs.insert(ids[2], vec![(aid, Value::Int(5))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    del.insert(ids[2]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.apply_index_writes(&mut writes);
+
+    build_to_end(&mut g, 1);
+    assert_eq!(
+        range_scan(&g, &label, &attr, 0, 10),
+        vec![ids[1]],
+        "neither deleted node's old value nor its SET value survives"
+    );
+}
+
+// --- DROP and CREATE INDEX while a column is building ---
+
+/// DROP INDEX while the column is building takes everything already indexed with it — what the
+/// steps and the writes put there both live in the column — and leaves no step anything to do.
+/// Writes after the drop stage nothing.
+#[test]
+fn dropping_a_building_column_leaves_nothing_behind() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[10, 20]);
+    create_index_on(&mut g, &label, &attr);
+    assert!(graph_writes::build_step(&mut g, 1));
+    set_attr(&mut g, ids[0], &attr, Value::Int(30));
+
+    drop_index_on(&mut g, &label, &attr);
+    assert!(!g.falkordb_index.has_building_columns());
+    assert!(
+        g.falkordb_index
+            .numeric(EntityType::Node, &label, &attr)
+            .is_none()
+    );
+    assert!(
+        !graph_writes::build_step(&mut g, usize::MAX),
+        "nothing left to build"
+    );
+    assert!(
+        g.falkordb_index
+            .numeric(EntityType::Node, &label, &attr)
+            .is_none()
+    );
+
+    // Indexing stopped: a later write to the attribute stages nothing.
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[1], vec![(aid, Value::Int(40))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    assert!(writes.native.is_empty(), "no column, so nothing to index");
+}
+
+/// DROP then CREATE INDEX on the same column mid-build: the new column starts from the first node,
+/// so a value that changed while no index existed is indexed as it is now, and the old one is gone.
+#[test]
+fn recreating_a_building_column_restarts_its_build() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[10, 20]);
+    create_index_on(&mut g, &label, &attr);
+    assert!(graph_writes::build_step(&mut g, 1));
+
+    drop_index_on(&mut g, &label, &attr);
+    set_attr(&mut g, ids[0], &attr, Value::Int(15)); // while no index exists
+    create_index_on(&mut g, &label, &attr);
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "the re-created column starts over"
+    );
+
+    build_to_end(&mut g, 1);
+    assert_eq!(range_scan(&g, &label, &attr, 10, 10), Vec::<u64>::new());
+    assert_eq!(range_scan(&g, &label, &attr, 15, 15), vec![ids[0]]);
+    assert_eq!(range_scan(&g, &label, &attr, 20, 20), vec![ids[1]]);
+}
+
+/// CREATE INDEX on a second attribute of the same label while the first is building adds a column
+/// of its own, starting from the first node, and leaves the first column's cursor alone; each
+/// column ends up with its own values.
+#[test]
+fn indexing_a_second_attribute_leaves_the_first_build_alone() {
+    let v = Arc::new("v".to_string());
+    let w = Arc::new("w".to_string());
+    let (mut g, label, ids) = people_with(&v, &[10, 20]);
+    for (&id, value) in ids.iter().zip([1, 2]) {
+        set_attr(&mut g, id, &w, Value::Int(value));
+    }
+    create_index_on(&mut g, &label, &v);
+    assert!(graph_writes::build_step(&mut g, 1));
+    let v_cursor = cursor(&g, EntityType::Node, &label, &v);
+    assert_eq!(v_cursor, Some(BuildCursor::Node(NodeId::from(ids[1]))));
+
+    create_index_on(&mut g, &label, &w);
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &w),
+        Some(BuildCursor::new(EntityType::Node))
+    );
+    assert_eq!(
+        cursor(&g, EntityType::Node, &label, &v),
+        v_cursor,
+        "the first column's build is untouched"
+    );
+
+    build_to_end(&mut g, 1);
+    assert_eq!(range_scan(&g, &label, &v, 0, 100), vec![ids[0], ids[1]]);
+    assert_eq!(range_scan(&g, &label, &w, 2, 2), vec![ids[1]]);
 }
 
 // --- The replica's write paths ---

@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::encode_numeric;
+use super::encode::{KeySpace, encode_numeric};
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
@@ -84,6 +84,78 @@ impl Iterator for UnionIter {
             // Current member exhausted (or not started): descend for the next one. Keys are
             // distinct, so this advances — it cannot spin.
             self.current = Some(self.tree.point(self.keys.next()?));
+        }
+    }
+}
+
+/// Encoded `(key, doc)` tuples for one column, split by the [`KeySpace`] they belong to.
+///
+/// Everything that moves a column's tuples in encoded form (a unit of work's collapsed adds and
+/// removes, a build step's batch) carries both key spaces, so a tuple always goes back into the
+/// tree it came from. Only [`scalar`](Self::scalar) is filled today.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct EncodedTuples {
+    pub scalar: Vec<(u64, u64)>,
+    pub array: Vec<(u64, u64)>,
+}
+
+impl EncodedTuples {
+    /// Scalar-only tuples: the shape a column holding no list values produces.
+    #[must_use]
+    pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
+        Self {
+            scalar,
+            array: Vec::new(),
+        }
+    }
+
+    /// Whether there are no tuples in either key space.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scalar.is_empty() && self.array.is_empty()
+    }
+
+    /// Total tuples across both key spaces.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.scalar.len() + self.array.len()
+    }
+
+    /// Empty both halves, keeping their capacity for reuse.
+    pub fn clear(&mut self) {
+        self.scalar.clear();
+        self.array.clear();
+    }
+
+    /// The half for `space`.
+    #[must_use]
+    pub fn half(
+        &self,
+        space: KeySpace,
+    ) -> &Vec<(u64, u64)> {
+        match space {
+            KeySpace::Scalar => &self.scalar,
+            KeySpace::Array => &self.array,
+        }
+    }
+
+    /// The half for `space`, mutably.
+    pub fn half_mut(
+        &mut self,
+        space: KeySpace,
+    ) -> &mut Vec<(u64, u64)> {
+        match space {
+            KeySpace::Scalar => &mut self.scalar,
+            KeySpace::Array => &mut self.array,
+        }
+    }
+
+    /// Sort both halves ascending and drop duplicate tuples: the **sorted and unique** shape a
+    /// tree's bulk build requires.
+    pub fn sort_dedup(&mut self) {
+        for half in [&mut self.scalar, &mut self.array] {
+            half.sort_unstable();
+            half.dedup();
         }
     }
 }
@@ -197,24 +269,31 @@ impl NumericIndex {
         out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
     }
 
-    /// Add already-encoded tuples — the adds a unit of work's staged writes collapsed to. Tuples
-    /// are never re-encoded: re-encoding a decoded key would be a second trip through a
-    /// many-to-one map.
+    /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or a build
+    /// step's batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
+    /// through a many-to-one map. Into an empty index the tuples are bulk-built, as
+    /// [`from_entries`](Self::from_entries) does, rather than merged in.
     pub fn add_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.insert_batch(pairs);
+        debug_assert!(tuples.array.is_empty(), "no list elements are indexed yet");
+        tuples.sort_dedup();
+        if self.tree.is_empty() {
+            self.tree = Tree::from_sorted(&tuples.scalar);
+        } else {
+            self.tree.insert_batch(&tuples.scalar);
+        }
     }
 
-    /// Remove already-encoded tuples — the removes a unit of work's staged writes collapsed to.
+    /// Remove already-encoded tuples: the removes a unit of work's staged writes collapsed to.
     pub fn remove_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.remove_batch(pairs);
+        debug_assert!(tuples.array.is_empty(), "no list elements are indexed yet");
+        tuples.sort_dedup();
+        self.tree.remove_batch(&tuples.scalar);
     }
 
     /// Whether the index holds no tuples.
