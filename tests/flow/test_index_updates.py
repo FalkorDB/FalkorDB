@@ -300,3 +300,51 @@ class testIndexUpdatesFlow(FlowTestsBase):
         result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
+
+    # Under `index-falkordb` the native index is the only Range index, so writes must not also
+    # feed Range fields to RediSearch. `indices_sz_mb` in GRAPH.MEMORY USAGE is RediSearch's own
+    # memory, which is what makes that feed visible from a client. Without the flag RediSearch is
+    # the Range index and the same writes must reach it; that half also shows the writes are big
+    # enough for a whole-MB counter to see.
+    def test12_native_only_build_feeds_no_range_fields_to_redisearch(self):
+        key = 'native_only_feed'
+        g = self.db.select_graph(key)
+
+        def redisearch_mb():
+            res = self.env.getConnection().execute_command("GRAPH.MEMORY", "USAGE", key)
+            fields = [f.decode() if isinstance(f, bytes) else f for f in res[0::2]]
+            return res[2 * fields.index('indices_sz_mb') + 1]
+
+        # Indexes first, on an empty graph, so every entry below arrives through the per-write
+        # feed and none through an index population.
+        create_node_range_index(g, 'NF', 'v', sync=True)
+        create_edge_range_index(g, 'RF', 'w', sync=True)
+
+        g.query("UNWIND range(1, 50000) AS i CREATE (:NF {v: i})")
+        after_nodes = redisearch_mb()
+        g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RF {w: i}]->()")
+        after_edges = redisearch_mb()
+
+        # The flag's defining behaviour: a predicate the native index cannot serve is an error,
+        # not a RediSearch answer. A string equality is one such predicate today.
+        try:
+            g.query("MATCH (n:NF) WHERE n.v = 'probe' RETURN n")
+            native_only = False
+        except ResponseError as e:
+            self.env.assertContains("native index cannot serve", str(e))
+            native_only = True
+
+        if native_only:
+            self.env.assertEqual(after_nodes, 0)
+            self.env.assertEqual(after_edges, 0)
+        else:
+            self.env.assertGreater(after_nodes, 0)
+            self.env.assertGreater(after_edges, after_nodes)
+
+        # Filtering is per field, not per index: a label with both kinds keeps its Fulltext half.
+        create_node_fulltext_index(g, 'NFT', 't', sync=True)
+        create_node_range_index(g, 'NFT', 'v', sync=True)
+        g.query("CREATE (:NFT {t: 'needle', v: 1})")
+        res = g.query("CALL db.idx.fulltext.queryNodes('NFT', 'needle') YIELD node RETURN node.v")
+        self.env.assertEqual(res.result_set, [[1]])
+        g.delete()
