@@ -80,12 +80,12 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
         }
         // Three reasons a union is declined, and naming the wrong one sends whoever reads the
         // ledger entry after work that isn't the problem. A union spanning attributes needs a real
-        // cross-column merge; one with a range or other non-equality member (`x = 1 OR x > 5`)
-        // needs the union to serve that member kind; a union of equalities on one attribute has a
-        // non-numeric member, which needs that value's index kind.
+        // cross-column merge; one with a member that is not an equality or `IN` list (`x = 1 OR
+        // x > 5`) needs the union to serve that member kind; a union of equalities and `IN` lists
+        // on one attribute has a non-numeric value, which needs that value's index kind.
         Q::Or(children) => {
             let mut members = Vec::new();
-            union_members(children, false, &mut members);
+            union_members(children, true, &mut members);
             let n = children.len();
             let plural = if n == 1 { "" } else { "s" };
             let one_key = members
@@ -94,12 +94,13 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                 .filter(|&first| members.iter().all(|&(key, _)| key == first));
             match one_key {
                 None => format!("a union of {n} member{plural} spanning more than one attribute"),
-                Some(key) if members.iter().all(|&(_, is_equality)| is_equality) => {
+                Some(key) if members.iter().all(|&(_, served)| served) => {
                     format!("a union of {n} member{plural} on `{key}` that is not all-numeric")
                 }
-                Some(key) => {
-                    format!("a union of {n} member{plural} on `{key}` with a non-equality member")
-                }
+                Some(key) => format!(
+                    "a union of {n} member{plural} on `{key}` with a member that is not an \
+                     equality or IN list"
+                ),
             }
         }
         // Name the children, not just the count. "a conjunction of 2 predicates" cannot
@@ -115,32 +116,42 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                 .collect::<Vec<_>>()
                 .join("; ")
         ),
-        Q::InList { key, .. } => format!("an IN list on `{key}`"),
+        // Since #2383 `IN` reaches the index whole, so it is declined here on its own values.
+        Q::InList { key, list } => {
+            let numeric = matches!(
+                list,
+                crate::runtime::value::Value::List(items)
+                    if items.iter().all(|v| encode::encode_numeric(v).is_some())
+            );
+            if numeric {
+                format!("an IN list on `{key}`")
+            } else {
+                format!("an IN list on `{key}` with a non-numeric value")
+            }
+        }
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
         Q::ArrayContains { key, .. } => format!("an array-contains on `{key}`"),
     }
 }
 
-/// Collect the attribute of every member of a (possibly nested) union, paired with whether the
-/// member is an `Equal`, the only member kind the native union serves. Nested unions are
-/// flattened the same way the router flattens them; the children of a conjunction inside the
-/// union count as non-equality members.
+/// Collect the attribute of every member of a union, paired with whether the native union serves
+/// that member kind: an `Equal` or an `IN` list, directly in the union. `NumericIndex::union`
+/// declines a nested combinator, so the members of a nested union or conjunction count by their
+/// attributes but are not served (`top_level` is `false` for them).
 #[cfg(feature = "index-falkordb")]
 fn union_members<'a>(
     children: &'a [crate::index::IndexQuery<crate::runtime::value::Value>],
-    in_conjunction: bool,
+    top_level: bool,
     out: &mut Vec<(&'a std::sync::Arc<String>, bool)>,
 ) {
     use crate::index::IndexQuery as Q;
     for child in children {
         match child {
-            Q::Equal { key, .. } => out.push((key, !in_conjunction)),
-            Q::Or(nested) => union_members(nested, in_conjunction, out),
-            Q::And(nested) => union_members(nested, true, out),
-            Q::Range { key, .. }
-            | Q::Point { key, .. }
-            | Q::InList { key, .. }
-            | Q::ArrayContains { key, .. } => out.push((key, false)),
+            Q::Equal { key, .. } | Q::InList { key, .. } => out.push((key, top_level)),
+            Q::Or(nested) | Q::And(nested) => union_members(nested, false, out),
+            Q::Range { key, .. } | Q::Point { key, .. } | Q::ArrayContains { key, .. } => {
+                out.push((key, false));
+            }
         }
     }
 }
@@ -176,6 +187,31 @@ mod tests {
         }
     }
 
+    fn in_list(
+        attr: &str,
+        values: Vec<Value>,
+    ) -> Q<Value> {
+        Q::InList {
+            key: Arc::new(attr.to_string()),
+            list: Value::List(Arc::new(values.into_iter().collect())),
+        }
+    }
+
+    /// `IN` reaches the index whole, so its message tests the values rather than assuming them.
+    #[test]
+    fn a_declined_in_list_says_whether_a_value_is_non_numeric() {
+        let mixed = in_list(
+            "a",
+            vec![Value::Int(1), Value::String(Arc::new("x".to_string()))],
+        );
+        assert_eq!(
+            describe_predicate(&mixed),
+            "an IN list on `a` with a non-numeric value"
+        );
+        let numeric = in_list("a", vec![Value::Int(1), Value::Int(2)]);
+        assert_eq!(describe_predicate(&numeric), "an IN list on `a`");
+    }
+
     /// The ledger's whole value is that the message names the gap. A union is declined for three
     /// different reasons and they need different work to close — a missing index kind, a member
     /// kind the union does not serve, or a real cross-column merge — so reporting one as another
@@ -207,11 +243,23 @@ mod tests {
             "nesting must not hide the second attribute"
         );
 
-        // `a = 1 OR a > 5`: one attribute, declined because the union serves only equalities.
+        // `a = 1 OR a > 5`: one attribute, declined because the union serves only equalities
+        // and IN lists.
         let with_range = Q::Or(vec![eq("a", 1), gt("a", 5)]);
         let msg = describe_predicate(&with_range);
-        assert!(msg.contains("non-equality member"), "{msg}");
+        assert!(msg.contains("not an equality or IN list"), "{msg}");
         assert!(msg.contains("`a`"), "names the attribute: {msg}");
+
+        // An IN list is a member kind the union serves; its string value is what declines it.
+        let mixed_in = Q::Or(vec![
+            in_list(
+                "a",
+                vec![Value::Int(1), Value::String(Arc::new("x".to_string()))],
+            ),
+            eq("a", 2),
+        ]);
+        let msg = describe_predicate(&mixed_in);
+        assert!(msg.contains("not all-numeric"), "{msg}");
 
         // A range on a second attribute still makes it a cross-attribute union.
         let range_cross = Q::Or(vec![eq("a", 1), gt("b", 5)]);
