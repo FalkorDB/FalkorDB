@@ -6,7 +6,7 @@ use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::BuildCursor;
+use crate::index::falkordb::falkordb_index::{BuildCursor, NumericAnswer};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::BuildState;
 use crate::index::index_docs::IndexDocs;
@@ -175,9 +175,11 @@ fn create_index_builds_the_column_from_live_nodes() {
         Some(BuildState::Ready)
     );
     assert!(
-        g.falkordb_index
-            .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
-            .is_some(),
+        matches!(
+            g.falkordb_index
+                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(NumericAnswer::Rows(_))
+        ),
         "a Ready column serves reads"
     );
 
@@ -279,7 +281,10 @@ fn create_index_builds_the_column_from_live_edges() {
     assert_eq!(
         g.falkordb_index
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
-            .map(Iterator::collect::<Vec<u64>>),
+            .map(|answer| match answer {
+                NumericAnswer::Rows(rows) => rows.collect::<Vec<u64>>(),
+                NumericAnswer::NotReady => panic!("a Ready column answered NotReady"),
+            }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
     );
