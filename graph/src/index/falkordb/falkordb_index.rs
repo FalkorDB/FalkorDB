@@ -141,6 +141,37 @@ impl IndexColumn {
             Self::Numeric(idx) => idx.is_empty(),
         }
     }
+
+    /// The ids stored under `key`, a key [`encode_value`](Self::encode_value) gave.
+    #[must_use]
+    pub fn rows_at(
+        &self,
+        key: u64,
+    ) -> DocIter {
+        match self {
+            Self::Numeric(idx) => idx.point_key(key),
+        }
+    }
+}
+
+/// A lookup a column has agreed to answer: which of its entities may hold one value.
+///
+/// [`FalkorDbIndex::equal_candidates`] makes it without reading the column, so a caller can
+/// collect one per entity and run only those it gets to. A live cursor per entity would instead
+/// hold a snapshot and a descent stack each.
+pub struct EqualCandidates<'a> {
+    column: &'a IndexColumn,
+    key: u64,
+}
+
+impl EqualCandidates<'_> {
+    /// Every entity holding the value, and possibly others: a column may give several values one
+    /// key (the numeric kind keys `1`, `1.0` and `true` alike). Node ids for a node column,
+    /// `edge_id`s for an edge column.
+    #[must_use]
+    pub fn rows(&self) -> DocIter {
+        self.column.rows_at(self.key)
+    }
 }
 
 /// A column is a versioned index ([`BuildState`] has the rules its build keeps). It is found by
@@ -676,6 +707,33 @@ impl FalkorDbIndex {
         Some(NumericAnswer::Rows(idx.lookup(keys)))
     }
 
+    /// "Which entities of `(entity, label)` may hold `value` at `attr`?", or `None` when this
+    /// index cannot answer: there is no such column, the column is still `Building` (it has not
+    /// seen every entity, so it cannot rule one out), or its kind does not index `value` (a string
+    /// in a numeric column, today).
+    ///
+    /// `None` is not "no entities". An answer, even an empty one, covers every entity holding
+    /// `value`, which is what lets a unique constraint trust it. The question names no index kind,
+    /// so a value a new kind indexes is answered by that kind with no change at the caller.
+    #[must_use]
+    pub fn equal_candidates(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+    ) -> Option<EqualCandidates<'_>> {
+        let entry = self.entry(entity, label, attr)?;
+        if entry.is_building() {
+            return None;
+        }
+        let key = entry.index.encode_value(value)?;
+        Some(EqualCandidates {
+            column: &entry.index,
+            key,
+        })
+    }
+
     /// The first column still `Building`, with its cursor. Node columns first; `None` once every
     /// column is `Ready`. For tests of one column at a time.
     #[cfg(test)]
@@ -1159,6 +1217,80 @@ mod tests {
             served(Relationship, &ints(&attr, &[30, 40])),
             None,
             "no edge column of this name"
+        );
+    }
+
+    /// `equal_candidates` answers only when its answer covers every entity holding the value, and
+    /// declines otherwise. A decline must never look like an empty answer: to a unique constraint,
+    /// "no entities" means "no duplicate".
+    #[test]
+    fn equal_candidates_declines_what_it_cannot_rule_out() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let candidates = |idx: &FalkorDbIndex, value: &Value| {
+            idx.equal_candidates(Node, &label, &attr, value)
+                .map(|c| c.rows().collect::<Vec<_>>())
+        };
+        let mut idx = FalkorDbIndex::new();
+        assert!(
+            candidates(&idx, &Value::Int(1)).is_none(),
+            "no column: declined"
+        );
+
+        // A column whose kind keys several values alike answers with all of them; the caller
+        // re-checks each against the graph.
+        let one = [Value::Int(1), Value::Float(1.0), Value::Bool(true)];
+        idx.create_numeric(Node, &label, &attr);
+        let mut staged = IndexChanges::new(Node);
+        for (value, id) in one.iter().zip([10, 11, 12]) {
+            staged.add(&idx, &label, &attr, value, id);
+        }
+        let mut writes = PendingIndexWrites::default();
+        writes.extend(staged);
+        idx.apply(&mut writes, |_, id| {
+            Some(BuildCursor::Node(NodeId::from(id)))
+        });
+        for value in &one {
+            assert_eq!(candidates(&idx, value), Some(vec![10, 11, 12]), "{value:?}");
+        }
+        assert_eq!(
+            candidates(&idx, &Value::Int(2)),
+            Some(vec![]),
+            "an empty answer from a Ready column means no entity holds the value"
+        );
+        assert!(
+            candidates(&idx, &Value::String(arc("1"))).is_none(),
+            "a numeric column does not index strings, so it cannot say none holds one"
+        );
+        assert!(
+            candidates(&idx, &Value::Float(f64::NAN)).is_none(),
+            "nor NaN"
+        );
+        assert!(
+            idx.equal_candidates(Relationship, &label, &attr, &Value::Int(1))
+                .is_none(),
+            "no edge column of this name"
+        );
+
+        // A building column has not seen every entity, even when it already holds this one: a
+        // batch put node 10 in and stopped before node 11.
+        idx.create_building(Node, &label, &attr);
+        let mut work = EncodedTuples::scalars(vec![(encode_numeric(&Value::Int(1)).unwrap(), 10)]);
+        work.sort_dedup();
+        assert!(idx.apply_indexer_batch(&mut IndexerBatch::<IndexColumn> {
+            name: (Node, (label.clone(), attr.clone())),
+            work,
+            next: Some(BuildCursor::Node(NodeId::from(11))),
+        }));
+        assert_eq!(
+            idx.numeric(Node, &label, &attr)
+                .unwrap()
+                .point(&Value::Int(1))
+                .collect::<Vec<_>>(),
+            vec![10]
+        );
+        assert!(
+            candidates(&idx, &Value::Int(1)).is_none(),
+            "a Building column cannot rule an entity out"
         );
     }
 }
