@@ -1568,7 +1568,10 @@ impl<'a> Parser<'a> {
                     keyword: Some(token),
                     ..
                 } => {
-                    if token == *clause {
+                    // A repeated MATCH keyword starts a new clause: relationship
+                    // uniqueness is scoped per MATCH clause, so it must not be
+                    // folded into this pattern.
+                    if token == *clause && *clause != Keyword::Match {
                         self.lexer.next();
                         continue;
                     }
@@ -3826,6 +3829,20 @@ mod tests {
         ] {
             assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
+    }
+
+    // Relationship uniqueness is scoped per MATCH clause, so back-to-back
+    // MATCH clauses must stay separate clauses rather than one pattern.
+    #[test]
+    fn consecutive_match_clauses_stay_separate() {
+        with_functions();
+        let ir = format!(
+            "{:?}",
+            Parser::new("MATCH (a)-[r1:E]->(b) MATCH (a)-[r2:E]->(b) RETURN r1")
+                .parse()
+                .unwrap()
+        );
+        assert_eq!(ir.matches("Match {").count(), 2, "{ir}");
     }
 
     // NOT type-checks its operand, so `NOT NOT x` is not `x`: a run of NOTs
