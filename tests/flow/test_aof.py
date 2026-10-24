@@ -72,3 +72,39 @@ class testAOFReplay():
         # rather than skipped.
         result = graph.query("MATCH (n) RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 2)
+
+    def test_binary_graph_keys_survive_incremental_aof_replay(self):
+        self.conn.flushall()
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("appendonly", "yes")
+        self._wait_for_aof_rewrite()
+
+        expected_keys = []
+        for command in ("GRAPH.QUERY", "GRAPH.PROFILE", "GRAPH.RECORD"):
+            for inline in (False, True):
+                for suffix in (b"plain", "emoji😀".encode(), b"cr\r\nlf", b"\xc3(bin", b"\xff\xfe"):
+                    key = command.encode() + str(inline).encode() + b"-aof-" + suffix
+                    expected_keys.append(key)
+                    query = "CREATE (:BinaryKey {value:1})"
+                    if inline:
+                        self.conn.pipeline().execute_command(command, key, query).execute()
+                    else:
+                        self.conn.execute_command(command, key, query)
+                    self.conn.execute_command(command, key, "MATCH (n) SET n.value = 2")
+
+        # New graphs keep C's NUL truncation; a renamed existing key keeps every byte.
+        self.conn.execute_command("GRAPH.QUERY", b"create-nul\x00suffix", "CREATE (:B {value:2})")
+        expected_keys.append(b"create-nul")
+        self.conn.rename(expected_keys[0], b"renamed-\xc3(\x00suffix")
+        expected_keys[0] = b"renamed-\xc3(\x00suffix"
+        self.conn.execute_command("GRAPH.QUERY", expected_keys[0], "MATCH (n) SET n.value = 2")
+        self.env.assertEqual(self.conn.execute_command("WAITAOF", 1, 0, 5000)[0], 1)
+        self.conn.execute_command("DEBUG", "LOADAOF")
+
+        for key in expected_keys:
+            self.env.assertEqual(self.conn.execute_command(
+                "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
+            lossy_key = key.decode("utf-8", "replace").encode()
+            if lossy_key != key:
+                self.env.assertEqual(self.conn.exists(lossy_key), 0)
+        self.env.assertEqual(self.conn.exists(b"create-nul\x00suffix"), 0)

@@ -20,6 +20,7 @@
 
 use crate::dispatch::must_run_inline;
 use crate::graph_core::{abandon_write, finish_write};
+use crate::graph_key::GraphKey;
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
@@ -44,7 +45,7 @@ use std::{os::raw::c_char, sync::Arc};
 fn record_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     query: &str,
 ) -> RedisResult {
     // A recorded query may be a write, and it is a *real* write: run it under a real
@@ -185,9 +186,9 @@ pub fn graph_record(
     // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
     // An existing graph is at the key the command named; one created here lands at the
     // key C rebuilds from the name.
-    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, Arc<str>) =
+    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, GraphKey) =
         if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-            (graph.clone(), Arc::from(key_str.to_string()))
+            (graph.clone(), GraphKey::new(&key_str))
         } else {
             let name = c_graph_name(&key_str);
             let graph = Arc::new(RwLock::new(ThreadedGraph::new(
@@ -195,9 +196,10 @@ pub fn graph_record(
                 &name,
             )));
             // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
-            let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            let create_key_str = c_graph_key(ctx, &key_str);
+            let create_key = ctx.open_key_writable(&create_key_str);
             create_key.set_value(&GRAPH_TYPE, graph.clone())?;
-            let key_name: Arc<str> = Arc::from(name.as_str());
+            let key_name = GraphKey::new(&create_key_str);
             register_graph(name, graph.clone());
             (graph, key_name)
         };

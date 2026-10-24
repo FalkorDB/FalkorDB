@@ -29,6 +29,7 @@
 //! [`crate::query_session::QuerySession`], which owns its locks and documents the
 //! reader→writer protocol.
 
+use crate::graph_key::GraphKey;
 use crate::{
     config::{
         CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
@@ -222,7 +223,7 @@ pub struct WriteMessage {
     pub query: Arc<str>,
     pub compact: bool,
     pub cached: bool,
-    pub key_name: Arc<str>,
+    pub key_name: GraphKey,
     pub timeout: Option<i64>,
     pub received_at: i64,
     pub enqueue_instant: Instant,
@@ -737,7 +738,7 @@ pub fn execute_profile(
 pub fn execute_query_write(
     session: QuerySession,
     ctx: &Context,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     query: &str,
     compact: bool,
     first_cached: bool,
@@ -783,7 +784,7 @@ impl From<String> for WriteAttempt {
 fn try_query_write(
     session: QuerySession,
     ctx: &Context,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     query: &str,
     compact: bool,
     first_cached: bool,
@@ -1022,7 +1023,7 @@ pub fn query_mut(
     compact: bool,
     write: bool,
     track_mem: bool,
-    key_name: Arc<str>,
+    key_name: GraphKey,
     per_query_timeout: Option<i64>,
     version_check: Option<u64>,
 ) -> RedisResult {
@@ -1073,7 +1074,8 @@ pub fn query_mut(
     // down, and a worker can panic before promoting. Either would leave the
     // query in `GRAPH.INFO WaitingQueries` forever, so the entry's lifetime is
     // tied to the closure that owns it.
-    let mut pool_waiting = telemetry::WaitingEntry::register(received_at, &key_name, &query);
+    let mut pool_waiting =
+        telemetry::WaitingEntry::register(received_at, key_name.display_name(), &query);
     spawn(
         move || {
             let mut slot = Some(slot);
@@ -1106,7 +1108,7 @@ pub fn query_mut(
             // fallback cannot normally happen (only this worker consumes the id);
             // it keeps the running report correct rather than silently empty.
             let running_id = pool_waiting.promote().unwrap_or_else(|| {
-                telemetry::register_running(received_at, &key_name, &query, false)
+                telemetry::register_running(received_at, key_name.display_name(), &query, false)
             });
             let wall_start = Instant::now();
             // Time spent waiting in the thread pool before this worker started.
@@ -1145,8 +1147,11 @@ pub fn query_mut(
             match res {
                 Ok(read_result) => {
                     if read_result.is_write {
-                        let waiting_id =
-                            telemetry::register_waiting(received_at, &key_name, &query);
+                        let waiting_id = telemetry::register_waiting(
+                            received_at,
+                            key_name.display_name(),
+                            &query,
+                        );
                         let msg = Box::new(WriteMessage {
                             bc,
                             query,
@@ -1199,7 +1204,7 @@ pub fn query_mut(
                             is_write: false,
                             timed_out: read_result.timed_out,
                         };
-                        telemetry::enqueue_entry(&key_name, &graph, entry);
+                        telemetry::enqueue_entry(key_name.display_name(), &graph, entry);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -1225,7 +1230,7 @@ fn query_sync(
     query: &str,
     compact: bool,
     write: bool,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
@@ -1249,7 +1254,8 @@ fn query_sync(
     // Telemetry stores the query as an `Arc<str>`; build it once and share it
     // across the running-registry registrations on this (rare) sync path.
     let query_arc: Arc<str> = Arc::from(query);
-    let running_id = telemetry::register_running(received_at, key_name, &query_arc, false);
+    let running_id =
+        telemetry::register_running(received_at, key_name.display_name(), &query_arc, false);
     let res = {
         let session = QuerySession::begin(graph);
         execute_query(
@@ -1270,8 +1276,12 @@ fn query_sync(
             if read_result.is_write {
                 // Write path: acquire exclusive lock and execute.
                 let write_start = Instant::now();
-                let running_id2 =
-                    telemetry::register_running(received_at, key_name, &query_arc, false);
+                let running_id2 = telemetry::register_running(
+                    received_at,
+                    key_name.display_name(),
+                    &query_arc,
+                    false,
+                );
                 // On the main thread the GIL is already held, so start as a writer:
                 // the order is satisfied and there is nothing to escalate.
                 let res = execute_query_write(
@@ -1305,7 +1315,7 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, graph, entry);
+                        telemetry::enqueue_entry(key_name.display_name(), graph, entry);
                     }
                     Err(err) => {
                         // execute_query_write already released the MVCC write
@@ -1316,7 +1326,13 @@ fn query_sync(
                         // Unless it was the master's write: the master only
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
-                        divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err, None);
+                        divergence_guard::on_failure(
+                            ctx,
+                            key_name.display_name(),
+                            "GRAPH.QUERY",
+                            &err,
+                            None,
+                        );
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -1338,7 +1354,7 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, graph, entry);
+                telemetry::enqueue_entry(key_name.display_name(), graph, entry);
             }
         }
         Err(err) => {
@@ -1353,7 +1369,7 @@ pub fn profile_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // Contexts that cannot block run inline (see `query_mut` for the rationale, and
@@ -1405,7 +1421,8 @@ pub fn profile_mut(
                 // the write loop; `execute_query_write` in profile mode replies with
                 // the profile tree instead of the result set.
                 Ok(ProfileDetect::Write) => {
-                    let waiting_id = telemetry::register_waiting(received_at, &key_name, &query);
+                    let waiting_id =
+                        telemetry::register_waiting(received_at, key_name.display_name(), &query);
                     let msg = Box::new(WriteMessage {
                         bc,
                         query,
@@ -1454,7 +1471,7 @@ fn profile_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -1500,7 +1517,7 @@ fn profile_sync(
                 disable_tracking();
             }
             // See `query_sync`: a replayed command failing is divergence.
-            divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err, None);
+            divergence_guard::on_failure(ctx, key_name.display_name(), "GRAPH.PROFILE", &err, None);
             return Err(redis_module::RedisError::String(err));
         }
     }
@@ -1520,7 +1537,7 @@ fn profile_sync(
 pub(crate) fn finish_write(
     session: &QuerySession,
     ctx: &Context,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     runtime: &Runtime,
     stats: &QueryStatistics,
 ) {
@@ -1571,7 +1588,7 @@ pub(crate) fn abandon_write(
 fn commit_and_replicate(
     g: &mut ThreadedGraph,
     ctx: &Context,
-    key_name: &Arc<str>,
+    key_name: &GraphKey,
     wq: WriteQueryOk,
 ) {
     // Index document changes were already applied by each `CommitOp` while this
@@ -1598,8 +1615,9 @@ fn commit_and_replicate(
     // nothing to recover it. Loud rather than silent: this is how the
     // first-full-sync window went unnoticed.
     let Some(buf) = wq.effects_buffer else {
+        let display_name = key_name.display_name();
         redis_module::logging::log_warning(format!(
-            "graph '{key_name}' was modified but produced no effects payload; \
+            "graph '{display_name}' was modified but produced no effects payload; \
              the change will not reach replicas or the AOF"
         ));
         return;
@@ -1723,7 +1741,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     is_write: true,
                     timed_out: false,
                 };
-                telemetry::enqueue_entry(&key_name, graph, entry);
+                telemetry::enqueue_entry(key_name.display_name(), graph, entry);
                 drop(bc);
             }
             Err(err) => {

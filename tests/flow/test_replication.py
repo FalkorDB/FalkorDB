@@ -2,6 +2,7 @@ from common import *
 from index_utils import wait_for_indices_to_sync
 from constraint_utils import *
 import csv
+from redis.exceptions import WatchError
 import os
 import tempfile
 import time
@@ -24,6 +25,60 @@ class testReplication(FlowTestsBase):
             Environment.skip(None) # sanitizer is not working correctly with replication
 
         self.env, self.db = Env(env='oss', useSlaves=True)
+
+    def test_binary_graph_keys_replicate_and_invalidate_watch(self):
+        source = self.env.getConnection()
+        replica = self.env.getSlaveConnection()
+        keys = (b"plain", "emoji😀".encode(), b"cr\r\nlf", b"\xc3(bin", b"\xff\xfe")
+        for command in ("GRAPH.QUERY", "GRAPH.PROFILE", "GRAPH.RECORD"):
+            for inline in (False, True):
+                for suffix in keys:
+                    key = command.encode() + str(inline).encode() + b"-" + suffix
+                    query = "CREATE (:BinaryKey {value:1})"
+                    if inline:
+                        source.pipeline().execute_command(command, key, query).execute()
+                    else:
+                        source.execute_command(command, key, query)
+                    self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+                    self.env.assertEqual(replica.execute_command(
+                        "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[1]])
+
+                    with source.pipeline() as watched:
+                        watched.watch(key)
+                        query = "MATCH (n) SET n.value = 2"
+                        if inline:
+                            source.pipeline().execute_command(command, key, query).execute()
+                        else:
+                            source.execute_command(command, key, query)
+                        watched.multi()
+                        watched.ping()
+                        aborted = False
+                        try:
+                            watched.execute()
+                        except WatchError:
+                            aborted = True
+                        self.env.assertTrue(aborted)
+                    self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+                    self.env.assertEqual(replica.execute_command(
+                        "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
+                    lossy_key = key.decode("utf-8", "replace").encode()
+                    if lossy_key != key:
+                        self.env.assertEqual(replica.exists(lossy_key), 0)
+
+    def test_writes_to_renamed_binary_nul_key_replicate(self):
+        source = self.env.getConnection()
+        replica = self.env.getSlaveConnection()
+        for command in ("GRAPH.QUERY", "GRAPH.PROFILE", "GRAPH.RECORD"):
+            original = command.encode() + b"-rename-source"
+            key = original + b"-\xc3(\x00suffix"
+            source.execute_command("GRAPH.QUERY", original, "CREATE (:BinaryKey {value:1})")
+            self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+            source.rename(original, key)
+            source.execute_command(command, key, "MATCH (n) SET n.value = 2")
+            self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+            self.env.assertEqual(replica.execute_command(
+                "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
+            self.env.assertEqual(replica.exists(key.split(b"\x00")[0]), 0)
 
     def test_CRUD_replication(self):
         # create a simple graph
