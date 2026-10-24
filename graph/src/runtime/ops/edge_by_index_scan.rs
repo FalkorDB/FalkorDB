@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::unsupported_by_native_index;
+use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
@@ -335,18 +335,23 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                type EdgeRow = (NodeId, NodeId, RelationshipId);
+                // `None` means "scan instead" — an index-unshaped predicate, or a column that is
+                // still building. Mirrors `NodeByIndexScanOp`.
+                let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> =
                     if Self::can_utilize_index(&q) {
                         let g = self.runtime.graph();
                         // Edge index: a numeric Equal/Range on a column we own is served
                         // by the CoW B-tree (endpoints recovered from the graph's reverse index);
-                        // string/geo/composite or a missing column falls through to RediSearch during
-                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        // anything else is an error under the flag. #51, mirrors
+                        // `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = match g.query_index_numeric_edges(label, &q) {
-                            Some(hit) => Box::new(hit),
+                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
+                            .query_index_numeric_edges(label, &q)
+                        {
+                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            // Still building — scan, do not error.
+                            Some(NumericAnswer::NotReady) => None,
                             None => {
                                 // See node_by_index_scan: native is the only index under this
                                 // flag, so an unserviceable predicate is a loud error.
@@ -354,11 +359,15 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             }
                         };
                         #[cfg(not(feature = "index-falkordb"))]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = Box::new(g.get_indexed_edges(label, q));
+                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
+                            Some(Box::new(g.get_indexed_edges(label, q)));
                         it
                     } else {
+                        None
+                    };
+                let base: Box<dyn Iterator<Item = EdgeRow>> = match indexed {
+                    Some(it) => it,
+                    None => {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
                             if cache.is_none() {
@@ -376,7 +385,8 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 None
                             }
                         }))
-                    };
+                    }
+                };
 
                 // An undirected pattern matches each edge in both
                 // orientations (a self-loop once), as `CondTraverse` does;
