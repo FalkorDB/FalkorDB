@@ -54,6 +54,9 @@ cargo build        # debug build required first (flow.sh defaults to target/debu
 - `TEST="tests/flow/test_function_calls:testFunctionCallsFlow.test89_JOIN" ./flow.sh` — one test
 - `FAIL_FAST=1` — stop on first failure, run serially (`--parallelism 1`)
 - `RELEASE=1` — run against `target/release` instead of `target/debug`
+- `FALKORDB_SERVER=valkey` — spawn `valkey-server` (from `PATH`) instead of
+  `redis-server`; also honored by `tests/common.py` (e2e/function tests),
+  which runs `/usr/local/bin/<server>-server`. The toolchain image ships both.
 - Progress is tracked in `flow_tests_done.txt` / `flow_tests_todo.txt`; logs
   land in `tests/flow/logs`.
 
