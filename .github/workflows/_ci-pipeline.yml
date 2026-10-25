@@ -132,6 +132,34 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
+  # module that loads fine under redis-server can crash valkey-server on load
+  # (#3493). The crash needs a valkey-server that copy-relocates `environ`:
+  # Ubuntu's package does, while the official valkey/valkey images and Debian's
+  # package do not and would pass even without the fix. Hence Ubuntu's Valkey.
+  valkey-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: ubuntu:26.04
+    needs: [build-engine]
+    if: ${{ !cancelled() && needs.build-engine.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Install Valkey
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
+            libstdc++6 libssl3t64 zlib1g libzstd1
+      - name: Load the engine into Valkey
+        run: tests/valkey_smoke.sh target/release/libfalkordb.so
   # Release flavour. The vehicle is the whole difference between the two events:
   # a pull request tests the binary it just built, the queue tests the image it
   # is about to promote. Same file list, same flavour config — two thin calls
