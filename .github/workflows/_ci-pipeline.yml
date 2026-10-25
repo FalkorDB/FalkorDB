@@ -469,6 +469,10 @@ jobs:
         ports: ["6379:6379"]
         env:
           FALKORDB_ARGS: ""
+          # As in `_flow-flavour.yml`'s service. A test's `Env(enableDebugCommand=True)` changes
+          # nothing against a service, and without this DEBUG RELOAD is refused:
+          # test_edge_index_scans' RDB round-trip test then fails on that, not on the index.
+          REDIS_ARGS: "--enable-debug-command yes"
     # Without these, flow.sh takes its local-dev branch and looks for a module this job never
     # builds — the service container would be started and never contacted. They also force
     # --parallelism 1, which the ledger parser needs: parallel classes interleave the per-test
