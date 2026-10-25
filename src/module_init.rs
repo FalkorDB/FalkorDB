@@ -147,7 +147,13 @@ unsafe extern "C" fn on_fork_child() {
 /// on the NULL.
 ///
 /// When both views are already the same object (Redis, or a valkey-server
-/// without the copy relocation) this is a no-op.
+/// without the copy relocation) this is a no-op. `RTLD_DEEPBIND` is
+/// glibc-only, and macOS dylibs must not reference `environ` directly, so the
+/// helper is a no-op off Linux.
+#[cfg(not(target_os = "linux"))]
+unsafe fn sync_deepbind_environ() {}
+
+#[cfg(target_os = "linux")]
 unsafe fn sync_deepbind_environ() {
     unsafe extern "C" {
         static mut environ: *mut *mut libc::c_char;

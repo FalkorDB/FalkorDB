@@ -36,7 +36,7 @@ fail() {
 }
 
 cli() {
-    "$CLI" -p "$PORT" "$@"
+    "$CLI" -e -p "$PORT" "$@"
 }
 
 "$SERVER" --version
@@ -62,6 +62,7 @@ for _ in $(seq 100); do
     cli INFO persistence | grep -q 'rdb_bgsave_in_progress:0' && break
     sleep 0.1
 done
+cli INFO persistence | grep -q 'rdb_bgsave_in_progress:0' || fail "BGSAVE did not finish"
 cli INFO persistence | grep -q 'rdb_last_bgsave_status:ok' || fail "BGSAVE failed"
 
 kill -0 "$PID" 2>/dev/null || fail "valkey-server died"
