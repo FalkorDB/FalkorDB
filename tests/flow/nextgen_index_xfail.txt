@@ -88,6 +88,19 @@ test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keep
 test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
 
 # ---------------------------------------------------------------------------
+# No UNDER CONSTRUCTION window — the index is ready when CREATE INDEX returns.
+#   assertion: `index_under_construction(g, 'L')` is False right after CREATE INDEX
+#              (test_index_create.py, test08 and test10)
+# Not an error from the native index. Under the flag the native column is built inside CREATE
+# INDEX, in one unbounded indexer batch, and RediSearch has no Range fields left to build, so nothing
+# is pending when the query returns. These tests check the window a background build leaves open.
+# They pass again only when the native build runs in the background AND `db.indexes()` and the
+# planner read the native column's build state; today both read RediSearch's pending count.
+# ---------------------------------------------------------------------------
+test_index_create:testIndexCreationFlow.test08_async_index_creation
+test_index_create:testIndexCreationFlow.test10_delete_interrupt_async_index_creation
+
+# ---------------------------------------------------------------------------
 # IGNORED in both directions (`!` prefix) — NOT a native-index gap.
 #
 # The check skips a `!` entry entirely: it is neither required to fail nor required to pass. That
