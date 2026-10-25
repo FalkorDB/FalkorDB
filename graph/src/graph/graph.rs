@@ -118,6 +118,10 @@ use crate::{
 
 /// The index fields that still need feeding to RediSearch in this build.
 ///
+/// Every path that fills RediSearch goes through it: the per-write commits
+/// (`commit_index_kind`, `commit_edge_index_locked`), the build after `CREATE INDEX`
+/// (`populate_index`) and the build after an RDB load (`Graph::populate_indexes_sync`).
+///
 /// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
 ///
 /// With it, the native index owns every **Range** column. The scan ops route Range predicates to
@@ -562,11 +566,19 @@ fn populate_index(
     let Some(snapshot) = indexer.acquire_population_snapshot(&label) else {
         return;
     };
+    let fields = redisearch_fields(snapshot.fields);
+    if fields.is_empty() {
+        // Every field is the native index's, so RediSearch has nothing to build. The ticket
+        // still has to go back: until it does the index reports UNDER CONSTRUCTION and the
+        // planner does not use it.
+        indexer.release_population_ticket(&snapshot.ticket);
+        return;
+    }
     populate_index_batch(
         kind,
         label,
         indexer,
-        snapshot.fields,
+        fields,
         0,
         BatchCursor::default(),
         snapshot.ticket,
@@ -3725,12 +3737,19 @@ impl Graph {
 
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
+    ///
+    /// RediSearch gets only the fields [`redisearch_fields`] keeps; under `index-falkordb` the
+    /// native columns are built from every field.
     pub fn populate_indexes_sync(&mut self) {
         let node_snapshots = self.node_indexer.acquire_population_snapshots();
         for snapshot in node_snapshots {
             let label = snapshot.ticket.label().clone();
-            let attrs = snapshot.fields;
-            if let Some(lm) = self.get_label_matrix(&label) {
+            #[cfg(feature = "index-falkordb")]
+            let native_attrs = snapshot.fields.clone();
+            let attrs = redisearch_fields(snapshot.fields);
+            if !attrs.is_empty()
+                && let Some(lm) = self.get_label_matrix(&label)
+            {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
                     .iter()
@@ -3767,7 +3786,7 @@ impl Graph {
             self.node_indexer
                 .release_population_ticket(&snapshot.ticket);
             #[cfg(feature = "index-falkordb")]
-            graph_writes::populate(self, EntityType::Node, &label, &attrs);
+            graph_writes::populate(self, EntityType::Node, &label, &native_attrs);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -3780,8 +3799,12 @@ impl Graph {
         let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
         for snapshot in edge_snapshots {
             let type_name = snapshot.ticket.label().clone();
-            let attrs = snapshot.fields;
-            if let Some(tensor) = self.get_relationship_matrix(&type_name) {
+            #[cfg(feature = "index-falkordb")]
+            let native_attrs = snapshot.fields.clone();
+            let attrs = redisearch_fields(snapshot.fields);
+            if !attrs.is_empty()
+                && let Some(tensor) = self.get_relationship_matrix(&type_name)
+            {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
                     // Allocate the RSDoc only once a field is present — edges
@@ -3810,7 +3833,7 @@ impl Graph {
             self.edge_indexer
                 .release_population_ticket(&snapshot.ticket);
             #[cfg(feature = "index-falkordb")]
-            graph_writes::populate(self, EntityType::Relationship, &type_name, &attrs);
+            graph_writes::populate(self, EntityType::Relationship, &type_name, &native_attrs);
         }
     }
 
