@@ -301,12 +301,19 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
 
-    # Under `index-falkordb` the native index is the only Range index, so writes must not also
-    # feed Range fields to RediSearch. `indices_sz_mb` in GRAPH.MEMORY USAGE is RediSearch's own
-    # memory, which is what makes that feed visible from a client. Without the flag RediSearch is
-    # the Range index and the same writes must reach it; that half also shows the writes are big
-    # enough for a whole-MB counter to see.
-    def test12_native_only_build_feeds_no_range_fields_to_redisearch(self):
+
+class testNativeOnlyFeedFlow(FlowTestsBase):
+    # Under `index-falkordb` the native index is the only Range index, so nothing may also feed
+    # Range fields to RediSearch: not a write, not the build after CREATE INDEX, not the build
+    # after an RDB load. `indices_sz_mb` in GRAPH.MEMORY USAGE is RediSearch's own memory, which
+    # is what makes those feeds visible from a client. Without the flag RediSearch is the Range
+    # index and all three must reach it; that half also shows the data is big enough for a
+    # whole-MB counter to see.
+    def __init__(self):
+        # enableDebugCommand: the test reloads via DEBUG RELOAD, which redis refuses by default.
+        self.env, self.db = Env(enableDebugCommand=True)
+
+    def test01_native_only_build_feeds_no_range_fields_to_redisearch(self):
         key = 'native_only_feed'
         g = self.db.select_graph(key)
 
@@ -315,15 +322,15 @@ class testIndexUpdatesFlow(FlowTestsBase):
             fields = [f.decode() if isinstance(f, bytes) else f for f in res[0::2]]
             return res[2 * fields.index('indices_sz_mb') + 1]
 
-        # Indexes first, on an empty graph, so every entry below arrives through the per-write
-        # feed and none through an index population.
+        # Writes: the indexes exist before the data, so every entry arrives through the per-write
+        # feed and none through a build.
         create_node_range_index(g, 'NF', 'v', sync=True)
         create_edge_range_index(g, 'RF', 'w', sync=True)
 
         g.query("UNWIND range(1, 50000) AS i CREATE (:NF {v: i})")
         after_nodes = redisearch_mb()
         g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RF {w: i}]->()")
-        after_edges = redisearch_mb()
+        after_writes = redisearch_mb()
 
         # The flag's defining behaviour: a predicate the native index cannot serve is an error,
         # not a RediSearch answer. A string equality is one such predicate today.
@@ -334,17 +341,56 @@ class testIndexUpdatesFlow(FlowTestsBase):
             self.env.assertContains("native index cannot serve", str(e))
             native_only = True
 
+        # The build after CREATE INDEX: the data exists before the indexes.
+        g.query("UNWIND range(1, 50000) AS i CREATE (:NB {v: i})")
+        g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RB {w: i}]->()")
+        before_build = redisearch_mb()
+        create_node_range_index(g, 'NB', 'v')
+        create_edge_range_index(g, 'RB', 'w')
+        if native_only:
+            # RediSearch has nothing to build, so the index is ready as soon as CREATE INDEX
+            # returns. Until the build hands back its ticket the index says UNDER CONSTRUCTION
+            # and the planner does not use it.
+            res = g.ro_query("CALL db.indexes() YIELD label, status "
+                             "WHERE label IN ['NB', 'RB'] RETURN label, status ORDER BY label")
+            self.env.assertEqual(res.result_set, [['NB', 'OPERATIONAL'], ['RB', 'OPERATIONAL']])
+        # A RediSearch build runs in the background; it has to finish before the reading shows it.
+        wait_for_indices_to_sync(g)
+        after_build = redisearch_mb()
+
+        # The build after an RDB load.
+        self.env.dumpAndReload()
+        after_reload = redisearch_mb()
+
         if native_only:
             self.env.assertEqual(after_nodes, 0)
-            self.env.assertEqual(after_edges, 0)
+            self.env.assertEqual(after_writes, 0)
+            self.env.assertEqual(after_build, 0)
+            self.env.assertEqual(after_reload, 0)
         else:
             self.env.assertGreater(after_nodes, 0)
-            self.env.assertGreater(after_edges, after_nodes)
+            self.env.assertGreater(after_writes, after_nodes)
+            self.env.assertGreater(after_build, before_build)
+            self.env.assertGreater(after_reload, 0)
 
-        # Filtering is per field, not per index: a label with both kinds keeps its Fulltext half.
+        # Both builds still leave an index the planner uses and that answers.
+        for q, scan in [("MATCH (n:NB) WHERE n.v = 7 RETURN n.v", "Node By Index Scan"),
+                        ("MATCH ()-[r:RB]->() WHERE r.w = 7 RETURN r.w", "Edge By Index Scan")]:
+            self.env.assertContains(scan, str(g.explain(q)))
+            self.env.assertEqual(g.query(q).result_set, [[7]])
+
+        # Filtering is per field, not per index: a label with both kinds keeps its Fulltext half,
+        # whether its document came from a write (NFT) or a build (NFB), and after a reload.
         create_node_fulltext_index(g, 'NFT', 't', sync=True)
         create_node_range_index(g, 'NFT', 'v', sync=True)
         g.query("CREATE (:NFT {t: 'needle', v: 1})")
-        res = g.query("CALL db.idx.fulltext.queryNodes('NFT', 'needle') YIELD node RETURN node.v")
-        self.env.assertEqual(res.result_set, [[1]])
+        g.query("CREATE (:NFB {t: 'needle', v: 2})")
+        create_node_fulltext_index(g, 'NFB', 't', sync=True)
+        create_node_range_index(g, 'NFB', 'v', sync=True)
+        for reload in [False, True]:
+            if reload:
+                self.env.dumpAndReload()
+            for label, v in [('NFT', 1), ('NFB', 2)]:
+                q = f"CALL db.idx.fulltext.queryNodes('{label}', 'needle') YIELD node RETURN node.v"
+                self.env.assertEqual(g.query(q).result_set, [[v]])
         g.delete()
