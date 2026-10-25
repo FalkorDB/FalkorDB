@@ -2,53 +2,41 @@
 # to compile libfalkordb.so, GraphBLAS, LAGraph, and to run flow / bench
 # tests. NOT shipped to users.
 #
-# We build redis-server / redis-cli from a git clone of the pinned tag
-# rather than inheriting `FROM redis:${REDIS_VERSION}`. This:
-#   * gives us the SAME redis binary across the toolchain image, the
-#     release runtime image (build/runtime/Dockerfile) and the coverage
-#     runtime image (build/runtime/Dockerfile.coverage) — all three use
-#     the same git tag, same flags, same protected-mode + jemalloc tweaks.
+# We build redis-server / redis-cli and valkey-server / valkey-cli from git
+# clones of the pinned tags (build/build-server.sh) rather than inheriting
+# `FROM redis:${REDIS_VERSION}`. This:
+#   * gives us the SAME server binaries across the toolchain image, the
+#     release runtime images (build/runtime/Dockerfile{,.rhel9,.amazonlinux2023})
+#     and the coverage runtime image (build/runtime/Dockerfile.coverage) — all
+#     use the same git tags, same flags, same protected-mode + jemalloc tweaks.
 #   * keeps consistency with build/runtime/Dockerfile.asan which already
-#     builds its own (ASAN-instrumented) redis from git.
+#     builds its own (ASAN-instrumented) server from git.
 #   * removes the implicit dependency on upstream's redis: image metadata
 #     (entrypoint, gosu, redis user) which we override anyway.
 #
-# Keep REDIS_VERSION in sync with build/runtime/Dockerfile so all images
-# carry the same redis revision.
+# The versions match every other Dockerfile that builds a server;
+# build/check-server-pins.sh enforces it in CI.
 ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.1.2
 
-FROM debian:trixie-slim AS redis-builder
-ARG REDIS_VERSION
+FROM debian:trixie-slim AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+        ca-certificates git gcc g++ libc6-dev libssl-dev make; \
     rm -rf /var/lib/apt/lists/*
-WORKDIR /tmp
-RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
-WORKDIR /tmp/redis-src
-RUN set -eux; \
-    # Mirror upstream redis image's protected-mode default flip (1 → 0) so
-    # `docker run`s of any downstream image accept connections out-of-the-box.
-    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
-    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
-    # Match upstream redis image's jemalloc page-size tuning so behaviour
-    # is identical across all kernels regardless of build host.
-    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
-    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    extraJemallocConfigureFlags="--build=$gnuArch"; \
-    case "${arch##*-}" in \
-        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
-        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
-    esac; \
-    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
-    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
-    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
-    make -j "$(nproc)" all; \
-    make PREFIX=/redis-install install; \
-    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
-    /redis-install/bin/redis-server --version
+COPY ./build/build-server.sh /usr/local/bin/build-server
+
+FROM server-builder-base AS redis-builder
+ARG REDIS_VERSION
+RUN build-server redis "${REDIS_VERSION}" /server-install
+
+# This image ships both servers side by side, so valkey's redis-* aliases are
+# left out: redis-server here is the real Redis.
+FROM server-builder-base AS valkey-builder
+ARG VALKEY_VERSION
+RUN REDIS_ALIASES=no build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
 # deps-base: everything the native dependency builds need, and nothing else.
@@ -168,13 +156,18 @@ RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- redisearch
 # ---------------------------------------------------------------------------
 FROM deps-base
 
-# Install the self-built redis-server / redis-cli at the same path the
-# upstream `redis:` image used (/usr/local/bin), so callers like
-# tests/common.py:52 ("/usr/local/bin/redis-server") and RLTest's PATH
-# lookup pick them up transparently.
-COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
-COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
-RUN redis-server --version && redis-cli --version
+ARG REDIS_VERSION
+ARG VALKEY_VERSION
+
+# Install the self-built servers at the same path the upstream `redis:` image
+# used (/usr/local/bin), so tests/common.py ("/usr/local/bin/redis-server",
+# or valkey-server with FALKORDB_SERVER=valkey) and RLTest's PATH lookup
+# pick them up transparently. Directory COPYs, so the sentinel/check-*
+# symlinks come along.
+COPY --from=redis-builder  /server-install/ /usr/local/
+COPY --from=valkey-builder /server-install/ /usr/local/
+RUN redis-server --version | grep -F " v=${REDIS_VERSION} " && redis-cli --version && \
+    valkey-server --version | grep -F " v=${VALKEY_VERSION} " && valkey-cli --version
 
 # ---- test-harness convenience, BELOW the dep branch point ----
 # Everything from here down can churn freely without rebuilding a dep.

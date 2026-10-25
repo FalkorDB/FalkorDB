@@ -1,9 +1,16 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
-# Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
-# to ship against a different redis release without editing the Dockerfile.
+# Which server the image ships FalkorDB on: `redis` (default) or `valkey`.
+# Selects the `server-${SERVER}` stage below; the other server's builder stage
+# is never built.
+ARG SERVER=redis
+# Server versions. Override via `--build-arg REDIS_VERSION=X.Y.Z` /
+# `--build-arg VALKEY_VERSION=X.Y.Z` to ship against a different release
+# without editing the Dockerfile. Every Dockerfile that builds a server pins
+# the same versions; build/check-server-pins.sh enforces it in CI.
 ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.1.2
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -61,81 +68,48 @@ FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
 
 # ---------------------------------------------------------------------------
-# Redis builder stage — debian:trixie-slim + minimal build deps.
+# Server builder stages — debian:trixie-slim + minimal build deps.
 #
-# We build redis-server / redis-cli ourselves on debian:trixie-slim instead
-# of inheriting `FROM redis:${REDIS_VERSION}` for two reasons:
+# We build the server binaries ourselves (build/build-server.sh, shared with
+# every other image that ships a server) instead of inheriting
+# `FROM redis:${REDIS_VERSION}` / `FROM valkey/valkey`, for two reasons:
 #
 #   1. The upstream redis image bakes a ~60 MB build-toolchain layer
 #      (gcc, g++, cmake, clang, python, rust) that is `apt-get purge`d in
 #      the same RUN — purged binaries don't shrink the layer tarball, so
-#      that 60 MB ships in every pull. Discarding this entire stage drops
+#      that 60 MB ships in every pull. Discarding these stages drops
 #      the waste.
 #
-#   2. The upstream image also ships the bundled stack modules
+#   2. The upstream redis image also ships the bundled stack modules
 #      (redisearch, rejson, redistimeseries, redisbloom — ~25 MB combined).
 #      run.sh only `--loadmodule`s falkordb.so so those modules are dead
-#      weight. A plain clone of the redis tag carries no module sources —
-#      since 8.10 the bundled modules are cloned on demand by
-#      `make modules-update`, so the default build is redis-only and the
-#      rust toolchain those modules pull in is never needed.
-#      (BUILD_WITH_MODULES=no below is the pre-8.10 spelling of the same
-#      intent; harmless now, and kept so the recipe still builds
-#      redis-only if REDIS_VERSION is pinned back to an 8.6.x tag.)
+#      weight; a plain build of the tag carries none of them.
 #
-# Trade-off: we are now the SBOM/CVE publisher for the redis binaries,
+# Trade-off: we are now the SBOM/CVE publisher for the server binaries,
 # losing the upstream image's attestation chain. Acceptable for a DB
 # vendor distribution.
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS redis-builder
-
-ARG REDIS_VERSION
-
+FROM debian:trixie-slim AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+        ca-certificates git gcc g++ libc6-dev libssl-dev make; \
     rm -rf /var/lib/apt/lists/*
+COPY ./build/build-server.sh /usr/local/bin/build-server
 
-WORKDIR /tmp
-# Clone the immutable upstream tag — same pattern as Dockerfile.asan.
-# --depth 1 keeps the fetch small; the tag ref is content-addressed by git
-# so no separate SHA pin is required.
-RUN set -eux; \
-    git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+FROM server-builder-base AS redis-builder
+ARG REDIS_VERSION
+RUN build-server redis "${REDIS_VERSION}" /server-install
 
-WORKDIR /tmp/redis-src
-RUN set -eux; \
-    # Mirror the upstream image's protected-mode default flip (1 → 0)
-    # — docker users supply auth/network controls externally.
-    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
-    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
-    # Bundled jemalloc page-size tuning to match upstream image.
-    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
-    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    extraJemallocConfigureFlags="--build=$gnuArch"; \
-    case "${arch##*-}" in \
-        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
-        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
-    esac; \
-    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
-    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
-    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
-    make -j "$(nproc)" all; \
-    make PREFIX=/redis-install install; \
-    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
-    /redis-install/bin/redis-server --version; \
-    /redis-install/bin/redis-cli --version
+FROM server-builder-base AS valkey-builder
+ARG VALKEY_VERSION
+RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
 # Runtime image — debian:trixie-slim, no build tools.
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS server
-
-# BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
-# stage that consumes them, else they expand to empty.
-ARG TARGETPLATFORM
+FROM debian:trixie-slim AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -151,7 +125,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #
 # Required at runtime:
 #   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
-#   libssl3                         : redis-server with BUILD_TLS=yes
+#   libssl3                         : the server, built with BUILD_TLS=yes
 #   gosu                            : run.sh drops root to `falkordb`; the
 #                                     browser entrypoint drops to nextjs
 #
@@ -163,9 +137,10 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 gosu; \
     apt-get upgrade -y; \
-    # Create the falkordb user/group, which run.sh runs redis-server as,
+    # Create the falkordb user/group, which run.sh runs the server as,
     # BEFORE purging `passwd` (which provides groupadd/useradd). uid/gid 999
-    # is the upstream redis image's, so bind-mount permissions carry over.
+    # is the upstream redis (and valkey) image's, so bind-mount permissions
+    # carry over.
     groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb; \
     # The `full` stage below runs the bundled browser as nextjs:nodejs (1001),
     # the uid/gid baked into the falkordb-browser image. useradd/groupadd only
@@ -190,20 +165,6 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
-# Pull only the binaries from the redis-builder stage — no build toolchain,
-# no bundled modules, no jemalloc build artefacts.
-COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
-COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
-
-# `make install` also creates redis-sentinel / redis-check-rdb / redis-check-aof
-# as symlinks to redis-server — the binary picks its mode from argv[0]. They are
-# recreated here rather than COPY'd (COPY dereferences symlinks, which would
-# triple the binary's size) so the image keeps the entry points the upstream
-# redis image — and every previous FalkorDB image — provides, at zero size cost.
-RUN ln -s redis-server /usr/local/bin/redis-sentinel && \
-    ln -s redis-server /usr/local/bin/redis-check-rdb && \
-    ln -s redis-server /usr/local/bin/redis-check-aof
-
 # root:falkordb 0775: `falkordb` writes through the group (after run.sh drops
 # to it, or under --user 999), and root still owns them, so a root process
 # with no capabilities (--cap-drop ALL, where run.sh cannot drop) can still
@@ -214,6 +175,33 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} 
     chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
+# Pull only the server tree from the builder stage — no build toolchain, no
+# bundled modules, no jemalloc build artefacts. build-server.sh also lays down
+# the <server>-sentinel / -check-rdb / -check-aof entry points (and on valkey
+# the redis-* aliases, so scripts and healthchecks written for the redis image
+# keep working) as symlinks: the directory COPY keeps them, at zero size cost.
+# FALKORDB_SERVER is what run.sh execs (`${FALKORDB_SERVER}-server`).
+FROM server-base AS server-redis
+ARG REDIS_VERSION
+ENV FALKORDB_SERVER=redis \
+    FALKORDB_SERVER_VERSION=${REDIS_VERSION}
+COPY --from=redis-builder /server-install/ /usr/local/
+
+FROM server-base AS server-valkey
+ARG VALKEY_VERSION
+ENV FALKORDB_SERVER=valkey \
+    FALKORDB_SERVER_VERSION=${VALKEY_VERSION}
+COPY --from=valkey-builder /server-install/ /usr/local/
+
+FROM server-${SERVER} AS server
+
+# BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
+# stage that consumes them, else they expand to empty.
+ARG TARGETPLATFORM
+
+LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
+      com.falkordb.server.version="${FALKORDB_SERVER_VERSION}"
+
 WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
@@ -222,20 +210,26 @@ RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Runtime-stage sanity (cheap belt-and-braces; the load-bearing checks are in
-# the builder stage where binutils is available). Verify falkordb.so deps and
-# that every redis entry point this image is expected to ship is present and
-# runnable in this base — the sentinel/check-* symlinks are covered here so a
-# future COPY-only refactor cannot silently drop them again (issue #2827).
+# the builder stage where binutils is available). Verify falkordb.so deps,
+# that the shipped server is the one the labels name, and that every entry
+# point this image is expected to ship is present and runnable in this base —
+# the sentinel/check-* symlinks are covered here so a future COPY-only
+# refactor cannot silently drop them again (issue #2827).
 RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" && \
     echo "$deps" && \
     if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: forbidden dyn dep in final image"; exit 1; \
     fi && \
-    redis-server --version && \
-    redis-cli --version && \
-    redis-sentinel --version && \
-    redis-check-rdb --version && \
-    redis-check-aof --version
+    "${FALKORDB_SERVER}-server" --version | grep -F " v=${FALKORDB_SERVER_VERSION} " && \
+    for name in "${FALKORDB_SERVER}" redis; do \
+        for tool in server cli sentinel check-aof; do \
+            "${name}-${tool}" --version || exit 1; \
+        done; \
+        # valkey-check-rdb reads --version only after a file argument, and
+        # otherwise checks a file named "--version": either reply proves the
+        # entry point runs in check-rdb mode.
+        "${name}-check-rdb" --version 2>&1 | grep -E 'check-rdb|Checking RDB file' || exit 1; \
+    done
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
@@ -244,8 +238,8 @@ ENV ARCH=${TARGETPLATFORM} \
 
 EXPOSE 6379/tcp
 
-# run.sh is self-contained — it execs `redis-server ...` with the right
-# args based on TLS/BROWSER env vars and doesn't forward $@. No CMD
+# run.sh is self-contained — it execs `${FALKORDB_SERVER}-server ...` with the
+# right args based on TLS/BROWSER env vars and doesn't forward $@. No CMD
 # stanza so it's clear that container args are ignored.
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
 
