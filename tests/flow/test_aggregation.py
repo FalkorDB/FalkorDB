@@ -498,3 +498,21 @@ class testAggregations():
                 self.env.assertEqual(sorted(r[1] for r in res), expected, message=q)
         finally:
             g.delete()
+
+    def test_groupby_node_survives_into_next_match(self):
+        """A node grouped by WITH must stay bound for the following MATCH.
+
+        The aggregate used to also publish the pre-projection node at its old
+        slot id. The next clause reuses that id, so the destination looked
+        already bound and the traversal returned no rows.
+        """
+        g = self.db.select_graph("agg-groupby-node")
+        try:
+            g.query("CREATE (:V {id: 1})-[:R]->(:V {id: 2})-[:R]->(:V {id: 3})-[:R]->(:V {id: 4})")
+            query = """MATCH (a:V {id: 1})-[:R]->(x:V)-[:R]->(m:V)
+                       WITH m, count(*) AS c1
+                       MATCH (m)-[r:R]->(b:V {id: 4})
+                       RETURN m.id AS mid, c1, b.id AS bid"""
+            self.env.assertEqual(g.query(query).result_set, [[3, 1, 4]])
+        finally:
+            g.delete()
