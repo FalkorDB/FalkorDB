@@ -278,6 +278,29 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+  native-index:
+    # The native index (`index-falkordb`) is off by default, so `lint` and
+    # `coverage` never compile it: its unit tests and its lints run only here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "native-index"
+      - name: Lint
+        run: |
+          CXX=clang++-23 cargo clippy --all-targets --features index-falkordb
+      - name: Unit tests
+        run: cargo test -p graph --features index-falkordb
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -439,6 +462,7 @@ jobs:
       - flow-test-matrix
       - ci-pipeline
       - lint
+      - native-index
       - coverage
       - fuzz
     steps:
