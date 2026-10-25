@@ -1,6 +1,10 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG TARGETPLATFORM=linux/amd64
+# Which server the image runs, and the server releases: the same as
+# build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
+ARG SERVER=redis
 ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.1.2
 
 # Stage 1: chef/planner — same cache split as the regular Dockerfile so a
 # source-only change skips the dep cook.
@@ -31,44 +35,29 @@ COPY . .
 RUN CXX=clang++-23 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
     mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
 
-# Stage 3: redis-builder — stock redis on debian:trixie-slim. Coverage
-# instrumentation lives in the .so only (LLVM_PROFILE_FILE writes profraw
-# from rustc -C instrument-coverage), so redis-server itself is uninstrumented.
-# Mirrors the redis-builder stage in build/runtime/Dockerfile — duplicated
-# rather than shared because Docker has no native include mechanism.
-FROM debian:trixie-slim AS redis-builder
-ARG REDIS_VERSION
+# Stage 3: server builders — the stock server on debian:trixie-slim, by the
+# same build/build-server.sh as build/runtime/Dockerfile. Coverage
+# instrumentation lives in the .so only (LLVM_PROFILE_FILE writes profraw from
+# rustc -C instrument-coverage), so the server itself is uninstrumented. Only
+# the builder the SERVER arg selects is built.
+FROM debian:trixie-slim AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+        ca-certificates git gcc g++ libc6-dev libssl-dev make; \
     rm -rf /var/lib/apt/lists/*
-WORKDIR /tmp
-RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
-WORKDIR /tmp/redis-src
-RUN set -eux; \
-    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
-    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
-    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
-    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    extraJemallocConfigureFlags="--build=$gnuArch"; \
-    case "${arch##*-}" in \
-        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
-        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
-    esac; \
-    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
-    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
-    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
-    make -j "$(nproc)" all; \
-    make PREFIX=/redis-install install; \
-    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
-    /redis-install/bin/redis-server --version
+COPY ./build/build-server.sh /usr/local/bin/build-server
 
-FROM debian:trixie-slim AS server
+FROM server-builder-base AS redis-builder
+ARG REDIS_VERSION
+RUN build-server redis "${REDIS_VERSION}" /server-install
 
-ARG TARGETPLATFORM
+FROM server-builder-base AS valkey-builder
+ARG VALKEY_VERSION
+RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
+FROM debian:trixie-slim AS server-base
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
     FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
@@ -96,9 +85,25 @@ RUN apt-get update && \
     (dpkg --purge passwd || true) && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Pull only the redis binaries from the redis-builder stage.
-COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
-COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+# The server tree, symlinked entry points included, as in the release image.
+FROM server-base AS server-redis
+ARG REDIS_VERSION
+ENV FALKORDB_SERVER=redis \
+    FALKORDB_SERVER_VERSION=${REDIS_VERSION}
+COPY --from=redis-builder /server-install/ /usr/local/
+
+FROM server-base AS server-valkey
+ARG VALKEY_VERSION
+ENV FALKORDB_SERVER=valkey \
+    FALKORDB_SERVER_VERSION=${VALKEY_VERSION}
+COPY --from=valkey-builder /server-install/ /usr/local/
+
+FROM server-${SERVER} AS server
+
+ARG TARGETPLATFORM
+
+LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
+      com.falkordb.server.version="${FALKORDB_SERVER_VERSION}"
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -109,7 +114,7 @@ COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Instrumentation runtime: every llvm-cov-aware binary writes profraw files
 # named per the LLVM_PROFILE_FILE template. %p = pid, %m = module hash; both
-# substitutions are needed because redis forks (BGSAVE / RDB) and the test
+# substitutions are needed because the server forks (BGSAVE / RDB) and the test
 # loads the module fresh per Env(). FALKORDB_COV_PATH should be bind-mounted
 # from the host so the test job can collect the files after the run.
 ENV ARCH=${TARGETPLATFORM} \
