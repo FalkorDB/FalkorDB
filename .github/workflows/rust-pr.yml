@@ -87,7 +87,7 @@ jobs:
         #     stack rebuilds the tag for this PR.
         run: |
           set -euo pipefail
-          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
+          PATTERN="^(build/Dockerfile|build/build-server\.sh|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
           if [ "$EVENT" = "merge_group" ]; then
             RANGE="HEAD~1 HEAD"
           else
@@ -278,6 +278,8 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+      - name: Server pins agree across Dockerfiles
+        run: build/check-server-pins.sh
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40
