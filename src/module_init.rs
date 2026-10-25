@@ -136,7 +136,7 @@ unsafe extern "C" fn on_fork_child() {
     }
 }
 
-/// Point this module's view of `environ` at the process's live environment.
+/// Point this module's view of `environ` at a snapshot of the live environment.
 ///
 /// Valkey `dlopen`s modules with `RTLD_DEEPBIND`, so the module and its
 /// dependencies (notably libomp) bind `environ` to libc's own definition
@@ -168,11 +168,27 @@ unsafe fn sync_deepbind_environ() {
         let live = libc::dlsym(main, c"environ".as_ptr()).cast::<*mut *mut libc::c_char>();
         libc::dlclose(main);
         let ours = &raw mut environ;
-        if !live.is_null() && live != ours {
-            // SAFETY: both point to `char **environ` objects; this runs on the
-            // main thread during module load, before any thread reads it.
-            *ours = *live;
+        if live.is_null() || live == ours {
+            return;
         }
+        // Install an owned, leaked snapshot rather than aliasing `*live`: the
+        // live array is typically the one glibc's `setenv` allocated, so a
+        // later `setenv` (e.g. libomp registering itself) may `realloc` it and
+        // leave `*ours` dangling. glibc never frees the strings themselves, so
+        // copying the pointer array is enough to keep the snapshot valid.
+        let src = *live;
+        let mut len = 0;
+        while !src.is_null() && !(*src.add(len)).is_null() {
+            len += 1;
+        }
+        let mut snapshot: Vec<*mut libc::c_char> = Vec::with_capacity(len + 1);
+        if len > 0 {
+            snapshot.extend_from_slice(std::slice::from_raw_parts(src, len));
+        }
+        snapshot.push(std::ptr::null_mut());
+        // SAFETY: `ours` points to libc's `char **environ`; this runs on the
+        // main thread during module load, before any thread reads it.
+        *ours = Box::leak(snapshot.into_boxed_slice()).as_mut_ptr();
     }
 }
 
