@@ -36,10 +36,15 @@ RUN apt install -y \
     llvm-23-tools \
     lld-23 \
     redis-server \
+    valkey-server \
     sudo
 
-# Symlink redis-server to /usr/local/bin for tests that expect it there
-RUN ln -sf /usr/bin/redis-server /usr/local/bin/redis-server
+# Symlink the servers to /usr/local/bin for tests that expect them there
+# (tests/common.py picks one with FALKORDB_SERVER). Ubuntu's valkey-server
+# copy-relocates `environ`, which the module only survives with the
+# RTLD_DEEPBIND fix from #3494.
+RUN ln -sf /usr/bin/redis-server /usr/local/bin/redis-server && \
+    ln -sf /usr/bin/valkey-server /usr/local/bin/valkey-server
 
 # Create clang/clang++ symlinks so scripts that reference unversioned names work
 RUN ln -sf /usr/bin/clang-23 /usr/local/bin/clang && \
