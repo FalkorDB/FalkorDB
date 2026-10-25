@@ -294,3 +294,73 @@ class testVecsim():
         g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
         self.env.assertEqual(knn_tags(v), ['B'])
 
+    def test10_concurrent_knn_no_duplicates(self):
+        # regression: concurrent read-only KNN queries over the same vector
+        # index used to share the HNSW visited-nodes state, so a node could be
+        # visited twice within one search and returned twice in a single page,
+        # each duplicate displacing a genuine neighbour.
+        # See https://github.com/FalkorDB/FalkorDB/issues/2848
+        import random
+        import threading
+
+        random.seed(7)
+
+        GRAPH_ID = "vecsim_concurrent"
+        DIM = 8
+        N = 2000
+        K = 160
+        ROUNDS = 20
+
+        g = Graph(self.conn, GRAPH_ID)
+
+        def rand_vec():
+            return [random.gauss(0, 1) for _ in range(DIM)]
+
+        # populate the graph
+        for i in range(0, N, 500):
+            g.query("UNWIND $rows AS row CREATE (:Doc {id: row.id, emb: vecf32(row.emb)})",
+                    params={'rows': [{'id': f"d{j}", 'emb': rand_vec()}
+                                     for j in range(i, min(i + 500, N))]})
+
+        g.create_node_vector_index("Doc", "emb", dim=DIM,
+                                   similarity_function="cosine")
+        wait_for_indices_to_sync(g)
+
+        knn_query = """CALL db.idx.vector.queryNodes('Doc', 'emb', $k, vecf32($q))
+                       YIELD node, score
+                       RETURN node.id AS id, score
+                       ORDER BY score ASC"""
+
+        # hammer the same index with KNN queries over a separate connection
+        other_conn = redis.Redis("localhost", self.env.port)
+        other_graph = FalkorDB(host="localhost", port=self.env.port).select_graph(GRAPH_ID)
+        stop = threading.Event()
+
+        def hammer():
+            q = [0.0] * DIM
+            while not stop.is_set():
+                other_graph.query(knn_query, params={'k': 1, 'q': q})
+
+        hammer_thread = threading.Thread(target=hammer)
+        hammer_thread.start()
+
+        try:
+            duplicate_pages = 0
+            worst_unique = K
+            for _ in range(ROUNDS):
+                ids = [row[0] for row in g.query(knn_query,
+                                                 params={'k': K, 'q': rand_vec()}).result_set]
+                unique = len(set(ids))
+                self.env.assertEqual(len(ids), K)
+                if unique != len(ids):
+                    duplicate_pages += 1
+                    worst_unique = min(worst_unique, unique)
+        finally:
+            stop.set()
+            hammer_thread.join()
+
+        self.env.assertEqual(duplicate_pages, 0,
+                             message=f"{duplicate_pages}/{ROUNDS} concurrent KNN pages "
+                                     f"contained duplicate ids "
+                                     f"(worst page: {worst_unique} unique of {K})")
+
