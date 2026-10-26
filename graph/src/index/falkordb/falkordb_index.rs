@@ -112,7 +112,7 @@ impl IndexColumn {
         }
     }
 
-    /// Add already-encoded tuples (a unit of work's collapsed adds, or a build step's batch).
+    /// Add already-encoded tuples (a unit of work's collapsed adds, or an indexer batch).
     pub fn add_encoded(
         &mut self,
         tuples: &mut EncodedTuples,
@@ -143,38 +143,62 @@ impl IndexColumn {
 
 /// Build state of a column.
 ///
-/// A column is filled in steps. Each reads the next batch of the label's entities at the values
-/// they hold *then* ([`graph_writes::read_build_batch_of`](super::graph_writes::read_build_batch_of)),
-/// adds them, and moves the cursor past them ([`apply_build`](FalkorDbIndex::apply_build)). The
-/// step that reaches the end flips the column [`Ready`](Self::Ready). While
-/// [`Building`](Self::Building), the read path returns `None` and falls through to RediSearch.
-/// `CREATE INDEX` takes one step over every entity, so its column is `Ready` when it returns.
+/// A column is filled by indexer batches. Each reads the label's next entities from the cursor at
+/// the values they hold *then*
+/// ([`graph_writes::read_indexer_batch_of`](super::graph_writes::read_indexer_batch_of)), adds
+/// them, and moves the cursor past them
+/// ([`apply_indexer_batch`](FalkorDbIndex::apply_indexer_batch)). The batch that reaches the end
+/// flips the column [`Ready`](Self::Ready). While [`Building`](Self::Building), the read path
+/// returns `None` and falls through to RediSearch. `CREATE INDEX` takes one batch over every
+/// entity, so its column is `Ready` when it returns.
 ///
-/// Live writes maintain the column as usual, including for entities no step has reached yet: a
-/// step that reaches one later reads its current value, and adding a tuple the column already
-/// holds is a no-op. A removed tuple the column never held is a no-op too. This is how C populates
-/// an index (`src/index/index_construct.c`), in batches interleaved with writes.
+/// A `Building` column holds exactly the current tuples of the entities below its cursor, and
+/// nothing at or above it. Live writes keep that true: a change to an entity below the cursor is
+/// applied, and a change to one at or above it is not, since the batch that reaches the entity
+/// reads its value then ([`FalkorDbIndex::apply`]). This is how C populates an index
+/// (`src/index/index_construct.c`), in batches interleaved with writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnState {
     /// Some of the label's entities are not indexed yet — reads fall through to RediSearch. `next`
-    /// is where the next step resumes.
+    /// is where the next indexer batch resumes.
     Building { next: BuildCursor },
     /// Every entity is indexed — the column serves reads.
     Ready,
 }
 
-/// Where a building column's next step resumes: the first entity no step has indexed yet.
+/// Where a building column's next indexer batch resumes: the first entity no batch has indexed
+/// yet. Also an entity's place in that order, to compare with it ([`Self::precedes`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildCursor {
     /// A node column's next node.
     Node(NodeId),
-    /// An edge column's next `(src, dst)` pair, so a source with more edges than one step reads
-    /// can be resumed partway, as C does. A step always finishes the multi-edge pair it stops in,
+    /// An edge column's next `(src, dst)` pair, so a source with more edges than one batch reads
+    /// can be resumed partway, as C does. A batch always finishes the multi-edge pair it stops in,
     /// so every edge of an earlier pair is indexed.
     Edge { src: NodeId, dst: NodeId },
 }
 
 impl BuildCursor {
+    /// Whether this entity's place comes before `next`, a column's cursor: whether a batch has
+    /// indexed it. A node by its id; an edge by its `(src, dst)` pair, the order batches read
+    /// edges in.
+    pub(crate) fn precedes(
+        self,
+        next: Self,
+    ) -> bool {
+        match (self, next) {
+            (Self::Node(at), Self::Node(next)) => u64::from(at) < u64::from(next),
+            (
+                Self::Edge { src, dst },
+                Self::Edge {
+                    src: nsrc,
+                    dst: ndst,
+                },
+            ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
+            _ => unreachable!("a node and an edge are never in one column"),
+        }
+    }
+
     /// Where the build of a new `entity` column starts: its first node, or its first pair.
     pub(crate) fn new(entity: EntityType) -> Self {
         match entity {
@@ -200,9 +224,9 @@ impl ColumnEntry {
     }
 }
 
-/// One build step's batch: the encoded tuples of column `key` it read, sorted, and where the
-/// column's next step resumes (`None`: the batch reached the end).
-pub(crate) struct BuildBatch {
+/// One indexer batch: the encoded tuples of column `key` it read, sorted, and where the column's
+/// next batch resumes (`None`: the batch reached the end).
+pub(crate) struct IndexerBatch {
     pub(crate) entity: EntityType,
     pub(crate) key: IndexKey,
     pub(crate) tuples: EncodedTuples,
@@ -308,9 +332,9 @@ impl FalkorDbIndex {
     }
 
     /// Create an empty numeric column in the `Building` state, its cursor at the start, replacing
-    /// any existing one. Live writes maintain the column from now on, build steps fill in the
-    /// entities that already exist, and reads fall through to RediSearch until the last step flips
-    /// it `Ready`.
+    /// any existing one. Indexer batches fill it from the start, live writes keep the part below
+    /// the cursor current, and reads fall through to RediSearch until the last batch flips it
+    /// `Ready`.
     pub fn create_building(
         &mut self,
         entity: EntityType,
@@ -491,23 +515,31 @@ impl FalkorDbIndex {
     /// `self` must be the index of the private version the changes were staged against. The index
     /// is part of the graph version, so a version that is later refused takes these changes down
     /// with it.
+    ///
+    /// `place` gives an entity's place in build order, or `None` if the version no longer knows
+    /// it, as for an edge it deleted: only a `Building` column asks. It applies a change only to
+    /// an entity below its cursor, and a removal of an entity with no place, which takes out a
+    /// tuple if the column holds one.
     pub(crate) fn apply(
         &mut self,
         writes: &mut PendingIndexWrites,
+        place: impl Fn(EntityType, u64) -> Option<BuildCursor>,
     ) {
         if writes.is_empty() {
             return;
         }
-        self.apply_writes(EntityType::Node, writes.drain(EntityType::Node));
+        self.apply_writes(EntityType::Node, writes.drain(EntityType::Node), &place);
         self.apply_writes(
             EntityType::Relationship,
             writes.drain(EntityType::Relationship),
+            &place,
         );
     }
 
     /// One entity kind's part of [`apply`](Self::apply): per column, collapse each tuple's
-    /// history to its last change ([`last_write_wins`]), then **remove** what ended removed and
-    /// **add** what ended added, one batched tree op each.
+    /// history to its last change ([`last_write_wins`]), keep, on a `Building` column, only the
+    /// changes to entities below its cursor, then **remove** what ended removed and **add** what
+    /// ended added, one batched tree op each.
     ///
     /// After the collapse the two sides are disjoint, so their order no longer matters; removes
     /// still go first. A column dropped since its changes were staged is skipped.
@@ -515,6 +547,7 @@ impl FalkorDbIndex {
         &mut self,
         entity: EntityType,
         writes: impl IntoIterator<Item = (IndexKey, Vec<IndexWrite>)>,
+        place: &impl Fn(EntityType, u64) -> Option<BuildCursor>,
     ) {
         let columns = self.columns_mut(entity);
         // One pair of buffers for the whole unit of work, reused column to column.
@@ -524,6 +557,14 @@ impl FalkorDbIndex {
                 continue;
             };
             last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
+            if let ColumnState::Building { next } = entry.state {
+                // A batch reads an entity at or above the cursor when it reaches it.
+                let indexed =
+                    |&(_, id): &(u64, u64)| place(entity, id).is_none_or(|at| at.precedes(next));
+                removes.scalar.retain(indexed);
+                adds.scalar
+                    .retain(|tuple| place(entity, tuple.1).is_some_and(|at| at.precedes(next)));
+            }
             entry.column.remove_encoded(&mut removes);
             entry.column.add_encoded(&mut adds);
         }
@@ -568,12 +609,12 @@ impl FalkorDbIndex {
         self.entry(entity, label, attr).map(|entry| entry.state)
     }
 
-    /// Apply one build step to this version: add the batch's tuples, read from this version, then
-    /// move the cursor to `batch.next`, or flip the column `Ready` when it is `None`. `false`,
-    /// changing nothing, if the column is gone or no longer `Building`.
-    pub(crate) fn apply_build(
+    /// Apply one indexer batch to this version: add its tuples, read from this version, then move
+    /// the cursor to `batch.next`, or flip the column `Ready` when it is `None`. `false`, changing
+    /// nothing, if the column is gone or no longer `Building`.
+    pub(crate) fn apply_indexer_batch(
         &mut self,
-        mut batch: BuildBatch,
+        mut batch: IndexerBatch,
     ) -> bool {
         let Some(entry) = self.columns_mut(batch.entity).get_mut(&batch.key) else {
             return false;
@@ -664,12 +705,16 @@ mod tests {
         }
         let mut writes = PendingIndexWrites::default();
         writes.extend(staged);
-        idx.apply(&mut writes);
+        idx.apply(&mut writes, |_, id| {
+            Some(BuildCursor::Node(NodeId::from(id)))
+        });
     }
 
     /// The build state machine at the column level. A `Building` column gates reads (returns
-    /// `None`, so the caller falls back) while live writes and build steps both fill it; the step
-    /// that reaches the end flips it `Ready`, and from then on a step changes nothing.
+    /// `None`, so the caller falls back) while indexer batches fill it. A live write reaches it
+    /// only below the cursor: one at or above is left to the batch that reaches the entity. The
+    /// batch that reaches the end flips the column `Ready`, and from then on a batch changes
+    /// nothing.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -682,6 +727,13 @@ mod tests {
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
             idx.query_numeric(Node, &label, &eq(v))
                 .map_or_else(Vec::new, Iterator::collect)
+        };
+        // What the column holds for `v`, whatever its state.
+        let holds = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
+            idx.numeric(Node, &label, &attr)
+                .unwrap()
+                .point(&Value::Int(v))
+                .collect()
         };
         // `age IN [10, 30]`: a union, gated like any other read.
         let in_10_30 = IndexQuery::InList {
@@ -705,25 +757,24 @@ mod tests {
         );
         assert!(hits(&idx, 10).is_empty(), "empty Building → None");
 
-        // Live writes during the build: node 2 is created with 30, and node 1 goes 20 -> 25
-        // before any step reached it — removing the 20 the column never held is a no-op.
+        // Live writes before any batch: node 2 is created with 30, and node 1 goes 20 -> 25.
+        // Both are at or above the cursor, so the column takes neither.
         write(&mut idx, &label, &attr, &[(30, 2, true)]);
         write(&mut idx, &label, &attr, &[(20, 1, false), (25, 1, true)]);
         assert!(
-            hits(&idx, 30).is_empty(),
-            "still Building → None even with live writes in the column"
+            all(&idx).is_empty(),
+            "writes at or above the cursor wait for the batch"
         );
         assert!(
             idx.query_numeric(Node, &label, &in_10_30).is_none(),
             "an IN list on a Building column falls through too"
         );
 
-        // A step indexes nodes 0..=2 at their current values — including node 1's 25 and node 2's
-        // 30, which the writes already added — and stops before node 3.
+        // A batch indexes nodes 0..=2 at their current values, and stops before node 3.
         let batch = |tuples: Vec<(u64, u64)>, next| {
             let mut tuples = EncodedTuples::scalars(tuples);
             tuples.sort_dedup();
-            BuildBatch {
+            IndexerBatch {
                 entity: Node,
                 key: column.clone(),
                 tuples,
@@ -731,18 +782,35 @@ mod tests {
             }
         };
         let next = BuildCursor::Node(NodeId::from(3));
-        assert!(idx.apply_build(batch(
+        assert!(idx.apply_indexer_batch(batch(
             vec![(key(30), 2), (key(10), 0), (key(25), 1)],
             Some(next),
         )));
         assert_eq!(idx.next_building(), Some((Node, column.clone(), next)));
         assert!(
             hits(&idx, 10).is_empty(),
-            "still Building after a partial step"
+            "still Building after a partial batch"
         );
 
-        // The last step reaches the end.
-        assert!(idx.apply_build(batch(vec![(key(40), 3)], None)));
+        // Now node 1, below the cursor, goes 25 -> 26 and the column takes it at once. Node 3, at
+        // the cursor, gets 45, and node 5, above it, is created with 50: the column takes neither.
+        write(&mut idx, &label, &attr, &[(25, 1, false), (26, 1, true)]);
+        write(&mut idx, &label, &attr, &[(45, 3, true)]);
+        write(&mut idx, &label, &attr, &[(50, 5, true)]);
+        assert_eq!(
+            holds(&idx, 26),
+            vec![1],
+            "a write below the cursor is applied"
+        );
+        assert!(holds(&idx, 25).is_empty());
+        assert!(holds(&idx, 45).is_empty(), "a write at the cursor is not");
+        assert!(
+            holds(&idx, 50).is_empty(),
+            "a write above the cursor is not"
+        );
+
+        // The last batch reaches the end, reading nodes 3 and 5 as they are now.
+        assert!(idx.apply_indexer_batch(batch(vec![(key(45), 3), (key(50), 5)], None)));
         assert!(!idx.has_building_columns());
         assert_eq!(
             idx.column_state(Node, &label, &attr),
@@ -755,26 +823,20 @@ mod tests {
             Some(vec![0, 2]),
             "a Ready column serves the IN list"
         );
-        assert_eq!(hits(&idx, 25), vec![1]);
-        assert!(
-            hits(&idx, 20).is_empty(),
-            "the removed value was never indexed"
-        );
-        assert_eq!(
-            hits(&idx, 30),
-            vec![2],
-            "added by the write and the step, held once"
-        );
-        assert_eq!(all(&idx), vec![0, 1, 2, 3]);
+        assert_eq!(hits(&idx, 26), vec![1]);
+        assert!(hits(&idx, 20).is_empty() && hits(&idx, 25).is_empty());
+        assert_eq!(hits(&idx, 45), vec![3]);
+        assert_eq!(hits(&idx, 50), vec![5]);
+        assert_eq!(all(&idx), vec![0, 1, 2, 3, 5]);
 
-        // A step on a `Ready` column, or on a column that is gone, changes nothing.
-        assert!(!idx.apply_build(batch(vec![(key(99), 9)], None)));
-        assert!(!idx.apply_build(BuildBatch {
+        // A batch on a `Ready` column, or on a column that is gone, changes nothing.
+        assert!(!idx.apply_indexer_batch(batch(vec![(key(99), 9)], None)));
+        assert!(!idx.apply_indexer_batch(IndexerBatch {
             key: (label.clone(), arc("gone")),
             ..batch(vec![(key(99), 9)], None)
         }));
         assert!(hits(&idx, 99).is_empty());
-        assert_eq!(all(&idx), vec![0, 1, 2, 3]);
+        assert_eq!(all(&idx), vec![0, 1, 2, 3, 5]);
     }
 
     #[test]

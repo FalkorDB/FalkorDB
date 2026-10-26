@@ -269,8 +269,8 @@ impl NumericIndex {
         out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
     }
 
-    /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or a build
-    /// step's batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
+    /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or an
+    /// indexer batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
     /// through a many-to-one map. Into an empty index the tuples are bulk-built, as
     /// [`from_entries`](Self::from_entries) does, rather than merged in.
     pub fn add_encoded(

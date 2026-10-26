@@ -83,7 +83,7 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::{FalkorDbIndex, IndexKey},
+    falkordb_index::{BuildCursor, FalkorDbIndex, IndexKey},
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -3778,28 +3778,28 @@ impl Graph {
         )
     }
 
-    /// One index-build step on this version: read the next batch of column `key` of `entity` at
+    /// One indexer batch on this version: read the next entities of column `key` of `entity` at
     /// the values this version holds, at most `entities` nodes or edges, add it to the column and
     /// move the column's cursor. `false`, changing nothing, if the column is not `Building`.
     #[cfg(feature = "index-falkordb")]
-    pub(crate) fn step_column_build(
+    pub(crate) fn index_batch(
         &mut self,
         entity: EntityType,
         key: &IndexKey,
         entities: usize,
     ) -> bool {
-        graph_writes::read_build_batch_of(self, entity, key, entities)
-            .is_some_and(|batch| self.falkordb_index.apply_build(batch))
+        graph_writes::read_indexer_batch_of(self, entity, key, entities)
+            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
     }
 
-    /// [`Self::step_column_build`] of the first `Building` column. For tests of one column.
+    /// [`Self::index_batch`] of the first `Building` column. For tests of one column.
     #[cfg(all(test, feature = "index-falkordb"))]
-    pub(crate) fn step_index_build(
+    pub(crate) fn index_next_batch(
         &mut self,
         entities: usize,
     ) -> bool {
-        graph_writes::read_build_batch(self, entities)
-            .is_some_and(|batch| self.falkordb_index.apply_build(batch))
+        graph_writes::read_indexer_batch(self, entities)
+            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
     }
 
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
@@ -3810,7 +3810,21 @@ impl Graph {
         docs: &mut IndexDocs,
     ) {
         #[cfg(feature = "index-falkordb")]
-        self.falkordb_index.apply(&mut docs.native);
+        {
+            // A `Building` column asks where a written entity sits in build order: a node by its
+            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            let endpoints = &self.edge_endpoints;
+            self.falkordb_index
+                .apply(&mut docs.native, |entity, id| match entity {
+                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
+                    EntityType::Relationship => {
+                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
+                            src: NodeId::from(src),
+                            dst: NodeId::from(dst),
+                        })
+                    }
+                });
+        }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;
     }
