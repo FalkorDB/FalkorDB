@@ -154,14 +154,17 @@ RUN apt-get update && \
 # which pulls llvm-23-dev -> llvm-23 (the package that ships the symbolizer
 # and llvm-objcopy-23, already used by the builder stage above).
 #
-# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-23
-# bin/lib layout makes it self-locating: no LD_LIBRARY_PATH, no ldconfig, and
-# no arch-specific multiarch path to get wrong. 101 KB of binary, and the
+# The /usr/lib/llvm-23 bin/lib layout is kept, and its lib dir registered with
+# the dynamic loader: apt.llvm.org builds have shipped the binary both with a
+# RUNPATH of $ORIGIN/../lib (23.1.4) and with none (23.1.5), so the RUNPATH
+# alone cannot be relied on. The path is the same on every arch: no
+# LD_LIBRARY_PATH and no multiarch triple to get wrong. 101 KB of binary, and the
 # 143 MB libLLVM it links -- which the old `llvm-<major>` install pulled in anyway,
 # on top of ~90 MB of unused llvm tools and the clang/lldb/lld/clangd that
 # llvm.sh drags in by default and the purge above never removed.
 COPY --from=builder /usr/lib/llvm-23/lib/libLLVM.so.23.1 /usr/lib/llvm-23/lib/
 COPY --from=builder /usr/lib/llvm-23/bin/llvm-symbolizer /usr/lib/llvm-23/bin/
+RUN echo /usr/lib/llvm-23/lib > /etc/ld.so.conf.d/llvm-23.conf && ldconfig
 # Fail the build loudly if the closure above ever goes stale -- otherwise a
 # missing .so degrades ASAN output to raw addresses only at test time.
 RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version
