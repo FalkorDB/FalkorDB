@@ -129,7 +129,6 @@ impl<'a> ExpandIntoOp<'a> {
         sibling_edges: &'a [u32],
         g: &Graph,
         pending: &Pending,
-        any_deleted_node: bool,
         iters_ref: &mut Option<Vec<usize>>,
         batch: &Batch<'a>,
         row_idx: usize,
@@ -156,7 +155,7 @@ impl<'a> ExpandIntoOp<'a> {
         // edges are only dropped at commit (`DETACH DELETE` defers them), so
         // without this check e.g. `DETACH DELETE a MERGE (a)-[:R]->(b)` would
         // match an edge that is about to disappear.
-        if any_deleted_node && (pending.is_node_deleted(src) || pending.is_node_deleted(dst)) {
+        if pending.is_node_deleted(src) || pending.is_node_deleted(dst) {
             return Ok(None);
         }
 
@@ -273,7 +272,6 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             let result = {
                 let g = runtime.g.borrow();
                 let pending = runtime.pending.borrow();
-                let any_deleted_node = pending.has_deleted_nodes();
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
                     Self::expand_row(
@@ -283,7 +281,6 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                         sibling_edges,
                         &g,
                         &pending,
-                        any_deleted_node,
                         &mut iters_ref,
                         batch,
                         row_idx,
