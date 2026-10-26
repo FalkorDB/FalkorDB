@@ -399,11 +399,11 @@ impl FalkorDbIndex {
         }
     }
 
-    /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range` leaf. A Range index also holds strings and geo (served by
-    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through, as does a
-    /// missing column (the read
-    /// falls back to a scan — today's `UNDER CONSTRUCTION` behavior). Yields docs — node ids for a node
+    /// Answer an index query for `(entity, label)` from the numeric column. Served: a numeric
+    /// `Equal`/`Range`, an `IN` list whose values are all numeric, and an `OR` of equalities and `IN`
+    /// lists on one attribute. A Range index also holds strings and geo (served by RediSearch), so
+    /// anything else returns `None` to fall through — a non-numeric value, an `And`, an `OR`
+    /// spanning attributes — and so does a missing column. Yields docs — node ids for a node
     /// column, `edge_id`s for an edge column. The read path routes here and falls back on `None`.
     #[must_use]
     pub fn query_numeric(
@@ -412,19 +412,29 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<DocIter> {
-        let (key, numeric) = match query {
-            IndexQuery::Equal { key, value } => (key, encode_numeric(value).is_some()),
-            IndexQuery::Range { key, min, max, .. } => (
-                key,
-                min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
-                    && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()),
-            ),
-            // And / Or / Point (geo) / InList / ArrayContains → not a numeric leaf.
+        // Which column to ask. `Equal`/`Range` are checked here because the column answers a bound
+        // it cannot encode with "no rows" rather than `None`; an `IN` list or an `OR` is checked
+        // by the column itself (`NumericIndex::query`), which declines rather than answer part.
+        let key = match query {
+            IndexQuery::Equal { key, value } if encode_numeric(value).is_some() => key,
+            IndexQuery::Range { key, min, max, .. }
+                if min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
+                    && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()) =>
+            {
+                key
+            }
+            // `n.a IN [...]` names one attribute by construction.
+            IndexQuery::InList { key, .. } => key,
+            // An `OR` is routed by its first member's attribute; the column declines it if any
+            // other member names a different one.
+            IndexQuery::Or(children) => match children.first() {
+                Some(IndexQuery::Equal { key, .. } | IndexQuery::InList { key, .. }) => key,
+                _ => return None,
+            },
+            // A string/geo leaf on a Range index (RediSearch owns those entries), And, Point (geo),
+            // ArrayContains → not a numeric predicate.
             _ => return None,
         };
-        if !numeric {
-            return None; // string / geo on a Range index — RediSearch owns those entries
-        }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
         match &entry.column {
             IndexColumn::Numeric(idx) => idx.query(query),
@@ -606,6 +616,104 @@ mod tests {
         assert!(idx.query_numeric(Node, &label, &other).is_none());
         assert!(
             idx.query_numeric(Relationship, &label, &eq).is_none(),
+            "no edge column of this name"
+        );
+    }
+
+    /// `n.a IN [...]` reaches the facade as one `InList`, and `a IN [..] OR a = ..` as an `Or` of
+    /// lists and equalities. Each must be routed to that attribute's column, and anything that
+    /// cannot be answered whole must be declined. A facade that declined every one would still
+    /// return the right rows, because RediSearch answers instead, so only a test at this level
+    /// notices.
+    #[test]
+    fn query_numeric_serves_in_lists_and_same_attribute_unions() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_numeric(Node, &label, &attr);
+        let column = idx.numeric_mut(Node, &label, &attr).unwrap();
+        column.add(&Value::Int(30), 1);
+        column.add(&Value::Int(40), 2);
+        column.add(&Value::Int(50), 3);
+
+        let in_list = |key: &Arc<String>, values: Vec<Value>| IndexQuery::InList {
+            key: key.clone(),
+            list: Value::List(Arc::new(values.into_iter().collect())),
+        };
+        let ints = |key: &Arc<String>, values: &[i64]| {
+            in_list(key, values.iter().copied().map(Value::Int).collect())
+        };
+        let eq = |key: &Arc<String>, v: i64| IndexQuery::Equal {
+            key: key.clone(),
+            value: Value::Int(v),
+        };
+        // Union order is unspecified, so compare sorted ids.
+        let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
+            idx.query_numeric(entity, &label, q).map(|it| {
+                let mut ids: Vec<u64> = it.collect();
+                ids.sort_unstable();
+                ids
+            })
+        };
+
+        assert_eq!(
+            served(Node, &ints(&attr, &[30, 40])),
+            Some(vec![1, 2]),
+            "an IN list is served from its attribute's column"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![ints(&attr, &[30]), ints(&attr, &[50])])
+            ),
+            Some(vec![1, 3]),
+            "`a IN [..] OR a IN [..]` is served as one union"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![eq(&attr, 40), ints(&attr, &[50])])
+            ),
+            Some(vec![2, 3]),
+            "`a = .. OR a IN [..]` is served as one union"
+        );
+
+        assert_eq!(
+            served(
+                Node,
+                &in_list(
+                    &attr,
+                    vec![Value::Int(30), Value::String(Arc::new("x".to_string()))]
+                )
+            ),
+            None,
+            "a non-numeric value declines the whole list"
+        );
+        assert_eq!(
+            served(Node, &in_list(&attr, Vec::new())),
+            None,
+            "an empty list is declined, not answered with no rows"
+        );
+        assert_eq!(
+            served(
+                Node,
+                &IndexQuery::Or(vec![eq(&attr, 30), eq(&arc("height"), 40)])
+            ),
+            None,
+            "an OR spanning two attributes cannot be answered from one column"
+        );
+        assert_eq!(
+            served(Node, &IndexQuery::Or(vec![])),
+            None,
+            "an empty OR is not match-all"
+        );
+        assert_eq!(
+            served(Node, &ints(&arc("height"), &[30])),
+            None,
+            "no column for the list's attribute"
+        );
+        assert_eq!(
+            served(Relationship, &ints(&attr, &[30, 40])),
+            None,
             "no edge column of this name"
         );
     }
