@@ -1169,3 +1169,17 @@ class testQueryValidationFlow(FlowTestsBase):
             self.env.assertEqual(actual, [['a', 1], ['b', 0]])
         finally:
             g.delete()
+
+    # An error reply used to be built one `char` at a time with `c as u8`, so any
+    # code point whose low byte is 0 -- '一' (U+4E00), 'Ā' (U+0100) -- became a NUL,
+    # and the `CString::new(..).unwrap()` that followed panicked and took Redis down
+    # (#3185); every other non-ASCII character came back as a garbage byte. An error
+    # reply must keep its message's UTF-8 verbatim and never take the server down.
+    def test52_error_reply_keeps_utf8_and_never_crashes(self):
+        con = self.redis_con
+        for cmd in ("GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.EXPLAIN"):
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID,
+                                     "MATCH (n:Person {name:'一'}) RETURN n +")
+            self.env.assertContains("'一'", msg)
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID, "RETURN 'Ā中文' +")
+            self.env.assertContains("Ā中文", msg)
