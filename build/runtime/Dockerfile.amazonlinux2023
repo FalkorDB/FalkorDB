@@ -24,7 +24,7 @@ ARG REDIS_VERSION=8.10.2
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS builder
+FROM amazonlinux:2023.12.20260918.0 AS builder
 
 # Re-declared inside the stage: the pre-FROM `ARG CXX` is global scope and is
 # NOT visible here otherwise, which would silently expand ${CXX} to empty and
@@ -124,7 +124,7 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 # protected-mode off by default, as in the upstream redis image, and the same
 # jemalloc page sizes.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS redis-builder
+FROM amazonlinux:2023.12.20260918.0 AS redis-builder
 
 ARG REDIS_VERSION
 
@@ -156,7 +156,7 @@ RUN set -eux; \
 # Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
 # paths, user, entrypoint and environment -- on amazonlinux:2023.12.20260817.0.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS server
+FROM amazonlinux:2023.12.20260918.0 AS server
 
 # BuildKit auto-ARGs must be re-declared in each stage that consumes them.
 ARG TARGETPLATFORM
