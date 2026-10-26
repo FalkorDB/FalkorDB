@@ -85,8 +85,11 @@ pub fn apply_effects(
     // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
-    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
-    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+    // Both indexes once for the whole buffer: the native index's staged changes, then
+    // RediSearch's documents. A record may undo an earlier one's entry — the cancelled pair, or
+    // an UPDATE followed by a DELETE of the same node — and the native apply keeps only each
+    // entry's last change.
+    g.commit_index_docs(&mut docs);
     Ok(())
 }
 
@@ -211,6 +214,19 @@ fn apply_record(
             rows,
         } => {
             let nodes = ids.to_roaring();
+            // The set is what the id space is told, the list is what the label
+            // and attribute writes below walk; a repeated id makes them describe
+            // different graphs, and the set would silently create one node where
+            // the record names two. Refused, as `create_relationships_bulk`
+            // refuses the same shape for edges.
+            if nodes.len() != u64::from(ids.count()) {
+                return Err(ApplyError::Graph(format!(
+                    "bulk node create got {} ids of which only {} are distinct; \
+                     an id names one node",
+                    ids.count(),
+                    nodes.len()
+                )));
+            }
             // No reservation to make: these ids came from the master, not from
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
@@ -229,7 +245,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, docs, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -239,13 +255,7 @@ fn apply_record(
             // same record shape reaching the two paths differently.
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
-                g.set_nodes_attributes_rows_of_labels(
-                    &ids,
-                    &label_ids,
-                    &attr_ids,
-                    &rows,
-                    &mut docs.node_adds,
-                )?;
+                g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             }
             Ok(())
         }
@@ -292,7 +302,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
+                g.set_relationships_attributes(&map, docs)?;
             }
             Ok(())
         }
@@ -315,13 +325,7 @@ fn apply_record(
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_nodes_attributes_rows_of_labels(
-                &ids,
-                &label_ids,
-                &attr_ids,
-                &rows,
-                &mut docs.node_adds,
-            )?;
+            g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             Ok(())
         }
 
@@ -341,19 +345,14 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, docs)?;
             Ok(())
         }
 
         Record::SetLabels { ids, labels } => {
             require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
-            g.set_node_labels_product(
-                &ids.iter().collect::<Vec<_>>(),
-                &label_ids,
-                &mut docs.node_adds,
-                false,
-            );
+            g.set_node_labels_product(&ids.iter().collect::<Vec<_>>(), &label_ids, docs, false);
             Ok(())
         }
 
@@ -370,7 +369,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, docs);
             Ok(())
         }
 
@@ -395,13 +394,13 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut docs.node_removes)?;
+            g.delete_nodes(&nodes, docs)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut docs.edge_removes)?;
+            g.delete_relationships(&edges, docs)?;
             Ok(())
         }
 
@@ -2169,6 +2168,29 @@ mod tests {
         .unwrap();
         apply_effects(&mut g, &buf).expect("both endpoints are live by then");
         assert_eq!(g.relationship_count(), 2);
+    }
+
+    /// #3247: a repeated id names two nodes and can only create one. Folding
+    /// the list into a set applied one node and dropped the other silently;
+    /// `CREATE_EDGE` already refuses the same shape.
+    #[test]
+    fn a_repeated_node_id_in_one_create_is_refused() {
+        let mut g = liveness_setup();
+        let before = g.node_count();
+        let res = apply_one(
+            &mut g,
+            Record::CreateNode {
+                ids: IdList::from([2, 3, 2]),
+                labels: vec![],
+                attr_ids: vec![],
+                rows: vec![],
+            },
+        );
+        match res {
+            Err(ApplyError::Graph(msg)) => assert!(msg.contains("distinct"), "{msg}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert_eq!(g.node_count(), before, "the record was applied");
     }
 
     /// A node deleted earlier in the buffer may still be named, as the
