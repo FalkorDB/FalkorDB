@@ -153,7 +153,11 @@ fn recurse(
         return Ok(());
     }
 
-    let labels = multilevel_node_bisection(&subgraph, opts, rng, stats);
+    let labels = if n >= L2_MIN_VERTICES {
+        best_of_bisections(&subgraph, opts, rng, stats)
+    } else {
+        multilevel_node_bisection(&subgraph, opts, rng, stats)
+    };
 
     let mut a_verts: Vec<Idx> = Vec::new();
     let mut b_verts: Vec<Idx> = Vec::new();
@@ -201,6 +205,73 @@ fn recurse(
     recurse(sub_a, map_a, offset, iperm, opts, rng, stats)?;
     recurse(sub_b, map_b, offset + na, iperm, opts, rng, stats)?;
     Ok(())
+}
+
+/// Graphs with at least this many vertices get [`best_of_bisections`]
+/// (METIS `MlevelNodeBisectionL2`: `nvtxs < 5000` takes the single run).
+const L2_MIN_VERTICES: usize = 5000;
+/// Bisections tried by [`best_of_bisections`] (METIS: `nruns = 5`).
+const L2_RUNS: usize = 5;
+
+/// METIS's `MlevelNodeBisectionL2` (`ometis.c`): coarsen once, to
+/// `max(100, n / 30)` vertices, run [`L2_RUNS`] complete multilevel
+/// bisections of that coarse graph, keep the one with the lightest
+/// separator (the first of equals), and refine it back up the levels
+/// with the node FM. Each run starts from different random draws, so
+/// the best of five is a far better separator than one run, for the
+/// price of five bisections of a graph 30 times smaller.
+fn best_of_bisections(
+    graph: &Graph,
+    opts: &MetisOptions,
+    rng: &mut SplitMix,
+    stats: &mut MetisStats,
+) -> Vec<u8> {
+    let coarse_opts = MetisOptions {
+        coarsen_floor: (graph.nvtxs as u32 / 30).max(100),
+        ..opts.clone()
+    };
+    let mut counters = CoarsenCounters::default();
+    let levels = coarsen(graph, &coarse_opts, rng, &mut counters);
+    stats.n_two_hop_fallbacks += counters.n_two_hop_fallbacks;
+    stats.n_levels += levels.len() as u32;
+    let coarse: &Graph = levels.last().map_or(graph, |c| &c.graph);
+
+    let separator = |labels: &[u8]| -> i64 {
+        labels
+            .iter()
+            .zip(&coarse.vwgt)
+            .filter(|(&p, _)| p != PART_A && p != PART_B)
+            .map(|(_, &w)| w)
+            .sum()
+    };
+    let mut labels = multilevel_node_bisection(coarse, opts, rng, stats);
+    let mut best = separator(&labels);
+    for _ in 1..L2_RUNS {
+        if best == 0 {
+            break;
+        }
+        let run = multilevel_node_bisection(coarse, opts, rng, stats);
+        let sep = separator(&run);
+        if sep < best {
+            best = sep;
+            labels = run;
+        }
+    }
+
+    for level_idx in (0..levels.len()).rev() {
+        let cg = &levels[level_idx];
+        let finer: &Graph = if level_idx == 0 {
+            graph
+        } else {
+            &levels[level_idx - 1].graph
+        };
+        labels = (0..finer.nvtxs as usize)
+            .map(|v| labels[cg.cmap[v] as usize])
+            .collect();
+        refine_separator_fm(finer, &mut labels, opts.max_imbalance, opts.fm_passes);
+        stats.n_fm_passes += opts.fm_passes;
+    }
+    labels
 }
 
 /// Multilevel node bisection: coarsen → initial bisection with niparts
@@ -573,6 +644,41 @@ mod tests {
             stats.n_separator_vertices > 0,
             "expected a top-level separator"
         );
+    }
+
+    #[test]
+    fn best_of_bisections_gives_a_valid_balanced_separator() {
+        // 100x100 grid: 10,000 vertices, above L2_MIN_VERTICES.
+        let (m, n) = (100, 100);
+        let t = grid_triples(m, n);
+        let (cp, ri) = csc_from_triples(m * n, &t);
+        let pat = CscPattern::new(m * n, &cp, &ri).unwrap();
+        let g = Graph::from_csc_pattern(&pat).unwrap();
+        let opts = MetisOptions::default();
+        let mut stats = MetisStats::default();
+        let mut rng = SplitMix::new(opts.seed);
+        let labels = best_of_bisections(&g, &opts, &mut rng, &mut stats);
+        let mut rng = SplitMix::new(opts.seed);
+        let again = best_of_bisections(&g, &opts, &mut rng, &mut MetisStats::default());
+        assert_eq!(labels, again, "same seed, same separator");
+        // No edge joins the two sides.
+        for v in 0..m * n {
+            for k in g.xadj[v] as usize..g.xadj[v + 1] as usize {
+                let u = g.adjncy[k] as usize;
+                let pair = (labels[v], labels[u]);
+                assert!(pair != (PART_A, PART_B) && pair != (PART_B, PART_A));
+            }
+        }
+        let count = |p: u8| labels.iter().filter(|&&l| l == p).count();
+        let (a, b, sep) = (
+            count(PART_A),
+            count(PART_B),
+            m * n - count(PART_A) - count(PART_B),
+        );
+        // A straight cut has 100 vertices; the sides stay within the bound.
+        assert!(sep <= 150, "separator {sep}");
+        let bound = ((1.0 + opts.max_imbalance) * (m * n) as f64 / 2.0).ceil() as usize;
+        assert!(a > 0 && b > 0 && a <= bound && b <= bound, "{a} / {b}");
     }
 
     #[test]
