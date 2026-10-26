@@ -270,7 +270,7 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             // queued in the emitter borrows the graph. The borrows drop at the end
             // of the block, before the refill arm pulls the next child batch.
             let result = {
-                let g = runtime.g.borrow();
+                let g = runtime.graph();
                 let pending = runtime.pending.borrow();
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
