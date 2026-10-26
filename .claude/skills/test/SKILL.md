@@ -57,6 +57,9 @@ cargo build        # debug build required first (flow.sh defaults to target/debu
 - `FALKORDB_SERVER=valkey` — spawn `valkey-server` (from `PATH`) instead of
   `redis-server`; also honored by `tests/common.py` (e2e/function tests),
   which runs `/usr/local/bin/<server>-server`. The toolchain image ships both.
+  Local runs only: with `FALKORDB_TEST_IMAGE` set (flow.sh) or `EXISTING_ENV=1`
+  (`tests/common.py`), the tests use the server that image or instance runs,
+  and `FALKORDB_SERVER` is ignored.
 - Progress is tracked in `flow_tests_done.txt` / `flow_tests_todo.txt`; logs
   land in `tests/flow/logs`.
 
