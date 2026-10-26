@@ -313,7 +313,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // (e.g. non-indexable value types), fall back to a
                 // label scan.
                 let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
-                    let g = self.runtime.g.borrow();
+                    let g = self.runtime.graph();
                     // Index: a numeric Equal/Range on a column we own is served by the
                     // CoW B-tree; everything else (string/geo on the same Range index, composite, or a
                     // missing column) falls through to RediSearch during the dark-launch.
@@ -329,12 +329,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         Box::new(g.get_indexed_nodes(self.index, q));
                     it
                 } else {
-                    Box::new(
-                        self.runtime
-                            .g
-                            .borrow()
-                            .get_nodes(&self.node_pattern.labels, 0),
-                    )
+                    Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0))
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {
