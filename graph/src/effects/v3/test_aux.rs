@@ -18,13 +18,13 @@
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 use crate::effects::DecodeError;
 use crate::effects::v3::{self as v3, EffectEncode, Record, emit::for_each_record, open_payload};
 use crate::graph::graph::Graph;
 use crate::graph::graphblas::test_init::ensure_init;
+use crate::index::index_docs::IndexDocs;
 use crate::runtime::pending::Pending;
 
 // ── graphs ──
@@ -83,8 +83,9 @@ pub(crate) fn live_node(
         cols.push(graph.get_label_id_mut(name).0 as u64);
     }
     if !rows.is_empty() {
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         graph.set_nodes_labels_bulk(&rows, &cols, &mut docs, true);
+        graph.apply_index_writes(&mut docs);
     }
 }
 
