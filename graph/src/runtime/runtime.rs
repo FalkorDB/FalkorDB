@@ -159,8 +159,12 @@ pub struct Runtime<'a> {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
-    pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Cache for MERGE pattern matching — stores only the created entity
+    /// bindings (variable id → value), keyed by the MERGE operator's plan node
+    /// and the pattern hash. Per operator, like C's `unique_entities`: another
+    /// MERGE clause with an equal pattern binds different variable ids and must
+    /// do its own match-or-create.
+    pub merge_pattern_cache: RefCell<HashMap<(NodeIdx<Dyn<IR>>, u64), Vec<(u32, Value)>>>,
     /// Pointer-identity memo of resolved node attribute ids. Plan
     /// expressions hold the same `Arc<String>` across all rows, so after
     /// the first resolution a lookup is a short pointer scan instead of a
@@ -426,7 +430,6 @@ impl<'a> Runtime<'a> {
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
-            pending.borrow_mut().open_id_boundaries(&g);
         }
         Self {
             parameters,
@@ -1362,6 +1365,12 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
+        // `max_node_id()` is 0 both when id 0 is the only id and when no id
+        // was ever handed out, so `min..=max` would seek a node 0 that was
+        // never created.
+        if self.g.borrow().node_count() == 0 {
+            return Ok(None);
+        }
         let mut result = RoaringTreemap::new();
         result.insert_range(min..=max);
         Ok(Some(result))
@@ -1890,6 +1899,18 @@ pub fn map_to_index_options(
     };
     match index_type {
         IndexType::Fulltext => {
+            // Reject keys this engine does not know, as C does: a misspelt
+            // option would otherwise be silently ignored.
+            const FULLTEXT_OPTIONS: [&str; 5] =
+                ["weight", "nostem", "phonetic", "language", "stopwords"];
+            if let Some((key, _)) = kv_map
+                .iter()
+                .find(|(k, _)| !FULLTEXT_OPTIONS.contains(&k.as_str()))
+            {
+                return Err(format!(
+                    "Invalid fulltext index configuration: unknown option '{key}'"
+                ));
+            }
             let weight = match get("weight") {
                 Some(Value::Float(f)) => Some(*f),
                 Some(Value::Int(i)) => Some(*i as f64),
@@ -1967,22 +1988,32 @@ pub fn map_to_index_options(
                     }
                     *n as u64
                 }
-                None => 0,
+                // Required, as in C: without it no vector can be indexed.
+                None => {
+                    return Err("Invalid vector index configuration: dimension is required".into());
+                }
                 _ => {
                     return Err(
                         "Invalid vector index configuration: dimension must be an integer".into(),
                     );
                 }
             };
-            let similarity_function =
-                match get("similarityFunction") {
-                    Some(Value::String(s)) => Some(s.to_string()),
-                    None => None,
-                    _ => return Err(
+            // Required and case-insensitive, as in C (`strcasecmp`); stored
+            // lowercase, the form the rest of the engine matches on.
+            let similarity_function = match get("similarityFunction") {
+                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                None => {
+                    return Err(
+                        "Invalid vector index configuration: similarityFunction is required".into(),
+                    );
+                }
+                _ => {
+                    return Err(
                         "Invalid vector index configuration: similarityFunction must be a string"
                             .into(),
-                    ),
-                };
+                    );
+                }
+            };
             let m = match get("M") {
                 Some(Value::Int(n)) if *n < 0 => {
                     return Err(
