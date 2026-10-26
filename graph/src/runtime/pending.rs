@@ -598,6 +598,14 @@ impl Pending {
         self.existing_nodes_attrs.remove(&id.into());
     }
 
+    pub fn clear_relationship_attributes(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        self.new_relationships_attrs.remove(&id.into());
+        self.existing_relationships_attrs.remove(&id.into());
+    }
+
     #[must_use]
     #[inline]
     pub fn has_node_attrs(&self) -> bool {
