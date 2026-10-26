@@ -300,3 +300,58 @@ class testIndexUpdatesFlow(FlowTestsBase):
         result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
+
+    # Rolling back a failed query must restore the edge index exactly, also when the
+    # query reused an edge id for an edge with other endpoints. Edge documents are
+    # keyed by (src, dst, id): re-adding the committed edge's document is not enough,
+    # the one published under the rolled-back endpoints must be deleted too, or the
+    # index scan returns a phantom relationship.
+    # https://github.com/FalkorDB/FalkorDB/issues/2781
+    def test12_failed_edge_id_reuse_leaves_no_index_entry(self):
+        g = self.db.select_graph('edge_id_reuse')
+        g.query("""CREATE (:A {n: 'a'})-[:R {w: 1}]->(:B {n: 'b'}),
+                          (:C {n: 'c'}), (:D {n: 'd'})""")
+        create_edge_range_index(g, 'R', 'w', sync=True)
+
+        # The first Commit deletes edge 0 and frees its id, the second reuses it for
+        # c->d and publishes that document, then the division fails the query.
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (c:C), (d:D) CREATE (c)-[:R {w: 1}]->(d)
+                       WITH 1 AS x
+                       RETURN 1 / 0""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        expected = [['a', 0, 'b']]
+        # the index scan sees only the committed edge ...
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        plan = str(g.explain(query))
+        self.env.assertContains("Edge By Index Scan", plan)
+        self.env.assertEqual(g.query(query).result_set, expected)
+
+        # ... as a full scan does
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w + 0 = 1 RETURN s.n, id(r), t.n"
+        self.env.assertEqual(g.query(query).result_set, expected)
+
+        # the id reused by an edge of another type, between the same endpoints:
+        # the committed R document stays, the S one is deleted
+        create_edge_range_index(g, 'S', 'w', sync=True)
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (a:A), (b:B) CREATE (a)-[:S {w: 1}]->(b)
+                       WITH 1 AS x
+                       RETURN 1 / 0""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertEqual(g.query(query).result_set, expected)
+        query = "MATCH (s)-[r:S]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
+        self.env.assertEqual(g.query(query).result_set, [])
+        g.delete()

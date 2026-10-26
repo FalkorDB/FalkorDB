@@ -1629,7 +1629,7 @@ impl Pending {
     ///
     /// `private` is the version this query built and is about to discard; a removed
     /// edge's document key comes from there, since committed state no longer has the
-    /// edge at all.
+    /// edge at all, or has it under other endpoints when the query reused its id.
     ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
@@ -1662,11 +1662,22 @@ impl Pending {
             let p = private.borrow();
             for (slot, ids) in &edges {
                 for id in ids {
-                    if g.endpoints_for_edge(id).is_some() {
+                    // The doc key is `(src, dst, edge_id)`, so an id alone does not
+                    // say which document is valid: the query may have deleted the
+                    // edge and reused its id for another edge of this type or for
+                    // another type. The committed edge of this type, if any, gets
+                    // its document rewritten; a document published under the
+                    // discarded version's endpoints is deleted unless it is that
+                    // same key.
+                    let live = g.endpoints_for_edge(id).filter(|_| {
+                        g.get_relationship_type_id(RelationshipId::from(id)).0 as u64 == *slot
+                    });
+                    if live.is_some() {
                         edge_adds.entry(*slot).or_default().insert(id);
-                    } else if let Some(endpoints) = p.endpoints_for_edge(id) {
-                        // The doc key is `(src, dst, edge_id)` as written, and only the
-                        // discarded version still knows the endpoints.
+                    }
+                    if let Some(endpoints) = p.endpoints_for_edge(id)
+                        && live != Some(endpoints)
+                    {
                         edge_removes.entry(*slot).or_default().insert(id, endpoints);
                     }
                 }
