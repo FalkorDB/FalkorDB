@@ -1855,6 +1855,35 @@ class test_udf_javascript():
                                          rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
         self.env.assertEqual(res, [[True, True]])
 
+    def test_deeply_nested_result_is_an_error(self):
+        """
+        A UDF result nested past the conversion's depth limit is a query
+        error, not a stack overflow, and the server keeps answering.
+        """
+
+        script = """
+        function deep(n) { let a = null; for (let i = 0; i < n; i++) a = [a]; return a; }
+        function deepObj(n) { let o = null; for (let i = 0; i < n; i++) o = {k: o}; return o; }
+        function cyclic() { const a = []; a.push(a); return a; }
+        falkor.register('deep', deep);
+        falkor.register('deepObj', deepObj);
+        falkor.register('cyclic', cyclic);
+        """
+        self.db.udf_load("nest", script)
+
+        for q in ["RETURN nest.deep(300000)", "RETURN nest.deepObj(300000)",
+                  "RETURN nest.deep(1025)", "RETURN nest.cyclic()"]:
+            try:
+                self.graph.query(q)
+                assert False, f"expected an error for {q}"
+            except ResponseError as e:
+                self.env.assertContains("nesting exceeds the maximum depth", str(e))
+            self.env.assertTrue(self.db.connection.ping())
+
+        # At the limit, and in ordinary use, nested results still convert.
+        res = self.graph.query("RETURN size(nest.deep(1024)), nest.deep(2)").result_set
+        self.env.assertEqual(res, [[1, [[None]]]])
+
     def test_returning_undefined(self):
         """
         UDFs returning `undefined` should map to Cypher NULL.

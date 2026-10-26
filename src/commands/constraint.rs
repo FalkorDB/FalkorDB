@@ -212,7 +212,11 @@ pub fn settle_constraint(
             // the write lock — so sleeping is safe.
             // Both are transient windows that close on their own: a pause or
             // failover ends, and the writer holding the MVCC slot commits.
-            Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::WriteSlotBusy)) => {
+            Err(
+                reason @ (WriteAbort::ReplicaTrafficPaused
+                | WriteAbort::WriteSlotBusy
+                | WriteAbort::Stale),
+            ) => {
                 if Instant::now() >= deadline {
                     for c in announce {
                         redis_module::logging::log_warning(format!(

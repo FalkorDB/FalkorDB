@@ -5,10 +5,23 @@ use super::Graph;
 use crate::entity_type::EntityType;
 use crate::index::IndexType;
 use crate::index::falkordb::graph_writes;
+use crate::index::index_docs::IndexDocs;
 use crate::runtime::value::Value;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+
+/// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
+/// away, the way each write call changed the index before they were batched. Tests that check
+/// the batch itself build their own `IndexDocs` instead.
+macro_rules! applied {
+    ($g:expr, |$w:ident| $call:expr) => {{
+        let mut $w = IndexDocs::default();
+        let result = $call;
+        $g.apply_index_writes(&mut $w);
+        result
+    }};
+}
 
 /// Reserve `n` node ids the way one query's `CreateOp` does: open the
 /// graph's batch, then ask the space for ids this query does not hold yet.
@@ -99,7 +112,12 @@ fn create_index_builds_the_column_from_live_nodes() {
 
     // Assign the :Person label to all three.
     let label_cols: Vec<u64> = vec![lid.0 as u64; ids.len()];
-    g.set_nodes_labels_bulk(&ids, &label_cols, &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &ids,
+        &label_cols,
+        &mut w,
+        false
+    ));
 
     // age = 10, 20, 30.
     let aid = g.get_or_create_node_attr_id(&attr);
@@ -107,8 +125,7 @@ fn create_index_builds_the_column_from_live_nodes() {
     for (i, &id) in ids.iter().enumerate() {
         attrs.insert(id, vec![(aid, Value::Int(((i + 1) * 10) as i64))]);
     }
-    g.set_nodes_attributes(&attrs, &mut FxHashMap::default())
-        .unwrap();
+    applied!(g, |w| g.set_nodes_attributes(&attrs, &mut w)).unwrap();
 
     // Build the index numeric column from the live nodes.
     graph_writes::create_index(
@@ -154,7 +171,7 @@ fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
     g.create_nodes(&set)
         .expect("freshly reserved ids are creatable");
     let cols = vec![lid.0 as u64; ids.len()];
-    g.set_nodes_labels_bulk(&ids, &cols, &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_nodes_labels_bulk(&ids, &cols, &mut w, false));
     (g, label, attr, ids)
 }
 
@@ -168,8 +185,9 @@ fn set_attr(
     let aid = g.get_or_create_node_attr_id(attr);
     let mut attrs = FxHashMap::default();
     attrs.insert(id, vec![(aid, value)]);
-    g.set_nodes_attributes(&attrs, &mut FxHashMap::default())
-        .unwrap();
+    let mut w = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut w).unwrap();
+    g.apply_index_writes(&mut w);
 }
 
 fn range_scan(
@@ -217,7 +235,7 @@ fn delete_removes_from_index() {
     set_attr(&mut g, ids[1], &attr, Value::Int(6));
     let mut del = RoaringTreemap::new();
     del.insert(ids[0]);
-    g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
     assert_eq!(range_scan(&g, &label, &attr, 0, 100), vec![ids[1]]);
 }
 
@@ -229,7 +247,7 @@ fn delete_then_reuse_id_and_value_stays_correct() {
     set_attr(&mut g, ids[0], &attr, Value::Int(5));
     let mut del = RoaringTreemap::new();
     del.insert(ids[0]);
-    g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
     assert!(range_scan(&g, &label, &attr, 4, 6).is_empty());
 
     // Reclaim the freed id for a fresh node with the same value.
@@ -240,7 +258,12 @@ fn delete_then_reuse_id_and_value_stays_correct() {
     g.create_nodes(&set)
         .expect("freshly reserved ids are creatable");
     let lid = g.get_label_id_mut("Person");
-    g.set_nodes_labels_bulk(&reused, &[lid.0 as u64], &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &reused,
+        &[lid.0 as u64],
+        &mut w,
+        false
+    ));
     set_attr(&mut g, reused[0], &attr, Value::Int(5));
 
     // Exactly one entry — the reused node — no resurrected duplicate.
@@ -274,7 +297,12 @@ fn set_label_indexes_existing_attrs() {
         "no :Person label yet ⇒ not indexed"
     );
     let lid = g.get_label_id_mut("Person");
-    g.set_nodes_labels_bulk(&[id], &[lid.0 as u64], &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &[id],
+        &[lid.0 as u64],
+        &mut w,
+        false
+    ));
     assert_eq!(
         range_scan(&g, &label, &attr, 4, 6),
         vec![id],
@@ -292,7 +320,11 @@ fn remove_label_drops_tuple_and_no_resurrect_on_reuse() {
 
     // REMOVE n:Person — the (:Person, v) tuple must be gone (without this hook it orphans).
     let lid = g.get_label_id_mut("Person");
-    g.remove_nodes_labels(&[ids[0]], &[lid.0 as u64], &mut FxHashMap::default());
+    applied!(g, |w| g.remove_nodes_labels(
+        &[ids[0]],
+        &[lid.0 as u64],
+        &mut w
+    ));
     assert!(
         range_scan(&g, &label, &attr, 4, 6).is_empty(),
         "REMOVE :Person must drop the tuple"
@@ -301,14 +333,19 @@ fn remove_label_drops_tuple_and_no_resurrect_on_reuse() {
     // Delete the node and reuse its id for a fresh :Person with a DIFFERENT value.
     let mut del = RoaringTreemap::new();
     del.insert(ids[0]);
-    g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
     let reused: Vec<u64> = reserve_nodes(&mut g, 1);
     assert_eq!(reused[0], ids[0]);
     let mut set = RoaringTreemap::new();
     set.insert(reused[0]);
     g.create_nodes(&set)
         .expect("freshly reserved ids are creatable");
-    g.set_nodes_labels_bulk(&reused, &[lid.0 as u64], &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_nodes_labels_bulk(
+        &reused,
+        &[lid.0 as u64],
+        &mut w,
+        false
+    ));
     set_attr(&mut g, reused[0], &attr, Value::Int(99));
 
     assert!(
@@ -346,7 +383,7 @@ fn edge_writes_maintain_the_index() {
     for (i, &id) in ids.iter().enumerate() {
         attrs.insert(id, vec![(aid, Value::Int(((i as i64) + 1) * 10))]);
     }
-    g.import_relationship_attrs(&attrs, &mut FxHashMap::default());
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
 
     let scan = |g: &Graph, lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
@@ -360,27 +397,24 @@ fn edge_writes_maintain_the_index() {
     // Update: 20 -> 25 must remove 20, not only add 25.
     let mut update: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     update.insert(ids[1], vec![(aid, Value::Int(25))]);
-    g.set_relationships_attributes(&update, &mut FxHashMap::default())
-        .unwrap();
+    applied!(g, |w| g.set_relationships_attributes(&update, &mut w)).unwrap();
     assert!(scan(&g, 20, 20).is_empty(), "the old value is gone");
     assert_eq!(scan(&g, 25, 25), vec![ids[1]]);
 
     // Explicit delete.
     let deleted: RoaringTreemap = std::iter::once(ids[0]).collect();
-    g.delete_relationships(&deleted, &mut FxHashMap::default())
-        .unwrap();
+    applied!(g, |w| g.delete_relationships(&deleted, &mut w)).unwrap();
     assert_eq!(scan(&g, 0, 100), vec![ids[1], ids[2]]);
 
     // Deleting `a` cascades to its two remaining edges.
     let deleted_nodes: RoaringTreemap = std::iter::once(a).collect();
     g.open_id_batches().expect("a consistent space");
-    g.delete_nodes(&deleted_nodes, &mut FxHashMap::default())
-        .unwrap();
-    g.delete_implicit_edges(
+    applied!(g, |w| g.delete_nodes(&deleted_nodes, &mut w)).unwrap();
+    applied!(g, |w| g.delete_implicit_edges(
         &deleted_nodes,
         &RoaringTreemap::new(),
-        &mut FxHashMap::default(),
-    )
+        &mut w,
+    ))
     .unwrap();
     assert!(
         scan(&g, 0, 100).is_empty(),
@@ -411,14 +445,14 @@ fn replica_node_rows_maintain_the_index() {
     let ids = reserve_nodes(&mut g, 2);
     g.create_nodes(&ids.iter().copied().collect())
         .expect("freshly reserved ids are creatable");
-    g.set_node_labels_product(&ids, &[lid], &mut FxHashMap::default(), true);
-    g.set_nodes_attributes_rows_of_labels(
+    applied!(g, |w| g.set_node_labels_product(&ids, &[lid], &mut w, true));
+    applied!(g, |w| g.set_nodes_attributes_rows_of_labels(
         &ids,
         &[lid],
         &[aid],
         &[Value::Int(5), Value::Int(6)],
-        &mut FxHashMap::default(),
-    )
+        &mut w,
+    ))
     .unwrap();
     assert_eq!(
         range_scan(&g, &label, &attr, 0, 100),
@@ -427,13 +461,13 @@ fn replica_node_rows_maintain_the_index() {
     );
 
     // UPDATE_NODE: the first node's v goes 5 -> 9.
-    g.set_nodes_attributes_rows_of_labels(
+    applied!(g, |w| g.set_nodes_attributes_rows_of_labels(
         &ids[..1],
         &[lid],
         &[aid],
         &[Value::Int(9)],
-        &mut FxHashMap::default(),
-    )
+        &mut w,
+    ))
     .unwrap();
     assert!(
         range_scan(&g, &label, &attr, 5, 5).is_empty(),
@@ -448,7 +482,12 @@ fn replica_set_labels_indexes_existing_attrs() {
     let (mut g, label, attr, id) = unlabeled_graph_with_index();
     set_attr(&mut g, id, &attr, Value::Int(5));
     let lid = g.get_label_id_mut("Person").0 as u64;
-    g.set_node_labels_product(&[id], &[lid], &mut FxHashMap::default(), false);
+    applied!(g, |w| g.set_node_labels_product(
+        &[id],
+        &[lid],
+        &mut w,
+        false
+    ));
     assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![id]);
 }
 
@@ -477,10 +516,18 @@ fn replica_edge_update_of_type_maintains_the_index() {
     let attrs_of = |w: i64| -> FxHashMap<u64, Vec<(u16, Value)>> {
         std::iter::once((ids[0], vec![(aid, Value::Int(w))])).collect()
     };
-    g.set_relationships_attributes_of_type(type_id, &attrs_of(10), &mut FxHashMap::default())
-        .unwrap();
-    g.set_relationships_attributes_of_type(type_id, &attrs_of(20), &mut FxHashMap::default())
-        .unwrap();
+    applied!(g, |w| g.set_relationships_attributes_of_type(
+        type_id,
+        &attrs_of(10),
+        &mut w
+    ))
+    .unwrap();
+    applied!(g, |w| g.set_relationships_attributes_of_type(
+        type_id,
+        &attrs_of(20),
+        &mut w
+    ))
+    .unwrap();
 
     let scan = |lo: i64, hi: i64| -> Vec<u64> {
         g.falkordb_index
@@ -491,4 +538,43 @@ fn replica_edge_update_of_type_maintains_the_index() {
     };
     assert!(scan(10, 10).is_empty(), "the old value is gone");
     assert_eq!(scan(20, 20), ids);
+}
+
+// --- One buffer per unit of work ---
+
+/// SET then DELETE of one node inside one unit of work. `Pending::commit` runs its SETs before
+/// its DELETEs and stages both into one buffer, so the batch holds `add (5, n)` from the SET and
+/// then `remove (5, n)` from the DELETE. Applying all removes and then all adds would leave the
+/// deleted node in the column, and it would come back as a wrong row once the id is reused. The
+/// buffer keeps each entry's last change, so the remove wins.
+#[test]
+fn set_then_delete_in_one_batch_leaves_no_entry() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, Value::Int(2));
+
+    // One unit of work, in `Pending::commit`'s order: SET n.v = 5, then DELETE n.
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, Value::Int(5))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.apply_index_writes(&mut writes);
+
+    assert!(
+        range_scan(&g, &label, &attr, 5, 5).is_empty(),
+        "the deleted node's new value must not be indexed"
+    );
+    assert!(
+        range_scan(&g, &label, &attr, 1, 1).is_empty(),
+        "nor its old one"
+    );
+    assert_eq!(
+        range_scan(&g, &label, &attr, 0, 10),
+        vec![ids[1]],
+        "the untouched node is all that is left"
+    );
 }

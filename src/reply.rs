@@ -31,6 +31,19 @@ use std::fmt::Write;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
+/// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
+/// but spells NaN `NaN` where C prints `nan`.
+fn write_f(
+    out: &mut String,
+    f: f64,
+) {
+    if f.is_nan() {
+        out.push_str("nan");
+    } else {
+        let _ = write!(out, "{f:.6}");
+    }
+}
+
 /// Build a Cypher-style string representation of a value, matching the C
 /// FalkorDB `SIValue_ToString` output used for verbose list/map/path/vector.
 fn format_value_to_string(
@@ -43,9 +56,7 @@ fn format_value_to_string(
         Value::Int(i) => {
             let _ = write!(out, "{i}");
         }
-        Value::Float(f) => {
-            let _ = write!(out, "{f:.6}");
-        }
+        Value::Float(f) => write_f(out, *f),
         Value::String(s) => out.push_str(s),
         Value::Datetime(ts) => out.push_str(&Value::format_datetime(*ts)),
         Value::Date(ts) => out.push_str(&Value::format_date(*ts)),
@@ -85,7 +96,7 @@ fn format_value_to_string(
                 if i > 0 {
                     out.push_str(", ");
                 }
-                let _ = write!(out, "{:.6}", f64::from(*f));
+                write_f(out, f64::from(*f));
             }
             out.push('>');
         }
@@ -468,17 +479,15 @@ pub fn reply_verbose_value(
             reply_with_str(ctx, "id");
             raw::reply_with_long_long(ctx.ctx, u64::from(*rel) as _);
 
+            // Deleted, pending (a `GRAPH.RECORD` trace rendered after an
+            // error before `Commit`) or committed: the runtime's view knows
+            // all three, the committed graph only the last.
+            let type_name = runtime
+                .get_relationship_type(*rel)
+                .unwrap_or_else(|| Arc::new(String::new()));
             let bg = runtime.g.borrow();
             let dr = runtime.deleted_relationships.borrow();
             let deleted = dr.get(rel);
-            let type_name = deleted.map_or_else(
-                || {
-                    let type_id = bg.get_relationship_type_id(*rel);
-                    bg.get_type(type_id)
-                        .unwrap_or_else(|| Arc::new(String::new()))
-                },
-                |x| x.type_name.clone(),
-            );
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "type");
@@ -518,8 +527,10 @@ pub fn reply_verbose_value(
             drop(bg);
         }
         Value::Point(point) => {
+            // C's top-level verbose point has no space after the colons, unlike
+            // the nested form in `format_value_to_string` (`SIValue_ToString`).
             let str = format!(
-                "point({{latitude: {:.6}, longitude: {:.6}}})",
+                "point({{latitude:{:.6}, longitude:{:.6}}})",
                 point.latitude, point.longitude
             );
             reply_with_str(ctx, &str);
