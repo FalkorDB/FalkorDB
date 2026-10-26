@@ -1011,6 +1011,35 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test41_degree_after_deleting_an_edge_created_in_the_same_query(self):
+        # An edge created and deleted in one query never reaches the graph, so
+        # the degree functions must not look its endpoints up there: doing so
+        # panicked and took the server down.
+        # https://github.com/FalkorDB/FalkorDB/issues/2769
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (a)-[r:R]->(b)
+                                  DELETE r
+                                  SET a.d = outdegree(a), b.d = indegree(b),
+                                      a.t = outdegree(a, 'R'), b.t = indegree(b, 'R')
+                                  RETURN a.d, b.d, a.t, b.t""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0, 0]])
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        # mixed with a committed edge deleted and a created edge kept
+        self.graph.delete()
+        self.graph.query("CREATE (:A)-[:R]->(:B)")
+        res = self.graph.query("""MATCH (a:A)-[old:R]->(b:B)
+                                  CREATE (a)-[gone:R]->(b), (a)-[kept:S]->(b)
+                                  DELETE old, gone
+                                  RETURN outdegree(a), indegree(b),
+                                         outdegree(a, 'R'), indegree(b, 'S')""")
+        self.env.assertEqual(res.result_set, [[1, 1, 0, 1]])
+
+        res = self.graph.query("MATCH (a:A) RETURN outdegree(a), outdegree(a, 'S')")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
