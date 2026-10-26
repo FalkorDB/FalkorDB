@@ -116,11 +116,22 @@ jobs:
           LATEST_TAG: ${{ steps.check.outputs.latest_tag }}
           LATEST_SHA: ${{ steps.check.outputs.latest_sha }}
           CURRENT_SHA: ${{ steps.check.outputs.current_sha }}
-          # Target the branch this run was dispatched on (master), not the repo
-          # default branch: main is the Rust tree and has none of these submodules.
-          BASE_BRANCH: ${{ github.ref_name }}
+          # Pinned on purpose. Do NOT use github.event.repository.default_branch:
+          # the default branch is main (Rust tree), which has none of these
+          # submodules, and PRs against it drag in all of master's history.
+          BASE_BRANCH: master
         run: |
           BRANCH_NAME="submodule-update/${SUBMODULE_NAME}/${LATEST_TAG}"
+
+          # Guard: only open the PR if the base branch actually tracks this
+          # submodule, so a wrong base can never produce a bogus PR again.
+          git fetch --no-tags --depth=1 origin "$BASE_BRANCH"
+          if ! git config -f <(git show "origin/${BASE_BRANCH}:.gitmodules") \
+               --get-regexp '^submodule\..*\.path$' | awk '{print $2}' \
+               | grep -qxF "$SUBMODULE_PATH"; then
+            echo "::error::${SUBMODULE_PATH} is not a submodule of ${BASE_BRANCH}; refusing to open a PR against it."
+            exit 1
+          fi
 
           # Check if a PR for this branch already exists
           EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null || echo "")
