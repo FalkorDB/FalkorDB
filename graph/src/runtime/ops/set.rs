@@ -104,7 +104,7 @@ impl Runtime<'_> {
                     var: var.clone(),
                     labels: labels
                         .iter()
-                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                 },
                 SetItem::Attribute {
@@ -127,7 +127,7 @@ impl Runtime<'_> {
         id: NodeId,
     ) -> Result<(), String> {
         self.pending.borrow_mut().clear_node_attributes(id);
-        let keys: Vec<Arc<String>> = self.g.borrow().get_node_attrs(id).collect();
+        let keys: Vec<Arc<String>> = self.graph().get_node_attrs(id).collect();
         for key in keys {
             self.set_pending_node_attr(id, &key, Value::Null)?;
         }
@@ -140,7 +140,7 @@ impl Runtime<'_> {
         id: RelationshipId,
     ) -> Result<(), String> {
         self.pending.borrow_mut().clear_relationship_attributes(id);
-        let keys: Vec<Arc<String>> = self.g.borrow().get_relationship_attrs(id).collect();
+        let keys: Vec<Arc<String>> = self.graph().get_relationship_attrs(id).collect();
         for key in keys {
             self.set_pending_relationship_attr(id, &key, Value::Null)?;
         }
@@ -194,7 +194,7 @@ impl Runtime<'_> {
                     match entity {
                         Value::Node(id) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_node_deleted(id)
+                                && ((self.graph().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
                                     || self.pending.borrow().is_node_deleted(id))
                             {
@@ -272,7 +272,7 @@ impl Runtime<'_> {
                         }
                         Value::Relationship(target_rel) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_relationship_deleted(target_rel)
+                                && ((self.graph().is_relationship_deleted(target_rel)
                                     && !self.pending.borrow().is_relationship_created(target_rel))
                                     || self.pending.borrow().is_relationship_deleted(target_rel))
                             {
@@ -375,7 +375,7 @@ impl Runtime<'_> {
                     match run_expr {
                         Some(Value::Node(id)) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_node_deleted(id)
+                                && ((self.graph().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
                                     || self.pending.borrow().is_node_deleted(id))
                             {
