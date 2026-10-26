@@ -842,3 +842,46 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test39_equal_patterns_in_separate_merge_clauses(self):
+        # The created-pattern cache was shared by every MERGE clause, so a
+        # later clause with an equal pattern reused the earlier clause's
+        # bindings: its own variable stayed unbound, or (in a UNION branch)
+        # it aliased the other branch's node (#3038).
+        g = self.db.select_graph("merge_equal_patterns")
+        res = g.query("""MERGE (a:M {v: 1}) ON CREATE SET a.v = 2
+                                  MERGE (b:M {v: 1})
+                                  RETURN a.v, b.v""")
+        self.env.assertEqual(res.result_set, [[2, 1]])
+        self.env.assertEqual(res.nodes_created, 2)
+
+        g.delete()
+        res = g.query("""MERGE (a:U {v: 1}) ON CREATE SET a.v = 2 RETURN a.v AS v
+                                  UNION ALL
+                                  MERGE (b:U {v: 1}) RETURN b.v AS v""")
+        self.env.assertEqual(res.result_set, [[2], [1]])
+        self.env.assertEqual(res.nodes_created, 2)
+        g.delete()
+
+    def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
+        # With every node bound and no named relationship, MERGE kept only the
+        # first match. A path variable still tells parallel edges apart (#3040).
+        # a run interrupted before its cleanup can leave the graph behind
+        if "merge_path_all_bound" in self.db.list_graphs():
+            self.db.select_graph("merge_path_all_bound").delete()
+        g = self.db.select_graph("merge_path_all_bound")
+        g.query("CREATE (a:A), (b:B), (a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)")
+        res = g.query("""MATCH (a:A), (b:B) MERGE p = (a)-[:R]->(b)
+                         RETURN [r IN relationships(p) | r.k][0] AS k ORDER BY k""")
+        self.env.assertEqual(res.result_set, [[1], [2]])
+        self.env.assertEqual(res.relationships_created, 0)
+        # without a path variable one row is still enough
+        res = g.query("MATCH (a:A), (b:B) MERGE (a)-[:R]->(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+        # a path without relationships cannot tell the matches apart either
+        res = g.query("MATCH (a:A) MERGE p = (a) RETURN count(p)")
+        self.env.assertEqual(res.result_set, [[1]])
+        # a named relationship is part of the output, path or not
+        res = g.query("MATCH (a:A), (b:B) MERGE p = (a)-[r:R]->(b) RETURN r.k ORDER BY r.k")
+        self.env.assertEqual(res.result_set, [[1], [2]])
+        g.delete()
