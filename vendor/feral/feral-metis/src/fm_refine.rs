@@ -301,7 +301,8 @@ pub fn refine_separator(
 /// Within a pass the highest-gain separator vertex is pulled into the
 /// target side — which forces its neighbours on the far side into the
 /// separator — and the pass keeps going through **negative**-gain
-/// moves, rolling back at the end to the lightest separator it saw.
+/// moves, rolling back at the end to the lightest separator it saw
+/// (of equally light ones, the one with the best-balanced sides).
 /// That hill-climbing is the whole point: [`refine_separator`] accepts
 /// only positive gains and therefore stops at the first local minimum.
 ///
@@ -369,6 +370,10 @@ pub fn refine_separator_fm(
         moves.clear();
         pulled.clear();
         let mut best_sep = sep;
+        // Side-weight difference at the best state: a move that keeps the
+        // separator as light but balances the sides better also becomes
+        // the best state, as in METIS (`mindiff` in `sfm.c`).
+        let mut best_diff = (pwgt[0] - pwgt[1]).abs();
         let mut best_at = 0usize; // number of moves kept at the best state
         let mut moved = vec![false; n];
 
@@ -427,8 +432,10 @@ pub fn refine_separator_fm(
             moves.push(v);
             pulled.push(dragged);
 
-            if sep < best_sep {
+            let diff = (pwgt[0] - pwgt[1]).abs();
+            if sep < best_sep || (sep == best_sep && diff < best_diff) {
                 best_sep = sep;
+                best_diff = diff;
                 best_at = moves.len();
             } else if moves.len() - best_at > limit {
                 break;
