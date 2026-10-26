@@ -77,22 +77,70 @@ keep_root() {
     drop_privs=""
 }
 
-# server_config NAME: the value the server will get for config NAME from its
-# arguments -- a config file given as the first argument, then any
-# `--NAME value`, the last one winning, as in the server. Empty when unset.
+# config_file_values NAME FILE [DEPTH]: every value config file FILE gives
+# config NAME (lower case), one per line in the order the server applies them.
+# Like the server, directive names are case-insensitive, and an `include`
+# directive reads the files it names (a glob expands) at that point; DEPTH
+# only bounds an include cycle.
+config_file_values() {
+    { [ -f "$2" ] && [ -r "$2" ] && [ "${3:-0}" -lt 8 ]; } || return 0
+    awk -v name="$1" '
+        { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
+        $0 == "" || /^#/ { next }
+        {
+            key = tolower($1)
+            rest = $0
+            sub(/^[^ \t]+[ \t]+/, "", rest)
+        }
+        key == "include" && NF == 2 { gsub(/^["\047]|["\047]$/, "", rest); print "i " rest; next }
+        key == name && NF >= 2 { print "v " rest }
+    ' "$2" | while IFS= read -r _line; do
+        case "$_line" in
+            "i "*)
+                # Unquoted, so an include glob expands as in the server.
+                # shellcheck disable=SC2086
+                for _inc in ${_line#i }; do
+                    config_file_values "$1" "$_inc" $(( ${3:-0} + 1 ))
+                done
+                ;;
+            *) printf '%s\n' "${_line#v }" ;;
+        esac
+    done
+}
+
+# server_config NAME: the value the server will get for config NAME (lower
+# case) from its arguments -- a config file given as the first argument and
+# the files it includes, then any `--NAME value` or `--include FILE`, the last
+# one winning, as in the server. Empty when unset.
 server_config() {
     _value="" _want="" _first=1
     # shellcheck disable=SC2086
     for _tok in ${SERVER_ARGS}; do
-        if [ -n "$_want" ]; then
-            _value=$_tok
-            _want=""
-        elif [ "$_tok" = "--$1" ]; then
-            _want=1
-        elif [ -n "$_first" ] && [ "${_tok#-}" = "$_tok" ] && [ -f "$_tok" ] && [ -r "$_tok" ]; then
-            _value=$(sed -n "s/^[[:space:]]*$1[[:space:]][[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/Ip" "$_tok" | tail -n 1)
+        _file=""
+        case "$_want" in
+            value) _value=$_tok ;;
+            include) _file=$_tok ;;
+            *)
+                if [ -n "$_first" ] && [ "${_tok#-}" = "$_tok" ]; then
+                    _file=$_tok
+                fi
+                case "$_tok" in
+                    --*)
+                        case "$(printf '%s' "$_tok" | tr '[:upper:]' '[:lower:]')" in
+                            "--$1") _want=value ;;
+                            --include) _want=include ;;
+                        esac
+                        _first=""
+                        continue
+                        ;;
+                esac
+                ;;
+        esac
+        _want="" _first=""
+        if [ -n "$_file" ]; then
+            _file_value=$(config_file_values "$1" "$_file" | tail -n 1)
+            [ -z "$_file_value" ] || _value=$_file_value
         fi
-        _first=""
     done
     _value=${_value#[\"\']}
     _value=${_value%[\"\']}
@@ -126,14 +174,14 @@ check_redis_file() {
 }
 
 # Before valkey-server starts, look for save files a Redis image wrote: the
-# configured RDB file and, with AOF on, the base file the AOF manifest lists.
+# one the server will load -- the RDB file with AOF off; with AOF on, the base
+# file the AOF manifest lists, as the server then loads the AOF alone.
 # Valkey would exit on them, so explain what to do instead -- unless
 # FALKORDB_REDIS_MIGRATION=1 asks to load them anyway.
 valkey_preflight() {
     redis_files=""
-    _dbfilename=$(server_config dbfilename)
-    check_redis_file "${FALKORDB_DATA_PATH}/${_dbfilename:-dump.rdb}"
-    if [ "$(server_config appendonly)" = "yes" ]; then
+    # yes/no configs are case-insensitive in the server.
+    if [ "$(server_config appendonly | tr '[:upper:]' '[:lower:]')" = "yes" ]; then
         _appenddirname=$(server_config appenddirname)
         _appendfilename=$(server_config appendfilename)
         _aof_dir="${FALKORDB_DATA_PATH}/${_appenddirname:-appendonlydir}"
@@ -146,6 +194,9 @@ valkey_preflight() {
                 check_redis_file "${_aof_dir}/${_base}"
             fi
         fi
+    else
+        _dbfilename=$(server_config dbfilename)
+        check_redis_file "${FALKORDB_DATA_PATH}/${_dbfilename:-dump.rdb}"
     fi
     [ -n "$redis_files" ] || return 0
 
