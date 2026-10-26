@@ -342,3 +342,11 @@ class testBidirectionalTraversals(FlowTestsBase):
         # a named edge still returns one row per relationship
         result = g.query("MATCH (a:A)-[r]-(b) RETURN count(r)")
         self.env.assertEqual(result.result_set, [[3]])
+
+        # a pattern expression yields one path per relationship, not per pair,
+        # in either direction (C: 2 and 3)
+        result = g.query("MATCH (a:A) RETURN size((a)-->()), size((a)--())")
+        self.env.assertEqual(result.result_set, [[2, 3]])
+        # as a predicate it is still just an existence check
+        result = g.query("MATCH (a:A) WHERE (a)--() RETURN count(a)")
+        self.env.assertEqual(result.result_set, [[1]])
