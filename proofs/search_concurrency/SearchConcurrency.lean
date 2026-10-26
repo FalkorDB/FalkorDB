@@ -209,6 +209,7 @@ import SearchConcurrency.Mvcc
 import SearchConcurrency.Locks
 import SearchConcurrency.Pool
 import SearchConcurrency.Once
+import SearchConcurrency.Guarded
 import SearchConcurrency.Knn
 
 #print axioms SC.Mvcc.snapshots_are_committed
@@ -229,3 +230,7 @@ import SearchConcurrency.Knn
 #print axioms SC.Locks.bug3226_open_scan_upgrade
 #print axioms SC.Locks.bug3226_restore_stall_cycle
 #print axioms SC.Locks.spec_programs_ordered
+#print axioms SC.Guarded.bug3483_drop_unguarded
+#print axioms SC.Guarded.bug3483_races_create
+#print axioms SC.Guarded.rs29_no_race
+#print axioms SC.Guarded.guardedOk_iff
