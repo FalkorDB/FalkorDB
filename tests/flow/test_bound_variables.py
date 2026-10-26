@@ -1,13 +1,16 @@
+import math
 from common import *
 from index_utils import *
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 GRAPH_ID = "bound_variables"
+# LOAD CSV reads from here (test09)
+IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/csvs/'
 
 class testBoundVariables(FlowTestsBase):
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -152,5 +155,82 @@ class testBoundVariables(FlowTestsBase):
                          MATCH (alias4), p1 = (alias4)
                          RETURN alias4.id, length(p1), size(alias0), alias1""")
         self.env.assertEqual(res.result_set, [[1, 0, 1, 'x']])
+
+        g.delete()
+
+    def test08_bound_node_after_bfs(self):
+        """A node bound before `CALL algo.BFS` is still bound in a later
+        MATCH that reuses it, with a named path over it (#2725)"""
+
+        g = self.db.select_graph("bound_node_after_bfs")
+        g.query("CREATE (:A {k11: 1, klist: []})")
+
+        # the issue's query: BFS from an isolated node yields no nodes, so
+        # UNWIND drops the row and the result is empty (as in C), not an error
+        query = """MATCH (n0 {k11: 1})
+                   WHERE size(n0.klist) >= 0
+                   CALL algo.BFS(n0, 2, 'rt0') YIELD nodes AS alias0
+                   UNWIND alias0 AS alias1
+                   MATCH (n0), p0 = (n0), (n0)
+                   WHERE (((n0.k9 = false) OR true)
+                          XOR ((n0.k9 = false) XOR (n0.k9 = false)))
+                   RETURN *"""
+        res = g.query(query)
+        self.env.assertEqual(res.header, [[1, 'alias0'], [1, 'alias1'],
+                                          [1, 'n0'], [1, 'p0']])
+        self.env.assertEqual(res.result_set, [])
+
+        # with an edge to reach, the rows BFS produces reach the MATCH and
+        # n0 is the node bound before the CALL
+        g.query("MATCH (a:A) CREATE (a)-[:rt0]->(:B)")
+        res = g.query(query)
+        self.env.assertEqual(res.result_set, [])
+
+        res = g.query("""MATCH (n0 {k11: 1})
+                         CALL algo.BFS(n0, 2, 'rt0') YIELD nodes AS alias0
+                         UNWIND alias0 AS alias1
+                         MATCH (n0), p0 = (n0), (n0)
+                         RETURN labels(alias1), labels(n0), length(p0)""")
+        self.env.assertEqual(res.result_set, [[['B'], ['A'], 0]])
+
+        g.delete()
+
+    def test09_bound_node_after_load_csv(self):
+        """A node bound before `LOAD CSV`, and paths over it, survive the
+        LOAD CSV (#2744)"""
+
+        os.makedirs(IMPORT_DIR, exist_ok=True)
+        with open(IMPORT_DIR + 'bound_variables.csv', 'w') as f:
+            f.write("alpha;beta\none;two\nthree;four\n")
+
+        g = self.db.select_graph("bound_node_after_load_csv")
+        g.query("CREATE (n0:A {k8: 1, k5: 1, k10: 'x', k2: true})")
+
+        # the issue's query
+        res = g.query("""MATCH (n0:A)
+                         WITH n0.k8 AS alias0,
+                              radians(toFloatOrNull(n0.k5)) AS alias1,
+                              tan(toFloatOrNull(n0.k8)) AS alias2,
+                              n0
+                         WHERE n0.k10 ENDS WITH ''
+                         MATCH p0=(n0), p1=(n0), (n0)
+                         WHERE n0.k10 STARTS WITH ''
+                         LOAD CSV FROM 'file://bound_variables.csv' AS alias3
+                         FIELDTERMINATOR ';'
+                         RETURN n0, p1, p0, alias1, alias0, alias3, n0.k2 AS alias4
+                         ORDER BY alias1 DESC, alias0 DESC, alias4 DESC
+                         SKIP 0""")
+        self.env.assertEqual(len(res.result_set), 3)
+        rows = sorted(res.result_set, key=lambda row: row[5])
+        self.env.assertEqual([row[5] for row in rows],
+                             [['alpha', 'beta'], ['one', 'two'], ['three', 'four']])
+        for n0, p1, p0, alias1, alias0, _, alias4 in rows:
+            self.env.assertEqual(n0.labels, ['A'])
+            self.env.assertEqual(n0.properties['k10'], 'x')
+            self.env.assertEqual(p0.nodes(), [n0])
+            self.env.assertEqual(p1.nodes(), [n0])
+            self.env.assertAlmostEqual(alias1, math.radians(1), 1e-12)
+            self.env.assertEqual(alias0, 1)
+            self.env.assertEqual(alias4, True)
 
         g.delete()
