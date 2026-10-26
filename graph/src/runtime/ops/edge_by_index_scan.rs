@@ -267,46 +267,45 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> = if q
-                    .can_be_served()
-                {
-                    let g = self.runtime.g.borrow();
-                    // Edge index: a numeric Equal/Range on a column we own is served
-                    // by the CoW B-tree (endpoints recovered from the graph's reverse index);
-                    // string/geo/composite or a missing column falls through to RediSearch during
-                    // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
-                    #[cfg(feature = "index-falkordb")]
-                    let it: Box<
-                        dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                    > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
-                        Box::new(hit)
-                    } else {
-                        Box::new(g.get_indexed_edges(label, q))
-                    };
-                    #[cfg(not(feature = "index-falkordb"))]
-                    let it: Box<
-                        dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                    > = Box::new(g.get_indexed_edges(label, q));
-                    it
-                } else {
-                    let cached = {
-                        let mut cache = self.all_edges_cache.borrow_mut();
-                        if cache.is_none() {
-                            *cache = Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
-                        }
-                        Arc::clone(cache.as_ref().unwrap())
-                    };
-                    let mut idx = 0usize;
-                    Box::new(std::iter::from_fn(move || {
-                        if idx < cached.len() {
-                            let v = cached[idx];
-                            idx += 1;
-                            Some(v)
+                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if q.can_be_served() {
+                        let g = self.runtime.graph();
+                        // Edge index: a numeric Equal/Range on a column we own is served
+                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+                        // string/geo/composite or a missing column falls through to RediSearch during
+                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
+                            Box::new(hit)
                         } else {
-                            None
-                        }
-                    }))
-                };
+                            Box::new(g.get_indexed_edges(label, q))
+                        };
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = Box::new(g.get_indexed_edges(label, q));
+                        it
+                    } else {
+                        let cached = {
+                            let mut cache = self.all_edges_cache.borrow_mut();
+                            if cache.is_none() {
+                                *cache = Some(Arc::new(self.runtime.graph().get_all_edges(label)));
+                            }
+                            Arc::clone(cache.as_ref().unwrap())
+                        };
+                        let mut idx = 0usize;
+                        Box::new(std::iter::from_fn(move || {
+                            if idx < cached.len() {
+                                let v = cached[idx];
+                                idx += 1;
+                                Some(v)
+                            } else {
+                                None
+                            }
+                        }))
+                    };
 
                 // An undirected pattern matches each edge in both
                 // orientations (a self-loop once), as `CondTraverse` does;
