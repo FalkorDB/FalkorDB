@@ -13,6 +13,7 @@ use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
+use graph::index::text_index_options::PHONETIC_OFF;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
 use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
@@ -640,7 +641,11 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
     let weight = r.read_double()?;
     let nostem = r.read_unsigned()? != 0;
     let phonetic_buf = r.read_buffer()?;
-    let phonetic = strip_null_terminator(&phonetic_buf);
+    let mut phonetic = strip_null_terminator(&phonetic_buf);
+    // C's "off" (and ours, see the encoder) comes back as our explicit off.
+    if phonetic == PHONETIC_OFF {
+        phonetic.clear();
+    }
 
     // C refuses the same words (`_RdbLoadIndex`): no type, or a bit it does not know.
     if field_type == 0 || field_type & !(RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR) != 0 {
@@ -805,6 +810,22 @@ mod tests {
             types(&decode(INDEX_FLD_VECTOR).unwrap()),
             [IndexType::Vector]
         );
+    }
+
+    /// C's default phonetic is the string "no", meaning off; it must not read as a code.
+    #[test]
+    fn c_phonetic_no_is_off() {
+        let mut w = VecWriter::new();
+        w.write_buffer(&null_terminated("g"));
+        w.write_unsigned(INDEX_FLD_FULLTEXT);
+        w.write_double(1.0);
+        w.write_unsigned(0);
+        w.write_buffer(&null_terminated(PHONETIC_OFF));
+        let bytes = w.into_vec();
+        let (_, fields) = decode_index_field(&mut BufferedReader::from_slice(&bytes)).unwrap();
+        let text = fields[0].options().expect("fulltext options");
+        assert!(!text.phonetic_enabled());
+        assert_eq!(text.phonetic.as_deref(), Some(""));
     }
 
     #[test]
