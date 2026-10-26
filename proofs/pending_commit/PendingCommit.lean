@@ -71,7 +71,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
   (server killed); C `0|0` (`deg_panics_on_pending_deleted`).
 * W4-fn-1 (labels staged before DELETE) — **still present**: `MATCH (n:A) SET n:C DELETE n
   RETURN labels(n), n:C` Rust `[A]|false` (the snapshot copies the committed labels,
-  ops/delete.rs:284, :464); note C answers `[]|false` here.
+  ops/delete.rs:286, :464); note C answers `[]|false` here.
 
 ## Modelled here ↔ there
 
@@ -86,9 +86,9 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Arena.retire/resize/grow`        | `retire_span` (:535), `resize_span_slack` (:548), `grow_slots` (:560) |
 | `Arena.setSpan/freeSpan/mergeSpan`| `Block::set_span` (:573), `free_span` (:616), `merge_span` slot effects |
 | `Arena.compact`, `live`           | `Block::compact` (:798) and its `debug_assert_eq!` (:821) |
-| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:510), `remove_node_labels` (:546), `node_has_label` (:590), `update_node_labels` (:618) |
-| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-139) |
-| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1107-1124) |
+| `Labels.stage/removeLabels/nodeHas/overlay` | `stage_node_labels` (pending.rs:509), `remove_node_labels` (:546), `node_has_label` (:590), `update_node_labels` (:618) |
+| `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-138) |
+| `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1105-1122) |
 | `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:421, :791) |
 | `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1479) + evaluator's null |
 | `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1798, attribute_store.rs:1351) |
@@ -97,7 +97,7 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1459-1789) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
 | `Snapshot.createDeferred`         | the fix proposed in #2876 |
-| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:602), commit counters (:1086, :1163) |
+| `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:600), commit counters (:1086, :1163) |
 
 Hypotheses (the AXIOMATISED rows): GraphBLAS `set_all`/`remove` on the label
 matrices behave as set insert/delete, so commit is `(C ∪ set) \ remove`
@@ -150,7 +150,7 @@ Wave-4 findings:
   stores duplicates too (`AttributeSet_AddNoClone` only asserts in debug); not
   reproduced live.
 * Labels staged before a `DELETE` are missing from the deleted snapshot
-  (ops/delete.rs:284, :464) — confirmed by another agent; the repro tests
+  (ops/delete.rs:286, :464) — confirmed by another agent; the repro tests
   `bug_deleted_snapshot_*` / `bug_detach_deleted_snapshot_*` are in the test
   file.
 
@@ -209,9 +209,9 @@ Wave-4 findings:
    Inconsistent within Rust too: a pending edge deleted directly is counted
    created + deleted. Fix: add `cancelled_nodes.len()` /
    `cancelled_relationships.len()` (and their staged props/labels) to both sides
-   (pending.rs:1086/1147/1226). Tests `bug_cancelled_*`.
+   (pending.rs:1084/1147/1226). Tests `bug_cancelled_*`.
 3. **Writes to a deleted relationship are applied and counted.** `REMOVE r.v`
-   after `DELETE r` (ops/remove.rs:141 has no deletion check for relationships;
+   after `DELETE r` (ops/remove.rs:140 has no deletion check for relationships;
    nodes have one at :121) → Rust `Properties removed: 1`, C none. `SET r.v = 2`
    after `DETACH DELETE a` cascades `r` → Rust set 1/removed 1, C none: the
    cascade is recorded only in `Runtime::deleted_relationships`, which set.rs:230
@@ -229,7 +229,7 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)
 
-* `effects_count` (pending.rs:1680) ignores `cancelled_nodes`, so a query that
+* `effects_count` (pending.rs:1666) ignores `cancelled_nodes`, so a query that
   only cancels (`CREATE (a) DELETE a`) ships no effect although its id went to
   the master's bin; the replica's boundary is then one lower. By hand this
   self-heals on the next create; not run against a replica.
@@ -238,7 +238,7 @@ plain DELETE detaches (#2573), #2876 shapes A/B.
   (`import_attrs_resolved` deduplicates since #3063; its GRAPH.BULK callers drop
   `Null` values before calling it, bulk_insert.rs:373.)
 * Deleted-node snapshots take labels from the committed matrix only
-  (delete.rs:263, :305), ignoring labels staged in the same query; C returns
+  (delete.rs:265, :305), ignoring labels staged in the same query; C returns
   `[]` for any deleted node's labels, so this is a divergence either way.
 
 ## Modelling assumptions
@@ -263,7 +263,7 @@ The query-time views were proven (`overlay_eq_ref`, `pendingWithLabels_spec`,
 commit/replay was never stated. Properties and refutations:
 * **#3448** `RemLCommitted` (a staged removal is of a committed label):
   `bug3448_remove_of_staged_label` (`CREATE (n:Foo) REMOVE n:Foo`, `SET n:B REMOVE n:B`:
-  `remove_node_labels`, pending.rs:699-711, pushes an only-staged label). `RemLLive` (no
+  `remove_node_labels`, pending.rs:697-709, pushes an only-staged label). `RemLLive` (no
   created/cancelled node in `remove_labels`): `deletePendingNode_keeps_remL` (general),
   `bug3448_cancelled_node_keeps_remL` (+ `_reached`); replica consequence in
   effects_emit_apply `bug3448_removeLabels_before_create_refused`.
@@ -275,6 +275,12 @@ commit/replay was never stated. Properties and refutations:
   :1239-1253 never registers the type); replica id gap in effects_emit_apply
   `bug3447_cancelled_edge_id_gap`.
 No existing definition or theorem changed.
+
+## Re-pinned to 5e475e6c9 (#3436, #3462)
+Re-pin only; no theorem added or changed. `Pending::commit`, `end_segment`, `enforce_constraints`
+now take `&mut Graph` / `&Graph` (#3436), so `pending.rs` pins moved by -1 or -2 up to `commit` and
+-14 from `enforce_constraints` on; `delete.rs` pins +2 (#3462 adds the `inspect ||` snapshot
+line, modelled in `ops_apply` `Delete.DeleteSt.new`).
 -/
 import PendingCommit.Span
 import PendingCommit.Arena

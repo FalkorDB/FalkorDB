@@ -149,10 +149,10 @@ graph/src/runtime/ops/load_csv.rs	ipv4_is_forbidden	48	PROVEN	LoadCsv.v4Forbidde
 graph/src/runtime/ops/load_csv.rs	validate_remote_url	81	PROVEN	LoadCsv.validateRemote (DNS = FFI parameter): validateRemote_spec
 graph/src/runtime/ops/load_csv.rs	new	153	PROVEN	LoadCsv.erNew: erNew_spec
 graph/src/runtime/ops/load_csv.rs	read	167	PROVEN	LoadCsv.erRead/erRun: erRun_le
-graph/src/runtime/ops/load_csv.rs	resolve	194	PROVEN	LoadCsv.pinned: pinned_spec (PROVEN for the address bound only; the URI is ignored, so a redirect hop connects to the first host IP: LoadCsvRedirect.fetch/pinnedRes, EachHopValidated refuted by bug3443_redirect_uses_first_host_ip, BUG #3443; fix fixed_eachHopValidated)
-graph/src/runtime/ops/load_csv.rs	http_config	218	PROVEN	LoadCsv.httpConfig: httpConfig_spec (PROVEN for OnceLock idempotence only; leaves ureq defaults max_redirects=10, https_only=false: LoadCsvRedirect.httpCfgMain, bug3443_redirect_downgrades_to_http, BUG #3443)
-graph/src/runtime/ops/load_csv.rs	next	253	PROVEN	LoadCsv.csvNext/headerPlan: csvNext_spec, headerPlan_example
-graph/src/runtime/ops/load_csv.rs	new	321	PROVEN	LoadCsv.LcSt.new: lcNew_spec
-graph/src/runtime/ops/load_csv.rs	open_csv_records	350	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example; with the agent redirect loop (LoadCsvRedirect.loadRemote): EachHopValidated refuted by bug3443_redirect_uses_first_host_ip, bug3443_redirect_downgrades_to_http (BUG #3443); noRedirect_single (C: no redirects followed)
-graph/src/runtime/ops/load_csv.rs	next	438	PROVEN	LoadCsv.resolvePath/lcRowArgs: resolvePath_spec, lcRowArgs_spec
+graph/src/runtime/ops/load_csv.rs	resolve	195	PROVEN	LoadCsv.pinned: pinned_spec (PROVEN for the address bound only; the URI is ignored, which is sound now that http_config follows no redirects, #3458: LoadCsvRedirect.fixed3443_eachHopValidated; history pre3443_redirect_uses_first_host_ip)
+graph/src/runtime/ops/load_csv.rs	http_config	223	PROVEN	LoadCsv.httpConfig: httpConfig_spec (OnceLock idempotence); LoadCsvRedirect.httpCfgMain = max_redirects 0, https_only true since #3458 (closes #3443): fixed3443_eachHopValidated, noRedirect_single; history httpCfgPre3443, pre3443_redirect_downgrades_to_http
+graph/src/runtime/ops/load_csv.rs	next	260	PROVEN	LoadCsv.csvNext/headerPlan: csvNext_spec, headerPlan_example
+graph/src/runtime/ops/load_csv.rs	new	328	PROVEN	LoadCsv.LcSt.new: lcNew_spec
+graph/src/runtime/ops/load_csv.rs	open_csv_records	357	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example; LoadCsvRedirect.loadRemote (agent without redirects, a 3xx is an error): fixed3443_eachHopValidated, fixed3443_redirect_is_error, noRedirect_single; #3443 fixed by #3458 (history pre3443_redirect_uses_first_host_ip, pre3443_redirect_downgrades_to_http)
+graph/src/runtime/ops/load_csv.rs	next	458	PROVEN	LoadCsv.resolvePath/lcRowArgs: resolvePath_spec, lcRowArgs_spec
 graph/src/runtime/ops/sort.rs	tiebreak	237	PROVEN	SortCmp.tiebreak/tbCols: tiebreak_strict (distinct rows never tie), tiebreak_swap (antisymmetric given antisymmetric compare_at/compare_rows_at = sort_cmp: Discharge.lawful_main)

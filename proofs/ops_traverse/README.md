@@ -68,6 +68,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `drive_flatten`, `capDrive_flatten` | Output batching never loses, duplicates or reorders rows; LIMIT is exact | `Drive.lean` |
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
+| `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | #2383: an `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
 | `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterRow` | A variable-length edge filter treats a non-boolean value exactly as `WHERE` does (since #2390) | `VarLen.lean` |
@@ -130,7 +131,7 @@ The project has no dependencies beyond Lean core.
 
 ## Coverage
 
-Line numbers are pinned to main b6567cb97 (no traversal code changed since fb3d516d0; #2899 and #2954 only shifted the `eval.rs` rows).
+Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
 
 `COVERAGE.tsv` has 77 rows:
 

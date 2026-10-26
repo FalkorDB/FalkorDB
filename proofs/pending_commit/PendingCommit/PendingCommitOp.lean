@@ -1,7 +1,7 @@
 import PendingCommit.PendingDocs
 import PendingCommit.Labels
 /-
-# `Pending::commit` and constraint enforcement (pending.rs:1080-1475)
+# `Pending::commit` and constraint enforcement (pending.rs:1078-1461)
 
 * `constraintHas_eq` — `constraint_node_has_label` (:1310) answers from the
   staged label sets, then "created ⇒ no committed label", then the matrix; when

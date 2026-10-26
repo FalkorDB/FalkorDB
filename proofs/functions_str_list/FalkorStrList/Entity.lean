@@ -4,13 +4,13 @@
 The runtime accessors entity.rs calls (`runtime.rs:1661-1880`) are modelled with the order
 they use: **deleted-entity snapshot > pending (this query's writes) > committed graph**.
 `deleteNode` / `deleteRel` model the snapshot the DELETE operator takes
-(`ops/delete.rs:226-290, :415-500`).
+(`ops/delete.rs:228-292, :417-502`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
 
 House decision (2026-09-25): a deleted entity keeps returning *all* its details for the rest
 of the query. `deleteRel_preserves` and `deleteNode_preserves` prove it for every accessor
 except node labels; `deleteNode_labels_iff` shows labels are preserved exactly when the
 query staged no label change on the node before deleting it — the snapshot reads the
-*committed* label ids (`g.get_node_label_ids(id)`, ops/delete.rs:282 and :461), not the
+*committed* label ids (`g.get_node_label_ids(id)`, ops/delete.rs:286 and :466), not the
 pending view. Confirmed live and in `lean_functions_str_list::bug_deleted_node_labels_*`.
 -/
 namespace FalkorStrList.Entity
@@ -87,14 +87,14 @@ def RT.inDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
 def RT.outDegree (r : RT) (id : Nat) (ts : List String) : Nat :=
   if (r.delNodes id).isSome || r.pendingDeleted id then 0 else r.outdeg id ts
 
-/-- DELETE of a node with `snapshot` (ops/delete.rs:279-288 / :460-465): labels from the
+/-- DELETE of a node with `snapshot` (ops/delete.rs:281-290 / :462-467): labels from the
 COMMITTED graph, attrs through `get_node_attrs` (pending applied). -/
 def deleteNode (r : RT) (id : Nat) : RT :=
   { r with
     delNodes := fun x => if x = id then some ⟨r.committedLabels id, r.getNodeAttrs id⟩ else r.delNodes x
     pendingDeleted := fun x => if x = id then true else r.pendingDeleted x }
 
-/-- DELETE of a relationship (ops/delete.rs:485-500): type, attrs, endpoints through the
+/-- DELETE of a relationship (ops/delete.rs:487-502): type, attrs, endpoints through the
 accessors, before marking it deleted. -/
 def deleteRel (r : RT) (id : Nat) : RT :=
   { r with delRels := fun x =>

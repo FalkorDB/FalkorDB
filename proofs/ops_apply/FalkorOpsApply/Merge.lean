@@ -6,19 +6,19 @@ matchesK in the *current* graph (including everything earlier rows of the same
 clause created), bind every match (and apply `ON MATCH SET`), otherwise create
 the pattern once (and apply `ON CREATE SET`).
 
-Rust (`MergeOp::next`, `merge.rs:279-444`): per input batch of up to
+Rust (`MergeOp::next`, `merge.rs:279-447`): per input batch of up to
 `BATCH_SIZE` rows, the match sub-plan runs ONCE over all rows (`merge.rs:313-343`)
 against the graph as it is at the start of the batch (the scans see pending
 creations of *earlier batches* through `IncludePending`,
-`planner/mod.rs:3113`); then rows are processed in order (`merge.rs:347-431`):
+`planner/mod.rs:3113`); then rows are processed in order (`merge.rs:347-434`):
 
 * no match → `do_create_fallback` (`merge.rs:113-178`): look the pattern hash up
-  in `runtime.merge_pattern_cache` (`runtime.rs:163`); on a hit bind the cached
+  in `runtime.merge_pattern_cache` (`runtime.rs:201`); on a hit bind the cached
   `(var id, value)` pairs and apply ON MATCH; on a miss create, cache, apply
   ON CREATE;
 * matchesK → first match emitted inline, the rest queued in `pending` and emitted
   after the batch (`drain_pending`, `merge.rs:252-273`) — unless every pattern
-  variable is bound (`all_vars_bound`, `merge.rs:368-381`), in which case only
+  variable is bound (`all_vars_bound`, `merge.rs:369-388`), in which case only
   the first match is used.
 
 The model is one node pattern `MERGE (n:L {k: key(row)})`: a node is `(id, k)`,
@@ -34,12 +34,16 @@ Theorems:
 * `batch_dependent` — with `ON CREATE SET` touching the merged property the
   result depends on `BATCH_SIZE`: rows that straddle a batch boundary see the
   earlier row's creation, rows inside one batch do not. CONFIRMED live.
-* `cross_clause_unbound` — the cache is keyed by the hash only and shared by all
-  MERGE clauses of the query: a second clause whose pattern hashes equal binds
-  the FIRST clause's variable id and leaves its own unbound
-  ("Variable b not found"). CONFIRMED live.
-* `allBound_first_only` — the all-bound shortcut returns one row where the
-  reference returns one per match (visible through a path variable). CONFIRMED.
+* `pre3050_cross_clause_unbound` — before #3050 the cache was keyed by the hash
+  only and shared by all MERGE clauses of the query: a second clause whose
+  pattern hashes equal bound the FIRST clause's variable id and left its own
+  unbound ("Variable b not found"). Fixed on main: the key is `(operator idx,
+  hash)` (`Clause.op`); `cross_clause_keyed` proves the second clause creates and
+  binds its own node.
+* `pre3055_allBound_first_only` — before #3055 the all-bound shortcut returned one
+  row where the reference returns one per match (visible through a path variable).
+  Fixed on main: `allBoundMain` is off for a relationship exposed by a path;
+  `allBound_path_keeps_all` proves it emits the reference rows.
 -/
 
 namespace Merge
@@ -57,6 +61,8 @@ structure Clause (α : Type) where
   /-- the variable id of `n` (binder-assigned; distinct clauses ⇒ distinct ids,
   except UNION branches, which restart numbering) -/
   var : Nat
+  /-- the plan index of this MERGE operator (`MergeOp::idx`); the cache key since #3050 -/
+  op : Nat
   key : α → Nat
   onCreate : Option (α → Nat)
   onMatch : Option (α → Nat)
@@ -93,9 +99,10 @@ def refMerge (cl : Clause α) (st : RState (α := α)) (rows : List α) : RState
 /-! ## Rust -/
 
 /-- `merge_pattern_cache`: hash ↦ cached `(var id, entity id)` bindings. -/
-abbrev Cache := List (Nat × (Nat × Nat))
+abbrev Cache := List ((Nat × Nat) × (Nat × Nat))
 
-def lookup (c : Cache) (h : Nat) : Option (Nat × Nat) := (c.find? (fun e => e.1 == h)).map Prod.snd
+/-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs:122,172`). -/
+def lookup (c : Cache) (h : Nat × Nat) : Option (Nat × Nat) := (c.find? (fun e => e.1 == h)).map Prod.snd
 
 structure SState where
   g : Graph
@@ -111,16 +118,16 @@ def bindCached (cl : Clause α) (cv : Nat × Nat) : Option Nat :=
 /-- `do_create_fallback` (`merge.rs:113-178`). -/
 def createFallback (cl : Clause α) (st : SState (α := α)) (r : α) :
     SState (α := α) × (α × Option Nat) :=
-  match lookup st.cache (cl.key r) with
+  match lookup st.cache (cl.op, cl.key r) with
   | some cv =>                                                      -- 122-135
     ({ st with g := applySet cl.onMatch r st.g cv.2 }, (r, bindCached cl cv))
   | none =>                                                         -- 136-177
     let g := st.g ++ [⟨st.next, cl.key r⟩]
     ({ g := applySet cl.onCreate r g st.next, next := st.next + 1,
-       cache := (cl.key r, (cl.var, st.next)) :: st.cache, out := st.out },
+       cache := ((cl.op, cl.key r), (cl.var, st.next)) :: st.cache, out := st.out },
      (r, some st.next))
 
-/-- Phase A of one batch (`merge.rs:347-431`): row by row against the batch-start
+/-- Phase A of one batch (`merge.rs:347-434`): row by row against the batch-start
 match groups. Returns the state (with `out` extended) and the queue of remaining
 matchesK. -/
 def phaseA (cl : Clause α) (allBound : Bool) :
@@ -189,7 +196,7 @@ theorem matches_single (id k k' : Nat) : matchesK [⟨id, k'⟩] k = if k' = k t
 /-- Cache entries point at nodes of the graph with that key, and carry this
 clause's variable. -/
 def CacheOK (cl : Clause α) (g : Graph) (c : Cache) : Prop :=
-  ∀ h v id, lookup c h = some (v, id) → v = cl.var ∧ ⟨id, h⟩ ∈ g
+  ∀ h v id, lookup c (cl.op, h) = some (v, id) → v = cl.var ∧ ⟨id, h⟩ ∈ g
 
 /-- Within-batch invariant.  `g0` is the batch-start graph; `created` the nodes
 created so far in this batch (keys absent from `g0`, at most one per key), and
@@ -198,13 +205,14 @@ structure J (cl : Clause α) (g0 : Graph) (g : Graph) (c : Cache) : Prop where
   ext : ∃ created, g = g0 ++ created ∧ ∀ n ∈ created, matchesK g0 n.k = []
   cache_ok : CacheOK cl g c
   fresh : ∀ k, matchesK g0 k = [] →
-    (lookup c k = none → matchesK g k = []) ∧
-    (∀ v id, lookup c k = some (v, id) → matchesK g k = [⟨id, k⟩])
+    (lookup c (cl.op, k) = none → matchesK g k = []) ∧
+    (∀ v id, lookup c (cl.op, k) = some (v, id) → matchesK g k = [⟨id, k⟩])
 
-theorem lookup_cons_self (c : Cache) (h v id : Nat) : lookup ((h, (v, id)) :: c) h = some (v, id) := by
+theorem lookup_cons_self (c : Cache) (h : Nat × Nat) (v id : Nat) :
+    lookup ((h, (v, id)) :: c) h = some (v, id) := by
   simp [lookup]
 
-theorem lookup_cons_other (c : Cache) (h h' e : Nat) (e' : Nat) (hne : h' ≠ h) :
+theorem lookup_cons_other (c : Cache) (h h' : Nat × Nat) (e : Nat) (e' : Nat) (hne : h' ≠ h) :
     lookup ((h, (e, e')) :: c) h' = lookup c h' := by
   have : (h == h') = false := by simp; exact fun e => hne e.symm
   simp [lookup, List.find?_cons, this]
@@ -243,7 +251,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
     | nil =>
       -- no batch-start match: cache decides
       simp only [phaseA]
-      cases hlk : lookup st.cache (cl.key r) with
+      cases hlk : lookup st.cache (cl.op, cl.key r) with
       | none =>
         have hcur : matchesK st.g (cl.key r) = [] := (hJ.fresh _ hm0).1 hlk
         simp only [createFallback, hlk]
@@ -252,7 +260,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
           simp only [refRow, hg, hcur, hoc, applySet]
         rw [href]
         have := ih { g := st.g ++ [⟨st.next, cl.key r⟩], next := st.next + 1,
-                     cache := (cl.key r, (cl.var, st.next)) :: st.cache,
+                     cache := ((cl.op, cl.key r), (cl.var, st.next)) :: st.cache,
                      out := st.out ++ [(r, some st.next)] }
                    ⟨rst.g ++ [⟨rst.next, cl.key r⟩], rst.next + 1, rst.out ++ [(r, some rst.next)]⟩
           ?_ (by simp [hg, hn]) (by simp [hn]) ?_
@@ -272,7 +280,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
           · intro h v id hl
             by_cases hh : h = cl.key r
             · subst hh; rw [lookup_cons_self] at hl; cases hl; simp
-            · rw [lookup_cons_other _ _ _ _ _ hh] at hl
+            · rw [lookup_cons_other _ _ _ _ _ (by simpa using hh)] at hl
               obtain ⟨e1, e2⟩ := hJ.cache_ok h v id hl
               exact ⟨e1, by simp [e2]⟩
           · intro k hk
@@ -285,7 +293,7 @@ theorem phaseA_ref (cl : Clause α) (hs : NoSet cl) (g0 : Graph) :
                 simp only [Option.some.injEq, Prod.mk.injEq] at hl
                 obtain ⟨rfl, rfl⟩ := hl
                 rw [matches_append, hcur, matches_single]; simp
-            · rw [lookup_cons_other _ _ _ _ _ hh]
+            · rw [lookup_cons_other _ _ _ _ _ (by simpa using hh)]
               have hne : ¬ (cl.key r = k) := fun e => hh e.symm
               refine ⟨fun hl => ?_, fun v id hl => ?_⟩
               · rw [matches_append, (hJ.fresh k hk).1 hl, matches_single]; simp [hne]
@@ -462,7 +470,7 @@ theorem merge_noSet_any_batch_size (cl : Clause α) (hs : NoSet cl) (B : Nat) (h
 /-! ## Counterexamples (each reproduced against the live Rust server and C) -/
 
 /-- `UNWIND … AS x MERGE (n:L {v: CASE x WHEN 1 THEN 1 ELSE 2 END}) ON CREATE SET n.v = 2`. -/
-def clCase : Clause Nat := ⟨0, fun x => if x = 1 then 1 else 2, some (fun _ => 2), none⟩
+def clCase : Clause Nat := ⟨0, 0, fun x => if x = 1 then 1 else 2, some (fun _ => 2), none⟩
 
 def st0 : SState (α := Nat) := ⟨[], 0, [], []⟩
 
@@ -482,36 +490,93 @@ theorem batch_dependent :
     (rustMerge clCase false st0 [[1], [2]]).g.length = 1 ∧
     (refMerge clCase ⟨[], 0, []⟩ [1, 2]).g.length = 1 := by decide
 
-/-- **Cross-clause cache.**  `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})`:
+/-- **Cross-clause cache (history, fixed by #3050).**  Before #3050 the cache was keyed by
+the hash only, so every MERGE of the query shared it; that is this model with every clause
+carrying the same `op`.  `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})`:
 the second clause misses in the graph, hits the first clause's cache entry
 (same hash: same label, same property map), inserts it under `a`'s variable id,
 and `b` stays unbound. -/
-def clA : Clause Unit := ⟨0, fun _ => 1, some (fun _ => 2), none⟩
-def clB : Clause Unit := ⟨1, fun _ => 1, none, none⟩
+def clA : Clause Unit := ⟨0, 0, fun _ => 1, some (fun _ => 2), none⟩
+def clB : Clause Unit := ⟨1, 1, fun _ => 1, none, none⟩
+/-- `clB` as the pre-#3050 cache saw it: same key space as `clA` (`op` erased). -/
+def clB0 : Clause Unit := { clB with op := 0 }
 
 def afterA : SState (α := Unit) := rustMerge clA false ⟨[], 0, [], []⟩ [[()]]
 def afterB : SState (α := Unit) := rustMerge clB false { afterA with out := [] } [[()]]
+def afterB0 : SState (α := Unit) := rustMerge clB0 false { afterA with out := [] } [[()]]
 
-theorem cross_clause_unbound :
-    afterB.out = [((), none)] ∧ afterB.g.length = 1 ∧
+theorem pre3050_cross_clause_unbound :
+    afterB0.out = [((), none)] ∧ afterB0.g.length = 1 ∧
     (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).out = [((), some 0), ((), some 1)] ∧
     (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).g.length = 2 := by decide
 
-/-- With a *per-clause* cache (`cache := []` at each clause, as C's per-op
-`unique_entities` rax) the second clause is correct. -/
+/-- **#3050 fixes it on main.**  The cache key carries the operator idx, so the second
+clause misses, creates its own node (id 1) and binds its own variable: same outputs and
+graph as the reference. -/
+theorem cross_clause_keyed :
+    afterB.out = [((), some 1)] ∧ afterB.g.length = 2 ∧
+    afterB.out = (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).out.drop 1 ∧
+    afterB.g.length = (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).g.length := by decide
+
+/-- The per-clause cache the fix amounts to (`cache := []` at each clause, as C's per-op
+`unique_entities` rax) agrees with the keyed one on this repro. -/
 theorem per_clause_cache_fixes :
     (rustMerge clB false { afterA with out := [], cache := [] } [[()]]).out = [((), some 1)] := by
   decide
 
-/-- **All-bound shortcut** (`merge.rs:368-400`): two matches (parallel edges of
-`MATCH (a),(b) MERGE p=(a)-[:R]->(b)`, modelled as two nodes with the key) but
-only the first is emitted. The reference (and C) emit both. -/
-def clK : Clause Unit := ⟨0, fun _ => 1, none, none⟩
+/-! ### The all-bound shortcut (#3040, fixed by #3055) -/
+
+/-- A relationship of the MERGE pattern, as `MergeOp::next` sees it: user-named (not an
+`_anon_*` alias), already bound in the input row, exposed by a path variable. -/
+structure RelShape where
+  named : Bool
+  bound : Bool
+  inPath : Bool
+
+/-- The shortcut condition before #3055 (`merge.rs`, all nodes bound and every *named*
+relationship bound; anonymous ones ignored). -/
+def preAllBound (nodesBound : Bool) (rels : List RelShape) : Bool :=
+  nodesBound && rels.all (fun r => !r.named || r.bound)
+
+/-- The shortcut condition on main (#3055): every relationship is bound, or anonymous and
+not exposed by a path variable. -/
+def allBoundMain (nodesBound : Bool) (rels : List RelShape) : Bool :=
+  nodesBound && rels.all (fun r => r.bound || (!r.named && !r.inPath))
+
+/-- `MATCH (a),(b) MERGE p = (a)-[:R]->(b)`: both nodes bound, one anonymous relationship
+in the path. -/
+def pathRels : List RelShape := [⟨false, false, true⟩]
+
+/-- The new condition is stricter than the old one: it only ever drops the shortcut. -/
+theorem allBoundMain_imp_pre (nb : Bool) (rels : List RelShape) :
+    allBoundMain nb rels = true → preAllBound nb rels = true := by
+  simp only [allBoundMain, preAllBound, Bool.and_eq_true, List.all_eq_true]
+  intro ⟨h1, h2⟩
+  refine ⟨h1, fun r hr => ?_⟩
+  have := h2 r hr
+  cases hn : r.named <;> cases hb : r.bound <;> simp_all
+
+/-- When a relationship is exposed by a path variable and not already bound, the shortcut
+is off on main, where it was on before. -/
+theorem path_shortcut_off :
+    preAllBound true pathRels = true ∧ allBoundMain true pathRels = false := by decide
+
+/-- **Pre-#3055 refutation** (`allBound_first_only`, #3040): with the old condition the
+shortcut fires on `pathRels`, two matches (parallel edges of `MATCH (a),(b) MERGE
+p=(a)-[:R]->(b)`, modelled as two nodes with the key) but only the first is emitted. The
+reference (and C) emit both. -/
+def clK : Clause Unit := ⟨0, 0, fun _ => 1, none, none⟩
 def gPar : Graph := [⟨0, 1⟩, ⟨1, 1⟩]
 
-theorem allBound_first_only :
-    (rustMerge clK true ⟨gPar, 2, [], []⟩ [[()]]).out = [((), some 0)] ∧
+theorem pre3055_allBound_first_only :
+    (rustMerge clK (preAllBound true pathRels) ⟨gPar, 2, [], []⟩ [[()]]).out = [((), some 0)] ∧
     (rustMerge clK false ⟨gPar, 2, [], []⟩ [[()]]).out = [((), some 0), ((), some 1)] ∧
     (refMerge clK ⟨gPar, 2, []⟩ [()]).out = [((), some 0), ((), some 1)] := by decide
+
+/-- **#3055 fixes it on main**: the flag computed by the new condition is `false` on the
+path shape, so every match is emitted, as the reference does. -/
+theorem allBound_path_keeps_all :
+    (rustMerge clK (allBoundMain true pathRels) ⟨gPar, 2, [], []⟩ [[()]]).out =
+      (refMerge clK ⟨gPar, 2, []⟩ [()]).out := by decide
 
 end Merge

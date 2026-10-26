@@ -3,7 +3,7 @@ import FalkorEffectsEmitApply.Liveness
 /-!
 # Emit then apply, with cancellation: two open replica divergences (#3447, #3448)
 
-`Emit.forEachRecord` (`for_each_record`, emit.rs:325-377 on b84473a7f) and
+`Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on b84473a7f) and
 `Live.applyAll` (the checked arms of `apply_record`) were proven separately;
 nothing related what the master emits to what a replica *at the master's
 pre-segment state* accepts. Two properties, both refuted on main:
@@ -12,10 +12,10 @@ pre-segment state* accepts. Two properties, both refuted on main:
   the segment (created or cancelled) is named by some `CREATE_EDGE`, so the
   replica's relationship `IdSpace` ends with the same contiguous range
   (`IdSpace::verify`, id_space.rs:737-790, refuses a hole above the entry
-  bound). `digest_cancelled` (emit.rs:457) skips a cancelled edge whose type has
+  bound). `digest_cancelled` (emit.rs:455) skips a cancelled edge whose type has
   no id, and a type whose every edge was cascaded away is never registered
   (`Pending::commit` registers only `created_rels_by_type` keys via
-  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1239-1253,
+  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249,
   graph.rs:2610/:1265; proofs/pending_commit `bug3447_cascade_drops_type_key`).
   `bug3447_cancelled_edge_id_gap`: live repro `CREATE ()-[:EXISTING]->()` then
   `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`; the
@@ -25,7 +25,7 @@ pre-segment state* accepts. Two properties, both refuted on main:
   `Pending`.
 * **`ReplayApplies`** (#3448) — the emitted stream, translated to apply records
   (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
-  (emit.rs:372) runs before `digest_cancelled` (:376) and does not skip created
+  (emit.rs:370) runs before `digest_cancelled` (:376) and does not skip created
   or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
   (proofs/pending_commit `bug3448_cancelled_node_keeps_remL`); the
   `RemoveLabels` arm calls `require_live` (apply.rs:359-360).
@@ -59,7 +59,7 @@ def allocated (p : Pending) : List Nat := p.createdRelTypes.flatMap (·.2) ++ p.
 def RelIdsCovered (p : Pending) (g : Schema) : Prop := ∀ i ∈ allocated p, i ∈ edgeIds (forEachRecord p g)
 
 /-- The relationship-type dictionary after `Pending::commit`: each
-`created_rels_by_type` key is get-or-created (pending.rs:1239-1253); cancelled
+`created_rels_by_type` key is get-or-created (pending.rs:1236-1249); cancelled
 types are not looked at. -/
 def typesAfterCommit (base : List Name) (p : Pending) : List Name :=
   p.createdRelTypes.foldl (fun ts q => if q.1 ∈ ts then ts else ts ++ [q.1]) base

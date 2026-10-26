@@ -149,7 +149,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `GraphCore` | `src/graph_core.rs` |
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
-| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449) |
+| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449; line pins re-targeted to 5e475e6c9) |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every
@@ -277,23 +277,33 @@ history `pre3428_legalResp`, `pre3428_cjk_panics` (`一` → NUL → `CString::n
 panic), `pre3428_latin1_garbled` (`é` → lone 0xE9). `Resp.Call.err s` / `respT (.err s)`
 take `s` to be that already-scrubbed text.
 
-## Gap closed 2026-10-22 (all **Open** on b84473a7f)
-* #3442 `SlowLog`: `add`'s `some _` arm (`slow_log.rs:120-132`) keeps the stale `minLat`
-  (the recompute is at `:172-177`). `bug3442_update_breaks_min_cache` (property `MinCache`),
-  `bug3442_faster_evicts_slower` (the issue's trace: Q11 at 25 ms evicts Q2 at 30 ms; property
-  `SlowestKept`). Fix shape: `addFixed` recomputes on both arms — `addFixed_entries`,
-  `addFixed_minCache` (preserved for every input), `fixed3442_trace`.
-* #3447 `RelLookup` (compact-reply part): the reply's type id of a deleted edge is a
-  *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
+## Gap closed 2026-10-22 (re-targeted to 5e475e6c9: #3442 and #3449 now **Fixed**)
+* #3442 `SlowLog` (fixed by #3456, closes #3442): on b84473a7f `add`'s `some _` arm
+  (`slow_log.rs:120-132`) kept the stale `minLat` (recompute at `:172-177` on b84473a7f). Main's update arm
+  falls through to the recompute (`slow_log.rs:121-139`, `:162-169`): `SlowLog.add` is that code,
+  `pre3442_add` the old one. History `pre3442_update_breaks_min_cache` (property `MinCache`),
+  `pre3442_faster_evicts_slower` (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms; property
+  `SlowestKept`). On main: `add_minCache` (preserved for every input),
+  `fixed3442_update_keeps_min_cache`, `fixed3442_trace` (Q2 kept, Q11 rejected), and
+  `add_entries_pre3442` (the fix changes only the cached minimum). `add_repeat_max` now assumes
+  one entry per hash (`add_nodup`).
+* #3447 `RelLookup` (compact-reply part, still **Open**): the reply's type id of a deleted edge
+  is a *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
   `commitCascade` registers only surviving edge types (`pending.rs:872-873`, `:1242-1251`);
   `bug3447_compact_cancelled_new_type_panics` (compact `none` = panic, verbose renders;
   `RegisteredTypes`, `ReplyTotal` fail); `replyTotal_of_registered` — after commit,
   `RegisteredTypes` makes both encoders total; `s3447_survivor_ok`.
-* #3449 `RelLookup`: `recordDelete` (no snapshot under a bare `Commit`, `delete.rs:69-81,99`)
-  and `s3449abort` (pending edge rendered after `abandon_write`, `record.rs:106-132`).
-  `bug3449_record_renders_dead_rel` (property `RecordedLive` fails; endpoints panic
-  `graph.rs:3381`; pending edge's type lookup panics `reply.rs:487` → `graph.rs:3348`);
-  fix shapes `fixed3449_record_snapshot`, `verboseRelFixed_total`.
+* #3449 `RelLookup` (fixed by #3462, closes #3449): `recordDelete` and `s3449abort` (pending
+  edge rendered after `abandon_write`, `record.rs:106-132`). On b84473a7f a top-level `DELETE r`
+  was not snapshotted (`delete.rs:69-81,99`) and the verbose reply asked the committed graph for
+  a pending edge's type. #3462 snapshots when `runtime.inspect || snapshot_required`
+  (`delete.rs:99-101`, `snapshot`) and resolves the verbose type through
+  `Runtime::get_relationship_type` (deleted -> pending -> graph, `runtime.rs:1902-1914`,
+  `verboseRel`). History `pre3449_record_renders_dead_rel` (`pre3449_snapshot`,
+  `pre3449_verboseRel`). On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
+  row renders from its snapshot), `snapshot_inspect`, `fixed3449_record_abort`,
+  `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
+  still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
 -/
 #print axioms RedisLayer.Serial.bug3484_range_fulltext_loses_range
 #print axioms RedisLayer.Serial.decFields_encFieldC

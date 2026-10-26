@@ -8,7 +8,7 @@ The existing theorems prove the query-time views (`overlay_eq_ref`,
 that the staged maps only name entities that exist when the batch is
 committed or replayed. Line numbers are b84473a7f.
 
-* **#3448** `remove_node_labels` (pending.rs:699-711) pushes every label into
+* **#3448** `remove_node_labels` (pending.rs:697-709) pushes every label into
   `remove_labels`, also one the node only had staged (a `CREATE`d node, or a
   `SET n:L` earlier in the query); ops/remove.rs filters by the overlay, not the
   committed matrix (`Labels.removeOp`). `delete_pending_node` (:788-821) clears

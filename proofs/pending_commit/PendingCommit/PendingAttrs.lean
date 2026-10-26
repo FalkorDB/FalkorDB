@@ -1,7 +1,7 @@
 import PendingCommit.Props
 import PendingCommit.ContentCompact
 /-
-# `Pending` property staging, validation and reads (pending.rs:46-495, :768-852)
+# `Pending` property staging, validation and reads (pending.rs:46-494, :768-852)
 
 * `rustUpsert_eq` — the `binary_search_by_key` + `entry[pos].1 = value` /
   `Vec::insert(pos, …)` in `set_node_attribute` (:425) and

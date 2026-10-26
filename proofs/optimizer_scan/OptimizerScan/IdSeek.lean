@@ -6,10 +6,10 @@
 | `Op`, `Op.flip`            | `ExprIR::{Eq,Gt,Ge,Lt,Le}` and the flip table, `planner/optimizer/utilize_node_by_id.rs:80-87` |
 | `getIdFilter`              | `get_id_filter`, `utilize_node_by_id.rs:52-92` |
 | `collectFilters`           | the AND walk of `utilize_node_by_id`, `utilize_node_by_id.rs:106-119` |
-| `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1322` |
-| `step`                     | one arm of the `match op`, `runtime/runtime.rs:1327-1362` |
-| `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1309-1363` |
-| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main b84473a7f (#3394): the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1364-1372` |
+| `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1428` |
+| `step`                     | one arm of the `match op`, `runtime/runtime.rs:1433-1468` |
+| `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1415-1469` |
+| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main b84473a7f (#3394): the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1470-1479` |
 | `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1624-1604` (since #2846 `node_ids.max_id()`, id_space.rs:320 — same arithmetic) |
 | `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs:63-73` |
 | `pre3394_seek`             | the same before #3394 (b6567cb97): no `node_count` check |
@@ -119,11 +119,11 @@ def collectFilters (alias : Var) : List Cmp → List (E × Op)
 
 /-! ### The runtime side -/
 
-/-- `id as u64`: two's-complement reinterpretation (`runtime.rs:1322`). -/
+/-- `id as u64`: two's-complement reinterpretation (`runtime.rs:1428`). -/
 def asU64 (i : Int) : Nat := (i % (2 ^ 64 : Int)).toNat
 
 /-- One arm of `evaluate_id_filter`'s `match op` on the running `[min, max]`
-(`runtime.rs:1327-1362`). `none` is the early `return Ok(None)`. -/
+(`runtime.rs:1433-1468`). `none` is the early `return Ok(None)`. -/
 def step : Nat × Nat → Op × Nat → Option (Nat × Nat)
   | (mn, mx), (.eq, id) => if id < mn ∨ id > mx then none else some (id, id)
   | (mn, mx), (.gt, id) => if id ≥ mx then none else some (max mn (id + 1), mx)
@@ -134,7 +134,7 @@ def step : Nat × Nat → Op × Nat → Option (Nat × Nat)
 inductive Res | err (msg : String) | empty | range (lo hi : Nat)
   deriving DecidableEq, Repr
 
-/-- `Runtime::evaluate_id_filter` (`runtime.rs:1309-1367`), filters evaluated in order;
+/-- `Runtime::evaluate_id_filter` (`runtime.rs:1415-1473`), filters evaluated in order;
 the first non-integer is an error, the first empty step returns `Ok(None)`. -/
 def evalIdFilter (maxId : Nat) (fs : List (V × Op)) : Res :=
   go (0, maxId) fs
@@ -161,7 +161,7 @@ def G.live (g : G) (x : Nat) : Bool := decide (x < g.bound) && !g.deleted.contai
 /-- `Graph::max_node_id` (`graph.rs:1624-1604` → `IdSpace::max_id`, id_space.rs:320). -/
 def maxNodeId (g : G) : Nat := if g.nodeCount = 0 then 0 else g.bound - 1
 
-/-- `Runtime::evaluate_id_filter` on main (#3394, `runtime.rs:1309-1373`): the same loop, then
+/-- `Runtime::evaluate_id_filter` on main (#3394, `runtime.rs:1415-1479`): the same loop, then
 `if self.g.borrow().node_count() == 0 { return Ok(None) }` before `insert_range(min..=max)`.
 The loop's error and early `Ok(None)` come first, so only a `range` result is affected. -/
 def evalIdFilterMain (nodeCount maxId : Nat) (fs : List (V × Op)) : Res :=

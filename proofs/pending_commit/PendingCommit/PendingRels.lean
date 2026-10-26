@@ -1,7 +1,7 @@
 import PendingCommit.PendingState
 /-
 # Created relationships, label scans and degrees in `Pending`
-(pending.rs:691-1077). See `PendingState.lean`'s header for the statements.
+(pending.rs:689-1075). See `PendingState.lean`'s header for the statements.
 -/
 namespace PendingCommit.PS
 open PA

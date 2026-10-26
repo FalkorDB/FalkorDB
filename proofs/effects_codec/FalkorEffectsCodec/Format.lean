@@ -10,15 +10,15 @@ proofs/effects_emit_apply; here they are parameters, and the theorems say what
 -/
 namespace FalkorCodec
 
-/-- `EffectsFormat::new_buffer` (`format.rs:22`) = `v3::new_buffer`. -/
+/-- `EffectsFormat::new_buffer` (`format.rs:20`) = `v3::new_buffer`. -/
 def fmtNewBuffer : Bytes := newBuffer
-/-- `EffectsFormat::is_empty` (`format.rs:27`): `buf.len() <= HEADER_LEN`. -/
+/-- `EffectsFormat::is_empty` (`format.rs:25`): `buf.len() <= HEADER_LEN`. -/
 def fmtIsEmpty (buf : Bytes) : Bool := buf.length ≤ 2
 
 theorem fmtIsEmpty_iff (body : Bytes) : fmtIsEmpty (fmtNewBuffer ++ body) = true ↔ body = [] := by
   simp [fmtIsEmpty, fmtNewBuffer, newBuffer, List.length_eq_zero_iff]
 
-/-- `EffectsFormat::replicate` (`format.rs:32`): `seal` then hand to the sink;
+/-- `EffectsFormat::replicate` (`format.rs:30`): `seal` then hand to the sink;
 `seal` is `maybe_compress(buf, compression_min_bytes())` (`v3/mod.rs`). -/
 def fmtReplicate (Z : Codec) (minBytes : Nat) (buf : Bytes) : Bytes := (maybeCompress Z buf minBytes).1
 
@@ -38,7 +38,7 @@ theorem compressionMinBytes_neg (v : Int) (h : v < 0) : compressionMinBytes v = 
 theorem seal_disabled (Z : Codec) (buf : Bytes) : maybeCompress Z buf 0 = (buf, false) := by
   simp [maybeCompress]
 
-/-! ### `describe` (`format.rs:46`) -/
+/-! ### `describe` (`format.rs:44`) -/
 
 inductive Line where
   | unreadable (flags : Nat)
@@ -117,7 +117,7 @@ theorem describe_spec {E A} (flags : Nat) (recs : List (Except E A)) (hf : Fused
   · rw [if_neg hc, if_neg hc]
     cases he <;> simp at h2 ⊢ <;> omega
 
-/-! ### `build` (`format.rs:115`): encode every record, count them, stop at the first failure -/
+/-! ### `build` (`format.rs:113`): encode every record, count them, stop at the first failure -/
 
 def buildLoop {Rec} (enc : Rec → Except EErr Bytes) : List Rec → Bytes → Nat → Option EErr → (Bytes × Nat × Option EErr)
   | [], buf, n, failed => (buf, n, failed)
@@ -156,7 +156,7 @@ theorem buildLoop_after_fail {Rec} (enc : Rec → Except EErr Bytes) :
   | [], _, _, _ => rfl
   | _ :: rs, buf, n, e => by simp only [buildLoop]; exact buildLoop_after_fail enc rs buf n e
 
-/-- `apply`, `build_index`, `build_constraint` (`format.rs:108/144/154`) delegate. -/
+/-- `apply`, `build_index`, `build_constraint` (`format.rs:106/144/154`) delegate. -/
 def fmtApply {G E} (applyEffects : G → Bytes → Except E G) (g : G) (buf : Bytes) := applyEffects g buf
 theorem fmtApply_eq {G E} (f : G → Bytes → Except E G) (g : G) (b : Bytes) : fmtApply f g b = f g b := rfl
 def fmtBuildIndex {P G X} (bib : P → G → Bool → X → Bytes → Except String Bytes) := bib

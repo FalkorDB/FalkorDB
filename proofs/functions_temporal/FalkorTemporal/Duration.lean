@@ -5,8 +5,8 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:482` |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs:523` (`y - 1970` is i32: `toI32`) |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:479` |
+| `decomposeDuration`       | `decompose_duration` — `temporal.rs:520` (`y - 1970` is i32: `toI32`) |
 | `shiftMonths`             | `shift_months` — `value.rs:752` (shared by `+` and `-` since #2984) |
 | `addDur`                  | `add_duration_to_timestamp` — `value.rs:728` |
 | `subDur`                  | `sub_duration_from_timestamp` — `value.rs:738` (`pre2984_subDur`: the old clamping one, history) |
@@ -32,7 +32,7 @@ theorem chk32_of (x : Int) (h : I32 x) : chk32 x = some x := by
   unfold chk32; unfold I32 at h
   rw [decide_eq_true h.1, decide_eq_true h.2]; rfl
 
-/-- `construct_duration_secs` (`temporal.rs:482-520`), `Err` ↦ `none`. -/
+/-- `construct_duration_secs` (`temporal.rs:479-517`), `Err` ↦ `none`. -/
 def constructDuration (years months weeks days hours minutes seconds : Int) : Option Int := do
   let tmo ← chkMul years 12 >>= fun y => chkAdd y months
   let tmo32 ← chk32 tmo
@@ -56,7 +56,7 @@ theorem construct_ym_s (Y M S : Int) (h1 : I64 (Y * 12)) (h2 : I64 (Y * 12 + M))
   simp only [Int.zero_mul, Int.zero_add, Int.mul_zero, chk_of _ h1, chk_of _ h2, chk32_of _ h3,
     chk32_of _ h4, chk_of _ z, chk_of _ h5, daysFromCivilT_eq, chk_of _ h6, bind, Option.bind]
 
-/-- `decompose_duration` (`temporal.rs:523-533`) as built in release (i32 wrap). -/
+/-- `decompose_duration` (`temporal.rs:520-530`) as built in release (i32 wrap). -/
 def decomposeDuration (dur : Int) : Int × Int × Int :=
   let days := dur / 86400
   let tod := dur % 86400

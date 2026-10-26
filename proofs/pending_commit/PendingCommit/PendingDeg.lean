@@ -1,6 +1,6 @@
 import PendingCommit.PendingRels
 /-
-# Degrees and label scans over `Pending` (pending.rs:892-1077)
+# Degrees and label scans over `Pending` (pending.rs:890-1075)
 
 * `pendingDeg_spec` — `pending_indegree` / `pending_outdegree` (:991,
   :1015): with type names, the sum over the listed types of the matching

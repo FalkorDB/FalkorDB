@@ -31,6 +31,9 @@ inductive IQ (E : Type) where
   | or (qs : List (IQ E))
   | arr (key : String) (v : E)
   | inList (key : String) (l : E)
+  /-- `IndexQuery::InList { list: Value::List(items) }`, the evaluated form (#2383): the list is
+  kept whole instead of being expanded to `Or(Equal, ..)`. Only `evalIQ` produces it. -/
+  | inListV (key : String) (items : List V)
 
 def isScalar : V → Bool
   | .int _ | .float | .str _ | .bool _ => true
@@ -51,8 +54,9 @@ def evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String
   | .arr k v => do pure (.arr k (← ev v))
   | .inList k l => do
     match ← asList l with
-    | some items => pure (.or ((items.filter isScalar).map (.eq k)))
+    | some items => pure (.inListV k (items.filter isScalar))
     | none => throw "IN operator requires a list"
+  | .inListV k items => pure (.inListV k items)
 where
   evalL ev asList : List (IQ E) → Except String (List (IQ V))
   | [] => pure []
@@ -75,6 +79,10 @@ def canUse : IQ V → Bool
   | .and qs => !qs.isEmpty && canUseL qs
   | .or qs => !qs.isEmpty && canUseL qs
   | .arr _ v => isScalar v
+  -- #2383: `matches!(list, Value::List(items) if !items.is_empty() && items.iter().all(is_indexable))`
+  | .inListV _ items => !items.isEmpty && items.all indexable
+  -- an `InList` whose payload is not a list never reaches the index
+  | .inList _ _ => false
   | _ => true
 where
   canUseL : List (IQ V) → Bool
@@ -94,12 +102,25 @@ theorem canUse_spec (k : String) (v : V) (qs : List (IQ V)) :
     canUse (.or qs) = (!qs.isEmpty && qs.all canUse) ∧ canUse (.or []) = false := by
   refine ⟨rfl, by simp only [canUse, indexable]; decide, rfl, by simp [canUse, canUseL_iff], rfl⟩
 
-/-- `IN list` keeps only the scalar items, in order, as an `Or` of equalities (known
-W2-index-3: a non-scalar item — date, array — is dropped). -/
+/-- `IN list` keeps only the scalar items, in order, as one `InList` (since #2383; before it was an
+`Or` of equalities over the same members, which `canUse_inListV_eq_or` shows decides alike). Known W2-index-3, still open on main:
+a non-scalar item — date, array — is dropped before the index is asked. -/
 theorem evalIQ_inList {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (l : E) (items : List V) (h : asList l = .ok (some items)) :
-    evalIQ ev asList (.inList k l) = .ok (.or ((items.filter isScalar).map (.eq k))) := by
+    evalIQ ev asList (.inList k l) = .ok (.inListV k (items.filter isScalar)) := by
   simp [evalIQ, h, bind, Except.bind, pure, Except.pure]
+
+/-- **#2383 keeps the fallback rule.** A list reaches the index iff its members, as an `Or` of
+`Equal`s, would have (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`):
+non-empty and every member indexable. Hence `IN [NULL]` (filtered to empty) falls back to a label scan. -/
+theorem canUse_inListV_eq_or (k : String) (items : List V) :
+    canUse (.inListV k items) = canUse (.or (items.map (.eq k))) := by
+  simp only [canUse, canUse.canUseL, canUseL_iff, List.isEmpty_map, List.all_map]
+  rfl
+
+theorem canUse_inListV_empty (k : String) : canUse (.inListV k []) = false := rfl
+
+theorem canUse_inList_nonlist (k : String) (v : V) : canUse (.inList k v) = false := rfl
 
 theorem evalIQ_inList_err {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (l : E) (h : asList l = .ok none) :
@@ -236,11 +257,21 @@ def canUseE : IQ V → Bool
   | .eq k v => canUse (.eq k v)
   | .range k lo hi a b => canUse (.range k lo hi a b)
   | .pt _ _ _ => true
-  | .inList _ _ => true
+  | .inListV _ items => !items.isEmpty && items.all indexable   -- #2383, as the node op
+  | .inList _ _ => false
 where
   canUseEL : List (IQ V) → Bool
   | [] => true
   | q :: qs => canUseE q && canUseEL qs
+
+/-- The edge op's `IN` rule (#2383) is the node op's, and decides as the `Or` of `Equal`s it replaced. -/
+theorem canUseE_inListV_eq_or (k : String) (items : List V) :
+    canUseE (.inListV k items) = canUseE (.or (items.map (.eq k))) := by
+  have h : ∀ qs : List V, canUseE.canUseEL (qs.map (.eq k)) = qs.all (fun v => indexable v) := by
+    intro qs; induction qs with
+    | nil => rfl
+    | cons v vs ih => simp [canUseE.canUseEL, canUseE, canUse, ih]
+  simp only [canUseE, h, List.isEmpty_map]
 
 theorem canUseE_spec (k : String) (v : V) (lo hi : Option V) (a b : Bool) :
     canUseE (.eq k v) = canUse (.eq k v) ∧ canUseE (.range k lo hi a b) = canUse (.range k lo hi a b) ∧

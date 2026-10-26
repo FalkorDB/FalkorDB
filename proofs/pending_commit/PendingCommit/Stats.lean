@@ -1,10 +1,10 @@
 /-
 # `Nodes created` / `Nodes deleted` statistics vs. C
 
-`Pending::commit` (pending.rs:1086, :1163) reports
+`Pending::commit` (pending.rs:1084, :1163) reports
 `nodes_created += created_nodes.len()` and `nodes_deleted += deleted_nodes.len()`.
 A node created and deleted in the same segment is unwound out of
-`created_nodes` by `delete_pending_node` (pending.rs:602) into
+`created_nodes` by `delete_pending_node` (pending.rs:600) into
 `cancelled_nodes`, which no statistic reads, so it is reported as neither
 created nor deleted. The C engine counts every create and every delete.
 

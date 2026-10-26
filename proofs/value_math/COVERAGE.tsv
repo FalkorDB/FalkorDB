@@ -159,28 +159,28 @@ graph/src/runtime/functions/trig.rs	pi	121	PROVEN	Trig tPi: pi_value, pi_ret, pi
 graph/src/runtime/functions/trig.rs	haversin	130	PROVEN	Trig tHaversin: haversin_formula ((1-cos)/2), unary_rust_eq_c
 graph/src/runtime/functions/procedures.rs	register	41	PROVEN	Procedures procRegs: procRegs_nodup; yields_* (one column per declared YIELD name, rectangular)
 graph/src/runtime/functions/procedures.rs	db_labels	47	PROVEN	Procedures dbLabels: yields_labels, dbLabels_rows; live = C (empty+populated)
-graph/src/runtime/functions/procedures.rs	db_types	64	PROVEN	Procedures dbTypes: yields_types; live = C
-graph/src/runtime/functions/procedures.rs	db_properties	81	PROVEN	Procedures dbProps: yields_props; live = C
-graph/src/runtime/functions/procedures.rs	db_indexes	97	PROVEN	Procedures dbIndexes: yields_indexes, typesOfFields_spec/_sublist, typesOf_isSome, attrOpts_defaults/_novec, dimToI64_le, statusOf_spec, infoNames_last; live vs C (row order + info detail differ)
-graph/src/runtime/functions/procedures.rs	db_meta_stats	292	PROVEN	Procedures dbMetaStats: yields_meta, metaStats_labels (map = label->count, no key overwritten); live = C
-graph/src/runtime/functions/procedures.rs	db_fulltext_create_node_index	332	PROVEN	Procedures ftCreate: stubs (zero-row batch; known stub, live C creates index)
-graph/src/runtime/functions/procedures.rs	db_fulltext_query_nodes	342	PROVEN	Procedures ftQueryNodes: stubs (planner-rewritten)
-graph/src/runtime/functions/procedures.rs	db_fulltext_query_relationships	356	PROVEN	Procedures ftQueryRels: stubs
-graph/src/runtime/functions/procedures.rs	db_fulltext_drop	366	PROVEN	Procedures ftDrop: stubs
-graph/src/runtime/functions/procedures.rs	db_vector_query_nodes	383	PROVEN	Procedures vecQueryNodes: stubs
-graph/src/runtime/functions/procedures.rs	db_vector_query_relationships	393	PROVEN	Procedures vecQueryRels: stubs
-graph/src/runtime/functions/procedures.rs	db_constraints	403	PROVEN	Procedures dbConstraints: yields_constraints; live vs C (same rows, order differs)
-graph/src/runtime/functions/procedures.rs	dbms_procedures	437	PROVEN	Procedures dbmsProcedures: yields_procedures, dbmsProcedures_sorted (sorted + permutation); live = C
-graph/src/runtime/functions/procedures.rs	dbms_functions	469	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
-graph/src/runtime/functions/procedures.rs	build_columns	557	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
-graph/src/runtime/functions/procedures.rs	type_to_dbms_value	616	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
-graph/src/runtime/functions/procedures.rs	type_to_dbms_string	649	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_visible (divergence)
-graph/src/runtime/functions/procedures.rs	format_union	694	PROVEN	Procedures formatUnion: any_string, examples
-graph/src/runtime/functions/procedures.rs	format_union_strings	706	PROVEN	Procedures formatUnion_strings_eq
+graph/src/runtime/functions/procedures.rs	db_types	63	PROVEN	Procedures dbTypes: yields_types; live = C
+graph/src/runtime/functions/procedures.rs	db_properties	79	PROVEN	Procedures dbProps: yields_props; live = C
+graph/src/runtime/functions/procedures.rs	db_indexes	94	PROVEN	Procedures dbIndexes: yields_indexes, typesOfFields_spec/_sublist, typesOf_isSome, attrOpts_defaults/_novec, dimToI64_le, statusOf_spec, infoNames_last; live vs C (row order + info detail differ)
+graph/src/runtime/functions/procedures.rs	db_meta_stats	289	PROVEN	Procedures dbMetaStats: yields_meta, metaStats_labels (map = label->count, no key overwritten); live = C
+graph/src/runtime/functions/procedures.rs	db_fulltext_create_node_index	329	PROVEN	Procedures ftCreate: stubs (zero-row batch; known stub, live C creates index)
+graph/src/runtime/functions/procedures.rs	db_fulltext_query_nodes	339	PROVEN	Procedures ftQueryNodes: stubs (planner-rewritten)
+graph/src/runtime/functions/procedures.rs	db_fulltext_query_relationships	353	PROVEN	Procedures ftQueryRels: stubs
+graph/src/runtime/functions/procedures.rs	db_fulltext_drop	363	PROVEN	Procedures ftDrop: stubs
+graph/src/runtime/functions/procedures.rs	db_vector_query_nodes	380	PROVEN	Procedures vecQueryNodes: stubs
+graph/src/runtime/functions/procedures.rs	db_vector_query_relationships	390	PROVEN	Procedures vecQueryRels: stubs
+graph/src/runtime/functions/procedures.rs	db_constraints	400	PROVEN	Procedures dbConstraints: yields_constraints; live vs C (same rows, order differs)
+graph/src/runtime/functions/procedures.rs	dbms_procedures	434	PROVEN	Procedures dbmsProcedures: yields_procedures, dbmsProcedures_sorted (sorted + permutation); live = C
+graph/src/runtime/functions/procedures.rs	dbms_functions	466	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
+graph/src/runtime/functions/procedures.rs	build_columns	554	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
+graph/src/runtime/functions/procedures.rs	type_to_dbms_value	613	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
+graph/src/runtime/functions/procedures.rs	type_to_dbms_string	646	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_visible (divergence)
+graph/src/runtime/functions/procedures.rs	format_union	691	PROVEN	Procedures formatUnion: any_string, examples
+graph/src/runtime/functions/procedures.rs	format_union_strings	703	PROVEN	Procedures formatUnion_strings_eq
 graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + path_no_panic (validated Path|Null never hits unreachable!)
 graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
 graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic
 graph/src/entity_type.rs	fmt	26	PROVEN	Procedures EntityType.fmt: entityType_fmt_inj, entityType_fmt_values (= C spellings, live)
 graph/src/runtime/index_ddl.rs	create_index	30	PROVEN	IndexDdl createIndex/prep: ro_rejects, create_nonmap, create_eval_err, create_opts_err, create_upgrade_err, create_vector_no_opts, create_vector_none (#3094 vector needs options), create_graph_fail, create_ok
-graph/src/runtime/index_ddl.rs	drop_index	88	PROVEN	IndexDdl dropIndex: ro_rejects, drop_ok (dropped += graph count)
-graph/src/runtime/index_ddl.rs	emit_effect	116	PROVEN	IndexDdl emit: emit_off, emit_counts, emit_frame, emit_buffer_created_on_error
+graph/src/runtime/index_ddl.rs	drop_index	87	PROVEN	IndexDdl dropIndex: ro_rejects, drop_ok (dropped += graph count)
+graph/src/runtime/index_ddl.rs	emit_effect	114	PROVEN	IndexDdl emit: emit_off, emit_counts, emit_frame, emit_buffer_created_on_error

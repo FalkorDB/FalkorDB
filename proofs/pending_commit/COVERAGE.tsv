@@ -16,11 +16,11 @@ graph/src/runtime/ops/delete.rs	node_attrs_to_map	38	NOT COVERED	operator plumbi
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	49	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	snapshot_required	69	NOT COVERED	operator plumbing / snapshot map building
 graph/src/runtime/ops/delete.rs	new	93	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	next	113	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	delete_batch	127	NOT COVERED	operator plumbing / snapshot map building
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	191	MODELLED	Snapshot.del, Stats.step
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	297	MODELLED	Snapshot.del (relationship map)
-graph/src/runtime/ops/delete.rs	delete_entity	393	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	next	115	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	delete_batch	129	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	193	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	299	MODELLED	Snapshot.del (relationship map)
+graph/src/runtime/ops/delete.rs	delete_entity	395	MODELLED	Snapshot.del, Stats.step
 graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
 graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
@@ -126,56 +126,56 @@ graph/src/runtime/pending.rs	absorb	401	PROVEN	PD.absorb_spec
 graph/src/runtime/pending.rs	merge	427	PROVEN	PD.absorb_spec (merge = absorb.1)
 graph/src/runtime/pending.rs	ids_by_slot	447	PROVEN	PD.ids_spec
 graph/src/runtime/pending.rs	commit	473	PROVEN	PD.commitDocs_spec (graph index writers uninterpreted)
-graph/src/runtime/pending.rs	default	487	PROVEN	PD.new_spec
-graph/src/runtime/pending.rs	new	494	PROVEN	PD.new_spec
-graph/src/runtime/pending.rs	set_schema_baseline	524	PROVEN	PD.accessors_spec
-graph/src/runtime/pending.rs	created_nodes	535	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	set_node_attributes	546	PROVEN	PS.setAttrs_spec
-graph/src/runtime/pending.rs	set_node_attribute	573	PROVEN	PS.setAttr_spec (+PA.rustUpsert_eq, Props.stage_sorted_lastWrite)
-graph/src/runtime/pending.rs	clear_node_attributes	593	PROVEN	PS.clearA_spec
-graph/src/runtime/pending.rs	has_node_attrs	603	PROVEN	PS.hasA_spec
-graph/src/runtime/pending.rs	has_relationship_attrs	609	PROVEN	PS.hasA_spec
-graph/src/runtime/pending.rs	get_node_attribute	614	PROVEN	PS.getA_spec, Props.read_your_writes_existing
-graph/src/runtime/pending.rs	update_node_attrs	632	PROVEN	PS.updA_spec
-graph/src/runtime/pending.rs	stage_node_labels	661	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
-graph/src/runtime/pending.rs	set_node_labels	678	PROVEN	Labels.stage
-graph/src/runtime/pending.rs	set_nodes_labels	686	PROVEN	Labels.stage per id
-graph/src/runtime/pending.rs	remove_node_labels	699	PROVEN	Labels.removeLabels_closed, overlay_eq_ref; (query-time view only) pushes a label that is only staged (created node, earlier SET) into remove_labels: RemLCommitted refuted by StagedBugs.bug3448_remove_of_staged_label (BUG #3448)
-graph/src/runtime/pending.rs	node_has_label	725	PROVEN	Labels.nodeHas_eq_ref
-graph/src/runtime/pending.rs	update_node_labels	754	PROVEN	Labels.overlay_eq_ref
-graph/src/runtime/pending.rs	deleted_node	772	PROVEN	PS.sets_spec; leaves set_labels, so a deleted node stays a pending labelled node: PendingWithLabelsLive refuted by StagedBugs.bug3453_pendingWithLabels_yields_deleted (BUG #3453)
-graph/src/runtime/pending.rs	delete_pending_node	788	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); remove_labels is not cleared: StagedBugs.deletePendingNode_keeps_remL, RemLLive refuted by bug3448_cancelled_node_keeps_remL (BUG #3448; replica side effects_emit_apply bug3448_removeLabels_before_create_refused)
-graph/src/runtime/pending.rs	remove_pending_relationships_for_node	839	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); drops an emptied created_rels_by_type group, so commit never registers a type whose every edge was cascaded: CancelledTypeRegistered refuted by StagedBugs.bug3447_cascade_drops_type_key (BUG #3447; replica id gap effects_emit_apply bug3447_cancelled_edge_id_gap)
-graph/src/runtime/pending.rs	created_relationship	899	PROVEN	PS.createdRel_spec
-graph/src/runtime/pending.rs	set_relationship_attributes	916	PROVEN	PS.setAttrs_spec
-graph/src/runtime/pending.rs	set_relationship_attribute	942	PROVEN	PS.setAttr_spec
-graph/src/runtime/pending.rs	get_relationship_attribute	963	PROVEN	PS.getA_spec
-graph/src/runtime/pending.rs	update_relationship_attrs	981	PROVEN	PS.updA_spec
-graph/src/runtime/pending.rs	deleted_relationship	1005	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	deleted_relationships_bulk	1012	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_relationship_type	1022	PROVEN	PS.sets_spec, createdRel_spec
-graph/src/runtime/pending.rs	is_node_created	1030	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_pending_nodes_with_labels	1040	PROVEN	PS.pendingWithLabels_spec (per-function spec only) no deleted filter, committed labels ignored: StagedBugs.bug3453_pendingWithLabels_yields_deleted; composed IncludePendingExact refuted in proofs/ops_aggregate (BUG #3453)
-graph/src/runtime/pending.rs	nodes_with_pending_label_removes	1060	PROVEN	PS.withLabelRemoves_spec
-graph/src/runtime/pending.rs	is_relationship_created	1078	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	get_created_relationship_endpoints	1087	PROVEN	PS.createdEndpoints_spec
-graph/src/runtime/pending.rs	has_deleted_nodes	1100	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	has_deleted_relationships	1105	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	has_created_relationships	1110	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	is_node_deleted	1115	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	deleted_nodes	1124	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	is_relationship_deleted	1129	PROVEN	PS.sets_spec
-graph/src/runtime/pending.rs	pending_indegree	1139	PROVEN	PS.pendingDeg_spec
-graph/src/runtime/pending.rs	pending_outdegree	1163	PROVEN	PS.pendingDeg_spec
-graph/src/runtime/pending.rs	pending_deleted_indegree	1188	PROVEN	PS.deletedDeg_some, deletedDeg_none, deg_panics_on_pending_deleted (#2769)
-graph/src/runtime/pending.rs	pending_deleted_outdegree	1210	PROVEN	PS.deletedDeg_some, deletedDeg_none
-graph/src/runtime/pending.rs	commit	1228	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
-graph/src/runtime/pending.rs	enforce_constraints	1385	PROVEN	PC.enforce_spec, affected_spec
-graph/src/runtime/pending.rs	constraint_node_has_label	1458	PROVEN	PC.constraintHas_eq
-graph/src/runtime/pending.rs	check_node_constraint	1482	CONDITIONAL	UQ.checkNode2 (#3334): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_nodes returns every live label member not written by this commit whose key values all pass is_value_valid_for_index_lookup (RediSearch Equal/And exact, index lags only this Commit), and the label matrix lists every live member; history PC.check/scan_ok
-graph/src/runtime/pending.rs	check_edge_constraint	1546	CONDITIONAL	UQ.checkEdge2 (#3334; membership PC.edgeMember_spec): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees, checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_edges returns every live edge of the type not written by this commit whose key values pass is_value_valid_for_index_lookup, and the tensor lists every live edge of the type; history PC.check/scan_ok
-graph/src/runtime/pending.rs	take_deferred_indexes	1617	PROVEN	PD.commitDeferred_spec (takeDeferred)
-graph/src/runtime/pending.rs	resync_published_indexes	1635	PROVEN	PD.resync_spec
-graph/src/runtime/pending.rs	commit_deferred_indexes	1690	PROVEN	PD.commitDeferred_spec
-graph/src/runtime/pending.rs	effects_count	1804	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
-graph/src/runtime/pending.rs	end_segment	1731	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err
+graph/src/runtime/pending.rs	default	486	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	new	493	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	set_schema_baseline	523	PROVEN	PD.accessors_spec
+graph/src/runtime/pending.rs	created_nodes	533	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	set_node_attributes	544	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_node_attribute	571	PROVEN	PS.setAttr_spec (+PA.rustUpsert_eq, Props.stage_sorted_lastWrite)
+graph/src/runtime/pending.rs	clear_node_attributes	591	PROVEN	PS.clearA_spec
+graph/src/runtime/pending.rs	has_node_attrs	601	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	has_relationship_attrs	607	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	get_node_attribute	612	PROVEN	PS.getA_spec, Props.read_your_writes_existing
+graph/src/runtime/pending.rs	update_node_attrs	630	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	stage_node_labels	659	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
+graph/src/runtime/pending.rs	set_node_labels	676	PROVEN	Labels.stage
+graph/src/runtime/pending.rs	set_nodes_labels	684	PROVEN	Labels.stage per id
+graph/src/runtime/pending.rs	remove_node_labels	697	PROVEN	Labels.removeLabels_closed, overlay_eq_ref; (query-time view only) pushes a label that is only staged (created node, earlier SET) into remove_labels: RemLCommitted refuted by StagedBugs.bug3448_remove_of_staged_label (BUG #3448)
+graph/src/runtime/pending.rs	node_has_label	723	PROVEN	Labels.nodeHas_eq_ref
+graph/src/runtime/pending.rs	update_node_labels	752	PROVEN	Labels.overlay_eq_ref
+graph/src/runtime/pending.rs	deleted_node	770	PROVEN	PS.sets_spec; leaves set_labels, so a deleted node stays a pending labelled node: PendingWithLabelsLive refuted by StagedBugs.bug3453_pendingWithLabels_yields_deleted (BUG #3453)
+graph/src/runtime/pending.rs	delete_pending_node	786	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); remove_labels is not cleared: StagedBugs.deletePendingNode_keeps_remL, RemLLive refuted by bug3448_cancelled_node_keeps_remL (BUG #3448; replica side effects_emit_apply bug3448_removeLabels_before_create_refused)
+graph/src/runtime/pending.rs	remove_pending_relationships_for_node	837	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken || CancelSpec discharged: CancelRust.cancelN_spec/cancelR_spec (deletePendingNode_spec_rust, removeRelsG_spec_rust); drops an emptied created_rels_by_type group, so commit never registers a type whose every edge was cascaded: CancelledTypeRegistered refuted by StagedBugs.bug3447_cascade_drops_type_key (BUG #3447; replica id gap effects_emit_apply bug3447_cancelled_edge_id_gap)
+graph/src/runtime/pending.rs	created_relationship	897	PROVEN	PS.createdRel_spec
+graph/src/runtime/pending.rs	set_relationship_attributes	914	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_relationship_attribute	940	PROVEN	PS.setAttr_spec
+graph/src/runtime/pending.rs	get_relationship_attribute	961	PROVEN	PS.getA_spec
+graph/src/runtime/pending.rs	update_relationship_attrs	979	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	deleted_relationship	1003	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_relationships_bulk	1010	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_relationship_type	1020	PROVEN	PS.sets_spec, createdRel_spec
+graph/src/runtime/pending.rs	is_node_created	1028	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_pending_nodes_with_labels	1038	PROVEN	PS.pendingWithLabels_spec (per-function spec only) no deleted filter, committed labels ignored: StagedBugs.bug3453_pendingWithLabels_yields_deleted; composed IncludePendingExact refuted in proofs/ops_aggregate (BUG #3453)
+graph/src/runtime/pending.rs	nodes_with_pending_label_removes	1058	PROVEN	PS.withLabelRemoves_spec
+graph/src/runtime/pending.rs	is_relationship_created	1076	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_created_relationship_endpoints	1085	PROVEN	PS.createdEndpoints_spec
+graph/src/runtime/pending.rs	has_deleted_nodes	1098	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_deleted_relationships	1103	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_created_relationships	1108	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_node_deleted	1113	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_nodes	1122	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_relationship_deleted	1127	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	pending_indegree	1137	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_outdegree	1161	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_deleted_indegree	1186	PROVEN	PS.deletedDeg_some, deletedDeg_none, deg_panics_on_pending_deleted (#2769)
+graph/src/runtime/pending.rs	pending_deleted_outdegree	1208	PROVEN	PS.deletedDeg_some, deletedDeg_none
+graph/src/runtime/pending.rs	commit	1226	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
+graph/src/runtime/pending.rs	enforce_constraints	1372	PROVEN	PC.enforce_spec, affected_spec
+graph/src/runtime/pending.rs	constraint_node_has_label	1444	PROVEN	PC.constraintHas_eq
+graph/src/runtime/pending.rs	check_node_constraint	1468	CONDITIONAL	UQ.checkNode2 (#3334): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees (= PC.check_spec label-scan verdict under the pre-commit invariant), checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_nodes returns every live label member not written by this commit whose key values all pass is_value_valid_for_index_lookup (RediSearch Equal/And exact, index lags only this Commit), and the label matrix lists every live member; history PC.check/scan_ok
+graph/src/runtime/pending.rs	check_edge_constraint	1532	CONDITIONAL	UQ.checkEdge2 (#3334; membership PC.edgeMember_spec): checkUnique_spec/uniqueViolated_spec, uniqueViolated_agrees, checkMandatory_eq_old; HYPOTHESIS hIdx/hScan: get_indexed_edges returns every live edge of the type not written by this commit whose key values pass is_value_valid_for_index_lookup, and the tensor lists every live edge of the type; history PC.check/scan_ok
+graph/src/runtime/pending.rs	take_deferred_indexes	1603	PROVEN	PD.commitDeferred_spec (takeDeferred)
+graph/src/runtime/pending.rs	resync_published_indexes	1621	PROVEN	PD.resync_spec
+graph/src/runtime/pending.rs	commit_deferred_indexes	1676	PROVEN	PD.commitDeferred_spec
+graph/src/runtime/pending.rs	effects_count	1790	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
+graph/src/runtime/pending.rs	end_segment	1717	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err

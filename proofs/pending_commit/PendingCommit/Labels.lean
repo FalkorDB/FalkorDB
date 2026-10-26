@@ -5,16 +5,16 @@
 added (`set_labels`) and removed (`remove_labels`). Maps are per node and nodes
 never interact, so one node is modelled; `C` is the committed label set.
 
-* `stage` — `stage_node_labels` (pending.rs:510): push the labels onto
+* `stage` — `stage_node_labels` (pending.rs:509): push the labels onto
   `set_labels`, drop them from `remove_labels`.
-* `removeLabels` — `remove_node_labels` (pending.rs:546): per label, drop it
+* `removeLabels` — `remove_node_labels` (pending.rs:544): per label, drop it
   from `set_labels`, push it onto `remove_labels`. The REMOVE operator
-  (`ops/remove.rs:128-139`) first filters the labels to those the node
+  (`ops/remove.rs:128-138`) first filters the labels to those the node
   currently has (`overlay`) — modelled as `removeOp`.
-* `nodeHas` — `node_has_label` (pending.rs:571): removal first, then add, else
+* `nodeHas` — `node_has_label` (pending.rs:569): removal first, then add, else
   `None` (ask the matrix).
 * `commitLabels` — `set_nodes_labels_bulk` then `remove_nodes_labels`
-  (pending.rs:1107-1124): `(C ∪ set) \ remove`.
+  (pending.rs:1105-1122): `(C ∪ set) \ remove`.
 
 Reference: a label's state is decided by the last clause that mentions it,
 else the committed matrix (`refHas`).
@@ -177,7 +177,7 @@ theorem nodeHas_eq_ref (C : Nat → Bool) (ops : List Op) (l : Nat) :
 
 /-- **`removeOp_nodup`**: because REMOVE stages only labels the node currently
 has, `remove_labels` never holds a label twice — so the commit's
-`labels_removed += rows.len()` (pending.rs:1121) counts each removed label once. -/
+`labels_removed += rows.len()` (pending.rs:1119) counts each removed label once. -/
 theorem removeOp_no_dup_push (C : Nat → Bool) (s : St) (ls : List Nat) (l : Nat)
     (h : s.remL.contains l = true) : (ls.filter (overlay C s)).contains l = false := by
   rw [contains_filter]; have hm : l ∈ s.remL := by simpa using h

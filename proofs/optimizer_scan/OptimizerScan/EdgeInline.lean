@@ -239,7 +239,7 @@ theorem distance_keeps_filter (t : T) : nonIdxT (.abs t) = true := rfl
 def extraLabels (ls : List Nat) : Option (List Nat) := if ls.length > 1 then some ls.tail else none
 
 /-- `evaluate_index_query` with its error: `InList` over a non-list value is
-`Err("IN operator requires a list")` (`node_by_index_scan.rs:240`). -/
+`Err("IN operator requires a list")` (`node_by_index_scan.rs:241`). -/
 def evalIQE (q : IQ) : Except String Q :=
   match q with
   | .inList _ (.term t) => match evalC t with
@@ -247,7 +247,7 @@ def evalIQE (q : IQ) : Except String Q :=
     | _ => .error "IN operator requires a list"
   | _ => .ok (evalIQ q)
 
-/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:301-328`):
+/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:308-335`):
 index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q
@@ -298,7 +298,21 @@ theorem isIndexable_spec (v : V) :
     isIndexable v = match v with | .i x => !lossy x | .date _ | .arr _ => false | _ => true := by
   cases v <;> rfl
 
+/-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
 theorem evalIQ_inList (k : Nat) (r : R) :
-    evalIQ (.inList k r) = .or (((listVals r).filter isPrim).map (.eq k)) := rfl
+    evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
+
+/-- History (`pre2383_`): before #2383 the runtime expanded an `IN` list to an `Or` of
+`Equal`s (node and edge index scans alike). -/
+def pre2383_evalIQ_inList (k : Nat) (r : R) : Q :=
+  .or (((listVals r).filter isPrim).map (.eq k))
+
+/-- **#2383 is behaviour-preserving**: the `InList` the runtime now builds selects the
+same nodes through the index and is refused by `can_utilize_index` on the same terms as
+the pre-#2383 `Or` of `Equal`s, so which queries fall back to a label scan is unchanged. -/
+theorem inList_same_as_pre2383 (k : Nat) (r : R) (F : List Nat) :
+    build F (evalIQ (.inList k r)) = build F (pre2383_evalIQ_inList k r) ∧
+    canUtilize (evalIQ (.inList k r)) = canUtilize (pre2383_evalIQ_inList k r) :=
+  ⟨build_inList_eq_or F k _, canUtilize_inList_eq_or k _⟩
 
 end OptimizerScan.Index

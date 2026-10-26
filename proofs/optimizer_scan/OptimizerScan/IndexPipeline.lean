@@ -165,15 +165,10 @@ theorem cu_inList (k : Nat) (ts : List T) (hne : ts ≠ []) (hts : ts.all scalar
     List.filter_eq_self.mpr (fun c hc => by
       obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).1)
   simp only [evalIQ, listVals, hfilt, canUtilize]
-  have hall : ∀ cs : List V, (∀ c ∈ cs, isIndexable c = true) →
-      canAll (cs.map (Q.eq k)) = true := by
-    intro cs hcs
-    induction cs with
-    | nil => rfl
-    | cons c cs ih =>
-      simp only [List.map_cons, canAll, canUtilize, hcs c (by simp), Bool.true_and]
-      exact ih (fun d hd => hcs d (by simp [hd]))
-  rw [hall _ (fun c hc => by obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).2)]
+  have hall : (ts.map evalC).all isIndexable = true :=
+    List.all_eq_true.mpr (fun c hc => by
+      obtain ⟨t, ht, rfl⟩ := List.mem_map.mp hc; exact (hgood t ht).2)
+  rw [hall]
   cases ts with
   | nil => exact absurd rfl hne
   | cons _ _ => rfl

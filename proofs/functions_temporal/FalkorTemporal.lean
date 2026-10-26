@@ -34,18 +34,18 @@ asserts today's behaviour and must be flipped when fixed). Live checks: Rust mod
 | --- | --- |
 | `isLeap`, `daysInMonth` | `is_leap` `value.rs:797`, `days_in_month` `value.rs:785` |
 | `daysFromCivil` | `days_from_civil` `value.rs:804` |
-| `daysFromCivilT` | `days_from_civil` `temporal.rs:466` (second copy, truncating i32 `/`) |
+| `daysFromCivilT` | `days_from_civil` `temporal.rs:463` (second copy, truncating i32 `/`) |
 | `civilFromDaysI` / `civilFromDays` | `civil_from_days` `value.rs:821` (without / with `y as i32`) |
-| `constructDuration` | `construct_duration_secs` `temporal.rs:482` |
-| `decomposeDuration` | `decompose_duration` `temporal.rs:523` |
+| `constructDuration` | `construct_duration_secs` `temporal.rs:479` |
+| `decomposeDuration` | `decompose_duration` `temporal.rs:520` |
 | `shiftMonths` | `shift_months` `value.rs:752` (shared by `+`/`-` since #2984) |
 | `addDur` / `subDur` | `add_duration_to_timestamp` `value.rs:728` / `sub_duration_from_timestamp` `value.rs:738`; `pre2984_subDur`: the old clamping `-` (history) |
 | `timeAddDur` / `timeSubDur` | `(Time, Duration)` arms of `add_slow` `value.rs:1063` / `Sub` `value.rs:1105` (#2985) |
 | `dateFromComponents`, `weekPath`, `quarterPath`, `ymdPath` | `date_from_components` `temporal.rs:82` (range-checked since #2950); `pre2950_weekPath`/`pre2950_quarterPath`: history |
 | `checkRange`, `inRange`, `i32Ok`, `u32Ok` | `check_range` `temporal.rs:63`, `i32::try_from`/`u32::try_from` |
 | `checkedAddDays`, `pre2950_dateAddDays`, `tdDaysOk`, `chronoYearOk` | chrono 0.4.45 `checked_add_signed` / `NaiveDate + TimeDelta` (pre-#2950), `TimeDelta::days`, `MIN_YEAR`/`MAX_YEAR` |
-| `weekSlice`, `sliceOk` | `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:288-290`; `pre2950_weekSlice`: the old `&rest[..2]` |
-| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:420-431` (`checked_mul`/`checked_add`, #2987) |
+| `weekSlice`, `sliceOk` | `rest.split_at_checked(2)` in `parse_week_date` `temporal.rs:285-287`; `pre2950_weekSlice`: the old `&rest[..2]` |
+| `Fns.dateLoop`, `chk64` | `W`/`D` arms of `parse_duration_string` `temporal.rs:417-428` (`checked_mul`/`checked_add`, #2987) |
 | `wrapMul`, `Fns.pre2987_dateLoop` | pre-#2987 release `n * 7` (history) |
 | `formatDateDigits` | `format_date` `value.rs:307` + `write_date_into` `value.rs:836` |
 | `VExpr.colEval` / `VExpr.rowEval` | `VectorEval::eval_and_or` `vector_expr.rs:391` / `ExprIR::And`,`Or` in `eval.rs:629-706` |
@@ -76,7 +76,8 @@ Counterexamples as theorems: `pre2984_sub_vs_add_neg`, `neg_days_encoding`,
 `time_not_normalised`, `week_string_wraps`, `pre2950_week_panics`,
 `pre2950_week_panics_delta`, `pre2950_quarter_panics`, `pre2950_week_edge_panics`,
 `pre2950_week_slice_panics`, `formatDate_not_injective`,
-`dayOfWeek_seven_rejected`, `dayOfWeek_zero_is_sunday`, `civilFromDays_trunc`.
+`pre2988_dayOfWeek_seven_rejected`, `pre2988_dayOfWeek_zero_is_sunday`, `civilFromDays_trunc`.
+Fixed forms on main: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`, `weekPath_eq_pre2988`.
 
 ## Confirmed bugs (Rust repro + live Rust-vs-C)
 
@@ -95,7 +96,7 @@ Counterexamples as theorems: `pre2984_sub_vs_add_neg`, `neg_days_encoding`,
    `bug_date_day_of_quarter_panics`. Main validates 1..=92 (`check_range`):
    `quarter_doq_errors`, `quarterPath_total`; history `pre2950_quarter_panics`.
 3. **FIXED by #2950 (737dfb5da).** Was: **server crash** `RETURN date('2020W1é')` — `&rest[..2]` not a char boundary
-   (`temporal.rs:258`); C: "Failed to parse date". Test
+   (`temporal.rs:255`); C: "Failed to parse date". Test
    `bug_date_week_string_char_boundary_panics`. Main uses `split_at_checked(2)`:
    `weekSlice_total`, `week_slice_errors`; history `pre2950_week_slice_panics`.
 4. **FIXED by #2983 (86dcd5a11).** Was: `distance(point({latitude:-88.3, longitude:-180}),
@@ -125,9 +126,12 @@ Counterexamples as theorems: `pre2984_sub_vs_add_neg`, `neg_days_encoding`,
    weeks=…": `dateLoop_week_overflow`, `week_string_overflow_errors`,
    `dateLoop_day_overflow`, `dateLoop_days_i64` (days never wraps); history
    `pre2987_week_string_wraps`.
-9. **Divergence** map `dayOfWeek` is 0..6 with 0 = Sunday (`temporal.rs:97,104`; unchanged by #2950):
-   `date({year:2021, week:1, dayOfWeek:7})` errors (C: 2021-01-10); `dayOfWeek:0` accepted
-   (C: error). The string form uses 1..7. Test `bug_date_map_day_of_week_is_zero_based`.
+9. **FIXED by #2988 (closes #2936, main 5e475e6c9).** Was: map `dayOfWeek` 0..6 with 0 = Sunday
+   (`temporal.rs:97,104`), so `date({year:2021, week:1, dayOfWeek:7})` errored (C: 2021-01-10)
+   and `dayOfWeek:0` was accepted (C: error). Main takes ISO 1..7 (7 = Sunday) like the string
+   form and C: `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`,
+   `dayOfWeek_out_of_range_errors`, `weekPath_eq_pre2988`; history `pre2988_weekPath`,
+   `pre2988_dayOfWeek_seven_rejected`, `pre2988_dayOfWeek_zero_is_sunday`.
 10. **Divergences, conversions (live only; `conversion.rs` is private)**:
     `toString(1.0)` = "1" (C "1.000000", openCypher "1.0" — looks like an Integer);
     `toString(0.1+0.2)` = "0.30000000000000004" (C "0.300000"); `toString(0.0/0)` "NaN"
@@ -182,7 +186,7 @@ positional-slot rewrite preserves values), `datePure_midnight`, `localtimePure_r
 `clock_fns_shape`, `transaction_consistent`, `calendar_ranges`, `fields_roundtrip`,
 `formatTime_length`, `distance_self`, `point_eq_struct`, `vecDist_kernel`.
 Re-targeted to e8f8a3017: #3125 (`1ea868116`) makes the compact date/time branches reject
-any non-digit (`allDigits` guard, temporal.rs:195, :309) instead of silently dropping it —
+any non-digit (`allDigits` guard, temporal.rs:192, :309) instead of silently dropping it —
 `parseDate_compact_rejects`, `parseDate_compact_ok_allDigits`, `parseTime_compact_rejects`,
 `compact_junk_examples`. It does not touch the `W` path (`parseDate_week_first`), so bug 3
 (`date('2020W1é')`) was fixed later by #2950 (`weekSlice_total`).
@@ -212,6 +216,13 @@ vector_expr.rs +3 after `:456`).
 here. COVERAGE.tsv value.rs rows re-pinned (+7 after the import block, +6 after
 `format_duration`, `add`/`sub` :728/:738, +7 from `days_in_month`, +4 after `add_slow`);
 `shift_months` row added (PROVEN).
+
+## Re-targeted to 5e475e6c9 (#2988)
+`weekPath` takes `dayOfWeek` in `1..7` (`check_range("dayOfWeek", day_of_week, 1, 7)`, offset
+`dow - 1`); the 0-based model is `pre2988_weekPath`. `weekPath_total`/`weekPath_ok` are restated
+for `1..7`; `weekPath_eq_pre2950` now holds for `dayOfWeek` `1..6` (the common domain);
+`week_edge_errors` uses `dayOfWeek: 7` for the old `dayOfWeek: 0` (Sunday). `temporal.rs` line
+pins shifted by -3 after `date_from_components` (`COVERAGE.tsv`).
 
 ## Re-targeted to 737dfb5da
 

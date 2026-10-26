@@ -146,6 +146,16 @@ public addresses (`validateRemote_spec`) and never more than the byte limit (`er
 paths stay inside the import folder (`resolvePath_spec`).
 Fixed by #2912 (b033aecc6): ORDER BY over floats with NaN crashed the server (float lane
 `unwrap_or(Less)`); main's lane is `sort_cmp_f64` (sort.rs:364; proofs/columnar `compareAt_spec`).
+## Re-target to 5e475e6c9: #3443 is fixed (#3458)
+`http_config` (load_csv.rs:223-234) now sets `https_only(true)` and `max_redirects(0)`, and
+`open_csv_records` (:357-) turns a 3xx reply into the error "LOAD CSV does not follow redirects"
+(:388-399), as C does. `LoadCsvRedirect.httpCfgMain` is that config and `loadRemote` that arm;
+the old config/arm are `httpCfgPre3443`/`loadRemotePre3443`, and the refutations are renamed
+`pre3443_redirect_uses_first_host_ip`, `pre3443_redirect_downgrades_to_http`. New:
+`fixed3443_eachHopValidated` (main's `loadRemote` satisfies `EachHopValidated` for every DNS
+answer and server) and `fixed3443_redirect_is_error`; `noRedirect_single` now holds for either
+`https_only`. #3436/#3462 only shift line pins (load_csv.rs `next` 260/458, `new` 328).
+
 ## Gaps closed 2026-10-22 (#3443, #3453; b84473a7f)
 **#3443 (`LoadCsvRedirect.lean`).** `LoadCsv.lean` treated a remote LOAD CSV as one request to the
 validated URL. The ureq 3.4.2 agent (load_csv.rs:369-378) follows redirects: `http_config` (:217-225)

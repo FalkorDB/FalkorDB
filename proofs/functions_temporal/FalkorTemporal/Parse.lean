@@ -26,10 +26,10 @@ def ymd (y : Int) (m d : Nat) (s : String) : Except String Int :=
   match C.fromYmd y m d with | some z => .ok z | none => .error s!"Invalid date: {s}"
 
 /-- `s.chars().all(|c| c.is_ascii_digit())` — the guard #3125 (`1ea868116`) added to the
-compact branches (temporal.rs:223, :338). `Char.isDigit` is ASCII `'0'..='9'`. -/
+compact branches (temporal.rs:220, :338). `Char.isDigit` is ASCII `'0'..='9'`. -/
 def allDigits (s : String) : Bool := s.toList.all Char.isDigit
 
-/-- `parse_date_string` (temporal.rs:176-268). -/
+/-- `parse_date_string` (temporal.rs:173-265). -/
 def parseDate (s : String) : Except String Int :=
   if s.contains 'W' then C.parseWeek s
   else if s.startsWith "-" then .error s!"Unsupported date string: {s}"
@@ -127,7 +127,7 @@ theorem parseDate_negative (s : String) (hW : s.contains 'W' = false) (h : s.sta
 def optPart (parts : List String) (i : Nat) (err : String) : Except String Nat :=
   if parts.length > i then pU32 C (parts.getD i "") err else .ok 0
 
-/-- `parse_time_string` (temporal.rs:311-370). -/
+/-- `parse_time_string` (temporal.rs:308-367). -/
 def parseTime (s0 : String) : Except String Nat :=
   let s := (s0.splitOn ".").headD s0
   let hms (h m sec : Nat) : Except String Nat :=
@@ -218,12 +218,12 @@ theorem parseTime_compact_rejects (s0 : String) (hc : ((s0.splitOn ".").headD s0
 /-- The `W` dispatch comes before the #3125 guard, so the guard does not reach
 `parse_week_date`. That used to crash on `date('2020W1é')` (`&rest[..2]`, W2-temporal-3,
 `pre2950_week_slice_panics`); since #2950 it splits with `split_at_checked`
-(temporal.rs:288-290) and errors (`weekSlice_total`, `week_slice_errors`). -/
+(temporal.rs:285-287) and errors (`weekSlice_total`, `week_slice_errors`). -/
 theorem parseDate_week_first (s : String) (hW : s.contains 'W' = true) :
     parseDate C s = C.parseWeek s := by
   simp [parseDate, hW]
 
-/-- The Rust tests' junk dates (temporal.rs:1002-1040) are rejected (`localtime('xx123456yy')`
+/-- The Rust tests' junk dates (temporal.rs:999-1037) are rejected (`localtime('xx123456yy')`
 is `parseTime_compact_rejects`: core `String.splitOn` does not reduce on literals). -/
 theorem compact_junk_examples :
     parseDate C "2o15o7o21" = .error "Invalid date string: 2o15o7o21" ∧
@@ -235,7 +235,7 @@ theorem compact_junk_examples :
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide)⟩
 
-/-- `parse_datetime_string` (temporal.rs:373): split at the first `T`. -/
+/-- `parse_datetime_string` (temporal.rs:370): split at the first `T`. -/
 def parseDatetime (s : String) : Except String (Int × Nat) :=
   match s.splitOn "T" with
   | [] | [_] => do let d ← parseDate C s; pure (d, 0)
@@ -257,7 +257,7 @@ theorem parseDatetime_noT (s : String) (h : s.splitOn "T" = [s]) :
     parseDatetime C s = (do let d ← parseDate C s; pure (d, 0)) := by
   simp [parseDatetime, h]
 
-/-! ## `parse_duration_string` (temporal.rs:391) -/
+/-! ## `parse_duration_string` (temporal.rs:388) -/
 
 /-- The seven accumulators `(years, months, 0, days, hours, minutes, seconds)`. -/
 structure DurAcc where
@@ -290,7 +290,7 @@ def pre2987_dateLoop : List Char → String → DurAcc → Except String DurAcc
         | 'D' => pre2987_dateLoop cs "" { a with days := wrap64 (a.days + n) }
         | _ => .error s!"Unknown duration component: {ch}"
 
-/-- The date-part loop (temporal.rs:408-434): digits and `-` accumulate, a letter commits
+/-- The date-part loop (temporal.rs:405-431): digits and `-` accumulate, a letter commits
 the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
 def dateLoop : List Char → String → DurAcc → Except String DurAcc
   | [], _, a => .ok a

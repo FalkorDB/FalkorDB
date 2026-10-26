@@ -64,10 +64,10 @@ graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1138	PROVEN	Clean
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394, history pre3394_phantom_node0); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
-graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1309	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
+graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1415	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
 graph/src/index/mod.rs	build_query_node (support, not a target file)	1477	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
 graph/src/runtime/ops/node_by_index_scan.rs	evaluate_index_query	98	PROVEN	EdgeInline.evalIQE_ok, evalIQE_inList_err, evalIQ_inList
 graph/src/runtime/ops/node_by_index_scan.rs	new	56	PROVEN	EdgeInline.extraLabels_spec, scanRow_eq_sel
-graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	250	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	253	PROVEN	EdgeInline.isIndexable_spec
-graph/src/runtime/ops/node_by_index_scan.rs	next	293	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
+graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	251	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	254	PROVEN	EdgeInline.isIndexable_spec
+graph/src/runtime/ops/node_by_index_scan.rs	next	300	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound

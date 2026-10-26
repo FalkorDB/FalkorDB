@@ -39,6 +39,10 @@ above the extension is unchanged in statement except that the catch-all's type i
 `null XOR 1/x = 1` (Rust `null`) and `CASE WHEN true THEN 1 ELSE 1/x END` (Rust `1`): C evaluates
 every operand / branch eagerly, Rust short-circuits as the source comments intend.
 
+**Re-checked at main 5e475e6c9** (from b84473a7f): nothing modelled changed. `eval.rs` differs only in `eval_shortest_path`
+(`rt.g.borrow()` -> `rt.graph()`, #3436), so every `eval.rs` row keeps its line. #2383 (index), #3055/#3050 (MERGE), #2988
+(`temporal.rs`) are other projects.
+
 **Re-targeted to main b6567cb97** (from 737dfb5da). #2954 (closes #2928) changes the
 `ListComprehension` arm of `eval_compound` (null source → null, scalar → type error; list
 literal / `range` still stream through `eval_iter_expr`): not modelled here (modelled and

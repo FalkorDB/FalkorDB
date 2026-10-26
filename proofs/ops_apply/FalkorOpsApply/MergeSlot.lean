@@ -20,7 +20,7 @@ outcome. Two details of `MergeOp` at fb3d516d0 were outside the model:
 The match sub-plan itself is not affected: the binder knows the variable is new, so it plans
 a label scan that writes the slot and never reads it (live: `OPTIONAL MATCH (c:C {id: …})`
 returns null in the same position, #3368). `MergeOp::next`'s all-bound shortcut
-(merge.rs:368-381) uses `is_bound_by_id` and is only reached when matches exist.
+(merge.rs:369-388) uses `is_bound_by_id` and is only reached when matches exist.
 
 Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
 `FalkorAggOps.AggPlan.bug3368_count_acc_in_merge_slot` / `bug3369_count_acc_in_merge_slot`
@@ -36,7 +36,7 @@ it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), no
 | `rustKey` | `compute_merge_pattern_hash` (merge.rs:180-246) = `Ctors.mergeHashInput` with `get := Row.get` (FxHash taken as injective on token streams; collisions are FINDINGS 6) |
 | `fixKey` | the same with `get` returning a value only for a slot bound to a node |
 | `matchK` | the match sub-plan (`run_batch(merge_child_idx)`, merge.rs:313-343): label scan + property filter |
-| `mergeRowK` | one input row of `MergeOp::next` (merge.rs:347-431) with `do_create_fallback` (merge.rs:113-178) |
+| `mergeRowK` | one input row of `MergeOp::next` (merge.rs:347-434) with `do_create_fallback` (merge.rs:113-178) |
 
 Properties a fix should prove: `KeyFromBoundNodeOnly` (MERGE takes a pattern variable as given
 only when the row binds it to a node) and `MergeBindsOwnNode` (after MERGE the variable is bound
@@ -132,6 +132,11 @@ structure MClause where
   var : Nat
   label : Nat
   src : Nat
+  /-- plan index of this MERGE operator (`MergeOp::idx`): the cache key's first half since #3050 -/
+  op : Nat
+
+/-- The cache as it was before #3050: one key space for every MERGE of the query. -/
+def MClause.erase (cl : MClause) : MClause := { cl with op := 0 }
 
 /-- `{id: r.id}` evaluated on the row (`r` = the map at slot `src`). -/
 def MClause.attr (cl : MClause) (r : Row) : MV :=
@@ -191,10 +196,10 @@ def norm : Key → Option (List KTok)
   | .error _ => none
 
 /-- `merge_pattern_cache`: hash ↦ cached `(var id, value)` pairs (hash = the token stream). -/
-abbrev Cache := List (Key × List (Nat × MV))
+abbrev Cache := List ((Nat × Key) × List (Nat × MV))
 
-def lookup (c : Cache) (k : Key) : Option (List (Nat × MV)) :=
-  (c.find? (fun e => decide (norm e.1 = norm k))).map Prod.snd
+def lookup (c : Cache) (k : Nat × Key) : Option (List (Nat × MV)) :=
+  (c.find? (fun e => decide (e.1.1 = k.1 ∧ norm e.1.2 = norm k.2))).map Prod.snd
 
 structure St where
   g : Graph
@@ -205,7 +210,7 @@ structure St where
 def matchK (g : Graph) (cl : MClause) (r : Row) : List GNode :=
   g.filter (fun n => n.label == cl.label && n.attr == cl.attr r)
 
-/-- One input row of `MergeOp::next` without SET (merge.rs:347-431): matches ⇒ one output per
+/-- One input row of `MergeOp::next` without SET (merge.rs:347-434): matches ⇒ one output per
 match with the variable bound; none ⇒ `do_create_fallback` (merge.rs:113-178). -/
 def mergeRowK (key : MClause → Row → Key) (cl : MClause) (st : St) (r : Row) :
     Except String (St × List Row) :=
@@ -215,11 +220,11 @@ def mergeRowK (key : MClause → Row → Key) (cl : MClause) (st : St) (r : Row)
     match key cl r with
     | .error e => .error e
     | .ok _ =>
-      match lookup st.cache (key cl r) with
+      match lookup st.cache (cl.op, key cl r) with
       | some pairs => .ok (st, [pairs.foldl (fun r p => r.insert p.1 p.2) r])     -- 122-135
       | none =>                                                                     -- 136-177
         let n : GNode := ⟨st.next, cl.label, cl.attr r⟩
-        .ok (⟨st.g ++ [n], st.next + 1, (key cl r, [(cl.var, .node st.next)]) :: st.cache⟩,
+        .ok (⟨st.g ++ [n], st.next + 1, ((cl.op, key cl r), [(cl.var, .node st.next)]) :: st.cache⟩,
              [r.insert cl.var (.node st.next)])
 
 /-- A clause over a stream of rows (each row one batch: the repros have one row per MERGE). -/
@@ -283,7 +288,7 @@ theorem fixKey_from_bound_node (cl : MClause) (r : Row) : KeyFromBoundNodeOnly f
 clause's nodes (true of a per-clause cache, C's `unique_entities`; the cross-clause sharing is
 the separate `Merge.cross_clause_unbound`). -/
 def CacheOK (cl : MClause) (st : St) : Prop :=
-  ∀ r k pairs, k = fixKey cl r → r.isBound cl.var = false → lookup st.cache k = some pairs →
+  ∀ r k pairs, k = fixKey cl r → r.isBound cl.var = false → lookup st.cache (cl.op, k) = some pairs →
     ∃ n ∈ st.g, pairs = [(cl.var, .node n.id)] ∧ n.label = cl.label ∧ n.attr = cl.attr r
 
 theorem mem_matchK {g : Graph} {cl : MClause} {r : Row} {n : GNode} (h : n ∈ matchK g cl r) :
@@ -322,10 +327,10 @@ theorem fixed_binds_own_node (cl : MClause) (st : St) (r : Row) (hu : r.isBound 
 /-! ## The repros (fresh graph): rows restated from ops_aggregate `SlotReuse` -/
 
 /-- Labels `A, B, C` = 0, 1, 2; strings `'a1', 'b1', 'c1'` = 10, 11, 12. -/
-def clA : MClause := ⟨1, 0, 0⟩      -- UNWIND … AS r0 MERGE (a:A {id: r0.id}):      r0, a = 0, 1
-def clB : MClause := ⟨2, 1, 1⟩      -- WITH count(*) AS c0 UNWIND … AS r1 MERGE (b:B …): c0, r1, b = 0, 1, 2
-def clC68 : MClause := ⟨2, 2, 1⟩    -- #3368: WITH count(*) AS c1 UNWIND … AS r2 MERGE (c:C …): c1, r2, c = 0, 1, 2
-def clC69 : MClause := ⟨3, 2, 2⟩    -- #3369: WITH c0, count(*) AS c1 UNWIND … AS r2 MERGE (c:C …): c0, c1, r2, c = 0..3
+def clA : MClause := ⟨1, 0, 0, 0⟩      -- UNWIND … AS r0 MERGE (a:A {id: r0.id}):      r0, a = 0, 1
+def clB : MClause := ⟨2, 1, 1, 1⟩      -- WITH count(*) AS c0 UNWIND … AS r1 MERGE (b:B …): c0, r1, b = 0, 1, 2
+def clC68 : MClause := ⟨2, 2, 1, 2⟩    -- #3368: WITH count(*) AS c1 UNWIND … AS r2 MERGE (c:C …): c1, r2, c = 0, 1, 2
+def clC69 : MClause := ⟨3, 2, 2, 2⟩    -- #3369: WITH c0, count(*) AS c1 UNWIND … AS r2 MERGE (c:C …): c0, c1, r2, c = 0..3
 
 def st0 : St := ⟨[], 0, []⟩
 def row1 : Row := Row.ofCells [.bound (.map 10)]
@@ -341,13 +346,14 @@ def row3_69 (acc : MV) : Row :=
   Row.ofCells [.bound (.int 1), .bound (.int 1), .bound (.map 12), .valueOnly acc]
 
 /-- Run segments 1 and 2, then the last MERGE on `last`; returns (final state, last outputs). -/
-def run (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
+def run (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
     Except String (St × List Row) :=
-  match mergeRows key clA st0 [row1] with
+  let adj : MClause → MClause := if shared then MClause.erase else id
+  match mergeRows key (adj clA) st0 [row1] with
   | .error e => .error e
-  | .ok (s1, _) => match mergeRows key clB s1 [row2 acc1] with
+  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
     | .error e => .error e
-    | .ok (s2, _) => mergeRows key cl s2 [last]
+    | .ok (s2, _) => mergeRows key (adj cl) s2 [last]
 
 def outVar (res : Except String (St × List Row)) (i : Nat) : Option (Option MV) :=
   match res with
@@ -360,9 +366,10 @@ def nodes (res : Except String (St × List Row)) : Option Graph :=
   | _ => none
 
 /-- The state the last MERGE starts from (after segments 1 and 2). -/
-def before (key : MClause → Row → Key) (acc1 : MV) : St :=
-  match mergeRows key clA st0 [row1] with
-  | .ok (s1, _) => match mergeRows key clB s1 [row2 acc1] with
+def before (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) : St :=
+  let adj : MClause → MClause := if shared then MClause.erase else id
+  match mergeRows key (adj clA) st0 [row1] with
+  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
     | .ok (s2, _) => s2
     | .error _ => st0
   | .error _ => st0
@@ -374,17 +381,17 @@ slot 2. `b`'s MERGE hashes `Int 1` instead of `:B {id:'b1'}`, misses, creates `B
 and caches `[(2, node 1)]` under that key; `c`'s MERGE hashes the same `Int 1`, hits, and binds
 `c` to node 1: `labels(c), c.id` = `[B], 'b1'`, 2 nodes. Live (main): exactly that; C (and the
 fixed key here): `[C], 'c1'`, 3 nodes. -/
-theorem bug3368_merge_takes_leftover_as_node :
+theorem pre3050_bug3368_merge_takes_leftover_as_node :
     keyVal (rustKey clC68 (row3_68 (.int 1))) = some (.int 1) ∧
     (row3_68 (.int 1)).isBound clC68.var = false ∧
     ¬ KeyFromBoundNodeOnly rustKey clC68 (row3_68 (.int 1)) ∧
-    outVar (run rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 1)) ∧
-    nodes (run rustKey (.int 1) clC68 (row3_68 (.int 1))) =
+    outVar (run true rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 1)) ∧
+    nodes (run true rustKey (.int 1) clC68 (row3_68 (.int 1))) =
       some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩] ∧
-    ¬ MergeBindsOwnNode rustKey clC68 (before rustKey (.int 1)) (row3_68 (.int 1)) ∧
+    ¬ MergeBindsOwnNode rustKey clC68.erase (before true rustKey (.int 1)) (row3_68 (.int 1)) ∧
     -- the fixed key: c = a new `C c1` node, 3 nodes (C's answer)
-    outVar (run fixKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    nodes (run fixKey (.int 1) clC68 (row3_68 (.int 1))) =
+    outVar (run true fixKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
+    nodes (run true fixKey (.int 1) clC68 (row3_68 (.int 1))) =
       some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩, ⟨2, 2, .str 12⟩] := by
   refine ⟨by decide, by decide, fun h => ?_, by decide, by decide, fun h => ?_, by decide, by decide⟩
   · have := (h (.int 1) (by decide)).2
@@ -398,11 +405,11 @@ counts 2 then 1 (two `a` rows) → correct `[C] c1`; counts 2 and 2 (two `a`, tw
 entry — the same mechanism on one more row, not modelled here); `collect(1)` in both segments (leftover `[1]` twice) → `[B] b1`; `count(*)` then
 `collect(1)` (`1` vs `[1]`) → correct. So it fires whenever the two leftovers are equal, list
 or not; "does not fire for a list" holds only when a list meets an integer. -/
-theorem bug3368_fires_iff_leftovers_equal :
-    outVar (run rustKey (.int 2) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    outVar (run rustKey (.int 2) clC68 (row3_68 (.int 2))) 2 = some (some (.node 1)) ∧
-    outVar (run rustKey (.list [1]) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 1)) ∧
-    outVar (run rustKey (.int 1) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 2)) := by
+theorem pre3050_bug3368_fires_iff_leftovers_equal :
+    outVar (run true rustKey (.int 2) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
+    outVar (run true rustKey (.int 2) clC68 (row3_68 (.int 2))) 2 = some (some (.node 1)) ∧
+    outVar (run true rustKey (.list [1]) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 1)) ∧
+    outVar (run true rustKey (.int 1) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 2)) := by
   decide
 
 /-! ### #3369 -/
@@ -413,15 +420,15 @@ holds the second count `Int 1`, value-only, so its MERGE hits that entry and re-
 operator reads as the column value: `RETURN c` gives `1`, `c.id` (inside `collect(c.id)`) fails
 with "Type mismatch: expected Map, Node, … but was Integer". Live (main): `RETURN c, c0, c1` →
 `1, 1, 1` with 2 nodes, the issue query → that error; C: `'c1'`, 3 nodes. -/
-theorem bug3369_merge_leaves_int_in_node_var :
+theorem pre3050_bug3369_merge_leaves_int_in_node_var :
     keyVal (rustKey clC69 (row3_69 (.int 1))) = some (.int 1) ∧
     ¬ KeyFromBoundNodeOnly rustKey clC69 (row3_69 (.int 1)) ∧
-    outVar (run rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.int 1)) ∧
-    outVar (run rustKey (.int 1) clC69 (row3_69 (.int 1))) 2 = some (some (.node 1)) ∧
-    nodes (run rustKey (.int 1) clC69 (row3_69 (.int 1))) =
+    outVar (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.int 1)) ∧
+    outVar (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) 2 = some (some (.node 1)) ∧
+    nodes (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) =
       some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩] ∧
-    ¬ MergeBindsOwnNode rustKey clC69 (before rustKey (.int 1)) (row3_69 (.int 1)) ∧
-    outVar (run fixKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
+    ¬ MergeBindsOwnNode rustKey clC69.erase (before true rustKey (.int 1)) (row3_69 (.int 1)) ∧
+    outVar (run true fixKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
   refine ⟨by decide, fun h => ?_, by decide, by decide, by decide, fun h => ?_, by decide⟩
   · obtain ⟨_, h⟩ := (h (.int 1) (by decide)).2; cases h
   · have := h _ _ rfl _ (List.mem_singleton_self _)
@@ -429,9 +436,51 @@ theorem bug3369_merge_leaves_int_in_node_var :
 
 /-- #3369 controls (live on main, matching): `collect(1)` as the first fold (`[1]` vs `1`) →
 `'c1'`; `collect(1)` in both segments → `RETURN c` gives `[1]`. -/
-theorem bug3369_controls :
-    outVar (run rustKey (.list [1]) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) ∧
-    outVar (run rustKey (.list [1]) clC69 (row3_69 (.list [1]))) 3 = some (some (.list [1])) := by
+theorem pre3050_bug3369_controls :
+    outVar (run true rustKey (.list [1]) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) ∧
+    outVar (run true rustKey (.list [1]) clC69 (row3_69 (.list [1]))) 3 = some (some (.list [1])) := by
+  decide
+
+/-! ## On main (#3050 keys the cache by `(operator idx, hash)`) -/
+
+/-- **#3368 and #3369 as filed no longer reproduce on main.**  `b`'s and `c`'s MERGEs are
+different operators, so `c`'s lookup of `(op c, hash Int 1)` misses `b`'s entry
+`(op b, hash Int 1)`: `c` gets its own new node (id 2, three nodes), even with the
+unchanged `rustKey`. Model only: the live repros were not re-run on main. -/
+theorem bug3368_filed_repro_fixed_by_3050 :
+    outVar (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
+    nodes (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) =
+      some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩, ⟨2, 2, .str 12⟩] ∧
+    outVar (run false rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
+  decide
+
+/-- Segment 2's MERGE input for a second `UNWIND` element (`{id:'b2'}` = 13): the same
+leftover accumulator. -/
+def row2b (acc : MV) : Row := Row.ofCells [.bound (.int 1), .bound (.map 13), .valueOnly acc]
+
+/-- State after segment 1 (`a`'s MERGE). -/
+def seg1 (key : MClause → Row → Key) : St :=
+  match mergeRows key clA st0 [row1] with
+  | .ok (s, _) => s
+  | .error _ => st0
+
+/-- (node count, the MERGE variable's value on each output row). -/
+def summ (res : Except String (St × List Row)) : Option (Nat × List (Option MV)) :=
+  match res with
+  | .ok (s, os) => some (s.g.length, os.map (fun o => o.read 2))
+  | .error _ => none
+
+/-- **Residual, inside one MERGE operator (model only, not re-run live).**  The key is still
+built from the value-only leftover (`KeyFromBoundNodeOnly` still fails for `rustKey`), so two
+rows of the SAME MERGE that carry the same leftover share one `(op, hash)` entry: the second
+row (`b2`) hits the first row's entry, binds `b1` and creates nothing. `fixKey` creates both
+(three nodes). The filed #3368 text already notes this ("its row also hashes `Int 2` and hits
+`b1`'s entry"). -/
+theorem same_op_leftover_shares_entry :
+    summ (mergeRows rustKey clB (seg1 rustKey) [row2 (.int 1), row2b (.int 1)]) =
+      some (2, [some (.node 1), some (.node 1)]) ∧
+    summ (mergeRows fixKey clB (seg1 fixKey) [row2 (.int 1), row2b (.int 1)]) =
+      some (3, [some (.node 1), some (.node 2)]) := by
   decide
 
 end MergeSlot

@@ -64,14 +64,14 @@ graph/src/effects/reader.rs	Reader::rest	36	PROVEN	Cursor.Rd.rest: Rd.take_refin
 graph/src/effects/reader.rs	Reader::take_array	93	PROVEN	Cursor.Rd.takeArray = take: Rd.take_refines, Rd.bits_refines
 graph/src/effects/reader.rs	Reader::f64	123	PROVEN	Cursor.Rd.f64 (bit transmute): Rd.bits_refines
 graph/src/effects/reader.rs	Reader::take_n	138	PROVEN	Cursor.Rd.takeN (one slice + chunks_exact): Rd.takeN_refines (= per-element reads), readN_take_chunks
-graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	22	PROVEN	Format.fmtNewBuffer: fmtIsEmpty_iff, ebNew_eq
-graph/src/effects/v3/format.rs	EffectsPayload::is_empty	27	PROVEN	Format.fmtIsEmpty: fmtIsEmpty_iff
-graph/src/effects/v3/format.rs	EffectsPayload::replicate	32	PROVEN	Format.fmtReplicate (seal then sink): fmtReplicate_transparent
-graph/src/effects/v3/format.rs	EffectsPayload::describe	46	PROVEN	Format.describe/describeLoop: describe_spec, describeLoop_spec
-graph/src/effects/v3/format.rs	EffectsPayload::apply	108	PROVEN	Format.fmtApply delegates to apply_effects (proofs/effects_emit_apply): fmtApply_eq
-graph/src/effects/v3/format.rs	EffectsPayload::build	115	PROVEN	Format.build/buildLoop: build_ok, buildLoop_after_fail
-graph/src/effects/v3/format.rs	EffectsPayload::build_index	144	PROVEN	Format.fmtBuildIndex delegates to build_index_buffer: fmtBuildIndex_eq
-graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	154	PROVEN	Format.fmtBuildConstraint delegates: fmtBuildConstraint_eq
+graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	20	PROVEN	Format.fmtNewBuffer: fmtIsEmpty_iff, ebNew_eq
+graph/src/effects/v3/format.rs	EffectsPayload::is_empty	25	PROVEN	Format.fmtIsEmpty: fmtIsEmpty_iff
+graph/src/effects/v3/format.rs	EffectsPayload::replicate	30	PROVEN	Format.fmtReplicate (seal then sink): fmtReplicate_transparent
+graph/src/effects/v3/format.rs	EffectsPayload::describe	44	PROVEN	Format.describe/describeLoop: describe_spec, describeLoop_spec
+graph/src/effects/v3/format.rs	EffectsPayload::apply	106	PROVEN	Format.fmtApply delegates to apply_effects (proofs/effects_emit_apply): fmtApply_eq
+graph/src/effects/v3/format.rs	EffectsPayload::build	113	PROVEN	Format.build/buildLoop: build_ok, buildLoop_after_fail
+graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	Format.fmtBuildIndex delegates to build_index_buffer: fmtBuildIndex_eq
+graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	Format.fmtBuildConstraint delegates: fmtBuildConstraint_eq
 graph/src/effects/v3/staging.rs	label_set	23	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/staging.rs	stage_created_node	29	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
 graph/src/effects/v3/staging.rs	stage_updated_node	37	NOT COVERED	test-only: `#[cfg(test)] mod staging;` in v3/mod.rs — not compiled into the engine
@@ -110,33 +110,33 @@ graph/src/effects/v3/mod.rs	constraint_status_tag	414	PROVEN	RecArms.statusTag: 
 graph/src/effects/v3/mod.rs	constraint_status_from_tag	423	PROVEN	RecArms.statusFromTag: tags_roundtrip, statusFromTag_err
 graph/src/effects/v3/mod.rs	constraint_from_tag	433	PROVEN	RecArms.ctypeFromTag: tags_roundtrip
 graph/src/effects/v3/mod.rs	new_buffer	472	PROVEN	Payload.newBuffer: ebNew_eq, openPayload_plain
-graph/src/effects/mod.rs	ReplicationSink::replicate	66	AXIOMATISED	trait implemented in src/ by RedisModule_Replicate (Redis FFI); format.rs replicate proven up to the sink (fmtReplicate_transparent)
-graph/src/effects/mod.rs	EffectsFormat::new_buffer	103	PROVEN	trait decl; sole impl format.rs: fmtIsEmpty_iff
-graph/src/effects/mod.rs	EffectsFormat::is_empty	110	PROVEN	trait decl; sole impl: fmtIsEmpty_iff
-graph/src/effects/mod.rs	EffectsFormat::replicate	117	PROVEN	trait decl; sole impl: fmtReplicate_transparent
-graph/src/effects/mod.rs	EffectsFormat::describe	132	PROVEN	trait decl; sole impl: describe_spec
-graph/src/effects/mod.rs	EffectsFormat::apply	144	PROVEN	trait decl; sole impl: fmtApply_eq
-graph/src/effects/mod.rs	EffectsFormat::build	167	PROVEN	trait decl; sole impl: build_ok
-graph/src/effects/mod.rs	EffectsFormat::build_index	179	PROVEN	trait decl; sole impl: fmtBuildIndex_eq
-graph/src/effects/mod.rs	EffectsFormat::build_constraint	193	PROVEN	trait decl; sole impl: fmtBuildConstraint_eq
-graph/src/effects/mod.rs	EffectsPayload::describe	246	PROVEN	ModRs.describeTop/chunks32: describeTop_spec, chunks32_flatten
-graph/src/effects/mod.rs	EffectsPayload::apply	292	PROVEN	ModRs.applyTop: applyTop_spec
-graph/src/effects/mod.rs	EffectEncode::encode	328	PROVEN	trait decl; impls proven: encRecord (readRecord_encRecord), blocks (Blk.rt), Value (decodeV_encV)
-graph/src/effects/mod.rs	EffectDecode::decode	340	PROVEN	trait decl; impls proven: readRecord, rLabelSet/rAttrIds, bU32 (RelType)
-graph/src/effects/mod.rs	EffectEncodeSized::encode_sized	366	PROVEN	trait decl; impls: bOpts (IndexFieldOptions), AttrValues (bRows)
-graph/src/effects/mod.rs	EffectDecodeSized::decode_sized	393	PROVEN	trait decl; impls: bOpts.rt, bRows.rt, IdList (proofs/id_list)
-graph/src/effects/mod.rs	EffectsBuffer::write	422	PROVEN	ModRs.ebWrite: ebWrite_spec
-graph/src/effects/mod.rs	EffectsBuffer::flush	430	PROVEN	ModRs.ebFlush: ebWrite_spec
-graph/src/effects/mod.rs	EffectsBuffer::bytes	436	PROVEN	ModRs.ebEffectWrite = vecWrite: eb_is_vec, vec_bytes
-graph/src/effects/mod.rs	EffectsBuffer::written	443	PROVEN	eb_is_vec, vec_written
-graph/src/effects/mod.rs	EffectsBuffer::reserve	447	PROVEN	eb_is_vec, vec_reserve
-graph/src/effects/mod.rs	EffectsBuffer::default	456	PROVEN	ModRs.ebNew: ebNew_eq
-graph/src/effects/mod.rs	EffectsBuffer::new	464	PROVEN	ModRs.ebNew: ebNew_eq, ebNew_isEmpty
-graph/src/effects/mod.rs	EffectsBuffer::is_empty	473	PROVEN	fmtIsEmpty: fmtIsEmpty_iff
-graph/src/effects/mod.rs	EffectsBuffer::build	484	PROVEN	delegates to format build: build_ok
-graph/src/effects/mod.rs	EffectsBuffer::build_index	497	PROVEN	delegates: fmtBuildIndex_eq
-graph/src/effects/mod.rs	EffectsBuffer::build_constraint	514	PROVEN	delegates: fmtBuildConstraint_eq
-graph/src/effects/mod.rs	EffectsBuffer::replicate	530	PROVEN	delegates: fmtReplicate_transparent
+graph/src/effects/mod.rs	ReplicationSink::replicate	65	AXIOMATISED	trait implemented in src/ by RedisModule_Replicate (Redis FFI); format.rs replicate proven up to the sink (fmtReplicate_transparent)
+graph/src/effects/mod.rs	EffectsFormat::new_buffer	102	PROVEN	trait decl; sole impl format.rs: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsFormat::is_empty	109	PROVEN	trait decl; sole impl: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsFormat::replicate	116	PROVEN	trait decl; sole impl: fmtReplicate_transparent
+graph/src/effects/mod.rs	EffectsFormat::describe	131	PROVEN	trait decl; sole impl: describe_spec
+graph/src/effects/mod.rs	EffectsFormat::apply	143	PROVEN	trait decl; sole impl: fmtApply_eq
+graph/src/effects/mod.rs	EffectsFormat::build	166	PROVEN	trait decl; sole impl: build_ok
+graph/src/effects/mod.rs	EffectsFormat::build_index	178	PROVEN	trait decl; sole impl: fmtBuildIndex_eq
+graph/src/effects/mod.rs	EffectsFormat::build_constraint	192	PROVEN	trait decl; sole impl: fmtBuildConstraint_eq
+graph/src/effects/mod.rs	EffectsPayload::describe	245	PROVEN	ModRs.describeTop/chunks32: describeTop_spec, chunks32_flatten
+graph/src/effects/mod.rs	EffectsPayload::apply	291	PROVEN	ModRs.applyTop: applyTop_spec
+graph/src/effects/mod.rs	EffectEncode::encode	327	PROVEN	trait decl; impls proven: encRecord (readRecord_encRecord), blocks (Blk.rt), Value (decodeV_encV)
+graph/src/effects/mod.rs	EffectDecode::decode	339	PROVEN	trait decl; impls proven: readRecord, rLabelSet/rAttrIds, bU32 (RelType)
+graph/src/effects/mod.rs	EffectEncodeSized::encode_sized	365	PROVEN	trait decl; impls: bOpts (IndexFieldOptions), AttrValues (bRows)
+graph/src/effects/mod.rs	EffectDecodeSized::decode_sized	392	PROVEN	trait decl; impls: bOpts.rt, bRows.rt, IdList (proofs/id_list)
+graph/src/effects/mod.rs	EffectsBuffer::write	421	PROVEN	ModRs.ebWrite: ebWrite_spec
+graph/src/effects/mod.rs	EffectsBuffer::flush	429	PROVEN	ModRs.ebFlush: ebWrite_spec
+graph/src/effects/mod.rs	EffectsBuffer::bytes	435	PROVEN	ModRs.ebEffectWrite = vecWrite: eb_is_vec, vec_bytes
+graph/src/effects/mod.rs	EffectsBuffer::written	442	PROVEN	eb_is_vec, vec_written
+graph/src/effects/mod.rs	EffectsBuffer::reserve	446	PROVEN	eb_is_vec, vec_reserve
+graph/src/effects/mod.rs	EffectsBuffer::default	455	PROVEN	ModRs.ebNew: ebNew_eq
+graph/src/effects/mod.rs	EffectsBuffer::new	463	PROVEN	ModRs.ebNew: ebNew_eq, ebNew_isEmpty
+graph/src/effects/mod.rs	EffectsBuffer::is_empty	472	PROVEN	fmtIsEmpty: fmtIsEmpty_iff
+graph/src/effects/mod.rs	EffectsBuffer::build	483	PROVEN	delegates to format build: build_ok
+graph/src/effects/mod.rs	EffectsBuffer::build_index	496	PROVEN	delegates: fmtBuildIndex_eq
+graph/src/effects/mod.rs	EffectsBuffer::build_constraint	513	PROVEN	delegates: fmtBuildConstraint_eq
+graph/src/effects/mod.rs	EffectsBuffer::replicate	529	PROVEN	delegates: fmtReplicate_transparent
 graph/src/effects/announce.rs	SchemaBaseline::of	39	PROVEN	Format.baselineOf: baselineOf_spec
 graph/src/effects/payload.rs	take_effects_buffer	25	PROVEN	Format.takeEffectsBuffer: takeEffectsBuffer_spec
 graph/src/effects/error.rs	LocalName::fmt	460	PROVEN	Format.localName: localName_none, localName_some

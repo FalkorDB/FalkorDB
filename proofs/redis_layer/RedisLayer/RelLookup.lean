@@ -2,12 +2,12 @@
 # Relationship lookups behind the reply encoders (#3447, #3449)
 
 `RespCompact.encC` / `RespVerbose.encVb` take an edge's type id / type name, source and
-destination as given fields. On `origin/main` (`b84473a7f`) those fields are *looked up*
-while the reply is written, and three of the lookups panic when the id is not where the
-code expects it. This file models the lookups over the three places a relationship id can
+destination as given fields. On `origin/main` those fields are *looked up*
+while the reply is written, and some of the lookups panic when the id is not where the
+code expects it (#3447 still; #3449 fixed by #3462, 5e475e6c9). This file models the lookups over the three places a relationship id can
 live during a query, and the two ways a reply's id can end up in none of the expected ones.
 
-| here | there (`b84473a7f`) |
+| here | there (`5e475e6c9`; line numbers of #3449's code moved by #3436/#3462) |
 | --- | --- |
 | `Rel`, `St.graph`, `St.types` | committed edges in `runtime.g` (`edge_endpoints`, `relationship_type_matrix`) and `Graph::relationship_types` (`graph/src/graph/graph.rs`) |
 | `St.deleted` | `runtime.deleted_relationships` (snapshots: src, dst, type *name*) |
@@ -16,9 +16,10 @@ live during a query, and the two ways a reply's id can end up in none of the exp
 | `graphTyId` | `Graph::get_relationship_type_id` (`graph.rs:3339-3349`, `.expect("relationship must have a type in type_matrix")`) |
 | `typeId` | `Graph::get_type_id` (`graph.rs:1214`): position of the name in the registry |
 | `compactRel` | `reply_compact_value`, `Value::Relationship` arm (`src/reply.rs:252-293`): endpoints `:253`; deleted → `get_type_id(&x.type_name).unwrap()` `:260`; else `get_relationship_type_id` `:276` |
-| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs:472-492`): endpoints `:475`; deleted → snapshot name `:491`; else `bg.get_relationship_type_id` `:487` (never asks `pending`) |
+| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs:472-490`): endpoints `:475`; type name from `Runtime::get_relationship_type` (`runtime.rs:1902-1914`: deleted → pending → graph) since #3462 |
+| `pre3449_verboseRel` | the same arm on b84473a7f: deleted → snapshot name; else `bg.get_relationship_type_id` (never asked `pending`) |
 | `commitCascade` | `CREATE … DETACH DELETE` of an endpoint: the cascade (`delete.rs:253-265` → `Pending::remove_pending_relationships_for_node`, `pending.rs:839-897`, drops an emptied type group `:872-873`) snapshots the edge into `deleted_relationships`; `Pending::commit` (`pending.rs:1239-1253`) registers types only through `create_relationships_bulk` over the surviving groups |
-| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs:99`) snapshots only when `snapshot_required` (`:69-81`) — false under a bare `Commit` — and ignores `runtime.should_record`; `record_mut` (`src/commands/record.rs:100-132`) renders the captured rows after `finish_write` |
+| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs:99-101`) snapshots when `runtime.inspect || snapshot_required` (`:69-81`; `snapshot_required` is false under a bare `Commit`; before #3462 only `snapshot_required`); `record_mut` (`src/commands/record.rs:100-132`) renders the captured rows after `finish_write` |
 | `recordAbort` | `GRAPH.RECORD` of `CREATE (a)-[r:R]->(b) SET a.x = 1/0`: the error comes before `Commit`, `abandon_write` (`record.rs:106`), then the rows are rendered anyway (`:113-132`) with `r` still pending |
 
 `none` is the panic (the server dies). C has no `GRAPH.RECORD`; its compact reply of a
@@ -66,12 +67,23 @@ def compactRel (s : St) (id : Nat) : Option (Nat × Nat × Nat) := do
     | none => graphTyId s id                   -- `:276` `.expect(..)`
   pure (t, a, b)
 
-/-- `reply_verbose_value` on `Value::Relationship`: `(type name, src, dst)` or panic. -/
+/-- History (b84473a7f): `reply_verbose_value` on `Value::Relationship`. -/
+def pre3449_verboseRel (s : St) (id : Nat) : Option (String × Nat × Nat) := do
+  let (a, b) ← endpoints s id
+  let t ← match look s.deleted id with
+    | some r => some r.ty                      -- snapshot name
+    | none => (look s.graph id).map (·.ty)     -- `bg.get_relationship_type_id` (pending not consulted)
+  pure (t, a, b)
+
+/-- `reply_verbose_value` on `Value::Relationship` on main (#3462): the type name comes from
+`Runtime::get_relationship_type` (`runtime.rs:1902-1914`): deleted → pending → graph. -/
 def verboseRel (s : St) (id : Nat) : Option (String × Nat × Nat) := do
   let (a, b) ← endpoints s id
   let t ← match look s.deleted id with
-    | some r => some r.ty                      -- `:491`
-    | none => (look s.graph id).map (·.ty)     -- `:487` (pending not consulted)
+    | some r => some r.ty
+    | none => match look s.pending id with
+      | some r => some r.ty
+      | none => (look s.graph id).map (·.ty)
   pure (t, a, b)
 
 /-- The id is somewhere the runtime can describe it. -/
@@ -155,60 +167,68 @@ theorem s3447_survivor_ok :
     compactRel (commitCascade [] [(⟨0, "NEW_TYPE", 0, 1⟩, true), (⟨1, "NEW_TYPE", 2, 3⟩, false)]) 0
       = some (0, 0, 1) := by decide
 
-/-! ## #3449: `GRAPH.RECORD` renders ids the runtime no longer (or not yet) describes -/
+/-! ## #3449 (fixed by #3462): `GRAPH.RECORD` rendered ids the runtime no longer (or not yet) described -/
 
 /-- `MATCH ()-[r]->() DELETE r` under `GRAPH.RECORD`: `r` leaves the graph at commit and is
-snapshotted only when `snap` (`DeleteOp::new`, `delete.rs:99`: `snapshot_required`). -/
+snapshotted only when `snap` (`DeleteOp::new`, `delete.rs:99-101`). -/
 def recordDelete (snap : Bool) (g : List Rel) (types : List String) (r : Rel) : St :=
   { graph := g.filter (· ≠ r), types, deleted := if snap then [r] else [], pending := [] }
 
 /-- `snapshot_required` for a `Delete` whose only ancestor is `Commit` (top-level `DELETE`). -/
 def snapshotRequiredTopLevel : Bool := false
 
+/-- `DeleteOp::new`'s snapshot flag: b84473a7f was `snapshot_required` alone; main (#3462) is
+`runtime.inspect || snapshot_required`. -/
+def pre3449_snapshot (_inspect snapReq : Bool) : Bool := snapReq
+def snapshot (inspect snapReq : Bool) : Bool := inspect || snapReq
+
 def r0 : Rel := ⟨0, "R", 0, 1⟩
-def s3449del : St := recordDelete snapshotRequiredTopLevel [r0] ["R"] r0
+/-- History: the recorded top-level `DELETE r` on b84473a7f (`inspect = true`, not consulted). -/
+def pre3449_s3449del : St :=
+  recordDelete (pre3449_snapshot true snapshotRequiredTopLevel) [r0] ["R"] r0
+/-- The same recorded `DELETE r` on main. -/
+def s3449del : St := recordDelete (snapshot true snapshotRequiredTopLevel) [r0] ["R"] r0
 
 /-- `CREATE (a)-[r:R]->(b) SET a.x = 1/0` under `GRAPH.RECORD`: the error precedes `Commit`;
 `r` is still pending (and, the type being new, unregistered) when the rows are rendered. -/
 def s3449abort : St := { graph := [], types := [], deleted := [], pending := [r0] }
 
-/-- **#3449**: (1) the recorded row of a top-level `DELETE r` names an id that is neither in
-the graph nor snapshotted: `get_relationship_endpoints` panics (`graph.rs:3381`), although
-the id was live when the row was captured. (2) After the aborted `CREATE`, the endpoints
-come from `pending` but the type comes from the graph (`reply.rs:487` → `graph.rs:3348`
-panics). Property `RecordedLive` (every rendered id is live, snapshotted or pending) fails
-in (1), and `ReplyTotal` fails in (2). -/
-theorem bug3449_record_renders_dead_rel :
-    (¬ RecordedLive [r0.id] s3449del ∧ verboseRel s3449del 0 = none) ∧
+/-- **#3449 on b84473a7f** (history): (1) the recorded row of a top-level `DELETE r` names an
+id that is neither in the graph nor snapshotted: `get_relationship_endpoints` panics
+(`graph.rs:3381`), although the id was live when the row was captured. (2) After the aborted
+`CREATE`, the endpoints come from `pending` but the type comes from the graph
+(`bg.get_relationship_type_id`, `graph.rs:3348`, panics). `RecordedLive` fails in (1) and the
+verbose reply is `none` in (2). -/
+theorem pre3449_record_renders_dead_rel :
+    (¬ RecordedLive [r0.id] pre3449_s3449del ∧ pre3449_verboseRel pre3449_s3449del 0 = none) ∧
     (Known s3449abort 0 ∧ endpoints s3449abort 0 = some (0, 1) ∧
-      verboseRel s3449abort 0 = none ∧ ¬ ReplyTotal s3449abort) := by
-  refine ⟨⟨fun h => ?_, by decide⟩, by simp [Known, s3449abort, look, r0], by decide, by decide,
-    fun h => ?_⟩
-  · have := h 0 (by simp [r0])
-    simp [Known, s3449del, recordDelete, snapshotRequiredTopLevel, look, r0] at this
-  · have := (h 0 (by simp [Known, s3449abort, look, r0])).2
-    simp [show verboseRel s3449abort 0 = none by decide] at this
+      pre3449_verboseRel s3449abort 0 = none) := by
+  refine ⟨⟨fun h => ?_, by decide⟩, by simp [Known, s3449abort, look, r0], by decide, by decide⟩
+  have := h 0 (by simp [r0])
+  simp [Known, pre3449_s3449del, pre3449_snapshot, recordDelete, snapshotRequiredTopLevel, look, r0] at this
 
-/-- The suggested fix for (1): snapshot when recording (`should_record ||
-snapshot_required`). The deleted edge then renders from its snapshot. -/
+/-- **#3449 fixed (1)**: with `inspect || snapshot_required` the recorded `DELETE r` is
+snapshotted, so every captured id is still describable (`RecordedLive`) and the verbose
+reply renders it from the snapshot. -/
 theorem fixed3449_record_snapshot :
-    verboseRel (recordDelete true [r0] ["R"] r0) 0 = some ("R", 0, 1) := by decide
+    RecordedLive [r0.id] s3449del ∧ verboseRel s3449del 0 = some ("R", 0, 1) := by
+  refine ⟨fun id hid => ?_, by decide⟩
+  simp [r0] at hid; subst hid
+  simp [Known, s3449del, snapshot, recordDelete, snapshotRequiredTopLevel, look, r0]
 
-/-- The suggested fix for (2): `reply_verbose_value` asks `Runtime::get_relationship_type`
-(`runtime.rs:1796-1808`: deleted → pending → graph). -/
-def verboseRelFixed (s : St) (id : Nat) : Option (String × Nat × Nat) := do
-  let (a, b) ← endpoints s id
-  let t ← match look s.deleted id with
-    | some r => some r.ty
-    | none => match look s.pending id with
-      | some r => some r.ty
-      | none => (look s.graph id).map (·.ty)
-  pure (t, a, b)
+/-- `fixed3449_record_snapshot` for any state of the flags: a recorded query (`inspect`)
+always snapshots, whatever `snapshot_required` says. -/
+theorem snapshot_inspect (b : Bool) : snapshot true b = true := rfl
 
-/-- With the fix the verbose encoder is total on every known id, whatever the registry. -/
+/-- **#3449 fixed (2)**: the aborted `CREATE`'s pending `r` renders with its pending type
+(`Runtime::get_relationship_type`), `R`, 0 → 1, whatever the registry. -/
+theorem fixed3449_record_abort : verboseRel s3449abort 0 = some ("R", 0, 1) := by decide
+
+/-- With the fix the verbose encoder is total on every known id (deleted, pending or
+committed), whatever the registry. -/
 theorem verboseRelFixed_total (s : St) (id : Nat) (h : Known s id) :
-    (verboseRelFixed s id).isSome := by
-  unfold verboseRelFixed endpoints
+    (verboseRel s id).isSome := by
+  unfold verboseRel endpoints
   rcases hd : look s.deleted id with _ | r
   · rcases hp : look s.pending id with _ | p
     · rcases hg : look s.graph id with _ | g

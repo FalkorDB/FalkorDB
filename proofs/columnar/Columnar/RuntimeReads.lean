@@ -15,7 +15,7 @@ definitions, so the agreement needs no premise.
 | `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs:614-630, :963-979): `None` unless `has_*_attrs()` (:603-611) |
 | `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs:1459-1490) |
 | `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1511-1535); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3490: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
-| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1556-1598, :1616-1658); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2587, :3430) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
+| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1668-1710, :1728-1770); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2587, :3430) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
 
 **`matNode_eq`**, **`matRel_eq`**: the bulk read is, id for id, the per-row read (or `Null`),
 on the read-only fast path and on the deleted / pending path alike; **`propReads`**: the
@@ -77,7 +77,7 @@ def getRelAttribute (id : Nat) (a : String) : Option (V F) :=
     | some v => some v
     | none => (s.attrId a).bind (byIdxR s id)   -- `g.get_relationship_attribute(id, attr)`
 
-/-- `materialize_node_property_values` (runtime.rs:1556). -/
+/-- `materialize_node_property_values` (runtime.rs:1668). -/
 def matNode (ids : List Nat) (a : String) : List (V F) :=
   if s.delNodes.isEmpty && !hasNodeAttrs s then
     match s.attrId a with
@@ -90,7 +90,7 @@ def matNode (ids : List Nat) (a : String) : List (V F) :=
         | none => byIdxN s id i).getD .null
     | some attrs => (attrs.lookup a).getD .null
 
-/-- `materialize_relationship_property_values` (runtime.rs:1616). -/
+/-- `materialize_relationship_property_values` (runtime.rs:1728). -/
 def matRel (ids : List Nat) (a : String) : List (V F) :=
   if s.delRels.isEmpty && !hasRelAttrs s then
     match s.attrId a with
@@ -175,7 +175,7 @@ theorem propReads (rt : RT F) : Columnar.CoreBridge.PropReads (rtOf s rt) where
   matNode ids a := matNode_eq s ids a
   matRel ids a := matRel_eq s ids a
 
-/-- `materialize_node_property` (runtime.rs:1542): `classify_column` of the values. -/
+/-- `materialize_node_property` (runtime.rs:1654): `classify_column` of the values. -/
 def matNodeCol [FloatModel F] (ids : List Nat) (a : String) : Column F × Bits := classifyColumn (matNode s ids a)
 def matRelCol [FloatModel F] (ids : List Nat) (a : String) : Column F × Bits := classifyColumn (matRel s ids a)
 

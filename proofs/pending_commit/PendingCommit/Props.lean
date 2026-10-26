@@ -10,8 +10,8 @@
   The evaluator reads `Some(Null)` and `None` both as `null`, so `normQ` folds
   them.
 * `commitExisting` — `Graph::set_nodes_attributes` → `insert_attrs` →
-  `merge_span` (pending.rs:1137, graph.rs:1761).
-* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs:1128,
+  `merge_span` (pending.rs:1135, graph.rs:1761).
+* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs:1126,
   attribute_store.rs:1351): drop nulls, `set_span`.
 
 Theorems: the pending list stays sorted/unique under any sequence of writes

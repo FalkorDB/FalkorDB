@@ -12,7 +12,7 @@ rollback with documents keyed by id, so it proves the buggy rule faithfully
 | Lean | Rust (fb3d516d0) |
 | --- | --- |
 | `Ep` | `endpoints_for_edge` of one graph version (`committed` or the query's discarded `private`) |
-| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1661-1673`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
+| `resyncEdgeKeys` | `Pending::resync_published_indexes`, edge arm (`runtime/pending.rs:1647-1659`): id live in committed ⇒ re-add, else if `private` knows it ⇒ delete under the private endpoints |
 | re-add key | `Graph::commit_edge_index_locked` (`graph/graph.rs:3863-3896`): re-resolves `(src, dst)` from the **committed** tensor; an id with no endpoints is skipped |
 | `resyncEdges` | the above then `Indexer::commit_edge` (`indexer.rs:760`, `Iter.commitEdge`: adds, then deletes) |
 | `EdgeIndexMatches`, `RollbackRestoresEdgeIndex` | the property: after rollback the edge index is exactly the committed graph's documents |
@@ -53,7 +53,7 @@ def PublishedBy (committed priv : Ep) (pub : List Nat) (t0 t1 : ETable) : Prop :
 
 /-- **Property (#2781).** Rolling back a failed query restores the edge index to
 the committed graph's documents: C's undo-log guarantee, which the doc comment of
-`resync_published_indexes` (`pending.rs:1621-1634`) claims. -/
+`resync_published_indexes` (`pending.rs:1607-1620`) claims. -/
 def RollbackRestoresEdgeIndex (resync : Ep → Ep → List Nat → ETable → ETable) : Prop :=
   ∀ committed priv pub t0 t1, EdgeIndexMatches committed t0 →
     PublishedBy committed priv pub t0 t1 → EdgeIndexMatches committed (resync committed priv pub t1)

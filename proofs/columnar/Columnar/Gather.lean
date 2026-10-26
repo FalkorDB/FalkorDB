@@ -333,7 +333,7 @@ theorem rowIter_spec {I : Type} (x : I) (xs : List I) :
     | nil => rfl
     | cons y ys ih => simp [drainIt, rowIterNext, ih]
 
-/-! ## `BatchedResultEmitter::new` (:770), `new_without_alias` (:780), `batch` (:756) -/
+/-! ## `BatchedResultEmitter::new` (:774), `new_without_alias` (:784), `batch` (:760) -/
 
 structure Em (B : Type) where
   binding : Option Nat

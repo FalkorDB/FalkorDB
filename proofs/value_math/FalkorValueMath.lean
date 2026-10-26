@@ -182,4 +182,8 @@ GRAPH.QUERY it fails with the misleading "graph.RO_QUERY is to be executed only 
 queries" (procedure_call.rs:67: a lone write procedure is planned as read-only);
 `db.idx.fulltext.drop` of a missing index errors (C: no-op); `queryNodes(1, 2)` errors
 (C: empty).
+
+## Re-pinned to 5e475e6c9 (#3436)
+Re-pin only. `procedures.rs` (`runtime.g.borrow()` -> `runtime.graph()`, -3 lines) and
+`index_ddl.rs` rows shifted; `value.rs`, `math.rs`, `conversion.rs` are unchanged since b84473a7f.
 -/

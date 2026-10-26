@@ -173,7 +173,7 @@ def groupBy {K} [DecidableEq K] {A} (key : A → K) (l : List A) : List (K × Li
     };
     slots[slot].1.push(id);
     ```
-    (`emit.rs:525-563`, `emit.rs:814-846`). `index` is an `FxHashMap<Shape,
+    (`emit.rs:523-561`, `emit.rs:812-844`). `index` is an `FxHashMap<Shape,
     usize>`; here an association list, since only `get` and `insert` of a fresh
     key are used and the map's iteration order never leaks into the output. -/
 

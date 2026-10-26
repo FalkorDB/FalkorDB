@@ -58,10 +58,10 @@ graph/src/runtime/eval.rs	NeighborIter::neighbors	231	NOT COVERED	idem
 graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1363	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
 graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1448	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	56	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	98	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList, evalIQ_inList_err (W2-index-3)
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	250	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff
-graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	253	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
-graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	293	PROVEN	IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	98	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList (one InList since #2383), evalIQ_inList_err (W2-index-3, still open)
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	251	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff; InList arm (#2383): canUse_inListV_eq_or, canUse_inListV_empty, canUse_inList_nonlist
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	254	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	300	PROVEN	IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
@@ -73,6 +73,6 @@ graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	I
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	78	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	116	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	265	PROVEN	IndexScan.canUseE: canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	265	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
 graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	268	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	310	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7; historical pre3081_undirected_once), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	316	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7; historical pre3081_undirected_once), scans_stream

@@ -39,6 +39,11 @@ Gaps: zstd/crc32 are hypotheses (`CodecOK`).
 `staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (NOT COVERED, TEST-ONLY).
 Bugs: #2914 (encoder wrote records its reader rejects) — **fixed by #2916 (`2c874022a`)**, now theorems;
 quadratic list reservation — **fixed by #3267**; ≥ 4 GiB compressed frame — **fixed by #3278**.
+
+## Re-pinned to 5e475e6c9 (#3436)
+No model change. `graph/src/effects/mod.rs` and `v3/format.rs` build entry points take `&Graph`
+instead of `&AtomicRefCell<Graph>` (a read query borrows its graph once, #3436); every
+`COVERAGE.tsv` row is re-pinned (mod.rs -1 line from the removed import, format.rs -2).
 -/
 import FalkorEffectsCodec.Prim
 import FalkorEffectsCodec.Value

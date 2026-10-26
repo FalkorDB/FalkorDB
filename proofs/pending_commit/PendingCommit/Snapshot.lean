@@ -59,7 +59,7 @@ structure RS where
   nextGen : Nat
   deriving Repr
 
-/-- `DELETE` of a live node: snapshot it (delete.rs:259-266), drop it from the graph. -/
+/-- `DELETE` of a live node: snapshot it (delete.rs:261-268), drop it from the graph. -/
 def del (s : RS) (id : Nat) : RS :=
   match find s.live id with
   | some e => { s with live := s.live.filter (·.1 != id), freed := id :: s.freed,

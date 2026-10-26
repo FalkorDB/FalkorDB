@@ -13,7 +13,7 @@ import FalkorNativeIndex.Ddl
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets origin/main 1d15bf713 (since cab3cf192 only `graph.rs` moved: `apply_index_writes` :3784, `commit_index_docs` :3801, `query_index_numeric_{nodes,edges}` :4089/:4106; and #3283 fixed the cow_btree invariant this project's tree rows rested on): `graph/src/index/falkordb/{encode,numeric,falkordb_index,
+Targets origin/main 5e475e6c9 (re-targeted from 1d15bf713: #2383 `IN [...]` served as a union of point lookups — `numeric.rs` rows re-pinned (`DocIter`/`UnionIter`, `in_list`, `union`, `union_of`, +61 lines before `new`), `query_numeric` routes `InList`/`Or`, node/edge scans build one `InList` (`next` :300/:316); #3436 only swaps `g.borrow()` for `graph()`. Earlier, since cab3cf192 only `graph.rs` moved: `apply_index_writes` :3784, `commit_index_docs` :3801, `query_index_numeric_{nodes,edges}` :4089/:4106; and #3283 fixed the cow_btree invariant this project's tree rows rested on): `graph/src/index/falkordb/{encode,numeric,falkordb_index,
 pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`
 (`apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`, `new_version`'s
 fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
@@ -26,11 +26,11 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 | `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
 | `Tree.lean`: `tInsert`…`tRange` (CowBTree contents; encoding/sorted lemmas imported from cow_btree) | `cow_btree/mod.rs:190-324` |
 | `Contract.lean`: `contract_fromSorted`, `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_range` | `cow_btree/mod.rs:190-324` on every reachable tree |
-| `Numeric.lean`: `NumericIndex.*`, `rangeBounds`, `IndexQuery` | `numeric.rs:39-254` |
-| `Index.lean`: `hmGet`…, `IndexColumn.*`, `ColumnEntry.ready`, `FalkorDbIndex.*` | `falkordb_index.rs:38-355`, `:409-432` |
+| `Numeric.lean`: `NumericIndex.*`, `rangeBounds`, `IndexQuery` (`equal`/`range`/`inList`/`or`), `encodeAll`, `unionOf`, `inList`, `unionMember`/`unionGo`/`union`, `UState`/`unionNext` | `numeric.rs:46-402` (`UnionIter::next` :79, `in_list` :329, `union` :349, `union_of` :381) |
+| `Index.lean`: `hmGet`…, `IndexColumn.*`, `ColumnEntry.ready`, `FalkorDbIndex.*`, `queryKey`, `queryNumeric` | `falkordb_index.rs:38-355`, `:409-446` |
 | `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `applyColumn`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:364-400` |
 | `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:62-393`, `:438-508` |
-| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries`, `buildColumn`, `createIndex`, `populate`, `indexOnlyWrites`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanRoute`, `newVersion`, `runUnit` | `graph_writes.rs:46-52`, `:404-432`, `:468-552`; `graph.rs:1062-1065`, `:3780-3808`, `:4087-4122`; `node_by_index_scan.rs:306-323`, `edge_by_index_scan.rs:329-349` |
+| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries`, `buildColumn`, `createIndex`, `populate`, `indexOnlyWrites`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanRoute`, `newVersion`, `runUnit` | `graph_writes.rs:46-52`, `:404-432`, `:468-552`; `graph.rs:1062-1065`, `:3780-3808`, `:4087-4122`; `node_by_index_scan.rs:313-337`, `edge_by_index_scan.rs:335-360` |
 
 ## Proven
 - **Encoding** (`Float.lean`, bit-level f64: both zeros, every NaN sign/payload, ±inf):
@@ -46,7 +46,8 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
   (every data variant vs a guarded non-NaN numeric bound, all five operators), `range_keys` (the
   inclusive key bounds incl. exclusive `±1` steps are exact), `range_agrees`, `point_agrees`,
   `nodeScan_native_agrees` (a built column answers a `Range` with exactly the ids the Filter keeps),
-  `queryNumeric_spec` (routing: only numeric `Equal`/`Range` on an existing column).
+  `queryNumeric_spec` (routing: a numeric `Equal`/`Range`, an `IN` list, or a same-attribute `OR` on an existing column).
+- **`IN` lists and `OR` unions of point lookups (#2383)** (`Numeric.lean`, `Ddl.lean`): `inList_agrees`, `union_agrees` (served result = ids equal to some member), `inList_isSome_iff` (declined unless non-empty and every member encodes), `union_nil`, `union_attr_mismatch`, `union_range_declines` (declined, not answered in part), `unionNext_spec` (the lazy cursor chain yields exactly the point scans in key order), `unionIter_initial`, `nodeScan_native_inList_agrees`. Order is unspecified: statements are membership. Not modelled: id uniqueness across keys (rests on the encoder rejecting lists).
 - **#3307, apply once per unit of work** (`Pending.lean`): `sortLog_filter` (stable sort keeps each
   tuple's history), `lwwGo_spec`, `lastWriteWins_spec` (keeps exactly each tuple's last change),
   `applyColumn_eq_sequential` (collapsed `remove_batch`+`insert_batch` = applying every staged change

@@ -103,17 +103,64 @@ def NumericIndex.range (ix : NumericIndex) (min max : Option Value) (incMin incM
   | none => ix.empty
   | some (lo, hi) => tRange ix.tree lo hi
 
-/-- `IndexQuery<Value>` (`index/mod.rs`), the variants the native index distinguishes. -/
+/-- `IndexQuery<Value>` (`index/mod.rs`), the variants the native index distinguishes. `inList`'s
+    payload is `some items` for `list: Value::List(items)` and `none` for any other `Value` (#2383);
+    `or` carries its children (`And`, `Point`, `ArrayContains` are `other`). -/
 inductive IndexQuery where
   | equal (key : String) (value : Value)
   | range (key : String) (min max : Option Value) (incMin incMax : Bool)
+  | inList (key : String) (list : Option (List Value))
+  | or (children : List IndexQuery)
   | other
-deriving Repr
 
-/-- `query` (`numeric.rs:234-249`). -/
+/-- `encode_numeric` over a whole list, `collect::<Option<Vec<u64>>>()`: `none` if any member does
+    not encode (`numeric.rs` `in_list`, `union`). -/
+def encodeAll (vs : List Value) : Option (List Nat) := vs.mapM encodeNumeric
+
+/-- `union_of` (`numeric.rs:381-395`): `keys.sort_unstable(); keys.dedup()`, then one point cursor per
+    distinct key, chained lazily. As a set of ids this is the concatenation of the point scans. The
+    chain is deliberately *not* id-ordered (`DocIter` doc); the model is a list whose order is not
+    claimed, every theorem below is about membership. The tree snapshot is pinned by `tree.clone()`,
+    so every member is answered from one version; here the tree is an immutable value, which is
+    that property. -/
+def NumericIndex.unionOf (ix : NumericIndex) (keys : List Nat) : List Nat :=
+  (sortDedup keys).flatMap (fun k => tRange ix.tree k k)
+
+/-- `in_list` (`numeric.rs:329-340`): an empty list is declined, as is a list with any member that
+    does not encode. -/
+def NumericIndex.inList (ix : NumericIndex) (items : List Value) : Option (List Nat) :=
+  if items.isEmpty then none else (encodeAll items).map ix.unionOf
+
+/-- The `match child` of `union` (`numeric.rs:359-365`): an `Equal`, or a **non-empty** `IN` list. -/
+def unionMember : IndexQuery → Option (String × List Value)
+  | .equal k v => some (k, [v])
+  | .inList k (some items) => if items.isEmpty then none else some (k, items)
+  | _ => none
+
+/-- The loop of `union` (`numeric.rs:355-372`). `attr` is the `get_or_insert` cell: the first member
+    fixes it and every later member must name the same attribute. -/
+def unionGo (attr : Option String) (keys : List Nat) : List IndexQuery → Option (List Nat)
+  | [] => some keys
+  | c :: cs =>
+    match unionMember c with
+    | none => none
+    | some (k, vs) =>
+      if attr.getD k ≠ k then none
+      else match encodeAll vs with
+        | none => none
+        | some ks => unionGo (some k) (keys ++ ks) cs
+
+/-- `union` (`numeric.rs:350-375`): `(!keys.is_empty()).then(|| self.union_of(keys))`. -/
+def NumericIndex.union (ix : NumericIndex) (children : List IndexQuery) : Option (List Nat) :=
+  (unionGo none [] children).bind (fun keys => if keys.isEmpty then none else some (ix.unionOf keys))
+
+/-- `query` (`numeric.rs:296-313`). -/
 def NumericIndex.query (ix : NumericIndex) : IndexQuery → Option (List Nat)
   | .equal _ v => some (ix.point v)
   | .range _ min max a b => some (ix.range min max a b)
+  | .inList _ (some items) => ix.inList items
+  | .inList _ none => none
+  | .or cs => ix.union cs
   | .other => none
 
 /-! ## Keys -/
@@ -342,13 +389,294 @@ theorem point_agrees (entries : List (Value × Nat))
     exact ⟨k, ((sortDedup_spec _).2 _).2 ((mem_encodePairs entries k id hid hids).2 ⟨v, hm, he⟩),
       Nat.le_refl _, Nat.le_refl _⟩
 
-/-- `query` dispatches `Equal` to `point`, `Range` to `range`, anything else to `None`. -/
+/-! ## `IN` lists and unions of point lookups (#2383)
+
+`n.a IN [v1, .., vn]` reaches the column as one `InList`, and `a = v1 OR a IN [..]` as an `Or`.
+Both are served as a union of point lookups over the distinct keys (`union_of`). The Rust claims,
+and the theorems below prove, three things: the union is exactly the ids a label scan plus the
+`IN` / `OR` filter returns (`inList_agrees`, `union_agrees`); the column *declines* (`None`) rather
+than answer part of a query (`inList_isSome_iff`, `union_nil`, `union_attr_mismatch`), because the
+scan op does not re-check the predicate; and the set is the same whatever the order, since the lazy
+chain is deliberately not id-ordered (all statements are membership). -/
+
+theorem encodeAll_nil : encodeAll [] = some [] := rfl
+
+theorem encodeAll_cons (v : Value) (vs : List Value) :
+    encodeAll (v :: vs) = (encodeNumeric v).bind (fun k => (encodeAll vs).map (k :: ·)) := by
+  simp [encodeAll, List.mapM_cons]
+  cases encodeNumeric v <;> simp
+  rename_i k
+  cases List.mapM encodeNumeric vs <;> simp
+
+theorem encodeAll_isSome (vs : List Value) :
+    (encodeAll vs).isSome = true ↔ ∀ v ∈ vs, (encodeNumeric v).isSome = true := by
+  induction vs with
+  | nil => simp [encodeAll_nil]
+  | cons v vs ih =>
+    rw [encodeAll_cons]
+    cases h : encodeNumeric v <;> simp [h, ih]
+
+theorem encodeAll_mem (vs : List Value) (ks : List Nat) (h : encodeAll vs = some ks) (k : Nat) :
+    k ∈ ks ↔ ∃ v ∈ vs, encodeNumeric v = some k := by
+  induction vs generalizing ks with
+  | nil => simp [encodeAll_nil] at h; subst h; simp
+  | cons v vs ih =>
+    rw [encodeAll_cons] at h
+    cases hv : encodeNumeric v with
+    | none => simp [hv] at h
+    | some k0 =>
+      simp only [hv, Option.bind_some, Option.map_eq_some_iff] at h
+      obtain ⟨ks', hks', rfl⟩ := h
+      rw [List.mem_cons, ih ks' hks']
+      constructor
+      · rintro (rfl | ⟨w, hw, hk⟩)
+        · exact ⟨v, List.mem_cons_self .., hv⟩
+        · exact ⟨w, List.mem_cons_of_mem _ hw, hk⟩
+      · rintro ⟨w, hw, hk⟩
+        rcases List.mem_cons.1 hw with rfl | hw
+        · left; rw [hv] at hk; exact (Option.some.inj hk).symm
+        · right; exact ⟨w, hw, hk⟩
+
+theorem encodeAll_append (as bs : List Value) (ka kb : List Nat) (ha : encodeAll as = some ka)
+    (hb : encodeAll bs = some kb) : encodeAll (as ++ bs) = some (ka ++ kb) := by
+  induction as generalizing ka with
+  | nil => simp [encodeAll_nil] at ha; subst ha; simpa using hb
+  | cons v vs ih =>
+    rw [encodeAll_cons] at ha
+    cases hv : encodeNumeric v with
+    | none => simp [hv] at ha
+    | some k0 =>
+      simp only [hv, Option.bind_some, Option.map_eq_some_iff] at ha
+      obtain ⟨ks', hks', rfl⟩ := ha
+      rw [List.cons_append, encodeAll_cons, hv]
+      simp [ih ks' hks']
+
+theorem unionOf_mem (ix : NumericIndex) (keys : List Nat) (id : Nat) :
+    id ∈ ix.unionOf keys ↔ ∃ k ∈ keys, id ∈ tRange ix.tree k k := by
+  simp only [NumericIndex.unionOf, List.mem_flatMap, (sortDedup_spec _).2]
+
+/-- `in_list` answers exactly when the list is non-empty and every member encodes (`numeric.rs`
+    doc: serving a subset "would silently drop rows"). -/
+theorem inList_isSome_iff (ix : NumericIndex) (items : List Value) :
+    (ix.inList items).isSome = true ↔ items ≠ [] ∧ ∀ v ∈ items, (encodeNumeric v).isSome = true := by
+  unfold NumericIndex.inList
+  cases items with
+  | nil => simp
+  | cons v vs =>
+    simp only [List.isEmpty_cons, Bool.false_eq_true, if_false, Option.isSome_map, encodeAll_isSome]
+    simp
+
+/-- **`IN` list ≡ label scan + `IN` filter**: a served `IN [b1, .., bn]` (every `bi` a guarded
+    non-NaN numeric) returns exactly the ids whose value equals some member. -/
+theorem inList_agrees (entries : List (Value × Nat))
+    (hwf : ∀ p ∈ entries, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
+    (items : List Value) (hgood : ∀ b ∈ items, GoodBound b) (r : List Nat)
+    (hr : (NumericIndex.fromEntries entries).inList items = some r) (id : Nat) (hid : id < W) :
+    id ∈ r ↔ ∃ v, (v, id) ∈ entries ∧ ∃ b ∈ items, cmpPred .eq v b = some true := by
+  unfold NumericIndex.inList at hr
+  cases hne : items.isEmpty
+  · simp only [hne, Bool.false_eq_true, if_false] at hr
+    cases hall : encodeAll items with
+    | none => simp [hall] at hr
+    | some ks =>
+      simp only [hall, Option.map_some, Option.some.injEq] at hr
+      subst hr
+      rw [unionOf_mem]
+      constructor
+      · rintro ⟨k, hk, hmem⟩
+        obtain ⟨b, hb, hkb⟩ := (encodeAll_mem items ks hall k).1 hk
+        have hp : id ∈ (NumericIndex.fromEntries entries).point b := by
+          simp only [NumericIndex.point, hkb]; exact hmem
+        obtain ⟨v, hv, hc⟩ := (point_agrees entries hwf b (hgood b hb) id hid).1 hp
+        exact ⟨v, hv, b, hb, hc⟩
+      · rintro ⟨v, hv, b, hb, hc⟩
+        have hp := (point_agrees entries hwf b (hgood b hb) id hid).2 ⟨v, hv, hc⟩
+        obtain ⟨kb, hkb, _⟩ := goodBound_enc b (hgood b hb)
+        simp only [NumericIndex.point, hkb] at hp
+        exact ⟨kb, (encodeAll_mem items ks hall kb).2 ⟨b, hb, hkb⟩, hp⟩
+  · simp [hne] at hr
+
+/-- The values a union's members contribute. -/
+def memberValues (cs : List IndexQuery) : List Value :=
+  cs.flatMap (fun c => match unionMember c with | some (_, vs) => vs | none => [])
+
+/-- Every member is an `Equal` or non-empty `IN` list on attribute `a`. -/
+def SameAttr (a : String) (cs : List IndexQuery) : Prop :=
+  ∀ c ∈ cs, ∃ vs, unionMember c = some (a, vs)
+
+theorem unionGo_spec (cs : List IndexQuery) : ∀ (attr : Option String) (keys out : List Nat),
+    unionGo attr keys cs = some out →
+    ∃ a, (∀ b, attr = some b → a = b) ∧ SameAttr a cs ∧
+      ∃ ks, encodeAll (memberValues cs) = some ks ∧ out = keys ++ ks := by
+  induction cs with
+  | nil =>
+    intro attr keys out h
+    simp only [unionGo, Option.some.injEq] at h
+    subst h
+    exact ⟨attr.getD "", fun b hb => by simp [hb], fun c hc => by simp at hc,
+      [], by simp [memberValues, encodeAll_nil], by simp⟩
+  | cons c cs ih =>
+    intro attr keys out h
+    simp only [unionGo] at h
+    cases hm : unionMember c with
+    | none => simp [hm] at h
+    | some p =>
+      obtain ⟨k, vs⟩ := p
+      simp only [hm] at h
+      by_cases hk : attr.getD k ≠ k
+      · simp [hk] at h
+      · simp only [hk, if_false] at h
+        cases he : encodeAll vs with
+        | none => simp [he] at h
+        | some ks1 =>
+          simp only [he] at h
+          obtain ⟨a, ha, hs, ks2, hk2, hout⟩ := ih (some k) (keys ++ ks1) out h
+          have hak : a = k := ha k rfl
+          subst hak
+          refine ⟨a, ?_, ?_, ks1 ++ ks2, ?_, ?_⟩
+          · intro b hb
+            rw [hb] at hk
+            simp only [ne_eq, Decidable.not_not, Option.getD_some] at hk
+            subst hk; rfl
+          · intro c' hc'
+            rcases List.mem_cons.1 hc' with rfl | hc'
+            · exact ⟨vs, hm⟩
+            · exact hs c' hc'
+          · simp only [memberValues, List.flatMap_cons, hm] at hk2 ⊢
+            exact encodeAll_append _ _ _ _ he hk2
+          · rw [hout]; simp [List.append_assoc]
+
+/-- An empty `OR` is not match-all: it is declined (`numeric.rs`, test `an empty OR`). -/
+theorem union_nil (ix : NumericIndex) : ix.union [] = none := by
+  simp [NumericIndex.union, unionGo]
+
+/-- An `OR` spanning two attributes cannot be answered from one column: it is declined. -/
+theorem union_attr_mismatch (ix : NumericIndex) (a b : String) (hab : a ≠ b) (v w : Value) :
+    ix.union [.equal a v, .equal b w] = none := by
+  simp only [NumericIndex.union, unionGo, unionMember]
+  cases encodeAll [v] <;> simp [Option.getD_none, Option.getD_some, hab]
+
+/-- A range (or any other child) is not a union member: the whole `OR` is declined. -/
+theorem union_range_declines (ix : NumericIndex) (k : String) (mn mx : Option Value) (a b : Bool)
+    (rest : List IndexQuery) : ix.union (.range k mn mx a b :: rest) = none := by
+  simp [NumericIndex.union, unionGo, unionMember]
+
+/-- **`OR` of equalities / `IN` lists ≡ label scan + `OR` filter**: a served union returns exactly
+    the ids whose value equals some member of some child, and every child names one attribute. -/
+theorem union_agrees (entries : List (Value × Nat))
+    (hwf : ∀ p ∈ entries, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
+    (cs : List IndexQuery) (hgood : ∀ b ∈ memberValues cs, GoodBound b) (r : List Nat)
+    (hr : (NumericIndex.fromEntries entries).union cs = some r) (id : Nat) (hid : id < W) :
+    (∃ a, SameAttr a cs) ∧
+    (id ∈ r ↔ ∃ v, (v, id) ∈ entries ∧ ∃ b ∈ memberValues cs, cmpPred .eq v b = some true) := by
+  unfold NumericIndex.union at hr
+  cases hg : unionGo none [] cs with
+  | none => simp [hg] at hr
+  | some keys =>
+    simp only [hg, Option.bind_some] at hr
+    obtain ⟨a, _, hs, ks, hks, hkeys⟩ := unionGo_spec cs none [] keys hg
+    by_cases hemp : keys.isEmpty = true
+    · simp [hemp] at hr
+    · simp only [hemp, Bool.false_eq_true, if_false, Option.some.injEq] at hr
+      subst hr
+      refine ⟨⟨a, hs⟩, ?_⟩
+      rw [unionOf_mem]
+      have hkeys' : keys = ks := by simpa using hkeys
+      subst hkeys'
+      constructor
+      · rintro ⟨k, hk, hmem⟩
+        obtain ⟨b, hb, hkb⟩ := (encodeAll_mem _ _ hks k).1 hk
+        have hp : id ∈ (NumericIndex.fromEntries entries).point b := by
+          simp only [NumericIndex.point, hkb]; exact hmem
+        obtain ⟨v, hv, hc⟩ := (point_agrees entries hwf b (hgood b hb) id hid).1 hp
+        exact ⟨v, hv, b, hb, hc⟩
+      · rintro ⟨v, hv, b, hb, hc⟩
+        have hp := (point_agrees entries hwf b (hgood b hb) id hid).2 ⟨v, hv, hc⟩
+        obtain ⟨kb, hkb, _⟩ := goodBound_enc b (hgood b hb)
+        simp only [NumericIndex.point, hkb] at hp
+        exact ⟨kb, (encodeAll_mem _ _ hks kb).2 ⟨b, hb, hkb⟩, hp⟩
+
+/-! ### The lazy chain (`UnionIter::next`, `numeric.rs:79-90`)
+
+State `(keys, cur)`: the keys still to visit and the cursor over the current one (`None` until the
+first `next`). `next` yields from `cur` if it has an item, else builds the cursor for the next key
+(`self.tree.point(self.keys.next()?)`, one descent) and loops; `?` on an empty `keys` returns `None`.
+A cursor is modelled by the ids it has left. -/
+
+abbrev UState := List Nat × Option (List Nat)
+
+/-- What the iterator still has to yield: the rest of the current cursor, then every later key's
+    point scan in order. -/
+def UState.remaining (t : List Nat) (s : UState) : List Nat :=
+  s.2.getD [] ++ s.1.flatMap (fun k => tRange t k k)
+
+/-- `UnionIter::next`: the `loop`, structural in `keys` (each non-yielding iteration consumes a key,
+    "keys are distinct, so this advances — it cannot spin"). -/
+def unionNext (t : List Nat) : List Nat → Option (List Nat) → Option (Nat × UState)
+  | keys, some (d :: ds) => some (d, (keys, some ds))
+  | [], _ => none
+  | k :: ks, _ => unionNext t ks (some (tRange t k k))
+
+/-- **`UnionIter::next` yields exactly the head of what remains**, leaves the tail, and returns
+    `None` only when nothing remains. So draining the chain enumerates the point scans in key order
+    and `union_of`'s eager model (`unionOf`) is exact. -/
+theorem unionNext_spec (t : List Nat) : ∀ (keys : List Nat) (cur : Option (List Nat)),
+    (∀ d s, unionNext t keys cur = some (d, s) →
+      UState.remaining t (keys, cur) = d :: UState.remaining t s) ∧
+    (unionNext t keys cur = none → UState.remaining t (keys, cur) = []) := by
+  intro keys
+  induction keys with
+  | nil =>
+    intro cur
+    cases cur with
+    | none => simp [unionNext, UState.remaining]
+    | some l =>
+      cases l with
+      | nil => simp [unionNext, UState.remaining]
+      | cons d ds => simp [unionNext, UState.remaining]
+  | cons k ks ih =>
+    intro cur
+    cases cur with
+    | none =>
+      obtain ⟨h1, h2⟩ := ih (some (tRange t k k))
+      refine ⟨fun d s h => ?_, fun h => ?_⟩
+      · simp only [unionNext] at h
+        have := h1 d s h
+        simpa [UState.remaining] using this
+      · simp only [unionNext] at h
+        simpa [UState.remaining] using h2 h
+    | some l =>
+      cases l with
+      | nil =>
+        obtain ⟨h1, h2⟩ := ih (some (tRange t k k))
+        refine ⟨fun d s h => ?_, fun h => ?_⟩
+        · simp only [unionNext] at h
+          simpa [UState.remaining] using h1 d s h
+        · simp only [unionNext] at h
+          simpa [UState.remaining] using h2 h
+      | cons d ds =>
+        refine ⟨fun d' s h => ?_, fun h => by simp [unionNext] at h⟩
+        simp only [unionNext, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        simp [UState.remaining]
+
+/-- The iterator `union_of` builds starts at `(sorted distinct keys, None)` and its remaining output
+    is `unionOf`. -/
+theorem unionIter_initial (ix : NumericIndex) (keys : List Nat) :
+    UState.remaining ix.tree (sortDedup keys, none) = ix.unionOf keys := by
+  simp [UState.remaining, NumericIndex.unionOf]
+
+/-- `query` dispatches `Equal` to `point`, `Range` to `range`, an `IN` list to `in_list`, an `OR` to
+    `union`, anything else to `None`. -/
 theorem query_spec (ix : NumericIndex) (q : IndexQuery) :
     ix.query q = match q with
       | .equal _ v => some (ix.point v)
       | .range _ a b c d => some (ix.range a b c d)
+      | .inList _ (some items) => ix.inList items
+      | .inList _ none => none
+      | .or cs => ix.union cs
       | .other => none := by
-  cases q <;> rfl
+  cases q <;> (try rename_i l; cases l) <;> rfl
 
 /-! ## Writes -/
 

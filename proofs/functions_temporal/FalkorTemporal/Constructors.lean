@@ -8,13 +8,13 @@ import FalkorTemporal.Duration
 | `tdDaysOk`          | chrono `TimeDelta::days` panics unless `days * 86400 ∈ [MIN.secs, MAX.secs]` (`time_delta.rs:86,150`) |
 | `Outcome`           | `Result<NaiveDate, String>` plus the panic that kills the server |
 | `inRange`, `checkRange` | `check_range` — `temporal.rs:63` (`None` passes) |
-| `i32Ok`, `u32Ok`    | `i32::try_from` / `u32::try_from` — `temporal.rs:92,124-127` |
+| `i32Ok`, `u32Ok`    | `i32::try_from` / `u32::try_from` — `temporal.rs:92,122-125` |
 | `checkedAddDays`    | `NaiveDate::checked_add_signed(Duration::days(n))` (`None` ↦ `.err`) |
-| `weekPath`          | `date_from_components`, `week` branch — `temporal.rs:94-109` |
-| `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs:111-121` |
-| `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs:124-130` |
+| `weekPath`          | `date_from_components`, `week` branch — `temporal.rs:94-107` |
+| `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs:109-119` |
+| `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs:122-128` |
 | `dateFromComponents`| `date_from_components` — `temporal.rs:82` |
-| `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:288-290` |
+| `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:285-287` |
 | `sliceOk`           | byte 2 of `rest` is a char boundary |
 | `formatDateDigits`  | `format_date` + `write_date_into` — `value.rs:307`, `value.rs:836` |
 | `pre2950_*`         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
@@ -67,28 +67,41 @@ def checkedAddDays (day n : Int) : Outcome :=
   if !tdDaysOk n then .panic "TimeDelta::days out of bounds"
   else if chronoYearOk (civilFromDaysI (day + n)).1 then .ok (day + n) else .err
 
-/-- `date_from_components`, week branch (`temporal.rs:94-109`). `check_range("week", 1, 53)`
+/-- `date_from_components`, week branch (`temporal.rs:94-107`). `check_range("week", 1, 53)`
 comes first, so `(week - 1) * 7 + day_offset - weekday_of_jan4` is in `-6..=370` and no i64
-operation can overflow. -/
+operation can overflow. Since #2988 `dayOfWeek` is ISO `1..=7` (7 = Sunday), as in the
+string form and C (`check_range("dayOfWeek", day_of_week, 1, 7)`, `day_of_week - 1`). -/
 def weekPath (year week dow : Int) : Outcome :=
   if !inRange week 1 53 then .err
-  else if !inRange dow 0 6 then .err
+  else if !inRange dow 1 7 then .err
   else if !chronoYearOk year then .err             -- `from_ymd_opt(year, 1, 4)`
   else
     let jan4 := daysFromCivil year 1 4
     -- weekday of jan4, Monday = 0 (1970-01-01 was a Thursday)
     let wd := (jan4 + 3) % 7
+    let off := dow - 1
+    checkedAddDays jan4 ((week - 1) * 7 + off - wd)
+
+/-- The week branch before #2988 (`temporal.rs:94-109` at 5e475e6c9's parent): `dayOfWeek`
+was `0..=6` with 0 = Sunday. -/
+def pre2988_weekPath (year week dow : Int) : Outcome :=
+  if !inRange week 1 53 then .err
+  else if !inRange dow 0 6 then .err
+  else if !chronoYearOk year then .err
+  else
+    let jan4 := daysFromCivil year 1 4
+    let wd := (jan4 + 3) % 7
     let off := if dow = 0 then 6 else dow - 1
     checkedAddDays jan4 ((week - 1) * 7 + off - wd)
 
-/-- `date_from_components`, quarter branch (`temporal.rs:111-121`). -/
+/-- `date_from_components`, quarter branch (`temporal.rs:109-119`). -/
 def quarterPath (year quarter : Int) (doq : Option Int) : Outcome :=
   if !inRange quarter 1 4 then .err
   else if !checkRange doq 1 92 then .err
   else if !chronoYearOk year then .err             -- `from_ymd_opt(year, qsm, 1)`
   else checkedAddDays (daysFromCivil year ((quarter - 1) * 3 + 1) 1) (doq.getD 1 - 1)
 
-/-- The year/month/day tail (`temporal.rs:124-130`): `u32::try_from` on month and day (no
+/-- The year/month/day tail (`temporal.rs:122-128`): `u32::try_from` on month and day (no
 more `as u32` truncation), then `NaiveDate::from_ymd_opt`. -/
 def ymdPath (year month day : Int) : Outcome :=
   if u32Ok month && u32Ok day && chronoYearOk year && inRange month 1 12 &&
@@ -116,14 +129,14 @@ theorem checkedAddDays_total (day n : Int) (hn : -1000000 ≤ n ∧ n ≤ 100000
 theorem weekPath_total (year week dow : Int) (w : String) : weekPath year week dow ≠ .panic w := by
   unfold weekPath
   by_cases h1 : inRange week 1 53 = true
-  · by_cases h2 : inRange dow 0 6 = true
+  · by_cases h2 : inRange dow 1 7 = true
     · by_cases h3 : chronoYearOk year = true
       · simp only [h1, h2, h3, Bool.not_true, Bool.false_eq_true, ite_false]
         simp only [inRange, Bool.and_eq_true, decide_eq_true_eq] at h1 h2
         have m0 := Int.emod_nonneg (daysFromCivil year 1 4 + 3) (by decide : (7:Int) ≠ 0)
         have m1 := Int.emod_lt_of_pos (daysFromCivil year 1 4 + 3) (by decide : (0:Int) < 7)
         apply checkedAddDays_total
-        split <;> omega
+        omega
       · simp only [h1, h2, h3, Bool.not_true, Bool.not_false, Bool.false_eq_true, ite_false,
           ite_true]; intro h; cases h
     · simp only [h1, h2, Bool.not_true, Bool.not_false, Bool.false_eq_true, ite_false, ite_true]
@@ -168,27 +181,26 @@ theorem dateFromComponents_total (year month day week dow quarter doq : Option I
     · exact ymdPath_total _ _ _ w
 
 /-- The week branch on in-range components is the ISO week date. -/
-theorem weekPath_ok (year week dow : Int) (hw : 1 ≤ week ∧ week ≤ 53) (hd : 0 ≤ dow ∧ dow ≤ 6)
+theorem weekPath_ok (year week dow : Int) (hw : 1 ≤ week ∧ week ≤ 53) (hd : 1 ≤ dow ∧ dow ≤ 7)
     (hy : -200000 ≤ year ∧ year ≤ 200000) :
     weekPath year week dow = .ok (daysFromCivil year 1 4 - (daysFromCivil year 1 4 + 3) % 7
-      + (week - 1) * 7 + (if dow = 0 then 6 else dow - 1)) := by
+      + (week - 1) * 7 + (dow - 1)) := by
   have hj := jan4_bound year hy
   have m0 := Int.emod_nonneg (daysFromCivil year 1 4 + 3) (by decide : (7:Int) ≠ 0)
   have m1 := Int.emod_lt_of_pos (daysFromCivil year 1 4 + 3) (by decide : (0:Int) < 7)
   unfold weekPath checkedAddDays
   have i1 : inRange week 1 53 = true := by
     simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
-  have i2 : inRange dow 0 6 = true := by
+  have i2 : inRange dow 1 7 = true := by
     simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
   have i3 : chronoYearOk year = true := by
     simp only [chronoYearOk, Bool.and_eq_true, decide_eq_true_eq]; omega
   generalize daysFromCivil year 1 4 = j at *
-  have e : j + ((week - 1) * 7 + (if dow = 0 then 6 else dow - 1) - (j + 3) % 7) =
-      j - (j + 3) % 7 + (week - 1) * 7 + (if dow = 0 then 6 else dow - 1) := by omega
-  have td : tdDaysOk ((week - 1) * 7 + (if dow = 0 then 6 else dow - 1) - (j + 3) % 7) = true := by
-    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; split <;> omega
-  have c := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 + (if dow = 0 then 6 else dow - 1))
-    (by split <;> omega)
+  have e : j + ((week - 1) * 7 + (dow - 1) - (j + 3) % 7) =
+      j - (j + 3) % 7 + (week - 1) * 7 + (dow - 1) := by omega
+  have td : tdDaysOk ((week - 1) * 7 + (dow - 1) - (j + 3) % 7) = true := by
+    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
+  have c := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 + (dow - 1)) (by omega)
   simp only [i1, i2, i3, td, e, c, Bool.not_true, Bool.false_eq_true, ite_false, ite_true]
 
 /-- The quarter branch: `dayOfQuarter` counts on from the quarter's first day (C does the
@@ -247,15 +259,38 @@ theorem in_range_examples :
 
 /-- At chrono's year edges an in-range week whose date leaves chrono's range is now an
 error (pre-#2950 it panicked, `pre2950_week_edge_panics`). -/
-theorem week_edge_errors : weekPath (-262143) 1 1 = .err ∧ weekPath 262142 53 0 = .err := by
+theorem week_edge_errors : weekPath (-262143) 1 1 = .err ∧ weekPath 262142 53 7 = .err := by
   decide +kernel
 
-/-- `dayOfWeek` in the map constructor accepts `0..6` with `0` = Sunday
-(`temporal.rs:97,104`), so ISO `dayOfWeek: 7` is rejected (C and openCypher: `1..7`,
-7 = Sunday). **Divergence (confirmed live; unchanged by #2950).** -/
-theorem dayOfWeek_seven_rejected : weekPath 2021 1 7 = .err := by decide +kernel
-theorem dayOfWeek_zero_is_sunday : weekPath 2021 1 0 = .ok (daysFromCivil 2021 1 10) := by
+/-- **Fixed by #2988 (W2-temporal-9, closes #2936)**: `dayOfWeek` in the map constructor is ISO
+`1..7` with `7` = Sunday, like the string form and C: `date({year:2021, week:1, dayOfWeek:7})`
+is 2021-01-10, and `0` / `8` / `-1` are errors. -/
+theorem dayOfWeek_seven_is_sunday : weekPath 2021 1 7 = .ok (daysFromCivil 2021 1 10) := by
   decide +kernel
+theorem dayOfWeek_zero_rejected : weekPath 2021 1 0 = .err := by decide +kernel
+theorem dayOfWeek_out_of_range_errors :
+    weekPath 2021 1 8 = .err ∧ weekPath 2021 1 (-1) = .err := by decide +kernel
+
+/-- Pre-#2988 (history, the divergence W2-temporal-9): `dayOfWeek` was `0..6` with `0` =
+Sunday, so ISO `dayOfWeek: 7` was rejected (C and openCypher: `1..7`) and `0` accepted. -/
+theorem pre2988_dayOfWeek_seven_rejected : pre2988_weekPath 2021 1 7 = .err := by decide +kernel
+theorem pre2988_dayOfWeek_zero_is_sunday :
+    pre2988_weekPath 2021 1 0 = .ok (daysFromCivil 2021 1 10) := by decide +kernel
+
+/-- The fix only re-labels Sunday: on `dayOfWeek` `1..7` main is the old branch with `7`
+read as the old `0`. (Monday..Saturday are unchanged.) -/
+theorem weekPath_eq_pre2988 (year week dow : Int) (hd : 1 ≤ dow ∧ dow ≤ 7) :
+    weekPath year week dow = pre2988_weekPath year week (if dow = 7 then 0 else dow) := by
+  unfold weekPath pre2988_weekPath
+  by_cases h7 : dow = 7
+  · subst h7
+    simp [show inRange 7 1 7 = true from by decide, show inRange 0 0 6 = true from by decide]
+  · have h0 : dow ≠ 0 := by omega
+    have hin : inRange dow 1 7 = true := by
+      simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
+    have hin' : inRange dow 0 6 = true := by
+      simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
+    simp [h7, h0, hin, hin']
 
 /-! ## Before #2950 (history): unchecked chrono arithmetic -/
 
@@ -343,9 +378,11 @@ theorem pre2950_weekPath_total (year week dow : Int) (hy : -200000 ≤ year ∧ 
 /-- #2950 only removed panics: wherever the old week branch was used as intended (week in
 `1..53`, sane year), main returns the same date. -/
 theorem weekPath_eq_pre2950 (year week dow : Int) (hw : 1 ≤ week ∧ week ≤ 53)
-    (hd : 0 ≤ dow ∧ dow ≤ 6) (hy : -200000 ≤ year ∧ year ≤ 200000) :
+    (hd : 1 ≤ dow ∧ dow ≤ 6) (hy : -200000 ≤ year ∧ year ≤ 200000) :
     weekPath year week dow = pre2950_weekPath year week dow := by
-  rw [weekPath_ok year week dow hw hd hy]
+  rw [weekPath_ok year week dow hw (by omega) hy]
+  have hd0 : dow ≠ 0 := by omega
+  have hd' : 0 ≤ dow ∧ dow ≤ 6 := by omega
   have hjan := jan4_bound year hy
   have hwd0 := Int.emod_nonneg (daysFromCivil year 1 4 + 3) (by decide : (7:Int) ≠ 0)
   have hwd1 := Int.emod_lt_of_pos (daysFromCivil year 1 4 + 3) (by decide : (0:Int) < 7)
@@ -356,11 +393,10 @@ theorem weekPath_eq_pre2950 (year week dow : Int) (hw : 1 ≤ week ∧ week ≤ 
   have td1 : tdDaysOk ((week - 1) * 7) = true := by
     unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
   have c1 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7) (by omega)
-  have td2 : tdDaysOk (if dow = 0 then 6 else dow - 1) = true := by
-    unfold tdDaysOk; split <;> simp only [Bool.and_eq_true, decide_eq_true_eq] <;> omega
-  have c2 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 +
-      (if dow = 0 then 6 else dow - 1)) (by split <;> omega)
-  simp only [hd, not_true_eq_false, ite_false, yOk, Bool.not_true, Bool.false_eq_true, td1, c1,
+  have td2 : tdDaysOk (dow - 1) = true := by
+    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
+  have c2 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 + (dow - 1)) (by omega)
+  simp only [hd', hd0, not_true_eq_false, ite_false, yOk, Bool.not_true, Bool.false_eq_true, td1, c1,
     td2, c2, ite_true, and_self]
 
 /-- Likewise for the quarter branch with `dayOfQuarter` in `1..92`. -/
@@ -401,7 +437,7 @@ inductive SliceOutcome where
   | ok
   deriving DecidableEq, Repr
 
-/-- Main (`temporal.rs:288-290`): `rest.split_at_checked(2).ok_or_else(..)?`. -/
+/-- Main (`temporal.rs:285-287`): `rest.split_at_checked(2).ok_or_else(..)?`. -/
 def weekSlice (rest : List Char) : SliceOutcome := if sliceOk rest then .ok else .err
 
 /-- Pre-#2950: `rest[..2]` / `rest[2..]`. -/

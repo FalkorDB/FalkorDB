@@ -116,7 +116,8 @@ theorem goodV_isPrim (c : V) (h : goodV c = true) : isPrim c = true := by
   cases c <;> simp_all [goodV, isPrim]
 
 /-- **PROVEN**: `n.k IN [c₁,…,cₙ]` on faithful literals is exact through the index
-(`InList` → runtime `Or` of `Equal`s → RediSearch union). -/
+(`InList` kept whole since #2383 → `build_query_node`'s `InList` arm, a RediSearch union of
+`Equal`s; `build_inList_eq_or` says it is the union the pre-#2383 `Or` built). -/
 theorem sel_inList (ts : List T) (hts : ts.all goodLitT = true) (hv : faithV (n.prop k) = true)
     (hk : k ∈ idx L) (hL : L ∈ n.labels) :
     qsem idx L (.inList k (.list ts)) n = inList (n.prop k) (ts.map (evalT n)) := by
@@ -131,7 +132,7 @@ theorem sel_inList (ts : List T) (hts : ts.all goodLitT = true) (hv : faithV (n.
     List.filter_eq_self.mpr (fun c hc => goodV_isPrim c (List.all_eq_true.mp hgood c hc))
   unfold qsem idxSel bsel
   simp only [evalIQ, listVals, hfilt, build, hL, decide_true, Bool.true_and, hmap]
-  rw [buildSome_eqs idx L k n _ hgood hk hv]
+  rw [← buildSome_map_eq, buildSome_eqs idx L k n _ hgood hk hv]
   rfl
 
 def isStrLitT : Option T → Bool

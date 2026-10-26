@@ -10,14 +10,14 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-568`) — **source semantics**; #2922 is an LLVM miscompile of exactly this `match` guard on aarch64-apple-darwin |
-| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:741`) |
-| `drain` | `drain_pending_entry` (`:619-644`) |
-| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:673-714`, `:735-740`) |
-| `emitLazy` | `emit_lazy` (`:726-743`) |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-571`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced (`pre2973_withBinding`) on aarch64-apple-darwin |
+| `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:745`) |
+| `drain` | `drain_pending_entry` (`:623-648`) |
+| `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:677-718`, `:739-744`) |
+| `emitLazy` | `emit_lazy` (`:730-747`) |
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
-| `finishLen` | `finish_batch` (`:648-666`) row count incl. the `should_expand` switch (`start_batch`, `:602-614`) |
+| `finishLen` | `finish_batch` (`:652-670`) row count incl. the `should_expand` switch (`start_batch`, `:605-618`) |
 | `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:285-294`) |
 -/
 
@@ -26,11 +26,29 @@ open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 
-/-- `with_binding`: `Some(cap) if cap < BATCH_SIZE => cap.max(1)`, else `BATCH_SIZE`. -/
+/-- `with_binding` since #2973 (`batched_result_emitter.rs:563`):
+`record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`. -/
 def withBinding (recordCap : Option Nat) : Nat :=
+  match recordCap with
+  | some cap => max 1 (min cap BATCH_SIZE)
+  | none => BATCH_SIZE
+
+/-- History: `with_binding` before #2973, a guarded arm,
+`Some(cap) if cap < BATCH_SIZE => cap.max(1), _ => BATCH_SIZE`. LLVM 21-23.1.0 on
+aarch64-apple-darwin dropped the guard (#2922, `withBindingMiscompiled`). -/
+def pre2973_withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
   | some cap => if cap < BATCH_SIZE then max cap 1 else BATCH_SIZE
   | none => BATCH_SIZE
+
+/-- **#2973 is a rewrite of the source form only**: the clamp computes exactly what the guarded arm
+did, for every cap. -/
+theorem withBinding_eq_pre2973 (rc : Option Nat) : withBinding rc = pre2973_withBinding rc := by
+  cases rc with
+  | none => rfl
+  | some cap =>
+    simp only [withBinding, pre2973_withBinding, BATCH_SIZE]
+    by_cases h : cap < 1024 <;> simp [h] <;> omega
 
 /-- The doubling after each `emit_lazy`. -/
 def grow (c : Nat) : Nat := min (c * 2) BATCH_SIZE
@@ -40,7 +58,7 @@ miscompiled binary yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
 theorem withBinding_le_batch (rc : Option Nat) : 1 ≤ withBinding rc ∧ withBinding rc ≤ BATCH_SIZE := by
   cases rc with
   | none => simp [withBinding, BATCH_SIZE]
-  | some cap => simp only [withBinding, BATCH_SIZE]; by_cases h : cap < 1024 <;> simp [h] <;> omega
+  | some cap => simp only [withBinding, BATCH_SIZE]; omega
 
 theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c ∧ grow c ≤ BATCH_SIZE := by
   unfold grow BATCH_SIZE at *; omega
@@ -48,13 +66,16 @@ theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c 
 /-- A lowered ceiling reaches `BATCH_SIZE` again (here: 10 → … → 1024 in 7 steps). -/
 theorem grow_reaches : Nat.repeat grow 7 (withBinding (some 10)) = BATCH_SIZE := by decide
 
-/-- The miscompile's effect, for the record: the guard dropped, `cap` passes through. -/
+/-- The miscompile's effect on the pre-#2973 form, for the record: the guard dropped, `cap` passes
+through. The clamp form has no guard to drop. -/
 def withBindingMiscompiled (recordCap : Option Nat) : Nat :=
   match recordCap with
   | some cap => max cap 1
   | none => BATCH_SIZE
 
 theorem miscompiled_differs : withBindingMiscompiled (some 1025) ≠ withBinding (some 1025) := by decide
+
+theorem miscompiled_differs_pre2973 : withBindingMiscompiled (some 1025) ≠ pre2973_withBinding (some 1025) := by decide
 
 variable {I : Type}
 
@@ -252,7 +273,7 @@ theorem batch_rows_active {F : Type} {b : Batch F} (h : b.WF) (f : Nat → List 
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hi
     exact (stream_rows_active h f x (hsub x hx)).2)
 
-/-- `finish_batch`'s row count: gathered when `start_batch` (`:602-614`) sets
+/-- `finish_batch`'s row count: gathered when `start_batch` (`:605-618`) sets
 `should_expand` — the parent has a column **or carries correlation origins**
 (`has_origins`, since #2845) — else a fresh `Batch::new(0)` whose length comes from
 the first installed column (`set_column` on an empty batch), or stays 0 when the

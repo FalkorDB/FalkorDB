@@ -106,7 +106,7 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 | D (W2-strlist-4) | `pre2953_toLower_rejects_valid` | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
 | E (W2-strlist-5) | `replaceRegex_dollar` | `string.replaceRegEx('abc', 'b', '$0x')` returns `'ac'` because `$` is expanded; C copies the replacement literally (`'a$0xc'`) | **Open**: listed under "decisions needed" (#2929) |
 | F (W2-strlist-6) | `pre2954_comprehension_diverges` | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
-| W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:282`, `:461`), not the pending ones | **Open** |
+| W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:286`, `:466`), not the pending ones | **Open** |
 | — | `pre2899_rangeIter_negate_overflows` | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
 C bugs recorded for comparison:

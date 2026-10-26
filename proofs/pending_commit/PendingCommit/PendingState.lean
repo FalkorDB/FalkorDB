@@ -1,6 +1,6 @@
 import PendingCommit.PendingAttrs
 /-
-# `Pending` bookkeeping (pending.rs:116-1077)
+# `Pending` bookkeeping (pending.rs:116-1075)
 
 The struct with every field as a finite set (`RoaringTreemap`: a duplicate-free
 list) or finite map (`FxHashMap`: `PA.FMap`), and each accessor/mutator as a

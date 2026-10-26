@@ -15,8 +15,8 @@ their `sel` agree on every node of the graph.
 | `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1371-1372` |
 | `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1477-1687` (`null_mut` ↦ `none`) |
 | `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1691`, `graph/graph.rs:3934`) |
-| `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:250-287` |
-| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-244` (InList → `Or` of the scalar items) |
+| `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:251-295` |
+| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-245` (InList → one `InList` of the scalar items since #2383; an `Or` of `Equal`s before) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
 | `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:547-566` |
 | `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:357-368` |
@@ -27,7 +27,7 @@ their `sel` agree on every node of the graph.
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:727-783` |
 | `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:973-1046` |
-| `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs:301-328` |
+| `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs:308-335` |
 -/
 namespace OptimizerScan.Index
 
@@ -128,6 +128,7 @@ inductive Q
   | eq (k : Nat) (v : V)
   | range (k : Nat) (lo hi : Option V) (il ih : Bool)
   | contains (k : Nat) (v : V)
+  | inList (k : Nat) (vs : List V)   -- `IndexQuery::InList` (#2383): one attribute, scalar members
   | and (qs : List Q)
   | or (qs : List Q)
   deriving Repr
@@ -161,16 +162,21 @@ def within (x : Int) (lo hi : Option Int) (il ih : Bool) : Bool :=
   (match lo with | none => true | some c => geB x c il) &&
   (match hi with | none => true | some c => leB x c ih)
 
+/-- The `Equal` arm of `build_query_node`. -/
+def buildEq (F : List Nat) (k : Nat) (v : V) : Option (Node → Bool) :=
+  if k ∈ F then
+    match valueToNumeric v, v with
+    | some d, _ => some (fun n => enc (n.prop k) == some (.num d))
+    | none, .s x => some (fun n => enc (n.prop k) == some (.tag x))
+    | none, _ => none
+  else none
+
+attribute [simp] buildEq
+
 mutual
 /-- `Index::build_query_node` (`index/mod.rs:1477-1687`); `none` is a null query node. -/
 def build (F : List Nat) : Q → Option (Node → Bool)
-  | .eq k v =>
-    if k ∈ F then
-      match valueToNumeric v, v with
-      | some d, _ => some (fun n => enc (n.prop k) == some (.num d))
-      | none, .s x => some (fun n => enc (n.prop k) == some (.tag x))
-      | none, _ => none
-    else none
+  | .eq k v => buildEq F k v
   | .range k lo hi il ih =>
     if k ∈ F then
       if isStrB lo || isStrB hi then
@@ -201,6 +207,9 @@ def build (F : List Nat) : Q → Option (Node → Bool)
       | .s x => some (fun n => (arrEnc (n.prop k)).contains (.tag x))
       | _ => none
     else none
+  | .inList k vs =>
+    -- the `InList` arm (`index/mod.rs:1596-1613`): a union of `Equal` children, null ones skipped
+    some (fun n => (vs.filterMap (buildEq F k)).any (· n))
   | .and qs => (buildAll F qs).map (fun fs n => fs.all (· n))
   | .or qs => some (fun n => (buildSome F qs).any (· n))
 
@@ -219,6 +228,20 @@ def buildSome (F : List Nat) : List Q → List (Node → Bool)
     | none => buildSome F qs
 end
 
+theorem buildSome_map_eq (F : List Nat) (k : Nat) (vs : List V) :
+    buildSome F (vs.map (Q.eq k)) = vs.filterMap (buildEq F k) := by
+  induction vs with
+  | nil => rfl
+  | cons v vs ih =>
+    simp only [List.map_cons, buildSome, build, List.filterMap_cons]
+    cases buildEq F k v <;> simp [ih]
+
+/-- **#2383**: the `InList` arm builds exactly the union of `Equal`s that the pre-#2383
+runtime handed over as an `Or`: `build_query_node` is unchanged in meaning. -/
+theorem build_inList_eq_or (F : List Nat) (k : Nat) (vs : List V) :
+    build F (.inList k vs) = build F (.or (vs.map (Q.eq k))) := by
+  simp only [build, buildSome_map_eq]
+
 /-- The index on label `L` (its field list `idx L`), queried with `q`. -/
 def bsel (F : List Nat) (q : Q) (n : Node) : Bool :=
   match build F q with
@@ -236,17 +259,28 @@ def isIndexable : V → Bool
   | .arr _ => false
 
 mutual
-/-- `can_utilize_index` (`node_by_index_scan.rs:250-287`). -/
+/-- `can_utilize_index` (`node_by_index_scan.rs:251-295`). -/
 def canUtilize : Q → Bool
   | .eq _ v => isIndexable v
   | .range _ lo hi _ _ => (lo.map isIndexable).getD true && (hi.map isIndexable).getD true
   | .contains _ v => match v with | .b _ | .i _ | .s _ => true | _ => false
+  | .inList _ vs => !vs.isEmpty && vs.all isIndexable   -- node_by_index_scan.rs:280-285 (#2383)
   | .and qs => !qs.isEmpty && canAll qs
   | .or qs => !qs.isEmpty && canAll qs
 def canAll : List Q → Bool
   | [] => true
   | q :: qs => canUtilize q && canAll qs
 end
+
+/-- **#2383**: `can_utilize_index` decides an `InList` on the same terms as the `Or` of
+`Equal`s it replaced (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`). -/
+theorem canUtilize_inList_eq_or (k : Nat) (vs : List V) :
+    canUtilize (.inList k vs) = canUtilize (.or (vs.map (Q.eq k))) := by
+  have : ∀ vs : List V, canAll (vs.map (Q.eq k)) = vs.all isIndexable := by
+    intro vs; induction vs with
+    | nil => rfl
+    | cons v vs ih => simp [canAll, canUtilize, ih]
+  simp [canUtilize, this]
 
 /-! ## Filter expressions -/
 
@@ -478,11 +512,11 @@ def listVals : R → List V
 def isPrim : V → Bool | .b _ | .i _ | .s _ => true | _ => false
 
 mutual
-/-- `evaluate_index_query` (`node_by_index_scan.rs:98-244`). -/
+/-- `evaluate_index_query` (`node_by_index_scan.rs:98-245`). -/
 def evalIQ : IQ → Q
   | .eq k t => .eq k (evalC t)
   | .range k lo hi il ih => .range k (lo.map evalC) (hi.map evalC) il ih
-  | .inList k r => .or (((listVals r).filter isPrim).map (.eq k))
+  | .inList k r => .inList k ((listVals r).filter isPrim)   -- #2383: kept whole, not an `Or` of `Equal`s
   | .contains k t => .contains k (evalC t)
   | .and qs => .and (evalIQs qs)
   | .or qs => .or (evalIQs qs)

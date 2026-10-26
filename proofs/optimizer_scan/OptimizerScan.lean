@@ -18,21 +18,28 @@ once), a hop chain is the conjunction of its hops, and the rewrite must select e
 `Filter → NodeByLabelScan` / `Filter → AllNodeScan` selects under Cypher's three-valued
 comparison (only `true` keeps a row).
 
+Re-targeted to origin/main 5e475e6c9: #2383 keeps an `IN [...]` list whole as `IndexQuery::InList`
+(node and edge index scans) instead of an `Or` of `Equal`s; `Index.Q` gained `inList`, `evalIQ`
+builds it, `canUtilize` has its arm, and `inList_same_as_pre2383` (EdgeInline.lean) proves the new
+query builds the same union and is accepted/refused by `can_utilize_index` exactly as the old `Or`
+(history def `pre2383_evalIQ_inList`). `utilize_sound` is unchanged in statement. #3436 only
+shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs:1415`.
+
 ## Lean ↔ Rust
 
 | Lean | Rust |
 | --- | --- |
 | `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
-| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1363` (`id as u64` at 1322) |
-| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1364-1373` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
+| `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1415-1469` (`id as u64` at 1428) |
+| `IdSeek.evalIdFilterMain` | `runtime/runtime.rs:1470-1480` (#3394, main b84473a7f: `node_count() == 0 → Ok(None)`) |
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1624` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
 | `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
-| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-287` |
+| `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-295` |
 | `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
 | `Index.pushAnd`/`mergeInto`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-783` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:301-328` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:308-335` |
 | `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
 | `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
 | `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
@@ -82,7 +89,7 @@ Scan selection (`ScanOrder.lean`):
    expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
 2. **`NodeByIdSeek` returned a node that never existed, and writes to it persisted** — **FIXED by #3394**
    (9212add39, closes #3353; main b84473a7f: `evaluate_id_filter` returns `Ok(None)` when
-   `node_count() == 0`, `runtime.rs:1364-1369`; Lean `seek_sound` without `nodeCount ≠ 0`,
+   `node_count() == 0`, `runtime.rs:1470-1475`; Lean `seek_sound` without `nodeCount ≠ 0`,
    `empty_graph_seek_none`; history `pre3394_seek`, `pre3394_seek_sound`, `pre3394_phantom_node0`). Before:
    `Graph::max_node_id` (`graph.rs:1624`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.

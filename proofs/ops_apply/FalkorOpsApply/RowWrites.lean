@@ -16,7 +16,7 @@ Three Rust behaviours break that, each from one modelled mechanism:
 | issue | mechanism (fb3d516d0) | here |
 | --- | --- | --- |
 | #2738 | `ApplyOp::next_batched` (`apply.rs:152`) runs ONE sub-plan over all rows of the input batch; its `Commit` (`commit.rs:69`) drains every row before `pending.commit()`, so every row reads the pre-batch graph.  `can_batch` (`apply.rs:119-133`) does not blacklist `Create`/`Delete`/`Set`/`Commit`. | `applyBatchedW`, `canBatchApply_admits_write`, `bug2738_batched_call_hides_writes` |
-| #2729 | `CreateOp::next` (`create.rs:121`) and `DeleteOp::next` (`delete.rs:113`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs:259-266`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check` |
+| #2729 | `CreateOp::next` (`create.rs:121`) and `DeleteOp::next` (`delete.rs:115`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs:259-266`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check` |
 | #3164 | `next_per_row` (`apply.rs:238`) commits each row's sub-plan (each `Union` branch has its own `Commit`, `union.rs:65-96`); the commit releases a deleted node's id (`Graph::delete_nodes`, `graph.rs:2216`) and the next `create_batch` reclaims it (`IdSpace::reserve`, `id_space.rs:483-498`, via `create.rs:158`).  A row holds only `Value::Node(NodeId)` (`value.rs:220`), so a later row's stale reference resolves to the new entity. | `NG`, `rustPerRow`, `NoStaleAlias`, `bug3164_stale_ref_deletes_recycled_id` |
 
 The sufficient condition under which batching IS sound for a writing sub-plan
@@ -158,7 +158,7 @@ def dvOf : Option (CreateBatch.Val Unit) → Delete.DV
   | none => .null
 
 /-- One batch through `Create(rel)` then `Delete(var)` (`create.rs:121-136`,
-`delete.rs:113-125`): create against the current pending deletes, then delete. -/
+`delete.rs:115-127`): create against the current pending deletes, then delete. -/
 def step (r : CreateBatch.PRel Unit) (v : Nat) (s : Delete.St × List (CreateBatch.Ev Unit Unit))
     (rows : List (CreateBatch.Row Unit)) :
     Except String (Delete.St × List (CreateBatch.Ev Unit Unit)) := do

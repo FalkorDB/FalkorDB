@@ -15,9 +15,9 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:864-868` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs:3941` `commit_index_kind` / `graph.rs:655` population `build_doc` |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1907` `Index::add_document`) |
-| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:1894-1903` fulltext unknown-key refusal (#3094) |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:1972-2050` `map_to_index_options`, vector branch |
-| `parsePhonetic`                 | `runtime.rs:1930` phonetic arm |
+| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2000-2009` fulltext unknown-key refusal (#3094) |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2078-2156` `map_to_index_options`, vector branch |
+| `parsePhonetic`                 | `runtime.rs:2036` phonetic arm |
 | `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
 | `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:4211` / `:4062` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
@@ -351,7 +351,7 @@ theorem range_never_vector_or_text (f : Field) (v : Val) (h : f.ty = .range) :
   cases v <;> simp [docSet, h, RSAdd.isVecOrText]
   all_goals (intro a ha; rcases ha with ⟨_, rfl⟩ | ⟨_, rfl⟩ <;> rfl)
 
-/-! ## Index options (`map_to_index_options`, runtime.rs:1887-2081, main @ fe619ac5f; lines re-pinned at b84473a7f)
+/-! ## Index options (`map_to_index_options`, runtime.rs:1993-2187, main @ fe619ac5f; lines re-pinned at 5e475e6c9 (+106 from #3436))
 
 #3094 (`fe619ac5f`'s parent series, fixes #3091) made the vector branch require
 `dimension` and `similarityFunction` (lower-casing the latter) and the fulltext
@@ -368,32 +368,32 @@ deriving Repr, DecidableEq
 
 abbrev Opts := List (String × OptVal)
 
-/-- `get` (runtime.rs:1891): first entry with that key. -/
+/-- `get` (runtime.rs:1997): first entry with that key. -/
 def get (m : Opts) (k : String) : Option OptVal := (m.find? (·.1 == k)).map (·.2)
 
-/-- `FULLTEXT_OPTIONS` (runtime.rs:1900-1901). -/
+/-- `FULLTEXT_OPTIONS` (runtime.rs:2006-2007). -/
 def fulltextOptions : List String := ["weight", "nostem", "phonetic", "language", "stopwords"]
 
-/-- The fulltext unknown-key refusal (runtime.rs:1902-1909): the first key, in map
+/-- The fulltext unknown-key refusal (runtime.rs:2008-2015): the first key, in map
 order, that is not one of `FULLTEXT_OPTIONS`. -/
 def fulltextUnknown (m : Opts) : Option String :=
   (m.find? (fun kv => !fulltextOptions.contains kv.1)).map (·.1)
 
-/-- `dimension` arm (runtime.rs:1978-1995): **required** since #3094 (it used to default to `0`). -/
+/-- `dimension` arm (runtime.rs:2084-2101): **required** since #3094 (it used to default to `0`). -/
 def parseDimension (m : Opts) : Except String Nat :=
   match get m "dimension" with
   | some (.int n) => if n < 0 then .error "dimension must be a non-negative integer" else .ok n.toNat
   | none => .error "dimension is required"
   | some _ => .error "dimension must be an integer"
 
-/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs:2013-2056). -/
+/-- `M` / `efConstruction` / `efRuntime` arms (runtime.rs:2119-2162). -/
 def parseNatOpt (m : Opts) (k : String) : Except String (Option Nat) :=
   match get m k with
   | some (.int n) => if n < 0 then .error (k ++ " must be a non-negative integer") else .ok (some n.toNat)
   | none => .ok none
   | some _ => .error (k ++ " must be an integer")
 
-/-- `similarityFunction` arm (runtime.rs:1996-2012): **required**, and stored as
+/-- `similarityFunction` arm (runtime.rs:2102-2118): **required**, and stored as
 `s.to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only, so it is that). -/
 def parseSim (m : Opts) : Except String (Option String) :=
   match get m "similarityFunction" with
@@ -554,7 +554,7 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
 #guard rustAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard cAccepts [("dimension", .int 2), ("similarityFunction", .str "Euclidean")] = true
 #guard rustAccepts [] = false
--- Fulltext: a misspelt key is refused (runtime.rs:1902-1909), first unknown key in map order.
+-- Fulltext: a misspelt key is refused (runtime.rs:2008-2015), first unknown key in map order.
 #guard fulltextUnknown [("weight", .float), ("nostemm", .bool true), ("lang", .str "x")] = some "nostemm"
 #guard fulltextUnknown [("weight", .float), ("phonetic", .bool true)] = none
 
@@ -589,7 +589,7 @@ theorem rust_keys_ok_imp_c (m : Opts) (h : fulltextUnknown m = none) : cFulltext
 #guard cFulltextKeysOk [("weight", .float), ("foo", .bool true)] = true
 #guard cFulltextKeysOk [("foo", .int 1)] = false
 
-/-- `phonetic` arm (runtime.rs:1930-1947). -/
+/-- `phonetic` arm (runtime.rs:2036-2053). -/
 def parsePhonetic : Option OptVal → Except String (Option String)
   | some (.bool b) => .ok (some (if b then "dm:en" else ""))
   | some (.str s) => if s.toLower = "dm:en" then .ok (some "dm:en") else .error "Unsupported phonetic algorithm"

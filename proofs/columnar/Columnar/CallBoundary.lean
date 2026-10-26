@@ -6,7 +6,7 @@ Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`row
 `gather` :897-918, `concat` :979-1053, `origin_row` :1298, `has_origins`
 :1312, `BatchBuilder::push_row_with` :577, `BatchBuilder::finish` :750-797),
 runtime/ops/project.rs `eval` :54-147, and
-runtime/ops/batched_result_emitter.rs `start_batch` :602, `finish_batch` :648.
+runtime/ops/batched_result_emitter.rs `start_batch` :605, `finish_batch` :652.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
 inspect, the value-level laws being this project's. Folded in from the
@@ -138,11 +138,11 @@ theorem projectMerged_eq_main {T C V : Type} (fastCols general : List T → List
 
 /-! ## `BatchedResultEmitter`: the gather guard -/
 
-/-- `start_batch` before (origin/main :590) and after (merged :602-606). -/
+/-- `start_batch` before (origin/main :590) and after (merged :605-609). -/
 def shouldExpandOld {V : Type} (b : Batch V) : Bool := b.cols.length > 0
 def shouldExpandNew {V : Type} (b : Batch V) : Bool := b.cols.length > 0 || b.hasOrigins
 
-/-- `finish_batch` (:648-664) for `count = idx.length > 0` packed results
+/-- `finish_batch` (:652-668) for `count = idx.length > 0` packed results
 with parent rows `idx`: gather the parent, or a fresh `Batch::new(0)`; then
 `I::finish` installs the result lane via `set_column`, whose first column
 sets `len` (:1238) — when the binding has one. -/

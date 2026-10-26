@@ -21,6 +21,16 @@ import OpsTraverse.ExpandIntoPending
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
+**Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
+edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
+(`IndexScan.evalIQ_inList`, new `IQ.inListV`); `can_utilize_index` gained an `InList` arm (non-empty and every
+member indexable), proved to decide exactly as the `Or` of `Equal`s it replaced (`canUse_inListV_eq_or`,
+`canUseE_inListV_eq_or`, so `IN [NULL]` still falls back to a label scan). W2-index-3 (`IN [date, 2]` drops the
+date member before the index is asked) is unchanged and still open. `node_by_index_scan.rs` `can_utilize_index` /
+`is_indexable` / `next` re-pinned :251/:254/:300, `edge_by_index_scan.rs` `next` :316. #3436 (`rt.g.borrow()` ->
+`rt.graph()`) touches `cond_traverse`, `cond_var_len_traverse`, `all_shortest_paths`, `expand_into`, the label/id
+scans and `eval_shortest_path` without changing what they compute; no other pin moved.
+
 **Re-targeted to main b6567cb97** (from 737dfb5da): no change to the traversal
 operators. #2954 grew the `ListComprehension` arm of `eval.rs`, shifting the
 `eval_shortest_path` / `bfs_shortest_path` rows by +27 (COVERAGE.tsv re-pinned).
@@ -36,7 +46,7 @@ operators; COVERAGE.tsv line numbers in `eval.rs` and `algo_procedures.rs` re-pi
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-197 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+201 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in

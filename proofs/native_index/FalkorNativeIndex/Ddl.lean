@@ -222,6 +222,24 @@ theorem nodeScan_native_agrees (g : G) (label key : String) (min max : Option Va
   rw [queryIndexNumericNodes_spec, queryNumeric_spec]
   simp only [henc, if_true, hcol, Option.map_some]
 
+/-- **Node `IN` scan ≡ label scan + `IN` filter on the native route** (#2383): a non-empty `IN` list
+    of guarded numerics on a column built from a label's `(value, id)` pairs (no `Bool` values) is
+    served whole and returns exactly the ids whose value equals some member. -/
+theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List Value) (hne : items ≠ [])
+    (hcol : g.idx.numeric .node label key = some (NumericIndex.fromEntries (collectNodeEntries g label key)))
+    (hwf : ∀ p ∈ collectNodeEntries g label key, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
+    (hgood : ∀ b ∈ items, GoodBound b) (id : Nat) (hid : id < W) :
+    ∃ hit, queryIndexNumericNodes g label (.inList key (some items)) = some hit ∧
+      (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ ∃ b ∈ items, cmpPred .eq v b = some true) := by
+  have hs : ((NumericIndex.fromEntries (collectNodeEntries g label key)).inList items).isSome = true := by
+    rw [inList_isSome_iff]
+    refine ⟨hne, fun v hv => ?_⟩
+    obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hgood v hv); simp [hkb]
+  obtain ⟨r, hr⟩ := Option.isSome_iff_exists.1 hs
+  refine ⟨r, ?_, inList_agrees _ hwf items hgood r hr id hid⟩
+  rw [queryIndexNumericNodes_spec, queryNumeric_spec]
+  simp only [hcol, Option.bind_some, hr]
+
 /-! ## Folded-roots MVCC -/
 
 /-- `Graph::new_version` (`graph.rs:1062-1065`): the index is a field of the version and is cloned

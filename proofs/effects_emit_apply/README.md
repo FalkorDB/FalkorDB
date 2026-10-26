@@ -130,7 +130,7 @@ Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model 
 - **Indexes and rollback.** W2-effects-4 is outside the model.
 - **Index and constraint DDL apply** is checked only by a live Rust-vs-C differential (18 steps, all agree), not by a theorem.
 - **`IdSpace` and `first_node_with_relationships`** are specs here, proven in `id_space` and `graph_queries`.
-- The `rel_bound` gap documented at `emit.rs:450-456` is no longer a gap: it is #3447, proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`). The replica's `IdSpace::verify` is modelled there only as its hole check (`verifyRange`).
+- The `rel_bound` gap documented at `emit.rs:448-454` is no longer a gap: it is #3447, proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`). The replica's `IdSpace::verify` is modelled there only as its hole check (`verifyRange`).
 
 ## Build and check
 

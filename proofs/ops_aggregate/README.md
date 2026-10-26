@@ -75,7 +75,8 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
 | `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C (#3007) | `Agg.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
-| `fixed_eachHopValidated` | With `https_only` and a resolver that validates and pins per request, every hop of any redirect chain is https and goes to an address validated for its own host (the property #3443 breaks) | `LoadCsvRedirect.lean` |
+| `fixed3443_eachHopValidated` | Main's `loadRemote` (https_only, no redirects, pinned resolver, since #3458) makes only https connections to addresses validated for their own host (the property #3443 broke) | `LoadCsvRedirect.lean` |
+| `fixed_eachHopValidated` | The general fix shape: with `https_only` and a resolver that validates and pins per request, every hop of any redirect chain is https and goes to an address validated for its own host | `LoadCsvRedirect.lean` |
 | `includePendingFixed_exact` | A Phase 2 that filters by liveness and effective labels, and skips what Phase 1 emitted, makes MERGE's node scan see each live matching node exactly once (the property #3453 breaks) | `IncludePendingExact.lean` |
 
 ### How `vectorized_eq_rowwise` is proved
@@ -104,7 +105,7 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
 | #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |
 | #3368 | `bug3368_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Same cause as #3369: the counts are left at id 2, which is `b` in the second segment and `c` in the last. Rust returns `[B] b1` for `c`; C `[C] c1` | **Open** |
-| #3443 | `bug3443_redirect_uses_first_host_ip`, `bug3443_redirect_downgrades_to_http` (property `EachHopValidated`) | ureq follows redirects (default `max_redirects = 10`), but `PinnedResolver` ignores the URI and returns the first host's addresses, and `https_only` is off. A cross-host redirect connects to the first host's IP (live: TLS "certificate not valid for name"); a redirect to `http://` is attempted (live: `http status: 400`). C follows no redirect | **Open** (#3443) |
+| #3443 | `pre3443_redirect_uses_first_host_ip`, `pre3443_redirect_downgrades_to_http` (property `EachHopValidated`) | ureq followed redirects (default `max_redirects = 10`), but `PinnedResolver` ignores the URI and returns the first host's addresses, and `https_only` was off. A cross-host redirect connected to the first host's IP (live: TLS "certificate not valid for name"); a redirect to `http://` was attempted (live: `http status: 400`). C follows no redirect | **Fixed by #3458** (`https_only(true)`, `max_redirects(0)`, a 3xx is an error): `fixed3443_eachHopValidated`, `fixed3443_redirect_is_error` |
 | #3453 | `bug3453_yields_deleted_node`, `bug3453_duplicate_row`, `bug3453_misses_split_multilabel` (property `IncludePendingExact`) | MERGE's pending-node scan reads `set_labels` only: a node deleted after `SET n:B` is matched (`MERGE (m:B)` creates nothing), a re-`SET` committed label yields the node twice (ON MATCH runs twice), and `MERGE (m:A:B)` misses a node with `A` committed and `B` staged (a duplicate is created). C is right in all three | **Open** (#3453) |
 | — | `dedup_collision_drops` | `DISTINCT`, `count(DISTINCT)` and the MERGE cache keep only a 64-bit FxHash; a collision drops a row | **Present on main** (#2780 closed as not planned) |
 | — | `pre2917_maxScalar_ne_batch_nan` | The scalar `max` body and `max_batch` disagreed on NaN | Fixed by #2917 (`maxScalar_eq_batch_nan`); harmless anyway, the scalar body is never called |
@@ -128,7 +129,7 @@ They were tagged CONDITIONAL. On main, `Discharge.lean` proves both hypotheses f
 | File | What's in it |
 |---|---|
 | `Agg.lean` | The aggregate value type `V`, the null-skipping fold, both drivers, every `*_batch` kernel, the batch-independence theorems, `max` and NaN, the percentile first-row rule (`pct_first_wins`) and its pre-#3007 history |
-| `LoadCsvRedirect.lean` | LOAD CSV's ureq redirect loop and pinned resolver: #3443 counterexamples, `fixed_eachHopValidated` |
+| `LoadCsvRedirect.lean` | LOAD CSV's ureq redirect loop and pinned resolver: #3443 history (`pre3443_*`), `fixed3443_eachHopValidated`, `fixed_eachHopValidated` |
 | `IncludePendingExact.lean` | `IncludePendingOp` composed with `Pending`'s label scans: #3453 counterexamples, `includePendingFixed_exact` |
 | `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return` bug, percentile index bounds and comparator |
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |

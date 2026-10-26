@@ -184,21 +184,31 @@ def hasColumn (x : FalkorDbIndex) (e : EntityType) (label attr : String) : Bool 
 def encodeValue (x : FalkorDbIndex) (e : EntityType) (label attr : String) (v : Value) : Option Nat :=
   (hmGet (x.columns e) (label, attr)).bind (fun c => c.column.encodeValue v)
 
-/-- `query_numeric` (`:409-432`): only a numeric `Equal`/`Range` leaf, on an existing column. -/
+/-- The column a query is routed to (`query_numeric`'s `let key = match query`, `:418-436`): an
+    `Equal`/`Range` only when its bounds encode (the column answers an unencodable bound with "no
+    rows", not `None`), an `IN` list always (the column declines), an `OR` by its first member. -/
+def queryKey : IndexQuery → Option String
+  | .equal key v => if (encodeNumeric v).isSome then some key else none
+  | .range key min max _ _ =>
+    if (min.all (fun v => (encodeNumeric v).isSome)) && (max.all (fun v => (encodeNumeric v).isSome))
+    then some key else none
+  | .inList key _ => some key
+  | .or cs => match cs with
+    | .equal key _ :: _ => some key
+    | .inList key _ :: _ => some key
+    | _ => none
+  | .other => none
+
+/-- `query_numeric` (`:409-446`): a numeric `Equal`/`Range`, an `IN` list whose values are all numeric,
+    or an `OR` of equalities and `IN` lists on one attribute (#2383), on an existing column. -/
 def queryNumeric (x : FalkorDbIndex) (e : EntityType) (label : String) (q : IndexQuery) : Option (List Nat) :=
-  let r : Option (String × Bool) := match q with
-    | .equal key v => some (key, (encodeNumeric v).isSome)
-    | .range key min max _ _ =>
-      some (key, (min.all (fun v => (encodeNumeric v).isSome)) && (max.all (fun v => (encodeNumeric v).isSome)))
-    | .other => none
-  match r with
+  match queryKey q with
   | none => none
-  | some (key, numeric) =>
-    if !numeric then none
-    else match hmGet (x.columns e) (label, key) with
-      | none => none
-      | some entry => match entry.column with
-        | .numeric ix => ix.query q
+  | some key =>
+    match hmGet (x.columns e) (label, key) with
+    | none => none
+    | some entry => match entry.column with
+      | .numeric ix => ix.query q
 
 end FalkorDbIndex
 
@@ -322,7 +332,8 @@ theorem createUnpopulated_creates (x : FalkorDbIndex) (e : EntityType) (l : Stri
         | cons c cs ih2 => intro y h; simp only [List.foldl_cons]; apply ih2; rw [numeric_createNumeric]; split <;> simp_all
       apply keep; rw [numeric_createNumeric]; simp
 
-/-- **`query_numeric` routing**: it answers exactly a numeric `Equal`/`Range` on an existing column,
+/-- **`query_numeric` routing**: it answers exactly a numeric `Equal`/`Range`, an `IN` list or a
+    same-attribute `OR` (the column declines what it cannot answer whole) on an existing column,
     from that column; everything else falls through (`None`). -/
 theorem queryNumeric_spec (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) :
     x.queryNumeric e l q =
@@ -331,20 +342,45 @@ theorem queryNumeric_spec (x : FalkorDbIndex) (e : EntityType) (l : String) (q :
       | .range key mn mx a b =>
         if (mn.all (fun v => (encodeNumeric v).isSome)) && (mx.all (fun v => (encodeNumeric v).isSome))
         then (x.numeric e l key).map (fun ix => ix.range mn mx a b) else none
+      | .inList key (some items) => (x.numeric e l key).bind (fun ix => ix.inList items)
+      | .inList _ none => none
+      | .or cs => match cs with
+        | .equal key _ :: _ => (x.numeric e l key).bind (fun ix => ix.union cs)
+        | .inList key _ :: _ => (x.numeric e l key).bind (fun ix => ix.union cs)
+        | _ => none
       | .other => none := by
+  have routed : ∀ key, queryKey q = some key →
+      x.queryNumeric e l q = (x.numeric e l key).bind (fun ix => ix.query q) := by
+    intro key hk
+    simp only [queryNumeric, hk, numeric]
+    cases hmGet (x.columns e) (l, key) with
+    | none => rfl
+    | some c => obtain ⟨⟨ix⟩⟩ := c; rfl
+  have declined : queryKey q = none → x.queryNumeric e l q = none := by
+    intro hk; simp only [queryNumeric, hk]
   cases q with
   | equal key v =>
-    simp only [queryNumeric, numeric]
-    cases (encodeNumeric v).isSome <;> simp
-    cases hmGet (x.columns e) (l, key) with
-    | none => rfl
-    | some c => obtain ⟨⟨ix⟩⟩ := c; rfl
+    by_cases h : (encodeNumeric v).isSome = true
+    · simp only [h, if_true]; rw [routed key (by simp [queryKey, h])]
+      generalize x.numeric e l key = o; cases o <;> rfl
+    · simp only [h, if_false]; exact declined (by simp [queryKey, h])
   | range key mn mx a b =>
-    simp only [queryNumeric, numeric]
-    cases ((mn.all (fun v => (encodeNumeric v).isSome)) && (mx.all (fun v => (encodeNumeric v).isSome))) <;> simp
-    cases hmGet (x.columns e) (l, key) with
-    | none => rfl
-    | some c => obtain ⟨⟨ix⟩⟩ := c; rfl
-  | other => rfl
+    by_cases h : ((mn.all (fun v => (encodeNumeric v).isSome)) && (mx.all (fun v => (encodeNumeric v).isSome))) = true
+    · simp only [h, if_true]; rw [routed key (by simp only [queryKey]; simp only [h, if_true])]
+      generalize x.numeric e l key = o; cases o <;> rfl
+    · simp only [h, if_false]; exact declined (by simp only [queryKey]; simp [h])
+  | inList key items =>
+    rw [routed key rfl]
+    cases items <;> (dsimp only [NumericIndex.query]; try (generalize x.numeric e l key = o; cases o <;> rfl))
+  | or cs =>
+    rcases cs with _ | ⟨c, cs'⟩
+    · exact declined rfl
+    · cases c with
+      | equal key v => rw [routed key rfl]; rfl
+      | inList key it => rw [routed key rfl]; rfl
+      | range _ _ _ _ _ => exact declined rfl
+      | or _ => exact declined rfl
+      | other => exact declined rfl
+  | other => exact declined rfl
 
 end NI

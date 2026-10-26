@@ -18,7 +18,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 **1. Does an index scan return the same nodes as the filter it replaces?**
 
 - **On the shapes the proof covers, yes.** `utilize_sound` is the headline. It covers a single-label scan whose property values are Null, Int or String, and filters built from `n.k op literal`, `literal op n.k`, `n.k IN [literals]` and unindexable conjuncts, combined by AND or OR. For those, the rewritten plan selects exactly the nodes the original plan does.
-- The building blocks are proven one by one: `sel_eq` (equality), `sel_range` (one- and two-sided ranges), `sel_inList` (`IN`), `sel_and2` (an index AND is the intersection), `sel_merge` (merging range conditions), and `pushAnd_spec`/`pushOr_spec` (the AND and OR branches of `try_filter_pushdown`).
+- The building blocks are proven one by one: `sel_eq` (equality), `sel_range` (one- and two-sided ranges), `sel_inList` (`IN`; the list reaches the index whole as `IndexQuery::InList` since #2383, `inList_same_as_pre2383`), `sel_and2` (an index AND is the intersection), `sel_merge` (merging range conditions), and `pushAnd_spec`/`pushOr_spec` (the AND and OR branches of `try_filter_pushdown`).
 - **Outside those shapes, no.** Each hypothesis of `utilize_sound` is there because the `IndexCex.lean` examples break the result without it: a computed constant ≥ 2⁵², a computed left side of `IN`, a list of properties on the right of `IN`, two labels, Bool or Date values. See [Bugs found](#bugs-found).
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**

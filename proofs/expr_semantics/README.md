@@ -119,7 +119,7 @@ Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN
 
 ## Coverage
 
-Line numbers are pinned to main 737dfb5da (#2899 rewrites `RangeIter` and adds `RangeIter::size_hint`, shifting every later `eval.rs` row; earlier, #2904 changed the `Pow` arm of `eval_compound` and `apply_pow`; #2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
+Line numbers are pinned to main 737dfb5da, re-checked at 5e475e6c9 (only `eval_shortest_path` changed, #3436, no line moved) (#2899 rewrites `RangeIter` and adds `RangeIter::size_hint`, shifting every later `eval.rs` row; earlier, #2904 changed the `Pow` arm of `eval_compound` and `apply_pow`; #2951 only changes `eval_compound`'s aggregate-finalizer arm, modelled in [`../ops_aggregate`](../ops_aggregate)).
 
 `COVERAGE.tsv` has 94 rows: 31 in `eval.rs`, 26 in `vector_expr.rs`, 17 in `functions/math.rs`, 10 in `value.rs`, 7 in `vectorized.rs`, and one each in `conversion.rs`, `eliminate_true_filters.rs` and `functions/mod.rs` (`init_functions`, MODELLED: the registered name set, #2724).
 

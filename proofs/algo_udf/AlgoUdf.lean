@@ -3,7 +3,7 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9; `js_globals.rs`
+`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
 re-targeted to 8743953a8 (#3079), `type_convert.rs` to cab3cf192 (#3074, #3336 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in

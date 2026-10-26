@@ -10,7 +10,7 @@ import FalkorEffectsEmitApply.CancelGap
 
 Target: `graph/src/effects/v3/emit.rs`, `graph/src/effects/v3/apply.rs`, and the
 gate in front of the emitter (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1669`). Coverage per Rust fn:
+`Pending::effects_count` at `runtime/pending.rs:1655`). Coverage per Rust fn:
 `COVERAGE.tsv` (36 rows, all PROVEN). Repros:
 `graph/tests/lean_effects_emit_apply.rs`
 (`cargo test -p graph --test lean_effects_emit_apply -- --nocapture --test-threads=1`).
@@ -20,14 +20,14 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
 
 | Lean                                   | Rust                                                        |
 |----------------------------------------|-------------------------------------------------------------|
-| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs:525-563`, `814-846` |
+| `Basic.memoStep`, `memoGroup`          | the `slots`/`index`/`last` loop, `emit.rs:523-561`, `814-846` |
 | `Basic.groupBy`                        | first-appearance grouping (spec; also `proofs/replication`) |
 | `Basic.sortDedup`                      | `labels.sort_unstable(); labels.dedup()`                    |
-| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs:923-951`                            |
-| `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:61`                       |
-| `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:397`                           |
-| `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:325` (opcode granularity)       |
-| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1669`                 |
+| `Emit.mergeRow`, `gatherRows`          | `gather_rows`, `emit.rs:921-949`                            |
+| `Emit.schemaAdditions`                 | `emit_schema_additions`, `emit.rs:60`                       |
+| `Emit.digestCancelled`                 | `digest_cancelled`, `emit.rs:395`                           |
+| `Emit.forEachRecord`                   | `for_each_record`, `emit.rs:323` (opcode granularity)       |
+| `Emit.effectsCount`                    | `Pending::effects_count`, `pending.rs:1655`                 |
 | `Emit.commitShips`                     | `if estimated > 0 { buf.build(..) }`, `commit.rs:108`       |
 | `Emit.applyAddName`                    | `apply_add_schema` + `verify_id`, `apply.rs:519,516`        |
 | `Apply.createOne`                      | `Record::CreateNode` arm, `apply.rs:210`                    |
@@ -148,7 +148,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 1. **A write that only registers schema or only cancels entities replicates
    nothing** — `runtime/ops/commit.rs:108` gates `buf.build` on
-   `effects_count() > 0` (`pending.rs:1669`), which counts neither
+   `effects_count() > 0` (`pending.rs:1655`), which counts neither
    `cancelled_nodes`/`cancelled_relationships` nor names registered since the
    `SchemaBaseline`, so `digest_cancelled` and `emit_schema_additions` never run.
    The master keeps the new label/attr and the moved id space; the next payload's
@@ -197,7 +197,7 @@ node) — refused since #3298 (`createNode_repeat_refused`).
 
 ## Suspected, unconfirmed
 
-* ~~The documented `rel_bound` gap (`emit.rs:450-456`)~~ — **confirmed as #3447**
+* ~~The documented `rel_bound` gap (`emit.rs:448-454`)~~ — **confirmed as #3447**
   (2026-10-22): when the same segment also creates a surviving edge above the
   cancelled id, the replica's relationship `IdSpace::verify` refuses the hole and
   forces a full resync. Proven in `CancelGap.lean` (`bug3447_cancelled_edge_id_gap`).
@@ -214,19 +214,19 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
 | Lean | Rust (b84473a7f) |
 | --- | --- |
 | `CancelGap.verifyRange` | `IdSpace::verify`'s hole check (id_space.rs:737-790) |
-| `CancelGap.typesAfterCommit` | `Pending::commit` → `create_relationships_bulk` → `get_type_id_mut` (pending.rs:1239-1253, graph.rs:2610/:1265): only `created_rels_by_type` keys are registered |
+| `CancelGap.typesAfterCommit` | `Pending::commit` → `create_relationships_bulk` → `get_type_id_mut` (pending.rs:1236-1249, graph.rs:2610/:1265): only `created_rels_by_type` keys are registered |
 | `CancelGap.toLive` | opcode records → `apply_record` arms (`RemoveLabels` `require_live`, apply.rs:359-360) |
 
 * **#3447** (property `RelIdsCovered`: every relationship id allocated in the
   segment reaches a `CREATE_EDGE`): `digest_cancelled` skips a cancelled edge
-  whose type has no id (emit.rs:457), and a type whose only edges were cascaded
+  whose type has no id (emit.rs:455), and a type whose only edges were cascaded
   is never registered. `bug3447_cancelled_edge_id_gap` (live repro `CREATE
   (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`): payload has
   `CreateEdge [2]` and nothing for 1; master's id space verifies, replica's has a
   hole. Fix property `relIdsCovered_of_registered` (holds for every `Pending`
   once all created and cancelled types are registered).
 * **#3448** (property `ReplayApplies`): `digest_labels(&p.remove_labels, None,
-  …)` (emit.rs:372) precedes `digest_cancelled` (:376); `delete_pending_node`
+  …)` (emit.rs:370) precedes `digest_cancelled` (:376); `delete_pending_node`
   keeps the node's `remove_labels` (pending_commit
   `bug3448_cancelled_node_keeps_remL`). `bug3448_removeLabels_before_create_refused`:
   `CREATE (n:Foo) REMOVE n:Foo DELETE n` → `AddLabel Foo, RemoveLabels [0],
@@ -247,4 +247,10 @@ master's pre-segment state accepts. Two properties, both refuted on b84473a7f:
   (see `proofs/id_space`).
 * Index/constraint DDL is checked only by a live Rust-vs-C differential (18
   steps, all agree).
+
+## Re-pinned to 5e475e6c9 (#3436)
+No model change. `emit.rs` (`for_each_record`, `build_index_buffer`, `digest_*`) takes
+`&Graph` instead of `&AtomicRefCell<Graph>` and no longer borrows inside; the emitted records
+are the same. Pins shifted by -1 or -2 in `emit.rs`, `pending.rs` -14 after `enforce_constraints`;
+`CommitOp::next`'s effects gate is still `commit.rs:108`.
 -/

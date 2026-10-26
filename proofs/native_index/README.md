@@ -10,6 +10,8 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 `Node By Index Scan` does **not** re-check the predicate on the rows it returns, so the index has to be exactly right on its own. A value whose key sorts on the wrong side of the bound is a silently wrong query result, not a slow one.
 
+Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
+
 The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`, and the native route of `runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
@@ -29,6 +31,19 @@ Yes, for non-Bool data and a guarded numeric bound. `filter_iff_key` proves that
 - `range_agrees` and `point_agrees`: a column built from `(value, id)` pairs answers a `Range` or an `Equal` with exactly the ids whose value passes the filter;
 - `nodeScan_native_agrees`: the same, end to end, for `NodeByIndexScanOp` on the native route;
 - `queryNumeric_spec`: only numeric `Equal`/`Range` queries on an existing column take the native route.
+
+**3b. Does an `IN` list (#2383) return what a label scan plus `IN` filter returns?**
+
+Yes, and it declines rather than answering part. `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and takes the union of the point scans over the sorted, deduplicated keys (`union_of`).
+
+- `inList_agrees`: a served list returns exactly the ids whose value equals some member (members guarded, no `Bool` data), via `point_agrees` per key;
+- `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined and the caller falls back;
+- `union_agrees`, `union_nil`, `union_attr_mismatch`, `union_range_declines`: an `OR` is served only when every child is an `Equal` or a non-empty `IN` list on one attribute, and then returns the ids equal to some member. An empty `OR` is not match-all, and an `OR` over two attributes would return wrong rows from one column, so both are declined;
+- `unionNext_spec` (`UnionIter::next`): the lazy chain builds one cursor at a time and each `next` yields the head of what remains, so draining it enumerates the point scans in key order, and the eager model `unionOf` is exact. The tree snapshot is pinned when the union is built (the model tree is an immutable value);
+- `queryNumeric_spec`: the facade routes an `IN` list to its attribute's column and an `OR` by its first member's attribute, which `union` rechecks;
+- `nodeScan_native_inList_agrees`: end to end, a non-empty guarded `IN` list on a built column returns exactly the ids the filter keeps.
+
+Order is deliberately unspecified (the chain is not merged into id order), so every statement is about membership. Uniqueness of ids rests on the encoder rejecting lists (a doc has one key per column) and is not modelled. A `Bool` member shares a key with `0`/`1` as in `bool_divergence`.
 
 **4. Does batching writes per unit of work (#3307) change the result?**
 
@@ -56,6 +71,9 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `int_cmp_agrees` | For a bound with `\|b\| < 2⁵²`, the `f64` image order is the exact `i64` order | `Value.lean` |
 | `filter_iff_key` | The `WHERE` comparison holds iff the stored key satisfies it against the bound's key | `Agree.lean` |
 | `range_agrees`, `point_agrees` | A built column answers `Range`/`Equal` with exactly the ids the filter keeps | `Numeric.lean` |
+| `inList_agrees`, `union_agrees`, `inList_isSome_iff` | #2383: an `IN` list / same-attribute `OR` is a union of point lookups equal to the filter, and is declined unless served whole | `Numeric.lean` |
+| `unionNext_spec` | The lazy cursor chain yields exactly the point scans in key order | `Numeric.lean` |
+| `nodeScan_native_inList_agrees` | Node `IN` scan on the native route = label scan + `IN` filter | `Ddl.lean` |
 | `nodeScan_native_agrees` | Node index scan on the native route = label scan + filter | `Ddl.lean` |
 | `lastWriteWins_spec` | The collapse keeps exactly each tuple's last staged change | `Pending.lean` |
 | `applyColumn_eq_sequential` | #3307's batched apply = applying each staged change one by one | `Pending.lean` |
@@ -98,7 +116,7 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Agree.lean` | `filter_iff_key`; counterexamples `bool_divergence`, `i64min_hole`, `p53_collision` |
 | `Tree.lean` | The `CowBTree` contract as its contents (`tInsert`, `tRemoveBatch`, `tRange`, …) |
 | `Contract.lean` | The contract discharged: on every reachable tree each `CowBTree` operation (the `cow_btree` model) equals its `Tree.lean` model (`contract_*`) |
-| `Numeric.lean` | `NumericIndex`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, per-write contents specs |
+| `Numeric.lean` | `NumericIndex`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, `IndexQuery` (with `inList` and `or`), `inList`, `union`, `unionOf`, `unionNext`, per-write contents specs |
 | `Index.lean` | `HashMap` as an association list, `IndexColumn`, `ColumnEntry.ready`, `FalkorDbIndex` |
 | `Pending.lean` | Staged writes (`IndexWrite`, `IndexChanges`, `PendingIndexWrites`), `lastWriteWins`, `applyColumn_eq_sequential` |
 | `Writes.lean` | The staging functions of `graph_writes.rs` (`nodeAttrsSet`, `nodesDeleted`, `labelsAdded`, …), `lastOp_ops`, the per-path `*_hit` theorems |
@@ -109,11 +127,11 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 
 ## Coverage
 
-`COVERAGE.tsv` has 83 function rows (plus one comment row):
+`COVERAGE.tsv` has 88 function rows (plus one comment row):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 83 |
+| PROVEN | 88 |
 
 - The 13 rows that read or write the tree (`from_entries`, `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
 - Three PROVEN rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under a caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.

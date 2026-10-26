@@ -280,11 +280,17 @@ matching the live repro (ports 6640 Rust / 6641 C):
   table); live 0 then 3 rows, C "Invalid arguments for procedure". Fix shape:
   `vectorQueryGuarded_requires_operational`.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
-  (`pending.rs:1661-1673`) with `commit_edge_index_locked`'s re-resolved key
+  (`pending.rs:1647-1659`) with `commit_edge_index_locked`'s re-resolved key
   (`graph.rs:3863-3896`), documents keyed by `(src, dst, id)`. Property
   `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
+
+## Re-pinned to 5e475e6c9 (#3436, #2383)
+Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1621`. #2383 (the native
+index serves `IN [...]` as an InList union of point lookups) changes `falkordb/falkordb_index.rs`
+and `falkordb/numeric.rs`, which belong to `native_index`, not to this project; `indexer.rs`,
+`index/mod.rs` and the RediSearch wrapper are unchanged.
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

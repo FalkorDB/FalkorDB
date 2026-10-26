@@ -169,11 +169,16 @@ plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House deci
 (deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
 `deleteNode_preserves_all`; **CONFIRMED BUG** `deleteNode_labels_iff` /
 `labels_lost_after_delete`: the DELETE snapshot copies committed labels
-(ops/delete.rs:282, :461 `g.get_node_label_ids(id)`), so labels staged by SET/REMOVE earlier
+(ops/delete.rs:286, :466 `g.get_node_label_ids(id)`), so labels staged by SET/REMOVE earlier
 in the same query are lost/resurrected. Repro: `lean_functions_str_list::
 bug_deleted_node_labels_ignore_staged_set` (`MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`
 → Rust `['A']|false`, expected `['A','C']|true`; C returns `[]`) and
 `..._staged_remove` (`REMOVE n:A … DELETE n RETURN labels(n)` → Rust `['A']`, expected `[]`).
+Re-checked at origin/main 5e475e6c9: no modelled function changed. #3436 only swaps `rt.g.borrow()` for `rt.graph()` (borrow plumbing,
+same graph); #3462 makes `DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
+`deleteRel` are the `snapshot = true` case, so unchanged) and delete.rs pins moved to :286/:466, so W4-fn-1 is still open (the
+snapshot still copies the committed label ids); #2988 is `temporal.rs` (functions_temporal). COVERAGE.tsv rows unchanged.
+
 Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
 `parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
 `parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null

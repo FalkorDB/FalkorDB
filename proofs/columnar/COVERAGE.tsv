@@ -147,22 +147,22 @@ graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Gather.RowIter.on
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.many: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch; miscompiled_differs (#2922)
-graph/src/runtime/ops/batched_result_emitter.rs	seed	575	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	602	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len; historical pre2845_emit_origin_lost_old
-graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	619	PROVEN	Emitter drain_spec, drain_conserve
-graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	648	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	673	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	726	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
-graph/src/runtime/ops/batched_result_emitter.rs	reset	747	MODELLED	state cleared
-graph/src/runtime/ops/batched_result_emitter.rs	batch	756	PROVEN	Gather.emBatch: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new	770	PROVEN	Gather.emNew/emWithBinding: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	780	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch, withBinding_eq_pre2973 (#2973: clamp form = the pre-#2973 guarded arm, history pre2973_withBinding); miscompiled_differs (#2922)
+graph/src/runtime/ops/batched_result_emitter.rs	seed	578	MODELLED	Emitter seedRows
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	605	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len; historical pre2845_emit_origin_lost_old
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	623	PROVEN	Emitter drain_spec, drain_conserve
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	652	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	677	PROVEN	Emitter packRows_spec, stream_rows_active
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	730	PROVEN	Emitter emitLazy_spec, emitAll_spec, grow_bounds
+graph/src/runtime/ops/batched_result_emitter.rs	reset	751	MODELLED	state cleared
+graph/src/runtime/ops/batched_result_emitter.rs	batch	760	PROVEN	Gather.emBatch: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new	774	PROVEN	Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	784	PROVEN	Emitter finishLen_drops (latent row loss with zero-column parent)
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property	1542	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
-graph/src/runtime/runtime.rs	materialize_node_property_values	1556	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
-graph/src/runtime/runtime.rs	materialize_relationship_property	1604	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
-graph/src/runtime/runtime.rs	materialize_relationship_property_values	1616	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
+graph/src/runtime/runtime.rs	materialize_node_property	1654	PROVEN	RuntimeReads.matNodeCol: matNodeCol_eq (classify_column of the per-row reads)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1668	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1716	PROVEN	RuntimeReads.matRelCol: matRelCol_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1728	PROVEN	RuntimeReads.matRel: matRel_eq (= get_relationship_attribute per id; its by-name fallback resolves through the same attribute id)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
 graph/src/runtime/eval.rs	ExprEval::eval_batch	1150	PROVEN	EvalBatch.laws/evalBatch_sound (expr_semantics evalBatch_eq_perRow with BatchLaws proved)
 graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1166	PROVEN	EvalBatch.laws/evalBatch_sound

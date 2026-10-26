@@ -5,12 +5,12 @@ import FalkorEffectsEmitApply.Basic
 
 Models `graph/src/effects/v3/emit.rs` (`for_each_record` and its digests) and
 the gate that decides whether it runs at all (`runtime/ops/commit.rs:108`,
-`Pending::effects_count` at `runtime/pending.rs:1669`).
+`Pending::effects_count` at `runtime/pending.rs:1655`).
 -/
 
 namespace FalkorEA
 
-/-! ## Attribute lookup and `gather_rows` (`emit.rs:923-951`) -/
+/-! ## Attribute lookup and `gather_rows` (`emit.rs:921-949`) -/
 
 /-- The value an entity holds for attribute `a`, or `Null` (a pad). -/
 def lookupAttr : List (Nat × Val) → Nat → Val
@@ -92,7 +92,7 @@ theorem pairwise_dropWhile {α} (R : α → α → Prop) (f : α → Bool) :
     pairs are strictly ascending by attribute id (what `Pending`'s sorted vec
     keeps) and a strictly ascending shape (built from those very vectors), the
     linear merge produces exactly `attr_ids.map(lookup)` — the quadratic
-    per-cell search that `emit.rs:939-942` says it replaced. No cell is taken
+    per-cell search that `emit.rs:937-940` says it replaced. No cell is taken
     from the wrong attribute and none is skipped. -/
 theorem mergeRow_eq_lookup :
     ∀ (as : List Nat) (ps : List (Nat × Val)),
@@ -185,7 +185,7 @@ theorem gatherRows_length (attrIds : List Nat) (look : Nat → Option (List (Nat
 example : mergeRow [1, 2] [(2, .int 20), (1, .int 10)] ≠ [1, 2].map (lookupAttr [(2, .int 20), (1, .int 10)]) := by
   decide
 
-/-! ## The record stream (`for_each_record`, `emit.rs:325-374`)
+/-! ## The record stream (`for_each_record`, `emit.rs:323-372`)
 
     Records are abstracted to their opcode and the ids they name — enough to
     decide *whether* the stream is empty and what the replica's schema
@@ -230,7 +230,7 @@ structure Pending where
   baseline          : Schema
 deriving Repr
 
-/-- `Pending::effects_count` (`runtime/pending.rs:1669-1688`), term for term.
+/-- `Pending::effects_count` (`runtime/pending.rs:1655-1674`), term for term.
     Note what is **not** summed: `cancelled_nodes`, `cancelled_relationships`,
     and the schema registered since `baseline`. -/
 def effectsCount (p : Pending) : Nat :=
@@ -244,7 +244,7 @@ def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
   | n :: ns => mk base n :: suffixRecs mk (base + 1) ns
 
-/-- `emit_schema_additions` (`emit.rs:61-109`): every dictionary entry past the
+/-- `emit_schema_additions` (`emit.rs:60-108`): every dictionary entry past the
     baseline, with its offset as id. -/
 def schemaAdditions (g : Schema) (b : Schema) : List Rec :=
   suffixRecs .addLabel b.labels.length (g.labels.drop b.labels.length)
@@ -256,8 +256,8 @@ def idxOf (l : List Name) (n : Name) : Option Nat :=
   | some i => some i
   | none   => none
 
-/-- `digest_cancelled` (`emit.rs:397-497`), ids only. A cancelled edge of a type
-    the graph never registered is skipped (`emit.rs:450-456`). -/
+/-- `digest_cancelled` (`emit.rs:395-495`), ids only. A cancelled edge of a type
+    the graph never registered is skipped (`emit.rs:448-454`). -/
 def digestCancelled (p : Pending) (g : Schema) : List Rec :=
   if p.cancelledNodes.isEmpty && p.cancelledRels.isEmpty then [] else
   let edges := p.cancelledRels.filterMap
@@ -401,7 +401,7 @@ theorem next_payload_refused :
     attribute is *accepted* — a silent divergence
     (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
     un-gated emitter would say nothing about `T1`'s edges, since the type has no
-    id (`emit.rs:450-456`), but it would still announce `p4`. -/
+    id (`emit.rs:448-454`), but it would still announce `p4`. -/
 theorem cancelled_edge_attr_dropped :
     let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
     let g : Schema := ⟨[], [], ["p4"]⟩

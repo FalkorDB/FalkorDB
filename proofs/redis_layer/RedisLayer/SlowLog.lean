@@ -8,9 +8,9 @@
 | `prefix`              | `prefix` `:32` (`&s[..s.floor_char_boundary(STR_MAX_LEN)]`) |
 | `truncate`            | `truncate` `:38` |
 | `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
-| `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:181` |
-| `replyLen`            | `SlowLog::reply` `:191` (5-element rows) |
-| `MinCache`, `SlowestKept`, `addFixed` | #3442: the `min_latency` cache (`:77`, `:114`, `:172-177`); `add`'s update arm `:120-132` skips the recompute |
+| `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:171` |
+| `replyLen`            | `SlowLog::reply` `:181` (5-element rows) |
+| `MinCache`, `SlowestKept`, `add`, `pre3442_add` | #3442 (fixed by #3456): the `min_latency` cache (`:77`, `:114`, `:162-169`); main's update arm `:121-139` falls through to the recompute; `pre3442_add` is b84473a7f's early return |
 
 **Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
 used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
@@ -230,13 +230,33 @@ def argmin : List E → Nat
     | [] => 0
     | _ => let j := argmin es; if (es.getD j e).latency < e.latency then j + 1 else 0
 
-/-- `SlowLog::add` with the hash of the (possibly panicking) slice already computed. -/
-def add (s : SL) (h lat : Nat) : SL :=
+/-- History (`pre3442_`, main b84473a7f): `SlowLog::add` with the hash of the (possibly
+panicking) slice already computed. The existing-entry branch (`:120-132`) returned before the
+`min_latency` recompute (#3442). -/
+def pre3442_add (s : SL) (h lat : Nat) : SL :=
   if lat < MIN_LATENCY then s
   else if s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat then s
   else match s.entries.find? (·.hash = h) with
     | some _ => { s with entries := s.entries.map fun e =>
         if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e }
+    | none =>
+      let es := if s.entries.length < MAX_ENTRIES then s.entries ++ [⟨h, lat⟩]
+        else s.entries.set (argmin s.entries) ⟨h, lat⟩
+      ⟨es, minOf es⟩
+
+/-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs:97-175`): an update that
+does not raise the latency returns unchanged; one that does raises it and falls through to
+the `min_latency` recompute, like every other arm. -/
+def add (s : SL) (h lat : Nat) : SL :=
+  if lat < MIN_LATENCY then s
+  else if s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat then s
+  else match s.entries.find? (·.hash = h) with
+    | some e =>
+      if lat ≤ e.latency then s
+      else
+        let es := s.entries.map fun e =>
+          if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e
+        ⟨es, minOf es⟩
     | none =>
       let es := if s.entries.length < MAX_ENTRIES then s.entries ++ [⟨h, lat⟩]
         else s.entries.set (argmin s.entries) ⟨h, lat⟩
@@ -249,7 +269,9 @@ theorem add_bounded (s : SL) (h lat : Nat) (hs : s.entries.length ≤ MAX_ENTRIE
   split; · exact hs
   split; · exact hs
   split
-  · simpa using hs
+  · split
+    · exact hs
+    · simpa using hs
   · simp only; split
     · simp; omega
     · simpa using hs
@@ -284,6 +306,8 @@ theorem add_nodup (s : SL) (h lat : Nat) (hs : (s.entries.map (·.hash)).Nodup)
   split; · exact hs
   split
   · rename_i e he
+    split
+    · exact hs
     have : (s.entries.map fun e => if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e).map (·.hash)
         = s.entries.map (·.hash) := by
       rw [List.map_map]; apply List.map_congr_left; intro x _; simp; split <;> rfl
@@ -303,22 +327,41 @@ theorem add_nodup (s : SL) (h lat : Nat) (hs : (s.entries.map (·.hash)).Nodup)
 theorem add_fast (s : SL) (h lat : Nat) (hl : lat < MIN_LATENCY) : add s h lat = s := by
   simp [add, hl]
 
-/-- A repeat keeps the worst latency. -/
+theorem nodup_map_inj_E (l : List E) (hn : (l.map (·.hash)).Nodup) (a b : E) (ha : a ∈ l) (hb : b ∈ l)
+    (h : a.hash = b.hash) : a = b := by
+  induction l with
+  | nil => simp at ha
+  | cons x xs ih =>
+    rw [List.map_cons] at hn
+    have hn' := List.nodup_cons.1 hn
+    rcases List.mem_cons.1 ha with rfl | ha' <;> rcases List.mem_cons.1 hb with rfl | hb'
+    · rfl
+    · exact absurd (List.mem_map.2 ⟨b, hb', h.symm⟩) hn'.1
+    · exact absurd (List.mem_map.2 ⟨a, ha', h⟩) hn'.1
+    · exact ih hn'.2 ha' hb'
+
+/-- A repeat keeps the worst latency (the log holds one entry per hash, `add_nodup`). -/
 theorem add_repeat_max (s : SL) (h lat : Nat) (e : E) (he : e ∈ s.entries) (heh : e.hash = h)
+    (hnd : (s.entries.map (·.hash)).Nodup)
     (hl : MIN_LATENCY ≤ lat) (hc : ¬(s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat)) :
     ∃ e' ∈ (add s h lat).entries, e'.hash = h ∧ e'.latency = max e.latency lat := by
   have hf : (s.entries.find? (·.hash = h)).isSome := by
     rw [List.find?_isSome]; exact ⟨e, he, by simp [heh]⟩
   obtain ⟨x, hx⟩ := Option.isSome_iff_exists.1 hf
+  have hxm : x ∈ s.entries := List.mem_of_find?_eq_some hx
+  have hxh : x.hash = h := by simpa using List.find?_some hx
+  have hxe : x = e := nodup_map_inj_E _ hnd x e hxm he (by rw [hxh, heh])
+  subst hxe
   unfold add
   rw [if_neg (by omega), if_neg hc, hx]
-  refine ⟨if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e,
-    List.mem_map.2 ⟨e, he, rfl⟩, by split <;> simp [heh], ?_⟩
+  simp only
   split
-  · rename_i hh; show lat = max e.latency lat; omega
-  · rename_i hh
-    have : ¬ lat > e.latency := fun hg => hh ⟨heh, hg⟩
-    show e.latency = max e.latency lat; omega
+  · rename_i hle
+    exact ⟨x, he, heh, by omega⟩
+  · rename_i hle
+    refine ⟨{ x with latency := lat }, List.mem_map.2 ⟨x, he, ?_⟩, heh, ?_⟩
+    · simp [heh]; omega
+    · show lat = max x.latency lat; omega
 
 theorem new_empty : SL.new.entries = [] ∧ SL.new.minLat = 0 := ⟨rfl, rfl⟩
 
@@ -328,22 +371,28 @@ theorem reset_empty (s : SL) : (reset s).entries = [] := rfl
 def replyLen (s : SL) : List Nat := s.entries.map fun _ => 5
 theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by simp [replyLen]
 
-/-! ## Gap closed: #3442 — the update arm leaves `min_latency` stale
+/-! ## Gap closed: #3442 (fixed by #3456) — the update arm left `min_latency` stale
 
-`SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raises the entry's
-latency and `return`s before the recompute at `:172-177`; `add`'s `some _` arm above is that
-branch (it leaves `minLat` alone). Once the cached minimum is below the real one, the
-pre-check at `:114` admits a query faster than every retained entry and the replace path
-(`:153-170`) evicts the real fastest entry. C (`SlowLog_Add`) sends the update path through
-`cleanup`, which recomputes the minimum. -/
+On b84473a7f `SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raised the
+entry's latency and `return`ed before the recompute at `:172-177`; `pre3442_add`'s `some _`
+arm is that branch (it leaves `minLat` alone). Once the cached minimum was below the real
+one, the pre-check at `:114` admitted a query faster than every retained entry and the
+replace path evicted the real fastest entry. C (`SlowLog_Add`) sends the update path through
+`cleanup`, which recomputes the minimum. #3456 makes the branch fall through to the recompute
+(`:120-139`, `:178`); `add` above is that main code. The refutations are kept as
+`pre3442_*` on `pre3442_add`; `add_minCache` and `fixed3442_trace` prove the fix on main. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
 def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries
 
 instance (s : SL) : Decidable (MinCache s) := by unfold MinCache; infer_instance
 
-/-- Replay a trace of `(hash, latency_ms)` additions. -/
+/-- Replay a trace of `(hash, latency_ms)` additions through main's `add`. -/
 def run (s : SL) (tr : List (Nat × Nat)) : SL := tr.foldl (fun s p => add s p.1 p.2) s
+
+/-- Replay through the pre-#3456 `add`. -/
+def pre3442_run (s : SL) (tr : List (Nat × Nat)) : SL :=
+  tr.foldl (fun s p => pre3442_add s p.1 p.2) s
 
 /-- Worst latency the trace logged for hash `h` (only latencies ≥ `MIN_LATENCY` count). -/
 def best (tr : List (Nat × Nat)) (h : Nat) : Nat :=
@@ -363,55 +412,66 @@ instance (tr : List (Nat × Nat)) (s : SL) : Decidable (SlowestKept tr s) := by
 def trace3442 : List (Nat × Nat) :=
   (List.range 10).map (fun i => (i + 1, 20 + 10 * i)) ++ [(1, 200), (11, 25)]
 
-/-- After ten distinct entries the cache is right; the update of `Q1` to 200 ms leaves it at
-20 while the real minimum is 30 (`MinCache` broken by the `some _` arm). -/
-theorem bug3442_update_breaks_min_cache :
-    let s := run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
-    MinCache s ∧ ¬ MinCache (add s 1 200) ∧ (add s 1 200).minLat = 20 ∧
-      minOf (add s 1 200).entries = 30 := by
+/-- History (b84473a7f): after ten distinct entries the cache is right; the update of `Q1` to
+200 ms leaves it at 20 while the real minimum is 30 (`MinCache` broken by the `some _` arm). -/
+theorem pre3442_update_breaks_min_cache :
+    let s := pre3442_run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
+    MinCache s ∧ ¬ MinCache (pre3442_add s 1 200) ∧ (pre3442_add s 1 200).minLat = 20 ∧
+      minOf (pre3442_add s 1 200).entries = 30 := by
   decide
 
-/-- **#3442**: `Q11` (25 ms) is admitted and evicts `Q2` (30 ms): the log keeps a query
-faster than one it dropped (`SlowestKept` fails on main). -/
-theorem bug3442_faster_evicts_slower :
-    let s := run SL.new trace3442
+/-- History (**#3442**, b84473a7f): `Q11` (25 ms) is admitted and evicts `Q2` (30 ms): the log
+keeps a query faster than one it dropped (`SlowestKept` failed). -/
+theorem pre3442_faster_evicts_slower :
+    let s := pre3442_run SL.new trace3442
     s.entries.any (·.hash = 11) = true ∧ s.entries.any (·.hash = 2) = false ∧
       ¬ SlowestKept trace3442 s := by
   decide
 
-/-- The fix: recompute the minimum on the update arm too (C's `cleanup`). -/
-def addFixed (s : SL) (h lat : Nat) : SL :=
-  if lat < MIN_LATENCY then s
-  else if s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat then s
-  else match s.entries.find? (·.hash = h) with
-    | some _ =>
-      let es := s.entries.map fun e =>
-        if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e
-      ⟨es, minOf es⟩
-    | none =>
-      let es := if s.entries.length < MAX_ENTRIES then s.entries ++ [⟨h, lat⟩]
-        else s.entries.set (argmin s.entries) ⟨h, lat⟩
-      ⟨es, minOf es⟩
+/-- Main: after the same ten entries and the update of `Q1`, the cache is the real minimum (30). -/
+theorem fixed3442_update_keeps_min_cache :
+    let s := run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
+    MinCache s ∧ MinCache (add s 1 200) ∧ (add s 1 200).minLat = 30 := by
+  decide
 
-/-- `addFixed` agrees with `add` on the entries; only the cached minimum differs. -/
-theorem addFixed_entries (s : SL) (h lat : Nat) :
-    (addFixed s h lat).entries = (add s h lat).entries := by
-  unfold addFixed add; split; · rfl
+/-- `add` on main agrees with the pre-#3456 `add` on the entries (one entry per hash); only
+the cached minimum differs (the fix touches nothing else). -/
+theorem add_entries_pre3442 (s : SL) (h lat : Nat) (hnd : (s.entries.map (·.hash)).Nodup) :
+    (add s h lat).entries = (pre3442_add s h lat).entries := by
+  unfold add pre3442_add; split; · rfl
   split; · rfl
-  split <;> rfl
+  split
+  · rename_i x hx
+    split
+    · rename_i hle
+      have hxm : x ∈ s.entries := List.mem_of_find?_eq_some hx
+      have hxh : x.hash = h := by simpa using List.find?_some hx
+      have hid : s.entries.map (fun e' => if e'.hash = h ∧ lat > e'.latency then { e' with latency := lat } else e') = s.entries := by
+        refine Eq.trans (List.map_congr_left (g := id) ?_) (List.map_id _)
+        intro e he
+        split
+        · rename_i hh
+          have : e = x := nodup_map_inj_E _ hnd e x he hxm (by rw [hh.1, hxh])
+          subst this; omega
+        · rfl
+      show s.entries = _
+      exact hid.symm
+    · rfl
+  · rfl
 
-/-- The fixed `add` preserves the cache invariant, for every state and input. -/
-theorem addFixed_minCache (s : SL) (h lat : Nat) (hs : MinCache s) :
-    MinCache (addFixed s h lat) := by
-  unfold addFixed; split; · exact hs
+/-- **The fix**: main's `add` preserves the cache invariant, for every state and input. -/
+theorem add_minCache (s : SL) (h lat : Nat) (hs : MinCache s) : MinCache (add s h lat) := by
+  unfold add; split; · exact hs
   split; · exact hs
-  split <;> exact fun _ => rfl
-
-def runFixed (s : SL) (tr : List (Nat × Nat)) : SL := tr.foldl (fun s p => addFixed s p.1 p.2) s
+  split
+  · split
+    · exact hs
+    · exact fun _ => rfl
+  · exact fun _ => rfl
 
 /-- With the fix the issue's trace keeps `Q2` and rejects `Q11`, as C does. -/
 theorem fixed3442_trace :
-    let s := runFixed SL.new trace3442
+    let s := run SL.new trace3442
     s.entries.any (·.hash = 11) = false ∧ s.entries.any (·.hash = 2) = true ∧
       SlowestKept trace3442 s := by
   decide

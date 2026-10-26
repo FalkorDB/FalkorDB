@@ -26,7 +26,7 @@ import Columnar.EvalBatch
 
 Lean 4 model of `runtime/batch.rs`, `runtime/vectorized.rs`,
 `runtime/vector_expr.rs`, `runtime/row.rs` and
-`runtime/ops/batched_result_emitter.rs`. 260 theorems, no `sorry` / `admit` /
+`runtime/ops/batched_result_emitter.rs`. 262 theorems, no `sorry` / `admit` /
 `axiom`. `f64` is abstract (`FloatModel`); the one IEEE fact used —
 `partial_cmp` antisymmetry — is a class field (hypothesis). Per-module
 Lean↔Rust tables are in each file's header; per-function buckets in
@@ -39,7 +39,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
 | `Row` | `Row` (`row.rs`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1415-1447`) |
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
-| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-783`), ExpandInto trim (`expand_into.rs:285-294`) |
+| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
@@ -149,6 +149,21 @@ proofs/ops_aggregate.
   old `unwrap_or(Less)` lane, known #2891), builder push paths and merge plan, constructors/accessors,
   `merge_over_input`, `clone_active_rows_seq_origin`, `size_hint`, `set_argument_batch`
   (every Argument leaf gets the batch, emitter-backed nodes reset), `inspect_context`, `BatchOp::next`.
+
+## Re-target to 5e475e6c9 (#2973, #3436)
+* #2973 (closes #2922) rewrites `BatchedResultEmitter::with_binding`'s ceiling from the guarded arm
+  `Some(cap) if cap < BATCH_SIZE => cap.max(1)` to `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
+  BATCH_SIZE))` (batched_result_emitter.rs:563), plus two `debug_assert!`s (`pack_ceiling` in `[1,
+  BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`). The #2922 miscompile (LLVM 21-23.1.0 on
+  aarch64-apple-darwin dropped the guard) is a compiler bug, so the source semantics did not change:
+  `Emitter.withBinding` is now the clamp, the old arm is kept as `pre2973_withBinding`, and
+  `withBinding_eq_pre2973` proves the two compute the same ceiling for every cap;
+  `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs` are unchanged. The `u16`
+  selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped, now stated without a
+  guard to drop.
+* #3436 swaps `rt.g.borrow()` for `rt.graph()` and inserts the `graph`/`graph_mut`/`graph_arc`/`HeldRead`
+  block in runtime.rs: `materialize_*` rows re-pinned (:1654, :1668, :1716, :1728), emitter rows shifted
+  by 3-4 (`seed` :578 … `new_without_alias` :784). `matNode_eq` / `matRel_eq` read the same graph.
 
 ## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
 * `Column::compare_at` (batch.rs:399): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
