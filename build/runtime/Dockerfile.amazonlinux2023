@@ -28,7 +28,7 @@ ARG VALKEY_VERSION=9.1.2
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS builder
+FROM amazonlinux:2023.12.20260918.0 AS builder
 
 # Re-declared inside the stage: the pre-FROM `ARG CXX` is global scope and is
 # NOT visible here otherwise, which would silently expand ${CXX} to empty and
@@ -127,7 +127,7 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 # OpenSSL, by the same build/build-server.sh as build/runtime/Dockerfile.
 # Only the builder the SERVER arg selects is built.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS server-builder-base
+FROM amazonlinux:2023.12.20260918.0 AS server-builder-base
 RUN dnf install -y git gcc gcc-c++ make openssl-devel && \
     dnf clean all
 COPY ./build/build-server.sh /usr/local/bin/build-server
@@ -142,9 +142,9 @@ RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
 # Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
-# paths, user, entrypoint and environment -- on amazonlinux:2023.12.20260817.0.
+# paths, user, entrypoint and environment -- on amazonlinux:2023.12.20260918.0.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260817.0 AS server-base
+FROM amazonlinux:2023.12.20260918.0 AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
