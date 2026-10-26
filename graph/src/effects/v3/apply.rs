@@ -214,6 +214,19 @@ fn apply_record(
             rows,
         } => {
             let nodes = ids.to_roaring();
+            // The set is what the id space is told, the list is what the label
+            // and attribute writes below walk; a repeated id makes them describe
+            // different graphs, and the set would silently create one node where
+            // the record names two. Refused, as `create_relationships_bulk`
+            // refuses the same shape for edges.
+            if nodes.len() != u64::from(ids.count()) {
+                return Err(ApplyError::Graph(format!(
+                    "bulk node create got {} ids of which only {} are distinct; \
+                     an id names one node",
+                    ids.count(),
+                    nodes.len()
+                )));
+            }
             // No reservation to make: these ids came from the master, not from
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
@@ -2155,6 +2168,29 @@ mod tests {
         .unwrap();
         apply_effects(&mut g, &buf).expect("both endpoints are live by then");
         assert_eq!(g.relationship_count(), 2);
+    }
+
+    /// #3247: a repeated id names two nodes and can only create one. Folding
+    /// the list into a set applied one node and dropped the other silently;
+    /// `CREATE_EDGE` already refuses the same shape.
+    #[test]
+    fn a_repeated_node_id_in_one_create_is_refused() {
+        let mut g = liveness_setup();
+        let before = g.node_count();
+        let res = apply_one(
+            &mut g,
+            Record::CreateNode {
+                ids: IdList::from([2, 3, 2]),
+                labels: vec![],
+                attr_ids: vec![],
+                rows: vec![],
+            },
+        );
+        match res {
+            Err(ApplyError::Graph(msg)) => assert!(msg.contains("distinct"), "{msg}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert_eq!(g.node_count(), before, "the record was applied");
     }
 
     /// A node deleted earlier in the buffer may still be named, as the
