@@ -93,7 +93,7 @@ jobs:
           # request, in this workspace. Do not leave the token in .git/config.
           persist-credentials: false
       - name: Download the engine
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}
@@ -120,12 +120,12 @@ jobs:
             exit 1
           fi
           # shellcheck disable=SC2086
-          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata "$MODULE" > codecov.txt.all
+          llvm-profdata-23 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata "$MODULE" > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./codecov.txt
@@ -133,7 +133,7 @@ jobs:
           disable_search: true
       - name: Upload flow logs on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.flavour }}-flow-logs-${{ matrix.arch }}-${{ strategy.job-index }}
           path: tests/flow/logs/
