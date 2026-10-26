@@ -64,17 +64,16 @@ GRAPH_ID = "index_populate_unsynced_delta"
 # writers for the full duration (measured: ~1.5s of continuous stall
 # indexing 1,000,000 edges, vs 5ms once real batching is restored).
 #
-# NOTE - a separate, pre-existing bug: repopulating an already-active index
-# via DEBUG RELOAD always drops whichever entity holds the smallest id in
-# that label/relation's content, regardless of this fix (confirmed
-# unchanged against a 100% unmodified build). It's unrelated to the
-# M/delta-plus resume issue above - it reproduces with no delta-plus
-# content at all - and is out of scope here. To keep that separate bug
-# from contaminating the assertions below, id 0 (`v == 0`) is always part
-# of the *high* (M) range, which these tests don't otherwise examine
-# closely, and the post-reload total is asserted as `total - 1` rather
-# than `total` - only the low (delta-plus) range, which is what this test
-# targets, is asserted at its exact full size throughout.
+# NOTE - there used to be a separate bug layered on top of this: repopulating
+# an index via DEBUG RELOAD dropped the entity whose indexed numeric value was
+# 0. It was originally misattributed to "the smallest id" because here the
+# smallest id (`v == 0`) is also the only value-0 entity. The real root cause
+# was a union-aliasing field-skip in RediSearch - a numeric +0.0 is all-zero
+# bytes, so the field's value pointer reads as NULL and the field was skipped
+# during the post-reload populate - fixed in FalkorDB/RediSearch#31. With that
+# fix `v == 0` is indexed like any other value, so the post-reload counts below
+# are asserted at the full `total`. test_03 / test_04 are the focused
+# regression for that numeric-0 fix.
 
 
 def _build_node_delta_gap(graph, label, prop, spare_prop, total=100000, gap=1000):
@@ -198,13 +197,12 @@ class testIndexPopulateUnsyncedDelta():
         labeled_total = g.query(f"MATCH (n:{label}) RETURN count(n)").result_set[0][0]
         self.env.assertEquals(labeled_total, total)
 
-        # -1: see the module docstring's note on the separate, pre-existing
-        # "repopulating an active index via reload drops the smallest id"
-        # bug - v == 0 is always in the high/M range, not what's under test
+        # value 0 (v == 0, in the high/M range) is now indexed across reload
+        # too - see the module docstring note and test_03 (FalkorDB/RediSearch#31)
         indexed = g.query(
             f"MATCH (n:{label}) WHERE n.{prop} >= 0 RETURN count(n)"
         ).result_set[0][0]
-        self.env.assertEquals(indexed, labeled_total - 1)
+        self.env.assertEquals(indexed, labeled_total)
 
         low_range_indexed = g.query(
             f"MATCH (n:{label}) WHERE n.{prop} >= 1 AND n.{prop} <= {gap} RETURN count(n)"
@@ -277,13 +275,12 @@ class testIndexPopulateUnsyncedDelta():
         ).result_set[0][0]
         self.env.assertEquals(total_edges, total)
 
-        # -1: see the module docstring's note on the separate, pre-existing
-        # "repopulating an active index via reload drops the smallest id"
-        # bug - v == 0 is always in the high/M range, not what's under test
+        # value 0 (v == 0, in the high/M range) is now indexed across reload
+        # too - see the module docstring note and test_04 (FalkorDB/RediSearch#31)
         indexed = g.query(
             f"MATCH ()-[e:{reltype}]->() WHERE e.{prop} >= 0 RETURN count(e)"
         ).result_set[0][0]
-        self.env.assertEquals(indexed, total_edges - 1)
+        self.env.assertEquals(indexed, total_edges)
 
         low_range_indexed = g.query(
             f"MATCH ()-[e:{reltype}]->() WHERE e.{prop} >= 1 AND e.{prop} <= {gap} "
@@ -300,3 +297,114 @@ class testIndexPopulateUnsyncedDelta():
             f"RETURN count(e)"
         ).result_set[0][0]
         self.env.assertEquals(indexed_spare, gap)
+
+    def test_03_node_numeric_zero_survives_reload(self):
+        # Focused regression for FalkorDB/RediSearch#31: a range-indexed numeric
+        # property equal to 0 (int 0 / float +0.0) must stay in the index across
+        # an RDB reload (the restart / failover / replica full-sync path, where
+        # the index is rebuilt from the decoded graph). Before the fix the
+        # document was created on reload but its numeric record was never written,
+        # so the node vanished from index scans while remaining in the graph.
+        g      = self.graph
+        label  = "Z"
+        prop   = "val"
+
+        # int 0 and float 0.0 (both affected), plus non-zero controls
+        g.query(f"CREATE (:{label} {{{prop}: 0}}), (:{label} {{{prop}: 7}}), "
+                f"(:{label} {{{prop}: 0.0}}), (:{label} {{{prop}: -3}})")
+        create_node_range_index(g, label, prop, sync=True)
+
+        q_zero = f"MATCH (n:{label} {{{prop}: 0}}) RETURN count(n)"
+        self.env.assertIn("Node By Index Scan", str(g.explain(q_zero)))
+
+        def zero_via_index():
+            return g.query(q_zero).result_set[0][0]
+
+        # before reload: both the int 0 and the float 0.0 node match
+        self.env.assertEquals(zero_via_index(), 2)
+
+        # reload rebuilds the index from RDB - value 0 must survive
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        self.env.assertEquals(zero_via_index(), 2)
+
+        # a second reload must remain stable (not an accumulating drift)
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        self.env.assertEquals(zero_via_index(), 2)
+
+        # and a brand new index, created fresh after the reload, must also
+        # index value 0
+        g.query(f"DROP INDEX FOR (n:{label}) ON (n.{prop})")
+        create_node_range_index(g, label, prop, sync=True)
+        self.env.assertEquals(zero_via_index(), 2)
+
+    def test_04_edge_numeric_zero_survives_reload(self):
+        # Edge-index counterpart of test_03.
+        g          = self.graph
+        base_label = "ZB"
+        reltype    = "ZE"
+        prop       = "val"
+
+        g.query(f"CREATE (a:{base_label}) "
+                f"CREATE (a)-[:{reltype} {{{prop}: 0}}]->(a), "
+                f"(a)-[:{reltype} {{{prop}: 5}}]->(a), "
+                f"(a)-[:{reltype} {{{prop}: 0.0}}]->(a)")
+        create_edge_range_index(g, reltype, prop, sync=True)
+
+        q_zero = f"MATCH ()-[e:{reltype}]->() WHERE e.{prop} = 0 RETURN count(e)"
+        self.env.assertIn("Edge By Index Scan", str(g.explain(q_zero)))
+
+        def zero_via_index():
+            return g.query(q_zero).result_set[0][0]
+
+        # before reload: both the int 0 and the float 0.0 edge match
+        self.env.assertEquals(zero_via_index(), 2)
+
+        # reload rebuilds the index from RDB - value 0 must survive
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        self.env.assertEquals(zero_via_index(), 2)
+
+    def test_05_node_boolean_false_survives_reload(self):
+        # A boolean `false` is indexed through the same numeric path as 0
+        # (SI_GET_NUMERIC(false) == 0), so its document-field bytes are all-zero
+        # and it hit the exact same union-aliasing skip - a node with an indexed
+        # `false` was dropped from the index on reload before the fix.
+        g     = self.graph
+        label = "BZ"
+        prop  = "flag"
+
+        g.query(f"CREATE (:{label} {{{prop}: false}}), (:{label} {{{prop}: true}}), "
+                f"(:{label} {{{prop}: false}})")
+        create_node_range_index(g, label, prop, sync=True)
+
+        q_false = f"MATCH (n:{label} {{{prop}: false}}) RETURN count(n)"
+        self.env.assertIn("Node By Index Scan", str(g.explain(q_false)))
+
+        def false_via_index():
+            return g.query(q_false).result_set[0][0]
+
+        self.env.assertEquals(false_via_index(), 2)
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        self.env.assertEquals(false_via_index(), 2)
+
+    def test_06_edge_boolean_false_survives_reload(self):
+        # Edge-index counterpart of test_05.
+        g          = self.graph
+        base_label = "BB"
+        reltype    = "BE"
+        prop       = "flag"
+
+        g.query(f"CREATE (a:{base_label}) "
+                f"CREATE (a)-[:{reltype} {{{prop}: false}}]->(a), "
+                f"(a)-[:{reltype} {{{prop}: true}}]->(a), "
+                f"(a)-[:{reltype} {{{prop}: false}}]->(a)")
+        create_edge_range_index(g, reltype, prop, sync=True)
+
+        q_false = f"MATCH ()-[e:{reltype}]->() WHERE e.{prop} = false RETURN count(e)"
+        self.env.assertIn("Edge By Index Scan", str(g.explain(q_false)))
+
+        def false_via_index():
+            return g.query(q_false).result_set[0][0]
+
+        self.env.assertEquals(false_via_index(), 2)
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        self.env.assertEquals(false_via_index(), 2)
