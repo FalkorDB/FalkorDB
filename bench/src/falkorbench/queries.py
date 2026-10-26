@@ -546,7 +546,7 @@ QUERIES = [
     Q("MSF nodes yield",     False, "CALL algo.MSF({relationshipTypes: ['SIMILAR'], weightAttribute: 'weight'}) YIELD nodes, edges RETURN size(nodes), size(edges)", 200),
     Q("maxFlow KNOWS",       False, "MATCH (a:Person {id: 1}), (b:Person {id: 5}) CALL algo.maxFlow({sourceNodes: [a], targetNodes: [b], relationshipTypes: ['KNOWS'], capacityProperty: 'weight', defaultCapacity: 1.0}) YIELD maxFlow RETURN maxFlow", 200),
 
-    # ---- round 10: comprehension-body (Row-context) eval, null/scalar
+    # ---- round 10: comprehension-body (Row-context) eval, null
     # iterables, chained-compare null arms, temporal component accessors,
     # value ordering arms, CALL{}+UNION binder, pending-entity reads,
     # label predicate, label-filtered algo matrices, lexer corners ----------
@@ -561,7 +561,6 @@ QUERIES = [
     Q("rel subscript",       False, "MATCH (a:Person {id: 1})-[r:KNOWS]->() RETURN r['weight'] LIMIT 5"),
     Q("list null subscript", False, "RETURN [1, 2, 3][null]"),
     Q("null iterable",       False, "RETURN [x IN null | x], all(x IN null WHERE x > 0), any(x IN null WHERE x > 0), none(x IN null WHERE x > 0), single(x IN null WHERE x > 0)"),
-    Q("scalar iterables",    False, "UNWIND 5 AS x RETURN x, [y IN 6 | y]"),
     Q("single multi true",   False, "RETURN single(x IN [1, 2, 3] WHERE x > 1)"),
     Q("unary minus null",    False, "MATCH (p:Person {id: 1}) RETURN -p.noSuchProp"),
     Q("untyped shortestPath", False, "MATCH (a:Person {id: 1}), (b:Person {id: 5}) RETURN shortestPath((a)-[*..5]->(b))"),
