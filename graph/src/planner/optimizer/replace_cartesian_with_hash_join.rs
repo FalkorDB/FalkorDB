@@ -205,11 +205,7 @@ fn try_hash_join_rewrite(
     if remaining.is_empty() {
         Some(join_subtree)
     } else {
-        let remaining_filter = if remaining.len() == 1 {
-            Arc::new(remaining.into_iter().next().unwrap())
-        } else {
-            Arc::new(tree!(ExprIR::And; remaining))
-        };
+        let remaining_filter = Arc::new(ExprIR::and_of(remaining));
         let mut result = DynTree::new(IR::Filter(remaining_filter));
         result.root_mut().push_child_tree(join_subtree);
         Some(result)
