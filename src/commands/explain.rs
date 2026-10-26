@@ -39,8 +39,7 @@ fn explain(
     query: &str,
 ) -> RedisResult {
     // L1-read for exactly the plan build, through a session: the optimizer consults
-    // the index to pick scans, and a session is what publishes the lock mode that the
-    // GIL lock-order assertion reads (#726).
+    // the index to pick scans.
     let Plan { plan, .. } = {
         let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
