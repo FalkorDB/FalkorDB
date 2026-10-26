@@ -400,7 +400,12 @@ fn encode_schema_index_block(
         // The field is the code, so this is no longer a conversion. It used to
         // map a `bool` to "dm:en", which meant a C-written `dm:fr` came back
         // out of a Rust round trip as `dm:en`.
-        let phonetic = opts.and_then(|o| o.phonetic.clone()).unwrap_or_default();
+        // Off is written as C writes it, "no": C enables phonetic matching for any
+        // other string, so an empty one turned it on when C loaded our RDB.
+        let phonetic = opts
+            .and_then(|o| o.phonetic.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| PHONETIC_OFF.to_owned());
         w.write_buffer(&null_terminated(&phonetic));
 
         if field_type & index_field_type::INDEX_FLD_VECTOR != 0
