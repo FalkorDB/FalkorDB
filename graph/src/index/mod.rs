@@ -260,26 +260,28 @@ pub enum IndexQuery<T> {
 }
 
 impl IndexQuery<Value> {
-    /// Expand the evaluated list of `property IN list` into one `Equal` per
-    /// item. Every non-null item is kept, including ones the index cannot
-    /// serve (a `date()`, a list), so that [`Self::can_be_served`] sees them
-    /// and the scan falls back; dropping them would lose the rows they
-    /// match. A null item never compares equal and is dropped.
+    /// Build the index query for the evaluated list of `property IN list`,
+    /// kept as one `InList` (one attribute by construction; RediSearch
+    /// builds the same union from it as from an `Or` of `Equal`s). Every
+    /// non-null item is kept, including ones the index cannot serve (a
+    /// `date()`, a list), so that [`Self::can_be_served`] sees them and the
+    /// scan falls back; dropping them would lose the rows they match. A
+    /// null item never compares equal and is dropped.
     #[must_use]
     pub fn in_list(
         key: &Arc<String>,
-        items: &[Value],
+        items: &Arc<thin_vec::ThinVec<Value>>,
     ) -> Self {
-        Self::Or(
-            items
-                .iter()
-                .filter(|v| !matches!(v, Value::Null))
-                .map(|v| Self::Equal {
-                    key: key.clone(),
-                    value: v.clone(),
-                })
-                .collect(),
-        )
+        let not_null = |v: &Value| !matches!(v, Value::Null);
+        let items = if items.iter().all(not_null) {
+            items.clone()
+        } else {
+            Arc::new(items.iter().filter(|v| not_null(v)).cloned().collect())
+        };
+        Self::InList {
+            key: key.clone(),
+            list: Value::List(items),
+        }
     }
 
     /// Whether the index answers this evaluated query exactly. When it
@@ -313,7 +315,14 @@ impl IndexQuery<Value> {
             Self::ArrayContains { value, .. } => {
                 !matches!(value, Value::Null) && is_indexable(value)
             }
-            Self::Point { .. } | Self::InList { .. } => true,
+            // The same rule as an `Or` of its members: an empty list (`IN [NULL]`)
+            // falls back, and so does a list with any member the index cannot
+            // hold exactly.
+            Self::InList { list, .. } => matches!(
+                list,
+                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
+            ),
+            Self::Point { .. } => true,
         }
     }
 }

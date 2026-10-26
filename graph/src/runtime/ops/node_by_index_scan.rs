@@ -291,3 +291,70 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key() -> Arc<String> {
+        Arc::new("v".to_string())
+    }
+
+    fn in_list(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::InList {
+            key: key(),
+            list: Value::List(Arc::new(values.iter().cloned().collect())),
+        }
+    }
+
+    /// The same members as an `Or` of `Equal`s — the shape an `IN` list used to reach the index in.
+    fn or_of_equals(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::Or(
+            values
+                .iter()
+                .map(|v| IndexQuery::Equal {
+                    key: key(),
+                    value: v.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    /// An `IN` list reaches the index only when it is non-empty and every member is one the index
+    /// holds exactly; otherwise the op scans. That is the rule its members got as an `Or` of
+    /// `Equal`s, so which queries fall back is unchanged by handing the list over whole.
+    #[test]
+    fn in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members() {
+        let lossy = Value::Int(9_007_199_254_740_993);
+        // A member the index cannot hold (here a list; a `date()` alike) is kept by
+        // `IndexQuery::in_list` so that the whole query falls back (#2958).
+        let unservable = Value::List(Arc::new(vec![Value::Int(1)].into_iter().collect()));
+        let cases: [(&[Value], bool); 6] = [
+            (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
+            (
+                &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
+                true,
+            ),
+            (&[], false),
+            (&[Value::Int(1), lossy.clone()], false),
+            (&[lossy], false),
+            (&[Value::Int(1), unservable], false),
+        ];
+        for (values, expected) in cases {
+            assert_eq!(in_list(values).can_be_served(), expected, "IN {values:?}");
+            assert_eq!(
+                in_list(values).can_be_served(),
+                or_of_equals(values).can_be_served(),
+                "IN {values:?} must decide as its members did as an Or"
+            );
+        }
+        assert!(
+            !IndexQuery::InList {
+                key: key(),
+                list: Value::Int(1),
+            }
+            .can_be_served(),
+            "an InList that does not hold a list never reaches the index"
+        );
+    }
+}
