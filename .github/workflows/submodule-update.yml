@@ -116,7 +116,9 @@ jobs:
           LATEST_TAG: ${{ steps.check.outputs.latest_tag }}
           LATEST_SHA: ${{ steps.check.outputs.latest_sha }}
           CURRENT_SHA: ${{ steps.check.outputs.current_sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Target the branch this run was dispatched on (master), not the repo
+          # default branch: main is the Rust tree and has none of these submodules.
+          BASE_BRANCH: ${{ github.ref_name }}
         run: |
           BRANCH_NAME="submodule-update/${SUBMODULE_NAME}/${LATEST_TAG}"
 
@@ -169,7 +171,7 @@ jobs:
           sed -i 's/^          //' /tmp/pr_body.md
 
           gh pr create \
-            --base "$DEFAULT_BRANCH" \
+            --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore(deps): update ${SUBMODULE_NAME} to ${LATEST_TAG}" \
             --body-file /tmp/pr_body.md
