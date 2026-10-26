@@ -236,24 +236,24 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
+                    // Kept as one `InList`, as in `NodeByIndexScanOp`: one attribute by
+                    // construction, and RediSearch builds the same union from either shape.
                     Value::List(items) => {
-                        let equals = items
-                            .iter()
-                            .filter(|v| {
-                                matches!(
-                                    v,
-                                    Value::Int(_)
-                                        | Value::Float(_)
-                                        | Value::String(_)
-                                        | Value::Bool(_)
-                                )
-                            })
-                            .map(|v| IndexQuery::Equal {
-                                key: key.clone(),
-                                value: v.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        Ok(IndexQuery::Or(equals))
+                        let keep = |v: &Value| {
+                            matches!(
+                                v,
+                                Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
+                            )
+                        };
+                        let items = if items.iter().all(keep) {
+                            items
+                        } else {
+                            Arc::new(items.iter().filter(|v| keep(v)).cloned().collect())
+                        };
+                        Ok(IndexQuery::InList {
+                            key: key.clone(),
+                            list: Value::List(items),
+                        })
                     }
                     _ => Err("IN operator requires a list".into()),
                 }
@@ -291,6 +291,12 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 // re-establishes correctness.
                 !children.is_empty() && children.iter().all(Self::can_utilize_index)
             }
+            // The same rule, for an `IN` list: empty once its members were filtered (`IN [NULL]`)
+            // falls back, and so does a list with any member the index cannot hold exactly.
+            IndexQuery::InList { list, .. } => matches!(
+                list,
+                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
+            ),
             IndexQuery::ArrayContains { value, .. } => match value {
                 // Match `Equal` / `Range`: reject int64s that lose
                 // f64 precision — the index can't represent them
@@ -329,13 +335,29 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // so we don't rebuild the full-type Vec per row.
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                        let g = self.runtime.graph();
+                        // Edge index: a numeric Equal/Range on a column we own is served
+                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+                        // string/geo/composite or a missing column falls through to RediSearch during
+                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
+                            Box::new(hit)
+                        } else {
+                            Box::new(g.get_indexed_edges(label, q))
+                        };
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = Box::new(g.get_indexed_edges(label, q));
+                        it
                     } else {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
                             if cache.is_none() {
-                                *cache =
-                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
+                                *cache = Some(Arc::new(self.runtime.graph().get_all_edges(label)));
                             }
                             Arc::clone(cache.as_ref().unwrap())
                         };
@@ -349,6 +371,19 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 None
                             }
                         }))
+                    };
+
+                // An undirected pattern matches each edge in both
+                // orientations (a self-loop once), as `CondTraverse` does;
+                // the index yields it once, `src -> dst`.
+                let oriented_hits: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if rp.bidirectional {
+                        Box::new(base.flat_map(|(src, dst, edge)| {
+                            std::iter::once((src, dst, edge))
+                                .chain((src != dst).then_some((dst, src, edge)))
+                        }))
+                    } else {
+                        base
                     };
 
                 // Filter edges by *both* endpoints when the child has
@@ -374,7 +409,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 let same_endpoint_alias = rp.from.alias == rp.to.alias;
                 let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
-                        Box::new(base.filter(move |(src, dst, _)| {
+                        Box::new(oriented_hits.filter(move |(src, dst, _)| {
                             let (from_id, to_id) = if transposed {
                                 (*dst, *src)
                             } else {
@@ -385,7 +420,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 && (!same_endpoint_alias || from_id == to_id)
                         }))
                     } else {
-                        base
+                        oriented_hits
                     };
                 Ok(Some(RowIter::many(edges)))
             }) {
@@ -398,5 +433,71 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 Err(e) => return Some(Err(e)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key() -> Arc<String> {
+        Arc::new("v".to_string())
+    }
+
+    fn in_list(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::InList {
+            key: key(),
+            list: Value::List(Arc::new(values.iter().cloned().collect())),
+        }
+    }
+
+    /// The same members as an `Or` of `Equal`s — the shape an `IN` list used to reach the index in.
+    fn or_of_equals(values: &[Value]) -> IndexQuery<Value> {
+        IndexQuery::Or(
+            values
+                .iter()
+                .map(|v| IndexQuery::Equal {
+                    key: key(),
+                    value: v.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    /// An `IN` list reaches the index only when it is non-empty and every member is one the index
+    /// holds exactly; otherwise the op scans. That is the rule its members got as an `Or` of
+    /// `Equal`s, so which queries fall back is unchanged by handing the list over whole.
+    #[test]
+    fn in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members() {
+        let lossy = Value::Int(9_007_199_254_740_993);
+        let cases: [(&[Value], bool); 5] = [
+            (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
+            (
+                &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
+                true,
+            ),
+            (&[], false),
+            (&[Value::Int(1), lossy.clone()], false),
+            (&[lossy], false),
+        ];
+        for (values, expected) in cases {
+            assert_eq!(
+                EdgeByIndexScanOp::can_utilize_index(&in_list(values)),
+                expected,
+                "IN {values:?}"
+            );
+            assert_eq!(
+                EdgeByIndexScanOp::can_utilize_index(&in_list(values)),
+                EdgeByIndexScanOp::can_utilize_index(&or_of_equals(values)),
+                "IN {values:?} must decide as its members did as an Or"
+            );
+        }
+        assert!(
+            !EdgeByIndexScanOp::can_utilize_index(&IndexQuery::InList {
+                key: key(),
+                list: Value::Int(1),
+            }),
+            "an InList that does not hold a list never reaches the index"
+        );
     }
 }

@@ -708,7 +708,7 @@ fn register_pagerank(funcs: &mut Functions) {
             let label = opt_string(&args[0], "label")?;
             let rel_type = opt_string(&args[1], "relationshipType")?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -822,7 +822,7 @@ fn register_wcc(funcs: &mut Functions) {
             let node_labels = extract_node_labels(&config)?;
             let rel_types = extract_rel_types(&config)?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -942,7 +942,7 @@ fn register_betweenness(funcs: &mut Functions) {
                 _ => return Err(String::from("samplingSeed must be an integer")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1077,7 +1077,7 @@ fn register_bfs(funcs: &mut Functions) {
             // arg 2: relationship type (String or Null)
             let rel_type = opt_string(&args[2], "relationshipType")?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1230,7 +1230,7 @@ fn register_cdlp(funcs: &mut Functions) {
                 _ => return Err(String::from("maxIterations must be a positive integer")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1332,7 +1332,7 @@ fn register_msf(funcs: &mut Functions) {
 
             // Validate that rel_types exist in the graph (if specified)
             {
-                let g = runtime.g.borrow();
+                let g = runtime.graph();
                 for rt in &rel_types {
                     if g.get_type_id(rt).is_none() {
                         return Err(format!("Relationship type '{rt}' does not exist"));
@@ -1358,7 +1358,7 @@ fn register_msf(funcs: &mut Functions) {
                 _ => return Err(String::from("objective must be a string")),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
 
             // Validate weight attribute exists as a relationship attribute
             if let Some(ref attr) = weight_attr
@@ -2394,7 +2394,9 @@ fn bfs_find_bound(
     let mut cost = 0.0;
     for edge_id in chain {
         weight += edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+        // C charges 1 per relationship when `costProp` is not given (or the
+        // edge lacks it), so `maxCost` alone bounds the hop count.
+        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
     }
 
     Ok(Some((weight, cost)))
@@ -2515,7 +2517,8 @@ fn enumerate_paths(
             let (weight, cost) = edges.last().map_or((0.0, 0.0), |&(_, _, _, w, c)| (w, c));
             let next_weight =
                 weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+            // Same 1-per-relationship default as C (and `bfs_find_bound`).
+            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 1.0);
 
             // C gates on `weight + w <= max_weight` (max_weight defaulting to
             // DBL_MAX), which rejects NaN and infinity. The negated `> bound`
@@ -2604,7 +2607,7 @@ fn run_path_algo(
     runtime: &Runtime,
     config: &PathAlgoConfig,
 ) -> Result<super::ProcedureBatch, String> {
-    let g = runtime.g.borrow();
+    let g = runtime.graph();
 
     // Fast path: one cheapest path, no cost cap, no hop cap — exactly what
     // Dijkstra solves, in O((V+E) log V) time and O(V) memory. The general
@@ -2700,7 +2703,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             let node_labels = extract_node_labels(&config)?;
             let rel_types = extract_rel_types(&config)?;
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
             for rt in &rel_types {
                 if g.get_type_id(rt).is_none() {
                     return Err(format!("Relationship type '{rt}' does not exist"));
@@ -2927,7 +2930,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 )),
             };
 
-            let g = runtime.g.borrow();
+            let g = runtime.graph();
 
             let Some(type_id) = g.get_type_id(&rel_types[0]) else {
                 return Err(format!(
