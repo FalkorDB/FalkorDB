@@ -103,3 +103,54 @@ class testBoundVariables(FlowTestsBase):
 
         # make sure no nodes were returned
         self.env.assertEqual(len(res.result_set), 0)
+
+    def test07_named_path_over_bound_node(self):
+        """`p = (n)` over an already-bound `n` is the one-node path: never
+        null, and the rows that bound `n` are kept (#2311, #2727, #2737)"""
+
+        g = self.db.select_graph("bound_node_path")
+        g.query("CREATE (:A {id: 1, k0: 'x'})-[:R]->(:B {id: 2})")
+
+        # OPTIONAL MATCH: the path is bound, not null-padded (#2311, #2737)
+        for label in [":A", ""]:
+            res = g.query(f"""MATCH (n{label} {{id: 1}})
+                              OPTIONAL MATCH p = (n)
+                              RETURN n.id, length(p), nodes(p)[0] = n""")
+            self.env.assertEqual(res.result_set, [[1, 0, True]], depth=1)
+
+        # MATCH: the rows produced before the pattern reach it (#2727)
+        res = g.query("""MATCH (n0:A) WITH n0 AS alias4
+                         MATCH (alias4), p1 = (alias4)
+                         RETURN alias4.k0, length(p1)""")
+        self.env.assertEqual(res.result_set, [['x', 0]])
+
+        res = g.query("MATCH (n:A) WITH * MATCH p = (n) RETURN count(p)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        res = g.query("""MATCH (n:A) CALL db.labels() YIELD label
+                         MATCH (n), p = (n)
+                         RETURN label, length(p) ORDER BY label""")
+        self.env.assertEqual(res.result_set, [['A', 0], ['B', 0]])
+
+        # inline filters on the bound node still apply
+        res = g.query("""MATCH (n) WITH n MATCH p = (n {id: 2})
+                         RETURN n.id, length(p)""")
+        self.env.assertEqual(res.result_set, [[2, 0]])
+
+        # a path over an edge whose every element is already bound
+        res = g.query("""MATCH (a)-[r]->(b) WITH a, r, b
+                         MATCH p = (a)-[r]->(b)
+                         RETURN a.id, length(p)""")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+        # the issue's full query: `alias4` survives the pipeline (#2727)
+        res = g.query("""OPTIONAL MATCH p0 = (n0 {k0: 'x'})
+                         WITH * WHERE n0 IS NOT NULL
+                         CALL algo.BFS(n0, 2, 'R') YIELD nodes AS alias0
+                         WITH alias0, n0.k0 AS alias1, n0 AS alias4, p0
+                         ORDER BY alias1
+                         MATCH (alias4), p1 = (alias4)
+                         RETURN alias4.id, length(p1), size(alias0), alias1""")
+        self.env.assertEqual(res.result_set, [[1, 0, 1, 'x']])
+
+        g.delete()
