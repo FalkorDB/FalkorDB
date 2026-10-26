@@ -262,3 +262,34 @@ class testFilters():
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
         self.env.assertEqual(columnar.result_set, [['else']] * 5)
+
+    def test10_filter_after_with_keeps_its_own_variables(self):
+        # Variable ids restart after a WITH, so a variable of the new scope
+        # can share its id with one hidden below the WITH. That one must not
+        # count as bound: the filter on `m` was pushed below the traverse
+        # that binds `m` and dropped every row (#2557).
+        g = self.db.select_graph("filter_after_with")
+        g.query("""CREATE (p:Person {id:1}), (f:Person {id:2}), (p)-[:KNOWS]->(f),
+                          (m1:Post {id:10}), (m2:Post {id:11}),
+                          (m1)-[:HAS_CREATOR]->(f), (m2)-[:HAS_CREATOR]->(f)""")
+
+        for pred, expected in [("m.id < 999", 2), ("m.id = 10", 1),
+                               ("999 > m.id", 2), ("m.id <> 5", 2)]:
+            res = g.query(f"""MATCH (root:Person {{id:1}})-[:KNOWS]-(friend:Person)
+                              WITH collect(friend) AS friends
+                              UNWIND friends AS f
+                              MATCH (f)<-[:HAS_CREATOR]-(m:Post)
+                              WHERE {pred}
+                              RETURN count(m)""")
+            self.env.assertEqual(res.result_set, [[expected]], depth=1)
+
+        # The same collision through an Apply: the WHERE of an OPTIONAL MATCH
+        # after an aggregating WITH must stay above the traverse binding `r`.
+        g.query("CREATE (:Rule {status:'revoked'})-[:SCOPED_TO]->(:Person {id:3})")
+        res = g.query("""MATCH (p:Person {id:3})
+                         OPTIONAL MATCH (r0:Rule)-[:SCOPED_TO]->(p)
+                         WITH p, count(r0) AS n
+                         OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p)
+                         WHERE r.status = 'revoked'
+                         RETURN n, r.status""")
+        self.env.assertEqual(res.result_set, [[1, 'revoked']])
