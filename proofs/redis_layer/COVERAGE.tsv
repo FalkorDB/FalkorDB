@@ -83,7 +83,7 @@ src/serializers/mod.rs	encode_schema_index_block	337	PROVEN	Serial.encIdx: decId
 src/serializers/mod.rs	encode_constraint_block	439	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
 src/serializers/mod.rs	Schema::decode	467	PROVEN	Serial.decSchema: decSchema_encSchema
 src/serializers/mod.rs	decode_schema_entry	529	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField (#3252: name used verbatim): decField_encField (every attribute name round-trips), field_name_kept, field_prefix_kept; history pre3252_field_prefix_lost (W4-redis-2: attr named range:x/vector:x reloaded as x, confirmed live then)
+src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField (#3252: name used verbatim): decField_encField (every attribute name round-trips), field_name_kept, field_prefix_kept; history pre3252_field_prefix_lost (W4-redis-2: attr named range:x/vector:x reloaded as x, confirmed live then); #3484: proven only against Rust's single-type encoder; on C's multi-type word it keeps one type (SerialCLayout.bug3484_range_fulltext_loses_range, bug3484_range_vector_loses_range); fix #3514 = decFields, decFields_encFieldC, decFields_encField
 src/serializers/mod.rs	Schema::from_graph	699	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c; history pre3043_nan_in_list
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)

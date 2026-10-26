@@ -8,6 +8,7 @@ import RedisLayer.RoQuery
 import RedisLayer.Bulk
 import RedisLayer.RoundTrip
 import RedisLayer.SerialProof
+import RedisLayer.SerialCLayout
 import RedisLayer.RespVerbose
 import RedisLayer.TelemetryLoop
 import RedisLayer.ModuleInit
@@ -294,3 +295,6 @@ take `s` to be that already-scrubbed text.
   `graph.rs:3381`; pending edge's type lookup panics `reply.rs:487` → `graph.rs:3348`);
   fix shapes `fixed3449_record_snapshot`, `verboseRelFixed_total`.
 -/
+#print axioms RedisLayer.Serial.bug3484_range_fulltext_loses_range
+#print axioms RedisLayer.Serial.decFields_encFieldC
+#print axioms RedisLayer.Serial.decFields_encField
