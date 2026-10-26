@@ -149,16 +149,21 @@ jobs:
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/falkordb/{1}:buildcache-{2}-{0},mode=max', matrix.arch, matrix.repo, inputs.flavour) || '' }}
           # Never serve the stages that ship OS packages from that cache. A
           # cached RUN is keyed on its command text and parent layer, not on
-          # what the Debian archive holds, so a hit skips `apt-get upgrade` and
-          # ships packages as old as the cache entry. `full` is FROM `server`
-          # and reruns with it anyway; it is named so that does not depend on
-          # it. The compile stages stay cached: redis-server and falkordb.so
-          # link libssl/libcrypto/libz dynamically, so the versions that ship
-          # come from these stages. A name with no stage behind it is ignored
-          # (Dockerfile.asan has no `full`). `pull` re-resolves the base image
-          # tags rather than reusing a copy the builder already holds.
+          # what the Debian archive holds, so a hit skips `apt-get upgrade`
+          # (`dnf`/`microdnf update` on RHEL9/AL2023) and ships packages as old
+          # as the cache entry. That RUN is in `server-base`, which the
+          # `server-redis`/`server-valkey` stage under `server` is FROM;
+          # Dockerfile.asan has no `server-base` and installs in `server`
+          # itself. `server` and `full` rerun after `server-base` anyway; they
+          # are named so that does not depend on it. The compile stages stay
+          # cached: the server binary and falkordb.so link libssl/libcrypto/libz
+          # dynamically, so the versions that ship come from these stages. A
+          # name with no stage behind it is ignored (Dockerfile.asan has no
+          # `full`). `pull` re-resolves the base image tags rather than reusing
+          # a copy the builder already holds.
           pull: true
           no-cache-filters: |
+            server-base
             server
             full
 
