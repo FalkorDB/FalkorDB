@@ -20,7 +20,7 @@ def server_binary() -> str:
     FALKORDB_SERVER picks the server -- `redis` (default) or `valkey` -- as
     it does in the docker images and flow.sh.
     """
-    server = os.environ.get("FALKORDB_SERVER", "redis")
+    server = os.environ.get("FALKORDB_SERVER") or "redis"
     if server not in ("redis", "valkey"):
         raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
     return f"/usr/local/bin/{server}-server"
