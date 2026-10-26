@@ -96,7 +96,9 @@ impl<'a> DeleteOp<'a> {
         trees: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let snapshot = snapshot_required(&runtime.plan, idx);
+        // `GRAPH.RECORD` renders the rows every operator produced after the
+        // commit, so it reads them even when no operator above does.
+        let snapshot = runtime.inspect || snapshot_required(&runtime.plan, idx);
         Self {
             runtime,
             child,
