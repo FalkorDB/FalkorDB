@@ -1,92 +1,125 @@
 /-
-# Guarded accesses: which lock an FFI call needs held (#3483)
+# Locksets: which locks every access to shared state holds (#3483)
 
 `Locks` checks lock *order* (deadlock freedom). It never asks what a thread touches
 while it holds, or does not hold, a lock, and `Locks.dropIndexBgProg` models
 `RediSearch_DropIndex` as touching nothing. So a data race behind an axiomatised FFI
-call was invisible to it. This module adds the missing obligation, Eraser-style: every
-access to a guarded resource happens with its guard held.
+call was invisible to it. This module adds the missing check, Eraser-style: for each
+shared resource, the locks held at *every* access must have a common member. It needs
+no claim about which lock "should" guard what; the per-access locksets come from the
+RediSearch LLAPI audit (2026-10-26: C side at `deps/RediSearch@a272834a6`, compared with
+`ea1a6f40c`; Rust call sites at main 322e57a98).
 
 | here | there |
 | --- | --- |
-| `naRef`                 | refcount of RediSearch's process-global `NA_rstr` (`deps/RediSearch@ea1a6f4 src/info/index_error.c:29`). A `RedisModuleString` refcount is a plain `int`: guarded by the GIL |
-| `createProg`            | `Index::create_rs_index` (`graph/src/index/mod.rs:1101`) → `RediSearch_CreateIndex`/`CreateField` → `IndexError_Init` → `RM_HoldString(NA_rstr)` (`index_error.c:42`); callers hold the GIL |
-| `dropProg_ea1a6f4`      | `graph_free` (`src/graph_core.rs:1777`) drops on `std::thread::spawn` (`:1797`) → `SpecHandle::drop` (`mod.rs:996`, no GIL by design, #726) → `RediSearch_DropIndex` → `IndexSpec_Free` → `IndexError_Clear` → `RM_FreeString(NA_rstr)` (`index_error.c:91`) |
-| `dropProg_rs29`         | FalkorDB/RediSearch#29 (a272834a6): errors borrow `NA_rstr` (`IndexError_FreeKey` skips it); the GC stop runs on the main thread via `RM_EventLoopAddOneShot` |
+| `gil`                    | the Redis GIL: main-thread callbacks, `QuerySession` writer mode, `RM_ThreadSafeContextLock` |
+| `rsGlobal`, `rsSpec`     | RediSearch's global `RWLOCK` (`src/rwlock.c:59-102`) and per-spec `rwlock` (`src/spec.c:2263-2310`), write mode |
+| `indexer`, `graphW`      | `Indexer::write_lock`; the per-graph `RwLock` in write mode |
+| `naRef`                  | refcount of RediSearch's global `NA_rstr` (`src/info/index_error.c:29`), a plain `int` |
+| `idxMem`                 | an index's inverted-index / numeric-tree memory, which ForkGC's child scans unlocked (`src/fork_gc.c:443-456`) |
 
-Live: issue #3483 (AOF replay, 6.0.3 crashes in `RM_FreeString`, `illegal decrRefCount
-… type 0, encoding 8, refcount 0` = the embstr `"N/A"`). C v4.22.2 pins RediSearch
-311f90126, which has no `IndexError`/`NA_rstr`, so the C engine cannot hit it.
+**Accesses to `naRef` at ea1a6f40c** (all reach `IndexError_Init` `:42` or `IndexError_Clear` `:91`):
+* `RediSearch_CreateIndex` (`api:47-78`, takes no RediSearch lock) from `Index::create_rs_index`
+  (`graph/src/index/mod.rs:1101`), GIL held on every path: `{gil, indexer}`.
+* `RediSearch_CreateField` (`api:167-242`, RWLOCK W): `{gil, indexer, rsGlobal}`.
+* `RediSearch_DropIndex` (`api:80-92`, RWLOCK W) from `SpecHandle::drop` on `graph_free`'s
+  spawned thread (`src/graph_core.rs:1794`): `{rsGlobal}`.
+* `RediSearch_IndexRelease` dropping the last ref (`api:99-101`, no lock) from
+  `OwnedIndex::drop` on a reader after a concurrent drop: `{}`.
+At a272834a6 (FalkorDB/RediSearch#29) errors borrow `NA_rstr`: none of these touch it.
+
+**Accesses to `idxMem`** (both commits):
+* ForkGC: `RM_Fork` under the GIL only (`fork_gc.c:1050-1065`): `{gil}`.
+* Writer commit `Indexer::commit` → `IndexAddDocument` (`api:648-688`, RWLOCK W + spec W):
+  `{gil, graphW, indexer, rsGlobal, rsSpec}`.
+* Background population `populate_index_batch` (`graph/src/graph/graph.rs:543-563`,
+  "Deliberately no global lock") → `IndexAddDocument`: `{indexer, rsGlobal, rsSpec}`.
 -/
 
 namespace SC.Guarded
 
-/-- A thread step: take or release a lock, or touch a resource. -/
-inductive GOp where
-  | acq (l : Nat)
-  | rel (l : Nat)
-  | touch (r : Nat)
-deriving DecidableEq, Repr
-
 def gil : Nat := 0
-def naRef : Nat := 0
+def rsGlobal : Nat := 1
+def rsSpec : Nat := 2
+def indexer : Nat := 3
+def graphW : Nat := 4
 
-/-- The lock a resource needs held; `none` = thread-safe (atomic or thread-local). -/
-def guard : Nat → Option Nat
-  | 0 => some gil  -- naRef: non-atomic `robj.refcount`
-  | _ => none
+/-- One access to a shared resource with the locks its thread holds. -/
+structure Access where
+  site : String
+  held : List Nat
+deriving Repr, Inhabited
 
-/-- Every guarded touch happens with its guard in `held`. -/
-def guardedOk : List Nat → List GOp → Bool
-  | _, [] => true
-  | held, .acq l :: ops => guardedOk (l :: held) ops
-  | held, .rel l :: ops => guardedOk (held.erase l) ops
-  | held, .touch r :: ops => (match guard r with | some l => held.contains l | none => true)
-                             && guardedOk held ops
+/-- Locks held at every access (Eraser's candidate set). -/
+def lockset : List Access → List Nat
+  | [] => [gil, rsGlobal, rsSpec, indexer, graphW]
+  | a :: as => (lockset as).filter (a.held.contains ·)
 
-/-- Resources a program touches without the guard held. -/
-def unguarded : List Nat → List GOp → List Nat
-  | _, [] => []
-  | held, .acq l :: ops => unguarded (l :: held) ops
-  | held, .rel l :: ops => unguarded (held.erase l) ops
-  | held, .touch r :: ops =>
-      (match guard r with | some l => if held.contains l then [] else [r] | none => [])
-      ++ unguarded held ops
+/-- Race-free: some lock is common to every access. -/
+def consistent (as : List Access) : Bool := !(lockset as).isEmpty
 
-/-- Writer / RDB-load / replica `GRAPH.EFFECT`: create an index under the GIL. -/
-def createProg : List GOp := [.acq gil, .touch naRef, .rel gil]
-/-- `graph_free`'s drop thread on RediSearch ea1a6f4: `IndexError_Clear` frees `NA_rstr`. -/
-def dropProg_ea1a6f4 : List GOp := [.touch naRef]
-/-- The same drop with RediSearch#29: the error borrows `NA_rstr`; nothing guarded. -/
-def dropProg_rs29 : List GOp := []
+/-! ## #3483: `NA_rstr`'s refcount -/
 
-/-- Two threads race on `r` if both touch it and at least one does so unguarded. -/
-def races (p q : List GOp) (r : Nat) : Bool :=
-  (unguarded [] p).contains r && (q.contains (.touch r) || p == q)
-  || (unguarded [] q).contains r && p.contains (.touch r)
+def naRef_ea1a6f4 : List Access :=
+  [⟨"CreateIndex ← Index::create_rs_index", [gil, indexer]⟩,
+   ⟨"CreateField ← Index::create_rs_index/register_fields", [gil, indexer, rsGlobal]⟩,
+   ⟨"DropIndex ← SpecHandle::drop on graph_free's thread", [rsGlobal]⟩,
+   ⟨"IndexRelease (last ref) ← OwnedIndex::drop on a reader", []⟩]
 
-/-- **#3483.** The drop thread touches `NA_rstr`'s refcount without the GIL while the
-main thread may be creating an index: a lost update, then a premature free. -/
-theorem bug3483_drop_unguarded : guardedOk [] dropProg_ea1a6f4 = false := by decide
-theorem bug3483_races_create : races createProg dropProg_ea1a6f4 naRef = true := by decide
+/-- With RediSearch#29 no LLAPI path touches `NA_rstr`'s refcount. -/
+def naRef_rs29 : List Access := []
 
-/-- With RediSearch#29 every program is guarded and no pair races on `NA_rstr`. -/
-theorem rs29_guarded : guardedOk [] createProg ∧ guardedOk [] dropProg_rs29 := by decide
-theorem rs29_no_race : races createProg dropProg_rs29 naRef = false := by decide
+/-- **#3483.** No lock is common to the accesses: the main thread's create holds only the
+GIL among them, the drop thread only RediSearch's lock. -/
+theorem bug3483_naRef_race : consistent naRef_ea1a6f4 = false := by decide
+/-- Even the GIL-free drop alone would race with create: the two share nothing. -/
+theorem bug3483_create_vs_drop :
+    consistent [naRef_ea1a6f4[0]!, naRef_ea1a6f4[2]!] = false := by decide
+theorem rs29_naRef_free : consistent naRef_rs29 = true := by decide
 
-/-- The guard check is the lockset property: no unguarded touches. -/
-theorem guardedOk_iff (held : List Nat) (p : List GOp) :
-    guardedOk held p = true ↔ unguarded held p = [] := by
-  induction p generalizing held with
-  | nil => simp [guardedOk, unguarded]
-  | cons op ops ih =>
-    cases op with
-    | acq l => simp [guardedOk, unguarded, ih]
-    | rel l => simp [guardedOk, unguarded, ih]
-    | touch r =>
-      simp only [guardedOk, unguarded, Bool.and_eq_true, List.append_eq_nil_iff, ih]
-      cases guard r with
-      | none => simp
-      | some l => by_cases h : held.contains l <;> simp_all
+/-! ## H1 (open): ForkGC forks while background population writes the index
+
+The ForkGC takes only the GIL around `RM_Fork`; background population writes under
+RediSearch's locks but not the GIL. The child can snapshot a half-written block or tree
+and send the parent a delta computed from it. -/
+
+def idxMem : List Access :=
+  [⟨"ForkGC RM_Fork (fork_gc.c:1050-1065)", [gil]⟩,
+   ⟨"writer commit → IndexAddDocument", [gil, graphW, indexer, rsGlobal, rsSpec]⟩,
+   ⟨"populate_index_batch → IndexAddDocument", [indexer, rsGlobal, rsSpec]⟩]
+
+theorem h1_fork_vs_populate_race : consistent idxMem = false := by decide
+
+/-- Writers alone are consistent (RediSearch's locks); so are fork and writer commit
+(the GIL). It is the GIL-free population that breaks it. -/
+theorem h1_without_populate : consistent (idxMem.take 2) = true := by decide
+
+/-- Either fix restores a common lock: population under the GIL, or the GC holding the
+spec lock across the fork. -/
+theorem h1_fix_populate_gil :
+    consistent (idxMem.take 2 ++ [⟨"populate under GIL", [gil, indexer, rsGlobal, rsSpec]⟩])
+      = true := by decide
+theorem h1_fix_gc_spec_lock :
+    consistent (⟨"ForkGC fork under spec R", [gil, rsSpec]⟩ :: idxMem.drop 1) = true := by
+  decide
+
+/-! ## The check is the lockset property -/
+
+theorem mem_lockset {as : List Access} {l : Nat} (h : l ∈ lockset as) (a : Access)
+    (ha : a ∈ as) : l ∈ a.held := by
+  induction as with
+  | nil => simp at ha
+  | cons b bs ih =>
+    simp only [lockset, List.mem_filter] at h
+    rcases List.mem_cons.mp ha with rfl | hb
+    · simpa using h.2
+    · exact ih h.1 hb
+
+/-- If the accesses are consistent, one lock is held at every access. -/
+theorem consistent_common_lock (as : List Access) (h : consistent as = true) :
+    ∃ l, ∀ a ∈ as, l ∈ a.held := by
+  simp only [consistent, Bool.not_eq_true', List.isEmpty_eq_false_iff] at h
+  obtain ⟨l, hl⟩ := List.exists_mem_of_ne_nil _ h
+  exact ⟨l, fun a ha => mem_lockset hl a ha⟩
 
 end SC.Guarded
