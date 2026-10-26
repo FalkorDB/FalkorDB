@@ -300,6 +300,11 @@ jobs:
         run: |
           CXX=clang++-23 cargo clippy --all-targets --features index-falkordb
       - name: Unit tests
+        # The doctests link GraphBLAS's bundled zstd and the zstd-sys crate together, and
+        # both define the zstd error helpers: the same link flag `coverage` and `fuzz` pass.
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
+          RUSTDOCFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
         run: cargo test -p graph --features index-falkordb
   coverage:
     runs-on: ubuntu-latest
