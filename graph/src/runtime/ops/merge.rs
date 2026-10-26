@@ -357,31 +357,31 @@ impl<'a> Iterator for MergeOp<'a> {
                         }
                     }
                 } else {
-                    // Check if all pattern variables are already bound.
-                    // All nodes must be bound, and every *named* relationship
-                    // alias must also be bound. Anonymous relationships
-                    // (_anon_* prefix) are not individually tracked, so when
-                    // all nodes are bound the pattern is fully constrained.
-                    // Only when a user-named relationship variable is unbound
-                    // do we need to iterate all matches. A path variable also
-                    // binds the anonymous relationships, so with one every
-                    // match (e.g. each parallel edge) is a distinct row.
+                    // When every match yields the same output row, the first
+                    // one is enough. That holds when all nodes are bound and
+                    // no relationship is visible in the output: a named
+                    // relationship (it cannot be bound already, MERGE rejects
+                    // that) or an anonymous one that a path variable exposes
+                    // (`MERGE p = (a)-[:R]->(b)` returns one path per
+                    // parallel edge, #3040). A path over bound nodes only
+                    // keeps the shortcut.
                     let pattern = self.resolve_pattern();
-                    let all_vars_bound = pattern.paths().is_empty()
-                        && pattern
-                            .nodes()
-                            .iter()
-                            .all(|node| input_env.is_bound_by_id(node.alias.id))
-                        && pattern
-                            .relationships()
-                            .iter()
-                            .filter(|rel| {
-                                rel.alias
+                    let all_vars_bound = pattern
+                        .nodes()
+                        .iter()
+                        .all(|node| input_env.is_bound_by_id(node.alias.id))
+                        && pattern.relationships().iter().all(|rel| {
+                            input_env.is_bound_by_id(rel.alias.id)
+                                || (rel
+                                    .alias
                                     .name
                                     .as_ref()
-                                    .is_some_and(|n| !n.starts_with("_anon_"))
-                            })
-                            .all(|rel| input_env.is_bound_by_id(rel.alias.id));
+                                    .is_none_or(|n| n.starts_with("_anon_"))
+                                    && !pattern
+                                        .paths()
+                                        .iter()
+                                        .any(|path| path.vars.contains(&rel.alias)))
+                        });
 
                     if all_vars_bound {
                         // Only first match needed.
