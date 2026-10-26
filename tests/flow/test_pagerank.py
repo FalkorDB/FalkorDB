@@ -158,3 +158,20 @@ class testPagerank(FlowTestsBase):
         # Should return an empty result set
         self.env.assertEqual(len(result.result_set), 0)
 
+    def test_pagerank_one_node_label(self):
+        """A label holding exactly one node is answered (#3349)"""
+        # the label matches one node; the graph holds others
+        self.graph.query("CREATE (:Node {id: 'a'}), (:Other {id: 'b'}), (:Other {id: 'c'})")
+
+        result = self.graph.query("""CALL algo.pageRank('Node', NULL)
+                                     YIELD node, score
+                                     RETURN node.id""").result_set
+        self.env.assertEqual(result, [['a']])
+
+        # a graph holding a single node, unfiltered
+        self.graph.delete()
+        self.graph.query("CREATE (:Node {id: 'a'})")
+        result = self.graph.query("""CALL algo.pageRank(NULL, NULL)
+                                     YIELD node, score
+                                     RETURN node.id""").result_set
+        self.env.assertEqual(result, [['a']])

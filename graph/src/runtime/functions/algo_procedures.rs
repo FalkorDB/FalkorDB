@@ -545,6 +545,49 @@ unsafe fn build_bool_pattern(
     GrB_Scalar_free(&raw mut scalar);
 }
 
+/// Hold `m` by row.
+///
+/// GraphBLAS stores every `n × 1` matrix by column, and that includes the
+/// `1 × 1` one a single-node graph or projection makes. `LAGraph_CheckGraph`
+/// rejects an adjacency matrix (or its cached transpose) held by column with
+/// `LAGRAPH_INVALID_GRAPH` (-1000), so without this WCC, PageRank and
+/// betweenness fail on a single node (#3349).
+unsafe fn pin_row_major(m: crate::graph::graphblas::GrB_Matrix) {
+    use crate::graph::graphblas::{GrB_Matrix_set_INT32, GrB_Orientation, GxB_Option_Field};
+
+    GrB_Matrix_set_INT32(
+        m,
+        GrB_Orientation::GrB_ROWMAJOR as i32,
+        GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT as _,
+    );
+}
+
+/// A new empty `n × n` BOOL matrix for a compact projection, held by row
+/// (see [`pin_row_major`]).
+unsafe fn new_compact_bool_matrix(n: u64) -> crate::graph::graphblas::GrB_Matrix {
+    use crate::graph::graphblas::{GrB_BOOL, GrB_Matrix, GrB_Matrix_new};
+
+    let mut m: GrB_Matrix = null_mut();
+    GrB_Matrix_new(&raw mut m, GrB_BOOL, n, n);
+    pin_row_major(m);
+    m
+}
+
+/// Cache `G->AT`, held by row like `G->A`. `LAGraph_Cached_AT` makes the
+/// transpose with `GrB_Matrix_new`, which holds a `1 × 1` one by column (see
+/// [`pin_row_major`]).
+unsafe fn cache_transpose(
+    g: LAGraph_Graph,
+    msg: *mut std::os::raw::c_char,
+) {
+    lagraph_bindings::LAGraph_Cached_AT(g, msg);
+    if let Some(graph) = g.as_ref()
+        && !graph.AT.is_null()
+    {
+        pin_row_major(graph.AT);
+    }
+}
+
 /// Build compact adjacency directly from relationship tensors.
 /// Avoids materializing the full node_cap × node_cap matrix.
 /// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
@@ -559,7 +602,7 @@ unsafe fn build_compact_adj_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
+    use crate::graph::graphblas::GrB_Index;
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -605,8 +648,7 @@ unsafe fn build_compact_adj_from_tensors(
     }
 
     // Build compact matrix in one bulk call
-    let mut compact: GrB_Matrix = null_mut();
-    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
+    let compact = new_compact_bool_matrix(n);
     build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
@@ -625,7 +667,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
+    use crate::graph::graphblas::GrB_Index;
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -675,8 +717,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     }
 
     // Build compact matrix in one bulk call
-    let mut compact: GrB_Matrix = null_mut();
-    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
+    let compact = new_compact_bool_matrix(n);
     build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
@@ -756,7 +797,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
-                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                cache_transpose(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Run PageRank
@@ -980,7 +1021,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 let mut msg = new_msg();
-                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                cache_transpose(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Select source nodes for sampling (all from compact matrix)
@@ -3214,7 +3255,7 @@ fn register_maxflow(funcs: &mut Functions) {
                     false,
                 )?;
                 let mut msg = new_msg();
-                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                cache_transpose(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
 
                 let mut lag_max_flow: f64 = 0.0;

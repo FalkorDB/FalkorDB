@@ -83,6 +83,20 @@ class testBetweenness(FlowTestsBase):
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
 
+    def test_betweenness_one_node_projection(self):
+        """A nodeLabels projection holding exactly one node is answered (#3349)"""
+        # the label matches one node; the graph holds others
+        self.graph.query("CREATE (:Node {name: 'a'}), (:Other {name: 'b'}), (:Other {name: 'c'})")
+
+        result = self.betweenness_centrality(nodeLabels=['Node'])
+        self.env.assertEqual([row[0] for row in result.result_set], ['a'])
+
+        # a graph holding a single node, unfiltered
+        self.graph.delete()
+        self.graph.query("CREATE (:Node {name: 'a'})")
+        result = self.betweenness_centrality()
+        self.env.assertEqual([row[0] for row in result.result_set], ['a'])
+
     def test_betweenness_centrality(self):
         """Test betweenness centrality algorithm on a simple directed graph structure."""
 
