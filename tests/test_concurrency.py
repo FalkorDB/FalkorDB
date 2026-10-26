@@ -137,17 +137,12 @@ def _multi_write(r):
     # A MULTI-wrapped write runs synchronously on the main thread (query_sync).
     # Before the #726 fix this DEADLOCKED against the pool write loop (query_sync
     # holds the GIL and waits for L1; the write loop holds L1 and waits for the
-    # GIL). Now it either succeeds or, when it races the write loop for the MVCC
-    # slot in the brief commit gap, returns a retryable "another write is in progress"
-    # (the client is expected to retry). Either way the server does not hang —
-    # which is what this test guards. Swallow only that expected transient error.
-    try:
-        p = r.pipeline(transaction=True)
-        p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
-        p.execute()
-    except Exception as e:  # noqa: BLE001 - narrow check below
-        if "another write is in progress" not in str(e):
-            raise
+    # GIL). It also used to fail with "another write is in progress" when it ran
+    # while a queued write was still matching (#3093): the MVCC write slot is now
+    # claimed only under the write lock, which this write holds, so it must succeed.
+    p = r.pipeline(transaction=True)
+    p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
+    p.execute()
 
 
 def test_multi_write_concurrent_with_writes():

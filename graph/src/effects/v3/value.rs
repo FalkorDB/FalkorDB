@@ -158,13 +158,23 @@ impl EffectDecode<3> for Value {
     /// `Value` is still recursive and still overflows the stack when dropped
     /// deep enough, on either side. That bound belongs where the value is built,
     /// not where it is read; see the issue on unbounded nesting.
+    ///
+    /// Width is bounded against the whole stack, not one level. A container's
+    /// children share the remaining bytes with every sibling its ancestors
+    /// still owe, so `owed` carries those siblings into the next level's
+    /// check. Bounded per level alone, each level of `[[[…` could claim the
+    /// whole remainder, and the reservations summed to the square of the
+    /// payload.
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let mut stack: Vec<Frame> = Vec::new();
+        // Children the open frames still owe beyond the one being read now:
+        // the sum of `left - 1` over the stack.
+        let mut owed = 0_usize;
 
         loop {
             // Produce one value. A container opens a frame and yields nothing
             // yet, so the next turn reads its first child.
-            let Some(mut value) = read_one(r, &mut stack)? else {
+            let Some(mut value) = read_one(r, &mut stack, &mut owed)? else {
                 continue;
             };
 
@@ -177,6 +187,8 @@ impl EffectDecode<3> for Value {
                         items.push(value);
                         *left -= 1;
                         if *left > 0 {
+                            // The next child is the one being read now.
+                            owed -= 1;
                             break;
                         }
                         let Some(Frame::List { items, .. }) = stack.pop() else {
@@ -194,9 +206,13 @@ impl EffectDecode<3> for Value {
 ///
 /// `Ok(None)` means a frame was pushed: the value is not known until its
 /// children are.
+///
+/// `owed` is how many values the open frames still need after this one; a
+/// count read here has to leave room for them too.
 fn read_one(
     r: &mut Reader<'_>,
     stack: &mut Vec<Frame>,
+    owed: &mut usize,
 ) -> Result<Option<Value>, DecodeError> {
     // Four bytes on the wire, widened so the arms below can be the shared
     // `si_type` constants themselves rather than casts of them.
@@ -218,11 +234,14 @@ fn read_one(
             }
         }
         si_type::T_ARRAY => {
-            let n = r.u32()?;
-            let n = r.guard_count(u64::from(n), MIN_VALUE_BYTES)?;
+            let n = u64::from(r.u32()?);
+            // Its children and the siblings already owed are disjoint bytes.
+            r.guard_count(n + *owed as u64, MIN_VALUE_BYTES)?;
+            let n = n as usize;
             if n == 0 {
                 return Ok(Some(Value::List(Arc::new(ThinVec::new()))));
             }
+            *owed += n - 1;
             stack.push(Frame::List {
                 items: ThinVec::with_capacity(n),
                 left: n,
@@ -429,6 +448,30 @@ mod tests {
             Value::decode(&mut r),
             Err(DecodeError::ImplausibleCount { .. } | DecodeError::UnexpectedEof { .. })
         ));
+    }
+
+    #[test]
+    fn nested_lists_cannot_each_claim_the_whole_remaining_buffer() {
+        // Every level claims as many children as the bytes after it could hold,
+        // which passes a width check that ignores the siblings its ancestors
+        // still owe. Each level then reserves capacity for its claim, so the
+        // reservations grow with the square of the payload: 1 MB of these
+        // peaked at 2.3 GB RSS on a client-sent `GRAPH.EFFECT` before failing
+        // at the end of the buffer. The second level has to be refused — its
+        // children and the first level's remaining siblings cannot both fit.
+        let levels = 1_000_u32;
+        let mut buf = Vec::new();
+        for k in 0..levels {
+            buf.u32(si_type::T_ARRAY as u32);
+            buf.u32(2 * (levels - k - 1));
+        }
+        let mut r = Reader::new(&buf);
+        let err = Value::decode(&mut r).unwrap_err();
+        assert!(
+            matches!(err, DecodeError::ImplausibleCount { .. }),
+            "expected the claim to be refused up front, got {err:?}"
+        );
+        assert_eq!(r.remaining(), buf.len() - 16, "refused at the second level");
     }
 
     #[test]
