@@ -77,74 +77,130 @@ keep_root() {
     drop_privs=""
 }
 
-# config_file_values NAME FILE [DEPTH]: every value config file FILE gives
-# config NAME (lower case), one per line in the order the server applies them.
-# Like the server, directive names are case-insensitive, and an `include`
-# directive reads the files it names (a glob expands) at that point; DEPTH
-# only bounds an include cycle.
-config_file_values() {
-    { [ -f "$2" ] && [ -r "$2" ] && [ "${3:-0}" -lt 8 ]; } || return 0
-    awk -v name="$1" '
-        { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
-        $0 == "" || /^#/ { next }
-        {
-            key = tolower($1)
-            rest = $0
-            sub(/^[^ \t]+[ \t]+/, "", rest)
-        }
-        key == "include" && NF == 2 { gsub(/^["\047]|["\047]$/, "", rest); print "i " rest; next }
-        key == name && NF >= 2 { print "v " rest }
-    ' "$2" | while IFS= read -r _line; do
-        case "$_line" in
-            "i "*)
-                # Unquoted, so an include glob expands as in the server.
-                # shellcheck disable=SC2086
-                for _inc in ${_line#i }; do
-                    config_file_values "$1" "$_inc" $(( ${3:-0} + 1 ))
-                done
-                ;;
-            *) printf '%s\n' "${_line#v }" ;;
-        esac
-    done
-}
-
 # server_config NAME: the value the server will get for config NAME (lower
-# case) from its arguments -- a config file given as the first argument and
-# the files it includes, then any `--NAME value` or `--include FILE`, the last
-# one winning, as in the server. Empty when unset.
+# case) from its arguments, empty when unset. This replays the server's config
+# loading (valkey 9's config.c): a config file given as the first argument,
+# then every `--name value` as a config line after it; the last setting wins.
+# Lines are split into arguments, quotes and escapes included, as the server
+# splits them; directive names are case-insensitive; `include` reads the files
+# it names -- a glob expands -- at that point; and `dir` changes the directory
+# later relative paths resolve against, as the server's chdir does. An option
+# value given on the command line is taken literally, as there.
 server_config() {
-    _value="" _want="" _first=1
+    _first=1
+    # The tokens, in order: F <config file>, O <option name>, A <argument>.
     # shellcheck disable=SC2086
     for _tok in ${SERVER_ARGS}; do
-        _file=""
-        case "$_want" in
-            value) _value=$_tok ;;
-            include) _file=$_tok ;;
-            *)
-                if [ -n "$_first" ] && [ "${_tok#-}" = "$_tok" ]; then
-                    _file=$_tok
-                fi
-                case "$_tok" in
-                    --*)
-                        case "$(printf '%s' "$_tok" | tr '[:upper:]' '[:lower:]')" in
-                            "--$1") _want=value ;;
-                            --include) _want=include ;;
-                        esac
-                        _first=""
-                        continue
-                        ;;
-                esac
-                ;;
-        esac
-        _want="" _first=""
-        if [ -n "$_file" ]; then
-            _file_value=$(config_file_values "$1" "$_file" | tail -n 1)
-            [ -z "$_file_value" ] || _value=$_file_value
+        if [ -n "$_first" ] && [ "${_tok#-}" = "$_tok" ]; then
+            printf 'F\t%s\n' "$_tok"
+        elif [ "${_tok#--}" != "$_tok" ]; then
+            printf 'O\t%s\n' "${_tok#--}"
+        else
+            printf 'A\t%s\n' "$_tok"
         fi
-    done
-    _value=${_value#[\"\']}
-    _value=${_value%[\"\']}
-    printf '%s\n' "$_value"
+        _first=""
+    done | SERVER_CONFIG_CWD=$PWD awk -v name="$1" '
+        # The arguments of config line s in a[1..n], split as sds.c
+        # sdsparsearg does; n, or -1 for unbalanced quotes.
+        function splitargs(s, a,    n, i, len, c, d, cur, inq, insq) {
+            n = 0; i = 1; len = length(s)
+            for (;;) {
+                while (i <= len && index(" \t\n\r\v\f", substr(s, i, 1))) i++
+                if (i > len) return n
+                cur = ""; inq = insq = 0
+                for (;;) {
+                    if (i > len) {
+                        if (inq || insq) return -1
+                        break
+                    }
+                    c = substr(s, i, 1)
+                    if (inq) {
+                        d = substr(s, i + 1, 1)
+                        if (c == "\\" && d == "x" && substr(s, i + 2, 2) ~ /^[0-9A-Fa-f][0-9A-Fa-f]$/) {
+                            cur = cur sprintf("%c", 16 * hex(substr(s, i + 2, 1)) + hex(substr(s, i + 3, 1)))
+                            i += 4
+                        } else if (c == "\\" && d != "") {
+                            cur = cur (d == "n" ? "\n" : d == "r" ? "\r" : d == "t" ? "\t" : d == "b" ? "\b" : d == "a" ? "\007" : d)
+                            i += 2
+                        } else {
+                            if (c == "\"") inq = 0
+                            else cur = cur c
+                            i++
+                        }
+                    } else if (insq) {
+                        if (c == "\\" && substr(s, i + 1, 1) == "\047") {
+                            cur = cur "\047"
+                            i += 2
+                        } else {
+                            if (c == "\047") insq = 0
+                            else cur = cur c
+                            i++
+                        }
+                    } else {
+                        i++
+                        if (index(" \t\n\r", c)) break
+                        if (c == "\"") inq = 1
+                        else if (c == "\047") insq = 1
+                        else cur = cur c
+                    }
+                }
+                a[++n] = cur
+            }
+        }
+        function hex(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+        function resolve(p) { return p ~ /^\// ? p : cwd "/" p }
+        function shquote(s) { gsub(/\047/, "\047\"\047\"\047", s); return "\047" s "\047" }
+        # The files `include p` reads into out[1..n]; n. A glob expands,
+        # sorted, from the current directory, as glob(3) does in the server.
+        function expand(p, out,    n, cmd, f) {
+            n = 0
+            if (p !~ /[*?[]/) {
+                out[++n] = resolve(p)
+                return n
+            }
+            cmd = "cd " shquote(cwd) " && IFS= && for f in $1; do [ -e \"$f\" ] && printf \"%s\\n\" \"$f\"; done"
+            cmd = "sh -c " shquote(cmd) " sh " shquote(p)
+            while ((cmd | getline f) > 0) out[++n] = resolve(f)
+            close(cmd)
+            return n
+        }
+        function apply(key, arg, depth,    files, n, i) {
+            key = tolower(key)
+            if (key == "dir") cwd = resolve(arg)
+            else if (key == "include") {
+                n = expand(arg, files)
+                for (i = 1; i <= n; i++) load(files[i], depth + 1)
+            } else if (key == name) value = arg
+        }
+        # Apply config file f; depth only bounds an include cycle.
+        function load(f, depth,    lines, n, i, line, a) {
+            if (depth > 8) return
+            n = 0
+            while ((getline line < f) > 0) lines[++n] = line
+            close(f)
+            for (i = 1; i <= n; i++) {
+                line = lines[i]
+                sub(/^[ \t\r\n]+/, "", line)
+                sub(/[ \t\r\n]+$/, "", line)
+                if (line == "" || line ~ /^#/) continue
+                split("", a)
+                if (splitargs(line, a) == 2) apply(a[1], a[2], depth)
+            }
+        }
+        BEGIN { cwd = ENVIRON["SERVER_CONFIG_CWD"]; value = "" }
+        {
+            kind = substr($0, 1, 1)
+            arg = substr($0, 3)
+        }
+        # An option with no argument yet takes the next token, even one
+        # starting with --, as its argument, as in the server -- bar --save
+        # and --sentinel, which it lets stand alone.
+        kind == "O" && opt != "" && !nargs && tolower(opt) !~ /^(save|sentinel)$/ { kind = "A"; arg = "--" arg }
+        kind == "F" { load(resolve(arg), 0) }
+        kind == "O" { opt = arg; nargs = 0 }
+        kind == "A" && opt != "" && !nargs++ { apply(opt, arg, 0) }
+        END { print value }
+    '
 }
 
 # redis_rdb_version FILE: the save-file version when FILE starts with a Redis
