@@ -2228,21 +2228,33 @@ impl<'a> Parser<'a> {
                     }
                     stack.push((current + 1, None, 0));
                 } else if current == 9 {
-                    // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
-
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
+                    // unary add or subtract, any run of them: `- -5` is 5
+                    let mut negate_count = 0;
+                    loop {
+                        match self.lexer.current() {
+                            Ok(Token::Plus) => {}
+                            Ok(Token::Dash) => negate_count += 1,
+                            // Handle integer overflow with negation
+                            Err(err) if negate_count > 0 => {
+                                return Err(
+                                    err.replace("Integer overflow '", "Integer overflow '-")
+                                );
+                            }
+                            _ => break,
+                        }
+                        self.lexer.next();
                     }
 
-                    let (res, height) = if is_negate {
-                        (Some(tree!(ExprIR::Negate)), 1)
+                    // Negate type-checks its operand, so `- -x` is not `x`.
+                    // A longer run still folds, keeping its parity, as NOT's
+                    // does: to one Negate, or to two the operand is placed under.
+                    if negate_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        (None, 0)
-                    };
-                    stack.push((current, res, height));
+                        for _ in 0..(2 - negate_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Negate)), 1));
+                        }
+                    }
                     stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
@@ -3937,6 +3949,27 @@ mod tests {
         ] {
             assert!(Parser::new(query).parse().is_ok(), "{query}");
         }
+    }
+
+    // Regression (#2309): a run of signs parsed only its first `+` and `-`, so
+    // `- -5` was "Invalid input Dash". It folds to one or two Negates by parity.
+    #[test]
+    fn chained_unary_signs_parse() {
+        with_functions();
+        for query in [
+            "RETURN - -5",
+            "RETURN --5",
+            "RETURN - - -5",
+            "RETURN -+5",
+            "RETURN +-+-5",
+            "RETURN --9223372036854775808",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "{query}");
+        }
+        let err = Parser::new("RETURN - -99999999999999999999")
+            .parse()
+            .expect_err("overflow");
+        assert!(err.contains("Integer overflow '-"), "{err}");
     }
 
     // Negation of a non-number is Null, and i64::MIN negates to itself. Both
