@@ -90,9 +90,12 @@ pub(crate) trait ManagedIndex: Clone + Sized {
         name: &Self::Name,
     ) -> Option<&'a mut Managed<Self>>;
 
-    /// Writer side: apply one unit of work's `changes`. While `state` is `Building`, only changes
-    /// to entities `place` puts below the cursor, plus removals of entities with no place, which
-    /// take out a tuple if the index holds one.
+    /// Writer side: apply one unit of work's `changes`. While `state` is `Building`, an addition
+    /// is applied only for an entity `place` puts below the cursor, and every removal is applied,
+    /// wherever `place` puts its entity or if it has none: removing a tuple the index does not hold
+    /// changes nothing. Additions are dropped before the changes collapse to the last per tuple,
+    /// so a dropped addition cannot cancel an earlier removal of the same tuple ([`BuildState`]
+    /// says why).
     fn writer_record(
         &mut self,
         state: BuildState<Self::Cursor>,
