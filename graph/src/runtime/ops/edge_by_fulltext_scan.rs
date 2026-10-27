@@ -100,7 +100,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                 else {
                     return Err("fulltext query expects a string query".into());
                 };
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(
                     g.fulltext_query_edges(&label_str, &query_str)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
