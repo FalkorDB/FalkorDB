@@ -1569,7 +1569,7 @@ pub(crate) fn abandon_write(
 /// writers. The last work a write does under the GIL; its caller releases the locks
 /// immediately afterwards and only then serializes the reply.
 fn commit_and_replicate(
-    g: &mut ThreadedGraph,
+    g: &ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
     wq: WriteQueryOk,

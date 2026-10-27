@@ -843,7 +843,7 @@ pub fn graph_bulk_insert(
             .iter()
             .map(redis_module::RedisString::as_slice)
             .collect();
-        let mut tg = graph.write();
+        let tg = graph.write();
         let Some(g_arc) = tg.graph.write() else {
             return Err(redis_module::RedisError::String(
                 "ERR another write is in progress, retry the query".to_string(),
