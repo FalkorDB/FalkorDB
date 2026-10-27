@@ -572,9 +572,8 @@ impl IndexDocs {
         &mut self,
         g: &mut Graph,
     ) {
-        // This is the query's own private version, which nothing else can borrow, so
-        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
-        // for the published version, where the order has to be the other way round.
+        // Each call takes its own indexer lock. `Pending::resync_published_indexes`
+        // holds both across its writes instead.
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -1779,6 +1778,10 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
+    /// `committed` is only borrowed immutably: RediSearch's documents live behind the
+    /// indexer, which every version shares, so rewriting them changes no version, and
+    /// a reader holding its borrow of `committed` is never disturbed.
+    ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
@@ -1821,15 +1824,14 @@ impl Pending {
             }
         }
 
-        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
-        // uses, and the only one that keeps this mutable borrow of the published
-        // version from colliding with a populate batch reading it (`AtomicRefCell`
-        // reports that collision by panicking). Concurrent *readers* are excluded
-        // instead by the write lock this query holds.
+        // Indexer locks before the graph borrow, the order `populate_index_batch` uses;
+        // they keep its batches out of RediSearch while both kinds are rewritten.
+        // Concurrent readers are kept out of RediSearch by the write lock this query
+        // holds.
         let (node_lock, edge_lock) = committed.borrow().index_locks();
         let node_guard = node_lock.lock();
         let edge_guard = edge_lock.lock();
-        let mut g = committed.borrow_mut();
+        let g = committed.borrow();
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
@@ -2125,6 +2127,51 @@ mod label_effect_tests {
             records(&pending, &g),
             vec![labelled(true, &[m]), labelled(false, &[l])]
         );
+    }
+}
+
+#[cfg(test)]
+mod resync_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::graph::mvcc_graph::MvccGraph;
+
+    /// A failed write's repair runs while a reader holds its borrow of the published
+    /// version, as every read runtime does for its whole query (`HeldRead` in
+    /// `Runtime::new`). The repair must leave that version alone: a `borrow_mut` of
+    /// it meets the reader's borrow and `AtomicRefCell` panics, which the module's
+    /// panic hook turns into a dead server.
+    #[test]
+    fn the_repair_does_not_borrow_the_published_version_mutably() {
+        ensure_init();
+        let mvcc = MvccGraph::new(16, 16, 0, "resync");
+        let first = mvcc.write().expect("the slot starts free");
+        let label = first.borrow_mut().get_label_id_mut("L");
+        mvcc.commit(first).expect("a new label commits");
+
+        let published = mvcc.read();
+        let reader = published.borrow();
+
+        // A `Commit` published a document for node 0 under `L`, then the query failed.
+        // A removal, so no RediSearch document is built: the label has no index.
+        let private = mvcc.write().expect("the reader holds no slot");
+        let mut pending = Pending::new();
+        pending
+            .deferred_docs
+            .node_removes
+            .entry(usize::from(label) as u64)
+            .or_default()
+            .insert(0);
+        pending.commit_deferred_indexes(&mut private.borrow_mut());
+        // Without documents to rewrite the repair returns before it borrows anything.
+        assert!(!pending.published.is_empty());
+
+        // The observable is a panic: a `borrow_mut` of `published` here meets
+        // `reader` and `AtomicRefCell` panics.
+        pending.resync_published_indexes(&published, &private.borrow());
+
+        drop(reader);
+        mvcc.rollback();
     }
 }
 

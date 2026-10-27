@@ -59,7 +59,7 @@ pub fn graph_effect(
         g
     };
 
-    let mut tg = graph.write();
+    let tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
         return Err(RedisError::String(
             "ERR another write is in progress, retry the query".to_string(),

@@ -1,4 +1,5 @@
-//! The one thing this crate needs from its host's locks.
+//! What this crate needs from its host's locks: a way to escalate, and a way to
+//! check that the global lock is held.
 //!
 //! Everything else — which graph is locked, when the locks are taken and released,
 //! what they even are — is the host's business. Under Redis they are the module GIL
@@ -26,6 +27,33 @@
 //! Escalation is **idempotent** and **sticky**: once a writer, a query stays one
 //! until it ends, so everything after the first mutation — including reads of the
 //! shared, non-MVCC index — sees an exclusively locked graph.
+//!
+//! ## The write slot
+//!
+//! **global lock → write slot.** [`MvccGraph`](crate::graph::mvcc_graph::MvccGraph)'s
+//! write slot is only claimed, and a version only committed, while the global lock is
+//! held, so the global lock serializes every slot holder and every publish. This
+//! crate cannot see the global lock, so the host installs a witness
+//! ([`set_global_lock_witness`]) and the slot's claims and commits debug-assert it.
+
+use std::sync::OnceLock;
+
+/// Whether the calling thread holds the host's global lock. Set once by the host.
+static GLOBAL_LOCK_WITNESS: OnceLock<fn() -> bool> = OnceLock::new();
+
+/// Install the host's answer to "does the calling thread hold the global lock?".
+/// The first call wins. Without one — this crate's unit tests, tools — nothing is
+/// checked.
+pub fn set_global_lock_witness(witness: fn() -> bool) {
+    let _ = GLOBAL_LOCK_WITNESS.set(witness);
+}
+
+/// True when the calling thread holds the host's global lock, or when no host
+/// installed a witness to ask.
+#[must_use]
+pub fn holds_global_lock() -> bool {
+    GLOBAL_LOCK_WITNESS.get().is_none_or(|holds| holds())
+}
 
 /// The one thing a query plan can ask its host to do: become a writer.
 ///

@@ -29,6 +29,7 @@ use crate::config::{
     apply_module_args, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
+use crate::query_session::holds_gil;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::graph::constraint::ConstraintStatus;
@@ -38,6 +39,7 @@ use graph::{
         REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init,
         RediSearch_SetDefaultScorer, RediSearch_SetNumWorkerThreads,
     },
+    locks::set_global_lock_witness,
     runtime::functions::{init_functions, init_udf_functions},
     threadpool::{self, init_thread_pool},
     udf,
@@ -141,6 +143,7 @@ pub fn graph_init(
     args: &[redis_module::RedisString],
 ) -> Status {
     graph::thread_id::set_main_thread();
+    set_global_lock_witness(holds_gil);
     panic::set_hook(Box::new(|info| {
         // Route the panic message + backtrace through RedisModule_Log so
         // it lands in the Redis log file uploaded by CI on test failure.
