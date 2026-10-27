@@ -34,7 +34,8 @@ use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId, TypeId};
 use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
-use super::falkordb_index::{BuildCursor, ColumnState, IndexColumn, IndexKey, IndexerBatch};
+use super::falkordb_index::{BuildCursor, IndexColumn};
+use super::managed::IndexId;
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 
@@ -401,7 +402,7 @@ pub fn edges_deleted(
 /// nothing.
 ///
 /// Each column is created `Building` and filled by one indexer batch with no limit on its size
-/// ([`read_indexer_batch_of`]), which reaches the end and flips it `Ready`. A batch into an empty
+/// ([`Graph::indexer_prepare`]), which reaches the end and flips it `Ready`. A batch into an empty
 /// column bulk-builds its tree, so this costs what building the column in one pass does.
 ///
 /// Built here on the write thread, with the graph borrowed. It is never built through the
@@ -430,51 +431,17 @@ fn build_in_one_batch(
     attr: &Arc<String>,
 ) {
     g.falkordb_index.create_building(entity, label, attr);
-    g.index_batch(entity, &(label.clone(), attr.clone()), usize::MAX);
+    g.indexer_prepare(
+        &IndexId::Column(entity, (label.clone(), attr.clone())),
+        usize::MAX,
+    );
 }
 
 // ---- Indexer batches ----
 //
 // A `Building` column is filled by indexer batches. Each reads the label's next entities from the
 // cursor, at their values in a version, and adds them to the column in that same version. See
-// `ColumnState`.
-
-/// Read an indexer batch of column `key` of `entity` from `g`: its next `entities` nodes or edges,
-/// at their values in `g`, encoded and sorted. `None` if the column is not `Building`. The batch
-/// is added to `g` itself (`Graph::index_batch`).
-pub(crate) fn read_indexer_batch_of(
-    g: &Graph,
-    entity: EntityType,
-    key: &IndexKey,
-    entities: usize,
-) -> Option<IndexerBatch> {
-    let ColumnState::Building { next } = g.falkordb_index.column_state(entity, &key.0, &key.1)?
-    else {
-        return None;
-    };
-    Some(read_batch(g, entity, key.clone(), next, entities))
-}
-
-/// The batch of column `key` of `entity` from cursor `from` on.
-fn read_batch(
-    g: &Graph,
-    entity: EntityType,
-    key: IndexKey,
-    from: BuildCursor,
-    entities: usize,
-) -> IndexerBatch {
-    let column = g
-        .falkordb_index
-        .column(entity, &key.0, &key.1)
-        .expect("a Building column exists");
-    let (tuples, next) = scan(g, &key.0, &key.1, from, entities, column);
-    IndexerBatch {
-        entity,
-        key,
-        tuples,
-        next,
-    }
-}
+// `BuildState`.
 
 /// Index population after an RDB load: build every column that a population snapshot of
 /// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its
@@ -556,8 +523,9 @@ fn edge_type(
 ///
 /// Each value is encoded as it is read and dropped straight away, so the scan never holds the
 /// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
-/// Range index) costs nothing past the read.
-fn scan(
+/// Range index) costs nothing past the read. This is how a column reads an indexer batch
+/// ([`ManagedIndex::indexer_read`](super::managed::ManagedIndex::indexer_read)).
+pub(super) fn scan(
     g: &Graph,
     label: &Arc<String>,
     attr: &Arc<String>,
@@ -674,14 +642,4 @@ pub(crate) fn run_indexer_batch(
 ) -> bool {
     g.index_next_batch(entities);
     g.falkordb_index.has_building_columns()
-}
-
-/// [`read_indexer_batch_of`] of the first `Building` column. For tests of one column.
-#[cfg(test)]
-pub(crate) fn read_indexer_batch(
-    g: &Graph,
-    entities: usize,
-) -> Option<IndexerBatch> {
-    let (entity, key, from) = g.falkordb_index.next_building()?;
-    Some(read_batch(g, entity, key, from, entities))
 }

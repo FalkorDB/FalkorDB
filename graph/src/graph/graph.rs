@@ -81,9 +81,11 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+#[cfg(all(test, feature = "index-falkordb"))]
+use crate::index::falkordb::managed::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::{BuildCursor, FalkorDbIndex, IndexKey},
+    falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -3778,20 +3780,6 @@ impl Graph {
         )
     }
 
-    /// One indexer batch on this version: read the next entities of column `key` of `entity` at
-    /// the values this version holds, at most `entities` nodes or edges, add it to the column and
-    /// move the column's cursor. `false`, changing nothing, if the column is not `Building`.
-    #[cfg(feature = "index-falkordb")]
-    pub(crate) fn index_batch(
-        &mut self,
-        entity: EntityType,
-        key: &IndexKey,
-        entities: usize,
-    ) -> bool {
-        graph_writes::read_indexer_batch_of(self, entity, key, entities)
-            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
-    }
-
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
@@ -5068,14 +5056,17 @@ impl Graph {
         self.attrs_name.iter().cloned().collect()
     }
 
-    /// [`Self::index_batch`] of the first `Building` column. For tests of one column.
+    /// [`Self::indexer_prepare`] of the first `Building` column. For tests of one column.
     #[cfg(all(test, feature = "index-falkordb"))]
     pub(crate) fn index_next_batch(
         &mut self,
         entities: usize,
     ) -> bool {
-        graph_writes::read_indexer_batch(self, entities)
-            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
+        self.falkordb_index
+            .next_building()
+            .is_some_and(|(entity, key, _)| {
+                self.indexer_prepare(&IndexId::Column(entity, key), entities)
+            })
     }
 }
 
