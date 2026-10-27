@@ -932,16 +932,34 @@ fn any_batch_size_builds_the_one_pass_column() {
     }
 }
 
-/// A node batch reads at most its size: nine nodes take exactly `ceil(9 / batch)` batches, the last
-/// of which flips the column `Ready`.
+/// A node batch reads its size and no more: after each batch the column holds exactly the nodes
+/// read so far, all of them below the cursor, so nine nodes take exactly `ceil(9 / batch)` batches,
+/// the last of which flips the column `Ready`. A batch that read further than it moved the cursor
+/// would leave nodes at or above the cursor in the column.
 #[test]
 fn a_node_batch_reads_at_most_its_size() {
     let attr = Arc::new("v".to_string());
     for (batch, batches) in [(1usize, 9usize), (2, 5), (4, 3), (9, 1), (10, 1)] {
-        let (mut g, label, _) = people_with(&attr, &(1..=9).collect::<Vec<_>>());
+        let (mut g, label, ids) = people_with(&attr, &(1..=9).collect::<Vec<_>>());
         create_index_on(&mut g, &label, &attr);
-        assert_eq!(build_to_end(&mut g, batch), batches, "batch {batch}");
-        assert_eq!(range_scan(&g, &label, &attr, 0, 100).len(), 9);
+        for k in 1..=batches {
+            let read = (k * batch).min(ids.len());
+            assert_eq!(
+                graph_writes::run_indexer_batch(&mut g, batch),
+                read < ids.len(),
+                "batch {batch}, #{k}: Building until the last"
+            );
+            assert_eq!(
+                range_scan(&g, &label, &attr, 0, 100),
+                ids[..read].to_vec(),
+                "batch {batch}, #{k}: the column holds exactly the nodes read so far"
+            );
+            assert_eq!(
+                cursor(&g, EntityType::Node, &label, &attr),
+                ids.get(read).map(|&id| BuildCursor::Node(NodeId::from(id))),
+                "batch {batch}, #{k}: the cursor is past them"
+            );
+        }
     }
 }
 
