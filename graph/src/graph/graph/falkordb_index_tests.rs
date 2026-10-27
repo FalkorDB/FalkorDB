@@ -794,6 +794,82 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     );
 }
 
+/// One unit of work deletes an edge behind the cursor and creates an edge that reuses its id ahead
+/// of the cursor, as a replica applying a buffer of a C master's writes can (C reuses a freed id
+/// at once). When the removal is applied, the id's place is the new edge's, ahead of the cursor,
+/// yet the column must lose the deleted edge's tuple and hold nothing for the new edge until its
+/// batch: with a value other than the deleted edge's, and with the same value, where the unit's
+/// removal and addition of that one tuple collapse to the addition.
+#[test]
+fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
+    for new_w in [9, 1] {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let ty = Arc::new("R".to_string());
+        let attr = Arc::new("w".to_string());
+        let aid = g.get_or_create_rel_attr_id(&attr);
+        let nodes = reserve_nodes(&mut g, 4);
+        g.create_nodes(&nodes.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
+        // In batch order: a->b, a->c, c->d; w = 1..=3.
+        let (srcs, dsts) = ([a, a, c], [b, c, d]);
+        let eids: Vec<u64> = g
+            .relationship_id_space()
+            .reserve(srcs.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+            .expect("freshly reserved ids are creatable");
+        let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+            pairs
+                .iter()
+                .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                .collect()
+        };
+        let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+        applied!(g, |w| g
+            .import_relationship_attrs(&with_w(&initial), &mut w));
+        g.falkordb_index
+            .create_building(EntityType::Relationship, &ty, &attr);
+
+        // One edge, a->b; the next batch resumes at a->c.
+        assert!(graph_writes::run_indexer_batch(&mut g, 1));
+        assert_eq!(
+            cursor(&g, EntityType::Relationship, &ty, &attr),
+            Some(BuildCursor::Edge {
+                src: NodeId::from(a),
+                dst: NodeId::from(c)
+            })
+        );
+        let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
+        assert_eq!(held(&g), vec![eids[0]]);
+
+        // One unit of work: delete a->b, then create d->a under its id, as a replica creates an
+        // edge under the id its master gave it (`effects/v3/apply.rs`).
+        let mut w = IndexDocs::default();
+        let mut del = RoaringTreemap::new();
+        del.insert(eids[0]);
+        g.delete_relationships(&del, &mut w).unwrap();
+        let reused = eids[0];
+        g.create_relationships_bulk(&ty, &[d], &[a], &[reused])
+            .expect("a freed id is creatable");
+        g.import_relationship_attrs(&with_w(&[(reused, new_w)]), &mut w);
+        g.apply_index_writes(&mut w);
+        assert!(
+            held(&g).is_empty(),
+            "w = {new_w}: a->b's tuple is out, and d->a, ahead of the cursor, waits for its batch"
+        );
+
+        build_to_end(&mut g, 1);
+        let values = [1, 2, 3, new_w];
+        assert_eq!(
+            contents(&g, EntityType::Relationship, &ty, &attr, &values),
+            one_pass(&g, EntityType::Relationship, &ty, &attr, &values),
+            "w = {new_w}"
+        );
+    }
+}
+
 /// `Person` nodes 0..10 with `v = 10 * id`, node 4 deleted (a gap in the rows), and `R` edges with
 /// several per source node and one multi-edge pair, so batches stop inside and between rows and
 /// inside the pair. Both columns are created, and `Building`.

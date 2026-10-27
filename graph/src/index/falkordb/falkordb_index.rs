@@ -153,9 +153,14 @@ impl IndexColumn {
 /// entity, so its column is `Ready` when it returns.
 ///
 /// A `Building` column holds exactly the current tuples of the entities below its cursor, and
-/// nothing at or above it. Live writes keep that true: a change to an entity below the cursor is
-/// applied, and a change to one at or above it is not, since the batch that reaches the entity
-/// reads its value then ([`FalkorDbIndex::apply`]). This is how C populates an index
+/// nothing at or above it. Live writes keep that true ([`FalkorDbIndex::apply`]). An addition for
+/// an entity below the cursor is applied, and one for an entity at or above it is not, since the
+/// batch that reaches the entity reads its value then. Every removal is applied, because an id's
+/// place can move past the cursor within one unit of work: an edge behind it is deleted and its
+/// id reused by an edge ahead of it, so the place no longer tells whether the column holds the
+/// deleted edge's tuples. Removing a tuple the column does not hold changes nothing. Additions are
+/// dropped before a unit's changes collapse to the last per tuple, so a tuple the unit removed and
+/// added back, as the reused id's new edge can, is still removed. This is how C populates an index
 /// (`src/index/index_construct.c`), in batches interleaved with writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnState {
@@ -517,9 +522,9 @@ impl FalkorDbIndex {
     /// with it.
     ///
     /// `place` gives an entity's place in build order, or `None` if the version no longer knows
-    /// it, as for an edge it deleted: only a `Building` column asks. It applies a change only to
-    /// an entity below its cursor, and a removal of an entity with no place, which takes out a
-    /// tuple if the column holds one.
+    /// it, as for an edge it deleted: only a `Building` column asks, and only of additions. It
+    /// applies an addition only for an entity below its cursor, and every removal
+    /// ([`ColumnState`] says why).
     pub(crate) fn apply(
         &mut self,
         writes: &mut PendingIndexWrites,
@@ -536,10 +541,10 @@ impl FalkorDbIndex {
         );
     }
 
-    /// One entity kind's part of [`apply`](Self::apply): per column, collapse each tuple's
-    /// history to its last change ([`last_write_wins`]), keep, on a `Building` column, only the
-    /// changes to entities below its cursor, then **remove** what ended removed and **add** what
-    /// ended added, one batched tree op each.
+    /// One entity kind's part of [`apply`](Self::apply): per column, keep, on a `Building` column,
+    /// only the additions for entities below its cursor, collapse each tuple's history to its last
+    /// change ([`last_write_wins`]), then **remove** what ended removed and **add** what ended
+    /// added, one batched tree op each.
     ///
     /// After the collapse the two sides are disjoint, so their order no longer matters; removes
     /// still go first. A column dropped since its changes were staged is skipped.
@@ -556,15 +561,13 @@ impl FalkorDbIndex {
             let Some(entry) = columns.get_mut(&key) else {
                 continue;
             };
-            last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
             if let ColumnState::Building { next } = entry.state {
-                // A batch reads an entity at or above the cursor when it reaches it.
-                let indexed =
-                    |&(_, id): &(u64, u64)| place(entity, id).is_none_or(|at| at.precedes(next));
-                removes.scalar.retain(indexed);
-                adds.scalar
-                    .retain(|tuple| place(entity, tuple.1).is_some_and(|at| at.precedes(next)));
+                // A batch reads an entity at or above the cursor when it reaches it, so its
+                // additions go. They go before the collapse, so one cannot cancel an earlier
+                // removal of the same tuple.
+                log.retain(|w| !w.add || place(entity, w.id).is_some_and(|at| at.precedes(next)));
             }
+            last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
             entry.column.remove_encoded(&mut removes);
             entry.column.add_encoded(&mut adds);
         }
