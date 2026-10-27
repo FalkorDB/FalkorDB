@@ -30,6 +30,15 @@ licence; each directory keeps its `LICENSE` and upstream `README.md`.
   adjacency for each of its neighbours, quadratic in the hub's degree (a star of 200k
   leaves: 11 s). Each vertex now keeps where its scan resumes, past the neighbours already
   matched (22 ms). The permutation is unchanged.
+- **Ordering quality.** Two changes, each a separate commit, bring `feral-metis`'s node
+  bisection closer to METIS 5's (`libmetis/ometis.c`, `sfm.c`). They change the
+  permutation; on California they cut the chordal hierarchy from 5,932,138 arcs and 59.6M
+  triangles to 5,838,003 and 53.9M (C METIS: 5,527,199 and 48.6M).
+  - Node FM (`fm_refine.rs`, `refine_separator_fm`): a move that leaves the separator as
+    light but the sides better balanced becomes the pass's best state (METIS's `mindiff`).
+  - Bisection (`node_nd.rs`, `best_of_bisections`): a subgraph of 5,000 vertices or more
+    is coarsened once to `max(100, n / 30)` vertices, bisected five times there, and the
+    lightest separator is refined back up, as METIS's `MlevelNodeBisectionL2` does.
 - Removed: the binaries, the integration tests and their data, and two extractors the
   changes above left unused.
 - Packaging: `publish = false`, path dependencies, formatted with `rustfmt`'s defaults
