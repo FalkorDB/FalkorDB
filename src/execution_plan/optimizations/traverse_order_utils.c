@@ -26,7 +26,10 @@ static bool _AlgebraicExpression_IsVarLen
 
 	// zero length edges should be handeled by a varaiable length traversal
 	// matching only the source node
-	return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e);
+	// fixed multi-hop edges e.g. *2..2 are also traversed by a variable length
+	// traversal, their expression holds only the edge operand and must never
+	// be scored as if it resolves its endpoints labels
+	return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e) || !QGEdge_SingleHop(e);
 }
 
 //------------------------------------------------------------------------------
