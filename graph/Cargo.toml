@@ -41,7 +41,9 @@ json-escape = "0.3.1"
 lru = "0.19.0"
 num_enum = "0.7.6"
 once_cell = "1.21.4"
-parking_lot = "0.13.0"
+# Held below 0.13, which removed eventual fairness: test_index_create's
+# test12 fails on it (#3548). Dependabot skips 0.13 for the same reason.
+parking_lot = "0.12.5"
 phf = { version = "0.14", features = ["macros"] }
 orx-tree = "2.2.0"
 rand = "0.10.2"

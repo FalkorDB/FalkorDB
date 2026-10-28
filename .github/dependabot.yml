@@ -25,6 +25,9 @@ updates:
         - "*"
 - directory: /
   package-ecosystem: cargo
+  ignore:
+  - dependency-name: "parking_lot" # 0.13 removed eventual fairness and fails test_index_create test12 (#3548).
+    versions: [">= 0.13"]
   schedule:
     interval: weekly
   groups:
