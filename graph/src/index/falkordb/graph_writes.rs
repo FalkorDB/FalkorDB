@@ -382,17 +382,15 @@ pub fn edges_deleted(
 
 // ---- Index DDL ----
 
-/// CREATE INDEX: build each attribute's column from the live graph, so the index serves reads as
-/// soon as CREATE INDEX returns. Only a Range index has native columns; any other type does
-/// nothing.
+/// CREATE INDEX: create each attribute's column `Building`, its cursor at the start, and leave it to
+/// the background builder ([`online_build`](super::online_build)), which the commit that publishes
+/// the column hands it to. Until its last batch flips it `Ready`, the column serves no reads: the
+/// planner does not use it ([`Graph::is_indexed`]), and `db.indexes()` reports the index under
+/// construction. Only a Range index has native columns; any other type does nothing.
 ///
-/// Each column is created `Building` and filled by one indexer batch with no limit on its size
-/// ([`Graph::indexer_prepare`]), which reaches the end and flips it `Ready`. A batch into an empty
-/// column bulk-builds its tree, so this costs what building the column in one pass does.
-///
-/// Built here on the write thread, with the graph borrowed. It is never built through the
-/// RediSearch populate, which reaches the graph through the `Indexer`'s back-pointer. This index
-/// is part of the graph version, and keeping that reference out is the point.
+/// The column is never built through the RediSearch populate, which reaches the graph through the
+/// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
+/// out is the point.
 pub fn create_index(
     g: &mut Graph,
     index_type: &IndexType,
@@ -402,13 +400,15 @@ pub fn create_index(
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
-            build_in_one_batch(g, entity, label, attr);
+            g.falkordb_index.create_building(entity, label, attr);
         }
     }
 }
 
 /// Create column `(entity, label, attr)` `Building`, replacing any column there, and fill it with
-/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`.
+/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`. A batch
+/// into an empty column bulk-builds its tree, so this costs what building the column in one pass
+/// does.
 fn build_in_one_batch(
     g: &mut Graph,
     entity: EntityType,
@@ -475,8 +475,10 @@ pub(crate) fn entity_tuples(
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of
-/// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its
-/// index fields, and an attribute has a native column when one of its fields is a Range field.
+/// `label` covers, before the loaded graph is published, in one indexer batch each. `fields` maps
+/// each attribute to its index fields, and an attribute has a native column when one of its fields
+/// is a Range field. Unlike CREATE INDEX ([`create_index`]), the column is `Ready` when this
+/// returns: the RDB holds no record of which indexes were still building.
 pub fn populate(
     g: &mut Graph,
     entity: EntityType,

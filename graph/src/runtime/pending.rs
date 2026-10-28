@@ -2544,6 +2544,43 @@ mod native_unique_tests {
         );
     }
 
+    /// While one of a composite key's columns is `Building`, as the background builder leaves a
+    /// new one, the key reads its other column: a building column has not seen every entity, so it
+    /// cannot rule a duplicate out, but a `Ready` one can. Here `tenant`'s column is created after
+    /// the nodes and never built, so it holds none of them.
+    #[test]
+    fn a_composite_key_with_a_building_column_reads_its_ready_one() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(2))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+            ],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("tenant"));
+        let lookups = native_unique_query(
+            &g.falkordb_index,
+            EntityType::Node,
+            &arc("U"),
+            &[arc("tenant"), arc("id")],
+            &[Value::Int(7), Value::Int(1)],
+        )
+        .expect("id's column answers");
+        assert_eq!(lookups.len(), 1, "the Building column declines");
+        assert_eq!(
+            fewest_candidates(lookups).count(),
+            2,
+            "the two holding id 1"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[2]).is_err());
+        assert_eq!(check_nodes(&g, &["tenant", "id"], ids[1]), Ok(()));
+    }
+
     /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
     #[test]
     fn an_edge_duplicate_is_found_by_the_native_lookup() {
