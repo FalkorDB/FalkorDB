@@ -83,6 +83,9 @@ pub trait Ordering {
 /// The seed is fixed and each call owns its generator (see [`nd`]), so the same skeleton
 /// always yields the same order, which is what makes a
 /// rebuilt index byte-identical to the original.
+///
+/// Panics on a skeleton that is not symmetric and simple, which only a bug can produce
+/// (see `nd::nd_graph`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NestedDissection;
 
@@ -118,7 +121,7 @@ impl Ordering for NestedDissection {
         // One call for the whole skeleton, all its components together: the backend orders
         // a disconnected graph itself. Only the isolated nodes are set aside (see
         // `nd::nd_graph`).
-        nd::node_nd(nd::nd_graph(skeleton)?)
+        nd::node_nd(nd::nd_graph(skeleton))
     }
 }
 
@@ -901,11 +904,26 @@ mod tests {
         );
     }
 
-    /// A skeleton that would send the backend outside its arrays is refused before the
-    /// call, by the copy into the backend's arrays. Each case is a 3-node path
+    /// `NestedDissection.order(skeleton)` panics, with `message`.
+    fn assert_panics_with(
+        skeleton: &Csr,
+        message: &str,
+        case: &str,
+    ) {
+        let panic = std::panic::catch_unwind(|| NestedDissection.order(skeleton)).expect_err(case);
+        let got = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(got, Some(message), "{case}");
+    }
+
+    /// A skeleton that would send the backend outside its arrays panics before the call,
+    /// in the copy into the backend's arrays: `CchInput::build` cannot produce one, so it
+    /// is a bug, never an error a user's graph could cause. Each case is a 3-node path
     /// `0 - 1 - 2` with one thing broken.
     #[test]
-    fn a_malformed_skeleton_is_refused_not_ordered() {
+    fn a_malformed_skeleton_panics_and_is_not_ordered() {
         let path = |p: Vec<u64>, i: Vec<u64>| Csr {
             n: 3,
             p: p.into(),
@@ -930,19 +948,16 @@ mod tests {
                 path(vec![0, 1, 3, 4], vec![1, 0, (1 << 32) + 1, 1]),
             ),
         ] {
-            assert_eq!(
-                NestedDissection.order(&skeleton),
-                Err(OrderError::Backend("malformed skeleton")),
-                "{case}"
-            );
+            assert_panics_with(&skeleton, "malformed CCH skeleton", case);
         }
     }
 
     /// The rest of the skeleton contract (sorted rows, no repeats, no self-loops, mirrored
-    /// entries) holds by construction, and is refused in every build all the same: `Csr`'s
-    /// fields are public, and the backend's result on anything else is undefined.
+    /// entries) holds by construction, and is checked in every build all the same (a
+    /// panic, in release too): `Csr`'s fields are public, and the backend's result on
+    /// anything else is undefined.
     #[test]
-    fn a_skeleton_that_is_not_simple_undirected_is_refused() {
+    fn a_skeleton_that_is_not_simple_undirected_panics() {
         let path = |p: Vec<u64>, i: Vec<u64>| Csr {
             n: 3,
             p: p.into(),
@@ -965,12 +980,10 @@ mod tests {
             ),
         ] {
             assert!(skeleton.is_well_formed(), "{case}");
-            assert_eq!(
-                NestedDissection.order(&skeleton),
-                Err(OrderError::Backend(
-                    "the skeleton is not symmetric, sorted, without repeats or self-loops"
-                )),
-                "{case}"
+            assert_panics_with(
+                &skeleton,
+                "the CCH skeleton is not symmetric, sorted, without repeats or self-loops",
+                case,
             );
         }
     }

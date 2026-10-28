@@ -32,10 +32,17 @@ pub(super) struct NdGraph {
 /// Copy `skeleton` into the backend's arrays.
 ///
 /// The skeleton must be the adjacency of a simple undirected graph
-/// ([`Csr::is_symmetric_simple`]): what `CchInput::build` produces by construction, and
-/// checked here in every build, since `Csr`'s fields are public and the backend's result is
-/// undefined on anything else. The check allocates nothing and costs a binary search per
-/// entry, small next to the ordering.
+/// ([`Csr::is_symmetric_simple`]). `CchInput::build` produces it by construction: the
+/// pattern union of the weights and their transpose in GraphBLAS, diagonal dropped, one
+/// entry per pair, exported sorted. No graph data can make it otherwise, so a skeleton that
+/// fails is a bug in the engine, not a property of the user's graph, and must not be
+/// reported as one (an index FAILED over it would read as a data problem).
+///
+/// # Panics
+/// If the skeleton is not well formed ([`Csr::is_well_formed`]) or not symmetric and
+/// simple. The check runs in release builds too: `Csr`'s fields are public and the backend
+/// indexes its arrays with these values, with an undefined result on anything else. It
+/// allocates nothing and costs a binary search per entry, small next to the ordering.
 ///
 /// Isolated nodes (empty rows) are left out and the rest renumbered in id order. They
 /// create no fill wherever they are eliminated, so their ranks are free, and a skeleton
@@ -45,15 +52,12 @@ pub(super) struct NdGraph {
 /// The copy costs `8 (m + 1) + 8 nnz` bytes for the `m` nodes the backend sees, plus `8 n`
 /// for the renumbering, while the backend runs; it is freed before the permutation is
 /// returned.
-pub(super) fn nd_graph(skeleton: &Csr) -> Result<NdGraph, OrderError> {
-    if !skeleton.is_well_formed() {
-        return Err(OrderError::Backend("malformed skeleton"));
-    }
-    if !skeleton.is_symmetric_simple() {
-        return Err(OrderError::Backend(
-            "the skeleton is not symmetric, sorted, without repeats or self-loops",
-        ));
-    }
+pub(super) fn nd_graph(skeleton: &Csr) -> NdGraph {
+    assert!(skeleton.is_well_formed(), "malformed CCH skeleton");
+    assert!(
+        skeleton.is_symmetric_simple(),
+        "the CCH skeleton is not symmetric, sorted, without repeats or self-loops"
+    );
     let n = skeleton.n;
 
     // `renumber[u]` is `u`'s backend id, or `NONE` for an isolated node.
@@ -81,12 +85,12 @@ pub(super) fn nd_graph(skeleton: &Csr) -> Result<NdGraph, OrderError> {
         }
         xadj.push(adjncy.len() as i64);
     }
-    Ok(NdGraph {
+    NdGraph {
         xadj,
         adjncy,
         nodes,
         isolated,
-    })
+    }
 }
 
 /// Nested dissection with the backend's default options: `perm[rank] = node`, the same
