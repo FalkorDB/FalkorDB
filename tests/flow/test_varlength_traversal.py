@@ -575,5 +575,9 @@ class testVarLengthTraversal(FlowTestsBase):
         # n1 -r1-> n2 -r2-> n1 and n1 -r2-> n2 -r1-> n1
         # the self-loop can't be taken twice
         q = "MATCH p=(a:N {id:1})-[*2..2]-(b:N {id:1}) RETURN count(*)"
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Node By Label Scan | (a:N)", plan,
+                          message=f"unexpected entry point for: {q}\n{plan}")
+
         count = self.graph.query(q).result_set[0][0]
-        self.env.assertEqual(count, 2)
+        self.env.assertEqual(count, 2, message=f"wrong count for: {q}")
