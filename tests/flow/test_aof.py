@@ -95,15 +95,17 @@ class testAOFReplay():
         # New graphs keep C's NUL truncation; a renamed existing key keeps every byte.
         self.conn.execute_command("GRAPH.QUERY", b"create-nul\x00suffix", "CREATE (:B {value:2})")
         expected_keys.append(b"create-nul")
-        self.conn.rename(expected_keys[0], b"renamed-\xc3(\x00suffix")
-        expected_keys[0] = b"renamed-\xc3(\x00suffix"
-        self.conn.execute_command("GRAPH.QUERY", expected_keys[0], "MATCH (n) SET n.value = 2")
+        renamed_key = b"renamed-\xc3(\x00suffix"
+        self.conn.rename(expected_keys[0], renamed_key)
+        expected_keys[0] = renamed_key
+        self.conn.execute_command("GRAPH.QUERY", renamed_key, "MATCH (n) SET n.value = 3")
         self.env.assertEqual(self.conn.execute_command("WAITAOF", 1, 0, 5000)[0], 1)
         self.conn.execute_command("DEBUG", "LOADAOF")
 
         for key in expected_keys:
+            expected_value = 3 if key == renamed_key else 2
             self.env.assertEqual(self.conn.execute_command(
-                "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
+                "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[expected_value]])
             lossy_key = key.decode("utf-8", "replace").encode()
             if lossy_key != key:
                 self.env.assertEqual(self.conn.exists(lossy_key), 0)
