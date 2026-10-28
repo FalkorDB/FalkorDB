@@ -290,7 +290,11 @@ pub struct MemoryUsageReport {
     pub unlabeled_node_attr_sz: usize,
     pub edge_block_storage_sz: usize,
     pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
+    /// RediSearch's own estimate of its indexes.
     pub indices_sz: usize,
+    /// The native index's columns, which RediSearch's estimate does not see.
+    #[cfg(feature = "index-falkordb")]
+    pub native_indices_sz: usize,
 }
 
 /// One label a deleted node carried, as [`Graph::delete_nodes`] reports them.
@@ -5050,7 +5054,11 @@ impl Graph {
         }
 
         // --- indices ---
+        // RediSearch's own estimate, as C reports it. The native columns are counted on their
+        // own: this version's pages, including those it shares with another version.
         let indices_sz = self.node_indexer.memory_usage() + self.edge_indexer.memory_usage();
+        #[cfg(feature = "index-falkordb")]
+        let native_indices_sz = self.falkordb_index.memory_usage();
 
         MemoryUsageReport {
             label_matrices_sz,
@@ -5061,6 +5069,8 @@ impl Graph {
             edge_block_storage_sz,
             edge_attr_by_type,
             indices_sz,
+            #[cfg(feature = "index-falkordb")]
+            native_indices_sz,
         }
     }
 

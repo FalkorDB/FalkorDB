@@ -275,6 +275,11 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         &mut self,
         batch: &mut Self::Batch,
     );
+
+    /// Heap bytes this index's own structure holds in this version: every page it reaches,
+    /// counted once, whether or not another version shares it. So the sizes of two versions that
+    /// share pages do not add up; each says what that version would cost alone.
+    fn memory_usage(&self) -> usize;
 }
 
 impl<K: VersionedIndex> IndexEntry<K> {
@@ -321,6 +326,20 @@ impl<K: VersionedIndex> IndexEntry<K> {
             scratch,
             &mut self.written_by_this_version,
         );
+    }
+
+    /// Heap bytes this index holds in this version: its structure ([`VersionedIndex::memory_usage`])
+    /// and, while `Building`, the entities written since a batch last committed on it, by their
+    /// serialized size. `written_by_this_version` is not counted: a published version, which is
+    /// what `GRAPH.MEMORY USAGE` reads, always has it empty ([`Self::publish`]).
+    pub(crate) fn memory_usage(&self) -> usize {
+        let written = &self.written_since_last_indexer_step;
+        self.index.memory_usage()
+            + if written.is_empty() {
+                0
+            } else {
+                written.serialized_size()
+            }
     }
 
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
