@@ -63,16 +63,8 @@ static GrB_Info GB_global_enum_get (int32_t *value, int field)
             break ;
 
         case GrB_BLOCKING_MODE : 
-
-            // return just the GrB modes
-            (*value) = (int) GB_Global_mode_get ( )  ;
-            if ((*value) == GxB_NONBLOCKING_GPU) (*value) = GrB_NONBLOCKING ;
-            if ((*value) == GxB_BLOCKING_GPU) (*value) = GrB_BLOCKING ;
-            break ;
-
         case GxB_MODE : 
 
-            // return all 4 possible modes (GrB and GxB)
             (*value) = (int) GB_Global_mode_get ( )  ;
             break ;
 
@@ -516,7 +508,7 @@ GrB_Info GrB_Global_get_SIZE
 
                 case GxB_GLOBAL_GPU_IDS : 
 
-                    (*value) = sizeof (int32_t) * GB_MAX_NGPUS ;
+                    (*value) = sizeof (int32_t) * GxB_NARENAS_GPU ;
                     info = GrB_SUCCESS ;
                     break ;
 

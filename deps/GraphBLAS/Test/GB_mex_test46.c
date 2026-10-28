@@ -14,6 +14,24 @@
 #define FREE_ALL ;
 
 //------------------------------------------------------------------------------
+// arena3_free: free function for arena 3
+//------------------------------------------------------------------------------
+
+// Arena 3 uses malloc/free, the same as arena 0, so a block of arena 3 that
+// is freed by the free function of arena 0 would go unnoticed.  arena3_free
+// counts its calls, so the test can check that each block is freed in its own
+// arena.
+
+static int64_t arena3_nfree = 0 ;
+
+void arena3_free (void *p) ;
+void arena3_free (void *p)
+{
+    arena3_nfree++ ;
+    free (p) ;
+}
+
+//------------------------------------------------------------------------------
 // GB_mex_test46 mexFunction
 //------------------------------------------------------------------------------
 
@@ -91,7 +109,10 @@ void mexFunction
 
     // create a new arena with just malloc/free
     int arena = 3 ;
-    OK (GxB_arena_init (3, malloc, NULL, NULL, free)) ;
+    OK (GxB_arena_init (3, malloc, NULL, NULL, arena3_free)) ;
+    int flag = false ;
+    OK (GxB_arena_initialized (&flag, 3)) ;
+    CHECK (flag == true) ;
 
     have_realloc = GB_Global_realloc_function_have (arena) ;
     CHECK (!have_realloc) ;
@@ -105,10 +126,15 @@ void mexFunction
         p [k] = k ;
     }
 
+    // with no realloc in arena 3, GB_realloc_memory does malloc/memcpy/free,
+    // and the old block must be freed by arena 3, not arena 0
     bool ok = false ;
+    arena3_nfree = 0 ;
     uint8_t *pnew = GB_realloc_memory (64, sizeof (uint8_t), p, &p_mem, &ok) ;
     CHECK (ok) ;
     CHECK (pnew != NULL) ;
+    CHECK (GB_arena (p_mem) == arena) ;
+    CHECK (arena3_nfree == 1) ;
 
     for (int k = 0 ; k < 32 ; k++)
     {
@@ -116,6 +142,7 @@ void mexFunction
     }
 
     GB_free_memory (&pnew, p_mem) ;
+    CHECK (arena3_nfree == 2) ;
 
     //--------------------------------------------------------------------------
     // finalize GraphBLAS

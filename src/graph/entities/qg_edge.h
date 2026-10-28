@@ -57,24 +57,19 @@ QGEdge *QGEdge_Clone
 	const QGEdge *orig
 );
 
-// returns true if edge represents a variable length path
-bool QGEdge_VariableLength
-(
-	const QGEdge *e  // edge to check
-);
-
-// determine whether this is a "ghost" edge
-// an edge of length zero
-// e.g. ()-[*0]->()
-bool QGEdge_GhostEdge
-(
-	const QGEdge *e
-);
-
 // determine whether this edge represent a single hop
 bool QGEdge_SingleHop
 (
 	const QGEdge *e
+);
+
+// determine whether this edge is traversed by a variable length traversal
+// that is any edge other than a single hop:
+// a range ()-[*1..3]->(), a fixed multi-hop ()-[*2..2]->()
+// or a zero length ()-[*0]->() edge
+bool QGEdge_RequiresVarLenTraversal
+(
+	const QGEdge *e  // edge to check
 );
 
 // determine whether this is part of an allShortestPaths query

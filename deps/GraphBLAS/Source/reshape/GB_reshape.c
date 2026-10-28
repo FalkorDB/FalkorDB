@@ -122,7 +122,9 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             GB_OK (GB_new (&T,  // new header
                 type, A->vdim, A->vlen, GB_ph_null, by_col, GxB_AUTO_SPARSITY,
                 GB_Global_hyper_switch_get ( ), 0,
-                A->p_is_32, A->j_is_32, A->i_is_32,
+                A->p_is_32,
+                // bug fix for v10.5.2, must swap j and i, see GB_mex_test52: */
+                A->i_is_32, A->j_is_32,
                 data_arena, data_arena)) ;
             GB_OK (GB_transpose_cast (T, type, by_col, A, false, Werk)) ;
             // now T can be reshaped in-place to construct C
@@ -236,23 +238,32 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         // allocate output and workspace
         //----------------------------------------------------------------------
 
-        I_work_is_32 = (in_place) ? T->i_is_32 : Ci_is_32 ;
-        J_work_is_32 = (in_place) ? T->j_is_32 : Cj_is_32 ;
+        I_work_is_32 = Ci_is_32 ;
+        J_work_is_32 = Cj_is_32 ;
+
         size_t jwsize = (J_work_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
         size_t iwsize = (I_work_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+        //----------------------------------------------------------------------
+        // allocate output matrix C, or use T if in-place, and get values
+        //----------------------------------------------------------------------
 
         if (in_place)
         { 
 
             //------------------------------------------------------------------
-            // Remove T->i and T->x from T; these become I_work and S_work
+            // use T in-place
             //------------------------------------------------------------------
 
-            // remove T->i from T; it becomes I_work
-            I_work = T->i ; I_work_mem = T->i_mem ;
-            T->i = NULL   ; T->i_mem = 0 ;
+            if (T->i_is_32 == I_work_is_32)
+            { 
+                // remove T->i from T; it becomes I_work and the future C->i.
+                // This can only be done if T->i has the right integer size
+                I_work = T->i ; I_work_mem = T->i_mem ;
+                T->i = NULL   ; T->i_mem = 0 ;
+            }
 
-            // remove T->x from T; it becomes S_work
+            // remove T->x from T; it becomes S_work, which becomes C->x
             S_work = T->x ; S_work_mem = T->x_mem ;
             T->x = NULL   ; T->x_mem = 0 ;
 
@@ -274,6 +285,16 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
                 GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 0,
                 Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena)) ;
 
+            // use T->x as S_input to GB_builder, which is not modified
+            S_input = T->x ;
+        }
+
+        //----------------------------------------------------------------------
+        // allocate I_work, if not reusing T->i as I_work
+        //----------------------------------------------------------------------
+
+        if (I_work == NULL)
+        { 
             // allocate new space for the future C->i
             I_work = GB_MALLOC_MEMORY (nvals, iwsize, &I_work_mem) ;
             if (I_work == NULL)
@@ -282,14 +303,14 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
                 GB_FREE_ALL ;
                 return (GrB_OUT_OF_MEMORY) ;
             }
-
-            // use T->x as S_input to GB_builder, which is not modified
-            S_input = T->x ;
         }
 
+        //----------------------------------------------------------------------
         // allocate J_work
+        //----------------------------------------------------------------------
+
         if (vdim_new > 1)
-        {
+        { 
             // J_work is not needed if vdim_new == 1
             J_work = GB_MALLOC_MEMORY (nvals, jwsize, &J_work_mem) ;
             if (J_work == NULL)

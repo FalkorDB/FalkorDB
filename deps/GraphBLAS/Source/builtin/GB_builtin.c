@@ -1041,7 +1041,7 @@ struct GB_Context_opaque GB_OPAQUE (CONTEXT_WORLD) =
     (double) GB_CHUNK_DEFAULT,      // chunk
     1,                              // nthreads_max
     0,                              // int32_t ngpus
-    // uint16_t gpu_ids [GB_MAX_NGPUS = 64]:
+    // uint16_t gpu_ids [GxB_NARENAS_GPU = 64]:
     0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
     0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
     0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,

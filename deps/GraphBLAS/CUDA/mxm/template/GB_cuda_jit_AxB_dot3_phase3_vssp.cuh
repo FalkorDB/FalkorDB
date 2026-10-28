@@ -6,7 +6,7 @@
 // are far apart in size, neither is very spare nor dense, for any size of N.
 
 // Both the grid and block are 1D, so blockDim.x is the # threads in a
-// threadblock, and the # of threadblocks is grid.x
+// threadblock, and the # of threadblocks is gridDim.x
 
 //  int64_t start          <- start of vector pairs for this kernel
 //  int64_t end            <- end of vector pairs for this kernel
@@ -42,11 +42,11 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
     const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
 
-    ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
+    // ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
     const GB_Ai_TYPE *__restrict__ Ai = (GB_Ai_TYPE *) A->i ;
     const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
 
-    ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
+    // ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
     const GB_Bi_TYPE *__restrict__ Bi = (GB_Bi_TYPE *) B->i ;
     const GB_Bp_TYPE *__restrict__ Bp = (GB_Bp_TYPE *) B->p ;
 
@@ -149,13 +149,14 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
                     int64_t pright = pB_end - 1 ;
                     GB_trim_binary_search (ia, Bi, GB_Bi_IS_32,
                         &pleft, &pright) ;
-                    //ASSERT (pleft > pB) ;
+                    // ASSERT (pleft > pB) ;
                     pB = pleft ;
                 }
-                else if (ia == ib) // ia == ib == k
+                else if (ia == ib)
                 { 
-                    // A(k,i) and B(k,j) are the next entries to merge
-                    GB_DOT_MERGE (pA, pB);
+                    // A(ia,i) and B(ia,j) are the next entries to merge
+                    // cij += A (ia,i) * B (ia,j)
+                    GB_DOT_MERGE (pA, pB, ia) ;
                     //GB_DOT_TERMINAL (cij) ;   // break if cij == terminal
                     pA+= blockDim.x ;
                     pB++ ;
@@ -183,7 +184,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
                     int64_t pright = pA_end - 1 ;
                     GB_trim_binary_search (ib, Ai, GB_Ai_IS_32,
                         &pleft, &pright) ;
-                    //ASSERT (pleft > pA) ;
+                    // ASSERT (pleft > pA) ;
                     pA = pleft ;
                 }
                 /*
@@ -193,10 +194,11 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
                     pB++ ;
                 }
                 */
-                else if (ia == ib)// ia == ib == k
+                else if (ia == ib)
                 { 
-                    // A(k,i) and B(k,j) are the next entries to merge
-                    GB_DOT_MERGE (pA, pB) ;
+                    // A(ia,i) and B(ia,j) are the next entries to merge
+                    // cij += A (ia,i) * B (ia,j)
+                    GB_DOT_MERGE (pA, pB, ia) ;
                     //GB_DOT_TERMINAL (cij) ;   // break if cij == terminal
                     pA++ ;
                     pB+=blockDim.x ;

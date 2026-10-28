@@ -69,5 +69,89 @@ void GB_string_copy
     size_t dest_size
 ) ;
 
+//------------------------------------------------------------------------------
+// GB_rmm_malloc and GB_rmm_free: wrappers for Rapids, or empty stubs if no CUDA
+//------------------------------------------------------------------------------
+
+// If CUDA is enabled, these functions are defined in
+// GraphBLAS/CUDA/rmm/GB_rmm_wrap.cpp, as C-callable wrappers for the C++
+// Rapids Memory Manager allocate/deallocate methods.  If CUDA is not enabled,
+// these functions are defined in GraphBLAS/Source/memory/GB_no_malloc_free.c,
+// as functions that do nothing (the malloc method returns NULL and the free
+// method does nothing).  These functions defined memory arenas 8 to 71, in
+// both cases, so that when CUDA is not enabled, the arenas 8 to 71 are still
+// reserved in case an application uses a CUDA-enabled copy of GraphBLAS.
+
+#define GB_RMM_MALLOC_FREE_DECLARE(id)               \
+    void *GB_rmm_malloc_ ## id (size_t size) ;       \
+    void GB_rmm_free_ ## id (void *p) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (0) ;
+GB_RMM_MALLOC_FREE_DECLARE (1) ;
+GB_RMM_MALLOC_FREE_DECLARE (2) ;
+GB_RMM_MALLOC_FREE_DECLARE (3) ;
+GB_RMM_MALLOC_FREE_DECLARE (4) ;
+GB_RMM_MALLOC_FREE_DECLARE (6) ;
+GB_RMM_MALLOC_FREE_DECLARE (7) ;
+GB_RMM_MALLOC_FREE_DECLARE (8) ;
+GB_RMM_MALLOC_FREE_DECLARE (9) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (10) ;
+GB_RMM_MALLOC_FREE_DECLARE (11) ;
+GB_RMM_MALLOC_FREE_DECLARE (12) ;
+GB_RMM_MALLOC_FREE_DECLARE (13) ;
+GB_RMM_MALLOC_FREE_DECLARE (14) ;
+GB_RMM_MALLOC_FREE_DECLARE (16) ;
+GB_RMM_MALLOC_FREE_DECLARE (17) ;
+GB_RMM_MALLOC_FREE_DECLARE (18) ;
+GB_RMM_MALLOC_FREE_DECLARE (19) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (20) ;
+GB_RMM_MALLOC_FREE_DECLARE (21) ;
+GB_RMM_MALLOC_FREE_DECLARE (22) ;
+GB_RMM_MALLOC_FREE_DECLARE (23) ;
+GB_RMM_MALLOC_FREE_DECLARE (24) ;
+GB_RMM_MALLOC_FREE_DECLARE (26) ;
+GB_RMM_MALLOC_FREE_DECLARE (27) ;
+GB_RMM_MALLOC_FREE_DECLARE (28) ;
+GB_RMM_MALLOC_FREE_DECLARE (29) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (30) ;
+GB_RMM_MALLOC_FREE_DECLARE (31) ;
+GB_RMM_MALLOC_FREE_DECLARE (32) ;
+GB_RMM_MALLOC_FREE_DECLARE (33) ;
+GB_RMM_MALLOC_FREE_DECLARE (34) ;
+GB_RMM_MALLOC_FREE_DECLARE (36) ;
+GB_RMM_MALLOC_FREE_DECLARE (37) ;
+GB_RMM_MALLOC_FREE_DECLARE (38) ;
+GB_RMM_MALLOC_FREE_DECLARE (39) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (40) ;
+GB_RMM_MALLOC_FREE_DECLARE (41) ;
+GB_RMM_MALLOC_FREE_DECLARE (42) ;
+GB_RMM_MALLOC_FREE_DECLARE (43) ;
+GB_RMM_MALLOC_FREE_DECLARE (44) ;
+GB_RMM_MALLOC_FREE_DECLARE (46) ;
+GB_RMM_MALLOC_FREE_DECLARE (47) ;
+GB_RMM_MALLOC_FREE_DECLARE (48) ;
+GB_RMM_MALLOC_FREE_DECLARE (49) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (50) ;
+GB_RMM_MALLOC_FREE_DECLARE (51) ;
+GB_RMM_MALLOC_FREE_DECLARE (52) ;
+GB_RMM_MALLOC_FREE_DECLARE (53) ;
+GB_RMM_MALLOC_FREE_DECLARE (54) ;
+GB_RMM_MALLOC_FREE_DECLARE (56) ;
+GB_RMM_MALLOC_FREE_DECLARE (57) ;
+GB_RMM_MALLOC_FREE_DECLARE (58) ;
+GB_RMM_MALLOC_FREE_DECLARE (59) ;
+
+GB_RMM_MALLOC_FREE_DECLARE (60) ;
+GB_RMM_MALLOC_FREE_DECLARE (61) ;
+GB_RMM_MALLOC_FREE_DECLARE (62) ;
+GB_RMM_MALLOC_FREE_DECLARE (63) ;
+
+#undef GB_RMM_MALLOC_FREE_DECLARE
+
 #endif
 

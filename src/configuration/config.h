@@ -40,7 +40,8 @@ typedef enum {
 	Config_TEMP_FOLDER               = 18,  // path to temp folder
 	Config_JS_HEAP_SIZE              = 19,  // quickjs js runtime heap size limit
 	Config_JS_STACK_SIZE             = 20,  // quickjs js runtime stack size limit
-	Config_END_MARKER                = 21
+	Config_WRITE_LOCK_POLL_INTERVAL  = 21,  // ms a writer waits for the graph lock before yielding the GIL and retrying
+	Config_END_MARKER                = 22
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -63,7 +64,8 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_EFFECTS_THRESHOLD,
 	Config_DELAY_INDEXING,
 	Config_JS_HEAP_SIZE,
-	Config_JS_STACK_SIZE
+	Config_JS_STACK_SIZE,
+	Config_WRITE_LOCK_POLL_INTERVAL
 };
 static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNTIME_CONFIGS[0]);
 

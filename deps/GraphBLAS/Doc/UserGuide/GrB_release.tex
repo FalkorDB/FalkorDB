@@ -5,7 +5,49 @@
 
 \begin{itemize}
 
-\item July 31, 2026: version 10.4.0
+\item Oct 20, 2026, version 10.5.2
+
+    \begin{itemize}
+    \item (75) bug fix: \verb'GxB_*_import' (historical method).  Check for
+        size of incoming Ax was incorrect.  Found and fixed by Erik Welch.
+    \item (74) bug fix: performance bug in \verb'GxB_*_sort'; see Issue 461.
+    \item (73) bug fix: \verb'GxB_Matrix_reshape' fails when dimensions change
+        from less than $2^{32}$ to larger than $2^{32}$.  See Issue 462 on
+        github.
+    \item (72) bug fix: \verb'GrB_select' fails when using built-in VALUE*
+        operators whose type differs from A.  See PR 463 on github.
+        Found and fixed by Erik Welch.
+    \end{itemize}
+
+\item Sept 12, 2026, version 10.5.1
+
+    \begin{itemize}
+    \item (71) bug fix: \verb'GrB_Matrix_resize' in 10.5.0 fails if an n-by-1
+        matrix is resized to an n-by-k matrix with $k>1$ when pending tuples
+        appear.
+    \end{itemize}
+
+\item Aug 12, 2026, version 10.5.0
+
+    \begin{itemize}
+    \item \verb'GrB_Matrix_resize', \verb'GrB_Vector_resize': no longer call
+        \verb'GrB_wait' if the matrix/vector is sparse/hypersparse, and both
+        dimensions are not decreasing.
+    \item \verb'GrB_Matrix_build' and \verb'GrB_Vector_build': no longer do a
+        post-iso check; they leave the matrix in non-iso format even if all the
+        entries are the same.
+    \item (70) bug fix:  potential buffer overflow in eWiseUnion when using
+        builtin 1st, 2nd, or positional operators.
+    \end{itemize}
+
+\item Aug 8, 2026, version 10.4.1
+
+    \begin{itemize}
+    \item (69) bug fix for Windows: OpenMP for-loop on Windows.
+        Caught by Erik Welch.
+    \end{itemize}
+
+\item Aug 7, 2026: version 10.4.0
 
     \begin{itemize}
     \item Memory arenas: allows the use of multiple memory allocators.

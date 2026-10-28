@@ -1,3 +1,12 @@
+//------------------------------------------------------------------------------
+// GB_cuda_apply_unop_jit: JIT kernel for apply, unop case
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #include "apply/GB_cuda_apply.hpp"
 
 extern "C"
@@ -17,9 +26,9 @@ GrB_Info GB_cuda_apply_unop_jit
     const GrB_Matrix A,
     const GB_void *ythunk,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
-    int32_t gridsz,
-    int32_t blocksz
+    int32_t gridsz
 )
 {
     //--------------------------------------------------------------------------
@@ -51,6 +60,7 @@ GrB_Info GB_cuda_apply_unop_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (Cx, A, ythunk, stream, gridsz, blocksz,
+    return (GB_jit_kernel (Cx, A, ythunk, device, stream, gridsz,
         &GB_callback)) ;
 }
+

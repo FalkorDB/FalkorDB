@@ -5,11 +5,18 @@
 
 #pragma once
 
+#include <stdint.h>
 #include <pthread.h>
 
 int rwlock_timedwrlock
 (
 	pthread_rwlock_t *lock,
-	int timeout_ms
+	int64_t timeout_ms
+) ;
+
+int rwlock_timedrdlock
+(
+	pthread_rwlock_t *lock,
+	int64_t timeout_ms
 ) ;
 

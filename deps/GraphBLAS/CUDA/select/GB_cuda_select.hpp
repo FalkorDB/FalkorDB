@@ -23,6 +23,7 @@ GrB_Info GB_cuda_select_bitmap_jit
     const GB_void *ythunk,
     const GrB_IndexUnaryOp op,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 ) ;
@@ -37,6 +38,7 @@ GrB_Info GB_cuda_select_sparse_jit
     const GB_void *ythunk,
     const GrB_IndexUnaryOp op,
     // CUDA stream and launch parameters:
+    int device,
     cudaStream_t stream,
     int32_t gridsz
 ) ;
