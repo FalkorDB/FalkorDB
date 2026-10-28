@@ -28,6 +28,10 @@ use std::thread_local;
 /// # Usage
 /// Registered as the global allocator via the `redis_module!` macro's
 /// `allocator` parameter.
+///
+/// It also frees arrays GraphBLAS allocated and handed over to Rust (the CSR
+/// export, under `matrix::init`'s contract), so a thread's deallocated count
+/// can include bytes it never counted as allocated.
 pub struct ThreadCountingAllocator;
 
 thread_local! {
