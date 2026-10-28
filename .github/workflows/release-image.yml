@@ -57,11 +57,29 @@ jobs:
 
       - name: Set tag name
         id: set_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          set -o pipefail
+
           # If the event is a release, use the release tag name
           if [ "${{ github.event_name }}" == "release" ]; then
             TAG_NAME=${{ github.event.release.tag_name }}
-            echo "IS_LATEST=1" >> $GITHUB_ENV
+
+            # :latest moves only when this release is the highest semver across
+            # all non-draft, non-prerelease releases — the same rule main's
+            # release-tag.yml applies. The Rust engine releases from 6.0 up, so
+            # a C patch release (4.x) must not clobber the :latest it published.
+            HIGHEST=$(gh api "/repos/${GH_REPO}/releases" --paginate \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | sed 's/^v//' \
+              | sort -V \
+              | tail -1)
+            echo "highest published release: ${HIGHEST}; this release: ${TAG_NAME#v}"
+            if [ "${HIGHEST}" == "${TAG_NAME#v}" ]; then
+              echo "IS_LATEST=1" >> $GITHUB_ENV
+            fi
           fi
 
           # If the event is a workflow_dispatch, use the input value
