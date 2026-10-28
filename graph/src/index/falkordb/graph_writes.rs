@@ -439,29 +439,6 @@ fn build_in_one_batch(
 // cursor, at their values in a version, and adds them to the column in that same version. See
 // `ColumnState`.
 
-/// One indexer batch: index the next entities of one `Building` column, at most `entities` of
-/// them, at their current values, and move its cursor past them, or flip the column `Ready` if the
-/// batch reached the end. Returns whether a column is still `Building` afterwards, i.e. whether to
-/// run another batch. Tests pass small batches to force cursors through every boundary.
-#[cfg(test)]
-pub(crate) fn run_indexer_batch(
-    g: &mut Graph,
-    entities: usize,
-) -> bool {
-    g.index_next_batch(entities);
-    g.falkordb_index.has_building_columns()
-}
-
-/// [`read_indexer_batch_of`] of the first `Building` column. For tests of one column.
-#[cfg(test)]
-pub(crate) fn read_indexer_batch(
-    g: &Graph,
-    entities: usize,
-) -> Option<IndexerBatch> {
-    let (entity, key, from) = g.falkordb_index.next_building()?;
-    Some(read_batch(g, entity, key, from, entities))
-}
-
 /// Read an indexer batch of column `key` of `entity` from `g`: its next `entities` nodes or edges,
 /// at their values in `g`, encoded and sorted. `None` if the column is not `Building`. The batch
 /// is added to `g` itself (`Graph::index_batch`).
@@ -682,4 +659,27 @@ fn scan_edges(
     edges
         .peek()
         .map(|&(src, dst, _)| (NodeId::from(src), NodeId::from(dst)))
+}
+
+/// One indexer batch: index the next entities of one `Building` column, at most `entities` of
+/// them, at their current values, and move its cursor past them, or flip the column `Ready` if the
+/// batch reached the end. Returns whether a column is still `Building` afterwards, i.e. whether to
+/// run another batch. Tests pass small batches to force cursors through every boundary.
+#[cfg(test)]
+pub(crate) fn run_indexer_batch(
+    g: &mut Graph,
+    entities: usize,
+) -> bool {
+    g.index_next_batch(entities);
+    g.falkordb_index.has_building_columns()
+}
+
+/// [`read_indexer_batch_of`] of the first `Building` column. For tests of one column.
+#[cfg(test)]
+pub(crate) fn read_indexer_batch(
+    g: &Graph,
+    entities: usize,
+) -> Option<IndexerBatch> {
+    let (entity, key, from) = g.falkordb_index.next_building()?;
+    Some(read_batch(g, entity, key, from, entities))
 }

@@ -3792,16 +3792,6 @@ impl Graph {
             .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
     }
 
-    /// [`Self::index_batch`] of the first `Building` column. For tests of one column.
-    #[cfg(all(test, feature = "index-falkordb"))]
-    pub(crate) fn index_next_batch(
-        &mut self,
-        entities: usize,
-    ) -> bool {
-        graph_writes::read_indexer_batch(self, entities)
-            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
-    }
-
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
@@ -5076,6 +5066,16 @@ impl Graph {
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
+    }
+
+    /// [`Self::index_batch`] of the first `Building` column. For tests of one column.
+    #[cfg(all(test, feature = "index-falkordb"))]
+    pub(crate) fn index_next_batch(
+        &mut self,
+        entities: usize,
+    ) -> bool {
+        graph_writes::read_indexer_batch(self, entities)
+            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
     }
 }
 

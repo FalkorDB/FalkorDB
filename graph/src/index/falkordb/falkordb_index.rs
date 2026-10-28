@@ -551,34 +551,6 @@ impl FalkorDbIndex {
         }
     }
 
-    /// The first column still `Building`, with its cursor. Node columns first; `None` once every
-    /// column is `Ready`. For tests of one column at a time.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn next_building(&self) -> Option<(EntityType, IndexKey, BuildCursor)> {
-        [
-            (EntityType::Node, &self.node_columns),
-            (EntityType::Relationship, &self.edge_columns),
-        ]
-        .into_iter()
-        .find_map(|(entity, columns)| {
-            columns.iter().find_map(|(key, entry)| match entry.state {
-                ColumnState::Building { next } => Some((entity, key.clone(), next)),
-                ColumnState::Ready => None,
-            })
-        })
-    }
-
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn has_building_columns(&self) -> bool {
-        self.node_columns
-            .values()
-            .chain(self.edge_columns.values())
-            .any(ColumnEntry::building)
-    }
-
     /// The build state of column `(entity, label, attr)`, if it exists.
     #[must_use]
     pub(crate) fn column_state(
@@ -655,6 +627,34 @@ impl FalkorDbIndex {
         match &entry.column {
             IndexColumn::Numeric(idx) => idx.query(query),
         }
+    }
+
+    /// The first column still `Building`, with its cursor. Node columns first; `None` once every
+    /// column is `Ready`. For tests of one column at a time.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn next_building(&self) -> Option<(EntityType, IndexKey, BuildCursor)> {
+        [
+            (EntityType::Node, &self.node_columns),
+            (EntityType::Relationship, &self.edge_columns),
+        ]
+        .into_iter()
+        .find_map(|(entity, columns)| {
+            columns.iter().find_map(|(key, entry)| match entry.state {
+                ColumnState::Building { next } => Some((entity, key.clone(), next)),
+                ColumnState::Ready => None,
+            })
+        })
+    }
+
+    /// Whether any column is still `Building`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn has_building_columns(&self) -> bool {
+        self.node_columns
+            .values()
+            .chain(self.edge_columns.values())
+            .any(ColumnEntry::building)
     }
 }
 

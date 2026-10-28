@@ -147,24 +147,6 @@ impl NumericIndex {
         Self::default()
     }
 
-    /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
-    /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
-    /// initial population — one sort + bottom-up page build, no per-item
-    /// traversal. The tree's tests compare it with incremental adds.
-    #[cfg(test)]
-    #[must_use]
-    pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
-        let mut pairs: Vec<(u64, u64)> = entries
-            .into_iter()
-            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        Self {
-            tree: Tree::from_sorted(&pairs),
-        }
-    }
-
     /// Index `id` under `value`. A no-op for non-numeric / `NaN` values and
     /// idempotent for an already-present `(value, id)`.
     pub fn add(
@@ -441,6 +423,24 @@ impl NumericIndex {
     /// An iterator over no entries (`lo > hi` yields nothing).
     fn empty(&self) -> DocIter {
         DocIter::One(self.tree.range(1, 0))
+    }
+
+    /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
+    /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
+    /// initial population — one sort + bottom-up page build, no per-item
+    /// traversal. The tree's tests compare it with incremental adds.
+    #[cfg(test)]
+    #[must_use]
+    pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
+        let mut pairs: Vec<(u64, u64)> = entries
+            .into_iter()
+            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        Self {
+            tree: Tree::from_sorted(&pairs),
+        }
     }
 }
 
