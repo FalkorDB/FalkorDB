@@ -453,7 +453,11 @@ impl NumericIndex {
     /// answering `a = 1 OR b = 2` from it would look up both `1` and `2` in `a` and return
     /// `{a=1} ∪ {a=2}` — wrong rows, not missing ones. So every member must target the same
     /// attribute, and every value must encode, as in [`in_list`](Self::in_list); otherwise `None`.
+    /// The exception is `a = null`, which holds for nothing, so it adds no key.
     fn union(children: &[IndexQuery<Value>]) -> Option<KeySet> {
+        if children.is_empty() {
+            return None;
+        }
         let mut attr: Option<&Arc<String>> = None;
         let mut keys = Vec::with_capacity(children.len());
         for child in children {
@@ -469,11 +473,11 @@ impl NumericIndex {
             if *attr.get_or_insert(key) != key {
                 return None;
             }
-            for value in values {
+            for value in values.iter().filter(|v| !matches!(v, Value::Null)) {
                 keys.push(encode_numeric(value)?);
             }
         }
-        (!keys.is_empty()).then(|| KeySet::distinct(keys))
+        Some(KeySet::distinct(keys))
     }
 
     /// An iterator over no entries (`lo > hi` yields nothing).

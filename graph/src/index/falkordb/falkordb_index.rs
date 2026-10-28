@@ -634,7 +634,13 @@ impl FalkorDbIndex {
         // it cannot encode with "no rows" rather than `None`; an `IN` list or an `OR` is checked
         // by the column itself (`NumericIndex::keys`), which declines rather than answer part.
         let key = match query {
-            IndexQuery::Equal { key, value } if encode_numeric(value).is_some() => key,
+            // `= null` holds for nothing, so it is answered with no rows rather than declined as a
+            // value no column indexes.
+            IndexQuery::Equal { key, value }
+                if matches!(value, Value::Null) || encode_numeric(value).is_some() =>
+            {
+                key
+            }
             IndexQuery::Range { key, min, max, .. }
                 if min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
                     && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()) =>
