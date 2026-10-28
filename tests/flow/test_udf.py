@@ -1090,8 +1090,10 @@ class testUDF():
         cases = [
             (["", script], "empty lib name"),
             (["REPLACE", "", script], "empty lib name"),
+            (["", ""], "empty lib name"),
             (["lib", ""], "empty script"),
             (["REPLACE", "lib", ""], "empty script"),
+            (["x" * 513, ""], "empty script"),
         ]
         for args, msg in cases:
             try:
