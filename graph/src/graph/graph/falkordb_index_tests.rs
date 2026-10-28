@@ -6,7 +6,7 @@ use super::{Graph, NodeId, Plan, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{Claim, MvccGraph, PANIC_IN_INDEXER_COMMIT};
 use crate::index::Field;
-use crate::index::falkordb::encode::encode_numeric;
+use crate::index::falkordb::encode::{KeyKind, encode_numeric, for_each_stored_key};
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexKey, NumericAnswer};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::online_build::{self, BuildHost, Indexer, Run, Turn, run_turn};
@@ -700,15 +700,21 @@ fn cursor(
     }
 }
 
+/// What a column answers, in the shape [`contents`] and [`one_pass`] report: for each value, the
+/// ids holding it as a scalar; every scalar's id in value order; and for each value, the ids whose
+/// list holds it.
+type Contents = (Vec<(i64, Vec<u64>)>, Vec<u64>, Vec<(i64, Vec<u64>)>);
+
 /// Column `(entity, label, attr)` as the ids it answers for each of `values`, plus all its ids in
-/// value order: enough to tell two columns apart over the values a test uses.
+/// value order, plus the ids whose list contains each of `values`: enough to tell two columns
+/// apart over the values a test uses, in both trees.
 fn contents(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     values: &[i64],
-) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+) -> Contents {
     let idx = g
         .falkordb_index
         .numeric(entity, label, attr)
@@ -723,31 +729,45 @@ fn contents(
             )
         })
         .collect();
-    (per_value, idx.range(None, None, true, true).collect())
+    let mut in_lists: Vec<(i64, Vec<u64>)> = values
+        .iter()
+        .map(|&v| (v, idx.array_contains(&Value::Int(v)).collect()))
+        .collect();
+    in_lists.iter_mut().for_each(|(_, ids)| ids.sort_unstable());
+    (
+        per_value,
+        idx.range(None, None, true, true).collect(),
+        in_lists,
+    )
 }
 
 /// What column `(entity, label, attr)` must hold for `g` as it stands now, in the shape
 /// [`contents`] reports: worked out from the graph's values here, sharing no code with the
 /// indexer batches. Every live `label` node, or `label`-typed edge, with a numeric `attr`, as its
-/// `(key, id)` tuple, in tuple order.
+/// `(key, id)` tuple, in tuple order; and one `(key, id)` per numeric element of a list `attr`.
 fn one_pass(
     g: &Graph,
     entity: EntityType,
     label: &Arc<String>,
     attr: &Arc<String>,
     values: &[i64],
-) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
+) -> Contents {
     let mut tuples: Vec<(u64, u64)> = Vec::new();
+    let mut elements: Vec<(u64, u64)> = Vec::new();
+    let mut take = |value: Option<Value>, id: u64| match value {
+        Some(Value::List(items)) => {
+            elements.extend(items.iter().filter_map(encode_numeric).map(|key| (key, id)));
+        }
+        Some(value) => tuples.extend(encode_numeric(&value).map(|key| (key, id))),
+        None => {}
+    };
     match entity {
         EntityType::Node => {
             if let (Some(lm), Some(idx)) =
                 (g.get_label_matrix(label), g.get_node_attribute_id(attr))
             {
                 for (n, _) in lm.iter(0, u64::MAX) {
-                    let value = g.get_node_attribute_by_idx(NodeId::from(n), idx as u16);
-                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
-                        tuples.push((key, n));
-                    }
+                    take(g.get_node_attribute_by_idx(NodeId::from(n), idx as u16), n);
                 }
             }
         }
@@ -757,32 +777,33 @@ fn one_pass(
                 g.get_relationship_attribute_id(attr),
             ) {
                 for (_, _, eid) in t.iter(0, u64::MAX, false) {
-                    let value =
-                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16);
-                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
-                        tuples.push((key, eid));
-                    }
+                    take(
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16),
+                        eid,
+                    );
                 }
             }
         }
     }
-    tuples.sort_unstable();
-    tuples.dedup();
-    let per_value = values
-        .iter()
-        .map(|&v| {
-            let key = encode_numeric(&Value::Int(v)).expect("an integer encodes");
-            (
-                v,
-                tuples
-                    .iter()
-                    .filter(|&&(k, _)| k == key)
-                    .map(|&(_, id)| id)
-                    .collect(),
-            )
-        })
-        .collect();
-    (per_value, tuples.into_iter().map(|(_, id)| id).collect())
+    for found in [&mut tuples, &mut elements] {
+        found.sort_unstable();
+        found.dedup();
+    }
+    let ids_at = |found: &[(u64, u64)], v: i64| -> Vec<u64> {
+        let key = encode_numeric(&Value::Int(v)).expect("an integer encodes");
+        found
+            .iter()
+            .filter(|&&(k, _)| k == key)
+            .map(|&(_, id)| id)
+            .collect()
+    };
+    let per_value = values.iter().map(|&v| (v, ids_at(&tuples, v))).collect();
+    let in_lists = values.iter().map(|&v| (v, ids_at(&elements, v))).collect();
+    (
+        per_value,
+        tuples.into_iter().map(|(_, id)| id).collect(),
+        in_lists,
+    )
 }
 
 /// A build in small batches, with writes landing between the batches both on nodes the batches
@@ -980,7 +1001,7 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     ))
     .unwrap();
     let values = [1, 2, 3, 4, 20, 40];
-    let (per_value, _) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
+    let (per_value, ..) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
     let at = |v: i64| per_value.iter().find(|(x, _)| *x == v).unwrap().1.clone();
     assert_eq!(at(20), vec![eids[1]], "1->0 is behind the cursor");
     assert!(at(40).is_empty(), "2->1 is ahead of the cursor");
@@ -1041,7 +1062,7 @@ fn a_cursor_inside_a_multi_edge_pair_places_each_edge_by_its_id() {
     ))
     .unwrap();
     let values = [1, 2, 3, 20, 30];
-    let (per_value, _) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
+    let (per_value, _, _) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
     let at = |v: i64| per_value.iter().find(|(x, _)| *x == v).unwrap().1.clone();
     assert_eq!(at(20), vec![eids[1]], "the edge below the cursor");
     assert!(at(30).is_empty(), "the edge at the cursor");
@@ -2228,15 +2249,12 @@ fn orders(actors: usize) -> Vec<Vec<usize>> {
 }
 
 /// The `:Person` and `:Other` nodes of a version: whether each is a `:Person`, and its `v` and `w`.
-type Model = BTreeMap<u64, (bool, Option<i64>, Option<i64>)>;
+type Model = BTreeMap<u64, (bool, Option<Value>, Option<Value>)>;
 
 fn model_of(g: &Graph) -> Model {
     let value = |n: u64, attr: &str| {
         let idx = g.get_node_attribute_id(&attr_named(attr))?;
-        match g.get_node_attribute_by_idx(NodeId::from(n), idx as u16)? {
-            Value::Int(x) => Some(x),
-            _ => None,
-        }
+        g.get_node_attribute_by_idx(NodeId::from(n), idx as u16)
     };
     let mut model = Model::new();
     for (label, person) in [("Person", true), ("Other", false)] {
@@ -2263,22 +2281,22 @@ fn check_rules(
         let Some(state) = g.falkordb_index.column_state(EntityType::Node, label, attr) else {
             continue;
         };
-        let expected: BTreeSet<(u64, u64)> = model
-            .iter()
-            .filter_map(|(&id, &(person, v, w))| {
-                let value = if i == 0 { v } else { w };
-                let key = encode_numeric(&Value::Int(value?))?;
-                let below = match state {
-                    BuildState::Ready => true,
-                    BuildState::Building {
-                        next: BuildCursor::Node(next),
-                    } => id < u64::from(next),
-                    BuildState::Building { .. } => unreachable!("a node column"),
-                };
-                (person && below).then_some((key, id))
-            })
-            .collect();
-        let held: BTreeSet<(u64, u64)> = g
+        let mut expected = BTreeSet::new();
+        for (&id, (person, v, w)) in &model {
+            let below = match state {
+                BuildState::Ready => true,
+                BuildState::Building {
+                    next: BuildCursor::Node(next),
+                } => id < u64::from(next),
+                BuildState::Building { .. } => unreachable!("a node column"),
+            };
+            if let (true, true, Some(value)) = (*person, below, if i == 0 { v } else { w }) {
+                for_each_stored_key(value, |kind, key| {
+                    expected.insert((kind, key, id));
+                });
+            }
+        }
+        let held: BTreeSet<(KeyKind, u64, u64)> = g
             .falkordb_index
             .numeric(EntityType::Node, label, attr)
             .expect("a numeric column")
@@ -2315,7 +2333,8 @@ type OrderedWrite = fn(&mut Graph, &[u64]);
 /// Every order of two writers and two indexer batches, each starting (a fork; a batch prepared on
 /// a new build version) and later committing, on two `Building` columns: for pairs of writes the
 /// rules must get right (re-values and deletes in a batch and past its cursor, a create that may
-/// reuse a freed id, a label moved off, the index dropped and created again), with the two
+/// reuse a freed id, a label moved off, the index dropped and created again, a number turning
+/// into a list and back, on nodes some of which hold lists already), with the two
 /// batches on different columns and on the same one. After every commit the published version
 /// keeps the rules on [`BuildState`] ([`check_rules`]): a writer's commit publishes its own data
 /// and a batch's changes none; no commit moves a column's build back, unless its writer created
@@ -2331,10 +2350,15 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     for (i, &id) in ids.iter().enumerate() {
         set_attr(&mut template, id, &w, Value::Int(100 + i as i64));
     }
+    // Lists, so batches, rebases and catch-ups carry array tuples too: one in the first batch, one
+    // in the second repeating an element, and one past both.
+    set_attr(&mut template, ids[2], &v, ints(&[2, 20]));
+    set_attr(&mut template, ids[6], &v, ints(&[6, 60, 6]));
+    set_attr(&mut template, ids[10], &w, ints(&[110, 111]));
     create_index_on(&mut template, &label, &v);
     create_index_on(&mut template, &label, &w);
 
-    let writes: [(&str, OrderedWrite, OrderedWrite); 5] = [
+    let writes: [(&str, OrderedWrite, OrderedWrite); 6] = [
         (
             "re-value in the batch, delete past the cursor",
             |g, ids| set_attr(g, ids[1], &attr_named("v"), Value::Int(51)),
@@ -2373,6 +2397,14 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
             |g, ids| {
                 set_attr(g, ids[4], &attr_named("v"), Value::Int(55));
                 relabel_to_other(g, ids[9]);
+            },
+        ),
+        (
+            "a number becomes a list in the batch; a list becomes a number, another list past it",
+            |g, ids| set_attr(g, ids[1], &attr_named("v"), ints(&[1, 51, 51])),
+            |g, ids| {
+                set_attr(g, ids[6], &attr_named("v"), Value::Int(56));
+                set_attr(g, ids[10], &attr_named("w"), ints(&[111, 112]));
             },
         ),
     ];
@@ -2600,13 +2632,11 @@ fn set_edge_attr(
     g: &mut Graph,
     eid: u64,
     attr: &Arc<String>,
-    value: i64,
+    value: Value,
 ) {
     g.open_id_batches().expect("a consistent space");
     let aid = g.get_or_create_rel_attr_id(attr);
-    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, Value::Int(value))])]
-        .into_iter()
-        .collect();
+    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, value)])].into_iter().collect();
     applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
 }
 
@@ -2647,17 +2677,21 @@ fn check_column(
             }
         }
     }
-    let expected: BTreeSet<(u64, u64)> = entities
-        .into_iter()
-        .filter(|&(id, _)| match state {
+    let mut expected = BTreeSet::new();
+    for (id, value) in entities {
+        let below = match state {
             BuildState::Ready => true,
             BuildState::Building { next } => g
                 .build_place(entity, id)
                 .is_some_and(|at| at.precedes(next)),
-        })
-        .filter_map(|(id, value)| Some((encode_numeric(&value?)?, id)))
-        .collect();
-    let held: BTreeSet<(u64, u64)> = g
+        };
+        if let (true, Some(value)) = (below, value) {
+            for_each_stored_key(&value, |kind, key| {
+                expected.insert((kind, key, id));
+            });
+        }
+    }
+    let held: BTreeSet<(KeyKind, u64, u64)> = g
         .falkordb_index
         .numeric(entity, label, attr)
         .expect("a numeric column")
@@ -2670,14 +2704,14 @@ fn check_column(
 /// Writers and indexer batches on real threads, on three columns at once (two node columns and an
 /// edge column), with one indexer thread per column, as the builder runs one chain of batches per
 /// column, and three writer threads that fork, write and claim, or write holding the slot:
-/// re-values, creates, deletes (a node's edges with it), labels moved off, edges added and
-/// re-valued, and now and then a column dropped and created again, `Building`. Until commits
-/// publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads share it behind
-/// a test lock: forks and reads take its read side, claims and commits its write side, and a batch
-/// is read with no lock held. After every commit the published version keeps the rules on
-/// [`BuildState`] against its own data ([`check_column`]), and every column ends `Ready`, as a
-/// one-pass build of the final data. It runs until every way a commit can go was seen, so a run
-/// in which the threads never raced fails.
+/// re-values (to numbers and to lists), creates, deletes (a node's edges with it), labels moved
+/// off, edges added and re-valued, and now and then a column dropped and created again, `Building`.
+/// Until commits publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads
+/// share it behind a test lock: forks and reads take its read side, claims and commits its write
+/// side, and a batch is read with no lock held. After every commit the published version keeps the
+/// rules on [`BuildState`] against its own data ([`check_column`]), and every column ends `Ready`,
+/// as a one-pass build of the final data. It runs until every way a commit can go was seen, so a
+/// run in which the threads never raced fails.
 #[test]
 fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     use parking_lot::{Mutex, RwLock};
@@ -2708,8 +2742,13 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         attr_named("R"),
     );
     let (mut g, label, ids) = people_with(&v, &(0..NODES).collect::<Vec<_>>());
-    for (i, &id) in ids.iter().enumerate() {
-        set_attr(&mut g, id, &w, Value::Int(1000 + i as i64));
+    for (i, &id) in (0..).zip(&ids) {
+        let value = if i % 5 == 0 {
+            ints(&[1000 + i, 2000 + i])
+        } else {
+            Value::Int(1000 + i)
+        };
+        set_attr(&mut g, id, &w, value);
     }
     add_edges(&mut g, &ty, &x, &ids[..ids.len() - 1], &ids[1..], 0);
     let columns: Vec<(EntityType, IndexKey)> = vec![
@@ -2737,8 +2776,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         }
     };
     // A random write on `g`, by `op`: re-create a column, delete a node and its edges, create a
-    // node, move one off `:Person`, add an edge, re-value an edge or a node. Half the time a node
-    // it picks is one of those just past a node column's cursor, which its next batches read.
+    // node, move one off `:Person`, add an edge, re-value an edge or a node, to a list a quarter of
+    // the time. Half the time a node it picks is one of those just past a node column's cursor,
+    // which its next batches read.
     let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
         let mut people: Vec<u64> = g
             .get_label_matrix(&label)
@@ -2767,6 +2807,11 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
             .map(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect())
             .unwrap_or_default();
         let value = rng.random_range(0..VALUES);
+        let new_value = if rng.random_bool(0.25) {
+            ints(&[value, value / 2, value])
+        } else {
+            Value::Int(value)
+        };
         match op {
             0..=3 => {
                 let (entity, (l, a)) = &columns[rng.random_range(0..columns.len())];
@@ -2789,14 +2834,14 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                 add_edges(g, &ty, &x, &[src], &[dst], value);
             }
             36..=55 if !edges.is_empty() => {
-                set_edge_attr(g, edges[rng.random_range(0..edges.len())], &x, value);
+                set_edge_attr(g, edges[rng.random_range(0..edges.len())], &x, new_value);
             }
             _ if !people.is_empty() => {
                 set_attr(
                     g,
                     people[rng.random_range(0..people.len())],
                     attr,
-                    Value::Int(value),
+                    new_value,
                 );
             }
             _ => {}
@@ -3461,5 +3506,308 @@ fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
             (None, Some((6, 8))),
             (None, None),
         ]
+    );
+}
+
+// --- List values: the array tree ---
+
+fn ints(xs: &[i64]) -> Value {
+    Value::List(Arc::new(xs.iter().map(|&x| Value::Int(x)).collect()))
+}
+
+/// `v IN n.attr`, answered from the column's array tree.
+fn contains(
+    g: &Graph,
+    label: &Arc<String>,
+    attr: &Arc<String>,
+    v: i64,
+) -> Vec<u64> {
+    g.falkordb_index
+        .numeric(EntityType::Node, label, attr)
+        .unwrap()
+        .array_contains(&Value::Int(v))
+        .collect()
+}
+
+/// A value changing kind — scalar, list, scalar — through the real SET path, one unit of work
+/// each. Every transition stages a remove from one tree and an add to the other; a remove routed
+/// to the wrong tree would leave a tuple behind that the scalar path never rechecks.
+#[test]
+fn a_value_changing_kind_moves_between_trees() {
+    let (mut g, label, attr, ids) = graph_with_index(1);
+    let n = ids[0];
+
+    set_attr(&mut g, n, &attr, Value::Int(1));
+    assert_eq!(range_scan(&g, &label, &attr, 1, 1), vec![n]);
+    assert!(contains(&g, &label, &attr, 1).is_empty());
+
+    set_attr(&mut g, n, &attr, ints(&[1, 2]));
+    assert!(
+        range_scan(&g, &label, &attr, 1, 1).is_empty(),
+        "the scalar tuple must be gone, not shadowed"
+    );
+    assert_eq!(contains(&g, &label, &attr, 1), vec![n]);
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, ints(&[2]));
+    assert!(
+        contains(&g, &label, &attr, 1).is_empty(),
+        "a dropped element"
+    );
+    assert_eq!(contains(&g, &label, &attr, 2), vec![n]);
+
+    set_attr(&mut g, n, &attr, Value::Int(2));
+    assert_eq!(range_scan(&g, &label, &attr, 2, 2), vec![n]);
+    assert!(
+        contains(&g, &label, &attr, 2).is_empty(),
+        "the same key crossing back must leave the array tree"
+    );
+}
+
+/// Both transitions inside ONE unit of work, so they meet in one buffer: `SET n.v = [1, 2]`
+/// then `DELETE n`, on a node whose `v` was the scalar `1`. The buffer holds a scalar remove of
+/// `(1, n)` and array adds then removes of `(1, n)` and `(2, n)` — the same `(key, id)` in both
+/// trees. Collapsing without the kind would let one tree's change decide the other's.
+#[test]
+fn a_kind_change_and_a_delete_in_one_batch_leave_nothing() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(1));
+    set_attr(&mut g, ids[1], &attr, ints(&[1]));
+
+    let aid = g.get_or_create_node_attr_id(&attr);
+    let mut attrs = FxHashMap::default();
+    attrs.insert(ids[0], vec![(aid, ints(&[1, 2]))]);
+    let mut writes = IndexDocs::default();
+    g.set_nodes_attributes(&attrs, &mut writes).unwrap();
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[0]);
+    g.delete_nodes(&del, &mut writes).unwrap();
+    g.apply_index_writes(&mut writes);
+
+    assert!(range_scan(&g, &label, &attr, 0, 10).is_empty());
+    assert_eq!(
+        contains(&g, &label, &attr, 1),
+        vec![ids[1]],
+        "only the untouched list node is left"
+    );
+    assert!(contains(&g, &label, &attr, 2).is_empty());
+}
+
+/// Indexer batches carry the array half, and so does the RDB-load populate, which builds through
+/// the same one-batch path. Writes land between batches behind and ahead of the cursor, changing
+/// values' kind both ways and deleting a list-valued node; the column then matches a one-pass
+/// build of the final graph in both trees. A batch that dropped the array half, or a write
+/// collapsed without its kind, leaves a tuple in the wrong tree or none at all.
+#[test]
+fn batched_build_carries_list_values_under_concurrent_writes() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 0, 4, 0]);
+    // Before the index exists, so the batches are their only way in.
+    set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
+    set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
+    set_attr(&mut g, ids[3], &attr, ints(&[3]));
+    set_attr(&mut g, ids[5], &attr, ints(&[4, 5]));
+    create_index_on(&mut g, &label, &attr);
+
+    // The first batch indexes ids[0] (scalar 1) and ids[1] ([1, 2]), and stops at ids[2].
+    assert!(graph_writes::run_indexer_batch(&mut g, 2));
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[0]]);
+    assert_eq!(contains(&g, &label, &attr, 2), vec![ids[1]]);
+    assert!(
+        matches!(
+            g.falkordb_index.query_numeric(
+                EntityType::Node,
+                &label,
+                &IndexQuery::ArrayContains {
+                    key: attr.clone(),
+                    value: Value::Int(2),
+                },
+            ),
+            Some(NumericAnswer::NotReady(_))
+        ),
+        "a building column says not ready, not unservable"
+    );
+
+    // Behind the cursor: ids[0] goes 1 -> [1, 6] and ids[1] goes [1, 2] -> 2. Ahead of it:
+    // ids[2] is deleted, ids[3] goes [3] -> [7], and ids[5] goes [4, 5] -> 5.
+    set_attr(&mut g, ids[0], &attr, ints(&[1, 6]));
+    set_attr(&mut g, ids[1], &attr, Value::Int(2));
+    let mut del = RoaringTreemap::new();
+    del.insert(ids[2]);
+    applied!(g, |w| g.delete_nodes(&del, &mut w)).unwrap();
+    set_attr(&mut g, ids[3], &attr, ints(&[7]));
+    set_attr(&mut g, ids[5], &attr, Value::Int(5));
+    assert_eq!(range_scan(&g, &label, &attr, 0, 10), vec![ids[1]]);
+    assert_eq!(contains(&g, &label, &attr, 1), vec![ids[0]]);
+    assert!(
+        contains(&g, &label, &attr, 2).is_empty(),
+        "ids[1] is a scalar now, and ids[2] was never reached"
+    );
+
+    build_to_end(&mut g, 2);
+    let values = [1, 2, 3, 4, 5, 6, 7];
+    let want = one_pass(&g, EntityType::Node, &label, &attr, &values);
+    assert_eq!(
+        want.2,
+        vec![
+            (1, vec![ids[0]]),
+            (2, vec![]),
+            (3, vec![]),
+            (4, vec![]),
+            (5, vec![]),
+            (6, vec![ids[0]]),
+            (7, vec![ids[3]]),
+        ],
+        "the oracle itself: only the two lists left"
+    );
+    assert_eq!(contents(&g, EntityType::Node, &label, &attr, &values), want);
+
+    // RDB load: the populate rebuilds the column from scratch, through one batch.
+    let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
+    let fields = HashMap::from([(attr.clone(), vec![Arc::new(field)])]);
+    graph_writes::populate(&mut g, EntityType::Node, &label, &fields);
+    assert_eq!(
+        g.falkordb_index
+            .column_state(EntityType::Node, &label, &attr),
+        Some(BuildState::Ready)
+    );
+    assert_eq!(contents(&g, EntityType::Node, &label, &attr, &values), want);
+}
+
+/// For each of `queries` on `:label` nodes, what the scan standing in for a building column keeps
+/// at every cursor of a build in batches of two (`(query, kept)`, ids sorted), and then, with the
+/// column built, what the column answers (ids sorted, by query). The scan has to keep exactly
+/// what the built column answers: the planner drops the predicate it hands an index scan, so
+/// nothing else checks the scan's rows.
+fn building_scans_and_built_answers(
+    g: &mut Graph,
+    label: &Arc<String>,
+    queries: &[IndexQuery<Value>],
+) -> (Vec<(usize, Vec<u64>)>, Vec<Vec<u64>>) {
+    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let mut kept = Vec::new();
+    loop {
+        for (i, q) in queries.iter().enumerate() {
+            if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_nodes(label, q) {
+                let attr = g.get_node_attribute_id(recheck.attribute());
+                let mut ids: Vec<u64> = g
+                    .get_nodes(&labels, 0)
+                    .filter(|&id| {
+                        attr.is_some_and(|attr| g.node_admitted(id, attr as u16, &recheck))
+                    })
+                    .map(u64::from)
+                    .collect();
+                ids.sort_unstable();
+                kept.push((i, ids));
+            }
+        }
+        if !g.falkordb_index.has_building_columns() {
+            break;
+        }
+        graph_writes::run_indexer_batch(g, 2);
+    }
+    let built = queries
+        .iter()
+        .enumerate()
+        .map(|(i, q)| match g.query_index_numeric_nodes(label, q) {
+            Some(NumericAnswer::Rows(rows)) => {
+                let mut ids: Vec<u64> = rows.map(u64::from).collect();
+                ids.sort_unstable();
+                ids
+            }
+            _ => panic!("query {i}: a built column serves it"),
+        })
+        .collect();
+    (kept, built)
+}
+
+/// While a column is building, `v IN n.attr` is answered by a scan, and the scan keeps exactly the
+/// nodes whose list the built column answers with: a list holding the number, never a scalar
+/// equal to it. And `n.attr = v` keeps the scalar, never a list holding `v`. A scan that checked a
+/// list value as one number would keep no list at all, answering `1 IN n.v` with nothing.
+#[test]
+fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 3, 0, 0, 5]);
+    set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
+    set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
+    set_attr(&mut g, ids[4], &attr, ints(&[3]));
+    set_attr(
+        &mut g,
+        ids[5],
+        &attr,
+        Value::List(Arc::new(
+            [
+                Value::Int(5),
+                Value::String(Arc::new("x".to_string())),
+                Value::Int(1),
+            ]
+            .into_iter()
+            .collect(),
+        )),
+    );
+    create_index_on(&mut g, &label, &attr);
+    let probe = |v: i64| IndexQuery::ArrayContains {
+        key: attr.clone(),
+        value: Value::Int(v),
+    };
+    let queries = [
+        probe(1),
+        probe(2),
+        probe(3),
+        probe(5),
+        probe(9),
+        eq(&attr, 1),
+        eq(&attr, 3),
+    ];
+
+    let (kept, built) = building_scans_and_built_answers(&mut g, &label, &queries);
+    assert_eq!(
+        built,
+        vec![
+            vec![ids[1], ids[5]],
+            vec![ids[1], ids[2]],
+            vec![ids[2], ids[4]],
+            vec![ids[5]],
+            vec![],
+            vec![ids[0]],
+            vec![ids[3]],
+        ],
+        "the built column itself"
+    );
+    for i in 0..queries.len() {
+        assert!(
+            kept.iter().filter(|(j, _)| *j == i).count() >= 2,
+            "query {i}: scanned at more than one cursor"
+        );
+    }
+    for (i, scanned) in kept {
+        assert_eq!(scanned, built[i], "query {i}");
+    }
+}
+
+/// `query_numeric` serves `v IN n.attr` from the array tree and `n.attr = v` from the scalar tree,
+/// and declines a probe the encoder cannot represent.
+#[test]
+fn array_contains_is_routed_to_the_array_tree() {
+    let (mut g, label, attr, ids) = graph_with_index(2);
+    set_attr(&mut g, ids[0], &attr, Value::Int(5));
+    set_attr(&mut g, ids[1], &attr, ints(&[5, 6]));
+    let probe = |v: Value| IndexQuery::ArrayContains {
+        key: attr.clone(),
+        value: v,
+    };
+    let rows =
+        |q: &IndexQuery<Value>| match g.falkordb_index.query_numeric(EntityType::Node, &label, q) {
+            Some(NumericAnswer::Rows(r)) => Some(r.collect::<Vec<_>>()),
+            Some(NumericAnswer::NotReady(_)) => panic!("the column is Ready"),
+            None => None,
+        };
+    assert_eq!(rows(&probe(Value::Int(5))), Some(vec![ids[1]]));
+    assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
+    assert_eq!(
+        rows(&probe(Value::String(Arc::new("x".to_string())))),
+        None,
+        "a non-numeric probe is not this column's to answer"
     );
 }

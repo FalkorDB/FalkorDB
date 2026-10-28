@@ -40,6 +40,62 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
     (!x.is_nan()).then(|| encode_f64(x))
 }
 
+/// Which kind of stored value a key comes from, and so which of a column's two trees it lives in.
+///
+/// A numeric column keeps **scalar** values and the elements of **list** values apart. One tree
+/// for both would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`, which is false
+/// in Cypher, would match it, and `Equal` has no post-filter to catch that (its plan is a bare
+/// `Node By Index Scan`). RediSearch keeps the same separation with its `numeric:arr` sub-field;
+/// this is the native equivalent. It lives here because the encoder is what decides it: see
+/// [`for_each_stored_key`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum KeyKind {
+    /// A scalar value: at most one key per entity.
+    Scalar,
+    /// The elements of a list value: one key per numeric element, read only by `value IN n.prop`.
+    Array,
+}
+
+impl KeyKind {
+    /// Every kind, in order.
+    pub const ALL: [Self; 2] = [Self::Scalar, Self::Array];
+}
+
+/// Call `emit` with each key a **stored** value contributes, and the kind of key it is.
+///
+/// A scalar contributes at most one key, of [`KeyKind::Scalar`]. A list contributes one key per
+/// element that [`encode_numeric`] accepts, of [`KeyKind::Array`], so `1 IN n.samples` is an
+/// ordinary point lookup. Elements it rejects (strings, temporals, `NaN`, nested lists) are
+/// skipped one by one rather than rejecting the list; Cypher's `IN` does not look inside a nested
+/// list, so neither does this.
+///
+/// Not deduplicated: `[1, 1.0, 2]` emits the key for `1` twice. Every consumer treats `(key, doc)`
+/// as a set member (a batch sorts and dedups, and a unit of work's staged writes collapse to the
+/// last change per tuple), so a duplicate costs one extra entry and is never stored twice. A
+/// callback rather than a buffer because the write path calls this once per written value, and a
+/// buffer per call would allocate on every write.
+///
+/// Deliberately separate from [`encode_numeric`], which answers a different question: the key of
+/// a **query** value. A query value is a single scalar; one that is a list is declined rather than
+/// expanded, because `n.v = [1, 2]` asks about the list itself.
+pub fn for_each_stored_key(
+    value: &Value,
+    mut emit: impl FnMut(KeyKind, u64),
+) {
+    match value {
+        Value::List(items) => {
+            for key in items.iter().filter_map(encode_numeric) {
+                emit(KeyKind::Array, key);
+            }
+        }
+        _ => {
+            if let Some(key) = encode_numeric(value) {
+                emit(KeyKind::Scalar, key);
+            }
+        }
+    }
+}
+
 /// Monotone total order over non-`NaN` `f64`, as a `u64`: for non-`NaN` `a`, `b`,
 /// `a < b`  ⇔  `encode_f64(a) < encode_f64(b)`.
 ///

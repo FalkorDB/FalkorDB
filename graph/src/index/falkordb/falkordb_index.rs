@@ -19,9 +19,9 @@ use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
-use super::encode::encode_numeric;
+use super::encode::{KeyKind, encode_numeric, for_each_stored_key};
 use super::graph_writes;
-use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
+use super::numeric::{DocIter, EncodedTuples, NumericIndex, Selection};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::versioned::{BuildState, IndexEntry, IndexId, VersionedIndex};
 
@@ -72,7 +72,7 @@ impl IndexColumn {
     pub fn add_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
+        scratch: &mut EncodedTuples,
     ) {
         match self {
             Self::Numeric(idx) => idx.add_batch(entries, scratch),
@@ -83,15 +83,16 @@ impl IndexColumn {
     pub fn remove_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
-        scratch: &mut Vec<(u64, u64)>,
+        scratch: &mut EncodedTuples,
     ) {
         match self {
             Self::Numeric(idx) => idx.remove_batch(entries, scratch),
         }
     }
 
-    /// The tree key `value` takes in *this* column, or `None` when the kind does not index it
-    /// (numeric: non-numeric and `NaN`).
+    /// The key a scalar `value` takes in *this* column's scalar tree, or `None` when the kind does
+    /// not index it (numeric: non-numeric, `NaN`, and a list, whose elements are keys of the array
+    /// tree instead).
     #[must_use]
     pub fn encode_value(
         &self,
@@ -102,17 +103,30 @@ impl IndexColumn {
         }
     }
 
-    /// Append the tuple `(value, id)` takes in *this* column to `out`, if the kind indexes
-    /// `value`. The one place a value becomes a column's tuples, so a kind that gives
-    /// a value several keys changes only this.
+    /// Call `emit` with each key a stored `value` takes in *this* column, and its [`KeyKind`].
+    /// Nothing when the kind does not index it; one key per numeric element, of
+    /// [`KeyKind::Array`], for a list.
+    pub fn for_each_stored_key(
+        &self,
+        value: &Value,
+        emit: impl FnMut(KeyKind, u64),
+    ) {
+        match self {
+            Self::Numeric(_) => for_each_stored_key(value, emit),
+        }
+    }
+
+    /// Append the tuples `(value, id)` takes in *this* column to `out`, each with the tuples of its
+    /// kind. The one place a value becomes a column's tuples. Unsorted and possibly repeated: see
+    /// [`EncodedTuples::sort_dedup`].
     pub fn push_encoded(
         &self,
         value: &Value,
         id: u64,
         out: &mut EncodedTuples,
     ) {
-        if let Some(key) = self.encode_value(value) {
-            out.scalar.push((key, id));
+        match self {
+            Self::Numeric(_) => out.push_numeric(value, id),
         }
     }
 
@@ -144,7 +158,8 @@ impl IndexColumn {
         }
     }
 
-    /// The ids stored under `key`, a key [`encode_value`](Self::encode_value) gave.
+    /// The ids stored under `key` in the scalar tree, a key [`encode_value`](Self::encode_value)
+    /// gave.
     #[must_use]
     pub fn rows_at(
         &self,
@@ -175,7 +190,7 @@ impl IndexColumn {
         graph_writes::entity_tuples(from, *entity, key, written, self, &mut removes);
         graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
         if let BuildState::Building { next } = state {
-            adds.scalar.retain(|&(_, id)| {
+            adds.retain(|&(_, id)| {
                 to.build_place(*entity, id)
                     .is_some_and(|at| at.precedes(next))
             });
@@ -258,7 +273,7 @@ impl VersionedIndex for IndexColumn {
             // removal of the same tuple.
             log.retain(|w| !w.add || place(w.id).is_some_and(|at| at.precedes(next)));
         }
-        last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
+        last_write_wins(&mut log, removes, adds);
         self.remove_encoded(removes);
         self.add_encoded(adds);
     }
@@ -294,24 +309,20 @@ impl VersionedIndex for IndexColumn {
         next: Option<BuildCursor>,
         published: &Graph,
     ) {
-        let mut adds = EncodedTuples::scalars(
-            batch
-                .scalar
-                .iter()
-                .filter(|&&(_, id)| !written.contains(id))
-                .copied()
-                .collect(),
-        );
         // The written entities in the batch's range, as the published version has them. Those
         // below `from` are right in this copy already.
         let mut current = EncodedTuples::default();
         graph_writes::entity_tuples(published, *entity, key, written, self, &mut current);
-        adds.scalar
-            .extend(current.scalar.into_iter().filter(|&(_, id)| {
-                published.build_place(*entity, id).is_some_and(|at| {
-                    !at.precedes(from) && next.is_none_or(|next| at.precedes(next))
-                })
-            }));
+        let in_range = |id| {
+            published
+                .build_place(*entity, id)
+                .is_some_and(|at| !at.precedes(from) && next.is_none_or(|next| at.precedes(next)))
+        };
+        let mut adds = EncodedTuples::default();
+        for kind in KeyKind::ALL {
+            adds[kind].extend(batch[kind].iter().filter(|&&(_, id)| !written.contains(id)));
+            adds[kind].extend(current[kind].iter().filter(|&&(_, id)| in_range(id)));
+        }
         self.add_encoded(&mut adds);
     }
 
@@ -385,7 +396,7 @@ impl<I> NumericAnswer<I> {
 #[derive(Clone, Debug)]
 pub struct Recheck {
     attribute: Arc<String>,
-    keys: KeySet,
+    keys: Selection,
 }
 
 impl Recheck {
@@ -395,13 +406,15 @@ impl Recheck {
         &self.attribute
     }
 
-    /// Whether the built column answers the query with an entity whose attribute is `value`.
+    /// Whether the built column answers the query with an entity whose attribute is `value`: a
+    /// scalar for a scalar query, a list holding a matching element for `value IN n.prop`
+    /// ([`Selection::admits`]).
     #[must_use]
     pub fn admits(
         &self,
         value: &Value,
     ) -> bool {
-        encode_numeric(value).is_some_and(|key| self.keys.contains(key))
+        self.keys.admits(value)
     }
 }
 
@@ -769,20 +782,20 @@ impl FalkorDbIndex {
             })
     }
 
-    /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
-    /// such column or it does not index `value` — the write path's staging gate.
-    #[must_use]
-    pub fn encode_value(
+    /// Call `emit` with each key `value` takes in column `(entity, label, attr)` and its
+    /// [`KeyKind`]; nothing when there is no such column or it does not index `value`. The write
+    /// path's staging gate.
+    pub fn for_each_stored_key(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
         value: &Value,
-    ) -> Option<u64> {
-        self.columns(entity)
-            .get(&(label.clone(), attr.clone()))?
-            .index
-            .encode_value(value)
+        emit: impl FnMut(KeyKind, u64),
+    ) {
+        if let Some(entry) = self.entry(entity, label, attr) {
+            entry.index.for_each_stored_key(value, emit);
+        }
     }
 
     /// Apply a unit of work's staged changes and leave `writes` empty. This is the single write
@@ -833,9 +846,9 @@ impl FalkorDbIndex {
     }
 
     /// Answer an index query for `(entity, label)` from the numeric column. Served: a numeric
-    /// `Equal`/`Range`, an `IN` list whose values are all numeric, and an `OR` of equalities and
-    /// `IN` lists on one attribute. Yields docs — node ids for a node column, `edge_id`s for an
-    /// edge column.
+    /// `Equal`/`Range`, an `IN` list whose values are all numeric, an `OR` of equalities and
+    /// `IN` lists on one attribute, and a numeric `value IN n.prop` (array-contains). Yields
+    /// docs — node ids for a node column, `edge_id`s for an edge column.
     ///
     /// Three outcomes, and the caller must keep them apart (see [`NumericAnswer`]):
     ///
@@ -844,8 +857,8 @@ impl FalkorDbIndex {
     ///   still `Building`. The caller scans and keeps what the [`Recheck`] admits; this is a timing
     ///   state, never an error.
     /// * `None` — any other shape, or no such column: a non-numeric value, an `And`, an `OR`
-    ///   spanning attributes, geo, array-contains. A Range index also holds strings and geo, which
-    ///   only RediSearch serves. Under `index-falkordb` there is no other index, and the caller
+    ///   spanning attributes, geo. A Range index also holds strings and geo, which only RediSearch
+    ///   serves. Under `index-falkordb` there is no other index, and the caller
     ///   turns this into an error.
     #[must_use]
     pub fn query_numeric(
@@ -879,8 +892,11 @@ impl FalkorDbIndex {
                 Some(IndexQuery::Equal { key, .. } | IndexQuery::InList { key, .. }) => key,
                 _ => return None,
             },
-            // A string/geo leaf on a Range index (RediSearch owns those entries), And, Point (geo),
-            // ArrayContains → not a numeric predicate.
+            // `value IN n.prop`, where the property holds a list: served from the column's array
+            // tree (`NumericIndex::array_contains`) when the probed value encodes.
+            IndexQuery::ArrayContains { key, value } if encode_numeric(value).is_some() => key,
+            // A string/geo leaf on a Range index (RediSearch owns those entries), And, Point (geo)
+            // → not a numeric predicate.
             _ => return None,
         };
         let entry = self.entry(entity, label, key)?;
@@ -902,8 +918,9 @@ impl FalkorDbIndex {
 
     /// "Which entities of `(entity, label)` may hold `value` at `attr`?", or `None` when this
     /// index cannot answer: there is no such column, the column is still `Building` (it has not
-    /// seen every entity, so it cannot rule one out), or its kind does not index `value` (a string
-    /// in a numeric column, today).
+    /// seen every entity, so it cannot rule one out), or its kind does not index `value` as a
+    /// scalar (a string in a numeric column, today, or a list: its elements are in the array tree,
+    /// which says which lists contain a number, not which equal a list).
     ///
     /// `None` is not "no entities". An answer, even an empty one, covers every entity holding
     /// `value`, which is what lets a unique constraint trust it. The question names no index kind,
@@ -1247,6 +1264,23 @@ mod tests {
                 "{n} tuples of one value reported {size} bytes"
             );
         }
+    }
+
+    /// A column reports the pages of both its trees: list elements' tuples, in the array tree,
+    /// count as scalars' do.
+    #[test]
+    fn a_column_reports_both_trees_pages() {
+        let scalars = tuples(10_000, |i| i as i64);
+        let mut elements = EncodedTuples::default();
+        elements[KeyKind::Array].clone_from(&scalars[KeyKind::Scalar]);
+        let mut both = scalars.clone();
+        both[KeyKind::Array].clone_from(&scalars[KeyKind::Scalar]);
+        let size =
+            |tuples: &EncodedTuples| VersionedIndex::memory_usage(&column_of(tuples.clone()));
+
+        assert!(size(&scalars) > 0);
+        assert_eq!(size(&elements), size(&scalars));
+        assert_eq!(size(&both), 2 * size(&scalars));
     }
 
     /// Versions that share pages each count them: a fork reports what its parent does, and
