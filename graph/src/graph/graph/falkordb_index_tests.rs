@@ -1088,7 +1088,8 @@ fn any_batch_size_builds_the_one_pass_column() {
 /// While a column is building, a read of it scans, and the scan keeps what the built column will
 /// answer: at every cursor a build passes through, for nodes and for edges, for each shape a
 /// column serves. The planner drops the predicate it hands an index scan, so nothing else checks
-/// the scan's rows; a scan that kept them all would return every entity of the label.
+/// the scan's rows; a scan that kept them all would return every entity of the label. `= null`
+/// holds for nothing, and is answered with no rows rather than declined.
 #[test]
 fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     let (mut g, label, v, ty, w) = scan_fixture();
@@ -1116,18 +1117,25 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         eq(&v, 40),
         eq(&v, 35),
         equal(&v, Value::Float(30.0)),
+        equal(&v, Value::Null),
         range(&v, Some(20), Some(60), true),
         range(&v, Some(20), Some(60), false),
         range(&v, Some(50), None, true),
         range(&v, None, Some(30), false),
         in_list(&v, &[int(10), int(70), int(70), int(1000)]),
-        IndexQuery::Or(vec![eq(&v, 0), in_list(&v, &[int(90)])]),
+        IndexQuery::Or(vec![
+            eq(&v, 0),
+            in_list(&v, &[int(90)]),
+            equal(&v, Value::Null),
+        ]),
     ];
     let edge_queries = [
         eq(&w, 3),
+        equal(&w, Value::Null),
         range(&w, Some(2), Some(5), true),
         in_list(&w, &[int(0), int(7)]),
         IndexQuery::Or(vec![eq(&w, 1), eq(&w, 7)]),
+        IndexQuery::Or(vec![eq(&w, 1), equal(&w, Value::Null)]),
     ];
     let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
     let sorted = |mut ids: Vec<u64>| {
