@@ -646,14 +646,16 @@ fn scan_edges(
         .is_some()
     {}
     let mut read = 0usize;
-    while let Some((src, dst, eid)) = edges.next() {
+    while read < budget {
+        let Some((src, dst, eid)) = edges.next() else {
+            break;
+        };
         index(eid);
         read += 1;
-        if read >= budget {
+        if read == budget {
             while let Some((_, _, eid)) = edges.next_if(|&(s, d, _)| s == src && d == dst) {
                 index(eid);
             }
-            break;
         }
     }
     edges

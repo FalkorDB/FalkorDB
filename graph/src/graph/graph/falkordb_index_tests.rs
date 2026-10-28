@@ -1050,6 +1050,42 @@ fn a_node_batch_reads_at_most_its_size() {
     }
 }
 
+/// A batch of size zero reads nothing, for a node column and for an edge column: the column stays
+/// empty and `Building`, and the build that follows still reaches every entity. C's populate reads
+/// nothing for a zero batch either (`indexed < batch_size || multi`, `src/index/index_construct.c`).
+#[test]
+fn a_batch_of_size_zero_reads_nothing() {
+    for entity in [EntityType::Node, EntityType::Relationship] {
+        let (mut g, label, v, ty, w) = scan_fixture();
+        let (l, a, other, values): (_, _, _, Vec<i64>) = match entity {
+            EntityType::Node => (
+                &label,
+                &v,
+                (EntityType::Relationship, &ty, &w),
+                (0..10).map(|i| i * 10).collect(),
+            ),
+            EntityType::Relationship => (&ty, &w, (EntityType::Node, &label, &v), (0..8).collect()),
+        };
+        g.falkordb_index.drop_column(other.0, other.1, other.2);
+
+        assert!(
+            graph_writes::run_indexer_batch(&mut g, 0),
+            "{entity:?}: still Building"
+        );
+        assert!(
+            contents(&g, entity, l, a, &[]).1.is_empty(),
+            "{entity:?}: nothing read"
+        );
+
+        build_to_end(&mut g, 2);
+        assert_eq!(
+            contents(&g, entity, l, a, &values),
+            one_pass(&g, entity, l, a, &values),
+            "{entity:?}"
+        );
+    }
+}
+
 /// The same unit of work against a `Building` column, on a node the batches already indexed and on
 /// one they have not reached: neither the old value nor the SET's value may survive the DELETE.
 #[test]
