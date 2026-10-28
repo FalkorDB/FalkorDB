@@ -40,20 +40,6 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
     (!x.is_nan()).then(|| encode_f64(x))
 }
 
-/// Which of a column's key spaces a stored key lives in.
-///
-/// Scalar values are what a column indexes. The elements of list values belong in a key space of
-/// their own: sharing one would give a node with `v = [1, 2]` the key for `1`, so `WHERE n.v = 1`,
-/// which is false in Cypher, would match it. Nothing is stored in [`KeySpace::Array`] yet; every
-/// path that moves tuples carries it, so indexing list elements only fills it.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum KeySpace {
-    /// A scalar value: at most one key per entity.
-    Scalar,
-    /// The elements of a list value: one key per numeric element.
-    Array,
-}
-
 /// Monotone total order over non-`NaN` `f64`, as a `u64`: for non-`NaN` `a`, `b`,
 /// `a < b`  ⇔  `encode_f64(a) < encode_f64(b)`.
 ///

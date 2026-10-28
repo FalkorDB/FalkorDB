@@ -98,8 +98,8 @@ impl IndexColumn {
         }
     }
 
-    /// Append the tuple `(value, id)` takes in *this* column to `out`, in its key space, if the
-    /// kind indexes `value`. The one place a value becomes a column's tuples, so a kind that gives
+    /// Append the tuple `(value, id)` takes in *this* column to `out`, if the kind indexes
+    /// `value`. The one place a value becomes a column's tuples, so a kind that gives
     /// a value several keys changes only this.
     pub fn push_encoded(
         &self,

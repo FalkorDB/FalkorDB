@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::{KeySpace, encode_numeric};
+use super::encode::encode_numeric;
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
@@ -88,75 +88,42 @@ impl Iterator for UnionIter {
     }
 }
 
-/// Encoded `(key, doc)` tuples for one column, split by the [`KeySpace`] they belong to.
-///
-/// Everything that moves a column's tuples in encoded form (a unit of work's collapsed adds and
-/// removes, a build step's batch) carries both key spaces, so a tuple always goes back into the
-/// tree it came from. Only [`scalar`](Self::scalar) is filled today.
+/// Encoded `(key, doc)` tuples for one column: what everything that moves a column's tuples in
+/// encoded form carries (a unit of work's collapsed adds and removes, an indexer batch).
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EncodedTuples {
     pub scalar: Vec<(u64, u64)>,
-    pub array: Vec<(u64, u64)>,
 }
 
 impl EncodedTuples {
-    /// Scalar-only tuples: the shape a column holding no list values produces.
+    /// Tuples of scalar values.
     #[must_use]
     pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
-        Self {
-            scalar,
-            array: Vec::new(),
-        }
+        Self { scalar }
     }
 
-    /// Whether there are no tuples in either key space.
+    /// Whether there are no tuples.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.scalar.is_empty() && self.array.is_empty()
+        self.scalar.is_empty()
     }
 
-    /// Total tuples across both key spaces.
+    /// How many tuples there are.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.scalar.len() + self.array.len()
+        self.scalar.len()
     }
 
-    /// Empty both halves, keeping their capacity for reuse.
+    /// Empty the tuples, keeping their capacity for reuse.
     pub fn clear(&mut self) {
         self.scalar.clear();
-        self.array.clear();
     }
 
-    /// The half for `space`.
-    #[must_use]
-    pub fn half(
-        &self,
-        space: KeySpace,
-    ) -> &Vec<(u64, u64)> {
-        match space {
-            KeySpace::Scalar => &self.scalar,
-            KeySpace::Array => &self.array,
-        }
-    }
-
-    /// The half for `space`, mutably.
-    pub fn half_mut(
-        &mut self,
-        space: KeySpace,
-    ) -> &mut Vec<(u64, u64)> {
-        match space {
-            KeySpace::Scalar => &mut self.scalar,
-            KeySpace::Array => &mut self.array,
-        }
-    }
-
-    /// Sort both halves ascending and drop duplicate tuples: the **sorted and unique** shape a
-    /// tree's bulk build requires.
+    /// Sort the tuples ascending and drop duplicates: the **sorted and unique** shape a tree's
+    /// bulk build requires.
     pub fn sort_dedup(&mut self) {
-        for half in [&mut self.scalar, &mut self.array] {
-            half.sort_unstable();
-            half.dedup();
-        }
+        self.scalar.sort_unstable();
+        self.scalar.dedup();
     }
 }
 
@@ -277,7 +244,6 @@ impl NumericIndex {
         &mut self,
         tuples: &mut EncodedTuples,
     ) {
-        debug_assert!(tuples.array.is_empty(), "no list elements are indexed yet");
         tuples.sort_dedup();
         if self.tree.is_empty() {
             self.tree = Tree::from_sorted(&tuples.scalar);
@@ -291,7 +257,6 @@ impl NumericIndex {
         &mut self,
         tuples: &mut EncodedTuples,
     ) {
-        debug_assert!(tuples.array.is_empty(), "no list elements are indexed yet");
         tuples.sort_dedup();
         self.tree.remove_batch(&tuples.scalar);
     }
