@@ -26,6 +26,21 @@ class testReplication(FlowTestsBase):
 
         self.env, self.db = Env(env='oss', useSlaves=True)
 
+    def _wait_for_replica_offset(self, source, replica, timeout=30):
+        """Wait for all writes propagated before this call, across connections.
+
+        WAIT only covers writes from its own connection. Pipelines, WATCH and
+        the bulk loader can use different connections, so compare offsets.
+        """
+        target = source.info("replication")["master_repl_offset"]
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if replica.info("replication").get("slave_repl_offset", -1) >= target:
+                return
+            time.sleep(0.05)
+        raise AssertionError(
+            f"replica did not reach master offset {target} within {timeout}s")
+
     def test_binary_graph_keys_replicate_and_invalidate_watch(self):
         source = self.env.getConnection()
         replica = self.env.getSlaveConnection()
@@ -39,7 +54,7 @@ class testReplication(FlowTestsBase):
                         source.pipeline().execute_command(command, key, query).execute()
                     else:
                         source.execute_command(command, key, query)
-                    self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+                    self._wait_for_replica_offset(source, replica)
                     self.env.assertEqual(replica.execute_command(
                         "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[1]])
 
@@ -58,7 +73,7 @@ class testReplication(FlowTestsBase):
                         except WatchError:
                             aborted = True
                         self.env.assertTrue(aborted)
-                    self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+                    self._wait_for_replica_offset(source, replica)
                     self.env.assertEqual(replica.execute_command(
                         "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
                     lossy_key = key.decode("utf-8", "replace").encode()
@@ -72,10 +87,10 @@ class testReplication(FlowTestsBase):
             original = command.encode() + b"-rename-source"
             key = original + b"-\xc3(\x00suffix"
             source.execute_command("GRAPH.QUERY", original, "CREATE (:BinaryKey {value:1})")
-            self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+            self._wait_for_replica_offset(source, replica)
             source.rename(original, key)
             source.execute_command(command, key, "MATCH (n) SET n.value = 2")
-            self.env.assertEqual(source.execute_command("WAIT", 1, 5000), 1)
+            self._wait_for_replica_offset(source, replica)
             self.env.assertEqual(replica.execute_command(
                 "GRAPH.RO_QUERY", key, "MATCH (n) RETURN n.value")[1], [[2]])
             self.env.assertEqual(replica.exists(key.split(b"\x00")[0]), 0)
@@ -333,29 +348,6 @@ class testReplication(FlowTestsBase):
                     return 0
                 raise
 
-        def wait_for_replica_offset(timeout=30):
-            """Block until the replica has applied everything the master propagated.
-
-            WAIT is NOT usable for this. It blocks on the calling client's `woff`,
-            and Redis only advances `woff` when that client's *own* command
-            propagated something:
-
-                if (old_master_repl_offset != server.master_repl_offset)
-                    c->woff = server.master_repl_offset;      // server.c
-
-            The bulk batches are issued by the loader's worker process over its own
-            connection, so `source_con`'s `woff` never covers them — WAIT would take
-            the "already acked" fast path and return without waiting for the batches
-            at all. Compare offsets directly instead."""
-            target = source_con.info("replication")["master_repl_offset"]
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
-                    return
-                time.sleep(0.05)
-            raise AssertionError(
-                f"replica did not reach master offset {target} within {timeout}s")
-
         # Private directory, and the whole body runs inside it so the CSVs are
         # removed even when an assertion fails.
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -382,7 +374,7 @@ class testReplication(FlowTestsBase):
             # WAIT is the right tool for *this* gate: a client with woff 0 blocks
             # until some replica reaches SLAVE_STATE_ONLINE and acks, which is
             # exactly "the replica is attached". It is the wrong tool after the load
-            # — see wait_for_replica_offset.
+            # — see _wait_for_replica_offset.
             source_con.execute_command("WAIT", "1", "0")
 
             # Snapshot the full-sync counter so the assertions below can prove the
@@ -405,7 +397,7 @@ class testReplication(FlowTestsBase):
             buf.wait_pool()
 
             # Block until the replica has actually applied both batches.
-            wait_for_replica_offset()
+            self._wait_for_replica_offset(source_con, replica_con)
 
             src     = Graph(source_con, graphname)
             replica = Graph(replica_con, graphname)

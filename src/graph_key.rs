@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: SSPL-1.0
+
 use redis_module::RedisString;
 use std::sync::Arc;
 
