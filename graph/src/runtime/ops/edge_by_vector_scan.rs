@@ -89,7 +89,7 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
                     &view,
                     "db.idx.vector.queryRelationships",
                 )?;
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(
                     g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
