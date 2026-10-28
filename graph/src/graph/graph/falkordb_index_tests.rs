@@ -1755,6 +1755,33 @@ fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
     assert!(range_scan(&published, &label, &attr, 10, 10).is_empty());
 }
 
+/// A claim needs the fork mutably only to rebase it: with no indexer batch committed since it was
+/// made, a fork can be claimed while it is borrowed.
+#[test]
+fn a_claim_with_nothing_to_rebase_leaves_the_fork_alone() {
+    let (mvcc, _, _, _) = mvcc_building(&[10, 20, 30]);
+    let fork = mvcc.fork();
+    let reading = fork.borrow();
+    assert_eq!(mvcc.claim(&fork), Ok(()));
+    drop(reading);
+    mvcc.rollback();
+}
+
+/// A claimant's fork is never borrowed. One that is, when indexer batches overtook it, is a bug a
+/// debug build stops on, rather than a write the host runs again for as long as it lasts.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "a fork is claimed while it is borrowed")]
+fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
+    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let fork = mvcc.fork();
+    let (prepared, batch) = prepare(&mvcc, &id, 2);
+    mvcc.commit_indexer_batch(&prepared, &batch);
+    let _reading = fork.borrow();
+    let _ = mvcc.claim(&fork);
+}
+
 /// A writer whose fork an indexer batch overtook on a `Building` column claims and commits over
 /// it: the column keeps the batch's progress, and the writer's changes below its cursor are in it.
 /// A change at or above the cursor is not, since a later batch reads it.

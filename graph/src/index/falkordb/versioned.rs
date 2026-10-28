@@ -473,24 +473,53 @@ impl Graph {
         }
     }
 
+    /// Whether [`Self::rebase_onto_indexer_batches`] has anything to do: whether an indexer batch
+    /// moved on, in `published`, an index still `Building` here.
+    pub(crate) fn overtaken_by_indexer_batches(
+        &self,
+        published: &Self,
+    ) -> bool {
+        self.falkordb_index
+            .column_names()
+            .iter()
+            .any(|name| self.overtaken::<IndexColumn>(published, name))
+    }
+
+    /// Whether an indexer batch moved on, in `published`, index `name`, still `Building` here: the
+    /// same index (the same generation), with more batches committed on it.
+    fn overtaken<K: VersionedIndex>(
+        &self,
+        published: &Self,
+        name: &K::Name,
+    ) -> bool {
+        match (
+            K::entry(&self.falkordb_index, name),
+            K::entry(&published.falkordb_index, name),
+        ) {
+            (Some(ours), Some(theirs)) => {
+                ours.is_building()
+                    && theirs.generation == ours.generation
+                    && theirs.indexer_commits != ours.indexer_commits
+            }
+            _ => false,
+        }
+    }
+
     /// [`Self::rebase_onto_indexer_batches`] for one index.
     fn rebase_index<K: VersionedIndex>(
         &mut self,
         published: &Self,
         name: &K::Name,
     ) {
+        if !self.overtaken::<K>(published, name) {
+            return;
+        }
         let (Some(ours), Some(theirs)) = (
             K::entry(&self.falkordb_index, name),
             K::entry(&published.falkordb_index, name),
         ) else {
             return;
         };
-        if !ours.is_building()
-            || theirs.generation != ours.generation
-            || theirs.indexer_commits == ours.indexer_commits
-        {
-            return;
-        }
         let written = ours.written_by_this_version.clone();
         let mut rebased = theirs.clone();
         rebased
