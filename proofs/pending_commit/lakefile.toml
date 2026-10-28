@@ -8,3 +8,8 @@ name = "PendingCommit"
 [[require]]
 name = "falkor-graph-queries"
 path = "../graph_queries"
+
+# runtime_core owns the borrow-word model (`RuntimeCore.Cell`) that `Hold` runs on.
+[[require]]
+name = "falkor-runtime-core"
+path = "../runtime_core"

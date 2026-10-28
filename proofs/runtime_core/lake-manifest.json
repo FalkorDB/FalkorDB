@@ -1,6 +1,14 @@
 {"version": "1.3.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«redis-layer»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../redis_layer",
+   "copy": false,
+   "configFile": "lakefile.toml"}],
  "name": "«falkor-runtime-core»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

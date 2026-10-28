@@ -3,13 +3,13 @@
 
 | here | there |
 | --- | --- |
-| `checkTimeout`       | `Runtime::check_timeout`, `runtime/runtime.rs:467-474` (deadline = `Instant::now() + timeout_ms` from `Runtime::new`, `:457`) |
-| `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs:477-485` (`usage_fn() as i64`) |
+| `checkTimeout`       | `Runtime::check_timeout`, `runtime/runtime.rs:530-537` (deadline = `Instant::now() + timeout_ms` from `Runtime::new`, `:457`) |
+| `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs:540-548` (`usage_fn() as i64`) |
 | `drainPending`       | `drain_pending`, `runtime/ops/mod.rs:127-139` |
 | `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs:155-172` |
-| `natOpt`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:1970-2073` |
-| `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:1900-1909` |
-| `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs:1930-1947` |
+| `natOpt`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2076-2179` |
+| `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:2006-2015` |
+| `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs:2036-2053` |
 -/
 namespace RuntimeCore.Misc
 
@@ -176,7 +176,7 @@ structure VecOpts where
   efConstruction : Option Nat
   efRuntime : Option Nat
 
-/-- The `IndexType::Vector` arm (`runtime.rs:1976-2079`, #3094 / `fe619ac5f`): `dimension`
+/-- The `IndexType::Vector` arm (`runtime.rs:2082-2185`, #3094 / `fe619ac5f`): `dimension`
 and `similarityFunction` are **required** (they used to default to 0 / `None`), and the
 similarity name is stored as `to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only). -/
 def vectorOptions (get : String → Option V) : Except String VecOpts := do
@@ -233,8 +233,8 @@ theorem vector_similarity_lowered (get : String → Option V) (o : VecOpts)
         cases dv <;> simp [hd, hs, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure, Except.pure] at h
         all_goals (split at h <;> simp at h)
 
-/-- `FULLTEXT_OPTIONS` (`runtime.rs:1900-1901`) and the unknown-key refusal
-(`runtime.rs:1902-1909`, #3094): the first key of the map, in order, outside it. -/
+/-- `FULLTEXT_OPTIONS` (`runtime.rs:2006-2007`) and the unknown-key refusal
+(`runtime.rs:2008-2015`, #3094): the first key of the map, in order, outside it. -/
 def fulltextOptions : List String := ["weight", "nostem", "phonetic", "language", "stopwords"]
 
 def fulltextUnknown (keys : List String) : Option String := keys.find? (!fulltextOptions.contains ·)
@@ -271,7 +271,7 @@ theorem vector_negative_refused (get : String → Option V) (key : String)
     repeat' split
     all_goals (first | exact ⟨_, rfl⟩ | simp_all)
 
-/-- The `phonetic` key (`runtime.rs:1930-1947`), with `eq_ignore_ascii_case` abstracted
+/-- The `phonetic` key (`runtime.rs:2036-2053`), with `eq_ignore_ascii_case` abstracted
 as `isDmEn`. -/
 def phonetic (isDmEn : String → Bool) : Option V → Except String (Option String)
   | none => .ok none

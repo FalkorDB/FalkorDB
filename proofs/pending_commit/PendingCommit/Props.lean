@@ -5,7 +5,7 @@
 
 * `upsert` — `Pending::set_node_attribute` (pending.rs:421):
   `binary_search_by_key`, overwrite on `Ok`, `insert` on `Err`.
-* `readQ` — `Runtime::get_node_attribute_no_delete_check` (runtime.rs:1479):
+* `readQ` — `Runtime::get_node_attribute_no_delete_check` (runtime.rs:1585):
   the pending value first (`Some(Null)` for a staged removal), then the store.
   The evaluator reads `Some(Null)` and `None` both as `null`, so `normQ` folds
   them.

@@ -149,14 +149,53 @@ def finishCore {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeyS
     | _, _ => a) acc1
   pure (mergeE acc2 key, outs)
 
-/-- The emitted row's **bound** slots (aggregate.rs:1141-1213): `finishCore`, then
-`unbind_agg_accumulators` clears each accumulator's bound bit (:1185-1187), then the outputs
-are re-bound (:1195-1197). -/
-def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+/-- Stage 1 of `finishCore` (aggregate.rs:1154-1168): evaluate every aggregation over `combined`,
+writing each output into `acc` and `combined`. Returns `acc` and the outputs in order. -/
+def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z × List (Nat × Z)) := do
+  let (acc1, _, outs) ← aggs.foldlM (fun (st : Env Z × Env Z × List (Nat × Z)) (p : Nat × Ex Z) => do
+      let val ← ev p.2 st.2.1
+      pure (upd st.1 p.1 val, upd st.2.1 p.1 val, st.2.2 ++ [(p.1, val)]))
+    (acc, combinedEnv keys key acc, [])
+  pure (acc1, outs)
+
+/-- Stage 2 (aggregate.rs:1196-1210 on main): the pre-projection key aliases unless an output owns
+the slot, then `acc.merge(&key)`. -/
+def finishTail (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc1 : Env Z) : Env Z :=
+  mergeE (keys.foldl (fun a k => match k.orig, key k.name with
+    | some o, some v => if aggs.any (·.1 == o) then a else upd a o v
+    | _, _ => a) acc1) key
+
+/-- **History, before #3522 (ca36bfa15).** The emitted row's bound slots: `finishCore` (keys
+written), THEN `unbind_agg_accumulators`, then the outputs re-bound. An accumulator sharing a key's
+slot id unbinds the key. -/
+def preFinishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
     (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
   match finishCore ev keys aggs key acc with
   | .error e => .error e
   | .ok (acc3, outs) => .ok (updAll (aggs.foldl (fun a p => unbindAcc p.2 a) acc3) outs)
+
+/-- The emitted row's **bound** slots on main (aggregate.rs:1141-1213 since #3522): evaluate the
+aggregations (:1154-1168), unbind every accumulator FIRST (:1184-1192), then write the key aliases
+and the key row (:1193-1209), then re-bind the outputs last (:1210-1213). -/
+def finishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
+  match finishEval ev keys aggs key acc with
+  | .error e => .error e
+  | .ok (acc1, outs) =>
+    .ok (updAll (finishTail keys aggs key (aggs.foldl (fun a p => unbindAcc p.2 a) acc1)) outs)
+
+/-- The values (not the bound bits) of the emitted row do not depend on whether the unbind comes
+before or after the key writes, because `unbind` keeps the value; `finishCore` is the two stages. -/
+theorem finishCore_eq {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) :
+    finishCore ev keys aggs key acc =
+      (finishEval ev keys aggs key acc).map fun r => (finishTail keys aggs key r.1, r.2) := by
+  unfold finishCore finishEval finishTail
+  cases aggs.foldlM (fun (st : Env Z × Env Z × List (Nat × Z)) (p : Nat × Ex Z) => do
+      let val ← ev p.2 st.2.1
+      pure (upd st.1 p.1 val, upd st.2.1 p.1 val, st.2.2 ++ [(p.1, val)]))
+    (acc, combinedEnv keys key acc, []) <;> rfl
 
 theorem updAll_get (env : Env Z) (l : List (Nat × Z)) (n : Nat) (v : Z)
     (hn : (l.map Prod.fst).Nodup) (hm : (n, v) ∈ l) : updAll env l n = some v := by
@@ -210,7 +249,21 @@ theorem finishCore_outs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : 
     have hl := foldlM_outs ev aggs _ r0 hr
     simpa using hl
 
-/-- **Output bindings win** (aggregate.rs:1203-1210): on success, with distinct output
+/-- `finishEval` returns one output per aggregation, in order. -/
+theorem finishEval_outs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (r : Env Z × List (Nat × Z))
+    (h : finishEval ev keys aggs key acc = .ok r) : r.2.map Prod.fst = aggs.map Prod.fst := by
+  unfold finishEval at h
+  simp only [bind, Except.bind] at h
+  split at h
+  · cases h
+  · rename_i r0 hr
+    simp only [pure, Except.pure, Except.ok.injEq] at h
+    rw [← h]
+    have hl := foldlM_outs ev aggs _ r0 hr
+    simpa using hl
+
+/-- **Output bindings win** (aggregate.rs:1210-1213): on success, with distinct output
 names, every aggregate output name is bound to the value computed for it — even when an
 accumulator slot or a key alias shares its id. -/
 theorem finishGroup_outputs {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
@@ -220,13 +273,13 @@ theorem finishGroup_outputs {E : Type} (ev : Ex Z → Env Z → Except E Z) (key
     ∃ outs : List (Nat × Z), outs.map Prod.fst = aggs.map Prod.fst ∧
       ∀ n v, (n, v) ∈ outs → out n = some v := by
   unfold finishGroup at h
-  cases hc : finishCore ev keys aggs key acc with
+  cases hc : finishEval ev keys aggs key acc with
   | error e => rw [hc] at h; cases h
   | ok r =>
     rw [hc] at h
-    obtain ⟨acc3, outs⟩ := r
+    obtain ⟨acc1, outs⟩ := r
     simp only [Except.ok.injEq] at h
-    have hl := finishCore_outs ev keys aggs key acc _ hc
+    have hl := finishEval_outs ev keys aggs key acc _ hc
     refine ⟨outs, hl, fun n v hm => ?_⟩
     rw [← h]
     exact updAll_get _ _ n v (by rw [hl]; exact hnd) hm
@@ -236,7 +289,44 @@ theorem finishGroup_err {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : 
     (key acc : Env Z) (n : Nat) (t : Ex Z) (e : E)
     (he : ∀ env, ev t env = .error e) :
     finishGroup ev keys [(n, t)] key acc = .error e := by
-  simp [finishGroup, finishCore, bind, Except.bind, List.foldlM_cons, he]
+  simp [finishGroup, finishEval, bind, Except.bind, List.foldlM_cons, he]
+
+/-- `updAll` leaves a slot no listed name touches. -/
+theorem updAll_other (env : Env Z) (l : List (Nat × Z)) (n : Nat) (hn : n ∉ l.map Prod.fst) :
+    updAll env l n = env n := by
+  induction l generalizing env with
+  | nil => rfl
+  | cons p ps ih =>
+    rw [List.map_cons, List.mem_cons, not_or] at hn
+    have := ih (upd env p.1 p.2) hn.2
+    unfold updAll at this ⊢
+    rw [List.foldl_cons, this]
+    simp [upd]; intro h; exact absurd h hn.1
+
+/-- **Every grouping key is bound on main (#3150, fixed by #3522).** Whatever the accumulators'
+slot ids are (even a null key sharing a slot with an accumulator), a key whose name is not an
+aggregate output name is bound to its key value on the emitted row, because the keys are written
+after the accumulators are unbound and `acc.merge(&key)` lets every key win over every alias. The
+premise that no key name is an output name is the binder's (the projected items get distinct
+ids `0, 1, …` in the new scope, binder.rs:1149-1167). Keys do not overwrite each other: `key` is
+one row, so `WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)` keeps `x = 2, y = 1`
+(`keysBound_swap_3522`). -/
+theorem finishGroup_keys_bound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc out : Env Z)
+    (hdisj : ∀ k ∈ keys, k.name ∉ aggs.map Prod.fst)
+    (h : finishGroup ev keys aggs key acc = .ok out) :
+    ∀ k ∈ keys, ∀ v, key k.name = some v → out k.name = some v := by
+  intro k hk v hv
+  unfold finishGroup at h
+  cases hc : finishEval ev keys aggs key acc with
+  | error e => rw [hc] at h; cases h
+  | ok r =>
+    rw [hc] at h
+    obtain ⟨acc1, outs⟩ := r
+    simp only [Except.ok.injEq] at h
+    have hl := finishEval_outs ev keys aggs key acc _ hc
+    rw [← h, updAll_other _ _ _ (by rw [hl]; exact hdisj k hk)]
+    simp [finishTail, mergeE, hv]
 
 /-! ## `next` after consumption (aggregate.rs:1133-1222) -/
 

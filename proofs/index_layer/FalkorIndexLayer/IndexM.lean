@@ -102,7 +102,7 @@ def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except St
     let eo := fo.or f.options
     let w := (eo.bind (·.weight)).getD 1
     let ns := (eo.bind (·.nostem)).getD false
-    let ph := (eo.bind (·.phonetic)).any (· ≠ "")
+    let ph := eo.any TextOpts.phoneticEnabled
     .ok [⟨f.name, .text w ns ph⟩]
   | .vector =>
     match f.vopts with
@@ -229,11 +229,11 @@ theorem registerOne_range (fo : Option TextOpts) (tk : Bool) (n : String) (o : O
   simp [registerOne, Field.new, makeArrNames]
 
 /-- Fulltext: the per-call options win over the field's own, weight defaults to
-1, phonetic is on iff a non-empty code is given. -/
+1, phonetic is on iff the code is not absent, empty or C's `"no"` (`phonetic_enabled`, #3514). -/
 theorem registerOne_text (fo : Option TextOpts) (tk : Bool) (f : Field) (h : f.ty = .fulltext) :
     registerOne fo tk f = .ok [⟨f.name, .text (((fo.or f.options).bind (·.weight)).getD 1)
       (((fo.or f.options).bind (·.nostem)).getD false)
-      (((fo.or f.options).bind (·.phonetic)).any (· ≠ ""))⟩] := by
+      ((fo.or f.options).any TextOpts.phoneticEnabled)⟩] := by
   simp [registerOne, h]
 
 theorem registerOne_vector_err (fo : Option TextOpts) (tk : Bool) (f : Field) (v : VecOpts)

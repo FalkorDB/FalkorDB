@@ -3,11 +3,11 @@
 
 | here | there |
 | --- | --- |
-| `relNoDelete`              | `Runtime::get_relationship_attribute_no_delete_check`, `runtime/runtime.rs:1493-1508` |
-| `getRelAttribute`          | `Runtime::get_relationship_attribute`, `runtime.rs:1516-1541` (committed fallback BY NAME: `Graph::get_relationship_attribute`, `graph/graph.rs:3262`) |
-| `materializeRel`           | `Runtime::materialize_relationship_property_values`, `runtime.rs:1622-1664` |
-| `materializeNodeProp`, `materializeRelProp` | `materialize_{node,relationship}_property`, `runtime.rs:1548-1557`, `:1610-1619` (`classify_column` ∘ values) |
-| `getRelAttrs`              | `Runtime::get_relationship_attrs` (`runtime.rs:1763-1781`) + `Pending::update_relationship_attrs` (`pending.rs:833-854`) |
+| `relNoDelete`              | `Runtime::get_relationship_attribute_no_delete_check`, `runtime/runtime.rs:1599-1614` |
+| `getRelAttribute`          | `Runtime::get_relationship_attribute`, `runtime.rs:1622-1647` (committed fallback BY NAME: `Graph::get_relationship_attribute`, `graph/graph.rs:3262`) |
+| `materializeRel`           | `Runtime::materialize_relationship_property_values`, `runtime.rs:1728-1770` |
+| `materializeNodeProp`, `materializeRelProp` | `materialize_{node,relationship}_property`, `runtime.rs:1654-1663`, `:1610-1619` (`classify_column` ∘ values) |
+| `getRelAttrs`              | `Runtime::get_relationship_attrs` (`runtime.rs:1869-1887`) + `Pending::update_relationship_attrs` (`pending.rs:833-854`) |
 | `relEndpoints`, `relType`  | `Runtime::get_relationship_endpoints` (`:1783-1794`), `get_relationship_type` (`:1796-1808`) |
 | `labelIdOf`                | `Runtime::label_id` (`:1717-1722`) |
 | `setPendingAttr`           | `Runtime::set_pending_node_attr` (`:1377-1394`) / `set_pending_relationship_attr` (`:1396-1411`) |
@@ -26,7 +26,7 @@ import RuntimeCore.Accessors
 namespace RuntimeCore.RelAccessors
 open RuntimeCore.Accessors
 
-/-- `get_relationship_attribute_no_delete_check` (`runtime.rs:1499-1514`): resolve the id
+/-- `get_relationship_attribute_no_delete_check` (`runtime.rs:1605-1620`): resolve the id
 (memo = table, `Accessors.attrIdM_correct`), pending first, else committed by index. -/
 def relNoDelete (w : W) (id : Nat) (name : String) : Option Val :=
   match w.attrId name with
@@ -50,7 +50,7 @@ theorem relNoDelete_spec (w : W) (id : Nat) (name : String) :
   | none => rfl
   | some a => cases h : pendingGet w id a <;> simp [h, Option.or]
 
-/-- `get_relationship_attribute` (`runtime.rs:1516-1541`). `byName` is
+/-- `get_relationship_attribute` (`runtime.rs:1622-1647`). `byName` is
 `Graph::get_relationship_attribute(id, attr)`. -/
 def getRelAttribute (w : W) (byName : Nat → String → Option Val) (id : Nat) (name : String) :
     Option Val :=
@@ -78,7 +78,7 @@ theorem getRelAttribute_eq (w : W) (byName : Nat → String → Option Val)
     | none => rfl
     | some a => simp only [Option.bind_some]; cases pendingGet w id a <;> rfl
 
-/-- `materialize_relationship_property_values` (`runtime.rs:1622-1664`): the same code as
+/-- `materialize_relationship_property_values` (`runtime.rs:1728-1770`): the same code as
 the node one over the relationship maps and batched
 `get_relationship_attributes_by_idx`. -/
 def materializeRel (w : W) (bg : List Nat → Nat → List Val) (ids : List Nat) (name : String) :
@@ -113,13 +113,13 @@ theorem materializeRel_eq (w : W) (byName : Nat → String → Option Val)
   intro id _
   rw [getRelAttribute_eq w byName hName]
 
-/-- `materialize_node_property` (`runtime.rs:1548-1557`): `classify_column` of the values
+/-- `materialize_node_property` (`runtime.rs:1654-1663`): `classify_column` of the values
 (`classify` abstract; its spec is `proofs/columnar` `classifyColumn_*`). -/
 def materializeNodeProp {C : Type} (classify : List Val → C) (w : W)
     (bg : List Nat → Nat → List Val) (ids : List Nat) (name : String) : C :=
   classify (materialize w bg ids name)
 
-/-- `materialize_relationship_property` (`runtime.rs:1610-1619`). -/
+/-- `materialize_relationship_property` (`runtime.rs:1716-1725`). -/
 def materializeRelProp {C : Type} (classify : List Val → C) (w : W)
     (bg : List Nat → Nat → List Val) (ids : List Nat) (name : String) : C :=
   classify (materializeRel w bg ids name)
@@ -145,7 +145,7 @@ theorem materializeRelProp_eq {C : Type} (classify : List Val → C) (w : W)
       classify (ids.map (fun id => (getRelAttribute w byName id name).getD .null)) := by
   simp only [materializeRelProp, materializeRel_eq w byName hName bg hbg hd]
 
-/-- `get_relationship_attrs` (`runtime.rs:1763-1781`): deleted snapshot, else the
+/-- `get_relationship_attrs` (`runtime.rs:1869-1887`): deleted snapshot, else the
 committed listing overlaid by `update_relationship_attrs` (one pending map). -/
 def getRelAttrs (w : W) (id : Nat) : OM :=
   match w.deleted id with
@@ -172,7 +172,7 @@ structure DelRel where
   dst : Nat
   ty : String
 
-/-- `get_relationship_endpoints` (`runtime.rs:1783-1794`). -/
+/-- `get_relationship_endpoints` (`runtime.rs:1889-1900`). -/
 def relEndpoints (del : Nat → Option DelRel) (pend : Nat → Option (Nat × Nat))
     (com : Nat → Nat × Nat) (id : Nat) : Nat × Nat :=
   match del id with
@@ -182,7 +182,7 @@ def relEndpoints (del : Nat → Option DelRel) (pend : Nat → Option (Nat × Na
     | some e => e
     | none => com id
 
-/-- `get_relationship_type` (`runtime.rs:1796-1808`); `com` = `g.get_type(g.get_relationship_type_id(id))`. -/
+/-- `get_relationship_type` (`runtime.rs:1902-1914`); `com` = `g.get_type(g.get_relationship_type_id(id))`. -/
 def relType (del : Nat → Option DelRel) (pend : Nat → Option String)
     (com : Nat → Option String) (id : Nat) : Option String :=
   match del id with
@@ -212,7 +212,7 @@ theorem relType_spec (del : Nat → Option DelRel) (pend : Nat → Option String
 
 /-! ### `label_id` -/
 
-/-- `Runtime::label_id` (`runtime.rs:1717-1722`): the graph's label-name table. -/
+/-- `Runtime::label_id` (`runtime.rs:1823-1828`): the graph's label-name table. -/
 def labelIdOf (w : W) (name : String) : Option Nat := w.labelId name
 
 /-- **PROVEN**: `label_id` returns the table's id, and `node_has_label` is exactly
@@ -229,7 +229,7 @@ theorem labelIdOf_spec (w : W) (id : Nat) (name : String) :
 /-- `identifier_limits.rs:10`. -/
 def MAX_IDENTIFIER_LEN : Nat := 512
 
-/-- `set_pending_node_attr` (`runtime.rs:1377-1394`) / `set_pending_relationship_attr`
+/-- `set_pending_node_attr` (`runtime.rs:1483-1500`) / `set_pending_relationship_attr`
 (`:1396-1411`), generic over the name table `Tb` (node or relationship attribute names),
 its `get_or_create_*_attr_id` (`goc`), and the pending setter `setP`
 (`Pending::set_{node,relationship}_attribute`). `maxLen` is `MAX_IDENTIFIER_LEN`

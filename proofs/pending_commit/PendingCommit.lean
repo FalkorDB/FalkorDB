@@ -90,11 +90,11 @@ Bugs re-checked live at 2c874022a (Rust release module vs C `bin/macos-arm64v8-r
 | `Labels.removeOp`                 | `Runtime::remove` label branch (ops/remove.rs:128-138) |
 | `Labels.commitLabels`             | `set_nodes_labels_bulk` + `remove_nodes_labels` in `Pending::commit` (pending.rs:1105-1122) |
 | `Props.upsert`, `stageAll`        | `set_node_attribute` / `set_relationship_attribute` (pending.rs:421, :791) |
-| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1479) + evaluator's null |
+| `Props.readQ`, `normQ`            | `get_node_attribute_no_delete_check` (runtime.rs:1585) + evaluator's null |
 | `Props.commitNew`                 | `import_node_attrs` → `import_attrs` (graph.rs:1798, attribute_store.rs:1351) |
 | existing-entity commit            | `set_nodes_attributes` → `insert_attrs` → `merge_span` (graph.rs:1761) |
 | `Props.replaceFromMap/FromNode`   | `SET n = map` / `SET n = m` (ops/set.rs:185-224) |
-| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1459-1789) |
+| `Snapshot.RS`, `readRt`           | `Runtime::deleted_nodes/_relationships` and every snapshot-first accessor (runtime.rs:1565-1895) |
 | `Snapshot.del/commit/createRust`  | `delete_nodes_bulk`/`delete_entity` (ops/delete.rs), `CommitOp` (ops/commit.rs), `IdSpace::reserve` bin-first |
 | `Snapshot.createDeferred`         | the fix proposed in #2876 |
 | `Stats.step`, `Stats.P`           | `created_nodes`, `delete_pending_node` (pending.rs:600), commit counters (:1086, :1163) |
@@ -311,3 +311,4 @@ import PendingCommit.PendingCancel
 import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext
 import PendingCommit.StagedBugs
+import PendingCommit.Hold

@@ -1,7 +1,7 @@
 /-
 # Claims 1 and 4: `Runtime::graph()` reads the same `Graph` that `g.borrow()` would
 
-PR #3436, branch `perf/read-graph-once` @ e30861ea3 (d7d166e82, 896ba73ef, 653f467a9,
+**Merged: PR #3436 (25babfe4f); folded from the retired `pr3436_review`.** The PR branch @ e30861ea3 is the same code as main (`.rs` identical apart from line numbers: `runtime.rs` cites below are current main, ca36bfa15). Branch history: PR #3436, `perf/read-graph-once` @ e30861ea3 (d7d166e82, 896ba73ef, 653f467a9,
 merge of origin/main b97da5a1c = 30f8d7cff, then e30861ea3 "graph()/graph_mut() instead of
 a cell accessor"). Cites are to e30861ea3 unless marked; `pre_e30861e_*` names keep the
 653f467a9 `graph_cell()` theorems as history.
@@ -11,11 +11,11 @@ a cell accessor"). Cites are to e30861ea3 unless marked; `pre_e30861e_*` names k
 | `B`, `borrow`, `release`, `borrowMut`, `releaseMut` | `AtomicRefCell`'s borrow word, atomic_refcell-0.1.14 `src/lib.rs`: `borrow` `:126-134` → `AtomicBorrowRef::try_new` `:209-228` (`fetch_add(1)`, panic iff HIGH_BIT set); drop `:273-283` (`fetch_sub(1)`); `borrow_mut` `:151-160` → `AtomicBorrowRefMut::try_new` `:298-320` (CAS `0 → HIGH_BIT`, else panic "already immutably/mutably borrowed"); drop `:289-294` (`store(0)`) |
 | `Heap`, `Addr`            | the `Arc<AtomicRefCell<Graph>>` allocations: an `Arc` is an address of a cell (value + borrow word) |
 | `Rt`                      | `Runtime`'s private `g` (`runtime.rs:161`), `write` and `read_guard: Option<HeldRead>` (`:157`; `HeldRead { guard, _owner }` `:115-118`). `guard = some a`: the `HeldRead`'s `_owner` is an `Arc` of cell `a` and its `guard` borrows that same cell |
-| `new`                     | `Runtime::new` (`runtime.rs:440-…`): `read_guard = (!write).then(‖ { owner = Arc::clone(&g); guard = owner.borrow(); HeldRead { guard, _owner: owner } })` `:472-487` — `owner` and `g` are the same allocation, so the guard borrows `g`'s cell |
+| `new`                     | `Runtime::new` (`runtime.rs:444-…`): `read_guard = (!write).then(‖ { owner = Arc::clone(&g); guard = owner.borrow(); HeldRead { guard, _owner: owner } })` `:476-491` — `owner` and `g` are the same allocation, so the guard borrows `g`'s cell |
 | `GraphRef`, `deref`       | `GraphRef::{Held, Borrowed}` + `Deref` (`runtime.rs:121-137`) |
-| `graph`, `dropRef`        | `Runtime::graph` (`runtime.rs:555-560`: `Held(&held.guard)` / `Borrowed(self.g.borrow())`); dropping a `GraphRef` |
-| `graphMut`                | `Runtime::graph_mut` (`runtime.rs:572-575`): `assert!(self.write, …)`, then `self.g.borrow_mut()` |
-| `graphArc`                | `Runtime::graph_arc` (`runtime.rs:583-585`): `Arc::clone(&self.g)` (model in `DropOrder`) |
+| `graph`, `dropRef`        | `Runtime::graph` (`runtime.rs:559-564`: `Held(&held.guard)` / `Borrowed(self.g.borrow())`); dropping a `GraphRef` |
+| `graphMut`                | `Runtime::graph_mut` (`runtime.rs:576-579`): `assert!(self.write, …)`, then `self.g.borrow_mut()` |
+| `graphArc`                | `Runtime::graph_arc` (`runtime.rs:587-589`): `Arc::clone(&self.g)` (model in `DropOrder`) |
 | `borrowMain`              | origin/main's `self.g.borrow()` at every rewritten site |
 
 **The rewrite.** Every hunk outside `runtime.rs` is one of these swaps inside the same
@@ -28,18 +28,18 @@ coerce to `&Graph` by `Deref`):
   Covered by `graph_same_result` / `read_program_same` / `sites_same` (read runtime) and
   `graph_write_is_borrow` / `write_program_same` (write runtime).
 * `X.g.borrow_mut()` → `X.graph_mut()` (e30861ea3; 653f467a9 had `graph_cell().borrow_mut()`):
-  `index_ddl.rs:71,102`, `ops/create.rs:176,212,299,331,363,378,387`, `ops/delete.rs:257,411,452`,
-  `ops/remove.rs:138`, `ops/set.rs:107`, `runtime.rs:1487,1506`. `graph_mut_write_same`:
+  `index_ddl.rs:71,102`, `ops/create.rs:176,212,299,331,363,378,387`, `ops/delete.rs:259,413,454`,
+  `ops/remove.rs:138`, `ops/set.rs:107`, `runtime.rs:1491,1510`. `graph_mut_write_same`:
   on a write runtime it is main's `g.borrow_mut()`; `graph_mut_read_asserts`: on a read
   runtime the `assert!` fires before the cell is touched; `graph_mut_same_cell`: it
   borrows the cell `graph()` reads.
 * functions that took the cell and borrowed inside now take `&mut Graph` / `&Graph`, the
   caller holding one `graph_mut()` / `graph()` across the call (`ops/commit.rs:89,113,139,148`,
-  `runtime.rs:606,613`, `index_ddl.rs:≈130`): proven equivalent in `Hold`.
+  `runtime.rs:611,617`, `index_ddl.rs:≈130`): proven equivalent in `Hold`.
 * `X.g` kept past the call → `X.graph_arc()` (`udf/js_context.rs:314`, `src/graph_core.rs:263`):
   an owned clone, `DropOrder.graph_arc_keeps_g`.
 -/
-namespace Pr3436.Cell
+namespace RuntimeCore.Cell
 
 /-- The borrow word: `shared n` = `n` live `AtomicRef`s; `excl` = HIGH_BIT (an `AtomicRefMut`). -/
 inductive B where
@@ -93,7 +93,7 @@ structure Rt where
   guard : Option Addr
   deriving DecidableEq, Repr
 
-/-- `Runtime::new`'s new lines (`runtime.rs:471-486`): a read runtime clones `g` into
+/-- `Runtime::new`'s new lines (`runtime.rs:475-490`): a read runtime clones `g` into
 `_owner` (same allocation, so same address) and borrows that cell once; a write runtime
 takes nothing. The strong-count side of the clone is in `DropOrder`. -/
 def new {G} (h : Heap G) (g : Addr) (write : Bool) : R (Rt × Heap G) :=
@@ -115,7 +115,7 @@ def deref {G} (h : Heap G) : GraphRef → G
   | .held a => (h a).val
   | .borrowed a => (h a).val
 
-/-- `Runtime::graph` (`runtime.rs:554-559`). -/
+/-- `Runtime::graph` (`runtime.rs:558-563`). -/
 def graph {G} (h : Heap G) (rt : Rt) : R (GraphRef × Heap G) :=
   match rt.guard with
   | some a => .ok (.held a, h)
@@ -209,7 +209,7 @@ theorem graph_read_held {G} (h : Heap G) (rt : Rt) (hr : rt.ok) (hw : rt.write =
 
 /-- Main's `g.borrow()` succeeds exactly when the cell is not mutably borrowed; so on
 every state where no `borrow_mut` is live on `g`'s cell (proven for every published
-version a reader holds, `Protocol.guard_never_excl`), main and the PR both succeed. -/
+version a reader holds, `Proto.guard_never_excl`), main and the PR both succeed. -/
 theorem borrowMain_ok_iff {G} (h : Heap G) (rt : Rt) :
     (∃ r h', borrowMain h rt = .ok (r, h')) ↔ (h rt.g).b ≠ .excl := by
   unfold borrowMain
@@ -334,7 +334,7 @@ theorem read_program_main {G α} (rt : Rt) :
   | .mutate _ :: _, _, hro, _ => by simp [readOnly] at hro
 
 /-- **Claim 1 (programs).** On a read runtime whose cell is not mutably borrowed — the
-protocol proves this for every version a reader runs on (`Protocol.guard_never_excl`) —
+protocol proves this for every version a reader runs on (`Proto.guard_never_excl`) —
 main and the PR compute the same answers for every read-only program. -/
 theorem read_program_same {G α} (rt : Rt) (hr : rt.ok) (hw : rt.write = false)
     (ops : List (Op G α)) (h : Heap G) (hro : readOnly ops) (hne : (h rt.g).b ≠ .excl) :
@@ -352,7 +352,7 @@ inductive GM (G : Type) where
   | panic
   | ok (h : Heap G)
 
-/-- `Runtime::graph_mut` (`runtime.rs:572-575`). -/
+/-- `Runtime::graph_mut` (`runtime.rs:576-579`). -/
 def graphMut {G} (h : Heap G) (rt : Rt) : GM G :=
   if rt.write then
     match borrowMut (h rt.g).b with
@@ -435,4 +435,4 @@ theorem sites_same {G α} (sites : List (G → α)) (rt : Rt) (hr : rt.ok) (hw :
   rw [← hans sites]
   exact read_program_same rt hr hw _ h hro hne
 
-end Pr3436.Cell
+end RuntimeCore.Cell

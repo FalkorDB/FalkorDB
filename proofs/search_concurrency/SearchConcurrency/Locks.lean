@@ -11,7 +11,7 @@
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
 | `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:93`) commits with the scan open |
 | `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1615`) `write_loop` flag protocol |
-| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:59`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
+| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1007`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:67`) and write channel (`graph_core.rs:557`), slot released at execution / dequeue |
 | `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
 -/
 

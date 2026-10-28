@@ -76,6 +76,12 @@ theorem map_strip_nullTerm (l : List Bytes) (h : ∀ s ∈ l, U.valid s) :
     simp only [List.map_cons, strip_nullTerm U a (h a (by simp))]
     rw [ih (fun s hs => h s (by simp [hs]))]
 
+/-- Each decoded entry is a single field, so flattening the entries is the plain list. -/
+theorem flatMap_singletons {α} (l : List α) (f : α → Bytes) (g : α → Fld) :
+    (l.map fun af => (f af, [g af])).flatMap (fun af => af.2.map (af.1, ·))
+      = l.map fun af => (f af, g af) := by
+  induction l <;> simp_all
+
 theorem decIdx_enc (is : List Info) (hh : HeadWF U is) (hf : FieldsWF U (allFields is))
     (ts : List W) :
     decIdx U (encIdx one simCode is ++ ts) = some (mergeInfo one simCode [] false is, ts) := by
@@ -88,7 +94,7 @@ theorem decIdx_enc (is : List Info) (hh : HeadWF U is) (hf : FieldsWF U (allFiel
       ([W.u (allFields (i :: rest)).length]
         ++ (((allFields (i :: rest)).map fun (a, f) => encField one simCode a f).flatten ++ ts))
     have h2 := rdMany_map (decField U) (fun af => encField one simCode af.1 af.2)
-      (fun af => (attrBack af.1 af.2.ty, normField one simCode af.2)) (allFields (i :: rest))
+      (fun af => (attrBack af.1 af.2.ty, [normField one simCode af.2])) (allFields (i :: rest))
       (by
         intro af haf ts
         obtain ⟨ha, hp, hv⟩ := hf af haf
@@ -100,7 +106,8 @@ theorem decIdx_enc (is : List Info) (hh : HeadWF U is) (hf : FieldsWF U (allFiel
     simp only [List.singleton_append] at h1
     rw [Dec.bind_some _ _ _ _ _ h1, Dec.bind_some _ _ _ _ _ (rdU_u _ _)]
     rw [Dec.bind_some _ _ _ _ _ h2]
-    simp only [pure'_apply, mergeInfo, strip_nullTerm U _ hl, map_strip_nullTerm U _ hsw]
+    simp only [pure'_apply, mergeInfo, strip_nullTerm U _ hl, map_strip_nullTerm U _ hsw,
+      flatMap_singletons]
     by_cases he : i.stopwords.getD [] = [] <;> simp [he]
 
 def decCons (l : Bytes) (c : Cons) : Cons := ⟨c.unique, false, l, c.props, true⟩

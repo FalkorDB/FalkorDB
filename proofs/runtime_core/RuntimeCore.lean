@@ -7,18 +7,22 @@ contracts of the stores underneath (attribute/label name tables, attribute store
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
 Rust repros: `graph/tests/lean_runtime_core.rs`
 (`cargo test -p graph --test lean_runtime_core`); `bug_*` tests assert the correct
-answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main b84473a7f.
+answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main ca36bfa15 (after #3436).
 
 | here | there |
 | --- | --- |
-| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:575`), `effective_skip` (`:610`), `record_cap` (`:642`) |
+| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:681`), `effective_skip` (`:716`), `record_cap` (`:748`) |
 | `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs:1030,1179`), `ExpandIntoOp` (`ops/expand_into.rs:246`), SortOp top-k (`ops/sort.rs:491`) |
+| `Cell.*`      | #3436 `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` (`runtime.rs:115-137`, `:476-491`, `:559-589`): an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell` |
+| `DropOrder.*` | `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()`: `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
+| `Proto.*`     | the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; open bug #3439 `writer_reply_race` |
+| `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
 | `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
-| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:514-561`) |
-| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:710`), `children_to_recurse` (`:652`) |
-| `Accessors.*` | entity accessors `runtime.rs:1377-1878` (attrs, memo, labels, degrees, endpoints/type) |
-| `Misc.*`      | `check_timeout` (`:468`), `check_mem_capacity` (`:478`), `map_to_index_options` (`:1887`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
-| (reused)      | `evaluate_id_filter` (`:1309-1373`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
+| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:620-667`) |
+| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
+| `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |
+| `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:1993`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
+| (reused)      | `evaluate_id_filter` (`:1415-1479`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 
 ## Proven (plain English)
 - Budget: the reference budget `need` (Skip adds, Project passes, anything else is a
@@ -52,7 +56,7 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
   outside `FULLTEXT_OPTIONS` (`fulltextUnknown_none_iff`); phonetic yields only "dm:en" or "".
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
-B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:593-596`), but
+B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), but
     `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1088`,
     `expand_into.rs:246`). A traverse feeding another row-reducing traverse stops after
     LIMIT rows and the answer is lost.
@@ -62,7 +66,7 @@ B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:593-596`
     Tests `bug_limit_through_expand_into_drops_rows`, `bug_limit_through_two_hops_drops_rows`,
     `bug_skip_limit_through_two_hops_drops_rows`. Lean `hard_cap_unsound_expandInto`,
     `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse`.
-B2. `effective_skip` returns only the FIRST Skip (`runtime.rs:617-625`), so stacked Skips
+B2. `effective_skip` returns only the FIRST Skip (`runtime.rs:723-731`), so stacked Skips
     under one Limit under-budget the hard cap:
     `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1`: Rust [], C [20].
     Test `bug_stacked_skip_under_limit_drops_rows`; Lean `hard_cap_unsound_stacked_skip`.
@@ -73,7 +77,7 @@ B3. (shared with C, openCypher violation) SortOp's top-k uses the same walk thro
     CondTraverse: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1`
     → Rust [], C [] ; expected [20]. Test `bug_sort_topk_through_traverse_drops_rows`.
     The stacked-Skip Sort variant is issue #2659 (also in C).
-Also seen (known): `Labels added` counts new schema labels (`runtime.rs:555`) — #2655;
+Also seen (known): `Labels added` counts new schema labels (`runtime.rs:661`) — #2655;
 deleted-id reuse breaks the one-map assumption of `attrs_agree` — #2876
 (`Accessors.reuse_diverges`).
 
@@ -106,3 +110,7 @@ import RuntimeCore.Accessors
 import RuntimeCore.Misc
 import RuntimeCore.RelAccessors
 import RuntimeCore.Plan
+import RuntimeCore.Cell
+import RuntimeCore.DropOrder
+import RuntimeCore.Protocol
+import RuntimeCore.Reuse

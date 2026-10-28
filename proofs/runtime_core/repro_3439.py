@@ -1,9 +1,9 @@
-"""Live repro for pr3436_review (Protocol.writer_reply_race, pre-existing on main).
+"""Live repro for #3439 (RuntimeCore.Proto.writer_reply_race, pre-existing on main).
 
 Usage: python repro.py PORT SECONDS N_QUEUED_WRITERS N_INLINE_FAILING_WRITERS N_READERS
 Setup first: GRAPH.QUERY g "CREATE INDEX FOR (n:L) ON (n.v)".
-`repro.py P 60 2 1 0` crashes the Rust server ("already immutably borrowed" in
-Pending::resync_published_indexes); C survives. `repro.py P 60 0 2 6` exercises
+`repro_3439.py P 60 2 1 0` crashes the Rust server ("already immutably borrowed" in
+Pending::resync_published_indexes); C survives. `repro_3439.py P 60 0 2 6` exercises
 resync against PR #3436 read guards (no panic expected).
 """
 import sys, threading, time, redis

@@ -20,6 +20,20 @@ Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are 
 ## Wave 4 additions
 * `Pool` — `threadpool.rs`: `shutdown_drains` (one sentinel per worker runs every queued job
   once, in order, then all workers exit), `spawn_after_exit`, `global_spec` (OnceCell init).
+* `PoolWithin` — `threadpool.rs` after #3502 (ca36bfa15), Lean ↔ Rust:
+
+  | Lean | Rust |
+  | --- | --- |
+  | `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:79`, `new` `:67`, `named` `:72` |
+  | `waitLoop`, `drain`, `within` | `ThreadPool::shutdown_within` `:159` (wait loop `:167-169`, drain `:171-178`) |
+  | `holdEnd` | `ThreadPool::shutdown` `:146` (holds the `workers` lock across `join`) |
+
+  `within_in_time`, `within_true_all_finished`, `within_false_unfinished`, `within_partition`,
+  `blocked_reported`, `detached_workers_exit`, `late_job_lost`; two confirmed **unfixed** bugs
+  (`repro/threadpool_within.rs`): `second_call_true_despite_straggler` (a second
+  `shutdown_within` answers `true` with a worker still running) and
+  `within_blocks_behind_shutdown` (a `shutdown_within` behind a blocking `shutdown` waits on
+  the `workers` lock past its limit, forever if a job never returns).
 * `Once` — `thread_id.rs` and `storage/registry.rs` set-once globals.
 
 ## Proven (no sorry / admit / axiom)
@@ -208,6 +222,7 @@ import SearchConcurrency.Tickets
 import SearchConcurrency.Mvcc
 import SearchConcurrency.Locks
 import SearchConcurrency.Pool
+import SearchConcurrency.PoolWithin
 import SearchConcurrency.Once
 import SearchConcurrency.Guarded
 import SearchConcurrency.Knn
@@ -226,6 +241,11 @@ import SearchConcurrency.Knn
 #print axioms SC.Mvcc.claimFork_on_committed
 #print axioms SC.Pool.release_exactly_once
 #print axioms SC.Pool.count_eq_live
+#print axioms SC.PoolWithin.within_in_time
+#print axioms SC.PoolWithin.within_true_all_finished
+#print axioms SC.PoolWithin.detached_workers_exit
+#print axioms SC.PoolWithin.second_call_true_despite_straggler
+#print axioms SC.PoolWithin.within_blocks_behind_shutdown
 #print axioms SC.Locks.never_stuck_3014
 #print axioms SC.Locks.bug3226_open_scan_upgrade
 #print axioms SC.Locks.bug3226_restore_stall_cycle

@@ -63,7 +63,11 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_stacked_skip` | Counterexamples: through a traversal, or with stacked SKIPs, the hard cap loses the answer | `Budget.lean` |
 | `drive_flatten`, `fresh_drive` | The emitter outputs exactly the per-row expansions in order, for any `record_cap` | `Emitter.lean` |
 | `runBatch_eq_rec` | The iterative post-order `run_batch` builds the same tree, with the same first error, as the recursive build, for every plan | `RunBatch.lean` |
-| `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; writes still pull every batch | `Query.lean` |
+| `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; writes still pull every batch | `Cell.lean` | #3436's `Runtime::graph()`, `graph_mut()`, `GraphRef`, `Deref` on an atomic_refcell borrow-word model: the rewrite changes no result and no borrow-word effect |
+| `DropOrder.lean` | `HeldRead` / `Runtime` drop order, `graph_arc()`, `g` never reassigned |
+| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession`: `reader_guard_sound`, `priv_borrows_owner_only`; the open #3439 `writer_reply_race` |
+| `Reuse.lean` | `read_plan_no_update` (on `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` |
+| `Query.lean` |
 | `attrs_agree`, `materialize_eq` | `properties(n).k`, `n.k` and the bulk column read agree | `Accessors.lean` |
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
 | `degree_exact` | Degrees never underflow and count live edges exactly | `Accessors.lean` |
@@ -85,7 +89,7 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| B1 (W3-runtime-1) | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse` | `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:593-596`), which then use it as a hard stop. `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` returns `[]` (C: `[2]`) | **Open** (walk unchanged at 0f45a8685) |
+| B1 (W3-runtime-1) | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse` | `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), which then use it as a hard stop. `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` returns `[]` (C: `[2]`) | **Open** (walk unchanged at 0f45a8685) |
 | B2 (W3-runtime-2) | `hard_cap_unsound_stacked_skip` | `effective_skip` returns only the first `SKIP`. `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1` returns `[]` (C: `[20]`) | **Open**. The proposed fix for B1 and B2 is to give hard-cap consumers `need` and keep `record_cap` for the emitter |
 | B3 | *(same shape as B1; no separate theorem)* | SortOp's top-k uses the same walk: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1` returns `[]`; expected `[20]` | **Open**, shared with C. The stacked-SKIP Sort variant is #2659 |
 | — | `reuse_diverges` | With a node id in both pending attribute maps, `n.a` and `properties(n)` disagree. Only reachable through deleted-id reuse | Part of open #2876 (W2-pending-1) |
@@ -114,11 +118,11 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 | `Misc.lean` | `check_timeout`, `check_mem_capacity`, `drain_pending`, `edge_already_used`, index OPTIONS validation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The project is self-contained: its `lakefile.toml` has no dependencies. `evaluate_id_filter` (`runtime.rs`) is proven in [`../optimizer_scan`](../optimizer_scan), and the emitter's typed gather lanes are proven in [`../columnar`](../columnar).
+Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean` only). `evaluate_id_filter` (`runtime.rs`) is proven in [`../optimizer_scan`](../optimizer_scan), and the emitter's typed gather lanes are proven in [`../columnar`](../columnar).
 
 ## Coverage
 
-`COVERAGE.tsv` has 89 rows: 48 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
+`COVERAGE.tsv` has 93 rows: 52 in `runtime.rs`, 39 in `batched_result_emitter.rs` and 2 in `ops/mod.rs`.
 
 | Bucket | Rows |
 |---|---|

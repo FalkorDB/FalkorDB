@@ -5,11 +5,11 @@
 | --- | --- |
 | `RowIter`, `RowIter.next` | `RowIter::{One,Spread,Many}`, `Iterator for RowIter`, `ops/batched_result_emitter.rs:455-488` |
 | `St`                      | `BatchedResultEmitter { batch, pending, cursor, pack_ceiling }`, `:491-531`; `rows` = the batch's active rows from `cursor` on |
-| `initCeiling`             | `with_binding`, `:553-569` |
-| `refill`                  | `refill_from_cursor`, `:673-720` |
-| `drain`                   | `drain_pending_entry`, `:619-644` |
-| `loop`, `emit`            | `emit_lazy`, `:726-742` (loop + ceiling doubling) |
-| `seed`, `reset`           | `seed`, `:575-586`; `reset`, `:747-751` |
+| `initCeiling`             | `with_binding`, `:553-571` |
+| `refill`                  | `refill_from_cursor`, `:677-718` |
+| `drain`                   | `drain_pending_entry`, `:623-648` |
+| `loop`, `emit`            | `emit_lazy`, `:730-747` (loop + ceiling doubling) |
+| `seed`, `reset`           | `seed`, `:578-588`; `reset`, `:751-755` |
 | `drive`                   | the operator's pull loop: `emit_lazy` until `None`, then pull the next child batch and `seed` (e.g. `ExpandIntoOp::next`, `ops/expand_into.rs:258-304`) |
 
 Abstractions. Output batches are the list of `(parent_row, item)` pairs that
@@ -60,12 +60,15 @@ structure St (β : Type) where
   pending : Option (Nat × RowIter β)
   ceiling : Nat
 
-/-- `with_binding` (`:553-569`). -/
+/-- `with_binding` since #2973 (`:563`): `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`.
+The clamp form computes exactly what the guarded arm it replaced did
+(`Columnar.withBinding_eq_pre2973`, proofs/columnar `Columnar/Emitter.lean`; #2922 was an
+LLVM miscompile of that arm). -/
 def initCeiling : Option Nat → Nat
-  | some c => if c < BATCH_SIZE then max c 1 else BATCH_SIZE
+  | some c => max 1 (min c BATCH_SIZE)
   | none => BATCH_SIZE
 
-/-- `refill_from_cursor` (`:673-720`). -/
+/-- `refill_from_cursor` (`:677-718`). -/
 def refill (f : Nat → Option (RowIter β)) : List Nat → Option (Nat × RowIter β) × List Nat
   | [] => (none, [])
   | r :: rs =>
@@ -75,7 +78,7 @@ def refill (f : Nat → Option (RowIter β)) : List Nat → Option (Nat × RowIt
     | some (.spread [x]) => (some (r, .one (some x)), rs)
     | some it => (some (r, it), rs)
 
-/-- `drain_pending_entry` (`:619-644`): `k = ceiling - count` slots left. `none` in the
+/-- `drain_pending_entry` (`:623-648`): `k = ceiling - count` slots left. `none` in the
 second component is `self.pending = None` (the iterator was seen to be exhausted). -/
 def drain (row : Nat) : Nat → RowIter β → List (Nat × β) × Option (RowIter β)
   | 0, it => ([], some it)
@@ -86,7 +89,7 @@ def drain (row : Nat) : Nat → RowIter β → List (Nat × β) × Option (RowIt
       let r := drain row k it'
       ((row, x) :: r.1, r.2)
 
-/-- The `while count < self.pack_ceiling` loop of `emit_lazy` (`:732-738`). -/
+/-- The `while count < self.pack_ceiling` loop of `emit_lazy` (`:739-745`). -/
 def loop (f : Nat → Option (RowIter β)) (ceil : Nat) :
     Nat → Nat → List (Nat × β) → St β → List (Nat × β) × St β
   | 0, _, acc, s => (acc, s)
@@ -106,18 +109,18 @@ def loop (f : Nat → Option (RowIter β)) (ceil : Nat) :
           { s with pending := d.2.map (fun it => (r, it)) }
     else (acc, s)
 
-/-- `emit_lazy` (`:726-742`): pack, double the ceiling, `None` when nothing was packed. -/
+/-- `emit_lazy` (`:730-747`): pack, double the ceiling, `None` when nothing was packed. -/
 def emit (f : Nat → Option (RowIter β)) (s : St β) : Option (List (Nat × β)) × St β :=
   let r := loop f s.ceiling (2 * s.rows.length + 2) 0 [] s
   let s' := { r.2 with ceiling := min (s.ceiling * 2) BATCH_SIZE }
   (if r.1 = [] then none else some r.1, s')
 
-/-- `seed` (`:575-586`) installs a new parent batch and resets the cursor; `pending` is
+/-- `seed` (`:578-588`) installs a new parent batch and resets the cursor; `pending` is
 left alone (the Rust `debug_assert!`s it is empty — `emit_none_pending` shows the
 remaining work there is empty whenever `seed` is called). -/
 def seed (s : St β) (rows : List Nat) : St β := { s with rows := rows }
 
-/-- `reset` (`:747-751`). -/
+/-- `reset` (`:751-755`). -/
 def reset (s : St β) : St β := { s with rows := [], pending := none }
 
 /-! ### What is left to emit -/
@@ -376,7 +379,7 @@ theorem emit_len (f : Nat → Option (RowIter β)) (s : St β) (out : List (Nat 
 theorem initCeiling_pos (c : Option Nat) : 1 ≤ initCeiling c ∧ initCeiling c ≤ BATCH_SIZE := by
   cases c with
   | none => simp [initCeiling, BATCH_SIZE]
-  | some c => simp only [initCeiling]; split <;> simp [BATCH_SIZE] at * <;> omega
+  | some c => simp only [initCeiling, BATCH_SIZE]; omega
 
 /-- **PROVEN** (ceiling schedule): the ceiling stays in `[1, BATCH_SIZE]` and doubles. -/
 theorem emit_ceiling (f : Nat → Option (RowIter β)) (s : St β) :
@@ -460,7 +463,7 @@ theorem reset_remaining (f : Nat → Option (RowIter β)) (s : St β) :
     remaining f (reset s) = [] := by simp [reset, remaining, pendOut, flatRows]
 
 /-- The `zero_cap_clamps_to_one` / `cap_at_or_above_batch_size_is_ignored` unit tests
-(`:819-844`) as theorems. -/
+(`:822-844`) as theorems. -/
 theorem initCeiling_cases :
     initCeiling (some 0) = 1 ∧ initCeiling (some 10) = 10 ∧ initCeiling (some 1024) = 1024 ∧
     initCeiling (some 5000) = 1024 ∧ initCeiling none = 1024 := by decide

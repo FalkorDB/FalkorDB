@@ -17,11 +17,11 @@
   yield the same graph, so every accessor theorem there transfers unchanged
   (`accessor_unchanged`, `materialize_unchanged`).
 -/
-import Pr3436Review.Cell
+import RuntimeCore.Cell
 import RedisLayer.RoQuery
 import RuntimeCore.Accessors
 
-namespace Pr3436.Reuse
+namespace RuntimeCore.Reuse
 open RedisLayer.Ro
 
 mutual
@@ -76,7 +76,7 @@ theorem read_plan_no_update (q : List Clause) (h : isWritePlan (plan q false) = 
 
 /-! ### Claim 5: runtime_core's accessor theorems are about the same world -/
 
-open Pr3436.Cell RuntimeCore.Accessors
+open RuntimeCore.Cell RuntimeCore.Accessors
 
 /-- `Runtime::get_node_attribute` (runtime_core `Accessors.getNodeAttribute`) answers the
 same through `graph()` as through `g.borrow()`. -/
@@ -93,4 +93,4 @@ theorem materialize_unchanged (h : Heap W) (rt : Rt) (hr : rt.ok) (r₁ r₂ : G
     materialize (deref h₁ r₁) bg ids name = materialize (deref h₂ r₂) bg ids name :=
   graph_same_result (fun w => materialize w bg ids name) h rt hr r₁ r₂ h₁ h₂ hpr hmain
 
-end Pr3436.Reuse
+end RuntimeCore.Reuse

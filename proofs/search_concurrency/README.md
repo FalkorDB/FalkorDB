@@ -65,7 +65,8 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `refused_commit_releases_slot` | A commit refused by `Graph::validate` publishes nothing and frees the slot | `Mvcc.lean` |
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
-| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches | `Tickets.lean` |
+| `main_operational_complete` | Since #3086 an OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches | `PoolWithin.lean` | `threadpool.rs` after #3502: named workers, `shutdown_within` (`within_in_time`, `detached_workers_exit`) and its two open bugs |
+| `Tickets.lean` |
 | `never_stuck_3014`, `main_never_blocks` | Since #3014 the main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
@@ -115,11 +116,11 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 116 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
+`COVERAGE.tsv` has 119 rows, from `src/graph_core.rs`, `src/query_session.rs`, `graph/src/graph/mvcc_graph.rs`, `threadpool.rs`, the index files and a few others:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 66 |
+| PROVEN | 69 |
 | AXIOMATISED | 20 |
 | MODELLED | 17 |
 | NOT COVERED | 13 |

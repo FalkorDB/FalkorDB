@@ -18,7 +18,7 @@ import FalkorAggOps.IncludePendingExact
 # FalkorAggOps — Aggregate, Distinct, Sort, Skip, Limit, Project, Unwind, aggregation functions
 
 Build: `cd proofs/ops_aggregate && lake build` (Lean 4.35.0, core only, no Mathlib).
-No `sorry` / `admit` / `axiom`. 228 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
+No `sorry` / `admit` / `axiom`. 235 theorems. Coverage per Rust fn: `COVERAGE.tsv`.
 Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 (graph/tests/lean_ops_aggregate.rs; the `bug_*` tests for open findings fail, the 3 `agrees_*` pass;
 `bug_list_literal_of_aggregates_collapses` passes since #2951).
@@ -26,15 +26,16 @@ Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 ## Model (here | there, all under graph/src/runtime/)
 | Lean | Rust |
 |---|---|
-| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:981 / `fold` :229; keyless fast path `consume_input_vectorized` :509-689 |
+| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:990 / `fold` :238; keyless fast path `consume_input_vectorized` :518-689 |
 | `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
 | `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
 | `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:302 `build_full_sort`, :403 `build_top_k`, :504 `next` (cap = k+s) |
 | `project_flatten`, `unwindOne`/`chunks` | ops/project.rs:54, ops/unwind.rs:90 + batched emitter |
-| `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59, per-row :871/:912, keyless pre-insert :524/:879 |
-| `dedupBy`, `dcgGo`/`distinctCountGrouped`, `distinctCountBatches` | ops/distinct.rs:62; DISTINCT key (node, hash(group key)) aggregate.rs:715/:959; apply.rs:283 dedupers clear |
+| `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59, per-row :880/:921, keyless pre-insert :524/:879 |
+| `dedupBy`, `dcgGo`/`distinctCountGrouped`, `distinctCountBatches` | ops/distinct.rs:62; DISTINCT key (node, hash(group key)) aggregate.rs:724/:968; apply.rs:283 dedupers clear |
 | `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); `pre2951_evalStack`: the old `return` at eval.rs:877 |
+| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1141-1219: outputs :1154-1182, accumulators unbound :1184-1192 BEFORE the key aliases/key row :1193-1209 (#3522; `pre3522_*` is the old order), outputs re-bound :1210-1217 |
 | `Bitmap` | batch.rs:89-167 `NullBitmap` (`BitVec 64` words) |
 A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = `List (List α)`.
 
@@ -113,6 +114,17 @@ made `GroupKey::eq` `sort_cmp == Equal` (aggregate.rs:94) and canonicalised NaN/
 and aggregate.rs `hash` rows are PROVEN again. New fn `tiebreak` (sort.rs:237):
 `tiebreak_strict`, `tiebreak_swap`.
 
+## Re-target to ca36bfa15: #3150 is fixed (#3522)
+`AggregateOp::next` now unbinds the accumulators (aggregate.rs:1184-1192) before it writes the key
+aliases and the key row (:1193-1209), so a null key sharing an accumulator's slot id stays bound.
+`finishGroup` is that order (`finishEval`, then unbind, then `finishTail`, then the outputs); the old
+order is `preFinishGroup`, and the counterexample is renamed `pre3522_null_key_unbound` (with
+`PreKeysBound`/`preEmitCell`). New: `fixed3522_null_key_bound` (`RETURN null AS x, count(1)`),
+`keysBound_swap_3522` (`WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)`), and the general
+`finishGroup_keys_bound`/`keysBound_main`: for any keys/accumulators/evaluator, with no key name an
+output name and the group evaluating, `KeysBound` holds on main. COVERAGE.tsv line pins refreshed
+(`unbind_agg_accumulators` :1243, `hash_u64` :1267/:1271).
+
 ## Gap closed 2026-10-20: binder slot ids across an aggregating WITH/RETURN (`SlotReuse.lean`)
 The aggregate model kept outputs, accumulators and pre-projection aliases in separate abstract
 slots; the binder numbers each scope from 0 and `Row` is keyed by the bare id, so they collide.
@@ -122,8 +134,7 @@ binder.rs:1072-1078/:2193-2200; aliases 0.. in the new scope, :1149-1167), `fini
 :763-778). Properties a fix should prove: `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`
 (`AggRowSpec`). Refuted on main, each mirroring the live repro (Rust 9d3869aa8 vs C):
 `bug3375_output_overwrites_next_acc` (#3375: sum = count, 3 vs 6), `bug3375_avg_panics`
-(`finalize_avg` unreachable), `bug3150_null_key_unbound` (#3150: null key unbound → reply.rs:655
-panic; `'a'` survives as value-only), `bug3333_alias_binds_next_var` (#3333: alias of `m` binds
+(`finalize_avg` unreachable), `bug3333_alias_binds_next_var` (#3333: alias of `m` binds
 `b`'s id 2), `bug3369_count_acc_in_merge_slot` / `bug3368_count_acc_in_merge_slot` (#3369, #3368:
 `count(*)` accumulators left value-only at the ids of later MERGE nodes; the MERGE that then reads
 them as bound is merge.rs, not modelled here). Controls that agree with live: `agree3375_one_key`,

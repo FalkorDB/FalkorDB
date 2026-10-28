@@ -42,6 +42,7 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
 | `Table.add/del`, `commit` | `add_document` `mod.rs:1907` (ADD_REPLACE), `delete_document` `mod.rs:1929`, `Indexer::commit` `indexer.rs:714` |
 | `Slots.inc/dec/bump/countFor` | `mod.rs:2110/2124/1048/2146`, `indexer.rs:624-717` |
+| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1245` (#3514) |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -260,6 +261,17 @@ W5-idx-2 no-options shape; fixed by #3087.
   `bug_range_after_fulltext` re-proved unchanged. The protocol-level consequence (an OPERATIONAL index
   never misses a field) is `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
 - #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
+
+## Re-target to a0ba12950 (#3514)
+- #3514 (fix #3484, phonetic part) adds `TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48`)
+  and `register_fields` now asks it (`mod.rs:1245`) instead of "any non-empty code": C's `"no"`
+  (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off, like absent and empty.
+  Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne_text` re-proved on it. Proved
+  `phoneticEnabled_off_spellings` (the Rust unit test), `phoneticEnabled_code`, `phoneticEnabled_iff_ne_no`.
+  History: `pre3514_phoneticEnabled`, `pre3514_phonetic_no_was_on` (a C-written RDB turned phonetic on
+  for every fulltext index), `fixed3514_phonetic_no_is_off`, `pre3514_rule_differs_only_on_no`.
+  The RDB side of the same PR is in `proofs/redis_layer` (`SerialSchema.decField`).
+
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
 
 ## Gap closed 2026-10-20 (#3166, #3382, #2781; proofs cite fb3d516d0, repros on main 9d3869aa8)

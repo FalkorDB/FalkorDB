@@ -161,7 +161,7 @@ structure RtInit (P B : Type) where
 
 /-- `nested_plans` = the root's children after the first when the root is `NestedPlans`;
 the pending store opens its schema baseline only for a write query (`openWrite` =
-`set_schema_baseline`, runtime.rs:428). Since #2846 it opens no id boundaries: the
+`set_schema_baseline`, runtime.rs:466). Since #2846 it opens no id boundaries: the
 graph's write version carries its own id batch (`IdSpace::new_version`). -/
 def rtNew {P B : Type} (root : PT) (rootIsNested : Bool) (rootKids : List Nat) (write : Bool)
     (pendingNew : P) (openWrite : P → P) (now : Nat) (timeoutMs : Option Nat) : RtInit P B :=

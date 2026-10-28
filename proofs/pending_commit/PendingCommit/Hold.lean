@@ -1,5 +1,9 @@
 /-
-# e30861ea3: one borrow held across a call = main's sequential borrows
+# #3436 (e30861ea3): one borrow held across a call = the old sequential borrows
+
+Merged PR #3436 (25babfe4f); folded from the retired `pr3436_review` (module `Hold`; the borrow-word
+model is `RuntimeCore.Cell` in proofs/runtime_core; "main" below means main *before* #3436;
+Protocol model: `RuntimeCore.Proto` in proofs/runtime_core).
 
 e30861ea3 changed the commit and effects functions from taking the cell
 (`&AtomicRefCell<Graph>`) and borrowing inside to taking the graph; the caller holds one
@@ -9,15 +13,15 @@ origin/main b97da5a1c/b84473a7f, identical `.rs`):
 | function | main's borrows (inside) | e30861ea3 (caller holds) | model |
 | --- | --- | --- | --- |
 | `Pending::commit` (`pending.rs:1226-1367`) | `borrow_mut` per mutation group, each *conditional* on non-empty pending state (`create_nodes`, rel creation, `set_nodes_labels_bulk`, `remove_nodes_labels`, node/rel attrs, deletes, `delete_implicit_edges`), then **unconditional** `g.borrow_mut().apply_index_writes` (main `:1366`), then `enforce_constraints` (`let g = g.borrow()`, main `:1389`) | `&mut self.runtime.graph_mut()` (`ops/commit.rs:89`) | `commitSteps`: optional `mut`s ++ [`mut` apply_index_writes, `rd` enforce_constraints] |
-| `IndexDocs::commit` (`pending.rs:473`), `Pending::commit_deferred_indexes` (`:1676`) | one `let mut g = g.borrow_mut()` held for the body | `&mut self.graph_mut()` (`runtime.rs:613`) | single `mut` |
+| `IndexDocs::commit` (`pending.rs:473`), `Pending::commit_deferred_indexes` (`:1676`) | one `let mut g = g.borrow_mut()` held for the body | `&mut self.graph_mut()` (`runtime.rs:617`) | single `mut` |
 | `Pending::end_segment` (`:1717`) | one `g.borrow_mut().roll_id_batches()` (main `:1799`) | `&mut self.runtime.graph_mut()` (`ops/commit.rs:139`) | single `mut` |
-| `set_schema_baseline` (`:523`), `enforce_constraints` (`:1372`), `resync_published_indexes`' `private` (`:1621`), `EffectsBuffer::build{,_index}` (`effects/mod.rs:483,496`), `for_each_record` (`effects/v3/emit.rs:323`), `build_index_buffer` (`:226`) | one `g.borrow()` held for the body | `&self.runtime.graph()` (`ops/commit.rs:116,148`, `runtime.rs:606`, `index_ddl.rs:130`), `&g.borrow()` (`runtime.rs:462`) | single `rd` |
+| `set_schema_baseline` (`:523`), `enforce_constraints` (`:1372`), `resync_published_indexes`' `private` (`:1621`), `EffectsBuffer::build{,_index}` (`effects/mod.rs:483,496`), `for_each_record` (`effects/v3/emit.rs:323`), `build_index_buffer` (`:226`) | one `g.borrow()` held for the body | `&self.runtime.graph()` (`ops/commit.rs:116,148`, `runtime.rs:611`, `index_ddl.rs:130`), `&g.borrow()` (`runtime.rs:466`) | single `rd` |
 
 Within a call no step re-borrows the cell: the functions now take `&mut Graph`/`&Graph`
 and call `Graph` methods (`&mut self`), and the only graph-cell borrows anywhere in
 `graph/src/graph` + `graph/src/index` are the population thread's, on a *published*
 version (`Protocol` table). Other threads cannot borrow the private version at all
-(`Protocol.priv_borrows_owner_only`), and the owner thread is inside the call, so the
+(`Proto.priv_borrows_owner_only`), and the owner thread is inside the call, so the
 borrow word the call meets — `E`, the owner's own outstanding borrows from its call stack
 — is constant for the call, and the same on main and the PR (the callers are unchanged).
 
@@ -34,10 +38,10 @@ through another handle (the indexer's `Arc` is only ever set to a published vers
 failing writes, range-index CREATE/DROP (population threads) and 4 reader threads —
 no panic.
 -/
-import Pr3436Review.Cell
+import RuntimeCore.Cell
 
-namespace Pr3436.Hold
-open Pr3436.Cell
+namespace PendingCommit.Hold
+open RuntimeCore.Cell
 
 /-- One step of a function body: a mutation group (needs the exclusive borrow) or a read
 (needs a shared one). Either can fail with an error (`?`), which ends the call. -/
@@ -182,4 +186,4 @@ theorem empty_body_differs :
     runHoldMut (G := Nat) (.shared 1) 0 [] = .panic ∧ runMain (G := Nat) (.shared 1) 0 [] = .ok 0 :=
   ⟨rfl, rfl⟩
 
-end Pr3436.Hold
+end PendingCommit.Hold

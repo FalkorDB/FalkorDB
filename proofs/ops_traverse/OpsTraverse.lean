@@ -21,6 +21,12 @@ import OpsTraverse.ExpandIntoPending
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
+**Re-targeted to main b29a2885c** (from 5e475e6c9): #3463 adds the pending-deleted endpoint
+check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
+model and satisfies `LiveExpandInto` (`expandIntoP_live`), old counterexamples renamed
+`pre3463_*`; `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
+`Pending` (`bug_condTraverse_*`).
+
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
 edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
 (`IndexScan.evalIQ_inList`, new `IQ.inListV`); `can_utilize_index` gained an `InList` arm (non-empty and every
@@ -66,7 +72,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
 | `PathVlt.vltMain`, `revWalk` | `PathBuilderOp::next`, `Value::Path` branch (`path_builder.rs:88-139`, direction inferred at `:102-105`) |
-| `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:176-228`; `pending.rs:1115-1134`) |
+| `EIP.expandIntoP`, `Pending` | `ExpandIntoOp::expand_row` with pending deletes (`expand_into.rs:158-235`; `pending.rs:1115-1134`) |
 | `Scans.labelScan`, `idSeek`, `labelIdScan` | `node_by_label_scan.rs:77`, `node_by_id_seek.rs:55`, `node_by_label_and_id_scan.rs:59` |
 | `ASPFold.Rel`, `ASPInv.Inv`, `bstep`, `ASPStep`, `ASPFinal`, `ASPMain`, `ASPFuel` | the BFS of `all_shortest_paths.rs:141-265` (one `pop_front` iteration = `bstep`), its invariant, and the backtrack `:278-304` |
 | `Drive.drive`, `capDrive`, `driveE` | the emitter-driven `next` loops (scans, CondTraverse with `trim_to_cap`, ExpandInto, CondVarLenTraverse, AllShortestPaths) |
@@ -141,7 +147,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    Lean `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result`.
    Still present on 8743953a8 (live: `UNWIND [1,2]` 5 vs C 10; 3-hop star 7 vs C 12).
 3. **Undirected anonymous collapse is per direction, not per pair**
-   (`cond_traverse.rs:849-909`, `expand_into.rs:176-215`): `a→b, b→a, a→b`,
+   (`cond_traverse.rs:849-909`, `expand_into.rs:183-222`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.
    Lean `bidir_collapse_duplicates_pair`. Still present on 8743953a8 (live: 4 rows vs C 2).
 4. **Consecutive MATCH clauses are merged into one pattern**
@@ -177,13 +183,18 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    right on every non-cyclic walk (`vltMain_follows_of_ne`); recording the direction
    at plan time fixes it (`vltFix_follows`).
 
-10. **#3452: ExpandInto matches an edge whose endpoint is pending-deleted**
-   (`expand_into.rs:197-228` checks only `is_relationship_deleted`; `DETACH DELETE`
-   of a committed node defers its edges to commit, `delete.rs:191-216`).
-   `MATCH (a:A),(b:B) DETACH DELETE a MERGE (a)-[r:R]->(b) RETURN count(r)`: Rust 1,
-   0 relationships created (C creates a dangling edge). Property
-   `EIP.LiveExpandInto`; Lean `bug3452_main_violates`, `bug3452_matches_doomed_edge`,
-   `bug3452_collapse_matches_doomed_edge`; fix `expandIntoFix_live`.
+10. **#3452: ExpandInto matched an edge whose endpoint is pending-deleted** — FIXED by
+   #3463 (b29a2885c): `expand_into.rs:158-160` now yields no row when either endpoint
+   is `is_node_deleted`. Property `EIP.LiveExpandInto` is proved for main
+   (`EIP.expandIntoP_live`); the old counterexamples are `EIP.pre3463_violates`,
+   `pre3463_matches_doomed_edge`, `pre3463_collapse_matches_doomed_edge` (on
+   `expandIntoPre`).
+
+11. **#3463 follow-up: CondTraverse still matches an edge of a pending-deleted node**
+   (`cond_traverse.rs` never reads `Pending`; `expand_row` `:749`, `process_pairs` `:944`).
+   `MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)` takes the CondTraverse path
+   (`x` unbound) and matches the doomed edge. Property `EIP.LiveCondTraverse`; Lean
+   `EIP.bug_condTraverse_main_violates`, `bug_condTraverse_matches_doomed_edge`. Not fixed.
 
 Gaps closed 2026-10-22: PathBuilder's `Value::Path` (var-length) branch is modelled
 (`PathVlt.lean`, catches #3451); ExpandInto reads pending deletes (`ExpandIntoPending.lean`,

@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
 src/allocator.rs	alloc	44	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
-src/allocator.rs	dealloc	61	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
-src/allocator.rs	enable_tracking	80	PROVEN	Allocator.step .enable: enable_sets, query_accounting
-src/allocator.rs	disable_tracking	88	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
-src/allocator.rs	current_thread_usage	97	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
-src/allocator.rs	net_thread_usage	105	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
-src/allocator.rs	reset_counter	114	PROVEN	Allocator.step .reset: reset_zero, query_accounting
+src/allocator.rs	dealloc	65	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
+src/allocator.rs	enable_tracking	89	PROVEN	Allocator.step .enable: enable_sets, query_accounting
+src/allocator.rs	disable_tracking	97	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
+src/allocator.rs	current_thread_usage	106	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
+src/allocator.rs	net_thread_usage	114	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
+src/allocator.rs	reset_counter	123	PROVEN	Allocator.step .reset: reset_zero, query_accounting
 src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
 src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
 src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
@@ -68,23 +68,23 @@ src/serializers/buffered_io.rs	VecWriter::write_double	603	PROVEN	vecWrite: vecW
 src/serializers/buffered_io.rs	VecWriter::write_buffer	611	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	write_all_fd	626	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
 src/serializers/buffered_io.rs	read_all_fd	641	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
-src/serializers/mod.rs	VirtualKeyState::new	38	PROVEN	Serial.VKS.new: VKS.clear_eq_new
-src/serializers/mod.rs	VirtualKeyState::clear	45	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
-src/serializers/mod.rs	DecodeState::new	100	PROVEN	Serial.DS.new: DS.new_empty
-src/serializers/mod.rs	DecodeState::clear	110	PROVEN	Serial.DS.clear: DS.clear_eq_new
-src/serializers/mod.rs	Header::encode	135	PROVEN	Serial.encH: decH_encH
-src/serializers/mod.rs	Header::null_terminated	139	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	Header::decode	164	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
-src/serializers/mod.rs	Header::from_graph	212	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
-src/serializers/mod.rs	null_terminated	244	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	strip_null_terminator	252	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
-src/serializers/mod.rs	Schema::encode	261	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
-src/serializers/mod.rs	encode_schema_index_block	337	PROVEN	Serial.encIdx: decIdx_enc
-src/serializers/mod.rs	encode_constraint_block	439	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	467	PROVEN	Serial.decSchema: decSchema_encSchema
-src/serializers/mod.rs	decode_schema_entry	529	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField (#3252: name used verbatim): decField_encField (every attribute name round-trips), field_name_kept, field_prefix_kept; history pre3252_field_prefix_lost (W4-redis-2: attr named range:x/vector:x reloaded as x, confirmed live then); #3484: proven only against Rust's single-type encoder; on C's multi-type word it keeps one type (SerialCLayout.bug3484_range_fulltext_loses_range, bug3484_range_vector_loses_range); fix #3514 = decFields, decFields_encFieldC, decFields_encField
-src/serializers/mod.rs	Schema::from_graph	699	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/serializers/mod.rs	VirtualKeyState::new	39	PROVEN	Serial.VKS.new: VKS.clear_eq_new
+src/serializers/mod.rs	VirtualKeyState::clear	46	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
+src/serializers/mod.rs	DecodeState::new	101	PROVEN	Serial.DS.new: DS.new_empty
+src/serializers/mod.rs	DecodeState::clear	111	PROVEN	Serial.DS.clear: DS.clear_eq_new
+src/serializers/mod.rs	Header::encode	136	PROVEN	Serial.encH: decH_encH
+src/serializers/mod.rs	Header::null_terminated	140	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	Header::decode	165	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
+src/serializers/mod.rs	Header::from_graph	213	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
+src/serializers/mod.rs	null_terminated	245	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	strip_null_terminator	253	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
+src/serializers/mod.rs	Schema::encode	262	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
+src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff; history pre3514_encPh_off_read_on_by_c)
+src/serializers/mod.rs	encode_constraint_block	445	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	Schema::decode	473	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	decode_schema_entry	535	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	637	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; history pre3252_field_prefix_lost (W4-redis-2), pre3514_range_fulltext_loses_range, pre3514_range_vector_loses_range, pre3514_phonetic_no_kept (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	Schema::from_graph	727	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
 src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c; history pre3043_nan_in_list
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)

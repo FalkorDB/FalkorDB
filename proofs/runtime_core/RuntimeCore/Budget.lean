@@ -3,10 +3,10 @@
 
 | here | there |
 | --- | --- |
-| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:581-600`, `:616-631` |
-| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:575-605` |
-| `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:610-636` |
-| `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:642-648` |
+| `Anc`                 | the `IR` variants the walks distinguish, `runtime/runtime.rs:687-706`, `:616-631` |
+| `effectiveLimit`      | `Runtime::effective_limit`, `runtime/runtime.rs:681-711` |
+| `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:716-742` |
+| `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:748-754` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
 | `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs:1030-1049,1179`) and `ExpandIntoOp` (`ops/expand_into.rs:246-293`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:491-493`) |
 | `need`                | the smallest sound budget (reference) |
@@ -16,10 +16,10 @@ ancestor list here is "nearest parent first".
 
 `Limit`/`Skip` values: the walks evaluate the expression with no row; a non-`Int` or a
 negative value makes the walk return `None`/`0`, and makes `build_batch_op` fail the
-whole query (`runtime.rs:818-848`). So on every plan that executes, each `Limit`/`Skip`
+whole query (`runtime.rs:924-954`). So on every plan that executes, each `Limit`/`Skip`
 ancestor carries a `Nat`, which is what `Anc` stores.
 
-`saturating_add` (`runtime.rs:647`): both operands are `< 2^63` (they come from a
+`saturating_add` (`runtime.rs:753`): both operands are `< 2^63` (they come from a
 non-negative `i64`), so the sum never saturates in `usize`; `Nat` addition is exact.
 -/
 namespace RuntimeCore.Budget
@@ -37,14 +37,14 @@ inductive Anc (α : Type) where
 
 variable {α : Type}
 
-/-- `Runtime::effective_limit` (`runtime.rs:575-605`). -/
+/-- `Runtime::effective_limit` (`runtime.rs:681-711`). -/
 def effectiveLimit : List (Anc α) → Option Nat
   | [] => none
   | .limit n :: _ => some n
   | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => effectiveLimit r
   | .other _ :: _ => none
 
-/-- `Runtime::effective_skip` (`runtime.rs:610-636`): the *first* `Skip` reached through
+/-- `Runtime::effective_skip` (`runtime.rs:716-742`): the *first* `Skip` reached through
 `Project`/`Limit`, else 0. -/
 def effectiveSkip : List (Anc α) → Nat
   | [] => 0
@@ -52,7 +52,7 @@ def effectiveSkip : List (Anc α) → Nat
   | .project _ :: r | .limit _ :: r => effectiveSkip r
   | _ :: _ => 0
 
-/-- `Runtime::record_cap` (`runtime.rs:642-648`). -/
+/-- `Runtime::record_cap` (`runtime.rs:748-754`). -/
 def recordCap (as : List (Anc α)) : Option Nat :=
   (effectiveLimit as).map (· + effectiveSkip as)
 

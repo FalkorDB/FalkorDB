@@ -140,7 +140,8 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | here | there |
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
-| `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode) |
+| `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
+| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); `pre3514_*` history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
@@ -188,6 +189,17 @@ New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, 
    `SerialSchema.pre3252_field_prefix_lost`): Rust `db.indexes()` → `[x]`, C `[range:x]`.
    Now `decode_index_field` keeps the name verbatim (`field_name_kept`; `decField_encField`
    round-trips every name).
+9b. **FIXED by #3514 (`a0ba12950`, closes #3484)**: a C-written RDB entry carries every index type
+   of an attribute in one type word; `decode_index_field` kept one, so RANGE was lost next to a
+   FULLTEXT or VECTOR index (`SerialCLayout.pre3514_range_fulltext_loses_range`,
+   `pre3514_range_vector_loses_range`). Main decodes every set type (`SerialSchema.decField`;
+   `SerialCLayout.decField_encFieldC`: every C entry decodes to exactly its types;
+   `decField_encField`: Rust's own entries unchanged; `decField_empty_refused`,
+   `decField_unknown_bit_refused`: no type / unknown bit refused as C does). Same PR, phonetic:
+   C's `"no"` (off) read as a code, so every C-loaded fulltext index turned phonetic ON
+   (`pre3514_phonetic_no_kept`), and we wrote an empty string for off, which C reads as ON
+   (`pre3514_encPh_off_read_on_by_c`). Now `"no"` reads as off and off is written `"no"`
+   (`decField_c_phonetic_no_off`, `encPh_c_on_iff`; `index_layer` `Meta.TextOpts.phoneticEnabled`).
 10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
     ignores (0), C 1 (FIXED by #3328: `ModuleInit.pre3328_bool_yes_case`, `pre3328_table_name_case`, `pre3328_load_missing`; now `LoadArgs.fixed3328_counterexamples`; cause:
@@ -305,6 +317,7 @@ take `s` to be that already-scrubbed text.
   `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
   still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
 -/
-#print axioms RedisLayer.Serial.bug3484_range_fulltext_loses_range
-#print axioms RedisLayer.Serial.decFields_encFieldC
-#print axioms RedisLayer.Serial.decFields_encField
+#print axioms RedisLayer.Serial.pre3514_range_fulltext_loses_range
+#print axioms RedisLayer.Serial.decField_encFieldC
+#print axioms RedisLayer.Serial.decField_encField
+#print axioms RedisLayer.Serial.encPh_c_on_iff

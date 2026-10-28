@@ -7,7 +7,7 @@ import OpsTraverse.Basic
 | `RowIn`                  | the endpoint bindings `from_id` / `to_id` read at `cond_traverse.rs:764-777` and the sibling-edge columns read by `edge_already_used` (`runtime/ops/mod.rs:155`) |
 | `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs:944-1025`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
 | `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs:749-940`): forward scan, then the reverse scan with `s != d` (`:878`, `:890`) for bidirectional patterns |
-| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:125-238`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` (`:176-177`) |
+| `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs:125-245`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` (`:183-184`) |
 | `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs:75-84`, `graphblas/matrix.rs`) |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |
 | `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs:591-596`) |
@@ -223,7 +223,7 @@ theorem collapse_directed_keys_nodup (g : Graph) (r : RowIn) :
 
 `a→b` twice and `b→a` once. C collapses `(a)-[]-(b)` to one row per `(a,b)`;
 the forward and the reverse scan each contribute a representative, so Rust
-emits `(1,2)` twice (`cond_traverse.rs:849-909`; `expand_into.rs:176-215`).
+emits `(1,2)` twice (`cond_traverse.rs:849-909`; `expand_into.rs:183-222`).
 Repro: `lean_ops_traverse::bug_undirected_anonymous_collapse_duplicates_pairs`. -/
 def gAB : Graph := [⟨0, 1, 2⟩, ⟨1, 2, 1⟩, ⟨2, 1, 2⟩]
 

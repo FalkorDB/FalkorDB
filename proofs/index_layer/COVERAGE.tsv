@@ -51,7 +51,8 @@ graph/src/index/mod.rs	clone_for_update	1068	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
 graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop)
+graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text, pre3514_phonetic_no_was_on
+graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; #3514 history pre3514_phoneticEnabled, pre3514_phonetic_no_was_on, fixed3514_phonetic_no_is_off, pre3514_rule_differs_only_on_no
 graph/src/index/mod.rs	value_to_numeric	1357	PROVEN	valueToNumeric; equal_exact, numRange_exact
 graph/src/index/mod.rs	int_loses_f64_precision	1371	PROVEN	intLosesPrecision; intLosesPrecision_sound
 graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf (historical pre3081_open_bound_excludes_inf)

@@ -3,7 +3,7 @@
 
 A transition system over the graph versions of one graph key. Every event is one atomic
 step of the Rust code; any enabled event may fire (arbitrary interleaving of threads).
-Re-cited to the PR branch @ e30861ea3. `mvcc_graph.rs`, `query_session.rs`,
+Merged PR #3436 (25babfe4f), folded from the retired `pr3436_review`; cites checked unchanged on main ca36bfa15 (this file's `runtime.rs` cites moved +4). Originally cited to the PR branch @ e30861ea3. `mvcc_graph.rs`, `query_session.rs`,
 `record.rs` and the `src/commands` write paths are byte-identical to origin/main;
 `graph_core.rs` differs only at `:263` (`runtime.graph_arc()`, same line) — so the protocol
 cites hold for both. `pending.rs` changed signatures only (e30861ea3: `&mut Graph` /
@@ -15,7 +15,7 @@ its graph is `graph_mut()` (`Cell.graph_mut_write_same`: main's `g.borrow_mut()`
 | `C`, `S.next`          | a version = one `Arc<AtomicRefCell<Graph>>` allocation; `next` = a fresh one |
 | `S.pub`, `S.published` | `MvccGraph.graph` (`mvcc_graph.rs:70`) and every version it has ever held |
 | `S.lock`               | the per-graph `parking_lot::RwLock<ThreadedGraph>` (`QuerySession.mode`, `query_session.rs:31-41`) |
-| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:472-487`) — the PR's new state |
+| `S.guards`             | read runtimes' `read_guard` (`runtime.rs:157`, a `HeldRead` taken `:476-491`) — the PR's new state |
 | `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()` on their own version, and anyone's borrow of *any* published version — `MvccGraph`'s own (`fork :140`, `claim :162`, `commit :190-203`) and the index-population thread's `indexer.get_graph().borrow()` (`graph.rs:582,609,696,712`): the indexer's graph is set only by `set_indexer_graph`, called with a version being published (`mvcc_graph.rs:261`) or a freshly built one before registration (`redis_type.rs:109,125,771`, `copy.rs:152`, `restore.rs:54`), never with a private fork |
 | `S.excl`               | live `AtomicRefMut`s (every `borrow_mut()` on a graph cell, table below) |
 | `S.priv`               | a thread's private version (`QuerySession.fork` / the claimed `write()` fork) |
@@ -43,8 +43,8 @@ tests/`test_aux.rs`/`emit.rs`/`apply.rs` test modules excluded):
 
 | site | target | model |
 | --- | --- | --- |
-| `runtime.rs:1487,1506` (`set_pending_*_attr`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:257,411,452` (all `graph_mut()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
-| `ops/commit.rs:89` (`Pending::commit`), `:139` (`end_segment`), `runtime.rs:613` (`commit_deferred_indexes` → `IndexDocs::commit`): one `graph_mut()` held across each call (main borrowed inside, `pending.rs:480,1235-1366,1799` there; `Hold`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
+| `runtime.rs:1491,1510` (`set_pending_*_attr`), `ops/create.rs:176,212,299,331,363,378,387`, `ops/set.rs:107`, `ops/remove.rs:138`, `ops/delete.rs:259,413,454` (all `graph_mut()`), `ops/merge.rs:171` (via `set_pending_*_attr`) | `runtime.g` of a runtime running a SET/CREATE/REMOVE/DELETE/MERGE op | write runtime ⇒ private fork: `mutAcq`. A read runtime never runs these ops (`Reuse.read_plan_no_update`) |
+| `ops/commit.rs:89` (`Pending::commit`), `:139` (`end_segment`), `runtime.rs:617` (`commit_deferred_indexes` → `IndexDocs::commit`): one `graph_mut()` held across each call (main borrowed inside, `pending.rs:480,1235-1366,1799` there; `Hold`) | `runtime.g` via `CommitOp` (`ops/commit.rs:85-148`) | write runtime (`CommitOp` refuses `!write`, `commit.rs:50`): `mutAcq` |
 | `index_ddl.rs:71,102` | `runtime.graph_mut()` | write runtime (`:38,:94` refuse `!write`; `graph_mut` asserts it too): `mutAcq` |
 | `mvcc_graph.rs:232,235,252` | `new_graph` | still private: `mutAcq`, then `publish` |
 | `pending.rs:1670` | `committed` = **the published version** | `mutAcqPub`, under the write lock |
@@ -56,7 +56,7 @@ published version. What makes the PR sound is the weaker fact proven here: that 
 happens only under the per-graph write lock, and a read runtime lives entirely inside its
 session's read lock, so the two never overlap (`reader_guard_sound`).
 -/
-namespace Pr3436.Proto
+namespace RuntimeCore.Proto
 
 abbrev Tid := Nat
 abbrev C := Nat
@@ -774,4 +774,4 @@ theorem writer_reply_race_rev :
     run init [.wlock 1, .claimW 1, .publish 1 1, .wunlock 1, .wlock 2, .claimW 2, .mutAcqPub 2,
       .sAcq 1 1] = .panic := by decide
 
-end Pr3436.Proto
+end RuntimeCore.Proto

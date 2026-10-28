@@ -3,8 +3,8 @@
 
 | here | there |
 | --- | --- |
-| `capLoop`  | the `if self.result_set_size >= 0` loop, `runtime/runtime.rs:520-546` |
-| `query`    | `Runtime::query`, `runtime/runtime.rs:514-561` (rows + number of child batches pulled) |
+| `capLoop`  | the `if self.result_set_size >= 0` loop, `runtime/runtime.rs:626-652` |
+| `query`    | `Runtime::query`, `runtime/runtime.rs:620-667` (rows + number of child batches pulled) |
 
 A batch is modelled by its active rows (`active_indices`); `set_selection(take keep)`
 keeps the first `keep` of them. The second component counts how many batches were pulled
@@ -26,7 +26,7 @@ def capLoop (limit : Nat) (write : Bool) : Nat → List (List α) → List (List
       let r := capLoop limit write total' bs
       (b :: r.1, r.2 + 1)
 
-/-- `Runtime::query` (`runtime.rs:514-561`). `rss` is `result_set_size`. -/
+/-- `Runtime::query` (`runtime.rs:620-667`). `rss` is `result_set_size`. -/
 def query (rss : Int) (write : Bool) (bs : List (List α)) : List (List α) × Nat :=
   if rss ≥ 0 then capLoop rss.toNat write 0 bs else (bs, bs.length)
 

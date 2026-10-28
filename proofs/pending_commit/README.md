@@ -111,9 +111,10 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
 | `StagedBugs.lean` | Staged label/type state that outlives its entity: #3447, #3448, #3453 counterexamples, `deletePendingNode_keeps_remL` |
+| `Hold.lean` | #3436/#3439-era borrow holding: a caller-held `graph_mut()` / `graph()` across `Pending::commit`, `end_segment`, `IndexDocs::commit` equals main's sequential borrows (`commit_same`, `single_mut_same`, `single_rd_same`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-Path dependency (`lakefile.toml`): [`../graph_queries`](../graph_queries), for its model of the graph's id spaces (`GQ.IdS`, `GQ.rCancel`), which `CancelRust.lean` uses to prove the cancel contract instead of assuming it.
+Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for the atomic_refcell borrow-word model `RuntimeCore.Cell` that `Hold.lean` runs on; and [`../graph_queries`](../graph_queries), for its model of the graph's id spaces (`GQ.IdS`, `GQ.rCancel`), which `CancelRust.lean` uses to prove the cancel contract instead of assuming it.
 
 ## Coverage
 
@@ -147,7 +148,7 @@ Path dependency (`lakefile.toml`): [`../graph_queries`](../graph_queries), for i
 ## Build and check
 
 ```bash
-cd proofs/pending_commit && lake build   # this project (also builds ../graph_queries)
+cd proofs/pending_commit && lake build   # this project (also builds ../graph_queries, ../runtime_core and its ../redis_layer)
 bash proofs/lean_ci.sh pending_commit    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

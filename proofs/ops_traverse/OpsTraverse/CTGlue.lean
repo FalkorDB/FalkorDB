@@ -12,7 +12,7 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 | `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1053) |
 | `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1065) |
 | `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1086) |
-| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:72), `next` (:269) |
+| `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:72), `next` (:251) |
 | `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs:56), `NodeByIdSeekOp::new` (node_by_id_seek.rs:32), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs:34), `PathBuilderOp::new` (path_builder.rs:44), `AllShortestPathsOp::new` (all_shortest_paths.rs:59) |
 
 GraphBLAS matrices are their entry lists (`(row, col)` pairs) with a declared shape.
@@ -292,7 +292,7 @@ theorem ctNext_stream {C R : Type} (batched : C → Option (List (List R))) (emi
       (cs.flatMap (ctPack batched emitted padded opt)).flatten.take cap := by
   rw [Drive.capDrive_flatten]; simp
 
-/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs:72, :269) -/
+/-! ## `ExpandIntoOp::new` / `next` (expand_into.rs:72, :251) -/
 
 structure EiCfg where
   synthetic : Bool
@@ -312,7 +312,7 @@ theorem eiNew_spec (f t r : Nat) (fl tl : List String) :
   refine ⟨by simp [eiNew, and_assoc], ?_, rfl⟩
   simp only [eiNew]; split <;> simp_all
 
-/-- expand_into.rs:277-285: `set_selection(0..remaining)` keeps the first `remaining` rows. -/
+/-- expand_into.rs:290-298: `set_selection(0..remaining)` keeps the first `remaining` rows. -/
 theorem eiNext_stream {C R : Type} (pack : C → List (List R)) (cap : Nat) (cs : List C) :
     (Drive.capDrive pack cap 0 [] cs).flatten = (cs.flatMap pack).flatten.take cap := by
   rw [Drive.capDrive_flatten]; simp

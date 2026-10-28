@@ -1,19 +1,19 @@
 /-!
 # `src/allocator.rs` — per-thread allocation accounting
 
-`ThreadCountingAllocator` (`:31-75`) forwards every request to `RedisAlloc` (FFI: here an
+`ThreadCountingAllocator` (`:31-84`) forwards every request to `RedisAlloc` (FFI: here an
 input — whether it returned a non-null pointer, and the pointer itself is passed through
 unchanged) and, when the calling thread's `TRACKING_ENABLED` is set, adds `layout.size()`
-to that thread's `THREAD_ALLOCATED` / `THREAD_DEALLOCATED`. The helpers (`:80-117`) flip
+to that thread's `THREAD_ALLOCATED` / `THREAD_DEALLOCATED`. The helpers (`:89-126`) flip
 the flag, read and reset the counters, and compute the net with `saturating_sub`.
 
 | here | there |
 | --- | --- |
 | `TLS`, `TLS.init`       | the three `thread_local!` cells (`:33-41`; `TRACKING_ENABLED` starts `true`) |
-| `Ev.alloc ok n`         | `GlobalAlloc::alloc` (`:44`): counted iff the pointer is non-null and tracking is on |
-| `Ev.dealloc n`          | `GlobalAlloc::dealloc` (`:61`): counted iff tracking is on |
-| `Ev.enable/disable/reset` | `enable_tracking` (`:80`), `disable_tracking` (`:88`), `reset_counter` (`:114`) |
-| `usage`, `net`          | `current_thread_usage` (`:97`), `net_thread_usage` (`:105`) |
+| `Ev.alloc ok n`         | `GlobalAlloc::alloc` (`:44`): counted iff the pointer is non-null and tracking is on. #3514 added `#[cfg(test)]` branches (`:49-51`, `:70-73`) that call the system allocator in unit tests (Redis's does not exist there); the counting is unchanged and the model is the non-test build |
+| `Ev.dealloc n`          | `GlobalAlloc::dealloc` (`:65`): counted iff tracking is on |
+| `Ev.enable/disable/reset` | `enable_tracking` (`:89`), `disable_tracking` (`:97`), `reset_counter` (`:123`) |
+| `usage`, `net`          | `current_thread_usage` (`:106`), `net_thread_usage` (`:114`) |
 | `World`, `World.step`   | one `TLS` per thread: every event touches only its own thread's cells |
 
 `usize` arithmetic: `c.get() + layout.size()` wraps in the release profile (no
@@ -57,9 +57,9 @@ def allocRet (p : Option Nat) : Option Nat := p
 
 theorem alloc_passthrough (p : Option Nat) : allocRet p = p := rfl
 
-/-- `current_thread_usage` (`:97`). -/
+/-- `current_thread_usage` (`:106`). -/
 def usage (t : TLS) : Nat × Nat := (t.allocated, t.deallocated)
-/-- `net_thread_usage` (`:105`): `allocated.saturating_sub(deallocated)` (Nat `-` is saturating). -/
+/-- `net_thread_usage` (`:114`): `allocated.saturating_sub(deallocated)` (Nat `-` is saturating). -/
 def net (t : TLS) : Nat := t.allocated - t.deallocated
 
 theorem net_saturates (t : TLS) : net t ≤ t.allocated ∧ (t.allocated ≤ t.deallocated → net t = 0) := by

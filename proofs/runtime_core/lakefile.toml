@@ -3,3 +3,10 @@ defaultTargets = ["RuntimeCore"]
 
 [[lean_lib]]
 name = "RuntimeCore"
+
+# redis_layer owns graph_core.rs / query_session.rs: its parser+planner write
+# classification (`RedisLayer.Ro`) discharges "a read plan has no mutating op"
+# (`RuntimeCore.Reuse.read_plan_no_update`).
+[[require]]
+name = "redis-layer"
+path = "../redis_layer"

@@ -1,7 +1,0 @@
-# pr3436_review: PR #3436 @ e30861ea3. Rows stay commented out until the PR merges; then fold into runtime_core (and pending_commit for the Hold theorems).
-# file	function	line	bucket	lean_name_or_reason
-#graph/src/runtime/runtime.rs	deref	131	PROVEN	Cell.deref: graph_deref, graph_same_result (both GraphRef arms deref to g's cell)
-#graph/src/runtime/runtime.rs	new	440	PROVEN	Cell.new: new_ok, new_vals; Protocol.readNew_never_panics; DropOrder.held_survives, drop_sound (either field order), held_swapped_unsound (HeldRead's internal order), g_never_reassigned; with runtime_core Plan.rtNew_spec for the other fields
-#graph/src/runtime/runtime.rs	graph	555	PROVEN	Cell.graph: graph_deref, graph_read_held, read_program_same, sites_same, graph_write_is_borrow, write_program_same; Protocol.reader_guard_sound, guard_never_excl, mutAcq_panic_iff, mutAcqPub_panic_iff; Reuse.read_plan_no_update (premise discharged on RedisLayer.Ro); Hold.single_rd_same (caller-held &graph())
-#graph/src/runtime/runtime.rs	graph_mut	572	PROVEN	Cell.graphMut: graph_mut_write_same, graph_mut_read_asserts, graph_mut_same_cell; Hold.commit_same, single_mut_same (caller-held &mut graph_mut()) with Protocol.priv_borrows_owner_only
-#graph/src/runtime/runtime.rs	graph_arc	583	PROVEN	DropOrder.graphArc: graph_arc_keeps_g (a clone; g and read_guard unchanged), held_survives (its drop is one more holder)

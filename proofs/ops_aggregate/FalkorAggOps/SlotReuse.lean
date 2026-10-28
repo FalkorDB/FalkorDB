@@ -12,7 +12,7 @@ keeps the value (row.rs:160-166), which a later operator still reads.
 
 | here | there |
 | --- | --- |
-| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs:1072-1078), so the parser's accumulator child `__agg_order_by_placeholder__` (cypher.rs:2046-2048, :2072-2074) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs:2193-2200); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs:1149-1167, :2177-2185); the planner splits them into keys / aggregations in order (planner/mod.rs:2496-2512); a key whose tree is a bare variable records it as `original_var` (aggregate.rs:1146, :1174) |
+| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs:1072-1078), so the parser's accumulator child `__agg_order_by_placeholder__` (cypher.rs:2046-2048, :2072-2074) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs:2193-2200); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs:1149-1167, :2177-2185); the planner splits them into keys / aggregations in order (planner/mod.rs:2496-2512); a key whose tree is a bare variable records it as `original_var` (aggregate.rs:1160, :1199) |
 | `nextId` | the next clause's first new variable: the projection scope holds exactly its aliases (binder `projectItems_keys`), and `fresh_var` mints `len` (binder.rs:2255-2266) |
 | `finishVals` | the emitted row's stored values: `unbind` keeps the value (row.rs:160-166), so values = `finishCore` row + outputs |
 | `cell` | what a downstream operator or the reply reads at a slot of the one-row batch: `push_row` marks a column present iff the slot is bound or holds a non-null value (batch.rs:631-640), `finish` drops a non-present column (batch.rs:763-778), `value_at` returns the stored value (reply.rs:655 `unwrap`s it) |
@@ -200,7 +200,7 @@ theorem agree3375_one_key :
     slotAt (finishGroup finEv L.1 L.2 (upd env0 0 (.str 0)) (acc3375 (.int 6))) 2 =
       some (some (.int 6)) := by decide
 
-/-! ## #3150: a null key shares its slot with an accumulator and is unbound -/
+/-! ## #3150 (fixed by #3522): a null key shares its slot with an accumulator -/
 
 /-- `RETURN null AS x, count(1) AS n`: the pre-projection scope is empty, so `count`'s
 accumulator is id 0 — the id of `x`. -/
@@ -209,21 +209,80 @@ def items3150 : List (PItem AV) := [.key none, .agg cntF [.const .int]]
 theorem layout3150 : projLayout 0 items3150 =
     ([⟨0, none⟩], [(1, .func cntF [.const .int, .var 0])]) := rfl
 
-/-- **#3150**: `unbind_agg_accumulators` clears slot 0, which is the key `x`; its value `null`
-then makes the column absent, and `reply_compact`'s `value_at(..).unwrap()` (reply.rs:655)
-panics. With `'a' AS x` the slot is equally unbound but the non-null value keeps the column
-present, so the reply prints `'a'` — both match the live server (Rust main: panic / `a, 1`;
-C: `null, 1`). -/
-theorem bug3150_null_key_unbound :
+/-- **History, before #3522 (ca36bfa15): the keys-bound property on the old order** (accumulators
+unbound after the keys were written, `preFinishGroup`). -/
+def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
+  ∀ k ∈ keys, ∀ v, key k.name = some v →
+    slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
+
+/-- What a reader saw at slot `j` of the old emitted row (`preFinishGroup`). -/
+def preEmitCell {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (j : Nat) : Option (Option Z) :=
+  match preFinishGroup ev keys aggs key acc, finishVals ev keys aggs key acc with
+  | .ok b, .ok v => some (cell isNull b v j)
+  | _, _ => none
+
+/-- **#3150, before #3522 (ca36bfa15, was `bug3150_null_key_unbound`)**:
+`unbind_agg_accumulators` ran after the keys were written and cleared slot 0, which is the key `x`;
+its value `null` then made the column absent, and `reply_compact`'s `value_at(..).unwrap()`
+(reply.rs:655) panicked. With `'a' AS x` the slot was equally unbound but the non-null value kept
+the column present, so the reply printed `'a'` (live at 9d3869aa8: Rust panic / `a, 1`; C:
+`null, 1`). Fixed by #3522: `fixed3522_null_key_bound`. -/
+theorem pre3522_null_key_unbound :
     let L := projLayout 0 items3150
-    slotAt (finishGroup finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1))) 0 = some none ∧
-    emitCell AV.isNull finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) 0 = some none ∧
-    emitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.str 0)) (upd env0 0 (.int 1)) 0 =
+    slotAt (preFinishGroup finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1))) 0 = some none ∧
+    preEmitCell AV.isNull finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) 0 = some none ∧
+    preEmitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.str 0)) (upd env0 0 (.int 1)) 0 =
       some (some (.str 0)) ∧
-    ¬ KeysBound finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) := by
+    ¬ PreKeysBound finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) := by
   refine ⟨by decide, by decide, by decide, fun h => ?_⟩
   have := h ⟨0, none⟩ (List.Mem.head _) .null rfl
   revert this; decide
+
+/-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
+writes the keys (aggregate.rs:1184-1192), so on the same ids the null key `x` is bound to `null`
+and the column is present (live: `null, 1`, as C), and `KeysBound` holds. -/
+theorem fixed3522_null_key_bound :
+    let L := projLayout 0 items3150
+    slotAt (finishGroup finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1))) 0 = some (some .null) ∧
+    emitCell AV.isNull finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) 0 = some (some .null) ∧
+    emitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.str 0)) (upd env0 0 (.int 1)) 0 =
+      some (some (.str 0)) ∧
+    KeysBound finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) := by
+  refine ⟨by decide, by decide, by decide, fun k hk v hv => ?_⟩
+  have hk' : k = ⟨0, none⟩ := by simpa [projLayout, layoutGo, items3150] using hk
+  subst hk'
+  revert hv; revert v; decide
+
+/-- **General `KeysBound` on main**: for any keys, accumulators and evaluator, as long as no key
+name is an aggregate output name and the group evaluates, every key is bound to its value
+(`AggNext.finishGroup_keys_bound`). -/
+theorem keysBound_main {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
+    (aggs : List (Nat × Ex Z)) (key acc : Env Z)
+    (hdisj : ∀ k ∈ keys, k.name ∉ aggs.map Prod.fst)
+    (hok : ∃ out, finishGroup ev keys aggs key acc = .ok out) :
+    KeysBound ev keys aggs key acc := by
+  obtain ⟨out, ho⟩ := hok
+  intro k hk v hv
+  simp [slotAt, ho, finishGroup_keys_bound ev keys aggs key acc out hdisj ho k hk v hv]
+
+/-- The PR's second test, `WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)`: pre-projection
+`a, b` = 0, 1 so the accumulator is 2; the keys `x` (id 0, original 1) and `y` (id 1, original 0)
+swap the pre-projection slots, and each alias write lands on the other's slot id. Both keys stay
+bound to their own value (`x = 2`, `y = 1`) and the count is output 3. -/
+theorem keysBound_swap_3522 :
+    let L := projLayout 2 [PItem.key (some 1), .key (some 0), .agg cntF [.const .int]]
+    let key := upd (upd env0 0 (.int 2)) 1 (.int 1)
+    let acc := upd env0 2 (.int 7)
+    L.1 = [⟨0, some 1⟩, ⟨1, some 0⟩] ∧
+    slotAt (finishGroup finEv L.1 L.2 key acc) 0 = some (some (.int 2)) ∧
+    slotAt (finishGroup finEv L.1 L.2 key acc) 1 = some (some (.int 1)) ∧
+    slotAt (finishGroup finEv L.1 L.2 key acc) 2 = some (some (.int 7)) ∧
+    KeysBound finEv L.1 L.2 key acc := by
+  refine ⟨rfl, by decide, by decide, by decide, fun k hk v hv => ?_⟩
+  simp only [projLayout, layoutGo, List.mem_cons, List.not_mem_nil, or_false] at hk
+  rcases hk with rfl | rfl <;> revert hv <;> revert v <;> decide
 
 /-! ## #3333: a pre-projection key alias binds the next clause's first variable -/
 

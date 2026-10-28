@@ -4,11 +4,11 @@
 | here | there |
 | --- | --- |
 | `T`                 | the IR subtree, as the children `children_to_recurse` returns |
-| `K`, `childrenToRecurse` | `Runtime::children_to_recurse`, `runtime/runtime.rs:652-674` |
-| `Frame`, `runM`     | the `work`/`built` stack machine of `run_batch`, `runtime/runtime.rs:710-739` |
+| `K`, `childrenToRecurse` | `Runtime::children_to_recurse`, `runtime/runtime.rs:758-780` |
+| `Frame`, `runM`     | the `work`/`built` stack machine of `run_batch`, `runtime/runtime.rs:816-845` |
 | `runBatch`          | `Runtime::run_batch` incl. the final `built.pop().ok_or_else(..)` |
 | `recT`, `recL`      | the recursive build it replaced (reference): build the children left to right, then `build_batch_op(cur, kids)` |
-| `mk`                | `build_batch_op` (`runtime.rs:743-1307`), abstract: any `Except`-valued constructor |
+| `mk`                | `build_batch_op` (`runtime.rs:849-1413`), abstract: any `Except`-valued constructor |
 
 `built` is a `Vec` (push at the end); `built.drain(len - n..)` takes the last `n` in push
 order. `mk` is arbitrary, so the theorem holds for every operator and error.
@@ -142,7 +142,7 @@ theorem runBatch_ok_single (mk : Nat → List B → Except String B) (t : T) (b 
   simp only [Nat.add_zero, h] at this
   rw [this]; simp [runM]
 
-/-! ### `children_to_recurse` (`runtime.rs:652-674`) -/
+/-! ### `children_to_recurse` (`runtime.rs:758-780`) -/
 
 inductive K where
   | union | argument | createIndex | dropIndex | cartesianProduct | valueHashJoin

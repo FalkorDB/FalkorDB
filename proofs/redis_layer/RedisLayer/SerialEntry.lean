@@ -35,7 +35,7 @@ def ENGLISH : Bytes := "english".toUTF8.toList.map (·.toNat)
 def allFields (is : List Info) : List (Bytes × Fld) :=
   (is.map fun i => (i.fields.map fun (a, fs) => fs.map fun f => (a, f)).flatten).flatten
 
-/-- `encode_schema_index_block` (`:337-422`). -/
+/-- `encode_schema_index_block` (`:338-428`). -/
 def encIdx (is : List Info) : List W :=
   match is with
   | [] => [.u 0]
@@ -46,7 +46,7 @@ def encIdx (is : List Info) : List W :=
       ++ [.u (allFields is).length]
       ++ ((allFields is).map fun (a, f) => encField one simCode a f).flatten
 
-/-- `position(..).unwrap_or(0)` (`:457-460`). -/
+/-- `position(..).unwrap_or(0)` (`:462-466`). -/
 def pos (l : List Bytes) (p : Bytes) : Option Nat :=
   match l with
   | [] => none
@@ -54,13 +54,13 @@ def pos (l : List Bytes) (p : Bytes) : Option Nat :=
 
 def attrId (attrs : List Bytes) (p : Bytes) : Nat := (pos attrs p).getD 0
 
-/-- `encode_constraint_block` (`:439-464`). -/
+/-- `encode_constraint_block` (`:445-470`). -/
 def encCons (attrs : List Bytes) (cs : List Cons) : List W :=
   let act := cs.filter (·.operational)
   [.u act.length] ++ (act.map fun c =>
     [W.u (if c.unique then 0 else 1), .u c.props.length] ++ c.props.map fun p => W.u (attrId attrs p)).flatten
 
-/-- Grouping by attribute, as the decoder's `fields` / `field_order` pair does (`:551-559`). -/
+/-- Grouping by attribute, as the decoder's `fields` / `field_order` pair does (`:556-569`). -/
 def addField (acc : List (Bytes × List Fld)) (af : Bytes × Fld) : List (Bytes × List Fld) :=
   if acc.any (·.1 = af.1) then acc.map fun (a, fs) => if a = af.1 then (a, fs ++ [af.2]) else (a, fs)
   else acc ++ [(af.1, [af.2])]
@@ -78,17 +78,17 @@ def decCons1 (attrs : List Bytes) (name : Bytes) : Dec Cons :=
   Dec.bind rdU fun ct => Dec.bind rdU fun n => Dec.bind (rdMany rdU n) fun ids =>
   pure' ⟨decide (ct = 0), false, name, ids.map (lookupAttr attrs), true⟩
 
-/-- The index half of `decode_schema_entry` (`:537-582`). -/
+/-- The index half of `decode_schema_entry` (`:541-583`). -/
 def decIdx : Dec (Option Info) :=
   Dec.bind rdU fun has =>
   if has ≠ 0 then
     Dec.bind rdB fun lb => Dec.bind rdU fun swc => Dec.bind (rdMany rdB swc) fun sws =>
     Dec.bind rdU fun fc => Dec.bind (rdMany (decField U) fc) fun fs =>
-    pure' (some (⟨[], false, group fs, some (strip U lb),
+    pure' (some (⟨[], false, group (fs.flatMap fun af => af.2.map (af.1, ·)), some (strip U lb),
       if sws = [] then none else some (sws.map (strip U))⟩ : Info))
   else pure' none
 
-/-- `decode_schema_entry` (`:529-619`); `label`/`isRel` are stamped by the caller. -/
+/-- `decode_schema_entry` (`:535-628`); `label`/`isRel` are stamped by the caller. -/
 def decEntry (attrs : List Bytes) : Dec (Bytes × Option Info × List Cons) :=
   Dec.bind rdU fun _id => Dec.bind rdB fun nb =>
   let name := strip U nb
@@ -113,7 +113,7 @@ def enumFrom (n : Nat) : List Bytes → List (Nat × Bytes)
   | [] => []
   | l :: ls => (n, l) :: enumFrom (n+1) ls
 
-/-- `Schema::encode` (`:260-331`). -/
+/-- `Schema::encode` (`:262-332`). -/
 def encSchema (s : Schema) : List W :=
   [.u s.attrs.length] ++ (s.attrs.map fun a => [W.buf (nullTerm a)]).flatten
   ++ [.u s.labels.length] ++ ((enumFrom 0 s.labels).map (encEntry one simCode s false)).flatten
@@ -123,7 +123,7 @@ def stamp (rel : Bool) (e : Bytes × Option Info × List Cons) : List Info × Li
   ((e.2.1.map fun i => { i with label := e.1, isRel := rel }).toList,
    e.2.2.map fun c => { c with isRel := rel })
 
-/-- `Schema::decode` (`:466-527`). -/
+/-- `Schema::decode` (`:473-533`). -/
 def decSchema : Dec Schema :=
   Dec.bind rdU fun ac => Dec.bind (rdMany rdB ac) fun ab =>
   let attrs := ab.map (strip U)

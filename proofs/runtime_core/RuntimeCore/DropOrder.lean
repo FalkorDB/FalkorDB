@@ -1,9 +1,9 @@
 /-
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
-Cites: PR branch `perf/read-graph-once` @ e30861ea3 unless marked. Since 653f467a9 the
+Merged PR #3436 (25babfe4f), folded from the retired `pr3436_review`. Cites: current main (= PR branch @ e30861ea3, `runtime.rs` re-cited) unless marked. Since 653f467a9 the
 guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones `g` into
-`_owner` and borrows through it (`:472-487`). The soundness argument therefore rests on
+`_owner` and borrows through it (`:476-491`). The soundness argument therefore rests on
 `HeldRead`'s own `Arc`, not on `Runtime`'s field order.
 
 | here | there |
@@ -19,22 +19,22 @@ guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones
 **`g` is never reassigned** (`g_never_reassigned`). `g` is private (`runtime.rs:161`) and
 `runtime.rs` declares no child module, so only `runtime.rs` can name it. Since e30861ea3
 the field appears there exactly four times (`grep -nE "\.g\b|^\s+g,$"`): the struct
-literal in `new` (`:491`, the initialisation) and three reads, all inside `&self` methods —
-`graph` `:558` (`self.g.borrow()`), `graph_mut` `:574` (`self.g.borrow_mut()`, after
-`assert!(self.write)`; a borrow of the *cell*, not of the field) and `graph_arc` `:584`
+literal in `new` (`:495`, the initialisation) and three reads, all inside `&self` methods —
+`graph` `:562` (`self.g.borrow()`), `graph_mut` `:578` (`self.g.borrow_mut()`, after
+`assert!(self.write)`; a borrow of the *cell*, not of the field) and `graph_arc` `:588`
 (`Arc::clone(&self.g)`). Everyone else gets a `GraphRef`, an `AtomicRefMut<Graph>` or an
 owned `Arc` *clone* (`graph_arc_keeps_g`) — none of which can assign the field.
 `runtime.rs` has no `&mut self` method at all, and the tree has no `&mut Runtime` /
 `let mut runtime` / `let mut rt`. `HeldRead._owner` is written only by its constructor
-(`:483-486`). Since 653f467a9 none of this is needed for soundness (`held_survives` holds
+(`:487-490`). Since 653f467a9 none of this is needed for soundness (`held_survives` holds
 whatever happens to `g`); it is what makes `graph()`, `graph_mut()` and `graph_arc()` name
 the same cell. The 653f467a9 enumeration (six uses incl. `graph_cell`) is kept as
 `pre_e30861e_GUse`.
 -/
-import Pr3436Review.Cell
+import RuntimeCore.Cell
 
-namespace Pr3436.Drop
-open Pr3436.Cell
+namespace RuntimeCore.Drop
+open RuntimeCore.Cell
 
 structure Alloc where
   strong : Nat
@@ -191,7 +191,7 @@ def swappedFields (rt : Rt) : List Field :=
   [.other, .arc rt.g] ++ (match rt.guard with | some a => heldFields a | none => []) ++ [.other]
 
 /-- A read runtime holds two strong references (`g` and `HeldRead._owner`, the clone made
-in `new`, `:472`); a write runtime one. -/
+in `new`, `:476`); a write runtime one. -/
 def ownRefs (rt : Rt) : Nat := if rt.write then 1 else 2
 
 theorem only_app (a : Addr) : ∀ (xs ys : List Field), OnlyArcs a xs → OnlyArcs a ys →
@@ -264,7 +264,7 @@ theorem drop_restores_borrow (rt : Rt) (hr : rt.ok) (hw : rt.write = false) (h :
 
 /-- A `Runtime` value holds addresses into the heap, never into itself: moving it (a
 bitwise copy to a new location) leaves every field — and so the drop sequence — unchanged.
-Likewise moving `owner` into `HeldRead` after `owner.borrow()` (`:478-485`) moves the
+Likewise moving `owner` into `HeldRead` after `owner.borrow()` (`:482-489`) moves the
 `Arc` pointer, not the cell the guard points into. -/
 theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
     runtimeFields moved = runtimeFields rt := by rw [hm]
@@ -273,9 +273,9 @@ theorem move_irrelevant (rt : Rt) (moved : Rt) (hm : moved = rt) :
 
 /-- Every mention of the private field `g` in `runtime.rs` after initialisation. -/
 inductive GUse where
-  | borrowShared      -- `graph`, `:558`: `self.g.borrow()`
-  | borrowMut         -- `graph_mut`, `:574`: `self.g.borrow_mut()` (after `assert!(self.write)`)
-  | arcClone          -- `graph_arc`, `:584`: `Arc::clone(&self.g)`
+  | borrowShared      -- `graph`, `:562`: `self.g.borrow()`
+  | borrowMut         -- `graph_mut`, `:578`: `self.g.borrow_mut()` (after `assert!(self.write)`)
+  | arcClone          -- `graph_arc`, `:588`: `Arc::clone(&self.g)`
   deriving DecidableEq, Repr
 
 /-- Each use, as it acts on the `Runtime` record: all three are `&self` reads of the field
@@ -298,7 +298,7 @@ theorem g_uses_keep_ok (rt : Rt) (hr : rt.ok) (us : List GUse) :
   | nil => exact hr
   | cons u us ih => exact ih (u.apply rt) hr
 
-/-- `Runtime::graph_arc` (`runtime.rs:583-585`): a new strong reference to `g`'s cell,
+/-- `Runtime::graph_arc` (`runtime.rs:587-589`): a new strong reference to `g`'s cell,
 handed to the caller (graph_core's published version `src/graph_core.rs:263`, the JS UDF
 context `udf/js_context.rs:314`). The runtime record is untouched. -/
 def graphArc (h : H) (rt : Rt) : Option (Addr × H × Rt) :=
@@ -401,4 +401,4 @@ theorem pre653f467_g_replaced_unsound :
     dropFields h ([.arc 0] ++ [.other, .guard 0, .arc 1, .other]) = none := by
   decide
 
-end Pr3436.Drop
+end RuntimeCore.Drop

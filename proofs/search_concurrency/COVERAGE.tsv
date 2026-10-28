@@ -1,13 +1,16 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/threadpool.rs	new	59	PROVEN	Pool.new_spec, shutdown_drains; unbounded queue (#3014): Pool.spawn_never_blocks; historical Locks.pre3014_pool_deadlock_reachable (bounded_blocking(1024))
-graph/src/threadpool.rs	spawn	97	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
-graph/src/threadpool.rs	shutdown	119	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit)
-graph/src/threadpool.rs	spawn	132	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
-graph/src/threadpool.rs	init_thread_pool	148	PROVEN	Pool.global_spec (init: Ok once, then Err)
-graph/src/threadpool.rs	shutdown	157	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
-graph/src/threadpool.rs	try_acquire	185	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
-graph/src/threadpool.rs	try_acquire_in	189	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
-graph/src/threadpool.rs	drop	205	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
+graph/src/threadpool.rs	new	67	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin.spawnNames_none (`with_names(size, None)`: unnamed workers); unbounded queue (#3014): Pool.spawn_never_blocks; historical Locks.pre3014_pool_deadlock_reachable (bounded_blocking(1024))
+graph/src/threadpool.rs	named	72	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
+graph/src/threadpool.rs	with_names	79	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive)
+graph/src/threadpool.rs	spawn	124	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; PoolWithin.late_job_lost (job sent after the sentinels is accepted and never runs); Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
+graph/src/threadpool.rs	shutdown	146	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
+graph/src/threadpool.rs	shutdown_within	159	PROVEN	PoolWithin.waitLoop_exit, waitLoop_bound, within_in_time (returns before start+timeout+s), within_true_all_finished, within_false_unfinished, blocked_reported, within_partition (no handle lost), detached_workers_exit (no worker leak); sleep/is_finished are hypotheses on std (monotone, sleep in [1,s]); BUGS second_call_true_despite_straggler, within_blocks_behind_shutdown (repro/threadpool_within.rs, not fixed)
+graph/src/threadpool.rs	spawn	185	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
+graph/src/threadpool.rs	init_thread_pool	201	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	shutdown	210	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	try_acquire	238	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
+graph/src/threadpool.rs	try_acquire_in	242	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
+graph/src/threadpool.rs	drop	258	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
 graph/src/locks.rs	upgrade_to_write	43	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order)
 graph/src/thread_id.rs	set_main_thread	13	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec

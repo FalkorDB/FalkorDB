@@ -6,14 +6,14 @@
 | `W`                       | the state a read sees: `Runtime.deleted_nodes`, `Pending.{new,existing}_nodes_attrs`, `Pending.{set,remove}_labels`, the committed `Graph` |
 | `OM.insert/remove/lookup` | `OrderMap::{insert,remove,get}` (assoc list, unique keys) |
 | `pendingGet`              | `Pending::get_node_attribute`, `runtime/pending.rs:466-482` |
-| `memoLookup`, `memoInsert`, `attrIdM` | `Runtime::{memo_lookup,memo_insert,node_attr_id}`, `runtime/runtime.rs:1407-1443` |
-| `getNodeAttribute`        | `Runtime::get_node_attribute` + `_no_delete_check`, `runtime.rs:1465-1496` |
-| `materialize`             | `Runtime::materialize_node_property_values`, `runtime.rs:1562-1604` |
-| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs:484-506`), `Runtime::get_node_attrs` (`runtime.rs:1745-1761`) |
+| `memoLookup`, `memoInsert`, `attrIdM` | `Runtime::{memo_lookup,memo_insert,node_attr_id}`, `runtime/runtime.rs:1513-1549` |
+| `getNodeAttribute`        | `Runtime::get_node_attribute` + `_no_delete_check`, `runtime.rs:1571-1602` |
+| `materialize`             | `Runtime::materialize_node_property_values`, `runtime.rs:1668-1710` |
+| `updateNodeAttrs`, `getNodeAttrs` | `Pending::update_node_attrs` (`pending.rs:484-506`), `Runtime::get_node_attrs` (`runtime.rs:1851-1867`) |
 | `labelIds`, `hasLabelId`, `hasLabel` | `Runtime::get_node_labels` (`:1666-1678`), `node_has_label_id` (`:1731-1743`), `node_has_label` (`:1696-1709`); `Pending::{node_has_label,update_node_labels}` (`pending.rs:577-622`) |
 | `stage`, `unstage`        | `Pending::stage_node_labels` / `remove_node_labels` (`pending.rs:514-565`) |
-| `degree`                  | `Runtime::get_node_{in,out}degree{,_by_type}` (`runtime.rs:1810-1878`) |
-| `relEndpoints`, `relType` | `Runtime::get_relationship_{endpoints,type}` (`runtime.rs:1783-1808`) |
+| `degree`                  | `Runtime::get_node_{in,out}degree{,_by_type}` (`runtime.rs:1916-1984`) |
+| `relEndpoints`, `relType` | `Runtime::get_relationship_{endpoints,type}` (`runtime.rs:1889-1914`) |
 
 The relationship attribute accessors (`:1499-1541`, `:1610-1664`, `:1763-1781`) have the
 same shape over the relationship maps and are covered by the same theorems
@@ -107,7 +107,7 @@ def pendingGet (w : W) (id a : Nat) : Option Val :=
     | some v => some v
     | none => (w.exAttrs id).bind (lookupA a)
 
-/-- `get_node_attribute_no_delete_check` (`runtime.rs:1485-1496`), with the attr id
+/-- `get_node_attribute_no_delete_check` (`runtime.rs:1591-1602`), with the attr id
 already resolved (see `attrIdM` for the memo). -/
 def noDelete (w : W) (id : Nat) (name : String) : Option Val :=
   match w.attrId name with
@@ -117,13 +117,13 @@ def noDelete (w : W) (id : Nat) (name : String) : Option Val :=
     | some v => some v
     | none => w.committed id a
 
-/-- `Runtime::get_node_attribute` (`runtime.rs:1465-1481`). -/
+/-- `Runtime::get_node_attribute` (`runtime.rs:1571-1587`). -/
 def getNodeAttribute (w : W) (id : Nat) (name : String) : Option Val :=
   match (if !w.deletedEmpty then w.deleted id else none) with
   | some dn => dn.attrs.lookup name
   | none => noDelete w id name
 
-/-- `materialize_node_property_values` (`runtime.rs:1562-1604`); `bg` is the batched
+/-- `materialize_node_property_values` (`runtime.rs:1668-1710`); `bg` is the batched
 `get_node_attributes_by_idx`. -/
 def materialize (w : W) (bg : List Nat → Nat → List Val) (ids : List Nat) (name : String) :
     List Val :=
@@ -200,7 +200,7 @@ def updateNodeAttrs (w : W) (id : Nat) (m : OM) : OM :=
   | none => m
   | some added => added.foldl (attrStep w) m
 
-/-- `Runtime::get_node_attrs` (`runtime.rs:1745-1761`). -/
+/-- `Runtime::get_node_attrs` (`runtime.rs:1851-1867`). -/
 def getNodeAttrs (w : W) (id : Nat) : OM :=
   match w.deleted id with
   | some dn => dn.attrs
@@ -366,7 +366,7 @@ theorem reuse_diverges :
     getNodeAttribute reuseWorld 0 "a" = some (.int 5) ∧
     OM.lookup "a" (getNodeAttrs reuseWorld 0) = none := by decide
 
-/-! ### Attribute-id memo (`runtime.rs:1413-1463`) -/
+/-! ### Attribute-id memo (`runtime.rs:1519-1569`) -/
 
 def ATTR_ID_MEMO_CAP : Nat := 32
 
@@ -446,13 +446,13 @@ def labelIds (w : W) (id : Nat) : List Nat :=
 def pendingHas (w : W) (id l : Nat) : Option Bool :=
   if l ∈ w.remL id then some false else if l ∈ w.setL id then some true else none
 
-/-- `Runtime::node_has_label_id` (`runtime.rs:1731-1743`). -/
+/-- `Runtime::node_has_label_id` (`runtime.rs:1837-1849`). -/
 def hasLabelId (w : W) (id l : Nat) : Bool :=
   match w.deleted id with
   | some dn => decide (l ∈ dn.labels)
   | none => (pendingHas w id l).getD (decide (l ∈ w.committedLabels id))
 
-/-- `Runtime::get_node_labels` (`runtime.rs:1666-1678`), as label ids. -/
+/-- `Runtime::get_node_labels` (`runtime.rs:1772-1784`), as label ids. -/
 def getLabelIds (w : W) (id : Nat) : List Nat :=
   match w.deleted id with
   | some dn => dn.labels
@@ -513,7 +513,7 @@ theorem hasLabelId_iff (w : W) (id l : Nat) : hasLabelId w id l = true ↔ l ∈
       · simp [hr, hs]
       · simp [hr, hs]
 
-/-- `node_has_label(id, name)` (`runtime.rs:1696-1709`). -/
+/-- `node_has_label(id, name)` (`runtime.rs:1802-1815`). -/
 def hasLabel (w : W) (id : Nat) (name : String) : Bool :=
   match w.labelId name with
   | none => false
@@ -570,7 +570,7 @@ theorem unstage_spec (set rem ls : List Nat) (h : Disjoint set rem) :
   · exact h x hs hr
   · exact hn hr
 
-/-! ### Degrees (`runtime.rs:1810-1878`) -/
+/-! ### Degrees (`runtime.rs:1916-1984`) -/
 
 structure Edge where
   id : Nat
