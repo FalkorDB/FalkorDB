@@ -5212,6 +5212,7 @@ fn build_place(
         EntityType::Relationship => endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
             src: NodeId::from(src),
             dst: NodeId::from(dst),
+            edge: RelationshipId(id),
         }),
     }
 }
