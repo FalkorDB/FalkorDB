@@ -4538,14 +4538,14 @@ impl Graph {
                 };
                 (done, lm.nvals())
             }
-            BuildCursor::Edge { src, dst } => {
+            BuildCursor::Edge { src, dst, edge } => {
                 let Some(t) = self.get_relationship_matrix(label) else {
                     return Some((0, 0));
                 };
-                let next = (u64::from(src), u64::from(dst));
+                let next = (u64::from(src), u64::from(dst), u64::from(edge));
                 let done = t
                     .iter(0, next.0, false)
-                    .take_while(|&(s, d, _)| (s, d) < next)
+                    .take_while(|&edge| edge < next)
                     .count() as u64;
                 (done, t.edge_count())
             }
@@ -5299,6 +5299,7 @@ fn build_place(
         EntityType::Relationship => endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
             src: NodeId::from(src),
             dst: NodeId::from(dst),
+            edge: RelationshipId(id),
         }),
     }
 }

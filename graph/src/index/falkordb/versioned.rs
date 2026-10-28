@@ -27,6 +27,11 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// ([`online_build`](super::online_build)); an RDB load takes one batch over every entity, so the
 /// index is `Ready` once the graph is loaded.
 ///
+/// Batches read entities in a fixed order, and an entity's place in it is what it is compared to the
+/// cursor by ([`BuildCursor::precedes`](super::falkordb_index::BuildCursor::precedes)): a node by
+/// its id; an edge by its source, then its destination, then its edge id, so a batch can stop
+/// between any two edges, those of one multi-edge pair included.
+///
 /// A `Building` index holds exactly the current tuples of the entities below its cursor, and
 /// nothing at or above it. Live writes keep that true ([`VersionedIndex::writer_record`]). An
 /// addition for an entity below the cursor is applied, and one for an entity at or above it is

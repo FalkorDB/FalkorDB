@@ -833,11 +833,12 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_node_writes() {
     );
 }
 
-/// The edge counterpart: batches stop inside a source's edges, finishing the multi-edge pair they
-/// stop in, and writes land between them behind and ahead of the cursor, placed by their `(src,
-/// dst)` pair. That includes a new edge of the source being resumed, at a destination the batches
-/// have already passed, which only the write path indexes, and a deleted edge behind the cursor,
-/// whose endpoints are gone by the time its removal is applied.
+/// The edge counterpart: a batch stops inside a multi-edge pair, and writes land between batches
+/// behind and ahead of the cursor, placed by `(src, dst, edge id)`. That includes a new edge of
+/// the source being resumed, at a destination the batches have already passed, which only the
+/// write path indexes; a new edge of the pair the cursor is in, after it, which only a batch
+/// indexes; and a deleted edge behind the cursor, whose endpoints are gone by the time its removal
+/// is applied.
 #[test]
 fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     ensure_graphblas();
@@ -871,22 +872,22 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     g.falkordb_index
         .create_building(EntityType::Relationship, &ty, &attr);
 
-    // A two-edge batch stops inside the a->b pair, so it finishes the pair: three edges, and the
-    // next batch resumes at a->c.
+    // A two-edge batch stops inside the a->b pair: the next batch resumes at its third edge.
     assert!(graph_writes::run_indexer_batch(&mut g, 2));
     assert_eq!(
         cursor(&g, EntityType::Relationship, &ty, &attr),
         Some(BuildCursor::Edge {
             src: NodeId::from(a),
-            dst: NodeId::from(c)
+            dst: NodeId::from(b),
+            edge: RelationshipId::from(eids[2])
         })
     );
     let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
-    assert_eq!(held(&g), eids[..3].to_vec());
+    assert_eq!(held(&g), eids[..2].to_vec());
 
-    // Writes between batches: behind the cursor, delete the second a->b edge and add a fourth a->b
-    // edge with w = 8 (a destination the batches have passed); ahead of it, a->d goes 5 -> 55 and
-    // b->c is deleted.
+    // Writes between batches: behind the cursor, delete the second a->b edge and add a->a with
+    // w = 8 (a destination the batches have passed); ahead of it, add a fourth a->b edge with
+    // w = 9 (after the cursor in its pair), a->d goes 5 -> 55, and b->c is deleted.
     let mut del = RoaringTreemap::new();
     del.insert(eids[1]);
     del.insert(eids[5]);
@@ -896,32 +897,36 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     .unwrap();
     let added = g
         .relationship_id_space()
-        .reserve(1, &RoaringTreemap::new())
-        .expect("reserved")[0];
-    g.create_relationships_bulk(&ty, &[a], &[b], &[added])
+        .reserve(2, &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &[a, a], &[a, b], &added)
         .expect("freshly reserved ids are creatable");
-    applied!(g, |w| g
-        .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w));
+    applied!(g, |w| g.import_relationship_attrs(
+        &with_w(&[(added[0], 8), (added[1], 9)]),
+        &mut w
+    ));
     assert_eq!(
         held(&g),
-        vec![eids[0], eids[2], added],
-        "w = 1, 3, 8: the writes behind the cursor are in, the deleted edge's removal included"
+        vec![eids[0], added[0]],
+        "w = 1, 8: the writes behind the cursor are in, the deleted edge's removal included"
     );
 
     build_to_end(&mut g, 2);
-    let values = [1, 2, 3, 4, 5, 6, 7, 8, 55];
+    let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 55];
     assert_eq!(
         contents(&g, EntityType::Relationship, &ty, &attr, &values),
         one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
     );
     assert_eq!(
         held(&g),
-        vec![eids[0], eids[2], eids[3], eids[6], added, eids[4]],
-        "w = 1, 3, 4, 7, 8, 55"
+        vec![
+            eids[0], eids[2], eids[3], eids[6], added[0], added[1], eids[4]
+        ],
+        "w = 1, 3, 4, 7, 8, 9, 55"
     );
 }
 
-/// An edge write is placed by its `(src, dst)` pair, source first, the order batches read edges
+/// An edge write is placed by `(src, dst, edge id)`, source first, the order batches read edges
 /// in. With the cursor at 1->3, an edge 2->1 is ahead of it even though its destination is lower,
 /// so a write to it waits for its batch; 1->0 is behind, so a write to it is applied at once.
 #[test]
@@ -963,7 +968,8 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
         cursor(&g, EntityType::Relationship, &ty, &attr),
         Some(BuildCursor::Edge {
             src: NodeId::from(nodes[1]),
-            dst: NodeId::from(nodes[3])
+            dst: NodeId::from(nodes[3]),
+            edge: RelationshipId::from(eids[2])
         })
     );
 
@@ -983,6 +989,135 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     assert_eq!(
         contents(&g, EntityType::Relationship, &ty, &attr, &values),
         one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
+    );
+}
+
+/// A batch can stop inside a multi-edge pair, and the cursor then falls between two edges of one
+/// `(src, dst)` pair. Each is placed by its id: a write to the edge below the cursor is applied at
+/// once, and one to the edge at it waits for the batch that reads it.
+#[test]
+fn a_cursor_inside_a_multi_edge_pair_places_each_edge_by_its_id() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let ty = Arc::new("R".to_string());
+    let attr = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&attr);
+    let nodes = reserve_nodes(&mut g, 2);
+    g.create_nodes(&nodes.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    let (a, b) = (nodes[0], nodes[1]);
+    // a->b three times; w = 1..=3.
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(3, &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &[a; 3], &[b; 3], &eids)
+        .expect("freshly reserved ids are creatable");
+    let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+        pairs
+            .iter()
+            .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+            .collect()
+    };
+    let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+    applied!(g, |w| g
+        .import_relationship_attrs(&with_w(&initial), &mut w));
+    g.falkordb_index
+        .create_building(EntityType::Relationship, &ty, &attr);
+
+    assert!(graph_writes::run_indexer_batch(&mut g, 2));
+    assert_eq!(
+        cursor(&g, EntityType::Relationship, &ty, &attr),
+        Some(BuildCursor::Edge {
+            src: NodeId::from(a),
+            dst: NodeId::from(b),
+            edge: RelationshipId::from(eids[2])
+        }),
+        "between the pair's second and third edges"
+    );
+    applied!(g, |w| g.set_relationships_attributes(
+        &with_w(&[(eids[1], 20), (eids[2], 30)]),
+        &mut w
+    ))
+    .unwrap();
+    let values = [1, 2, 3, 20, 30];
+    let (per_value, _) = contents(&g, EntityType::Relationship, &ty, &attr, &values);
+    let at = |v: i64| per_value.iter().find(|(x, _)| *x == v).unwrap().1.clone();
+    assert_eq!(at(20), vec![eids[1]], "the edge below the cursor");
+    assert!(at(30).is_empty(), "the edge at the cursor");
+    assert!(at(3).is_empty(), "nor its old value");
+
+    build_to_end(&mut g, 2);
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &values),
+        one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
+    );
+}
+
+/// A batch reads exactly its size wherever it stops, inside a source's long row or a long
+/// multi-edge pair, and the next one resumes there without reading what came before. Over a whole
+/// build the tensor yields each edge once to a batch, plus one look-ahead per batch.
+#[test]
+fn an_edge_batch_resumes_inside_a_row_or_a_pair_without_reading_it_again() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let ty = Arc::new("R".to_string());
+    let attr = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&attr);
+    let nodes = reserve_nodes(&mut g, 60);
+    g.create_nodes(&nodes.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    // Node 0 to nodes 1..=50, then 30 edges from node 1 to node 2, then node 3 to nodes 4..=9.
+    let mut pairs: Vec<(u64, u64)> = (1..=50).map(|d| (nodes[0], nodes[d])).collect();
+    pairs.extend(std::iter::repeat_n((nodes[1], nodes[2]), 30));
+    pairs.extend((4..=9).map(|d| (nodes[3], nodes[d])));
+    let (srcs, dsts): (Vec<u64>, Vec<u64>) = pairs.into_iter().unzip();
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let attrs: FxHashMap<u64, Vec<(u16, Value)>> = eids
+        .iter()
+        .map(|&eid| (eid, vec![(aid, Value::Int(eid as i64))]))
+        .collect();
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+    g.falkordb_index
+        .create_building(EntityType::Relationship, &ty, &attr);
+
+    graph_writes::EDGES_SCANNED.with(|scanned| scanned.set(0));
+    let held = |g: &Graph| {
+        contents(g, EntityType::Relationship, &ty, &attr, &[])
+            .1
+            .len()
+    };
+    let mut sizes = vec![];
+    let mut batches = 0;
+    while g.falkordb_index.has_building_columns() {
+        let before = held(&g);
+        g.index_next_batch(7);
+        sizes.push(held(&g) - before);
+        batches += 1;
+        assert!(
+            batches <= eids.len(),
+            "the build makes no progress: {sizes:?}"
+        );
+    }
+    let edges = eids.len();
+    assert_eq!(sizes.iter().sum::<usize>(), edges);
+    assert!(
+        sizes[..sizes.len() - 1].iter().all(|&size| size == 7),
+        "every batch but the last reads exactly its size: {sizes:?}"
+    );
+    assert_eq!(
+        graph_writes::EDGES_SCANNED.with(std::cell::Cell::get),
+        edges + batches - 1,
+        "each edge once, plus each batch's look-ahead but the last's"
+    );
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &[]),
+        one_pass(&g, EntityType::Relationship, &ty, &attr, &[])
     );
 }
 
@@ -1030,7 +1165,8 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
             cursor(&g, EntityType::Relationship, &ty, &attr),
             Some(BuildCursor::Edge {
                 src: NodeId::from(a),
-                dst: NodeId::from(c)
+                dst: NodeId::from(c),
+                edge: RelationshipId::from(eids[1])
             })
         );
         let held = |g: &Graph| contents(g, EntityType::Relationship, &ty, &attr, &[]).1;
@@ -3297,7 +3433,7 @@ fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
 
 /// `db.indexes()` reports a `Building` column's progress as the entities below its cursor, out of
 /// the label's or type's: one batch at a time, nodes (with a deleted node in the ids) then edges
-/// (whose batches finish a multi-edge pair), until both are `Ready`.
+/// (whose first batch stops inside a multi-edge pair), until both are `Ready`.
 #[test]
 fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
     let (mut g, label, v, ty, w) = scan_fixture();
@@ -3320,9 +3456,9 @@ fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
             (Some((6, 9)), Some((0, 8))),
             (Some((8, 9)), Some((0, 8))),
             (None, Some((0, 8))),
-            (None, Some((3, 8))),
-            (None, Some((5, 8))),
-            (None, Some((7, 8))),
+            (None, Some((2, 8))),
+            (None, Some((4, 8))),
+            (None, Some((6, 8))),
             (None, None),
         ]
     );
