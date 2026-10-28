@@ -479,7 +479,7 @@ impl<'a> CondTraverseOp<'a> {
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         transposed: bool,
     ) -> CtState {
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         let (fwd_src_labels, fwd_dst_labels) = if transposed {
             (&rp.to.labels, &rp.from.labels)
@@ -613,7 +613,7 @@ impl<'a> CondTraverseOp<'a> {
             return true;
         }
 
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         if state.batched_matrix.is_none() {
             let m = if rp.types.is_empty() {
@@ -924,7 +924,7 @@ impl<'a> CondTraverseOp<'a> {
             return Ok(());
         }
 
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         // Lazily initialize state from current graph contents on first use,
         // ensuring sibling Commits in the subtree have already had a chance
@@ -943,7 +943,7 @@ impl<'a> CondTraverseOp<'a> {
         if state.no_match {
             return Ok(());
         }
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         // Map from_id/to_id to the matrix's src/dst dimensions.
         let (fwd_src_id, fwd_dst_id) = if transposed {
