@@ -43,6 +43,9 @@ type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 pub enum DocIter {
     One(TreeIter),
     Many(UnionIter),
+    /// An already-materialised doc set — a cross-attribute intersection, which cannot be produced
+    /// lazily from value-ordered streams. Distinct by construction.
+    Set(std::collections::hash_set::IntoIter<u64>),
 }
 
 impl Iterator for DocIter {
@@ -52,6 +55,7 @@ impl Iterator for DocIter {
         match self {
             Self::One(it) => it.next(),
             Self::Many(it) => it.next(),
+            Self::Set(it) => it.next(),
         }
     }
 }
@@ -487,9 +491,10 @@ impl NumericIndex {
 
     /// Dispatch the numeric predicates. `Equal` → [`point`](Self::point), `Range` →
     /// [`range`](Self::range), an `IN` list → [`in_list`](Self::in_list), an `OR` of
-    /// equalities and `IN` lists → [`union`](Self::union), and `value IN n.prop` →
-    /// [`array_contains`](Self::array_contains). `And` and non-numeric variants return `None` —
-    /// the query router composes or rejects those.
+    /// equalities and `IN` lists → [`union`](Self::union), an `AND` of bounds on this one
+    /// attribute → [`intersect_same_key`](Self::intersect_same_key), and `value IN n.prop` →
+    /// [`array_contains`](Self::array_contains). Non-numeric variants return `None`, and so does
+    /// an `AND` across attributes, which the query router intersects column by column.
     #[must_use]
     pub fn query(
         &self,
@@ -517,6 +522,7 @@ impl NumericIndex {
                 ..
             } => Self::in_list(items)?,
             IndexQuery::Or(children) => Self::union(children)?,
+            IndexQuery::And(children) => Self::intersect_same_key(children)?,
             IndexQuery::ArrayContains { value, .. } => {
                 return Some(Selection {
                     kind: KeyKind::Array,
@@ -599,6 +605,98 @@ impl NumericIndex {
             return KeySet::Empty;
         }
         KeySet::Range(lo, hi)
+    }
+
+    /// A conjunction of `Equal`/`Range` leaves that all constrain the **same** attribute,
+    /// collapsed into one window of keys.
+    ///
+    /// `WHERE n.v = 5 AND n.v > 2` and `WHERE n.id > 10 AND n.id >= 20` both arrive here. The
+    /// planner cannot fold them itself: `merge_range_queries` gives up whenever two conjuncts
+    /// specify the same side of the window, because at plan time the bounds may still be
+    /// expressions it cannot compare. By the time the index sees them they are concrete values,
+    /// so the intersection is arithmetic — take the tightest low and the tightest high — and the
+    /// result is a single range scan rather than a doc-stream intersection.
+    ///
+    /// An `Equal` is just a degenerate window (`lo == hi`), which is why it needs no special case.
+    /// An `= null` member holds for nothing, so it empties the window, as `= null` alone is
+    /// answered with no rows.
+    ///
+    /// Returns `None` if any member targets a different attribute, or is not a numeric
+    /// `Equal`/`Range`: this index is one column, so a cross-attribute conjunction is not
+    /// something it can answer. An empty window is an answer rather than a decline —
+    /// `v > 5 AND v < 2` is answerable, and the answer is no rows.
+    fn intersect_same_key(children: &[IndexQuery<Value>]) -> Option<KeySet> {
+        let refs: Vec<&IndexQuery<Value>> = children.iter().collect();
+        Self::intersect_refs(&refs)
+    }
+
+    /// [`intersect_same_key`](Self::intersect_same_key) over borrowed conjuncts, so a caller that
+    /// has regrouped leaves by attribute can fold one attribute's share without cloning them —
+    /// `IndexQuery` is deliberately not `Clone`.
+    pub(super) fn intersect_refs(children: &[&IndexQuery<Value>]) -> Option<KeySet> {
+        // `None` for a window nothing can satisfy. Nested conjunctions are flattened:
+        // `And(And(a, b), c)` constrains the same column.
+        fn fold<'a>(
+            children: &[&'a IndexQuery<Value>],
+            attr: &mut Option<&'a Arc<String>>,
+            window: &mut Option<(u64, u64)>,
+        ) -> Option<()> {
+            let numeric =
+                |v: &Option<Value>| v.as_ref().is_none_or(|v| encode_numeric(v).is_some());
+            for child in children {
+                let (key, keys) = match *child {
+                    IndexQuery::Equal {
+                        key,
+                        value: Value::Null,
+                    } => (key, KeySet::Empty),
+                    IndexQuery::Equal { key, value } => {
+                        (key, KeySet::Point(encode_numeric(value)?))
+                    }
+                    IndexQuery::Range {
+                        key,
+                        min,
+                        max,
+                        include_min,
+                        include_max,
+                    } if numeric(min) && numeric(max) => (
+                        key,
+                        NumericIndex::range_keys(
+                            min.as_ref(),
+                            max.as_ref(),
+                            *include_min,
+                            *include_max,
+                        ),
+                    ),
+                    IndexQuery::And(nested) if !nested.is_empty() => {
+                        let refs: Vec<&IndexQuery<Value>> = nested.iter().collect();
+                        fold(&refs, attr, window)?;
+                        continue;
+                    }
+                    _ => return None,
+                };
+                match attr {
+                    Some(first) if *first != key => return None,
+                    Some(_) => {}
+                    None => *attr = Some(key),
+                }
+                *window = match (*window, keys) {
+                    (Some((lo, hi)), KeySet::Point(k)) => Some((lo.max(k), hi.min(k))),
+                    (Some((lo, hi)), KeySet::Range(l, h)) => Some((lo.max(l), hi.min(h))),
+                    _ => None,
+                }
+                .filter(|(lo, hi)| lo <= hi);
+            }
+            Some(())
+        }
+
+        if children.is_empty() {
+            return None;
+        }
+        let mut attr = None;
+        let mut window = Some((0, u64::MAX));
+        fold(children, &mut attr, &mut window)?;
+        attr?; // an `And` of nothing but empty nested `And`s names no column
+        Some(window.map_or(KeySet::Empty, |(lo, hi)| KeySet::Range(lo, hi)))
     }
 
     /// `n.a IN [...]`. The list names one attribute by construction, so only its values are
@@ -877,8 +975,23 @@ mod tests {
             include_max: true,
         };
         assert_eq!(ids(idx.query(&rg).unwrap()), vec![1, 2, 3]);
-        // composite predicates are the router's job, not a single index's
-        assert!(idx.query(&IndexQuery::And(vec![eq])).is_none());
+        // A conjunction on this column IS answerable — it folds to one window. What a single
+        // column still cannot do is a conjunction spanning two attributes.
+        assert_eq!(ids(idx.query(&IndexQuery::And(vec![eq])).unwrap()), vec![3]);
+        assert!(
+            idx.query(&IndexQuery::And(vec![
+                IndexQuery::Equal {
+                    key: Arc::new("a".to_string()),
+                    value: Value::Int(1),
+                },
+                IndexQuery::Equal {
+                    key: Arc::new("b".to_string()),
+                    value: Value::Int(2),
+                },
+            ]))
+            .is_none(),
+            "two attributes need a cross-column intersection, not this column"
+        );
     }
 
     #[test]
@@ -1347,5 +1460,142 @@ mod tests {
         // Removing whatever it currently is leaves nothing on either side.
         idx.remove(&Value::Int(1), 1);
         assert!(idx.is_empty(), "no tuple stranded in either tree");
+    }
+
+    /// Two bounds on one attribute collapse to a single window rather than needing a doc-stream
+    /// intersection. The planner cannot do this itself — `merge_range_queries` bails whenever two
+    /// conjuncts constrain the same side, because at plan time the bounds may still be
+    /// expressions it cannot compare. Here they are concrete.
+    #[test]
+    fn same_key_conjunctions_fold_to_one_window() {
+        let attr = Arc::new("v".to_string());
+        let idx = NumericIndex::from_entries(
+            [
+                (&Value::Int(1), 1u64),
+                (&Value::Int(5), 5),
+                (&Value::Int(9), 9),
+                (&Value::Int(20), 20),
+            ]
+            .into_iter(),
+        );
+        let range =
+            |min: Option<i64>, max: Option<i64>, inc_min: bool, inc_max: bool| IndexQuery::Range {
+                key: attr.clone(),
+                min: min.map(Value::Int),
+                max: max.map(Value::Int),
+                include_min: inc_min,
+                include_max: inc_max,
+            };
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let got = |q: IndexQuery<Value>| sorted(idx.query(&q).expect("servable"));
+
+        // Two lower bounds: the tighter one wins.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                range(Some(1), None, false, true),
+                range(Some(9), None, true, true),
+            ])),
+            vec![9, 20]
+        );
+        // Lower and upper from different conjuncts.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                range(Some(5), None, true, true),
+                range(None, Some(9), true, true),
+            ])),
+            vec![5, 9]
+        );
+        // `Equal` is a degenerate window, and an equality inside a satisfied range survives.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                eq(5),
+                range(Some(2), None, true, true)
+            ])),
+            vec![5]
+        );
+        // The same predicate twice — legal Cypher (`WHERE a.p = 1 AND a.p = 1`), which the planner
+        // passes through as written — is one window, not a failure.
+        assert_eq!(got(IndexQuery::And(vec![eq(5), eq(5)])), vec![5]);
+        // `= null` holds for nothing, so a conjunction with it is answered with no rows, as
+        // `= null` alone is, rather than declined.
+        assert!(
+            got(IndexQuery::And(vec![
+                IndexQuery::Equal {
+                    key: attr.clone(),
+                    value: Value::Null,
+                },
+                range(Some(1), None, true, true),
+            ]))
+            .is_empty()
+        );
+        // An equality outside the range yields nothing — answerable, and the answer is no rows.
+        assert!(
+            got(IndexQuery::And(vec![
+                eq(1),
+                range(Some(8), None, true, true)
+            ]))
+            .is_empty()
+        );
+        // Contradictory bounds likewise.
+        assert!(
+            got(IndexQuery::And(vec![
+                range(Some(9), None, true, true),
+                range(None, Some(2), true, true),
+            ]))
+            .is_empty()
+        );
+        // Nesting is flattened — it still constrains one column.
+        assert_eq!(
+            got(IndexQuery::And(vec![
+                IndexQuery::And(vec![range(Some(5), None, true, true)]),
+                range(None, Some(9), true, true),
+            ])),
+            vec![5, 9]
+        );
+    }
+
+    /// The fold must decline anything it cannot fold, rather than answering from a subset of the
+    /// conjuncts — that would return rows the query excludes.
+    #[test]
+    fn unfoldable_conjunctions_are_declined() {
+        let idx = NumericIndex::from_entries([(&Value::Int(1), 1u64)].into_iter());
+        let eq = |attr: &str, v: i64| IndexQuery::Equal {
+            key: Arc::new(attr.to_string()),
+            value: Value::Int(v),
+        };
+        assert!(
+            idx.query(&IndexQuery::And(vec![eq("a", 1), eq("b", 2)]))
+                .is_none(),
+            "two attributes need a cross-column intersection"
+        );
+        assert!(
+            idx.query(&IndexQuery::And(vec![
+                eq("a", 1),
+                IndexQuery::Equal {
+                    key: Arc::new("a".to_string()),
+                    value: Value::String(Arc::new("x".to_string())),
+                },
+            ]))
+            .is_none(),
+            "a non-numeric member makes the whole conjunction unservable here"
+        );
+        assert!(
+            idx.query(&IndexQuery::And(vec![
+                eq("a", 1),
+                IndexQuery::ArrayContains {
+                    key: Arc::new("a".to_string()),
+                    value: Value::Int(1),
+                },
+            ]))
+            .is_none(),
+            "an array-contains member reads the other tree, so it does not fold into the window"
+        );
+        assert!(
+            idx.query(&IndexQuery::And(vec![])).is_none(),
+            "an empty conjunction names no column"
+        );
     }
 }

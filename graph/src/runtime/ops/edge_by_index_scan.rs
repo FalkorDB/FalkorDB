@@ -377,18 +377,18 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             Some(NumericAnswer::NotReady(recheck)) => {
                                 // Resolved once per scan. No edge holds a name the graph has
                                 // never seen.
-                                let edges: Box<dyn Iterator<Item = EdgeRow>> =
-                                    match g.get_relationship_attribute_id(recheck.attribute()) {
-                                        Some(attr) => {
-                                            let attr = attr as u16;
-                                            Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                                runtime
-                                                    .graph()
-                                                    .relationship_admitted(edge, attr, &recheck)
-                                            }))
-                                        }
-                                        None => Box::new(std::iter::empty()),
-                                    };
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match recheck
+                                    .resolve(|attr| {
+                                        g.get_relationship_attribute_id(attr)
+                                            .map(|attr| attr as u16)
+                                    }) {
+                                    Some(recheck) => {
+                                        Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                            runtime.graph().relationship_admitted(edge, &recheck)
+                                        }))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                };
                                 Some(edges)
                             }
                             None => {
