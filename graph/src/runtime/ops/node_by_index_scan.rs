@@ -312,8 +312,8 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
                 // Check if the index can satisfy this query. `None` here means "scan instead":
-                // either the predicate is not index-shaped (e.g. non-indexable value types), or
-                // the column is still building. Neither is a capability gap, so neither may error
+                // the predicate is not index-shaped (e.g. non-indexable value types), which the
+                // planner keeps a filter for. That is not a capability gap, so it may not error
                 // even under the no-fallback flag.
                 let indexed: Option<Box<dyn Iterator<Item = NodeId>>> =
                     if Self::can_utilize_index(&q) {
@@ -330,8 +330,15 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         {
                             Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
                             // The column exists and will serve this once its build reaches
-                            // every entity; until then the scan below is the correct answer.
-                            Some(NumericAnswer::NotReady) => None,
+                            // every entity. Until then scan the label for what it will answer:
+                            // the planner dropped the predicate it handed this op, so the scan
+                            // must check it itself.
+                            Some(NumericAnswer::NotReady(recheck)) => {
+                                let runtime = self.runtime;
+                                Some(Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
+                                    move |&id| runtime.graph().node_admitted(id, &recheck),
+                                )))
+                            }
                             None => {
                                 return Err(unsupported_by_native_index("node", self.index, &q));
                             }

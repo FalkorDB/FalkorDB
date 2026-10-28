@@ -336,8 +336,29 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
                 type EdgeRow = (NodeId, NodeId, RelationshipId);
-                // `None` means "scan instead" — an index-unshaped predicate, or a column that is
-                // still building. Mirrors `NodeByIndexScanOp`.
+                let runtime = self.runtime;
+                let cache = &self.all_edges_cache;
+                let scan_type = || -> Box<dyn Iterator<Item = EdgeRow>> {
+                    let cached = {
+                        let mut cache = cache.borrow_mut();
+                        if cache.is_none() {
+                            *cache = Some(Arc::new(runtime.graph().get_all_edges(label)));
+                        }
+                        Arc::clone(cache.as_ref().unwrap())
+                    };
+                    let mut idx = 0usize;
+                    Box::new(std::iter::from_fn(move || {
+                        if idx < cached.len() {
+                            let v = cached[idx];
+                            idx += 1;
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }))
+                };
+                // `None` means "scan instead": an index-unshaped predicate, which the planner
+                // keeps a filter for. Mirrors `NodeByIndexScanOp`.
                 let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> =
                     if Self::can_utilize_index(&q) {
                         let g = self.runtime.graph();
@@ -350,8 +371,14 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             .query_index_numeric_edges(label, &q)
                         {
                             Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
-                            // Still building — scan, do not error.
-                            Some(NumericAnswer::NotReady) => None,
+                            // Still building: scan the type for what the column will answer,
+                            // checking the predicate the planner dropped. See
+                            // `NodeByIndexScanOp`.
+                            Some(NumericAnswer::NotReady(recheck)) => {
+                                Some(Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                    runtime.graph().relationship_admitted(edge, &recheck)
+                                })))
+                            }
                             None => {
                                 // See node_by_index_scan: native is the only index under this
                                 // flag, so an unserviceable predicate is a loud error.
@@ -365,28 +392,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     } else {
                         None
                     };
-                let base: Box<dyn Iterator<Item = EdgeRow>> = match indexed {
-                    Some(it) => it,
-                    None => {
-                        let cached = {
-                            let mut cache = self.all_edges_cache.borrow_mut();
-                            if cache.is_none() {
-                                *cache = Some(Arc::new(self.runtime.graph().get_all_edges(label)));
-                            }
-                            Arc::clone(cache.as_ref().unwrap())
-                        };
-                        let mut idx = 0usize;
-                        Box::new(std::iter::from_fn(move || {
-                            if idx < cached.len() {
-                                let v = cached[idx];
-                                idx += 1;
-                                Some(v)
-                            } else {
-                                None
-                            }
-                        }))
-                    }
-                };
+                let base: Box<dyn Iterator<Item = EdgeRow>> = indexed.unwrap_or_else(scan_type);
 
                 // An undirected pattern matches each edge in both
                 // orientations (a self-loop once), as `CondTraverse` does;
