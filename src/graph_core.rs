@@ -43,6 +43,8 @@ use crossfire::{
     MTx, Rx,
     mpsc::{List, unbounded_blocking},
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::online_build::BuildHost;
 use graph::{
     effects::payload::take_effects_buffer,
     effects::{EffectsBuffer, ReplicationSink},
@@ -57,6 +59,8 @@ use graph::{
 use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
+#[cfg(feature = "index-falkordb")]
+use std::sync::Weak;
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -73,6 +77,8 @@ use crate::allocator::{
 use crate::dispatch::must_run_inline;
 use crate::divergence_guard;
 use crate::query_session::QuerySession;
+#[cfg(feature = "index-falkordb")]
+use crate::query_session::hold_gil;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
 ///
@@ -147,11 +153,19 @@ pub fn register_graph(
     // mutates the placeholder Arc in place rather than rebinding the name.
     // If this assert fires, a caller is leaking the previously-registered
     // Arc and likely racing index/teardown shutdown.
-    let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
+    let displaced = GRAPH_REGISTRY.lock().insert(name, Arc::clone(&arc));
     debug_assert!(
         displaced.is_none(),
         "register_graph: name already registered; missing graph_free or placeholder swap"
     );
+    // How the native index builder reaches this graph, once it is registered: the builder's host
+    // refuses a graph that is not. Registering starts the build of any index the graph already
+    // holds `Building`, such as one a `CREATE INDEX` that created this key committed. No caller
+    // holds the graph's lock here.
+    #[cfg(feature = "index-falkordb")]
+    arc.read()
+        .graph
+        .set_build_host(Arc::new(RedisBuildHost(Arc::downgrade(&arc))));
     // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
@@ -562,6 +576,18 @@ impl ThreadedGraph {
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
         }
+    }
+
+    /// Replace the graph's coordinator in place, keeping everything else (the write queue, the
+    /// slow log) and the coordinator's registration with the native index builder, which an index
+    /// created on the replacement needs to be built.
+    pub fn replace_graph(
+        &mut self,
+        graph: MvccGraph,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        graph.inherit_build(&self.graph);
+        self.graph = graph;
     }
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
@@ -1610,6 +1636,55 @@ fn commit_and_replicate(
     // about it. What the bytes are, and what still has to happen to them, is
     // the format's.
     buf.replicate(&CtxSink(ctx), key_name.as_bytes());
+}
+
+// ---- The native index builder's host (feature: index-falkordb) ----
+//
+// The build itself (when batches run, on which threads, and how they commit) is the graph crate's
+// (`graph::index::falkordb::online_build`). This is only how it reaches a Redis graph:
+// `register_graph` registers a `RedisBuildHost` with each graph, and module init starts the pool.
+
+/// A registered graph, as the native index builder reaches it. Holds the graph weakly: a build
+/// does not keep a deleted graph alive.
+#[cfg(feature = "index-falkordb")]
+struct RedisBuildHost(Weak<RwLock<ThreadedGraph>>);
+
+#[cfg(feature = "index-falkordb")]
+impl BuildHost for RedisBuildHost {
+    /// The graph's read lock, only to load the published version: it is released before the
+    /// version is borrowed.
+    fn read(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+        let tg = self.0.upgrade()?;
+        let published = tg.read().graph.read();
+        Some(published)
+    }
+
+    /// The GIL, then the graph's read lock, only to reach its coordinator: everything that takes
+    /// the write lock takes the GIL first, so under the GIL the read lock never waits. Refused once
+    /// the graph is no longer the one registered under its key.
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        let Some(tg) = self.0.upgrade() else {
+            return false;
+        };
+        let _gil = hold_gil();
+        if !graph_is_registered(&tg) {
+            return false;
+        }
+        // A debug build checks what the GIL is relied on for here. Had the read lock to wait, the
+        // GIL would be held while it did, and every client would wait with it: the PING tail of
+        // the earlier branch, whose publish took the write lock and waited for readers.
+        let graph = tg.try_read();
+        debug_assert!(
+            graph.is_some(),
+            "a graph's read lock waits under the GIL: its write lock was taken without the GIL"
+        );
+        let graph = graph.unwrap_or_else(|| tg.read());
+        f(&graph.graph);
+        true
+    }
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
