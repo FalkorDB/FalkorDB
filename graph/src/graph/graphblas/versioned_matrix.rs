@@ -843,6 +843,18 @@ impl VersionedMatrix<bool> {
         Iter::<BoolExtract>::new(self, min_row, max_row)
     }
 
+    /// [`Self::iter`] from the first entry at or after `at`, through row `max_row`, reading none
+    /// of the entries before it ([`Iter::from_layers_at`]).
+    #[must_use]
+    pub fn iter_at(
+        &self,
+        at: (u64, u64),
+        max_row: u64,
+    ) -> Iter {
+        self.wait();
+        Iter::<BoolExtract>::from_layers_at(&self.m, &self.dp, &self.dm, at, max_row)
+    }
+
     pub fn resize(
         &mut self,
         nrows: u64,
@@ -1443,6 +1455,30 @@ impl<E: IterExtract> Iter<E> {
             } else {
                 Some(matrix::Iter::new(dp, min_row, max_row))
             },
+            dp_next: None,
+            dmit,
+            dm_next,
+        }
+    }
+
+    /// [`Self::from_layers`] from the first effective entry at or after
+    /// `(row, col)`, through row `max_row`: each layer starts there by
+    /// binary search ([`matrix::Iter::from_entry`]), so none of the entries
+    /// before it is read. Callers must have waited `dp`/`dm`.
+    pub(crate) fn from_layers_at<V>(
+        m: &Matrix<V>,
+        dp: &Matrix<V>,
+        dm: &Matrix<bool>,
+        at: (u64, u64),
+        max_row: u64,
+    ) -> Self {
+        let mut dmit =
+            (dm.nvals() != 0).then(|| matrix::Iter::<BoolExtract>::from_entry(dm, at, max_row));
+        let dm_next = dmit.as_mut().and_then(Iterator::next);
+        Self {
+            mit: matrix::Iter::from_entry(m, at, max_row),
+            m_next: None,
+            dpit: (dp.nvals() != 0).then(|| matrix::Iter::from_entry(dp, at, max_row)),
             dp_next: None,
             dmit,
             dm_next,
