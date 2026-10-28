@@ -24,12 +24,11 @@ static bool _AlgebraicExpression_IsVarLen
 	QGEdge *e = QueryGraph_GetEdgeByAlias(qg, edge_alias);
 	ASSERT(e != NULL);
 
-	// zero length edges should be handeled by a varaiable length traversal
-	// matching only the source node
-	// fixed multi-hop edges e.g. *2..2 are also traversed by a variable length
-	// traversal, their expression holds only the edge operand and must never
-	// be scored as if it resolves its endpoints labels
-	return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e) || !QGEdge_SingleHop(e);
+	// an edge traversed by a variable length traversal, including zero length
+	// and fixed multi-hop edges e.g. *2..2, has an expression holding only the
+	// edge operand which must never be scored as if it resolves its endpoints
+	// labels
+	return QGEdge_RequiresVarLenTraversal(e);
 }
 
 //------------------------------------------------------------------------------
