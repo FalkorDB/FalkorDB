@@ -55,6 +55,46 @@ impl Iterator for DocIter {
     }
 }
 
+/// The keys a numeric predicate selects: what a column looks up to answer it, and what a scan
+/// standing in for a column still building checks each entity's key against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeySet {
+    /// None: a value or bound that does not encode, or bounds that cross.
+    Empty,
+    /// One key: an `Equal`.
+    Point(u64),
+    /// An inclusive range of keys: a `Range`.
+    Range(u64, u64),
+    /// Distinct keys, ascending: an `IN` list or a union of equalities.
+    Keys(Vec<u64>),
+}
+
+impl KeySet {
+    /// Keys are deduplicated, so `IN [1,1,2]` yields each entity once. That is sufficient for
+    /// uniqueness overall: a doc appears under one key per column (the encoder rejects lists, so
+    /// an array-valued property is not in this column at all), so distinct keys cannot both hold
+    /// the same doc.
+    fn distinct(mut keys: Vec<u64>) -> Self {
+        keys.sort_unstable();
+        keys.dedup();
+        Self::Keys(keys)
+    }
+
+    /// Whether `key` is one of these.
+    #[must_use]
+    pub fn contains(
+        &self,
+        key: u64,
+    ) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Point(k) => *k == key,
+            Self::Range(lo, hi) => (*lo..=*hi).contains(&key),
+            Self::Keys(keys) => keys.binary_search(&key).is_ok(),
+        }
+    }
+}
+
 /// The cursor chain behind a union: the keys still to visit, and a cursor over the current one.
 ///
 /// **One cursor exists at a time, and none until the first `next()`.** `RangeIter::new` performs a
@@ -256,10 +296,7 @@ impl NumericIndex {
         &self,
         value: &Value,
     ) -> DocIter {
-        match encode_numeric(value) {
-            Some(k) => DocIter::One(self.tree.point(k)),
-            None => self.empty(),
-        }
+        self.lookup(Self::point_keys(value))
     }
 
     /// Entity ids whose value lies in the (optionally half-open) numeric range.
@@ -273,46 +310,7 @@ impl NumericIndex {
         include_min: bool,
         include_max: bool,
     ) -> DocIter {
-        // Map value bounds to inclusive key bounds. Exclusive bounds step one key
-        // inward: encodings of distinct f64 are adjacent u64, so `k+1` / `k-1` is
-        // exactly the next / previous representable value. The `checked_*` guards
-        // catch the ±∞ edges (`x > +inf`, `x < -inf`) as empty.
-        let lo = match min {
-            None => 0,
-            Some(v) => {
-                let Some(k) = encode_numeric(v) else {
-                    return self.empty();
-                };
-                if include_min {
-                    k
-                } else {
-                    match k.checked_add(1) {
-                        Some(k1) => k1,
-                        None => return self.empty(),
-                    }
-                }
-            }
-        };
-        let hi = match max {
-            None => u64::MAX,
-            Some(v) => {
-                let Some(k) = encode_numeric(v) else {
-                    return self.empty();
-                };
-                if include_max {
-                    k
-                } else {
-                    match k.checked_sub(1) {
-                        Some(k1) => k1,
-                        None => return self.empty(),
-                    }
-                }
-            }
-        };
-        if lo > hi {
-            return self.empty();
-        }
-        DocIter::One(self.tree.range(lo, hi))
+        self.lookup(Self::range_keys(min, max, include_min, include_max))
     }
 
     /// Dispatch the numeric predicates. `Equal` → [`point`](Self::point), `Range` →
@@ -324,22 +322,107 @@ impl NumericIndex {
         &self,
         q: &IndexQuery<Value>,
     ) -> Option<DocIter> {
+        Self::keys(q).map(|keys| self.lookup(keys))
+    }
+
+    /// The keys `q` selects, or `None` where [`query`](Self::query) declines it. A column answers
+    /// from these, and a scan standing in for a column still building checks each entity against
+    /// them, so the scan keeps exactly what the column will answer.
+    #[must_use]
+    pub fn keys(q: &IndexQuery<Value>) -> Option<KeySet> {
         match q {
-            IndexQuery::Equal { value, .. } => Some(self.point(value)),
+            IndexQuery::Equal { value, .. } => Some(Self::point_keys(value)),
             IndexQuery::Range {
                 min,
                 max,
                 include_min,
                 include_max,
                 ..
-            } => Some(self.range(min.as_ref(), max.as_ref(), *include_min, *include_max)),
+            } => Some(Self::range_keys(
+                min.as_ref(),
+                max.as_ref(),
+                *include_min,
+                *include_max,
+            )),
             IndexQuery::InList {
                 list: Value::List(items),
                 ..
-            } => self.in_list(items),
-            IndexQuery::Or(children) => self.union(children),
+            } => Self::in_list(items),
+            IndexQuery::Or(children) => Self::union(children),
             _ => None,
         }
+    }
+
+    /// The entity ids under `keys`.
+    #[must_use]
+    pub fn lookup(
+        &self,
+        keys: KeySet,
+    ) -> DocIter {
+        match keys {
+            KeySet::Empty => self.empty(),
+            KeySet::Point(k) => DocIter::One(self.tree.point(k)),
+            KeySet::Range(lo, hi) => DocIter::One(self.tree.range(lo, hi)),
+            // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
+            // every member is answered from the same version however late its cursor is created.
+            KeySet::Keys(keys) => DocIter::Many(UnionIter {
+                tree: self.tree.clone(),
+                keys: keys.into_iter(),
+                current: None,
+            }),
+        }
+    }
+
+    fn point_keys(value: &Value) -> KeySet {
+        encode_numeric(value).map_or(KeySet::Empty, KeySet::Point)
+    }
+
+    fn range_keys(
+        min: Option<&Value>,
+        max: Option<&Value>,
+        include_min: bool,
+        include_max: bool,
+    ) -> KeySet {
+        // Map value bounds to inclusive key bounds. Exclusive bounds step one key
+        // inward: encodings of distinct f64 are adjacent u64, so `k+1` / `k-1` is
+        // exactly the next / previous representable value. The `checked_*` guards
+        // catch the ±∞ edges (`x > +inf`, `x < -inf`) as empty.
+        let lo = match min {
+            None => 0,
+            Some(v) => {
+                let Some(k) = encode_numeric(v) else {
+                    return KeySet::Empty;
+                };
+                if include_min {
+                    k
+                } else {
+                    match k.checked_add(1) {
+                        Some(k1) => k1,
+                        None => return KeySet::Empty,
+                    }
+                }
+            }
+        };
+        let hi = match max {
+            None => u64::MAX,
+            Some(v) => {
+                let Some(k) = encode_numeric(v) else {
+                    return KeySet::Empty;
+                };
+                if include_max {
+                    k
+                } else {
+                    match k.checked_sub(1) {
+                        Some(k1) => k1,
+                        None => return KeySet::Empty,
+                    }
+                }
+            }
+        };
+        if lo > hi {
+            return KeySet::Empty;
+        }
+        KeySet::Range(lo, hi)
     }
 
     /// `n.a IN [...]`. The list names one attribute by construction, so only its values are
@@ -353,10 +436,7 @@ impl NumericIndex {
     /// An empty list is declined too, rather than answered as "no rows": the scan op drops the
     /// members it cannot index before the list gets here, so `IN [date(..)]` arrives empty, and
     /// "no rows" would miss every entity holding that date.
-    fn in_list(
-        &self,
-        items: &[Value],
-    ) -> Option<DocIter> {
+    fn in_list(items: &[Value]) -> Option<KeySet> {
         if items.is_empty() {
             return None;
         }
@@ -364,7 +444,7 @@ impl NumericIndex {
             .iter()
             .map(encode_numeric)
             .collect::<Option<Vec<u64>>>()?;
-        Some(self.union_of(keys))
+        Some(KeySet::distinct(keys))
     }
 
     /// An `OR` of `Equal`s and `IN` lists — `a = 1 OR a IN [2, 3]`.
@@ -373,10 +453,7 @@ impl NumericIndex {
     /// answering `a = 1 OR b = 2` from it would look up both `1` and `2` in `a` and return
     /// `{a=1} ∪ {a=2}` — wrong rows, not missing ones. So every member must target the same
     /// attribute, and every value must encode, as in [`in_list`](Self::in_list); otherwise `None`.
-    fn union(
-        &self,
-        children: &[IndexQuery<Value>],
-    ) -> Option<DocIter> {
+    fn union(children: &[IndexQuery<Value>]) -> Option<KeySet> {
         let mut attr: Option<&Arc<String>> = None;
         let mut keys = Vec::with_capacity(children.len());
         for child in children {
@@ -396,28 +473,7 @@ impl NumericIndex {
                 keys.push(encode_numeric(value)?);
             }
         }
-        (!keys.is_empty()).then(|| self.union_of(keys))
-    }
-
-    /// A lazy chain of point cursors over `keys` — see [`UnionIter`].
-    ///
-    /// Keys are deduplicated, so `IN [1,1,2]` yields each entity once. That is sufficient for
-    /// uniqueness overall: a doc appears under one key per column (the encoder rejects lists, so
-    /// an array-valued property is not in this column at all), so distinct keys cannot both hold
-    /// the same doc.
-    fn union_of(
-        &self,
-        mut keys: Vec<u64>,
-    ) -> DocIter {
-        keys.sort_unstable();
-        keys.dedup();
-        // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so every
-        // member is answered from the same version however late its cursor is created.
-        DocIter::Many(UnionIter {
-            tree: self.tree.clone(),
-            keys: keys.into_iter(),
-            current: None,
-        })
+        (!keys.is_empty()).then(|| KeySet::distinct(keys))
     }
 
     /// An iterator over no entries (`lo > hi` yields nothing).

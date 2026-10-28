@@ -82,7 +82,7 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::falkordb_index::NumericAnswer;
+use crate::index::falkordb::falkordb_index::{NumericAnswer, Recheck};
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
@@ -4147,6 +4147,32 @@ impl Graph {
                     .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
             })
         }))
+    }
+
+    /// Whether the scan standing in for a column still building keeps node `id`: whether the
+    /// column, once built, answers the query `recheck` came from with it. Reads the committed
+    /// value, which is the one the column indexes.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn node_admitted(
+        &self,
+        id: NodeId,
+        recheck: &Recheck,
+    ) -> bool {
+        self.get_node_attribute(id, recheck.attribute())
+            .is_some_and(|value| recheck.admits(&value))
+    }
+
+    /// [`Self::node_admitted`] for relationship `id`.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn relationship_admitted(
+        &self,
+        id: RelationshipId,
+        recheck: &Recheck,
+    ) -> bool {
+        self.get_relationship_attribute(id, recheck.attribute())
+            .is_some_and(|value| recheck.admits(&value))
     }
 
     #[must_use]
