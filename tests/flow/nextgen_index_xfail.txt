@@ -20,8 +20,8 @@
 # "utilize_array" test that fails on a string union.
 #
 # Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label
-# scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map/Point values and
-# ints above 2^53 still return correct results silently — as do several array tests (test_33,
+# scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map values and ints
+# above 2^53 still return correct results silently — as do several array tests (test_33,
 # test_34, test10, test17). Their passing is not evidence of native array support.
 
 # ---------------------------------------------------------------------------
