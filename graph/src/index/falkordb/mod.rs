@@ -21,3 +21,6 @@ pub mod numeric;
 
 #[cfg(feature = "index-falkordb")]
 pub mod pending_writes;
+
+#[cfg(feature = "index-falkordb")]
+pub mod versioned;

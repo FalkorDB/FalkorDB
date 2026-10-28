@@ -6,8 +6,9 @@ use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
+use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
+use crate::index::falkordb::versioned::BuildState;
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
@@ -171,7 +172,7 @@ fn create_index_builds_the_column_from_live_nodes() {
     assert_eq!(
         g.falkordb_index
             .column_state(EntityType::Node, &label, &attr),
-        Some(ColumnState::Ready)
+        Some(BuildState::Ready)
     );
     assert!(
         g.falkordb_index
@@ -214,7 +215,7 @@ fn rdb_load_populate_builds_each_column() {
         graph_writes::populate(&mut g, entity, l, &range(a));
         assert_eq!(
             g.falkordb_index.column_state(entity, l, a),
-            Some(ColumnState::Ready),
+            Some(BuildState::Ready),
             "{entity:?}"
         );
     }
@@ -231,6 +232,65 @@ fn rdb_load_populate_builds_each_column() {
     assert_eq!(
         contents(&g, EntityType::Relationship, &ty, &w, &edge_values),
         edges
+    );
+}
+
+/// The edge counterpart: CREATE INDEX on a relationship type builds its column from the live
+/// edges, a multi-edge pair included, in one indexer batch dispatched to the edge column, so it is
+/// `Ready` and serves reads when CREATE INDEX returns, and holds what a one-pass build does.
+#[test]
+fn create_index_builds_the_column_from_live_edges() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let ty = Arc::new("R".to_string());
+    let attr = Arc::new("w".to_string());
+    let aid = g.get_or_create_rel_attr_id(&attr);
+    let nodes = reserve_nodes(&mut g, 3);
+    g.create_nodes(&nodes.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    // a->b twice (one multi-edge pair), a->c and c->b; w = 1..=4.
+    let (a, b, c) = (nodes[0], nodes[1], nodes[2]);
+    let (srcs, dsts) = ([a, a, a, c], [b, b, c, b]);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let attrs: FxHashMap<u64, Vec<(u16, Value)>> = eids
+        .iter()
+        .zip(1..)
+        .map(|(&eid, w)| (eid, vec![(aid, Value::Int(w))]))
+        .collect();
+    applied!(g, |w| g.import_relationship_attrs(&attrs, &mut w));
+
+    graph_writes::create_index(
+        &mut g,
+        &IndexType::Range,
+        EntityType::Relationship,
+        &ty,
+        std::slice::from_ref(&attr),
+    );
+    assert_eq!(
+        g.falkordb_index
+            .column_state(EntityType::Relationship, &ty, &attr),
+        Some(BuildState::Ready)
+    );
+    assert_eq!(
+        g.falkordb_index
+            .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
+            .map(Iterator::collect::<Vec<u64>>),
+        Some(vec![eids[1]]),
+        "a Ready column serves reads"
+    );
+    let values = [1, 2, 3, 4];
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &values),
+        one_pass(&g, EntityType::Relationship, &ty, &attr, &values)
+    );
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &attr, &values).1,
+        eids
     );
 }
 
@@ -590,8 +650,8 @@ fn cursor(
         .column_state(entity, label, attr)
         .expect("the column exists")
     {
-        ColumnState::Building { next } => Some(next),
-        ColumnState::Ready => None,
+        BuildState::Building { next } => Some(next),
+        BuildState::Ready => None,
     }
 }
 
