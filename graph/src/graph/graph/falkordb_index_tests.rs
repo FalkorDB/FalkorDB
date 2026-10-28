@@ -9,6 +9,7 @@ use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexKey, NumericAnswer};
 use crate::index::falkordb::graph_writes;
+use crate::index::falkordb::online_build::{self, BuildHost, Indexer, Run, Turn, run_turn};
 use crate::index::falkordb::versioned::{
     ALLOW_BATCH_RACE, BuildState, CATCH_UP_BY, CatchUp, Dropped, IndexId, IndexerCommit,
     PreparedBatch, REFRESH_COST,
@@ -22,7 +23,10 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::CString;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
 /// away, the way each write call changed the index before they were batched. Tests that check
@@ -2758,6 +2762,362 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
             "{}.{} against a one-pass build",
             key.0,
             key.1
+        );
+    }
+}
+
+// --- The background builder ---
+
+/// A graph as the builder reaches it in these tests. A fair lock stands in for the host's global
+/// lock: a turn publishes holding it, and so does every writer here. `before_publish` runs once,
+/// holding it, just before the next turn's batch goes in.
+struct TestHost {
+    mvcc: MvccGraph,
+    global: parking_lot::FairMutex<()>,
+    before_publish: parking_lot::Mutex<Option<Box<dyn FnOnce(&MvccGraph) + Send>>>,
+}
+
+impl TestHost {
+    fn new(mvcc: MvccGraph) -> Arc<Self> {
+        Arc::new(Self {
+            mvcc,
+            global: parking_lot::FairMutex::new(()),
+            before_publish: parking_lot::Mutex::new(None),
+        })
+    }
+
+    /// One writer's unit of work, holding the global lock as a host's writers do.
+    fn write(
+        &self,
+        write: impl FnOnce(&mut Graph),
+    ) {
+        let _global = self.global.lock();
+        commit_write(&self.mvcc, write);
+    }
+
+    fn before_publish(
+        &self,
+        f: impl FnOnce(&MvccGraph) + Send + 'static,
+    ) {
+        *self.before_publish.lock() = Some(Box::new(f));
+    }
+}
+
+/// How the builder reaches a [`TestHost`]: weakly, as the Redis host does, so the graph's own
+/// registration does not keep it alive.
+struct HostRef(Weak<TestHost>);
+
+impl BuildHost for HostRef {
+    fn read(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+        self.0.upgrade().map(|host| host.mvcc.read())
+    }
+
+    fn publish(
+        &self,
+        f: &mut dyn FnMut(&MvccGraph),
+    ) -> bool {
+        let Some(host) = self.0.upgrade() else {
+            return false;
+        };
+        let _global = host.global.lock();
+        if let Some(before) = host.before_publish.lock().take() {
+            before(&host.mvcc);
+        }
+        f(&host.mvcc);
+        true
+    }
+}
+
+fn wait_until(
+    what: &str,
+    mut done: impl FnMut() -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !done() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A commit hands the builder each index its version brings in `Building`: one created, or one
+/// dropped and created again under the same name, which is another index. An index already
+/// `Building` in the version before, or brought in `Ready`, is not handed over again.
+#[test]
+fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
+    let (mvcc, label, v, _) = mvcc_building(&[10, 20]);
+    let w = Arc::new("w".to_string());
+    let u = Arc::new("u".to_string());
+    let id = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let before = mvcc.read();
+    let mut after = before.borrow().new_version();
+    assert!(
+        after.indexes_to_build_since(&before.borrow()).is_empty(),
+        "v is Building in both"
+    );
+    create_index_on(&mut after, &label, &w);
+    after
+        .falkordb_index
+        .create_numeric(EntityType::Node, &label, &u);
+    assert_eq!(
+        after.indexes_to_build_since(&before.borrow()),
+        [id(&w)],
+        "w is new; u came in Ready"
+    );
+    drop_index_on(&mut after, &label, &v);
+    create_index_on(&mut after, &label, &v);
+    let mut handed = after.indexes_to_build_since(&before.borrow());
+    handed.sort_by_key(|id| format!("{id:?}"));
+    assert_eq!(handed, [id(&v), id(&w)], "v was created again");
+    assert_eq!(after.building_indexes().len(), 2);
+}
+
+/// A turn reads one batch of its index with no lock held, publishes it, and says whether the index
+/// is still `Building`. Once the last batch made it `Ready`, a turn finds nothing to do.
+#[test]
+fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
+    let values = [10, 20, 30, 40, 50];
+    let (mvcc, label, attr, _) = mvcc_building(&values);
+    let host = TestHost::new(mvcc);
+    let reach = HostRef(Arc::downgrade(&host));
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let run = Run::new();
+
+    let turns: Vec<Turn> = (0..4).map(|_| run_turn(&reach, &id, &run, 2)).collect();
+    assert_eq!(
+        turns,
+        [
+            Turn::Committed { more: true },
+            Turn::Committed { more: true },
+            Turn::Committed { more: false },
+            Turn::Idle,
+        ]
+    );
+    let published = host.mvcc.read();
+    let g = published.borrow();
+    assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None, "Ready");
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &attr, &values),
+        one_pass(&g, EntityType::Node, &label, &attr, &values)
+    );
+}
+
+/// A turn whose index was dropped after its batch read it publishes nothing and ends its chain.
+/// One whose index was created again publishes nothing either, and goes on: its next batches build
+/// the new index from that index's own cursor.
+#[test]
+fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
+    for again in [false, true] {
+        let values = [10, 20, 30, 40];
+        let (mvcc, label, attr, _) = mvcc_building(&values);
+        let host = TestHost::new(mvcc);
+        let reach = HostRef(Arc::downgrade(&host));
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let run = Run::new();
+        let (l, a) = (label.clone(), attr.clone());
+        host.before_publish(move |mvcc| {
+            commit_write(mvcc, |g| {
+                drop_index_on(g, &l, &a);
+                if again {
+                    create_index_on(g, &l, &a);
+                }
+            });
+        });
+
+        assert_eq!(
+            run_turn(&reach, &id, &run, 2),
+            Turn::Dropped { more: again },
+            "again: {again}"
+        );
+        let published = host.mvcc.read();
+        if !again {
+            assert_eq!(
+                published
+                    .borrow()
+                    .falkordb_index
+                    .column_state(EntityType::Node, &label, &attr),
+                None,
+                "dropped"
+            );
+            continue;
+        }
+        assert_eq!(
+            cursor(&published.borrow(), EntityType::Node, &label, &attr),
+            Some(BuildCursor::new(EntityType::Node)),
+            "the new index, untouched by the old one's batch"
+        );
+        let mut turns = 0;
+        while run_turn(&reach, &id, &run, 2) != Turn::Idle {
+            turns += 1;
+            assert!(turns < 10, "the new index is never built");
+        }
+        let published = host.mvcc.read();
+        let g = published.borrow();
+        assert_eq!(cursor(&g, EntityType::Node, &label, &attr), None);
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, &attr, &values),
+            one_pass(&g, EntityType::Node, &label, &attr, &values)
+        );
+    }
+}
+
+/// A turn that waited for what publishing needs while the builder stopped publishes nothing: it
+/// checks again once it holds it. The Redis shutdown handler stops the builder holding the GIL, so
+/// a turn waiting for the GIL gets it only after the stop, and must then leave the graph alone.
+#[test]
+fn a_turn_that_waited_while_the_builder_stopped_publishes_nothing() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let reach = HostRef(Arc::downgrade(&host));
+    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let run = Arc::new(Run::new());
+    let stopping = Arc::clone(&run);
+    host.before_publish(move |_| stopping.stop());
+
+    assert_eq!(run_turn(&reach, &id, &run, 2), Turn::Gone);
+    assert_eq!(
+        cursor(&host.mvcc.read().borrow(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "nothing published"
+    );
+}
+
+/// Stopping the builder waits, with no limit, for a turn still reading a graph with no lock held,
+/// since the Redis module tears GraphBLAS down right after. The pool's own wait is bounded, and
+/// this turn is held inside its read for longer. The stopped turn then publishes nothing.
+#[test]
+fn a_stop_waits_for_a_turn_still_reading() {
+    /// [`HostRef`] whose first read holds its turn until the test releases it.
+    struct HeldRead {
+        host: Weak<TestHost>,
+        held: parking_lot::Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+    }
+
+    impl BuildHost for HeldRead {
+        fn read(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+            let version = self.host.upgrade()?.mvcc.read();
+            if let Some((holding, release)) = self.held.lock().take() {
+                holding.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            Some(version)
+        }
+
+        fn publish(
+            &self,
+            f: &mut dyn FnMut(&MvccGraph),
+        ) -> bool {
+            HostRef(self.host.clone()).publish(f)
+        }
+    }
+
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let host = TestHost::new(mvcc);
+    let (holding, held) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let reach: Arc<dyn BuildHost> = Arc::new(HeldRead {
+        host: Arc::downgrade(&host),
+        held: parking_lot::Mutex::new(Some((holding, released))),
+    });
+    let indexer = Indexer::new(Box::new(|host, id, run| run_turn(host, id, run, 2)));
+    indexer.start(1);
+    indexer.enqueue(
+        reach,
+        IndexId::Column(EntityType::Node, (label.clone(), attr.clone())),
+    );
+    held.recv_timeout(Duration::from_secs(10))
+        .expect("a turn reads the graph");
+    let stopped = AtomicBool::new(false);
+    let early = thread::scope(|scope| {
+        scope.spawn(|| {
+            indexer.stop_within(Duration::from_millis(20));
+            stopped.store(true, Ordering::SeqCst);
+        });
+        thread::sleep(Duration::from_millis(200));
+        let early = stopped.load(Ordering::SeqCst);
+        release.send(()).unwrap();
+        early
+    });
+    assert!(!early, "stop returned while a turn was still reading");
+    assert!(stopped.load(Ordering::SeqCst));
+    assert_eq!(
+        cursor(&host.mvcc.read().borrow(), EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "the stopped turn published nothing"
+    );
+}
+
+/// The builder end to end, as a host drives it. Registering a graph's host starts the build of the
+/// index its published version holds `Building` (a `CREATE INDEX` committed before any host was
+/// registered); a write that leaves it `Building` starts nothing more; a commit that creates
+/// another index starts that one. The pool then builds both to `Ready` while a writer keeps
+/// re-valuing nodes in both, and each ends as a one-pass build of the final data.
+///
+/// The only test in this crate that uses the builder itself, which is one per process.
+#[test]
+fn the_builder_finishes_what_registering_and_commits_start_under_sustained_writes() {
+    let nodes = online_build::BATCH_ENTITIES * 3 / 2;
+    let values: Vec<i64> = (0..nodes as i64).collect();
+    let (mvcc, label, v, ids) = mvcc_building(&values);
+    let w = Arc::new("w".to_string());
+    let host = TestHost::new(mvcc);
+    host.write(|g| {
+        for &id in &ids {
+            set_attr(g, id, &w, Value::Int(id as i64));
+        }
+    });
+    assert_eq!(online_build::pending(), 0);
+
+    host.mvcc
+        .set_build_host(Arc::new(HostRef(Arc::downgrade(&host))));
+    assert_eq!(online_build::pending(), 1, "registering started v");
+    host.write(|g| set_attr(g, ids[0], &v, Value::Int(-1)));
+    assert_eq!(
+        online_build::pending(),
+        1,
+        "a write that leaves v Building starts nothing"
+    );
+    host.write(|g| create_index_on(g, &label, &w));
+    assert_eq!(online_build::pending(), 2, "creating w started it");
+
+    let built = || {
+        let published = host.mvcc.read();
+        let g = published.borrow();
+        cursor(&g, EntityType::Node, &label, &v).is_none()
+            && cursor(&g, EntityType::Node, &label, &w).is_none()
+    };
+    let done = AtomicBool::new(false);
+    let writes = AtomicUsize::new(0);
+    online_build::start(2);
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut i = 0;
+            while !done.load(Ordering::SeqCst) {
+                let id = ids[(i * 7919) % ids.len()];
+                let value = Value::Int((nodes + i) as i64);
+                host.write(|g| {
+                    set_attr(g, id, &v, value.clone());
+                    set_attr(g, id, &w, value);
+                });
+                writes.fetch_add(1, Ordering::SeqCst);
+                i += 1;
+            }
+        });
+        wait_until("both indexes to be built", built);
+        done.store(true, Ordering::SeqCst);
+    });
+    online_build::stop();
+
+    assert!(
+        writes.load(Ordering::SeqCst) > 0,
+        "the builds ran under writes"
+    );
+    let published = host.mvcc.read();
+    let g = published.borrow();
+    for attr in [&v, &w] {
+        assert_eq!(
+            contents(&g, EntityType::Node, &label, attr, &[]),
+            one_pass(&g, EntityType::Node, &label, attr, &[]),
+            "{attr} against a one-pass build"
         );
     }
 }

@@ -677,6 +677,60 @@ impl Graph {
             .apply_indexer_batch(&mut batch)
             .then_some(batch)
     }
+
+    /// Whether index `id` is `Building` in this version.
+    pub(crate) fn index_building(
+        &self,
+        id: &IndexId,
+    ) -> bool {
+        match id {
+            IndexId::Column(entity, key) => {
+                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
+                    .is_some_and(IndexEntry::is_building)
+            }
+        }
+    }
+
+    /// Every index this version holds `Building`: what registering a graph with the builder starts.
+    pub(crate) fn building_indexes(&self) -> Vec<IndexId> {
+        self.falkordb_index
+            .column_names()
+            .into_iter()
+            .filter(|name| {
+                IndexColumn::entry(&self.falkordb_index, name).is_some_and(IndexEntry::is_building)
+            })
+            .map(|(entity, key)| IndexId::Column(entity, key))
+            .collect()
+    }
+
+    /// The indexes this version holds `Building` that `older` does not hold as the same index:
+    /// created since, or dropped and created again. What a commit hands the builder, so each build
+    /// starts once, however many commits it spans.
+    pub(crate) fn indexes_to_build_since(
+        &self,
+        older: &Self,
+    ) -> Vec<IndexId> {
+        self.falkordb_index
+            .column_names()
+            .into_iter()
+            .filter(|name| self.building_since::<IndexColumn>(older, name))
+            .map(|(entity, key)| IndexId::Column(entity, key))
+            .collect()
+    }
+
+    /// [`Self::indexes_to_build_since`] for one index: `Building` here, and in `older` absent or
+    /// another generation.
+    fn building_since<K: VersionedIndex>(
+        &self,
+        older: &Self,
+        name: &K::Name,
+    ) -> bool {
+        K::entry(&self.falkordb_index, name).is_some_and(|ours| {
+            ours.is_building()
+                && K::entry(&older.falkordb_index, name)
+                    .is_none_or(|theirs| theirs.generation != ours.generation)
+        })
+    }
 }
 
 /// Report an indexer batch that found another batch committed on its index
