@@ -196,10 +196,10 @@ fn create_index_builds_the_column_from_live_nodes() {
 }
 
 /// RDB load creates each native column empty and `Ready`, and its populate rebuilds the column
-/// once every entity is in, through the one indexer batch CREATE INDEX takes. Afterwards each
-/// column is `Ready` and holds what the graph's values say, for nodes and for edges.
+/// once every entity is in. Afterwards each column is `Ready` and holds what the graph's values
+/// say, for nodes and for edges.
 #[test]
-fn rdb_load_populate_builds_each_column_through_an_indexer_batch() {
+fn rdb_load_populate_builds_each_column() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let range = |attr: &Arc<String>| -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
