@@ -1535,3 +1535,20 @@ class testUniqueConstraintLookup():
         self._violates("UNWIND [30000, 30000] AS i CREATE (:T {tenant: 1, id: i})", msg)
         g.query("CREATE (:T {tenant: 2, id: 7})")
         self.env.assertEqual(self._count("MATCH (n:T) RETURN count(n)"), 20001)
+
+    def test09_composite_bulk_insert_with_string_ids_is_linear(self):
+        # every node shares `tenant`; a string `id` is looked up by no native
+        # column today, so each inserted node's only lookup is the tenant's,
+        # which has to be read once per check, not once per node
+        g = self.g
+        create_unique_node_constraint(g, "S", "tenant", "id", sync=True)
+        msg = "unique constraint violation on node of type S"
+
+        g.query("UNWIND range(1, 10000) AS i CREATE (:S {tenant: 1, id: 'u' + toString(i)})")
+        start = time.time()
+        g.query("UNWIND range(10001, 20000) AS i CREATE (:S {tenant: 1, id: 'u' + toString(i)})")
+        self.env.assertLess(time.time() - start, 10)
+
+        self._violates("CREATE (:S {tenant: 1, id: 'u7'})", msg)
+        g.query("CREATE (:S {tenant: 2, id: 'u7'})")
+        self.env.assertEqual(self._count("MATCH (n:S) RETURN count(n)"), 20001)

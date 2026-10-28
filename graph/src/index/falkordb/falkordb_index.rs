@@ -172,6 +172,13 @@ impl EqualCandidates<'_> {
     pub fn rows(&self) -> DocIter {
         self.column.rows_at(self.key)
     }
+
+    /// Which lookup this is: its column and the key it reads. Two lookups with the same id answer
+    /// with the same rows.
+    #[must_use]
+    pub fn id(&self) -> (usize, u64) {
+        (std::ptr::from_ref(self.column).addr(), self.key)
+    }
 }
 
 /// A column is a versioned index ([`BuildState`] has the rules its build keeps). It is found by

@@ -215,6 +215,35 @@ fn native_unique_query<'g>(
     (!lookups.is_empty()).then_some(lookups)
 }
 
+/// The lookups one unique-constraint check has read. `unique_violated` compares
+/// each candidate with every member's key, so a set of lookups read once has
+/// been checked for every member, and a member whose lookups are the same as an
+/// earlier member's needs no read. That is the case for a key with a member no
+/// column answers for (a string id, today) beside one most of the label shares
+/// (a tenant): every member looks up only the tenant, and reading it once per
+/// member would make a bulk insert quadratic.
+#[cfg(feature = "index-falkordb")]
+#[derive(Default)]
+struct ReadOnce(RefCell<FxHashSet<Vec<(usize, u64)>>>);
+
+#[cfg(feature = "index-falkordb")]
+impl ReadOnce {
+    /// The candidates of `lookups` ([`fewest_candidates`]), or none when an
+    /// earlier member had the same lookups.
+    fn candidates(
+        &self,
+        lookups: Vec<EqualCandidates<'_>>,
+    ) -> impl Iterator<Item = u64> + use<> {
+        let mut ids: Vec<_> = lookups.iter().map(EqualCandidates::id).collect();
+        ids.sort_unstable();
+        let first = self.0.borrow_mut().insert(ids);
+        first
+            .then(|| fewest_candidates(lookups))
+            .into_iter()
+            .flatten()
+    }
+}
+
 /// The candidates of the smallest of `lookups`, which all answer for one
 /// member's key. A key's first property may be shared by most of the label (a
 /// tenant), and reading its lookup for every member of a bulk insert costs a
@@ -1576,6 +1605,8 @@ impl Pending {
             ConstraintType::Unique => {
                 // Under `index-falkordb` the native index answers, and RediSearch is not asked.
                 #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
                 let (query_for, lookup) = (
                     |values: Vec<Value>| {
                         native_unique_query(
@@ -1587,7 +1618,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        fewest_candidates(candidates).map(NodeId::from)
+                        read_once.candidates(candidates).map(NodeId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1669,6 +1700,8 @@ impl Pending {
             ConstraintType::Unique => {
                 // As for nodes. An edge column's ids are `edge_id`s.
                 #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
                 let (query_for, lookup) = (
                     |values: Vec<Value>| {
                         native_unique_query(
@@ -1680,7 +1713,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        fewest_candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(candidates).map(RelationshipId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -2399,6 +2432,62 @@ mod native_unique_tests {
             read(&["tenant", "id"], &[tenant, absent]),
             0,
             "an id no node holds reads nothing"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
+        );
+    }
+
+    /// Members whose lookups are the same read them once per check. No column answers for a
+    /// string today, so every member of a `(tenant, id)` key with string ids looks up only the
+    /// tenant, whose column holds the whole label. The check compares each candidate with every
+    /// member's key, so reading the tenant once covers them all.
+    #[test]
+    fn members_with_the_same_lookups_read_them_once() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+        }
+        // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", string(&format!("u{i}")))])
+            .chain([[("tenant", Value::Int(8)), ("id", string("u0"))]])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let props = [arc("tenant"), arc("id")];
+        let lookups = |tenant: i64, id: &str| {
+            native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                &[Value::Int(tenant), string(id)],
+            )
+            .expect("the tenant's column answers")
+        };
+        let once = ReadOnce::default();
+        assert_eq!(
+            once.candidates(lookups(7, "u1")).count(),
+            51,
+            "the first member reads the tenant"
+        );
+        assert_eq!(
+            once.candidates(lookups(7, "u2")).count(),
+            0,
+            "a member with the same lookups reads nothing more"
+        );
+        assert_eq!(
+            once.candidates(lookups(8, "u9")).count(),
+            1,
+            "another tenant is another lookup"
         );
         assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
         assert_eq!(
