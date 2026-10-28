@@ -30,6 +30,11 @@ import sys
 # `file:Class.test`, the identifier RLTest prints. Tolerates surrounding whitespace and the ANSI
 # colour codes RLTest emits when it thinks it is on a terminal.
 TEST_ID = re.compile(r"([A-Za-z0-9_]+):([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)")
+# A summary entry for a whole class, not one test: RLTest records a class whose `__init__` raised
+# as `file:Class [__init__]`, and a Redis that did not exit cleanly under the class's name. Neither
+# names a test, so neither can be ledgered, and neither may be read as "nothing failed". Anchored
+# on the `test_` file and `test` class prefixes, so a `key:value` line a test prints is not one.
+CLASS_ENTRY = re.compile(r"(test_[A-Za-z0-9_]+):(test[A-Za-z0-9_]+)( \[__init__\])?")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -57,8 +62,8 @@ def read_ledger(path: str) -> tuple[set[str], set[str]]:
     return expected, ignored
 
 
-def parse_results(text: str) -> tuple[set[str], set[str]]:
-    """Return (failed, seen) test ids from RLTest output.
+def parse_results(text: str) -> tuple[set[str], set[str], set[str]]:
+    """Return (failed, seen, class_failures) from RLTest output.
 
     RLTest prints a test id twice, and the two forms are distinguishable without tracking any
     state:
@@ -79,11 +84,16 @@ def parse_results(text: str) -> tuple[set[str], set[str]]:
     ``_runTest(prefix='\\t')`` — ``.strip()`` removes it. ``msgPrefix`` never reaches stdout; it is
     only a fallback key for recording the failure. Checked against a full 78 KB six-suite run:
     zero lines carrying a test id are rejected.
+
+    A ``[FAIL]`` or ``[ERROR]`` verdict counts as a failure on its own. The summary block is
+    printed only when RLTest finishes, so a runner that dies after a test failed never lists it
+    there.
     """
     text = ANSI.sub("", text).replace("\r", "")
     failed: set[str] = set()
     seen: set[str] = set()
     skipped: set[str] = set()
+    class_failures: set[str] = set()
     current: str | None = None
 
     for line in text.splitlines():
@@ -99,13 +109,61 @@ def parse_results(text: str) -> tuple[set[str], set[str]]:
                 seen.add(test_id)
                 current = None
             continue
+        if CLASS_ENTRY.fullmatch(stripped):
+            class_failures.add(stripped)
+            continue
+        if current is None:
+            continue
         # A skipped test prints the same `name:` header as a pass. Counting it as a pass would
         # report every ledgered-but-skipped test as "now green" and send someone to delete a
         # line for a test that never executed.
-        if current is not None and "[SKIP]" in stripped:
+        if "[SKIP]" in stripped:
             skipped.add(current)
             current = None
-    return failed, seen - skipped
+        elif "[FAIL]" in stripped or "[ERROR]" in stripped:
+            failed.add(current)
+            current = None
+        elif "[PASS]" in stripped:
+            current = None
+    return failed, seen - skipped, class_failures
+
+
+def split_suites(text: str) -> list[tuple[str, int, str]]:
+    """Split the runner's log into (suite, exit status, output), one per ``SUITE_EXIT`` line.
+
+    Output after the last ``SUITE_EXIT`` line belongs to no suite and is not returned.
+    """
+    suites: list[tuple[str, int, str]] = []
+    chunk: list[str] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "SUITE_EXIT" and parts[2].isdigit():
+            suites.append((parts[1], int(parts[2]), "\n".join(chunk)))
+            chunk = []
+        else:
+            chunk.append(line)
+    return suites
+
+
+def suite_problem(status: int, output: str) -> str | None:
+    """Say why one suite's output cannot be reconciled, or return None if it can.
+
+    A suite that exits 1 has failing tests, and the ledger can only account for failures it can
+    read. So a nonzero exit needs RLTest's closing summary (proof that the runner finished) and at
+    least one failure the parser recognises. An import error exits 1 with neither.
+    """
+    if status > 1:
+        return f"exit {status}: the harness died rather than reporting test failures"
+    failed, seen, class_failures = parse_results(output)
+    if not seen and not class_failures:
+        return "reported no test results"
+    if status == 0:
+        return None
+    if "Total Tests Run:" not in output:
+        return "exited 1 before RLTest printed its summary"
+    if not failed and not class_failures:
+        return "exited 1 but reported no failure this check can read"
+    return None
 
 
 def main() -> int:
@@ -120,9 +178,9 @@ def main() -> int:
             text = fh.read()
     else:
         text = sys.stdin.read()
-    failed, seen = parse_results(text)
+    failed, seen, class_failures = parse_results(text)
 
-    if not seen:
+    if not seen and not class_failures:
         print("error: no test results parsed — the run produced nothing to check", file=sys.stderr)
         return 2
 
@@ -130,18 +188,20 @@ def main() -> int:
     failed -= ignored
     seen -= ignored
 
-    unexpected_failures = sorted(failed - ledger)
+    # A class-level failure names no test, so no ledger line can account for it.
+    unexpected_failures = sorted(failed - ledger) + sorted(class_failures)
     # Only count a ledgered test as passing if the run actually executed it.
     unexpected_passes = sorted((ledger & seen) - failed)
     # A ledgered test that never ran is neither a pass nor a failure, so without this it
     # reconciles silently — and so does every other test in the suite that died with it.
     never_ran = sorted(ledger - seen)
-    # The runner records each suite's exit status. >1 means the harness itself died rather
-    # than merely reporting test failures, so its results are not trustworthy input.
+    # The runner records each suite's exit status. Checking each suite on its own matters: a
+    # suite with no ledger entries that dies on import leaves nothing behind, and the other
+    # suites' results would otherwise reconcile without it.
     dead_suites = [
-        line.split()[1]
-        for line in text.splitlines()
-        if line.startswith("SUITE_EXIT") and len(line.split()) == 3 and int(line.split()[2]) > 1
+        f"{suite}: {problem}"
+        for suite, status, output in split_suites(text)
+        if (problem := suite_problem(status, output)) is not None
     ]
 
     if unexpected_failures:
@@ -173,7 +233,7 @@ def main() -> int:
         )
 
     if dead_suites:
-        print("\nSUITES THAT DIED (exit > 1) — their results are not usable:")
+        print("\nSUITES THAT CANNOT BE RECONCILED — their results are not usable:")
         for suite in dead_suites:
             print(f"  {suite}")
 
