@@ -383,8 +383,11 @@ def coverage(port):
 @click.argument("name")
 def profile(module, port, out, seconds, reuse, open_ui, name):
     """Profile the server while one query runs in a loop."""
+    # `_select` returns the row's prerequisites too, in suite order, so the row asked for is not
+    # necessarily first. They run once, below, before the row is profiled.
     queries = _select((name,))
-    query = queries[0]
+    query = next(q for q in queries if q.name == name)
+    prerequisites = [q for q in queries if q.name != name]
     out_path = Path(out) if out else RESULTS / f"profile_{query.name.replace(' ', '_')}.json.gz"
 
     server = client_mod.Server(port=port)
@@ -407,6 +410,8 @@ def profile(module, port, out, seconds, reuse, open_ui, name):
         if started_here:
             click.echo("building graph...")
             client_mod.build_graph(bench, query_set.SETUP, query_set.SETUP_COMMANDS)
+        for pre in prerequisites:
+            bench.run(pre.cypher, write=pre.write)
         profile_mod.profile_query(
             bench, query, out_path, seconds=seconds, save_only=not open_ui, echo=click.echo
         )
