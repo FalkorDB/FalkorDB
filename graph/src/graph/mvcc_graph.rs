@@ -66,11 +66,15 @@
 //! and hands back the `Arc` it published.
 
 use std::sync::Arc;
+#[cfg(feature = "index-falkordb")]
+use std::sync::OnceLock;
 
 use arc_swap::ArcSwap;
 use thiserror::Error;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::online_build::{self, BuildHost};
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 
@@ -81,6 +85,9 @@ use crate::index::falkordb::versioned::{IndexerCommit, PreparedBatch};
 pub struct MvccGraph {
     /// Current committed graph version. Replaced only by a commit's compare-and-swap.
     graph: ArcSwap<Graph>,
+    /// How the background index builder reaches this graph, once its host registers it.
+    #[cfg(feature = "index-falkordb")]
+    build_host: OnceLock<Arc<dyn BuildHost>>,
 }
 
 /// Why [`MvccGraph::commit`] refused a version. Whichever it is, the version
@@ -116,6 +123,38 @@ impl MvccGraph {
     pub fn from_graph(graph: Graph) -> Self {
         Self {
             graph: ArcSwap::from_pointee(graph),
+            #[cfg(feature = "index-falkordb")]
+            build_host: OnceLock::new(),
+        }
+    }
+
+    /// Register how the background index builder reaches this graph, and start the build of every
+    /// index the published version holds `Building`: one a commit brought in before any host was
+    /// registered (a `CREATE INDEX` that created its graph's key, inside `MULTI`/`EXEC` or replayed
+    /// from the AOF), or one a stopped builder left unfinished. From then on, each commit that
+    /// brings in a `Building` index starts its build. The first host registered is kept.
+    #[cfg(feature = "index-falkordb")]
+    pub fn set_build_host(
+        &self,
+        host: Arc<dyn BuildHost>,
+    ) {
+        if self.build_host.set(Arc::clone(&host)).is_err() {
+            return;
+        }
+        for id in self.read().building_indexes() {
+            online_build::enqueue(Arc::clone(&host), id);
+        }
+    }
+
+    /// Register `old`'s builder host with this coordinator, which replaces `old` in place. Without
+    /// it, an index created on the replacement would never be built.
+    #[cfg(feature = "index-falkordb")]
+    pub fn inherit_build(
+        &self,
+        old: &Self,
+    ) {
+        if let Some(host) = old.build_host.get() {
+            self.set_build_host(Arc::clone(host));
         }
     }
 
@@ -205,7 +244,20 @@ impl MvccGraph {
     ) -> Result<Arc<Graph>, CommitError> {
         let published = self.graph.load_full();
         Self::prepare(&published, &mut fork, true)?;
-        self.publish(&published, Arc::new(fork))
+        // The indexes to build, asked of the version this one replaces before it is replaced.
+        #[cfg(feature = "index-falkordb")]
+        let to_build = fork.indexes_to_build_since(&published);
+        let version = self.publish(&published, Arc::new(fork))?;
+        // Each `Building` index this version brings in, new or created again, starts its build:
+        // the builder runs one chain of batches per index until it is `Ready`, so a commit made
+        // during the build, an indexer batch's included, starts nothing.
+        #[cfg(feature = "index-falkordb")]
+        if let Some(host) = self.build_host.get() {
+            for id in to_build {
+                online_build::enqueue(Arc::clone(host), id);
+            }
+        }
+        Ok(version)
     }
 
     /// Commit an indexer batch. `prepared` is a build version of a published one
