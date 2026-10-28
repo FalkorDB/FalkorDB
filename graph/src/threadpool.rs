@@ -154,8 +154,11 @@ impl ThreadPool {
     }
 
     /// [`Self::shutdown`], waiting at most `timeout` for the workers: one still running a job by
-    /// then is left behind, detached, to exit when its job returns. For jobs that may block on
-    /// what the caller holds. Whether every worker exited in time.
+    /// then is left behind, to exit when its job returns. For jobs that may block on what the
+    /// caller holds. Whether every worker exited in time.
+    ///
+    /// A worker left behind is kept, not detached, so a later call waits for it again and reports
+    /// it until it has exited.
     pub fn shutdown_within(
         &self,
         timeout: Duration,
@@ -168,15 +171,13 @@ impl ThreadPool {
         while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
             thread::sleep(Duration::from_millis(1));
         }
-        let mut all_exited = true;
-        for worker in workers.drain(..) {
-            if worker.is_finished() {
-                let _ = worker.join();
-            } else {
-                all_exited = false;
-            }
+        let (exited, running): (Vec<_>, Vec<_>) =
+            workers.drain(..).partition(JoinHandle::is_finished);
+        for worker in exited {
+            let _ = worker.join();
         }
-        all_exited
+        *workers = running;
+        workers.is_empty()
     }
 }
 
@@ -267,7 +268,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
 
-    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it.
+    /// A bounded shutdown returns on time with a worker blocked in a job, and reports it. It keeps
+    /// the worker: a repeat call reports it again while its job runs, and joins it once the job
+    /// returns.
     #[test]
     fn shutdown_within_leaves_a_blocked_job_behind() {
         let pool = Arc::new(ThreadPool::new(1));
@@ -288,11 +291,17 @@ mod tests {
                 .unwrap();
         });
         let exited = shutdown.recv_timeout(Duration::from_secs(2));
+        let again = pool.shutdown_within(Duration::from_millis(20));
         drop(release);
         assert_eq!(
             exited,
             Ok(false),
             "returned in time, the blocked worker left behind"
+        );
+        assert!(!again, "a repeat call still reports the blocked worker");
+        assert!(
+            pool.shutdown_within(Duration::from_secs(2)),
+            "joined once its job returned"
         );
     }
 
