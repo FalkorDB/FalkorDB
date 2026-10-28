@@ -99,12 +99,16 @@ SETUP = [
     "CREATE INDEX FOR (n:WIdx) ON (n.id)",
     "CREATE INDEX FOR (n:WIdx) ON (n.v)",
     "UNWIND range(0, 999) AS i CREATE (:WIdx {id: i, v: i, w: i})",
-    # Deletion pool. Sized for `mass delete indexed`'s explicit rep count with
-    # room to spare: running dry does not fail, it quietly measures a no-op.
+    # Deletion pool. Sized for one run of `mass delete indexed` with room to
+    # spare: its warmup and 50 reps take 5,100. Running dry does not fail, it
+    # quietly measures a no-op, and a `--reuse` run, which skips this setup,
+    # starts from the 900 an earlier run left.
     "CREATE INDEX FOR (n:WDel) ON (n.v)",
     "UNWIND range(0, 5999) AS i CREATE (:WDel {v: i})",
-    # Indexed label for create/delete round trips.
+    # Indexed label for creates and deletes.
     "CREATE INDEX FOR (n:WTmp) ON (n.v)",
+    # Indexed label for `label churn indexed`; its twin, `WPlain`, has none.
+    "CREATE INDEX FOR (n:WExtra) ON (n.v)",
     # Edge equivalent: `wv` indexed, `ww` not, no constraint.
     "CREATE INDEX FOR ()-[r:WREL]-() ON (r.wv)",
     "MATCH (a:WIdx {id: 0}), (b:WIdx {id: 1}) CREATE (a)-[:WREL {wv: 1, ww: 1}]->(b)",
@@ -655,15 +659,26 @@ QUERIES = [
     Q("SET unindexed prop",    True, "MATCH (n:WIdx {id: 500}) SET n.w = n.w + 1 RETURN n.w"),
     Q("SET += indexed map",    True, "MATCH (n:WIdx {id: 501}) SET n += {v: n.v + 1, x: 1} RETURN n.v"),
     Q("SET += unindexed map",  True, "MATCH (n:WIdx {id: 501}) SET n += {w: n.w + 1, x: 1} RETURN n.w"),
-    # Create/delete round trips. The unindexed twin is the existing
-    # "CREATE + DELETE" on :Tmp.
+    # Create, then delete, as separate commits. A node created and deleted in one
+    # query is never committed, so it never reaches an index. The unindexed twins
+    # are `create node` and `delete node` on :Tmp; as there, the delete takes the
+    # nodes the create added.
     Q("create indexed node",   True, "CREATE (:WTmp {v: 1})"),
-    Q("create+delete indexed", True, "CREATE (t:WTmp {v: 1}) WITH t DELETE t"),
-    # Scattered mass delete — the `remove_batch` path. Explicit reps because
-    # this drains its pool: 50 x 100 against 6,000 :WDel.
+    Q("delete indexed node",   True, "MATCH (t:WTmp) WITH t LIMIT 1 DELETE t",
+      needs=("create indexed node",)),
+    # Mass delete — the `remove_batch` path, 100 nodes per rep. The label scan
+    # yields ids in order, so each rep deletes the lowest 100 left: adjacent keys.
+    # Explicit reps because this drains its pool (see the setup).
     Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50),
-    # Label add/remove re-routes which columns a node belongs to.
-    Q("label churn indexed",   True, "MATCH (n:WIdx {id: 502}) SET n:WExtra REMOVE n:WExtra"),
+    # A label added or removed moves a node in or out of that label's columns.
+    # Each rep toggles the label, so every rep commits one direction; setting and
+    # removing it in one query would cancel before the commit.
+    Q("label churn indexed",   True, "MATCH (n:WIdx {id: 502}) WITH n, n:WExtra AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WExtra) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WExtra)"),
+    Q("label churn unindexed", True, "MATCH (n:WIdx {id: 503}) WITH n, n:WPlain AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WPlain) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WPlain)"),
     # Edge pair.
     Q("SET indexed edge prop",   True, "MATCH ()-[r:WREL]->() SET r.wv = r.wv + 1 RETURN r.wv"),
     Q("SET unindexed edge prop", True, "MATCH ()-[r:WREL]->() SET r.ww = r.ww + 1 RETURN r.ww"),
