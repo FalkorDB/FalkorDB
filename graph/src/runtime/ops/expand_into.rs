@@ -202,6 +202,11 @@ impl<'a> ExpandIntoOp<'a> {
             let mat_src = u64::from(edge_src);
             let mat_dst = u64::from(edge_dst);
             if !emit_relationship {
+                // One row per pattern pair, as in C: an edge found in the
+                // forward direction already covers the reverse one.
+                if !row_edges.is_empty() {
+                    break;
+                }
                 // One representative edge per (src, dst) pair.
                 let mut found_id: Option<RelationshipId> = None;
                 'outer: for &tidx in edge_type_indices.iter() {

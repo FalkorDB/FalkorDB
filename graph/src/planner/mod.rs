@@ -1123,12 +1123,26 @@ impl Planner {
                 }
                 let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
 
+                // A pattern expression whose list is used (`size((a)--())`)
+                // yields one path per matched edge, as C does: register the
+                // path on the pattern itself, like an explicit
+                // `[p = (a)--() | p]`, so the traversal binds each edge
+                // instead of collapsing a node pair to one representative.
+                // As a predicate only emptiness matters, so collapsing stays.
+                let mut graph = graph.as_ref().clone();
+                let paths = if mode == PatternMode::Exists {
+                    vec![query_path]
+                } else {
+                    graph.add_path(query_path);
+                    vec![]
+                };
+
                 let comprehension = ExtractedComprehension {
                     var,
-                    graph: graph.as_ref().clone(),
+                    graph,
                     where_filter: None,
                     result_expr: Arc::new(DynTree::new(ExprIR::Variable(path_var))),
-                    paths: vec![query_path],
+                    paths,
                     nested: vec![],
                 };
                 let list = self.hoist_or_nest(node, comprehension, extracted);
