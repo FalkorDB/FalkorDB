@@ -62,6 +62,8 @@
 //! lock ([`crate::locks::holds_global_lock`]), which therefore serializes every
 //! slot holder, and with it every store.
 
+#[cfg(feature = "index-falkordb")]
+use std::sync::OnceLock;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -71,6 +73,8 @@ use arc_swap::ArcSwap;
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::online_build::{self, BuildHost};
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::versioned::{Dropped, IndexerCommit, PreparedBatch, report_batch_race};
 use crate::locks::holds_global_lock;
@@ -84,6 +88,9 @@ pub struct MvccGraph {
     graph: ArcSwap<AtomicRefCell<Graph>>,
     /// Write lock (true = write in progress)
     write: AtomicBool,
+    /// How the background index builder reaches this graph, once its host registers it.
+    #[cfg(feature = "index-falkordb")]
+    build_host: OnceLock<Arc<dyn BuildHost>>,
 }
 
 /// Why [`MvccGraph::claim`] refused a fork.
@@ -116,6 +123,38 @@ impl MvccGraph {
         Self {
             graph: ArcSwap::from_pointee(AtomicRefCell::new(graph)),
             write: AtomicBool::new(false),
+            #[cfg(feature = "index-falkordb")]
+            build_host: OnceLock::new(),
+        }
+    }
+
+    /// Register how the background index builder reaches this graph, and start the build of every
+    /// index the published version holds `Building`: one a commit brought in before any host was
+    /// registered (a `CREATE INDEX` that created its graph's key, inside `MULTI`/`EXEC` or replayed
+    /// from the AOF), or one a stopped builder left unfinished. From then on, each commit that
+    /// brings in a `Building` index starts its build. The first host registered is kept.
+    #[cfg(feature = "index-falkordb")]
+    pub fn set_build_host(
+        &self,
+        host: Arc<dyn BuildHost>,
+    ) {
+        if self.build_host.set(Arc::clone(&host)).is_err() {
+            return;
+        }
+        for id in self.read().borrow().building_indexes() {
+            online_build::enqueue(Arc::clone(&host), id);
+        }
+    }
+
+    /// Register `old`'s builder host with this coordinator, which replaces `old` in place. Without
+    /// it, an index created on the replacement would never be built.
+    #[cfg(feature = "index-falkordb")]
+    pub fn inherit_build(
+        &self,
+        old: &Self,
+    ) {
+        if let Some(host) = old.build_host.get() {
+            self.set_build_host(Arc::clone(host));
         }
     }
 
@@ -410,11 +449,29 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
+        // Each `Building` index this version brings in, new or created again, starts its build:
+        // the builder runs one chain of batches per index until it is `Ready`, so a commit made
+        // during the build, an indexer batch's included, starts nothing.
+        #[cfg(feature = "index-falkordb")]
+        let to_build = if writer {
+            new_graph
+                .borrow()
+                .indexes_to_build_since(&published.borrow())
+        } else {
+            Vec::new()
+        };
+
         // Let go of the old version before the store, so that, as before, the
         // store frees it unless a reader still holds it.
         drop(published);
         self.graph.store(new_graph);
         self.write.store(false, Ordering::Release);
+        #[cfg(feature = "index-falkordb")]
+        if let Some(host) = self.build_host.get() {
+            for id in to_build {
+                online_build::enqueue(Arc::clone(host), id);
+            }
+        }
         Ok(())
     }
 
