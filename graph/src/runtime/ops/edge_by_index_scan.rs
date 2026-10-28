@@ -375,9 +375,21 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             // checking the predicate the planner dropped. See
                             // `NodeByIndexScanOp`.
                             Some(NumericAnswer::NotReady(recheck)) => {
-                                Some(Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                    runtime.graph().relationship_admitted(edge, &recheck)
-                                })))
+                                // Resolved once per scan. No edge holds a name the graph has
+                                // never seen.
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> =
+                                    match g.get_relationship_attribute_id(recheck.attribute()) {
+                                        Some(attr) => {
+                                            let attr = attr as u16;
+                                            Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                                runtime
+                                                    .graph()
+                                                    .relationship_admitted(edge, attr, &recheck)
+                                            }))
+                                        }
+                                        None => Box::new(std::iter::empty()),
+                                    };
+                                Some(edges)
                             }
                             None => {
                                 // See node_by_index_scan: native is the only index under this
