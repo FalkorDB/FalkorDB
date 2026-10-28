@@ -4118,12 +4118,13 @@ impl Graph {
             .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
-    /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
-    /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
-    /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
-    /// only holds a temporary graph borrow, so the result must not borrow `self`. Three-way answer
-    /// as for nodes: rows, `NotReady` (still building — scan), `None` (not servable). #51.
+    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
+    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
+    /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
+    /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
+    /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes: rows,
+    /// `NotReady` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
