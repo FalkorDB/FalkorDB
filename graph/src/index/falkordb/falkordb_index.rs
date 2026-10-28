@@ -21,7 +21,7 @@ use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
-use super::versioned::{BuildState, IndexEntry, VersionedIndex};
+use super::versioned::{BuildState, IndexEntry, IndexId, VersionedIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -371,6 +371,8 @@ impl BuildCursor {
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
     edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
+    /// Indexes created in this version and those before it: the next one's generation.
+    indexes_created: u64,
 }
 
 impl FalkorDbIndex {
@@ -483,9 +485,11 @@ impl FalkorDbIndex {
         column: IndexColumn,
         state: BuildState<BuildCursor>,
     ) {
+        self.indexes_created += 1;
+        let generation = self.indexes_created;
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            IndexEntry::new(column, state),
+            IndexEntry::new(column, state, generation),
         );
     }
 
@@ -581,6 +585,29 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Whether every index but `except` is the same index, with the same indexer batches committed
+    /// on it, here as in `other`: what an indexer batch's commit asks when no writer committed in
+    /// between, so that only batches can have changed an index.
+    pub(crate) fn same_batches_except(
+        &self,
+        other: &Self,
+        except: &IndexId,
+    ) -> bool {
+        [EntityType::Node, EntityType::Relationship]
+            .into_iter()
+            .all(|entity| {
+                let (ours, theirs) = (self.columns(entity), other.columns(entity));
+                ours.len() == theirs.len()
+                    && ours.iter().all(|(key, entry)| {
+                        matches!(except, IndexId::Column(e, k) if *e == entity && k == key)
+                            || theirs.get(key).is_some_and(|their| {
+                                (their.generation, their.indexer_commits)
+                                    == (entry.generation, entry.indexer_commits)
+                            })
+                    })
+            })
     }
 
     /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no

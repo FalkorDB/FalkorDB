@@ -60,6 +60,8 @@ use std::sync::{
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::{Graph, NodeOpError};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::versioned::{Dropped, IndexerCommit, PreparedBatch, report_batch_race};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -187,20 +189,92 @@ impl MvccGraph {
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) -> Result<(), NodeOpError> {
-        debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+        Self::commit_version(&mut self.graph, &self.write, new_graph, true)
+    }
+
+    /// Commit an indexer batch. `prepared` is a build version of a published one
+    /// ([`Graph::new_build_version`]) with `batch` already applied
+    /// ([`Graph::indexer_prepare`]), made with no lock held. How it goes in depends on what
+    /// committed since ([`Graph::indexer_fit`]):
+    /// - nothing: `prepared` is published as it is;
+    /// - only other indexes' batches: `batch`'s index is put into a new build version of the
+    ///   published one, which is published ([`Graph::with_batch_index`]);
+    /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
+    ///   committed on the same index: nothing is published, and the index's next batch starts from
+    ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
+    ///   index, and is reported ([`report_batch_race`]).
+    ///
+    /// The commit changes no graph data and keeps the data version, so a writer's fork made before
+    /// it can still be claimed ([`Self::claim`]).
+    ///
+    /// The caller holds what a writer holds to publish, and the write slot is free. Returns `None`
+    /// if it was taken all the same, or the version was refused. The slot is released however the
+    /// commit ends, an unwind included.
+    #[cfg(feature = "index-falkordb")]
+    pub fn commit_indexer_batch(
+        &mut self,
+        prepared: &Arc<AtomicRefCell<Graph>>,
+        batch: &PreparedBatch,
+    ) -> Option<IndexerCommit> {
+        if self
+            .write
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return None;
+        }
+        let Self { graph, write } = self;
+        let write: &AtomicBool = write;
+        let slot = ReleaseOnDrop(write);
+        let fit = prepared.borrow().indexer_fit(&graph.borrow(), batch);
+        let version = match fit {
+            IndexerCommit::Same => Arc::clone(prepared),
+            IndexerCommit::Swap => Arc::new(AtomicRefCell::new(
+                prepared.borrow().with_batch_index(&graph.borrow(), batch),
+            )),
+            IndexerCommit::Dropped(why) => {
+                if why == Dropped::AnotherBatch {
+                    report_batch_race(&batch.id());
+                }
+                return Some(fit);
+            }
+        };
+        let committed = Self::commit_version(graph, write, version, false);
+        // `commit_version` released the slot, whichever way it returned.
+        std::mem::forget(slot);
+        committed.ok().map(|()| fit)
+    }
+
+    /// [`Self::commit`]: `writer` for a writer's version, `false` for an indexer batch's, which
+    /// keeps the data version. Takes the published version and the write slot apart, so that an
+    /// indexer batch's commit can keep the slot's release guard across it.
+    fn commit_version(
+        graph: &mut Arc<AtomicRefCell<Graph>>,
+        write: &AtomicBool,
+        new_graph: Arc<AtomicRefCell<Graph>>,
+        writer: bool,
+    ) -> Result<(), NodeOpError> {
+        debug_assert_eq!(
+            graph.borrow().version + u64::from(writer),
+            new_graph.borrow().version
+        );
 
         // Before any of the work below, so a refusal changes nothing — and
         // releasing the slot on the way out, so a refusal is a rollback rather
         // than a graph nobody can write to again.
         if let Err(e) = new_graph.borrow().validate() {
-            self.rollback();
+            write.store(false, Ordering::Release);
             return Err(e);
+        }
+        #[cfg(test)]
+        if !writer && PANIC_IN_INDEXER_COMMIT.with(std::cell::Cell::get) {
+            panic!("an indexer batch's commit unwinds");
         }
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
         let (old_labels, old_types, old_node_attrs, old_rel_attrs, old_schema_version) = {
-            let g = self.graph.borrow();
+            let g = graph.borrow();
             (
                 g.get_labels().len(),
                 g.get_types().len(),
@@ -260,8 +334,8 @@ impl MvccGraph {
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
 
-        self.graph = new_graph;
-        self.write.store(false, Ordering::Release);
+        *graph = new_graph;
+        write.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -270,10 +344,30 @@ impl MvccGraph {
     }
 }
 
+/// Releases the write slot when dropped, unless forgotten: so a commit that unwinds does not leave
+/// the slot taken, which would refuse every later write until the process restarts.
+#[cfg(feature = "index-falkordb")]
+struct ReleaseOnDrop<'a>(&'a AtomicBool);
+
+#[cfg(feature = "index-falkordb")]
+impl Drop for ReleaseOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 impl Drop for MvccGraph {
     fn drop(&mut self) {
         self.graph.borrow().cancel_indexing();
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// For the test that an indexer batch's commit that unwinds releases the write slot: while
+    /// set, the commit of an indexer batch's version panics after validating it.
+    pub(crate) static PANIC_IN_INDEXER_COMMIT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
