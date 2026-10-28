@@ -27,6 +27,12 @@
 //!   "indices_sz_mb",                              <int> ]
 //! ```
 //!
+//! `indices_sz_mb` is RediSearch's own estimate of its indexes, as C reports it.
+//! A build with `index-falkordb` appends a 10th pair, `"native_indices_sz_mb"`,
+//! for the native index's columns, which RediSearch's estimate does not see.
+//! It comes last so that a reader of C's nine pairs by position still finds
+//! them where C puts them.
+//!
 //! The `total_graph_sz_mb` value is the sum of all other MB-rounded
 //! components, which avoids truncation discrepancies when clients verify
 //! the total against the individual parts.
@@ -87,6 +93,10 @@ fn memory_report(
     let unlabeled_node_attr_mb = (report.unlabeled_node_attr_sz / MB) as i64;
     let edge_block_mb = (report.edge_block_storage_sz / MB) as i64;
     let indices_mb = (report.indices_sz / MB) as i64;
+    #[cfg(feature = "index-falkordb")]
+    let native_indices_mb = (report.native_indices_sz / MB) as i64;
+    #[cfg(not(feature = "index-falkordb"))]
+    let native_indices_mb = 0;
 
     let mut node_attr_by_label_mb: Vec<(String, i64)> = Vec::new();
     let mut node_attr_sum_mb: i64 = 0;
@@ -105,6 +115,7 @@ fn memory_report(
     }
 
     let total_mb = indices_mb
+        + native_indices_mb
         + node_block_mb
         + unlabeled_node_attr_mb
         + edge_block_mb
@@ -113,8 +124,9 @@ fn memory_report(
         + edge_attr_sum_mb
         + relation_matrices_mb;
 
-    // Build a flat array: [key, value, key, value, ...] (9 pairs = 18 elements)
-    let mut out = Vec::with_capacity(18);
+    // Build a flat array: [key, value, key, value, ...] (9 pairs = 18 elements, 10 = 20
+    // with the native index)
+    let mut out = Vec::with_capacity(20);
 
     // 1. total_graph_sz_mb
     out.push(RedisValue::SimpleString("total_graph_sz_mb".into()));
@@ -174,6 +186,13 @@ fn memory_report(
     // 9. indices_sz_mb
     out.push(RedisValue::SimpleString("indices_sz_mb".into()));
     out.push(RedisValue::Integer(indices_mb));
+
+    // 10. native_indices_sz_mb, only where there is a native index
+    #[cfg(feature = "index-falkordb")]
+    {
+        out.push(RedisValue::SimpleString("native_indices_sz_mb".into()));
+        out.push(RedisValue::Integer(native_indices_mb));
+    }
 
     Ok(RedisValue::Array(out))
 }
