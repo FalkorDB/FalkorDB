@@ -239,8 +239,11 @@ struct UnionIter {
 }
 
 impl UnionIter {
-    fn new(mut iters: Vec<Iter>) -> Self {
-        let heads = iters.iter_mut().map(Iterator::next).collect();
+    /// Heads start empty: every consumer seeks before reading, and priming
+    /// a full-range iterator here would walk any deleted prefix of its
+    /// matrix on every execution, even for a one-row lookup.
+    fn new(iters: Vec<Iter>) -> Self {
+        let heads = vec![None; iters.len()];
         Self { iters, heads }
     }
 
