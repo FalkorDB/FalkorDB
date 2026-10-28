@@ -67,10 +67,16 @@ jobs:
 
             # :latest follows GitHub's "Latest release" label, set when the
             # release is published. A C patch release published without it
-            # must not move :latest off the release that has it.
-            LATEST=$(gh api "/repos/${GH_REPO}/releases/latest" --jq .tag_name)
-            echo "latest release: ${LATEST}; this release: ${TAG_NAME}"
-            if [ "${LATEST}" == "${TAG_NAME}" ]; then
+            # must not move :latest off the release that has it. GraphQL's
+            # isLatest is that label; REST /releases/latest is documented as
+            # the newest release by created_at instead.
+            # shellcheck disable=SC2016 # $owner etc. are GraphQL variables
+            RELEASE_IS_LATEST=$(gh api graphql \
+              -f query='query($owner: String!, $name: String!, $tag: String!) { repository(owner: $owner, name: $name) { release(tagName: $tag) { isLatest } } }' \
+              -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -f tag="${TAG_NAME}" \
+              --jq '.data.repository.release.isLatest')
+            echo "${TAG_NAME} is GitHub's latest release: ${RELEASE_IS_LATEST}"
+            if [ "${RELEASE_IS_LATEST}" == "true" ]; then
               echo "IS_LATEST=1" >> $GITHUB_ENV
             fi
           fi
