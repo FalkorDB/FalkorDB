@@ -23,8 +23,9 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// them ([`IndexEntry::indexer_apply`]). The batch that reaches the end flips the index
 /// [`Ready`](Self::Ready). While [`Building`](Self::Building), a read the index would serve is
 /// answered [`NotReady`](super::falkordb_index::NumericAnswer::NotReady) and the read path scans
-/// instead. `CREATE INDEX` takes one batch over every entity, so its index is `Ready` when it
-/// returns.
+/// instead. `CREATE INDEX` leaves its index `Building` for the background builder
+/// ([`online_build`](super::online_build)); an RDB load takes one batch over every entity, so the
+/// index is `Ready` once the graph is loaded.
 ///
 /// A `Building` index holds exactly the current tuples of the entities below its cursor, and
 /// nothing at or above it. Live writes keep that true ([`VersionedIndex::writer_record`]). An

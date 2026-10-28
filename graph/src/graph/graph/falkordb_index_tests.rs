@@ -2,7 +2,7 @@
 //! and checks the index column it should have changed. The build's tests drive indexer batches
 //! between writes.
 
-use super::{Graph, NodeId, RelationshipId};
+use super::{Graph, NodeId, Plan, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{Claim, MvccGraph, PANIC_IN_INDEXER_COMMIT};
 use crate::index::Field;
@@ -16,9 +16,14 @@ use crate::index::falkordb::versioned::{
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
+use crate::locks::WriteEscalation;
+use crate::planner::IR;
+use crate::runtime::functions::init_functions;
 use crate::runtime::orderset::OrderSet;
+use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use atomic_refcell::AtomicRefCell;
+use orx_tree::{Dfs, NodeRef};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -130,15 +135,13 @@ fn new_version_isolates_the_falkordb_index() {
     assert_eq!(writer.version, committed.version + 1);
 }
 
-/// CREATE INDEX builds the column from real graph state: three
-/// `:Person {age}` nodes, then a range scan returns the right ids in
-/// `(value, id)` order. The column is built by one indexer batch over every node
-/// (its `get_label_matrix` → `get_node_attribute_by_idx` reads), so it is
-/// `Ready` and serves reads when CREATE INDEX returns. Drives the native half of
-/// `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised
-/// in a unit test).
+/// CREATE INDEX leaves the column `Building`, its cursor at the start, for the background builder:
+/// the planner does not use it, and a read that reaches it is told to scan. Once indexer batches
+/// have built it from real graph state (three `:Person {age}` nodes), it is `Ready`, the planner
+/// uses it, and a range scan returns the right ids in `(value, id)` order. Drives the native half
+/// of `Graph::create_index` directly, bypassing the RediSearch FFI (uninitialised in a unit test).
 #[test]
-fn create_index_builds_the_column_from_live_nodes() {
+fn create_index_leaves_the_node_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
     let label = Arc::new("Person".to_string());
@@ -171,7 +174,6 @@ fn create_index_builds_the_column_from_live_nodes() {
     }
     applied!(g, |w| g.set_nodes_attributes(&attrs, &mut w)).unwrap();
 
-    // Build the index numeric column from the live nodes.
     graph_writes::create_index(
         &mut g,
         &IndexType::Range,
@@ -180,10 +182,30 @@ fn create_index_builds_the_column_from_live_nodes() {
         std::slice::from_ref(&attr),
     );
     assert_eq!(
+        cursor(&g, EntityType::Node, &label, &attr),
+        Some(BuildCursor::new(EntityType::Node)),
+        "CREATE INDEX takes no batch"
+    );
+    assert!(
+        !g.is_indexed(&label, &attr, &IndexType::Range),
+        "the planner does not use a Building column"
+    );
+    assert!(
+        matches!(
+            g.falkordb_index
+                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(NumericAnswer::NotReady(_))
+        ),
+        "a read that reaches a Building column scans"
+    );
+
+    assert_eq!(build_to_end(&mut g, 2), 2, "two batches of two nodes");
+    assert_eq!(
         g.falkordb_index
             .column_state(EntityType::Node, &label, &attr),
         Some(BuildState::Ready)
     );
+    assert!(g.is_indexed(&label, &attr, &IndexType::Range));
     assert!(
         matches!(
             g.falkordb_index
@@ -247,11 +269,11 @@ fn rdb_load_populate_builds_each_column() {
     );
 }
 
-/// The edge counterpart: CREATE INDEX on a relationship type builds its column from the live
-/// edges, a multi-edge pair included, in one indexer batch dispatched to the edge column, so it is
-/// `Ready` and serves reads when CREATE INDEX returns, and holds what a one-pass build does.
+/// The edge counterpart: CREATE INDEX on a relationship type leaves its column `Building`, and
+/// indexer batches dispatched to the edge column build it from the live edges, a multi-edge pair
+/// included, into what a one-pass build holds. Until then the planner does not use it.
 #[test]
-fn create_index_builds_the_column_from_live_edges() {
+fn create_index_leaves_the_edge_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
     let ty = Arc::new("R".to_string());
@@ -284,10 +306,18 @@ fn create_index_builds_the_column_from_live_edges() {
         std::slice::from_ref(&attr),
     );
     assert_eq!(
+        cursor(&g, EntityType::Relationship, &ty, &attr),
+        Some(BuildCursor::new(EntityType::Relationship)),
+        "CREATE INDEX takes no batch"
+    );
+    assert!(!g.is_edge_indexed(&ty, &attr, &IndexType::Range));
+    build_to_end(&mut g, 2);
+    assert_eq!(
         g.falkordb_index
             .column_state(EntityType::Relationship, &ty, &attr),
         Some(BuildState::Ready)
     );
+    assert!(g.is_edge_indexed(&ty, &attr, &IndexType::Range));
     assert_eq!(
         g.falkordb_index
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
@@ -3120,4 +3150,180 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
             "{attr} against a one-pass build"
         );
     }
+}
+
+// --- Reads while a column builds ---
+
+/// The escalation a read query is given: it never writes.
+struct ReadOnly;
+
+impl WriteEscalation for ReadOnly {
+    fn upgrade_to_write(&self) -> Result<(), String> {
+        Err("a read query does not write".into())
+    }
+}
+
+/// The integers read query `plan` returns on `version`, sorted. `plan` may have been made on
+/// another version, as `execute_query` plans on one `read()` and runs on another.
+fn run_on(
+    plan: &Plan,
+    version: Graph,
+) -> Vec<i64> {
+    let runtime = Runtime::new(
+        Arc::new(AtomicRefCell::new(version)),
+        plan.parameters.clone(),
+        false,
+        Arc::clone(&plan.plan),
+        false,
+        String::new(),
+        -1,
+        false,
+        None,
+        0,
+        None,
+        &ReadOnly,
+    );
+    let summary = runtime.query().expect("the query runs");
+    let column = runtime.return_names[0].id;
+    let mut ints: Vec<i64> = summary
+        .result
+        .iter()
+        .flat_map(|batch| batch.active_indices().map(move |row| (batch, row)))
+        .map(|(batch, row)| match batch.value_at(column, row) {
+            Some(Value::Int(i)) => i,
+            other => panic!("not an integer: {other:?}"),
+        })
+        .collect();
+    ints.sort_unstable();
+    ints
+}
+
+/// Whether `plan` reads through an index scan.
+fn plans_index_scan(plan: &Plan) -> bool {
+    plan.plan
+        .root()
+        .walk::<Dfs>()
+        .any(|ir| matches!(ir, IR::NodeByIndexScan { .. } | IR::EdgeByIndexScan { .. }))
+}
+
+/// The planner reads readiness from the version's own column. A version without the column, or
+/// with it `Building`, plans no index scan; once the column is `Ready`, it does. RediSearch's
+/// readiness lives in its index map, which every version shares, so it cannot say this: a version
+/// committed before CREATE INDEX would see the index operational and plan a lookup its column
+/// cannot answer.
+#[test]
+fn the_planner_uses_a_column_only_once_this_version_built_it() {
+    let _ = init_functions();
+    let v = Arc::new("v".to_string());
+    let (mut g, label, _) = people_with(&v, &[10, 20, 30]);
+    let query = "MATCH (n:Person) WHERE n.v = 20 RETURN n.v";
+    let planned = |g: &Graph| plans_index_scan(&g.get_plan(query).expect("plans"));
+
+    assert!(!g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(!planned(&g), "no column");
+    create_index_on(&mut g, &label, &v);
+    let before = g.new_version();
+    assert!(!g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(!planned(&g), "Building");
+    build_to_end(&mut g, 2);
+    assert!(g.is_indexed(&label, &v, &IndexType::Range));
+    assert!(planned(&g), "Ready");
+    assert_eq!(run_on(&g.get_plan(query).unwrap(), g.new_version()), [20]);
+    assert!(!planned(&before), "the version before is still Building");
+}
+
+/// A plan made while a column was `Ready` can run on a version where the column is `Building`
+/// again: dropped and created anew between planning and running. The index scan then stands in a
+/// scan of the label or type that keeps only what the column would answer, though filter pushdown
+/// moved the predicate into the index scan. Checked at every cursor of the new column's build, for
+/// a range, an IN list and an equality, on nodes and on edges: these drive the scan operators'
+/// `NotReady` arms.
+#[test]
+fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
+    let _ = init_functions();
+    let (mut g, label, v, ty, w) = scan_fixture();
+    build_to_end(&mut g, usize::MAX);
+    let queries = [
+        (
+            "MATCH (n:Person) WHERE n.v >= 20 AND n.v <= 60 RETURN n.v",
+            vec![20, 30, 50, 60],
+        ),
+        (
+            "MATCH (n:Person) WHERE n.v IN [10, 40, 90] RETURN n.v",
+            vec![10, 90],
+        ),
+        ("MATCH (n:Person) WHERE n.v = 70 RETURN n.v", vec![70]),
+        (
+            "MATCH ()-[r:R]->() WHERE r.w >= 2 AND r.w <= 5 RETURN r.w",
+            vec![2, 3, 4, 5],
+        ),
+        (
+            "MATCH ()-[r:R]->() WHERE r.w IN [0, 7, 9] RETURN r.w",
+            vec![0, 7],
+        ),
+    ];
+    let plans: Vec<Plan> = queries
+        .iter()
+        .map(|(query, _)| g.get_plan(query).expect("plans"))
+        .collect();
+    for (plan, (query, _)) in plans.iter().zip(&queries) {
+        assert!(plans_index_scan(plan), "{query} reads its index");
+    }
+
+    for batches in 0.. {
+        let mut building = g.new_version();
+        for (entity, l, a) in [
+            (EntityType::Node, &label, &v),
+            (EntityType::Relationship, &ty, &w),
+        ] {
+            building.falkordb_index.create_building(entity, l, a);
+        }
+        let mut taken = 0;
+        while taken < batches && building.index_next_batch(1) {
+            taken += 1;
+        }
+        for (plan, (query, expected)) in plans.iter().zip(&queries) {
+            assert_eq!(
+                &run_on(plan, building.new_version()),
+                expected,
+                "{query} after {batches} batches"
+            );
+        }
+        if taken < batches {
+            break;
+        }
+    }
+}
+
+/// `db.indexes()` reports a `Building` column's progress as the entities below its cursor, out of
+/// the label's or type's: one batch at a time, nodes (with a deleted node in the ids) then edges
+/// (whose batches finish a multi-edge pair), until both are `Ready`.
+#[test]
+fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
+    let (mut g, label, v, ty, w) = scan_fixture();
+    let progress = |g: &Graph| {
+        (
+            g.native_build_progress(EntityType::Node, &label, &v),
+            g.native_build_progress(EntityType::Relationship, &ty, &w),
+        )
+    };
+    let mut seen = vec![progress(&g)];
+    while g.index_next_batch(2) {
+        seen.push(progress(&g));
+    }
+    assert_eq!(
+        seen,
+        [
+            (Some((0, 9)), Some((0, 8))),
+            (Some((2, 9)), Some((0, 8))),
+            (Some((4, 9)), Some((0, 8))),
+            (Some((6, 9)), Some((0, 8))),
+            (Some((8, 9)), Some((0, 8))),
+            (None, Some((0, 8))),
+            (None, Some((3, 8))),
+            (None, Some((5, 8))),
+            (None, Some((7, 8))),
+            (None, None),
+        ]
+    );
 }
