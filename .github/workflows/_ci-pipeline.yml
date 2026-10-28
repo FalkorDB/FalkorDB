@@ -419,25 +419,33 @@ jobs:
       build_image: ${{ inputs.build_image }}
       sanitizer_env: address
 
-  # Build the runtime image with the native index compiled in (`index-falkordb`).
-  # Single amd64 cell: this gate is about whether the native index can serve the index
-  # suites, not about per-arch packaging, so a second arch would double the cost for no
-  # extra signal. Uses the shared Dockerfile with a cargo-features build-arg rather than
-  # its own file — the flavour Dockerfiles are near-copies and a fourth would drift.
-  build-rc-nextgen-image:
-    if: ${{ inputs.use_image }}
-    uses: ./.github/workflows/_build-flavour.yml
-    permissions:
-      contents: read
-      packages: write
-    with:
-      flavour: nextgen
-      tag: rc-${{ inputs.ci_key }}-nextgen
-      commit_sha: ${{ inputs.commit_sha }}
-      cargo_features: index-falkordb
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
-      build_image: ${{ inputs.build_image }}
-      create_manifest: false
+  # Build the engine with the native index compiled in (`index-falkordb`) and upload it, as
+  # `build-engine` does for the default build. An artifact rather than an RC image: nothing ships
+  # with the flag, so there is no image to gate on, and an artifact needs no `packages: write`.
+  # That is what lets a fork, and a stacked pull request, run the ledger below. amd64 only: the
+  # ledger asks whether the native index serves the index suites, which a second arch would not
+  # change.
+  build-engine-nextgen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: ${{ inputs.build_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      # The same key as `build-engine`: the feature adds no dependencies, and rust-cache keeps only
+      # the dependencies, so the two builds restore the same cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "release"
+      - name: Build with the native index
+        run: cargo build --release --features index-falkordb
+      - name: Upload the native-index binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nextgen-binary
+          path: target/release/libfalkordb.so
 
   # Reconcile the index flow suites against the xfail ledger.
   #
@@ -450,43 +458,35 @@ jobs:
   # Runs the suites in one job rather than through the flow matrix because the check needs the
   # combined output of all of them; a per-file matrix would need cross-cell collection to say
   # anything.
+  #
+  # The artifact vehicle, as `_flow-artifact.yml`: RLTest starts redis itself with the downloaded
+  # module, so there is no service and no registry read, and every event runs it.
   nextgen-index-ledger:
-    needs: [build-rc-nextgen-image]
-    if: ${{ inputs.use_image && (!cancelled() && needs.build-rc-nextgen-image.result == 'success') }}
+    needs: [build-engine-nextgen]
+    if: ${{ !cancelled() && needs.build-engine-nextgen.result == 'success' }}
     runs-on: ubuntu-latest
-    container:
-      image: ${{ inputs.build_image }}
-      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    timeout-minutes: 40
+    container: ${{ inputs.build_image }}
     permissions:
       contents: read
-      packages: read
-    services:
-      falkordb:
-        image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}-nextgen
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        ports: ["6379:6379"]
-        env:
-          FALKORDB_ARGS: ""
-          # As in `_flow-flavour.yml`'s service. A test's `Env(enableDebugCommand=True)` changes
-          # nothing against a service, and without this DEBUG RELOAD is refused:
-          # test_edge_index_scans' RDB round-trip test then fails on that, not on the index.
-          REDIS_ARGS: "--enable-debug-command yes"
-    # Without these, flow.sh takes its local-dev branch and looks for a module this job never
-    # builds — the service container would be started and never contacted. They also force
-    # --parallelism 1, which the ledger parser needs: parallel classes interleave the per-test
-    # lines it reads.
     env:
-      FALKORDB_TEST_IMAGE: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}-nextgen
-      FALKORDB_USE_SERVICE: "1"
-      FALKORDB_HOST: falkordb
-      FALKORDB_PORT: "6379"
+      # Where the artifact is unpacked, so flow.sh loads it (see `_flow-artifact.yml`).
+      TARGET_DIR: target/release
+      # The ledger parser reads per-test result lines, and parallel classes interleave them.
+      PARALLELISM: "--parallelism 1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The suites below are test code from the pull request. Do not leave the token in
+          # .git/config.
           persist-credentials: false
-      - name: Run the index flow suites against the native-index image
+      - name: Download the native-index binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nextgen-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run the index flow suites against the native-index build
         # A failing suite is expected while gaps remain, so this step must not fail the job — the
         # ledger check below is the gate. But each suite's exit status is recorded: a suite that
         # dies without running its tests would otherwise let its ledger entries reconcile
@@ -505,7 +505,7 @@ jobs:
           for t in tests/flow/test_index_create tests/flow/test_index_scans \
                    tests/flow/test_index_updates tests/flow/test_index_delete \
                    tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates; do
-            TEST="$t" RELEASE=1 ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
+            TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
             status=${PIPESTATUS[0]}
             echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log
             if [ "$status" -gt 1 ]; then rc=1; fi   # >1 = harness died, not just test failures
@@ -522,7 +522,7 @@ jobs:
             --results /tmp/nextgen_flow.log
       - name: Upload flow log
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nextgen-index-flow-log
           path: /tmp/nextgen_flow.log
