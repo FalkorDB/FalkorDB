@@ -741,7 +741,11 @@ fn populate_index_batch(
                 } else {
                     do_recurse = true;
                 }
-                // guard dropped here
+                // Hand the lock to a waiter, if any. The next batch re-takes it at once,
+                // and parking_lot (0.13+) lets a plain unlock's next locker barge ahead of
+                // a parked CREATE/DROP INDEX or index commit, which then waits out the
+                // whole population (#3548).
+                MutexGuard::unlock_fair(guard);
             }
 
             if do_recurse {
