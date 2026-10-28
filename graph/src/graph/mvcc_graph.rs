@@ -166,12 +166,25 @@ impl MvccGraph {
             return Err(Claim::Stale);
         }
         // Only indexer batches committed since the fork was made, if anything did: it takes their
-        // progress, with what it wrote re-applied.
+        // progress, with what it wrote re-applied. Borrowed mutably only then: until a build runs
+        // in the background, no published column is `Building`, and a claim is what it was.
+        #[cfg(feature = "index-falkordb")]
+        if fork
+            .try_borrow()
+            .is_ok_and(|fork| !fork.overtaken_by_indexer_batches(&self.graph.borrow()))
+        {
+            return Ok(());
+        }
         #[cfg(feature = "index-falkordb")]
         {
-            // A fork that is borrowed, which no claimant's is, is refused rather than panicked on.
+            // A claimant's fork is never borrowed: its writer has stopped reading it to claim it.
+            // One that is is a bug, which a debug build stops on. A release build refuses the
+            // claim, and the host runs the write again.
             let Ok(mut fork) = fork.try_borrow_mut() else {
                 self.write.store(false, Ordering::Release);
+                if cfg!(debug_assertions) {
+                    panic!("a fork is claimed while it is borrowed");
+                }
                 return Err(Claim::Stale);
             };
             fork.rebase_onto_indexer_batches(&self.graph.borrow());
