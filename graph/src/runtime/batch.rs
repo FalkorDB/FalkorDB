@@ -1415,7 +1415,11 @@ impl RowView for BatchRow<'_, '_> {
         for (var_id, col) in self.batch.columns.iter().enumerate() {
             match col {
                 Column::Unbound => r.push_slot(Value::Null, false),
-                col => r.push_slot(col.get(self.row), !self.batch.value_only.test(var_id)),
+                col => {
+                    // A `value_only` column carries a value without binding it.
+                    let bound = !self.batch.value_only.test(var_id);
+                    r.push_slot(col.get(self.row), bound);
+                }
             }
         }
         if let Some(origins) = &self.batch.origin_rows {
