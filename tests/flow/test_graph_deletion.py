@@ -403,7 +403,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEqual(res.nodes_created, 11)
 
-        # expecting IDs to be reused
+        # ids freed by a query are not reused within it (#2876): the creates
+        # get fresh ids
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -413,8 +414,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 11)
         self.env.assertEqual(res.nodes_created, 11)
-        self.env.assertEqual(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEqual(res.result_set, [[i] for i in range(11, 22)])
 
+        # the next query reuses the ids the previous one freed
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -442,7 +444,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEqual(res.nodes_deleted, 10)
         self.env.assertEqual(res.nodes_created, 10)
-        self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
+        self.env.assertEqual(res.result_set, [[i + 10, i] for i in range(0, 10)])
 
         res = self.graph.query("""
             MATCH (a:A)
@@ -1011,12 +1013,13 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
-    def test41_reused_id_is_not_shadowed_by_the_deleted_entity(self):
-        # A node deleted before a WITH hands its id to a node created after it,
-        # in the same query. The deleted node's snapshot used to stay keyed by
-        # that id and shadow the live node through every accessor: it read the
-        # dead node's labels and properties, WHERE filtered it out, and MERGE
-        # did not see it and created a duplicate.
+    def test41_deleted_id_is_not_reused_in_the_same_query(self):
+        # A node deleted before a WITH used to hand its id to a node created
+        # after it, in the same query. The deleted node's snapshot stayed keyed
+        # by that id and shadowed the live node through every accessor: it read
+        # the dead node's labels and properties, WHERE filtered it out, and
+        # MERGE did not see it and created a duplicate. A query no longer
+        # reuses an id it freed, so the new node gets a fresh one.
         # https://github.com/FalkorDB/FalkorDB/issues/2876
         # https://github.com/FalkorDB/FalkorDB/issues/2759
         def fresh(q):
@@ -1027,7 +1030,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
                                   CREATE (m {v:2}) WITH m
                                   MATCH (x) RETURN id(x), x.v, labels(x)""")
-        self.env.assertEqual(res.result_set, [[0, 2, []]])
+        self.env.assertEqual(res.result_set, [[1, 2, []]])
 
         fresh("CREATE (:A {v:1})")
         res = self.graph.query("""MATCH (n) DELETE n WITH count(*) AS c
@@ -1054,12 +1057,16 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH (z:L {v:2}) RETURN count(z)")
         self.env.assertEqual(res.result_set, [[1]])
 
-        # a variable still bound to the deleted node: the id now names the new
-        # node, as in C
+        # a variable still bound to the deleted node keeps naming it: the new
+        # node does not take its id
         fresh("CREATE ({v:1})")
         res = self.graph.query("""MATCH (n) DELETE n WITH n AS k
                                   CREATE (m {v:2}) RETURN id(k), id(m), m.v""")
-        self.env.assertEqual(res.result_set, [[0, 0, 2]])
+        self.env.assertEqual(res.result_set, [[0, 1, 2]])
+
+        # the next query may reuse the freed id
+        res = self.graph.query("CREATE (m {v:3}) RETURN id(m)")
+        self.env.assertEqual(res.result_set, [[0]])
 
         # the id came from a node created and deleted in the same query
         self.graph.delete()
