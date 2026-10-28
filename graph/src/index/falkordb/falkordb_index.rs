@@ -318,9 +318,9 @@ impl FalkorDbIndex {
     }
 
     /// Create an empty numeric column for `(entity, label, attr)` in the `Ready`
-    /// state, replacing any existing one. Used by the synchronous paths (RDB load /
-    /// replica), where the caller fills it via [`build_numeric`](Self::build_numeric)
-    /// before any read is served. An edge column's docs are `edge_id`s.
+    /// state, replacing any existing one. Used by the RDB-load path
+    /// ([`create_unpopulated`](Self::create_unpopulated)), whose populate rebuilds it once every
+    /// entity is in, before any read is served. An edge column's docs are `edge_id`s.
     pub fn create_numeric(
         &mut self,
         entity: EntityType,
@@ -354,28 +354,6 @@ impl FalkorDbIndex {
             ColumnState::Building {
                 next: BuildCursor::new(entity),
             },
-        );
-    }
-
-    /// Build (or rebuild) the numeric column for `(entity, label, attr)` from
-    /// `entries` (any order) in the `Ready` state, replacing any existing one — the
-    /// bulk populate path. `NumericIndex::from_entries` bottom-up-loads the sorted
-    /// pairs (cheaper than looping incremental adds). Non-numeric / `NaN` values are
-    /// skipped by the encoder, so a Range attr holding mixed types indexes only its
-    /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
-    pub fn build_numeric<'a>(
-        &mut self,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-        entries: impl IntoIterator<Item = (&'a Value, u64)>,
-    ) {
-        self.insert_column(
-            entity,
-            label,
-            attr,
-            IndexColumn::Numeric(NumericIndex::from_entries(entries)),
-            ColumnState::Ready,
         );
     }
 

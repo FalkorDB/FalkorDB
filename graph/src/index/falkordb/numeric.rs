@@ -150,7 +150,8 @@ impl NumericIndex {
     /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
     /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
     /// initial population — one sort + bottom-up page build, no per-item
-    /// traversal.
+    /// traversal. The tree's tests compare it with incremental adds.
+    #[cfg(test)]
     #[must_use]
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
         let mut pairs: Vec<(u64, u64)> = entries
@@ -238,8 +239,8 @@ impl NumericIndex {
 
     /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or an
     /// indexer batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
-    /// through a many-to-one map. Into an empty index the tuples are bulk-built, as
-    /// [`from_entries`](Self::from_entries) does, rather than merged in.
+    /// through a many-to-one map. Into an empty index the tuples are bulk-built, bottom-up from
+    /// the sorted tuples, rather than merged in.
     pub fn add_encoded(
         &mut self,
         tuples: &mut EncodedTuples,

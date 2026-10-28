@@ -2,8 +2,10 @@
 //! and checks the index column it should have changed. The build's tests drive indexer batches
 //! between writes.
 
-use super::{Graph, NodeId};
+use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
+use crate::index::Field;
+use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, ColumnState};
 use crate::index::falkordb::graph_writes;
 use crate::index::index_docs::IndexDocs;
@@ -11,6 +13,8 @@ use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::ffi::CString;
 use std::sync::Arc;
 
 /// Run one graph write with its own [`IndexDocs`] and apply its native-index changes straight
@@ -189,6 +193,45 @@ fn create_index_builds_the_column_from_live_nodes() {
     assert_eq!(scan(Some(15), Some(35)), vec![ids[1], ids[2]]);
     // Unbounded → all three, value-ordered.
     assert_eq!(scan(None, None), vec![ids[0], ids[1], ids[2]]);
+}
+
+/// RDB load creates each native column empty and `Ready`, and its populate rebuilds the column
+/// once every entity is in, through the one indexer batch CREATE INDEX takes. Afterwards each
+/// column is `Ready` and holds what the graph's values say, for nodes and for edges.
+#[test]
+fn rdb_load_populate_builds_each_column_through_an_indexer_batch() {
+    let (mut g, label, v, ty, w) = scan_fixture();
+    let range = |attr: &Arc<String>| -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+        let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
+        HashMap::from([(attr.clone(), vec![Arc::new(field)])])
+    };
+    for (entity, l, a) in [
+        (EntityType::Node, &label, &v),
+        (EntityType::Relationship, &ty, &w),
+    ] {
+        g.falkordb_index
+            .create_unpopulated(&IndexType::Range, entity, l, std::slice::from_ref(a));
+        graph_writes::populate(&mut g, entity, l, &range(a));
+        assert_eq!(
+            g.falkordb_index.column_state(entity, l, a),
+            Some(ColumnState::Ready),
+            "{entity:?}"
+        );
+    }
+    let node_values: Vec<i64> = (0..10).map(|i| i * 10).collect();
+    let nodes = one_pass(&g, EntityType::Node, &label, &v, &node_values);
+    assert_eq!(nodes.1.len(), 9, "ten nodes, one deleted");
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &v, &node_values),
+        nodes
+    );
+    let edge_values: Vec<i64> = (0..8).collect();
+    let edges = one_pass(&g, EntityType::Relationship, &ty, &w, &edge_values);
+    assert_eq!(edges.1.len(), 8);
+    assert_eq!(
+        contents(&g, EntityType::Relationship, &ty, &w, &edge_values),
+        edges
+    );
 }
 
 // --- Write-path maintenance ---
@@ -578,9 +621,10 @@ fn contents(
     (per_value, idx.range(None, None, true, true).collect())
 }
 
-/// What a one-pass build of `g` as it stands now gives column `(entity, label, attr)`: the column
-/// rebuilt on a copy of `g` by the RDB-load populate, which collects every value and bulk-builds,
-/// and shares no code with the indexer batches.
+/// What column `(entity, label, attr)` must hold for `g` as it stands now, in the shape
+/// [`contents`] reports: worked out from the graph's values here, sharing no code with the
+/// indexer batches. Every live `label` node, or `label`-typed edge, with a numeric `attr`, as its
+/// `(key, id)` tuple, in tuple order.
 fn one_pass(
     g: &Graph,
     entity: EntityType,
@@ -588,9 +632,52 @@ fn one_pass(
     attr: &Arc<String>,
     values: &[i64],
 ) -> (Vec<(i64, Vec<u64>)>, Vec<u64>) {
-    let mut copy = g.new_version();
-    graph_writes::build_column(&mut copy, entity, label, attr);
-    contents(&copy, entity, label, attr, values)
+    let mut tuples: Vec<(u64, u64)> = Vec::new();
+    match entity {
+        EntityType::Node => {
+            if let (Some(lm), Some(idx)) =
+                (g.get_label_matrix(label), g.get_node_attribute_id(attr))
+            {
+                for (n, _) in lm.iter(0, u64::MAX) {
+                    let value = g.get_node_attribute_by_idx(NodeId::from(n), idx as u16);
+                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
+                        tuples.push((key, n));
+                    }
+                }
+            }
+        }
+        EntityType::Relationship => {
+            if let (Some(t), Some(idx)) = (
+                g.get_relationship_matrix(label),
+                g.get_relationship_attribute_id(attr),
+            ) {
+                for (_, _, eid) in t.iter(0, u64::MAX, false) {
+                    let value =
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16);
+                    if let Some(key) = value.as_ref().and_then(encode_numeric) {
+                        tuples.push((key, eid));
+                    }
+                }
+            }
+        }
+    }
+    tuples.sort_unstable();
+    tuples.dedup();
+    let per_value = values
+        .iter()
+        .map(|&v| {
+            let key = encode_numeric(&Value::Int(v)).expect("an integer encodes");
+            (
+                v,
+                tuples
+                    .iter()
+                    .filter(|&&(k, _)| k == key)
+                    .map(|&(_, id)| id)
+                    .collect(),
+            )
+        })
+        .collect();
+    (per_value, tuples.into_iter().map(|(_, id)| id).collect())
 }
 
 /// A build in small batches, with writes landing between the batches both on nodes the batches
