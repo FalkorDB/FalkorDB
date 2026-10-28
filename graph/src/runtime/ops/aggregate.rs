@@ -1181,6 +1181,16 @@ impl<'a> Iterator for AggregateOp<'a> {
                     combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
+                // Unbind internal accumulator variables so they don't leak
+                // to downstream operators and collide with variables in
+                // subsequent scopes that reuse the same slot IDs. This comes
+                // before any key is written: the binder may give an
+                // accumulator the slot id of a grouping key, and unbinding
+                // after the key is written would drop that key (a null key
+                // then vanishes from the batch, #3150).
+                for (_, tree) in self.agg {
+                    unbind_agg_accumulators(&tree.root(), &mut acc);
+                }
                 // Insert pre-projection key variable values into acc so
                 // downstream operators can find them, but skip any slot that
                 // is already occupied by an aggregation output to avoid
@@ -1197,12 +1207,6 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 acc.merge(&key);
-                // Unbind internal accumulator variables so they don't leak
-                // to downstream operators and collide with variables in
-                // subsequent scopes that reuse the same slot IDs.
-                for (_, tree) in self.agg {
-                    unbind_agg_accumulators(&tree.root(), &mut acc);
-                }
                 // Re-bind aggregate output names last: an accumulator slot id
                 // can coincide with another aggregate's output name (the binder
                 // may reuse slot IDs), and the unbind above would otherwise
