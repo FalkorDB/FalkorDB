@@ -8,7 +8,7 @@ use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::managed::BuildState;
+use crate::index::falkordb::versioned::BuildState;
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;

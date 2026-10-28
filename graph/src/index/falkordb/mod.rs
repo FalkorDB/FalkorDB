@@ -17,10 +17,10 @@ pub mod falkordb_index;
 pub mod graph_writes;
 
 #[cfg(feature = "index-falkordb")]
-pub mod managed;
-
-#[cfg(feature = "index-falkordb")]
 pub mod numeric;
 
 #[cfg(feature = "index-falkordb")]
 pub mod pending_writes;
+
+#[cfg(feature = "index-falkordb")]
+pub mod versioned;

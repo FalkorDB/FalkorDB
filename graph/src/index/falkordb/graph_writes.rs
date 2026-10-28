@@ -35,9 +35,9 @@ use crate::index::{Field, IndexType};
 use crate::runtime::value::Value;
 
 use super::falkordb_index::{BuildCursor, IndexColumn};
-use super::managed::IndexId;
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
+use super::versioned::IndexId;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
 /// Range indexes alone, and the graph skips the redundant RediSearch feed on the write path.
@@ -524,7 +524,7 @@ fn edge_type(
 /// Each value is encoded as it is read and dropped straight away, so the scan never holds the
 /// entities' `Value`s, only the encoded tuples. A value the column does not index (a string on a
 /// Range index) costs nothing past the read. This is how a column reads an indexer batch
-/// ([`ManagedIndex::indexer_read`](super::managed::ManagedIndex::indexer_read)).
+/// ([`VersionedIndex::indexer_read`](super::versioned::VersionedIndex::indexer_read)).
 pub(super) fn scan(
     g: &Graph,
     label: &Arc<String>,

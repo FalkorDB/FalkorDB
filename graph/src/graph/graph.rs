@@ -82,7 +82,7 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(all(test, feature = "index-falkordb"))]
-use crate::index::falkordb::managed::IndexId;
+use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
     falkordb_index::{BuildCursor, FalkorDbIndex},

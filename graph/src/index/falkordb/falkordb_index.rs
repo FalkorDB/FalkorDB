@@ -19,9 +19,9 @@ use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
 use super::graph_writes;
-use super::managed::{BuildState, Managed, ManagedIndex};
 use super::numeric::{DocIter, EncodedTuples, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
+use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -143,10 +143,10 @@ impl IndexColumn {
     }
 }
 
-/// A column is a managed index ([`BuildState`] has the rules its build keeps). It is found by
+/// A column is a versioned index ([`BuildState`] has the rules its build keeps). It is found by
 /// entity and `(label, attr)`, writers stage its changes as a log of encoded tuples, and a batch
 /// reads the label's entities in build order ([`BuildCursor`]) into encoded tuples.
-impl ManagedIndex for IndexColumn {
+impl VersionedIndex for IndexColumn {
     type Cursor = BuildCursor;
     type Changes = Vec<IndexWrite>;
     type Batch = EncodedTuples;
@@ -157,14 +157,14 @@ impl ManagedIndex for IndexColumn {
     fn entry<'a>(
         index: &'a FalkorDbIndex,
         (entity, key): &(EntityType, IndexKey),
-    ) -> Option<&'a Managed<Self>> {
+    ) -> Option<&'a IndexEntry<Self>> {
         index.columns(*entity).get(key)
     }
 
     fn entry_mut<'a>(
         index: &'a mut FalkorDbIndex,
         (entity, key): &(EntityType, IndexKey),
-    ) -> Option<&'a mut Managed<Self>> {
+    ) -> Option<&'a mut IndexEntry<Self>> {
         index.columns_mut(*entity).get_mut(key)
     }
 
@@ -271,8 +271,8 @@ impl BuildCursor {
 /// writer mutates that particular column.
 #[derive(Clone, Default)]
 pub struct FalkorDbIndex {
-    node_columns: HashMap<IndexKey, Managed<IndexColumn>>,
-    edge_columns: HashMap<IndexKey, Managed<IndexColumn>>,
+    node_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
+    edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
 }
 
 impl FalkorDbIndex {
@@ -309,7 +309,7 @@ impl FalkorDbIndex {
     fn columns(
         &self,
         entity: EntityType,
-    ) -> &HashMap<IndexKey, Managed<IndexColumn>> {
+    ) -> &HashMap<IndexKey, IndexEntry<IndexColumn>> {
         match entity {
             EntityType::Node => &self.node_columns,
             EntityType::Relationship => &self.edge_columns,
@@ -319,7 +319,7 @@ impl FalkorDbIndex {
     fn columns_mut(
         &mut self,
         entity: EntityType,
-    ) -> &mut HashMap<IndexKey, Managed<IndexColumn>> {
+    ) -> &mut HashMap<IndexKey, IndexEntry<IndexColumn>> {
         match entity {
             EntityType::Node => &mut self.node_columns,
             EntityType::Relationship => &mut self.edge_columns,
@@ -332,7 +332,7 @@ impl FalkorDbIndex {
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<&Managed<IndexColumn>> {
+    ) -> Option<&IndexEntry<IndexColumn>> {
         self.columns(entity).get(&(label.clone(), attr.clone()))
     }
 
@@ -385,8 +385,10 @@ impl FalkorDbIndex {
         column: IndexColumn,
         state: BuildState<BuildCursor>,
     ) {
-        self.columns_mut(entity)
-            .insert((label.clone(), attr.clone()), Managed::new(column, state));
+        self.columns_mut(entity).insert(
+            (label.clone(), attr.clone()),
+            IndexEntry::new(column, state),
+        );
     }
 
     /// Drop the column for `(entity, label, attr)` in `O(1)` — releases the tree `Arc`. DROP INDEX.
@@ -444,7 +446,7 @@ impl FalkorDbIndex {
         attr: &Arc<String>,
     ) -> Option<&NumericIndex> {
         match self.columns(entity).get(&(label.clone(), attr.clone())) {
-            Some(Managed {
+            Some(IndexEntry {
                 index: IndexColumn::Numeric(idx),
                 ..
             }) => Some(idx),
@@ -463,7 +465,7 @@ impl FalkorDbIndex {
             .columns_mut(entity)
             .get_mut(&(label.clone(), attr.clone()))
         {
-            Some(Managed {
+            Some(IndexEntry {
                 index: IndexColumn::Numeric(idx),
                 ..
             }) => Some(idx),
@@ -528,7 +530,7 @@ impl FalkorDbIndex {
     }
 
     /// One entity kind's part of [`apply`](Self::apply): each column records its changes as its
-    /// state allows ([`Managed::writer_record`]). A column dropped since its changes were staged
+    /// state allows ([`IndexEntry::writer_record`]). A column dropped since its changes were staged
     /// is skipped.
     fn apply_writes(
         &mut self,
@@ -537,7 +539,7 @@ impl FalkorDbIndex {
         place: &impl Fn(EntityType, u64) -> Option<BuildCursor>,
     ) {
         let columns = self.columns_mut(entity);
-        let mut scratch = <IndexColumn as ManagedIndex>::Scratch::default();
+        let mut scratch = <IndexColumn as VersionedIndex>::Scratch::default();
         for (key, log) in writes {
             let Some(entry) = columns.get_mut(&key) else {
                 continue;
@@ -617,7 +619,7 @@ impl FalkorDbIndex {
         self.node_columns
             .values()
             .chain(self.edge_columns.values())
-            .any(Managed::is_building)
+            .any(IndexEntry::is_building)
     }
 
     /// The build state of column `(entity, label, attr)`, if it exists.
@@ -635,8 +637,8 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::super::managed::IndexerBatch;
     use super::super::pending_writes::IndexChanges;
+    use super::super::versioned::IndexerBatch;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
 

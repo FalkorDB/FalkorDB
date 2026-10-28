@@ -1,9 +1,9 @@
 //! What every native index carries, whatever its kind: its build state, and the two sides that
 //! change it, writers and indexer batches.
 //!
-//! A kind (today only the tuple column, [`IndexColumn`]) implements [`ManagedIndex`]: how it
+//! A kind (today only the tuple column, [`IndexColumn`]) implements [`VersionedIndex`]: how it
 //! records a writer's changes, and how it reads and adds an indexer batch. The lifecycle around
-//! those operations is written once here, over [`Managed<K>`], and never names a kind.
+//! those operations is written once here, over [`IndexEntry<K>`], and never names a kind.
 
 use std::fmt;
 
@@ -12,17 +12,17 @@ use crate::graph::graph::Graph;
 
 use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 
-/// Build state of a managed index, generic over its kind's cursor.
+/// Build state of a versioned index, generic over its kind's cursor.
 ///
 /// An index is filled by indexer batches. Each reads the next entities from the cursor at the
-/// values they hold *then* ([`ManagedIndex::indexer_read`]), adds them, and moves the cursor past
-/// them ([`Managed::indexer_apply`]). The batch that reaches the end flips the index
+/// values they hold *then* ([`VersionedIndex::indexer_read`]), adds them, and moves the cursor past
+/// them ([`IndexEntry::indexer_apply`]). The batch that reaches the end flips the index
 /// [`Ready`](Self::Ready). While [`Building`](Self::Building), the read path returns `None` and
 /// falls through to RediSearch. `CREATE INDEX` takes one batch over every entity, so its index is
 /// `Ready` when it returns.
 ///
 /// A `Building` index holds exactly the current tuples of the entities below its cursor, and
-/// nothing at or above it. Live writes keep that true ([`ManagedIndex::writer_record`]). An
+/// nothing at or above it. Live writes keep that true ([`VersionedIndex::writer_record`]). An
 /// addition for an entity below the cursor is applied, and one for an entity at or above it is
 /// not, since the batch that reaches the entity reads its value then. Every removal is applied,
 /// because an id's place can move past the cursor within one unit of work: an edge behind it is
@@ -41,7 +41,7 @@ pub(crate) enum BuildState<C> {
     Ready,
 }
 
-/// The name of any managed index: what the builder's chains, a commit's report of what it created
+/// The name of any versioned index: what the builder's chains, a commit's report of what it created
 /// and every per-index dispatch key on.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum IndexId {
@@ -49,24 +49,24 @@ pub(crate) enum IndexId {
     Column(EntityType, IndexKey),
 }
 
-/// One managed index: the kind's own structure plus its build state.
+/// One versioned index: the kind's own structure plus its build state.
 #[derive(Clone)]
-pub(crate) struct Managed<K: ManagedIndex> {
+pub(crate) struct IndexEntry<K: VersionedIndex> {
     pub(crate) index: K,
     pub(crate) state: BuildState<K::Cursor>,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
 /// (`None`: the batch reached the end).
-pub(crate) struct IndexerBatch<K: ManagedIndex> {
+pub(crate) struct IndexerBatch<K: VersionedIndex> {
     pub(crate) name: K::Name,
     pub(crate) work: K::Batch,
     pub(crate) next: Option<K::Cursor>,
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
-/// [`Managed<K>`]'s, the same for every kind.
-pub(crate) trait ManagedIndex: Clone + Sized {
+/// [`IndexEntry<K>`]'s, the same for every kind.
+pub(crate) trait VersionedIndex: Clone + Sized {
     /// Where a `Building` index's next batch resumes, and an entity's place in that order.
     type Cursor: Copy + Eq + fmt::Debug;
     /// One unit of work's staged changes to one index.
@@ -82,13 +82,13 @@ pub(crate) trait ManagedIndex: Clone + Sized {
     fn entry<'a>(
         index: &'a FalkorDbIndex,
         name: &Self::Name,
-    ) -> Option<&'a Managed<Self>>;
+    ) -> Option<&'a IndexEntry<Self>>;
 
     /// Index `name` in `index`, if it exists, to change.
     fn entry_mut<'a>(
         index: &'a mut FalkorDbIndex,
         name: &Self::Name,
-    ) -> Option<&'a mut Managed<Self>>;
+    ) -> Option<&'a mut IndexEntry<Self>>;
 
     /// Writer side: apply one unit of work's `changes`. While `state` is `Building`, an addition
     /// is applied only for an entity `place` puts below the cursor, and every removal is applied,
@@ -122,7 +122,7 @@ pub(crate) trait ManagedIndex: Clone + Sized {
     );
 }
 
-impl<K: ManagedIndex> Managed<K> {
+impl<K: VersionedIndex> IndexEntry<K> {
     pub(crate) fn new(
         index: K,
         state: BuildState<K::Cursor>,
@@ -144,7 +144,7 @@ impl<K: ManagedIndex> Managed<K> {
     }
 
     /// Apply one unit of work's `changes`, as this index's state allows
-    /// ([`ManagedIndex::writer_record`]).
+    /// ([`VersionedIndex::writer_record`]).
     pub(crate) fn writer_record(
         &mut self,
         changes: K::Changes,
@@ -173,9 +173,9 @@ impl<K: ManagedIndex> Managed<K> {
 }
 
 impl FalkorDbIndex {
-    /// Apply one indexer batch to this version ([`Managed::indexer_apply`]). `false`, changing
+    /// Apply one indexer batch to this version ([`IndexEntry::indexer_apply`]). `false`, changing
     /// nothing, if the index is gone or no longer `Building`.
-    pub(crate) fn apply_indexer_batch<K: ManagedIndex>(
+    pub(crate) fn apply_indexer_batch<K: VersionedIndex>(
         &mut self,
         batch: &mut IndexerBatch<K>,
     ) -> bool {
@@ -202,7 +202,7 @@ impl Graph {
 
     /// [`Self::indexer_prepare`] for one kind: read the batch from the index's cursor, then apply
     /// it to the same version. Returns the batch, or `None` if the index is not `Building`.
-    fn prepare_batch<K: ManagedIndex>(
+    fn prepare_batch<K: VersionedIndex>(
         &mut self,
         name: K::Name,
         budget: usize,
