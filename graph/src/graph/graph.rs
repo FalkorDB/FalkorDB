@@ -83,7 +83,7 @@ use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::FalkorDbIndex,
+    falkordb_index::{BuildCursor, FalkorDbIndex, IndexKey},
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -445,8 +445,8 @@ pub struct Graph {
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
-    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes, and
-    /// `FalkorDbIndex::apply` updates it.
+    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes and to read
+    /// build batches, and `FalkorDbIndex::apply` updates it.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
 }
@@ -3782,6 +3782,20 @@ impl Graph {
         )
     }
 
+    /// One indexer batch on this version: read the next entities of column `key` of `entity` at
+    /// the values this version holds, at most `entities` nodes or edges, add it to the column and
+    /// move the column's cursor. `false`, changing nothing, if the column is not `Building`.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) fn index_batch(
+        &mut self,
+        entity: EntityType,
+        key: &IndexKey,
+        entities: usize,
+    ) -> bool {
+        graph_writes::read_indexer_batch_of(self, entity, key, entities)
+            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
+    }
+
     /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
     /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
     /// private version the changes were staged against.
@@ -3790,7 +3804,21 @@ impl Graph {
         docs: &mut IndexDocs,
     ) {
         #[cfg(feature = "index-falkordb")]
-        self.falkordb_index.apply(&mut docs.native);
+        {
+            // A `Building` column asks where a written entity sits in build order: a node by its
+            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            let endpoints = &self.edge_endpoints;
+            self.falkordb_index
+                .apply(&mut docs.native, |entity, id| match entity {
+                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
+                    EntityType::Relationship => {
+                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
+                            src: NodeId::from(src),
+                            dst: NodeId::from(dst),
+                        })
+                    }
+                });
+        }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;
     }
@@ -4085,7 +4113,7 @@ impl Graph {
     }
 
     /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing column). Wraps
+    /// (non-numeric / composite / missing or `Building` column). Wraps
     /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
     /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
     /// borrow.
@@ -4105,7 +4133,7 @@ impl Graph {
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
     /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing column.
+    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
@@ -5042,6 +5070,16 @@ impl Graph {
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
+    }
+
+    /// [`Self::index_batch`] of the first `Building` column. For tests of one column.
+    #[cfg(all(test, feature = "index-falkordb"))]
+    pub(crate) fn index_next_batch(
+        &mut self,
+        entities: usize,
+    ) -> bool {
+        graph_writes::read_indexer_batch(self, entities)
+            .is_some_and(|batch| self.falkordb_index.apply_indexer_batch(batch))
     }
 }
 
