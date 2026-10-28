@@ -1130,6 +1130,17 @@ impl Graph {
         }
     }
 
+    /// A new version for an indexer batch: [`Self::new_version`], but at the same data version,
+    /// since a batch changes no data. The batch's index tells what it changed (its
+    /// `indexer_commits`).
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn new_build_version(&self) -> Self {
+        let mut version = self.new_version();
+        version.version = self.version;
+        version
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -5170,6 +5181,7 @@ impl Graph {
             .next_building()
             .is_some_and(|(entity, key, _)| {
                 self.indexer_prepare(&IndexId::Column(entity, key), entities)
+                    .is_some()
             })
     }
 }
