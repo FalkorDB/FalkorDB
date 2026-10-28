@@ -133,8 +133,7 @@ OpBase *ExecutionPlan_ProcessPattern
 			edge = QueryGraph_GetEdgeByAlias(qg, edge_alias) ;
 		}
 
-		bool is_var_len = edge &&
-			(QGEdge_VariableLength (edge) || !QGEdge_SingleHop (edge)) ;
+		bool is_var_len = edge && QGEdge_RequiresVarLenTraversal (edge) ;
 
 		if (is_var_len) {
 			if (QGEdge_IsShortestPath (edge)) {
