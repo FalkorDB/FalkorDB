@@ -1148,9 +1148,12 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     loop {
         for (i, q) in node_queries.iter().enumerate() {
             if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_nodes(&label, q) {
+                let attr = g
+                    .get_node_attribute_id(recheck.attribute())
+                    .expect("registered") as u16;
                 let ids = g
                     .get_nodes(&labels, 0)
-                    .filter(|&id| g.node_admitted(id, &recheck))
+                    .filter(|&id| g.node_admitted(id, attr, &recheck))
                     .map(u64::from)
                     .collect();
                 kept.push((false, i, sorted(ids)));
@@ -1158,10 +1161,13 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         }
         for (i, q) in edge_queries.iter().enumerate() {
             if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_edges(&ty, q) {
+                let attr = g
+                    .get_relationship_attribute_id(recheck.attribute())
+                    .expect("registered") as u16;
                 let ids = g
                     .get_all_edges(&ty)
                     .into_iter()
-                    .filter(|&(_, _, edge)| g.relationship_admitted(edge, &recheck))
+                    .filter(|&(_, _, edge)| g.relationship_admitted(edge, attr, &recheck))
                     .map(|(_, _, edge)| u64::from(edge))
                     .collect();
                 kept.push((true, i, sorted(ids)));
