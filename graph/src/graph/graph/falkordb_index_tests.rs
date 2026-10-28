@@ -7,7 +7,7 @@ use crate::entity_type::EntityType;
 use crate::graph::mvcc_graph::{Claim, MvccGraph, PANIC_IN_INDEXER_COMMIT};
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::{BuildCursor, NumericAnswer};
+use crate::index::falkordb::falkordb_index::{BuildCursor, IndexKey, NumericAnswer};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::{
     ALLOW_BATCH_RACE, BuildState, CATCH_UP_BY, CatchUp, Dropped, IndexId, IndexerCommit,
@@ -2324,6 +2324,385 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
         assert!(
             counts.get(outcome).copied().unwrap_or(0) > 0,
             "no order reached \"{outcome}\": {counts:?}"
+        );
+    }
+}
+
+/// Delete node `id` and the edges on it, in the order a commit does.
+fn delete_node_with_edges(
+    g: &mut Graph,
+    id: u64,
+) {
+    delete_node(g, id);
+    let del: RoaringTreemap = [id].into_iter().collect();
+    applied!(g, |w| g.delete_implicit_edges(
+        &del,
+        &RoaringTreemap::new(),
+        &mut w
+    ))
+    .expect("deleted");
+}
+
+/// `ty`-typed edges from each of `srcs` to the matching `dsts`, with `attr` = `first`,
+/// `first + 1`, ...: their ids.
+fn add_edges(
+    g: &mut Graph,
+    ty: &Arc<String>,
+    attr: &Arc<String>,
+    srcs: &[u64],
+    dsts: &[u64],
+    first: i64,
+) -> Vec<u64> {
+    g.open_id_batches().expect("a consistent space");
+    let aid = g.get_or_create_rel_attr_id(attr);
+    let eids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(srcs.len(), &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(ty, srcs, dsts, &eids)
+        .expect("freshly reserved ids are creatable");
+    let values: FxHashMap<u64, Vec<(u16, Value)>> = eids
+        .iter()
+        .zip(first..)
+        .map(|(&eid, w)| (eid, vec![(aid, Value::Int(w))]))
+        .collect();
+    applied!(g, |d| g.import_relationship_attrs(&values, &mut d));
+    eids
+}
+
+/// Set edge `eid`'s `attr` to `value`, through the write path.
+fn set_edge_attr(
+    g: &mut Graph,
+    eid: u64,
+    attr: &Arc<String>,
+    value: i64,
+) {
+    g.open_id_batches().expect("a consistent space");
+    let aid = g.get_or_create_rel_attr_id(attr);
+    let set: FxHashMap<u64, Vec<(u16, Value)>> = [(eid, vec![(aid, Value::Int(value))])]
+        .into_iter()
+        .collect();
+    applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
+}
+
+/// Column `key` of `entity` checked against `g`'s own data, by the rules on [`BuildState`]: it
+/// holds exactly the current tuples of every `label` node, or `label`-typed edge, if `Ready`, or
+/// of those `g` places below its cursor if `Building`, and nothing else. Reads `g` entity by
+/// entity, not through the build's own scans. A column `g` does not have passes.
+fn check_column(
+    g: &Graph,
+    entity: EntityType,
+    (label, attr): &IndexKey,
+    what: &str,
+) {
+    let Some(state) = g.falkordb_index.column_state(entity, label, attr) else {
+        return;
+    };
+    let mut entities: Vec<(u64, Option<Value>)> = Vec::new();
+    match entity {
+        EntityType::Node => {
+            let idx = g.get_node_attribute_id(attr);
+            if let Some(m) = g.get_label_matrix(label) {
+                for (n, _) in m.iter(0, u64::MAX) {
+                    let value = idx
+                        .and_then(|idx| g.get_node_attribute_by_idx(NodeId::from(n), idx as u16));
+                    entities.push((n, value));
+                }
+            }
+        }
+        EntityType::Relationship => {
+            let idx = g.get_relationship_attribute_id(attr);
+            if let Some(t) = g.get_relationship_matrix(label) {
+                for (_, _, eid) in t.iter(0, u64::MAX, false) {
+                    let value = idx.and_then(|idx| {
+                        g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx as u16)
+                    });
+                    entities.push((eid, value));
+                }
+            }
+        }
+    }
+    let expected: BTreeSet<(u64, u64)> = entities
+        .into_iter()
+        .filter(|&(id, _)| match state {
+            BuildState::Ready => true,
+            BuildState::Building { next } => g
+                .build_place(entity, id)
+                .is_some_and(|at| at.precedes(next)),
+        })
+        .filter_map(|(id, value)| Some((encode_numeric(&value?)?, id)))
+        .collect();
+    let held: BTreeSet<(u64, u64)> = g
+        .falkordb_index
+        .numeric(entity, label, attr)
+        .expect("a numeric column")
+        .tuples()
+        .into_iter()
+        .collect();
+    assert_eq!(held, expected, "{what}: {label}.{attr} ({state:?})");
+}
+
+/// Writers and indexer batches on real threads, on three columns at once (two node columns and an
+/// edge column), with one indexer thread per column, as the builder runs one chain of batches per
+/// column, and three writer threads that fork, write and claim, or write holding the slot:
+/// re-values, creates, deletes (a node's edges with it), labels moved off, edges added and
+/// re-valued, and now and then a column dropped and created again, `Building`. Until commits
+/// publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads share it behind
+/// a test lock: forks and reads take its read side, claims and commits its write side, and a batch
+/// is read with no lock held. After every commit the published version keeps the rules on
+/// [`BuildState`] against its own data ([`check_column`]), and every column ends `Ready`, as a
+/// one-pass build of the final data. It runs until every way a commit can go was seen, so a run
+/// in which the threads never raced fails.
+#[test]
+fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
+    use parking_lot::{Mutex, RwLock};
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const NODES: i64 = 400;
+    const VALUES: i64 = 10_000;
+    const BATCH: usize = 7;
+    const SEEN: [&str; 9] = [
+        "writer claimed",
+        "writer over batches",
+        "writer stale",
+        "writer holding the slot",
+        "batch same",
+        "batch swapped",
+        "batch caught up, refreshing",
+        "batch caught up, inserting",
+        "batch dropped, gone",
+    ];
+    let (v, w, x, ty) = (
+        attr_named("v"),
+        attr_named("w"),
+        attr_named("x"),
+        attr_named("R"),
+    );
+    let (mut g, label, ids) = people_with(&v, &(0..NODES).collect::<Vec<_>>());
+    for (i, &id) in ids.iter().enumerate() {
+        set_attr(&mut g, id, &w, Value::Int(1000 + i as i64));
+    }
+    add_edges(&mut g, &ty, &x, &ids[..ids.len() - 1], &ids[1..], 0);
+    let columns: Vec<(EntityType, IndexKey)> = vec![
+        (EntityType::Node, (Arc::clone(&label), Arc::clone(&v))),
+        (EntityType::Node, (Arc::clone(&label), Arc::clone(&w))),
+        (EntityType::Relationship, (Arc::clone(&ty), Arc::clone(&x))),
+    ];
+    for (entity, (l, a)) in &columns {
+        g.falkordb_index.create_building(*entity, l, a);
+    }
+    let mvcc = RwLock::new(MvccGraph::from_graph(g));
+
+    let counts: Mutex<BTreeMap<&str, usize>> = Mutex::new(BTreeMap::new());
+    let count = |how: &'static str| *counts.lock().entry(how).or_default() += 1;
+    let seen_all = || {
+        let counts = counts.lock();
+        SEEN.iter()
+            .all(|how| counts.get(how).copied().unwrap_or(0) > 0)
+    };
+    let check = |what: &str| {
+        let published = mvcc.read().read();
+        let g = published.borrow();
+        for (entity, key) in &columns {
+            check_column(&g, *entity, key, what);
+        }
+    };
+    // A random write on `g`, by `op`: re-create a column, delete a node and its edges, create a
+    // node, move one off `:Person`, add an edge, re-value an edge or a node. Half the time a node
+    // it picks is one of those just past a node column's cursor, which its next batches read.
+    let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
+        let mut people: Vec<u64> = g
+            .get_label_matrix(&label)
+            .map(|m| m.iter(0, u64::MAX).map(|(n, _)| n).collect())
+            .unwrap_or_default();
+        let attr = if rng.random_bool(0.5) { &v } else { &w };
+        if rng.random_bool(0.5)
+            && let Some(BuildState::Building {
+                next: BuildCursor::Node(next),
+            }) = g
+                .falkordb_index
+                .column_state(EntityType::Node, &label, attr)
+        {
+            let near: Vec<u64> = people
+                .iter()
+                .copied()
+                .filter(|&id| id >= u64::from(next))
+                .take(2 * BATCH)
+                .collect();
+            if !near.is_empty() {
+                people = near;
+            }
+        }
+        let edges: Vec<u64> = g
+            .get_relationship_matrix(&ty)
+            .map(|t| t.iter(0, u64::MAX, false).map(|(_, _, e)| e).collect())
+            .unwrap_or_default();
+        let value = rng.random_range(0..VALUES);
+        match op {
+            0..=3 => {
+                let (entity, (l, a)) = &columns[rng.random_range(0..columns.len())];
+                g.falkordb_index.drop_column(*entity, l, a);
+                g.falkordb_index.create_building(*entity, l, a);
+            }
+            4..=11 if !people.is_empty() => {
+                delete_node_with_edges(g, people[rng.random_range(0..people.len())]);
+            }
+            12..=19 => {
+                let id = add_person(g, &v, value);
+                set_attr(g, id, &w, Value::Int(rng.random_range(0..VALUES)));
+            }
+            20..=25 if !people.is_empty() => {
+                relabel_to_other(g, people[rng.random_range(0..people.len())]);
+            }
+            26..=35 if people.len() >= 2 => {
+                let src = people[rng.random_range(0..people.len())];
+                let dst = people[rng.random_range(0..people.len())];
+                add_edges(g, &ty, &x, &[src], &[dst], value);
+            }
+            36..=55 if !edges.is_empty() => {
+                set_edge_attr(g, edges[rng.random_range(0..edges.len())], &x, value);
+            }
+            _ if !people.is_empty() => {
+                set_attr(
+                    g,
+                    people[rng.random_range(0..people.len())],
+                    attr,
+                    Value::Int(value),
+                );
+            }
+            _ => {}
+        }
+    };
+
+    let writers_left = AtomicUsize::new(3);
+    let started = Instant::now();
+    thread::scope(|scope| {
+        for (seed, (entity, key)) in (100..).zip(&columns) {
+            let (mvcc, count, check, writers_left) = (&mvcc, &count, &check, &writers_left);
+            scope.spawn(move || {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let id = IndexId::Column(*entity, key.clone());
+                loop {
+                    // Before the batch reads: once no writer is left, a column that is not
+                    // `Building` stays so.
+                    let done = writers_left.load(Ordering::Acquire) == 0;
+                    let prepared = Arc::new(AtomicRefCell::new(
+                        mvcc.read().read().borrow().new_build_version(),
+                    ));
+                    let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, BATCH) else {
+                        if done {
+                            break;
+                        }
+                        thread::yield_now();
+                        continue;
+                    };
+                    // A batch's read takes milliseconds at full size; this one's, microseconds.
+                    // The wait gives writers the time to commit while it is taken.
+                    thread::sleep(Duration::from_micros(rng.random_range(0..200)));
+                    let how = mvcc
+                        .write()
+                        .commit_indexer_batch(&prepared, &batch)
+                        .expect("the slot is free under the lock");
+                    count(match how {
+                        IndexerCommit::Same => "batch same",
+                        IndexerCommit::Swap => "batch swapped",
+                        IndexerCommit::CatchUp(CatchUp::Refresh) => "batch caught up, refreshing",
+                        IndexerCommit::CatchUp(CatchUp::Insert) => "batch caught up, inserting",
+                        IndexerCommit::Dropped(Dropped::Gone) => "batch dropped, gone",
+                        IndexerCommit::Dropped(Dropped::AnotherBatch) => {
+                            "batch dropped, another batch"
+                        }
+                    });
+                    check(&format!("a batch on {}.{} ({how:?})", key.0, key.1));
+                }
+            });
+        }
+        for seed in 0..3 {
+            let (mvcc, count, check, writers_left, random_write, seen_all) = (
+                &mvcc,
+                &count,
+                &check,
+                &writers_left,
+                &random_write,
+                &seen_all,
+            );
+            scope.spawn(move || {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let mut writes = 0;
+                while writes < 150 || (!seen_all() && started.elapsed() < Duration::from_secs(30)) {
+                    writes += 1;
+                    let op = rng.random_range(0..100);
+                    if rng.random_bool(0.3) {
+                        let mut mvcc = mvcc.write();
+                        let version = mvcc.write().expect("the slot is free under the lock");
+                        random_write(&mut version.borrow_mut(), op, &mut rng);
+                        mvcc.commit(version).expect("the writer commits");
+                        drop(mvcc);
+                        count("writer holding the slot");
+                        check("a write holding the slot");
+                        continue;
+                    }
+                    loop {
+                        let (base, fork) = {
+                            let mvcc = mvcc.read();
+                            (mvcc.read(), mvcc.fork())
+                        };
+                        random_write(&mut fork.borrow_mut(), op, &mut rng);
+                        // As a batch's, so batches commit while a fork waits to claim.
+                        thread::sleep(Duration::from_micros(rng.random_range(0..200)));
+                        let mut mvcc = mvcc.write();
+                        let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
+                        match mvcc.claim(&fork) {
+                            Ok(()) => {
+                                mvcc.commit(fork).expect("the writer commits");
+                                drop(mvcc);
+                                count(if over_batches {
+                                    "writer over batches"
+                                } else {
+                                    "writer claimed"
+                                });
+                                check("a claimed write");
+                                break;
+                            }
+                            Err(Claim::Stale) => count("writer stale"),
+                            Err(e) => panic!("{e:?}"),
+                        }
+                    }
+                }
+                writers_left.fetch_sub(1, Ordering::Release);
+            });
+        }
+    });
+
+    let counts = counts.into_inner();
+    for how in SEEN {
+        assert!(
+            counts.get(how).copied().unwrap_or(0) > 0,
+            "never seen: {how}; {counts:?} in {:?}",
+            started.elapsed()
+        );
+    }
+    let published = mvcc.read().read();
+    let g = published.borrow();
+    for (entity, key) in &columns {
+        check_column(&g, *entity, key, "built");
+        assert_eq!(
+            g.falkordb_index.column_state(*entity, &key.0, &key.1),
+            Some(BuildState::Ready),
+            "{}.{} built",
+            key.0,
+            key.1
+        );
+        assert_eq!(
+            contents(&g, *entity, &key.0, &key.1, &[]),
+            one_pass(&g, *entity, &key.0, &key.1, &[]),
+            "{}.{} against a one-pass build",
+            key.0,
+            key.1
         );
     }
 }
