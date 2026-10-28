@@ -78,6 +78,21 @@ use crate::{
     },
 };
 
+/// Prefix of the name the parser gives an unnamed node or relationship.
+///
+/// It is C's spelling, and `@` cannot start an unquoted identifier, so a
+/// query can only collide with it by backquoting the name. The old
+/// `_anon_` prefix was a plain identifier: `MATCH (_anon_0:A), (:B)` made
+/// both patterns one node, and any variable written `_anon...` was treated
+/// as anonymous.
+pub const ANON_PREFIX: &str = "@anon_";
+
+/// Whether `name` is one the parser made up for an unnamed entity.
+#[must_use]
+pub fn is_anon(name: &str) -> bool {
+    name.starts_with(ANON_PREFIX)
+}
+
 /// A variable in a Cypher query, either named or anonymous.
 ///
 /// Variables are assigned unique IDs during binding to distinguish between

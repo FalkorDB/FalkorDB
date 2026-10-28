@@ -36,5 +36,5 @@ class test_execution_plan_print():
 
         # 'conditional variable length traverse' shouldn't print labels
         # as it does not enforce them
-        self.env.assertContains("Conditional Variable Length Traverse | (n)-[_anon_0*1..INF]->(m)", plan)
+        self.env.assertContains("Conditional Variable Length Traverse | (n)-[@anon_0*1..INF]->(m)", plan)
 

@@ -53,7 +53,7 @@ use crate::{
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
         AllShortestPaths, BoundQueryIR, ExprIR, NestedPlanRef, QueryExpr, QueryGraph, QueryIR,
-        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
+        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable, is_anon,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -402,10 +402,7 @@ fn fmt_rel_with_labels_dir(
     let from_str = rel.from.alias.to_string();
     let to_str = fmt_node(&rel.to);
 
-    let alias_str = rel.alias.to_string();
-    let is_anon = alias_str.starts_with("_anon");
-
-    if is_anon {
+    if rel.alias.name.as_ref().is_some_and(|n| is_anon(n)) {
         format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
@@ -1999,10 +1996,7 @@ impl Planner {
             // (named edge or edge referenced in a named path). When false,
             // the runtime may collapse multi-edges into one row per (src, dst).
             let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias
-                    .name
-                    .as_ref()
-                    .is_some_and(|n| n.starts_with("_anon"))
+                !rel.alias.name.as_ref().is_some_and(|n| is_anon(n))
                     || component
                         .paths()
                         .iter()
@@ -2010,16 +2004,11 @@ impl Planner {
             };
             // Collect edge alias IDs for relationship uniqueness checking.
             // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
+            // anonymous edges (`@anon_*`) are excluded so the same physical edge
             // can be traversed by different anonymous bindings (matches FalkorDB C).
             let sibling_edges: Vec<u32> = relationships
                 .iter()
-                .filter(|r| {
-                    !r.alias
-                        .name
-                        .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
-                })
+                .filter(|r| !r.alias.name.as_ref().is_some_and(|n| is_anon(n)))
                 .map(|r| r.alias.id)
                 .collect();
             // Inline attrs are lowered to Filters below; the operator embeds the
