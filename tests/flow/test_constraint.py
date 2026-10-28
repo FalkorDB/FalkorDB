@@ -1518,3 +1518,20 @@ class testUniqueConstraintLookup():
         g.query("MATCH ()-[r:R {id: 1}]->() DELETE r WITH 1 AS x "
                 "MATCH (a:E) WITH a LIMIT 1 CREATE (a)-[:R {id: 1}]->(a)")
         self.env.assertEqual(self._count("MATCH ()-[r:R]->() RETURN count(r)"), 1000)
+
+    def test08_composite_bulk_insert_is_linear(self):
+        # every node shares `tenant`, so its lookup returns the whole label for
+        # each inserted node; the check has to read the `id` lookup instead
+        g = self.g
+        create_unique_node_constraint(g, "T", "tenant", "id", sync=True)
+        msg = "unique constraint violation on node of type T"
+
+        g.query("UNWIND range(1, 10000) AS i CREATE (:T {tenant: 1, id: i})")
+        start = time.time()
+        g.query("UNWIND range(10001, 20000) AS i CREATE (:T {tenant: 1, id: i})")
+        self.env.assertLess(time.time() - start, 10)
+
+        self._violates("CREATE (:T {tenant: 1, id: 7})", msg)
+        self._violates("UNWIND [30000, 30000] AS i CREATE (:T {tenant: 1, id: i})", msg)
+        g.query("CREATE (:T {tenant: 2, id: 7})")
+        self.env.assertEqual(self._count("MATCH (n:T) RETURN count(n)"), 20001)

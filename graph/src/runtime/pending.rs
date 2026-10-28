@@ -39,6 +39,8 @@ use crate::index::{
     Index,
     indexer::{IndexQuery, IndexType},
 };
+#[cfg(feature = "index-falkordb")]
+use itertools::Either;
 
 use crate::{
     entity_type::EntityType,
@@ -191,11 +193,12 @@ fn redisearch_unique_query(
     })
 }
 
-/// The native lookup for one member of a unique constraint: the first
+/// The native lookups for one member of a unique constraint: one per
 /// constrained property whose column can say which entities hold that
-/// property's value. One property is enough, because `unique_violated`
-/// re-checks each candidate's whole key against the graph. `None` when no
-/// column can answer for any of them.
+/// property's value. Any one of them is enough, because `unique_violated`
+/// re-checks each candidate's whole key against the graph, so
+/// [`fewest_candidates`] reads only the smallest. `None` when no column can
+/// answer for any of them.
 #[cfg(feature = "index-falkordb")]
 fn native_unique_query<'g>(
     index: &'g FalkorDbIndex,
@@ -203,11 +206,37 @@ fn native_unique_query<'g>(
     label: &Arc<String>,
     properties: &[Arc<String>],
     values: &[Value],
-) -> Option<EqualCandidates<'g>> {
-    properties
+) -> Option<Vec<EqualCandidates<'g>>> {
+    let lookups: Vec<_> = properties
         .iter()
         .zip(values)
-        .find_map(|(attr, value)| index.equal_candidates(entity, label, attr, value))
+        .filter_map(|(attr, value)| index.equal_candidates(entity, label, attr, value))
+        .collect();
+    (!lookups.is_empty()).then_some(lookups)
+}
+
+/// The candidates of the smallest of `lookups`, which all answer for one
+/// member's key. A key's first property may be shared by most of the label (a
+/// tenant), and reading its lookup for every member of a bulk insert costs a
+/// scan of that share per member. Each round takes one entity from every
+/// lookup, so the first to run out is the smallest, and finding it reads at
+/// most `lookups.len()` times as many entities as it returns. Each lookup's
+/// rows own their tree snapshot, so the result borrows nothing (`use<>`).
+#[cfg(feature = "index-falkordb")]
+fn fewest_candidates(lookups: Vec<EqualCandidates<'_>>) -> impl Iterator<Item = u64> + use<> {
+    let mut rows: Vec<_> = lookups.iter().map(EqualCandidates::rows).collect();
+    if rows.len() == 1 {
+        return Either::Left(rows.pop().expect("one lookup"));
+    }
+    let mut read = vec![Vec::new(); rows.len()];
+    loop {
+        for (i, it) in rows.iter_mut().enumerate() {
+            match it.next() {
+                Some(id) => read[i].push(id),
+                None => return Either::Right(read.swap_remove(i).into_iter()),
+            }
+        }
+    }
 }
 
 /// Whether a unique constraint is violated by this commit, given `members`: the
@@ -1557,7 +1586,9 @@ impl Pending {
                             &values,
                         )
                     },
-                    |candidates: EqualCandidates<'_>| candidates.rows().map(NodeId::from),
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        fewest_candidates(candidates).map(NodeId::from)
+                    },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
                 let (query_for, lookup) = {
@@ -1648,7 +1679,9 @@ impl Pending {
                             &values,
                         )
                     },
-                    |candidates: EqualCandidates<'_>| candidates.rows().map(RelationshipId::from),
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        fewest_candidates(candidates).map(RelationshipId::from)
+                    },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
                 let (query_for, lookup) = {
@@ -2316,6 +2349,62 @@ mod native_unique_tests {
             check_nodes(&g, &["s", "n"], ids[2]),
             Ok(()),
             "shares only the number"
+        );
+    }
+
+    /// A composite key reads its most selective column, whichever property it is. Every node
+    /// shares `tenant`, so its column returns the whole label for every member, while `id` returns
+    /// the one node holding that id. Reading the first property's column made a bulk insert cost a
+    /// scan of the tenant per inserted node.
+    #[test]
+    fn a_composite_key_reads_its_most_selective_column() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+        }
+        // 50 nodes of one tenant, then a duplicate of node 3's key.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", Value::Int(i))])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let read = |props: &[&str], values: &[Value]| -> usize {
+            let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+            let lookups = native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                values,
+            )
+            .expect("both columns answer");
+            fewest_candidates(lookups).count()
+        };
+        let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant.clone(), three.clone()]),
+            2,
+            "node 3 and its duplicate, not the tenant's 51"
+        );
+        assert_eq!(
+            read(&["id", "tenant"], &[three, tenant.clone()]),
+            2,
+            "the order of the properties does not matter"
+        );
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant, absent]),
+            0,
+            "an id no node holds reads nothing"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
         );
     }
 
