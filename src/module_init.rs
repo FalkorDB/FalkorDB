@@ -274,6 +274,9 @@ pub fn graph_init(
         // GraphBLAS starts libomp, which reads `environ` once at init.
         #[cfg(target_os = "linux")]
         sync_deepbind_environ();
+        // SAFETY: GraphBLAS allocates through RedisModule_Alloc/Free, and the
+        // global allocator, `ThreadCountingAllocator`, frees through
+        // `RedisAlloc`, i.e. `RedisModule_Free(ptr)` whatever the layout.
         if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,

@@ -48,7 +48,6 @@ graph/src/planner/optimizer/utilize_index.rs	subtree_has_any_property	569	PROVEN
 graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	582	PROVEN	Cleanup.nestedListE_iff
 graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	602	PROVEN	Index.trySingle inn arm; sel_inList, trySingle_spec; IndexCex C7/C8/C9 counterexamples
 graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	658	PROVEN	Index.trySingle; trySingle_spec
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	727	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement)
 graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	802	PROVEN	Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Date/computed constants)
 graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	855	PROVEN	Cleanup.nonIdxD_spec
 graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	881	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
@@ -61,6 +60,9 @@ graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1051	PROV
 graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1080	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
 graph/src/planner/optimizer/utilize_index.rs	utilize_index	1120	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
 graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1138	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
+graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	727	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement)
+graph/src/planner/optimizer/utilize_index.rs	is_array_contains	791	PROVEN	Index.isArrayContains: isArrayContains_good, tp_atom, pushAnd (C10 agreement)
+graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	727	MODELLED	the AND branch keeping an array-contains conjunct's filter (#3736): pushAnd models it, but utilize_sound assumes goodA, which excludes array-contains (as it does the standalone branch); checked by decide only (IndexCex C10)
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
 graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
@@ -71,5 +73,3 @@ graph/src/runtime/ops/node_by_index_scan.rs	new	58	PROVEN	EdgeInline.extraLabels
 graph/src/runtime/ops/node_by_index_scan.rs	can_utilize_index	253	PROVEN	EdgeInline.canUtilize_empty; Index.cu_inList, cu_merge, canUtilize_inList_eq_or (InList arm, #2383: same terms as the old Or)
 graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	256	PROVEN	EdgeInline.isIndexable_spec
 graph/src/runtime/ops/node_by_index_scan.rs	next	302	PROVEN	EdgeInline.scanRow_eq_sel; Index.utilize_sound
-graph/src/planner/optimizer/utilize_index.rs	is_array_contains	791	PROVEN	Index.isArrayContains: isArrayContains_good, tp_atom, pushAnd (C10 agreement)
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	727	MODELLED	the AND branch keeping an array-contains conjunct's filter (#3736): pushAnd models it, but utilize_sound assumes goodA, which excludes array-contains (as it does the standalone branch); checked by decide only (IndexCex C10)
