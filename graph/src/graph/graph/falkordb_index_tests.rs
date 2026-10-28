@@ -10,7 +10,8 @@ use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, NumericAnswer};
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::{
-    ALLOW_BATCH_RACE, BuildState, CatchUp, Dropped, IndexId, IndexerCommit, PreparedBatch,
+    ALLOW_BATCH_RACE, BuildState, CATCH_UP_BY, CatchUp, Dropped, IndexId, IndexerCommit,
+    PreparedBatch, REFRESH_COST,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
@@ -1718,41 +1719,76 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
 /// An indexer batch read on a version writers have since moved past catches up on what they
 /// changed in its column, and is published: the batch's progress with the writers' values. A
 /// writer's change below the batch's new cursor is in the column; one at or above it is not, since
-/// the next batch reads it.
+/// the next batch reads it. Both ways of catching up, refreshing and inserting, give that.
 #[test]
 fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
-    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
-    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-    let (prepared, batch) = prepare(&mvcc, &id, 2);
-    commit_write(&mut mvcc, |g| {
-        set_attr(g, ids[0], &attr, Value::Int(15));
-        set_attr(g, ids[2], &attr, Value::Int(35));
-    });
-    let data_version = mvcc.read().borrow().version;
+    for how in [CatchUp::Refresh, CatchUp::Insert] {
+        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        commit_write(&mut mvcc, |g| {
+            set_attr(g, ids[0], &attr, Value::Int(15));
+            set_attr(g, ids[2], &attr, Value::Int(35));
+        });
+        let data_version = mvcc.read().borrow().version;
 
-    assert_eq!(
-        mvcc.commit_indexer_batch(&prepared, &batch),
-        Some(IndexerCommit::CatchUp(CatchUp::Refresh))
-    );
-    let published = mvcc.read();
-    let published = published.borrow();
-    assert_eq!(published.version, data_version, "the writer's data");
-    assert_eq!(
-        cursor(&published, EntityType::Node, &label, &attr),
-        Some(BuildCursor::Node(NodeId::from(ids[2]))),
-        "the batch's progress"
-    );
-    assert_eq!(
-        range_scan(&published, &label, &attr, 0, 100),
-        vec![ids[0], ids[1]],
-        "nothing at or above the cursor"
-    );
-    assert_eq!(
-        range_scan(&published, &label, &attr, 15, 15),
-        vec![ids[0]],
-        "the writer's value"
-    );
-    assert!(range_scan(&published, &label, &attr, 10, 10).is_empty());
+        CATCH_UP_BY.with(|by| by.set(Some(how)));
+        let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+        CATCH_UP_BY.with(|by| by.set(None));
+        assert_eq!(committed, Some(IndexerCommit::CatchUp(how)));
+        let published = mvcc.read();
+        let published = published.borrow();
+        assert_eq!(
+            published.version, data_version,
+            "{how:?}: the writer's data"
+        );
+        assert_eq!(
+            cursor(&published, EntityType::Node, &label, &attr),
+            Some(BuildCursor::Node(NodeId::from(ids[2]))),
+            "{how:?}: the batch's progress"
+        );
+        assert_eq!(
+            range_scan(&published, &label, &attr, 0, 100),
+            vec![ids[0], ids[1]],
+            "{how:?}: nothing at or above the cursor"
+        );
+        assert_eq!(
+            range_scan(&published, &label, &attr, 15, 15),
+            vec![ids[0]],
+            "{how:?}: the writer's value"
+        );
+        assert!(
+            range_scan(&published, &label, &attr, 10, 10).is_empty(),
+            "{how:?}"
+        );
+    }
+}
+
+/// A batch that writers committed after refreshes what they changed when that costs less than
+/// inserting the batch, an entity costing [`REFRESH_COST`] tuples, and inserts the batch otherwise.
+#[test]
+fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it() {
+    let budget = 2 * REFRESH_COST as usize;
+    for (written, how) in [(1, CatchUp::Refresh), (3, CatchUp::Insert)] {
+        let values: Vec<i64> = (0..=budget as i64).collect();
+        let (mut mvcc, label, attr, ids) = mvcc_building(&values);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, budget);
+        commit_write(&mut mvcc, |g| {
+            for &id in &ids[..written] {
+                set_attr(g, id, &attr, Value::Int(1000));
+            }
+        });
+        assert_eq!(
+            mvcc.commit_indexer_batch(&prepared, &batch),
+            Some(IndexerCommit::CatchUp(how)),
+            "{written} written against a batch of {budget}"
+        );
+        assert_eq!(
+            range_scan(&mvcc.read().borrow(), &label, &attr, 1000, 1000),
+            ids[..written].to_vec()
+        );
+    }
 }
 
 /// A claim needs the fork mutably only to rebase it: with no indexer batch committed since it was
@@ -2119,147 +2155,160 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let orders = orders(4);
     ALLOW_BATCH_RACE.with(|allow| allow.set(true));
-    for (name, first, second) in writes {
-        for batches_on in [[&v, &w], [&v, &v]] {
-            for order in &orders {
-                let mut mvcc = MvccGraph::from_graph(template.new_version());
-                let mut forks: [Option<(Arc<AtomicRefCell<Graph>>, Arc<AtomicRefCell<Graph>>)>; 2] =
-                    [None, None];
-                let mut batches: [Option<(Arc<AtomicRefCell<Graph>>, PreparedBatch)>; 2] =
-                    [None, None];
-                let mut started = [false; 4];
-                for (event, &actor) in order.iter().enumerate() {
-                    let what = format!(
-                        "{name}; batches on {}, {}; order {order:?}, event {event}",
-                        batches_on[0], batches_on[1]
-                    );
-                    let before = {
-                        let g = mvcc.read();
-                        let g = g.borrow();
-                        [
-                            build_progress(&g, &label, &v),
-                            build_progress(&g, &label, &w),
-                        ]
-                    };
-                    let starting = !std::mem::replace(&mut started[actor], true);
-                    match (actor, starting) {
-                        (0 | 1, true) => {
-                            let fork = mvcc.fork();
-                            let write = if actor == 0 { first } else { second };
-                            write(&mut fork.borrow_mut(), &ids);
-                            forks[actor] = Some((fork, mvcc.read()));
-                        }
-                        (0 | 1, false) => {
-                            let (fork, base) = forks[actor].take().expect("started");
-                            match mvcc.claim(&fork) {
-                                Ok(()) => {
-                                    let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
-                                    let data = model_of(&fork.borrow());
-                                    mvcc.commit(fork)
-                                        .unwrap_or_else(|e| panic!("{what}: {e:?}"));
-                                    *counts
-                                        .entry(if over_batches {
-                                            "writer over batches"
-                                        } else {
-                                            "writer claimed"
-                                        })
-                                        .or_default() += 1;
-                                    let published = mvcc.read();
-                                    let published = published.borrow();
-                                    assert_eq!(model_of(&published), data, "{what}: its data");
-                                    let recreated_v =
-                                        actor == 0 && name.starts_with("index dropped");
-                                    for (i, attr) in [&v, &w].into_iter().enumerate() {
-                                        if !(recreated_v && i == 0) {
-                                            assert!(
-                                                build_progress(&published, &label, attr)
-                                                    >= before[i],
-                                                "{what}: {attr}'s build moved back"
-                                            );
+    for how in [CatchUp::Refresh, CatchUp::Insert] {
+        CATCH_UP_BY.with(|by| by.set(Some(how)));
+        for (name, first, second) in writes {
+            for batches_on in [[&v, &w], [&v, &v]] {
+                for order in &orders {
+                    let mut mvcc = MvccGraph::from_graph(template.new_version());
+                    let mut forks: [Option<(Arc<AtomicRefCell<Graph>>, Arc<AtomicRefCell<Graph>>)>;
+                        2] = [None, None];
+                    let mut batches: [Option<(Arc<AtomicRefCell<Graph>>, PreparedBatch)>; 2] =
+                        [None, None];
+                    let mut started = [false; 4];
+                    for (event, &actor) in order.iter().enumerate() {
+                        let what = format!(
+                            "{name}; {how:?}; batches on {}, {}; order {order:?}, event {event}",
+                            batches_on[0], batches_on[1]
+                        );
+                        let before = {
+                            let g = mvcc.read();
+                            let g = g.borrow();
+                            [
+                                build_progress(&g, &label, &v),
+                                build_progress(&g, &label, &w),
+                            ]
+                        };
+                        let starting = !std::mem::replace(&mut started[actor], true);
+                        match (actor, starting) {
+                            (0 | 1, true) => {
+                                let fork = mvcc.fork();
+                                let write = if actor == 0 { first } else { second };
+                                write(&mut fork.borrow_mut(), &ids);
+                                forks[actor] = Some((fork, mvcc.read()));
+                            }
+                            (0 | 1, false) => {
+                                let (fork, base) = forks[actor].take().expect("started");
+                                match mvcc.claim(&fork) {
+                                    Ok(()) => {
+                                        let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
+                                        let data = model_of(&fork.borrow());
+                                        mvcc.commit(fork)
+                                            .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                                        *counts
+                                            .entry(if over_batches {
+                                                "writer over batches"
+                                            } else {
+                                                "writer claimed"
+                                            })
+                                            .or_default() += 1;
+                                        let published = mvcc.read();
+                                        let published = published.borrow();
+                                        assert_eq!(model_of(&published), data, "{what}: its data");
+                                        let recreated_v =
+                                            actor == 0 && name.starts_with("index dropped");
+                                        for (i, attr) in [&v, &w].into_iter().enumerate() {
+                                            if !(recreated_v && i == 0) {
+                                                assert!(
+                                                    build_progress(&published, &label, attr)
+                                                        >= before[i],
+                                                    "{what}: {attr}'s build moved back"
+                                                );
+                                            }
                                         }
+                                        check_rules(&published, &label, [&v, &w], &what);
                                     }
-                                    check_rules(&published, &label, [&v, &w], &what);
+                                    Err(Claim::Stale) => {
+                                        *counts.entry("writer stale").or_default() += 1;
+                                    }
+                                    Err(e) => panic!("{what}: {e:?}"),
                                 }
-                                Err(Claim::Stale) => {
-                                    *counts.entry("writer stale").or_default() += 1;
+                            }
+                            (_, true) => {
+                                let id = IndexId::Column(
+                                    EntityType::Node,
+                                    (label.clone(), batches_on[actor - 2].clone()),
+                                );
+                                let prepared = Arc::new(AtomicRefCell::new(
+                                    mvcc.read().borrow().new_build_version(),
+                                ));
+                                let batch = prepared.borrow_mut().indexer_prepare(&id, BATCH);
+                                batches[actor - 2] = batch.map(|batch| (prepared, batch));
+                            }
+                            (_, false) => {
+                                let Some((prepared, batch)) = batches[actor - 2].take() else {
+                                    continue;
+                                };
+                                let data = model_of(&mvcc.read().borrow());
+                                let how = mvcc
+                                    .commit_indexer_batch(&prepared, &batch)
+                                    .unwrap_or_else(|| panic!("{what}: refused"));
+                                *counts
+                                    .entry(match how {
+                                        IndexerCommit::Same => "batch same",
+                                        IndexerCommit::Swap => "batch swapped",
+                                        IndexerCommit::CatchUp(CatchUp::Refresh) => {
+                                            "batch caught up, refreshing"
+                                        }
+                                        IndexerCommit::CatchUp(CatchUp::Insert) => {
+                                            "batch caught up, inserting"
+                                        }
+                                        IndexerCommit::Dropped(Dropped::Gone) => {
+                                            "batch dropped, gone"
+                                        }
+                                        IndexerCommit::Dropped(Dropped::AnotherBatch) => {
+                                            "batch dropped, another batch"
+                                        }
+                                    })
+                                    .or_default() += 1;
+                                let published = mvcc.read();
+                                let published = published.borrow();
+                                assert_eq!(model_of(&published), data, "{what}: no data changed");
+                                for (i, attr) in [&v, &w].into_iter().enumerate() {
+                                    assert!(
+                                        build_progress(&published, &label, attr) >= before[i],
+                                        "{what}: {attr}'s build moved back"
+                                    );
                                 }
-                                Err(e) => panic!("{what}: {e:?}"),
+                                if !matches!(how, IndexerCommit::Dropped(_)) {
+                                    let i = usize::from(batches_on[actor - 2].as_str() == "w");
+                                    assert!(
+                                        build_progress(&published, &label, batches_on[actor - 2])
+                                            > before[i],
+                                        "{what}: the batch's column did not move on"
+                                    );
+                                }
+                                check_rules(&published, &label, [&v, &w], &what);
                             }
                         }
-                        (_, true) => {
-                            let id = IndexId::Column(
-                                EntityType::Node,
-                                (label.clone(), batches_on[actor - 2].clone()),
-                            );
+                    }
+                    // Then build both columns to the end.
+                    for attr in [&v, &w] {
+                        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+                        loop {
                             let prepared = Arc::new(AtomicRefCell::new(
                                 mvcc.read().borrow().new_build_version(),
                             ));
-                            let batch = prepared.borrow_mut().indexer_prepare(&id, BATCH);
-                            batches[actor - 2] = batch.map(|batch| (prepared, batch));
-                        }
-                        (_, false) => {
-                            let Some((prepared, batch)) = batches[actor - 2].take() else {
-                                continue;
+                            let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, BATCH)
+                            else {
+                                break;
                             };
-                            let data = model_of(&mvcc.read().borrow());
-                            let how = mvcc
-                                .commit_indexer_batch(&prepared, &batch)
-                                .unwrap_or_else(|| panic!("{what}: refused"));
-                            *counts
-                                .entry(match how {
-                                    IndexerCommit::Same => "batch same",
-                                    IndexerCommit::Swap => "batch swapped",
-                                    IndexerCommit::CatchUp(_) => "batch caught up",
-                                    IndexerCommit::Dropped(Dropped::Gone) => "batch dropped, gone",
-                                    IndexerCommit::Dropped(Dropped::AnotherBatch) => {
-                                        "batch dropped, another batch"
-                                    }
-                                })
-                                .or_default() += 1;
-                            let published = mvcc.read();
-                            let published = published.borrow();
-                            assert_eq!(model_of(&published), data, "{what}: no data changed");
-                            for (i, attr) in [&v, &w].into_iter().enumerate() {
-                                assert!(
-                                    build_progress(&published, &label, attr) >= before[i],
-                                    "{what}: {attr}'s build moved back"
-                                );
-                            }
-                            if !matches!(how, IndexerCommit::Dropped(_)) {
-                                let i = usize::from(batches_on[actor - 2].as_str() == "w");
-                                assert!(
-                                    build_progress(&published, &label, batches_on[actor - 2])
-                                        > before[i],
-                                    "{what}: the batch's column did not move on"
-                                );
-                            }
-                            check_rules(&published, &label, [&v, &w], &what);
+                            assert_eq!(
+                                mvcc.commit_indexer_batch(&prepared, &batch),
+                                Some(IndexerCommit::Same)
+                            );
                         }
                     }
+                    let what = format!(
+                        "{name}; batches on {}, {}; order {order:?}, built",
+                        batches_on[0], batches_on[1]
+                    );
+                    check_rules(&mvcc.read().borrow(), &label, [&v, &w], &what);
                 }
-                // Then build both columns to the end.
-                for attr in [&v, &w] {
-                    let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
-                    loop {
-                        let prepared =
-                            Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
-                        let Some(batch) = prepared.borrow_mut().indexer_prepare(&id, BATCH) else {
-                            break;
-                        };
-                        assert_eq!(
-                            mvcc.commit_indexer_batch(&prepared, &batch),
-                            Some(IndexerCommit::Same)
-                        );
-                    }
-                }
-                let what = format!(
-                    "{name}; batches on {}, {}; order {order:?}, built",
-                    batches_on[0], batches_on[1]
-                );
-                check_rules(&mvcc.read().borrow(), &label, [&v, &w], &what);
             }
         }
     }
+    CATCH_UP_BY.with(|by| by.set(None));
     ALLOW_BATCH_RACE.with(|allow| allow.set(false));
     for outcome in [
         "writer claimed",
@@ -2267,7 +2316,8 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
         "writer stale",
         "batch same",
         "batch swapped",
-        "batch caught up",
+        "batch caught up, refreshing",
+        "batch caught up, inserting",
         "batch dropped, gone",
         "batch dropped, another batch",
     ] {
