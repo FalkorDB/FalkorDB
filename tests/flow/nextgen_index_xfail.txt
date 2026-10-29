@@ -22,16 +22,23 @@
 # Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label
 # scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map values and ints
 # above 2^53 still return correct results silently — as do several array tests (test_33,
-# test_34, test10, test17). Their passing is not evidence of native array support.
+# test_34, test10, test17). Their passing says nothing about the native array tree either way.
 
 # ---------------------------------------------------------------------------
-# Array-valued properties — `ArrayContains`.
-#   error: "an array-contains on `samples`"
-# The numeric encoder rejects lists outright, so an array-valued property is not in the numeric
-# column at all — there is nothing for the native index to answer from. Needs an array/list kind.
+# STRING elements inside array-valued properties — `ArrayContains`.
+#   error: "an array-contains on `samples` with a non-numeric value"
+#
+# Numeric array elements ARE served: each one is a tuple in the column's separate array tree, and
+# `value IN n.prop` is a point lookup into it. `test_29_array_index` passes on that and has been
+# removed from this file.
+#
+# What is left is the string half. These tests index a list of strings and probe it, and there is
+# no native text kind, so this group closes with the text work, not with more array work.
+#
+# The two trees are separate on purpose: sharing one would make `WHERE n.v = 1` match a node
+# whose `v` is `[1, 2]`, and `Equal` has no post-filter to catch it.
 # ---------------------------------------------------------------------------
 test_index_scans:testIndexScanFlow.test_28_array_index
-test_index_scans:testIndexScanFlow.test_29_array_index
 test_index_scans:testIndexScanFlow.test_30_update_array_index
 test_index_scans:testIndexScanFlow.test_31_remove_array_index
 test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
@@ -74,24 +81,33 @@ test_constraint:testConstraintEdges.test06_constraint_fix
 test_index_scans:testIndexScanFlow.test13_point_index_scan
 
 # ---------------------------------------------------------------------------
-# Conjunctions — `And` the planner could not fold at plan time. The message names the children,
-# because the three shapes that land here need completely different work:
-#   [equality on `v`; range on `v`]     same key  -> arithmetic collapse, one cursor
-#   [range on `id`; range on `id`]      same key  -> tighter min/max, one cursor
-#   [equality on `a`; equality on `b`]  two keys  -> a real intersection
+# Conjunctions — CLOSED. Nothing left in this group.
 #
-# A fourth shape used to dominate and is now gone: the *same* predicate twice, from an inline
-# property map on a traversal endpoint (`MATCH (a:L {p: v})-[]->(b)`). `push_filters_down` merged
-# the planner's filter and `select_scan_node`'s identical copy into an `And` without dedup. It now
-# dedups, which removed 31 of the bench suite's 40 failures and one entry from this file — that
-# entry, `test_07_reset_order`, turned out to be a plain string gap underneath and has moved to
-# the group above.
+# Three shapes used to land here, and all three are served now:
+#   the same predicate twice          -> no longer produced by the planner (see below)
+#   several bounds on ONE attribute   -> folded arithmetically into a single window
+#   bounds across TWO attributes      -> one column per attribute, intersected
 #
-# Only the same-key Equal+Range case is left here. An `Equal` is a degenerate range, so this one
-# collapses without any doc-stream intersection machinery.
+# The duplicate came from an inline property map on a traversal endpoint
+# (`MATCH (a:L {p: v})-[]->(b)`) being lowered twice, which `push_filters_down` then merged into
+# `And(p, p)`. The cause was fixed, not the merge: `lower_inline_attrs` (planner/mod.rs) lowers
+# each inline map at most once, so there is no second copy to merge. `push_filters_down` does no
+# dedup, and its test `user_written_duplicate_is_not_touched` pins that a duplicate the user
+# writes is kept. The same-attribute fold serves such a duplicate as one window.
+#
+# The same-attribute fold happens in the index rather than the planner because
+# `merge_range_queries` gives up whenever two conjuncts constrain the same side of the window: at
+# plan time the bounds may still be expressions it cannot compare, and by the time the index sees
+# them they are concrete values.
+#
+# The cross-attribute case is a set probe, not a sorted merge: `DocIter` yields docs in value
+# order, not id order, so the first attribute is materialised and the rest probe it.
+#
+# Still declined: a conjunction with a member that is not a numeric `Equal`/`Range` or `= null`.
+# With a string member that is the string gap, and its tests are in the string group above
+# (test_constraint's composite constraints). With an array-contains or an `IN` list member, no
+# test in these suites hits one today.
 # ---------------------------------------------------------------------------
-test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
-test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
 
 # ---------------------------------------------------------------------------
 # IGNORED in both directions (`!` prefix) — NOT a native-index gap.

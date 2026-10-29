@@ -4243,33 +4243,29 @@ impl Graph {
     }
 
     /// Whether the scan standing in for a column still building keeps node `id`: whether the
-    /// column, once built, answers the query `recheck` came from with it. `attr` is `recheck`'s
-    /// attribute as [`Self::get_node_attribute_id`] resolves it, once per scan rather than once per
-    /// node. Reads the committed value, which is the one the column indexes.
+    /// columns, once built, answer the query `recheck` came from with it. `recheck`'s attributes
+    /// are resolved by [`Self::get_node_attribute_id`] ([`Recheck::resolve`]), once per scan rather
+    /// than once per node. Reads the committed values, which are the ones the columns index.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn node_admitted(
         &self,
         id: NodeId,
-        attr: u16,
-        recheck: &Recheck,
+        recheck: &Recheck<u16>,
     ) -> bool {
-        self.get_node_attribute_by_idx(id, attr)
-            .is_some_and(|value| recheck.admits(&value))
+        recheck.admits(|&attr| self.get_node_attribute_by_idx(id, attr))
     }
 
-    /// [`Self::node_admitted`] for relationship `id`, with `attr` resolved by
+    /// [`Self::node_admitted`] for relationship `id`, with `recheck`'s attributes resolved by
     /// [`Self::get_relationship_attribute_id`].
     #[cfg(feature = "index-falkordb")]
     #[must_use]
     pub fn relationship_admitted(
         &self,
         id: RelationshipId,
-        attr: u16,
-        recheck: &Recheck,
+        recheck: &Recheck<u16>,
     ) -> bool {
-        self.get_relationship_attribute_by_idx(id, attr)
-            .is_some_and(|value| recheck.admits(&value))
+        recheck.admits(|&attr| self.get_relationship_attribute_by_idx(id, attr))
     }
 
     /// The relationship counterpart of [`Self::is_indexed`].

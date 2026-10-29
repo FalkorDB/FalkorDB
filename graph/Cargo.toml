@@ -22,11 +22,11 @@ prejit_harvest = []
 # `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
 # wiring. Off by default: the shipped build is byte-for-byte unchanged until this
 # is switched on. Under it the native index is the only Range index: a numeric
-# Equal, Range or IN list, or an OR of numeric equalities and IN lists on one
-# attribute, is served natively, and a predicate it cannot serve raises an error
-# instead of falling through to RediSearch. tests/flow/nextgen_index_xfail.txt
-# lists the flow tests that fail on one. Fulltext and Vector indexes are still
-# RediSearch's.
+# Equal, Range or IN list, an OR of numeric equalities and IN lists on one
+# attribute, or a numeric `value IN n.list` is served natively, and a predicate it
+# cannot serve raises an error instead of falling through to RediSearch.
+# tests/flow/nextgen_index_xfail.txt lists the flow tests that fail on one.
+# Fulltext and Vector indexes are still RediSearch's.
 index-falkordb = []
 
 

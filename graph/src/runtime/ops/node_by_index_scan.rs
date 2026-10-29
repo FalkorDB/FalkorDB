@@ -337,19 +337,19 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                                 let runtime = self.runtime;
                                 // Resolved once per scan. No node holds a name the graph has
                                 // never seen.
-                                let nodes: Box<dyn Iterator<Item = NodeId>> = match g
-                                    .get_node_attribute_id(recheck.attribute())
-                                {
-                                    Some(attr) => {
-                                        let attr = attr as u16;
-                                        Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
-                                            move |&id| {
-                                                runtime.graph().node_admitted(id, attr, &recheck)
-                                            },
-                                        ))
-                                    }
-                                    None => Box::new(std::iter::empty()),
-                                };
+                                let nodes: Box<dyn Iterator<Item = NodeId>> =
+                                    match recheck.resolve(|attr| {
+                                        g.get_node_attribute_id(attr).map(|attr| attr as u16)
+                                    }) {
+                                        Some(recheck) => Box::new(
+                                            g.get_nodes(&self.node_pattern.labels, 0).filter(
+                                                move |&id| {
+                                                    runtime.graph().node_admitted(id, &recheck)
+                                                },
+                                            ),
+                                        ),
+                                        None => Box::new(std::iter::empty()),
+                                    };
                                 Some(nodes)
                             }
                             None => {
