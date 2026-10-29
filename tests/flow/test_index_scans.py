@@ -1440,6 +1440,12 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE n.v < 2 RETURN n.k"],
             expected_rows=[[['int']], [['bool']], [['false']], [['bool'], ['zero']],
                            [['int'], ['zero']], [['int'], ['zero']]])
+        # Bool bounds are not served by the index; the label scan decides.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'int'}), (:L {v:true, k:'bool'}), (:L {v:false, k:'false'})",
+            ["MATCH (n:L) WHERE n.v >= false RETURN n.k",
+             "MATCH (n:L) WHERE n.v < true RETURN n.k"])
         self._index_vs_scan(
             [('L', 'arr')],
             "CREATE (:L {k:4, arr:[true,'X']}), (:L {k:5, arr:[1,'x']})",
@@ -1454,7 +1460,8 @@ class testIndexScanFlow():
             [('L', 'v')],
             "CREATE (:L {v:'John Smith', k:'js'}), (:L {v:'Johnny', k:'jy'}),"
             " (:L {v:'a b', k:'ab'}), (:L {v:'a!', k:'a!'}), (:L {v:'a_b', k:'a_b'}),"
-            " (:L {v:'a\\\\b', k:'a\\\\b'}), (:L {v:'a[', k:'a['}), (:L {v:'', k:'empty'})",
+            " (:L {v:'a\\\\b', k:'a\\\\b'}), (:L {v:'a[', k:'a['}), (:L {v:'', k:'empty'}),"
+            " (:L {v:true, k:'t'}), (:L {v:false, k:'f'})",
             ["MATCH (n:L) WHERE n.v < 'JohnA' RETURN n.k",
              "MATCH (n:L) WHERE n.v > 'a!' RETURN n.k",
              "MATCH (n:L) WHERE n.v >= 'a ' AND n.v < 'a_' RETURN n.k",

@@ -296,14 +296,16 @@ impl IndexQuery<Value> {
         const fn is_indexable(v: &Value) -> bool {
             match v {
                 Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_) | Value::String(_) | Value::Null => true,
+                Value::Float(_) | Value::String(_) | Value::Bool(_) | Value::Null => true,
                 _ => false,
             }
         }
         match self {
             Self::Equal { value, .. } => is_indexable(value),
+            // A Bool has a TAG key for equality only; it has no place in a range.
             Self::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
+                let ok = |v: &Value| is_indexable(v) && !matches!(v, Value::Bool(_));
+                min.as_ref().is_none_or(ok) && max.as_ref().is_none_or(ok)
             }
             Self::And(children) | Self::Or(children) => {
                 // An empty `Or([])` / `And([])` is not a valid index query:
@@ -661,6 +663,25 @@ fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Key of a Bool in a TAG field. `0xFF` never occurs in a UTF-8 string, so no
+/// string encodes to it, and it sorts after every string key: a Bool is found
+/// by `= true`, never by `= 1`, and (with `STRING_RANGE_END`) never by a string
+/// range (#2963, #363).
+const BOOL_TRUE_KEY: &[u8] = &[0xFF, b't'];
+const BOOL_FALSE_KEY: &[u8] = &[0xFF, b'f'];
+/// Closes an open-ended string range below the Bool keys: no string reaches it.
+const STRING_RANGE_END: &[u8] = &[0xFE];
+
+/// The TAG key a String or Bool is indexed and looked up under.
+fn tag_key(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::String(s) => Some(tag_encode_lower(s.as_bytes())),
+        Value::Bool(true) => Some(BOOL_TRUE_KEY.to_vec()),
+        Value::Bool(false) => Some(BOOL_FALSE_KEY.to_vec()),
+        _ => None,
+    }
+}
+
 /// Hex-encode `bytes` into `out` (high nibble first). `out.len()` must be
 /// `bytes.len() * 2`.
 fn hex_encode_into(
@@ -842,11 +863,18 @@ impl Document {
                 return;
             }
             match value {
-                // Booleans are not indexed. Stored as 1/0 in the numeric field
-                // they matched `= 1` / `= 0` and numeric ranges (#2963, #363);
-                // no index query is built for a Bool (`can_be_served`), so a
-                // Bool predicate is answered by a label scan and its filter.
-                Value::Bool(_) => {}
+                // A Bool is a TAG key of its own. Stored as 1/0 in the numeric
+                // field it matched `= 1` / `= 0` and numeric ranges (#2963, #363).
+                Value::Bool(_) => {
+                    let enc = tag_key(value).unwrap_or_default();
+                    RediSearch_DocumentAddFieldString(
+                        self.rs_doc,
+                        field.name.as_ptr(),
+                        enc.as_ptr().cast::<c_char>(),
+                        enc.len(),
+                        RSFLDTYPE_TAG,
+                    );
+                }
                 Value::Int(i) => {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
@@ -891,6 +919,11 @@ impl Document {
                     let mut string_cstrs: Vec<CString> = Vec::new();
                     for item in items.iter() {
                         match item {
+                            Value::Bool(_) => {
+                                if let Some(cs) = tag_key(item).and_then(|k| CString::new(k).ok()) {
+                                    string_cstrs.push(cs);
+                                }
+                            }
                             Value::Int(i) => numerics.push(*i as f64),
                             Value::Float(f) => numerics.push(*f),
                             Value::String(s) => {
@@ -1535,7 +1568,14 @@ impl Index {
 
         // Lex range: NULL pointer means open bound (infinity)
         let min_cstr = min.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
-        let max_cstr = max.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
+        // An open upper end stops below the Bool keys, which sort after every string.
+        let (max_cstr, include_max) = match max {
+            Some(s) => (
+                CString::new(tag_encode_lower(s.as_bytes())).ok(),
+                include_max,
+            ),
+            None => (CString::new(STRING_RANGE_END).ok(), true),
+        };
         let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
         let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
@@ -1568,16 +1608,16 @@ impl Index {
                     RediSearch_CreateNumericNode(self.rs_ptr(), field.name.as_ptr(), d, d, 1, 1)
                 }
             }
-            // String equality
+            // String and Bool equality, both TAG keys
             IndexQuery::Equal {
                 key,
-                value: Value::String(value),
+                value: value @ (Value::String(_) | Value::Bool(_)),
             } => {
                 let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
                 let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
-                let Ok(msg) = CString::new(tag_encode_lower(value.as_bytes())) else {
+                let Some(Ok(msg)) = tag_key(&value).map(CString::new) else {
                     return std::ptr::null_mut();
                 };
                 let child = unsafe {
@@ -1726,13 +1766,13 @@ impl Index {
                             )
                         }
                     }
-                    Value::String(s) => {
+                    Value::String(_) | Value::Bool(_) => {
                         let Some(arr_name) = field.string_arr_name() else {
                             return std::ptr::null_mut();
                         };
                         let root =
                             unsafe { RediSearch_CreateTagNode(self.rs_ptr(), arr_name.as_ptr()) };
-                        let Ok(token) = CString::new(tag_encode_lower(s.as_bytes())) else {
+                        let Some(Ok(token)) = tag_key(value).map(CString::new) else {
                             return std::ptr::null_mut();
                         };
                         let child = unsafe {
