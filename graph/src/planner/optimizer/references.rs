@@ -38,7 +38,7 @@ use super::super::IR;
 /// the same predicate, relocated — they reference variables exactly as they did
 /// while they were Filters. A fixed-length traverse's edge predicate stays in
 /// `IR::Filter`, the only place it is evaluated.
-pub(super) fn ir_references_variable(
+pub(crate) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
     scope_id: u32,
