@@ -48,6 +48,7 @@ use super::super::IR;
 fn is_constant_true(
     filter: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
+    traverser: &mut Bfs,
 ) -> bool {
     // Fast path: pure constant (no params needed).
     if matches!(
@@ -59,8 +60,8 @@ fn is_constant_true(
 
     // Slow path: substitute parameters into a cloned expression, then
     // re-evaluate as constant.
-    if !params.is_empty() && expr_has_parameter(filter) {
-        let substituted = substitute_params(filter, params);
+    if !params.is_empty() && expr_has_parameter(filter, traverser) {
+        let substituted = substitute_params(filter, params, traverser);
         return matches!(
             ExprEval::constant().eval(&substituted, substituted.root().idx(), NO_ROW, None),
             Ok(Value::Bool(true))
@@ -71,9 +72,12 @@ fn is_constant_true(
 }
 
 /// Check if the expression tree contains any parameter references.
-fn expr_has_parameter(expr: &DynTree<ExprIR<Variable>>) -> bool {
+fn expr_has_parameter(
+    expr: &DynTree<ExprIR<Variable>>,
+    traverser: &mut Bfs,
+) -> bool {
     expr.root()
-        .indices::<Bfs>()
+        .indices_with(traverser)
         .any(|idx| matches!(expr.node(idx).data(), ExprIR::Parameter(_)))
 }
 
@@ -82,9 +86,10 @@ fn expr_has_parameter(expr: &DynTree<ExprIR<Variable>>) -> bool {
 fn substitute_params(
     expr: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
+    traverser: &mut Bfs,
 ) -> DynTree<ExprIR<Variable>> {
     let mut result = expr.clone();
-    let indices: Vec<_> = result.root().indices::<Bfs>().collect();
+    let indices: Vec<_> = result.root().indices_with(traverser).collect();
     for idx in indices {
         if let ExprIR::Parameter(name) = result.node(idx).data()
             && let Some(val) = params.get(name)
@@ -102,17 +107,21 @@ fn substitute_params(
 pub(super) fn eliminate_true_filters(
     optimized_plan: &mut DynTree<IR>,
     params: &HashMap<String, Value>,
+    traverser: &mut Bfs,
 ) {
     loop {
         let mut changed = false;
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        let indices = optimized_plan
+            .root()
+            .indices_with(traverser)
+            .collect::<Vec<_>>();
 
         for idx in indices {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
                 continue;
             };
 
-            if is_constant_true(filter, params) {
+            if is_constant_true(filter, params, traverser) {
                 optimized_plan.node_mut(idx).take_out();
                 changed = true;
                 break;
@@ -123,7 +132,7 @@ pub(super) fn eliminate_true_filters(
                 let remaining: Vec<DynTree<ExprIR<Variable>>> = filter
                     .root()
                     .children()
-                    .filter(|c| !is_constant_true(&c.clone_as_tree(), params))
+                    .filter(|c| !is_constant_true(&c.clone_as_tree(), params, traverser))
                     .map(|c| c.clone_as_tree())
                     .collect();
 
