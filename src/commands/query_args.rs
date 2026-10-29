@@ -18,8 +18,8 @@
 //! `--track-memory` is Rust-only.
 
 use crate::config::TIMEOUT_MAX;
-use redis_module::{RedisError, RedisString};
 use std::sync::atomic::Ordering;
+use valkey_module::{ValkeyError, ValkeyString};
 
 /// C's `_validate_command_arity` upper bound for the query commands.
 const MAX_ARGS: usize = 8;
@@ -41,9 +41,9 @@ pub struct QueryFlags {
 /// Checks the arity of a query command and parses its flags (`args[3..]`).
 ///
 /// `args` is the full argument vector, command name included.
-pub fn parse_query_flags(args: &[RedisString]) -> Result<QueryFlags, RedisError> {
+pub fn parse_query_flags(args: &[ValkeyString]) -> Result<QueryFlags, ValkeyError> {
     if args.len() < 3 || args.len() > MAX_ARGS {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let mut flags = QueryFlags::default();
     let mut rest = args[3..].iter();
@@ -57,13 +57,13 @@ pub fn parse_query_flags(args: &[RedisString]) -> Result<QueryFlags, RedisError>
             let t = rest
                 .next()
                 .and_then(|v| v.parse_integer().ok())
-                .ok_or(RedisError::Str(TIMEOUT_ERR))?;
+                .ok_or(ValkeyError::Str(TIMEOUT_ERR))?;
             let max = TIMEOUT_MAX.load(Ordering::Relaxed);
             if max > 0 && t > max {
-                return Err(RedisError::Str(TIMEOUT_MAX_ERR));
+                return Err(ValkeyError::Str(TIMEOUT_MAX_ERR));
             }
             if t < 0 {
-                return Err(RedisError::Str(TIMEOUT_ERR));
+                return Err(ValkeyError::Str(TIMEOUT_ERR));
             }
             flags.timeout = Some(t);
         } else if arg.eq_ignore_ascii_case(b"version") {
@@ -71,7 +71,7 @@ pub fn parse_query_flags(args: &[RedisString]) -> Result<QueryFlags, RedisError>
                 .next()
                 .and_then(|v| v.parse_integer().ok())
                 .and_then(|v| u32::try_from(v).ok())
-                .ok_or(RedisError::Str(VERSION_ERR))?;
+                .ok_or(ValkeyError::Str(VERSION_ERR))?;
             flags.version = Some(u64::from(v));
         }
     }
