@@ -218,78 +218,10 @@ impl<'a> NodeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
-                    // Kept as one `InList` rather than expanded to `Or(Equal, ..)`: it names one
-                    // attribute by construction, and RediSearch builds the same union from either
-                    // shape (`build_query_node`). Only the members kept here reach the index.
-                    Value::List(items) => {
-                        let keep = |v: &Value| {
-                            matches!(
-                                v,
-                                Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                            )
-                        };
-                        let items = if items.iter().all(keep) {
-                            items
-                        } else {
-                            Arc::new(items.iter().filter(|v| keep(v)).cloned().collect())
-                        };
-                        Ok(IndexQuery::InList {
-                            key: key.clone(),
-                            list: Value::List(items),
-                        })
-                    }
+                    Value::List(items) => Ok(IndexQuery::in_list(key, &items)),
                     _ => Err("IN operator requires a list".into()),
                 }
             }
-        }
-    }
-
-    /// Check if an evaluated index query can be satisfied by the index.
-    /// Returns false when runtime values are types the index can't handle
-    /// (e.g. List, Map, large Int64), in which case the caller should fall
-    /// back to a label scan.
-    fn can_utilize_index(q: &IndexQuery<Value>) -> bool {
-        use crate::index::Index;
-
-        const fn is_indexable(v: &Value) -> bool {
-            match v {
-                Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_)
-                | Value::String(_)
-                | Value::Bool(_)
-                | Value::Point(_)
-                | Value::Null => true,
-                _ => false, // List, Map, Node, Relationship, Path, etc.
-            }
-        }
-        match q {
-            IndexQuery::Equal { value, .. } => is_indexable(value),
-            IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
-            }
-            IndexQuery::And(children) | IndexQuery::Or(children) => {
-                // Empty `Or([])` / `And([])` is not a valid index
-                // query: the RediSearch backend treats it as
-                // match-all, which is unsafe when the optimizer has
-                // already pushed an IN-list whose elements were all
-                // filtered out at runtime (e.g. `IN [NULL]`). Force
-                // the fallback path so the retained post-filter
-                // re-establishes correctness.
-                !children.is_empty() && children.iter().all(Self::can_utilize_index)
-            }
-            // The same rule, for an `IN` list: empty once its members were filtered (`IN [NULL]`)
-            // falls back, and so does a list with any member the index cannot hold exactly.
-            IndexQuery::InList { list, .. } => matches!(
-                list,
-                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
-            ),
-            IndexQuery::ArrayContains { value, .. } => {
-                matches!(
-                    value,
-                    Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                )
-            }
-            _ => true,
         }
     }
 }
@@ -312,7 +244,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // Check if the index can satisfy this query. If not
                 // (e.g. non-indexable value types), fall back to a
                 // label scan.
-                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                let base: Box<dyn Iterator<Item = NodeId>> = if q.can_be_served() {
                     let g = self.runtime.graph();
                     // Index: a numeric Equal/Range on a column we own is served by the
                     // CoW B-tree; everything else (string/geo on the same Range index, composite, or a
@@ -389,8 +321,12 @@ mod tests {
     #[test]
     fn in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members() {
         let lossy = Value::Int(9_007_199_254_740_993);
-        let cases: [(&[Value], bool); 5] = [
-            (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
+        // A member the index cannot hold (here a list; a `date()` alike) is kept by
+        // `IndexQuery::in_list` so that the whole query falls back (#2958).
+        let unservable = Value::List(Arc::new(vec![Value::Int(1)].into_iter().collect()));
+        let cases: [(&[Value], bool); 7] = [
+            (&[Value::Int(1), Value::Float(2.5), Value::Null], true),
+            (&[Value::Int(1), Value::Bool(true)], true),
             (
                 &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
                 true,
@@ -398,24 +334,22 @@ mod tests {
             (&[], false),
             (&[Value::Int(1), lossy.clone()], false),
             (&[lossy], false),
+            (&[Value::Int(1), unservable], false),
         ];
         for (values, expected) in cases {
+            assert_eq!(in_list(values).can_be_served(), expected, "IN {values:?}");
             assert_eq!(
-                NodeByIndexScanOp::can_utilize_index(&in_list(values)),
-                expected,
-                "IN {values:?}"
-            );
-            assert_eq!(
-                NodeByIndexScanOp::can_utilize_index(&in_list(values)),
-                NodeByIndexScanOp::can_utilize_index(&or_of_equals(values)),
+                in_list(values).can_be_served(),
+                or_of_equals(values).can_be_served(),
                 "IN {values:?} must decide as its members did as an Or"
             );
         }
         assert!(
-            !NodeByIndexScanOp::can_utilize_index(&IndexQuery::InList {
+            !IndexQuery::InList {
                 key: key(),
                 list: Value::Int(1),
-            }),
+            }
+            .can_be_served(),
             "an InList that does not hold a list never reaches the index"
         );
     }

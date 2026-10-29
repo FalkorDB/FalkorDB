@@ -704,13 +704,15 @@ fn try_single_filter_scan<T: IndexSubject>(
 }
 
 /// Result of pushing a whole `Filter` predicate into a single index
-/// scan: the label/type the index lives on, the merged index query and
-/// any conjuncts that couldn't be indexed and must stay as a reduced
-/// post-filter.
+/// scan: the label/type the index lives on, the merged index query, any
+/// conjuncts that couldn't be indexed and must stay as a reduced
+/// post-filter, and whether a pushed conjunct may not be answered
+/// exactly by the index (so the whole original filter must stay).
 type FilterPushdown = (
     Arc<String>,
     IndexQuery<QueryExpr<Variable>>,
     Vec<DynTree<ExprIR<Variable>>>,
+    bool,
 );
 
 /// Tries to push a `Filter` predicate into a single index query on
@@ -720,10 +722,11 @@ type FilterPushdown = (
 ///   and leave the rest as post-filter conjuncts.
 /// - `OR(...)` — convert every branch to an index query or bail
 ///   (partial conversion would produce wrong results).
-/// - Any other comparison / `IN` — delegate to `try_single_filter_scan`
-///   and keep the original filter when it's a "value IN property"
-///   array-contains (index may return false positives for non-indexable
-///   list elements).
+/// - Any other comparison / `IN` — delegate to `try_single_filter_scan`.
+///
+/// Only the conjuncts or branches that are pushed decide whether the
+/// original filter must stay (`pushed_needs_post_filter`); a conjunct
+/// left in the reduced post-filter is evaluated there anyway.
 fn try_filter_pushdown<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
@@ -733,9 +736,11 @@ fn try_filter_pushdown<T: IndexSubject>(
         ExprIR::And => {
             let mut merged: Option<(Arc<String>, IndexQuery<QueryExpr<Variable>>)> = None;
             let mut remaining = Vec::new();
+            let mut needs_post = false;
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
                 if let Some((_, label, query)) = try_single_filter_scan(subject, &conjunct, graph) {
+                    needs_post |= pushed_needs_post_filter(subject, &conjunct);
                     merged = Some(match merged {
                         None => (label, query),
                         Some((prev_label, prev_q)) => {
@@ -746,14 +751,16 @@ fn try_filter_pushdown<T: IndexSubject>(
                     remaining.push(conjunct);
                 }
             }
-            merged.map(|(label, q)| (label, q, remaining))
+            merged.map(|(label, q)| (label, q, remaining, needs_post))
         }
         ExprIR::Or => {
             let mut or_queries = Vec::new();
             let mut or_label: Option<Arc<String>> = None;
+            let mut needs_post = false;
             for child in filter.root().children() {
                 let branch = child.clone_as_tree();
                 if let Some((_, label, q)) = try_single_filter_scan(subject, &branch, graph) {
+                    needs_post |= pushed_needs_post_filter(subject, &branch);
                     if or_label.is_none() {
                         or_label = Some(label);
                     }
@@ -763,23 +770,30 @@ fn try_filter_pushdown<T: IndexSubject>(
                 }
             }
             or_label.and_then(|label| {
-                (!or_queries.is_empty()).then(|| (label, IndexQuery::Or(or_queries), Vec::new()))
+                (!or_queries.is_empty())
+                    .then(|| (label, IndexQuery::Or(or_queries), Vec::new(), needs_post))
             })
         }
         _ => try_single_filter_scan(subject, filter, graph).map(|(_, label, q)| {
-            // For "value IN property" (array-contains), keep the filter
-            // as a post-filter — the index may return false positives
-            // for non-indexable array elements.
-            let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
-                && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
-            if is_array_contains {
-                (label, q, vec![filter.root().clone_as_tree()])
-            } else {
-                (label, q, Vec::new())
-            }
+            let needs_post = pushed_needs_post_filter(subject, filter);
+            (label, q, Vec::new(), needs_post)
         }),
     }
+}
+
+/// Whether a comparison or `IN` pushed into the index must also stay as
+/// a post-filter: either its value side may evaluate to something the
+/// index can't serve (see `needs_post_filter`), or it is a "value IN
+/// property" array-contains, for which the index may return false
+/// positives from non-indexable array elements.
+fn pushed_needs_post_filter<T: IndexSubject>(
+    subject: &T,
+    pushed: &DynTree<ExprIR<Variable>>,
+) -> bool {
+    let is_array_contains = matches!(pushed.root().data(), ExprIR::In)
+        && !subtree_has_property_of(pushed, pushed.root().child(0).idx(), subject.alias())
+        && subtree_has_property_of(pushed, pushed.root().child(1).idx(), subject.alias());
+    is_array_contains || needs_post_filter(pushed, subject.alias().id)
 }
 
 /// Whether a filter contains runtime values that might evaluate to
@@ -789,7 +803,7 @@ fn try_filter_pushdown<T: IndexSubject>(
 /// proven indexable), requiring a post-filter safety net even after
 /// the filter has been pushed into the index.
 ///
-/// If the runtime's `can_utilize_index` rejects the evaluated query
+/// If the runtime's `IndexQuery::can_be_served` rejects the evaluated query
 /// (e.g. a list or a `date(...)` value), the scan op falls back to
 /// iterating all entities of the label/type; the retained Filter
 /// above it re-establishes correctness. Mirrors the C
@@ -800,7 +814,7 @@ fn try_filter_pushdown<T: IndexSubject>(
 /// RHS (list expression) of an `IN` operator — `InList` index queries
 /// handle the list natively, so that subtree is whitelisted.
 fn needs_post_filter(
-    filter: &QueryExpr<Variable>,
+    filter: &DynTree<ExprIR<Variable>>,
     scan_alias_id: u32,
 ) -> bool {
     // Whitelist the RHS subtree of `property IN [literal, ...]` only
@@ -843,7 +857,16 @@ fn needs_post_filter(
         if skip_descendants.contains(&i) {
             return false;
         }
-        is_non_indexable_subexpr(filter.node(i).data(), Some(scan_alias_id))
+        let node = filter.node(i);
+        // A Bool has a TAG key for equality only: a range with a Bool bound is
+        // refused by `can_be_served`, and the scan then needs the filter.
+        let bool_range_bound = matches!(
+            node.data(),
+            ExprIR::Lt | ExprIR::Gt | ExprIR::Le | ExprIR::Ge
+        ) && node
+            .children()
+            .any(|c| matches!(c.data(), ExprIR::Constant(Value::Bool(_))));
+        bool_range_bound || is_non_indexable_subexpr(node.data(), Some(scan_alias_id))
     })
 }
 
@@ -852,22 +875,42 @@ fn needs_post_filter(
 /// tolerates `Variable` references to the scan target itself (the
 /// property-access side), so only *other* variables count as runtime
 /// dependencies.
+///
+/// This is an allow-list: the only nodes the index is known to resolve
+/// exactly are the comparison and boolean structure of the predicate,
+/// the scanned property, and scalar literals the index stores as they
+/// are. Anything else — an arithmetic expression, a folded non-scalar
+/// constant such as `date(...)` or `point(...)`, a function call, a list
+/// or map — can evaluate to a value `IndexQuery::can_be_served` rejects,
+/// and the scan then falls back to every entity of the label.
 fn is_non_indexable_subexpr(
     expr: &ExprIR<Variable>,
     scan_alias_id: Option<u32>,
 ) -> bool {
-    #[allow(clippy::match_same_arms)]
     match expr {
         ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
-        ExprIR::Parameter(_) => true,
-        ExprIR::Constant(Value::Int(v)) => Index::int_loses_f64_precision(*v),
-        // Compound / non-primitive literals: the index backing store
-        // only handles numeric, string, bool, and point scalars.
-        ExprIR::List | ExprIR::Map => true,
-        // Function calls can return any type, including non-indexable
-        // temporal values (`date()`, `datetime()`, `duration()`…).
-        // Conservative: keep the filter as a safety net.
-        ExprIR::FuncInvocation(_) => true,
+        ExprIR::Constant(v) => !is_exact_index_literal(v),
+        ExprIR::And
+        | ExprIR::Or
+        | ExprIR::Eq
+        | ExprIR::Lt
+        | ExprIR::Gt
+        | ExprIR::Le
+        | ExprIR::Ge
+        | ExprIR::In
+        | ExprIR::Paren
+        | ExprIR::Property(_) => false,
+        _ => true,
+    }
+}
+
+/// A literal the index looks up exactly: the value types
+/// `IndexQuery::can_be_served` accepts. Null is served as an empty
+/// result, which is what a comparison with null selects.
+const fn is_exact_index_literal(v: &Value) -> bool {
+    match v {
+        Value::Int(i) => !Index::int_loses_f64_precision(*i),
+        Value::Null | Value::Bool(_) | Value::Float(_) | Value::String(_) => true,
         _ => false,
     }
 }
@@ -977,6 +1020,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
     index: Arc<String>,
     query: IndexQuery<QueryExpr<Variable>>,
     remaining: Vec<DynTree<ExprIR<Variable>>>,
+    keep_filter: bool,
     original_filter: &QueryExpr<Variable>,
     filter_idx: NodeIdx<Dyn<IR>>,
     over_pending: bool,
@@ -984,7 +1028,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
 ) {
     // `over_pending`: rows injected by `IncludePending` bypass the index, so
     // the filter has to stay and re-check them. See `governing_filter`.
-    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().id);
+    let keep_filter = over_pending || keep_filter;
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
     *plan.node_mut(idx).data_mut() = scan_ir;
@@ -1021,7 +1065,8 @@ fn try_index_rewrite<T: IndexSubject>(
 ) -> bool {
     if let Some((subject, filter, filter_idx, over_pending, metadata)) =
         match_scan_with_filter::<T>(plan, idx)
-        && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
+        && let Some((label, query, remaining, keep_filter)) =
+            try_filter_pushdown(&subject, &filter, graph)
     {
         apply_filter_pushdown(
             plan,
@@ -1030,6 +1075,7 @@ fn try_index_rewrite<T: IndexSubject>(
             label,
             query,
             remaining,
+            keep_filter,
             &filter,
             filter_idx,
             over_pending,

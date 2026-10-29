@@ -259,6 +259,76 @@ pub enum IndexQuery<T> {
     },
 }
 
+impl IndexQuery<Value> {
+    /// Build the index query for the evaluated list of `property IN list`,
+    /// kept as one `InList` (one attribute by construction; RediSearch
+    /// builds the same union from it as from an `Or` of `Equal`s). Every
+    /// non-null item is kept, including ones the index cannot serve (a
+    /// `date()`, a list), so that [`Self::can_be_served`] sees them and the
+    /// scan falls back; dropping them would lose the rows they match. A
+    /// null item never compares equal and is dropped.
+    #[must_use]
+    pub fn in_list(
+        key: &Arc<String>,
+        items: &Arc<thin_vec::ThinVec<Value>>,
+    ) -> Self {
+        let not_null = |v: &Value| !matches!(v, Value::Null);
+        let items = if items.iter().all(not_null) {
+            items.clone()
+        } else {
+            Arc::new(items.iter().filter(|v| not_null(v)).cloned().collect())
+        };
+        Self::InList {
+            key: key.clone(),
+            list: Value::List(items),
+        }
+    }
+
+    /// Whether the index answers this evaluated query exactly. When it
+    /// returns false the scan falls back to every entity of the label or
+    /// type, and the optimizer has kept the predicate as a post-filter.
+    #[must_use]
+    pub fn can_be_served(&self) -> bool {
+        // The value types `build_query_node` looks up exactly. Null is
+        // served as an empty result, which is what `= null` selects.
+        // Temporals have no Equal or Range arm, and a Point has no Equal
+        // arm (a radius query is the separate `Point` variant).
+        const fn is_indexable(v: &Value) -> bool {
+            match v {
+                Value::Int(i) => !Index::int_loses_f64_precision(*i),
+                Value::Float(_) | Value::String(_) | Value::Bool(_) | Value::Null => true,
+                _ => false,
+            }
+        }
+        match self {
+            Self::Equal { value, .. } => is_indexable(value),
+            // A Bool has a TAG key for equality only; it has no place in a range.
+            Self::Range { min, max, .. } => {
+                let ok = |v: &Value| is_indexable(v) && !matches!(v, Value::Bool(_));
+                min.as_ref().is_none_or(ok) && max.as_ref().is_none_or(ok)
+            }
+            Self::And(children) | Self::Or(children) => {
+                // An empty `Or([])` / `And([])` is not a valid index query:
+                // the RediSearch backend treats it as match-all, which is
+                // unsafe when an IN list had only null items (`IN [NULL]`).
+                // Fall back so the retained post-filter decides.
+                !children.is_empty() && children.iter().all(Self::can_be_served)
+            }
+            Self::ArrayContains { value, .. } => {
+                !matches!(value, Value::Null) && is_indexable(value)
+            }
+            // The same rule as an `Or` of its members: an empty list (`IN [NULL]`)
+            // falls back, and so does a list with any member the index cannot
+            // hold exactly.
+            Self::InList { list, .. } => matches!(
+                list,
+                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
+            ),
+            Self::Point { .. } => true,
+        }
+    }
+}
+
 /// Lazy iterator over RediSearch query results.
 ///
 /// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
@@ -555,26 +625,61 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /// Escape a TAG string value so it survives RediSearch's tag tokenizer and the
 /// query-side `tag_strtolower` strip pass, collapsing to a single literal
-/// token. Mirrors C FalkorDB's `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
-/// `src/index/tag_encode.c`): every byte `<= 0x20` (control bytes, whitespace
-/// and the `\1` tag separator), `\` (0x5c, the read-side strip target) and `_`
-/// (0x5f, the escape prefix itself) is emitted as `_` followed by two lowercase
-/// hex digits; all other bytes pass through verbatim. Applied symmetrically on
-/// the index write and query paths so the stored key and the query key match.
-/// No decoder exists — the encoded form is only ever the RediSearch index key;
-/// the real attribute value is served from FalkorDB's own attribute store.
+/// token, **and so the byte order of the keys is the byte order of the values**:
+/// a string range query compares these keys, so `a < b` must imply
+/// `enc(a) < enc(b)` (the old encoding of `' '` sorted after `'A'`, #2963).
+///
+/// The bytes the tag layer cannot carry are the controls and whitespace
+/// (`<= 0x20`, which includes the `\1` tag separator) and `\` (0x5c, the
+/// read-side strip target). Each source byte becomes a self-delimiting unit, and
+/// the units compare as the bytes do:
+///
+/// * `<= 0x21` -> `0x21, 0x22 + b` (`0x21` is itself escaped, so every other
+///   byte is `>= 0x22` and sorts after the escapes)
+/// * `[` (0x5b) -> `0x5b 0x5b`, `\` (0x5c) -> `0x5b 0x5d` (between `[` and `]`)
+/// * every other byte passes through verbatim.
+///
+/// The empty string, which RediSearch does not index as an empty tag, is the
+/// lone byte `0x21`. That is no other string's key (an escape is always two
+/// bytes) and it sorts before them all, as `''` does (#2963).
+///
+/// Applied symmetrically on the index write and query paths so the stored key
+/// and the query key match. No decoder exists: the encoded form is only ever
+/// the RediSearch index key; the real attribute value is served from
+/// FalkorDB's own attribute store.
 fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
+    if src.is_empty() {
+        return vec![0x21];
+    }
     let mut out = Vec::with_capacity(src.len());
     for &b in src {
-        if b <= 0x20 || b == b'\\' || b == b'_' {
-            out.push(b'_');
-            out.push(HEX_DIGITS[(b >> 4) as usize]);
-            out.push(HEX_DIGITS[(b & 0x0f) as usize]);
-        } else {
-            out.push(b);
+        match b {
+            0..=0x21 => out.extend_from_slice(&[0x21, 0x22 + b]),
+            b'[' => out.extend_from_slice(b"[["),
+            b'\\' => out.extend_from_slice(b"[]"),
+            _ => out.push(b),
         }
     }
     out
+}
+
+/// Key of a Bool in a TAG field. `0xFF` never occurs in a UTF-8 string, so no
+/// string encodes to it, and it sorts after every string key: a Bool is found
+/// by `= true`, never by `= 1`, and (with `STRING_RANGE_END`) never by a string
+/// range (#2963, #363).
+const BOOL_TRUE_KEY: &[u8] = &[0xFF, b't'];
+const BOOL_FALSE_KEY: &[u8] = &[0xFF, b'f'];
+/// Closes an open-ended string range below the Bool keys: no string reaches it.
+const STRING_RANGE_END: &[u8] = &[0xFE];
+
+/// The TAG key a String or Bool is indexed and looked up under.
+fn tag_key(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::String(s) => Some(tag_encode_lower(s.as_bytes())),
+        Value::Bool(true) => Some(BOOL_TRUE_KEY.to_vec()),
+        Value::Bool(false) => Some(BOOL_FALSE_KEY.to_vec()),
+        _ => None,
+    }
 }
 
 /// Hex-encode `bytes` into `out` (high nibble first). `out.len()` must be
@@ -758,12 +863,16 @@ impl Document {
                 return;
             }
             match value {
-                Value::Bool(i) => {
-                    RediSearch_DocumentAddFieldNumber(
+                // A Bool is a TAG key of its own. Stored as 1/0 in the numeric
+                // field it matched `= 1` / `= 0` and numeric ranges (#2963, #363).
+                Value::Bool(_) => {
+                    let enc = tag_key(value).unwrap_or_default();
+                    RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        f64::from(*i),
-                        RSFLDTYPE_NUMERIC,
+                        enc.as_ptr().cast::<c_char>(),
+                        enc.len(),
+                        RSFLDTYPE_TAG,
                     );
                 }
                 Value::Int(i) => {
@@ -810,7 +919,11 @@ impl Document {
                     let mut string_cstrs: Vec<CString> = Vec::new();
                     for item in items.iter() {
                         match item {
-                            Value::Bool(b) => numerics.push(f64::from(*b)),
+                            Value::Bool(_) => {
+                                if let Some(cs) = tag_key(item).and_then(|k| CString::new(k).ok()) {
+                                    string_cstrs.push(cs);
+                                }
+                            }
                             Value::Int(i) => numerics.push(*i as f64),
                             Value::Float(f) => numerics.push(*f),
                             Value::String(s) => {
@@ -1358,7 +1471,6 @@ impl Index {
         match value {
             Value::Int(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
-            Value::Bool(b) => Some(f64::from(*b)),
             _ => None,
         }
     }
@@ -1456,7 +1568,14 @@ impl Index {
 
         // Lex range: NULL pointer means open bound (infinity)
         let min_cstr = min.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
-        let max_cstr = max.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
+        // An open upper end stops below the Bool keys, which sort after every string.
+        let (max_cstr, include_max) = match max {
+            Some(s) => (
+                CString::new(tag_encode_lower(s.as_bytes())).ok(),
+                include_max,
+            ),
+            None => (CString::new(STRING_RANGE_END).ok(), true),
+        };
         let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
         let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
@@ -1479,7 +1598,7 @@ impl Index {
         query: IndexQuery<Value>,
     ) -> *mut redisearch::RSQNode {
         match query {
-            // Numeric equality (Int, Float, Bool)
+            // Numeric equality (Int, Float)
             IndexQuery::Equal { ref key, ref value } if Self::value_to_numeric(value).is_some() => {
                 let d = Self::value_to_numeric(value).unwrap();
                 let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
@@ -1489,16 +1608,16 @@ impl Index {
                     RediSearch_CreateNumericNode(self.rs_ptr(), field.name.as_ptr(), d, d, 1, 1)
                 }
             }
-            // String equality
+            // String and Bool equality, both TAG keys
             IndexQuery::Equal {
                 key,
-                value: Value::String(value),
+                value: value @ (Value::String(_) | Value::Bool(_)),
             } => {
                 let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
                 let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
-                let Ok(msg) = CString::new(tag_encode_lower(value.as_bytes())) else {
+                let Some(Ok(msg)) = tag_key(&value).map(CString::new) else {
                     return std::ptr::null_mut();
                 };
                 let child = unsafe {
@@ -1647,28 +1766,13 @@ impl Index {
                             )
                         }
                     }
-                    Value::Bool(b) => {
-                        let Some(arr_name) = field.numeric_arr_name() else {
-                            return std::ptr::null_mut();
-                        };
-                        unsafe {
-                            RediSearch_CreateNumericNode(
-                                self.rs_ptr(),
-                                arr_name.as_ptr(),
-                                f64::from(*b),
-                                f64::from(*b),
-                                1,
-                                1,
-                            )
-                        }
-                    }
-                    Value::String(s) => {
+                    Value::String(_) | Value::Bool(_) => {
                         let Some(arr_name) = field.string_arr_name() else {
                             return std::ptr::null_mut();
                         };
                         let root =
                             unsafe { RediSearch_CreateTagNode(self.rs_ptr(), arr_name.as_ptr()) };
-                        let Ok(token) = CString::new(tag_encode_lower(s.as_bytes())) else {
+                        let Some(Ok(token)) = tag_key(value).map(CString::new) else {
                             return std::ptr::null_mut();
                         };
                         let child = unsafe {
@@ -2295,24 +2399,50 @@ mod tests {
 
     #[test]
     fn tag_encode_escapes_only_expected_bytes() {
-        // Bytes <= 0x20 (controls + space), '\\' (0x5c) and '_' (0x5f) become
-        // `_` + two lowercase hex digits; everything else passes through.
         assert_eq!(tag_encode_lower(b"plain"), b"plain");
-        assert_eq!(tag_encode_lower(b"a b"), b"a_20b"); // space
-        assert_eq!(tag_encode_lower(b"a\\b"), b"a_5cb"); // backslash
-        assert_eq!(tag_encode_lower(b"a_b"), b"a_5fb"); // the escape prefix itself
-        assert_eq!(tag_encode_lower(&[0x00]), b"_00"); // NUL
-        assert_eq!(tag_encode_lower(&[0x09]), b"_09"); // tab
-        assert_eq!(tag_encode_lower(&[0x01]), b"_01"); // FalkorDB tag separator
+        assert_eq!(tag_encode_lower(b""), [0x21]); // the empty string has a key of its own
+        assert_eq!(tag_encode_lower(b"a b"), [b'a', 0x21, 0x42, b'b']); // space
+        assert_eq!(tag_encode_lower(b"a_b"), b"a_b"); // `_` is no longer an escape
+        assert_eq!(tag_encode_lower(&[0x00]), [0x21, 0x22]); // NUL
+        assert_eq!(tag_encode_lower(&[0x01]), [0x21, 0x23]); // FalkorDB tag separator
+        assert_eq!(tag_encode_lower(b"!"), [0x21, 0x43]);
+        assert_eq!(tag_encode_lower(b"\\"), b"[]"); // backslash
+        assert_eq!(tag_encode_lower(b"["), b"[[");
         // Other punctuation (comma 0x2c) and high bytes pass through untouched.
         assert_eq!(tag_encode_lower(b"a,b"), b"a,b");
         assert_eq!(tag_encode_lower(&[0xff]), &[0xff]);
     }
 
     #[test]
+    fn tag_encode_is_order_preserving_and_injective() {
+        // Every pair of short strings over the bytes the escapes care about, and
+        // some neighbours, must compare the same before and after encoding.
+        let alphabet: Vec<u8> = (0u8..=0x23)
+            .chain([b'A', b'Z', b'[', b'\\', b']', b'_', b'a', 0x7f, 0x80, 0xff])
+            .collect();
+        let mut all: Vec<Vec<u8>> = vec![vec![]];
+        for &a in &alphabet {
+            all.push(vec![a]);
+            for &b in &alphabet {
+                all.push(vec![a, b]);
+            }
+        }
+        for x in &all {
+            let ex = tag_encode_lower(x);
+            assert!(
+                !ex.iter().any(|&c| c <= 0x20 || c == b'\\'),
+                "{x:?} encodes to a byte the tag layer cannot carry: {ex:?}"
+            );
+            for y in &all {
+                assert_eq!(x.cmp(y), ex.cmp(&tag_encode_lower(y)), "{x:?} vs {y:?}");
+            }
+        }
+    }
+
+    #[test]
     fn tag_encode_output_has_no_interior_nul() {
         // The encoded form is handed to CString::new, so it must never contain a
-        // 0x00 byte (NUL itself is escaped to "_00").
+        // 0x00 byte (NUL itself is escaped).
         let enc = tag_encode_lower(&[0x00, b'x', 0x20, 0xff, b'\\']);
         assert!(!enc.contains(&0x00), "encoded form contains NUL: {enc:?}");
     }

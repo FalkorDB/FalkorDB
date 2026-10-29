@@ -1321,6 +1321,22 @@ class testIndexScanFlow():
             with_idx.delete()
             no_idx.delete()
 
+    def test_36_unservable_value_keeps_filter(self):
+        # A value the index can't look up exactly (a folded date() or
+        # point(), a computed int beyond 2^52, a date() in an IN list)
+        # must not return every node of the label or lose rows.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:date('2020-01-01'), k:'date'}),"
+            " (:L {v:point({latitude:1.0, longitude:2.0}), k:'p'})",
+            ["MATCH (n:L) WHERE n.v = date('2020-01-01') RETURN n.k",
+             "MATCH (n:L {v: date('2020-01-01')}) RETURN n.k",
+             "MATCH (n:L) WHERE n.v > date('2019-01-01') RETURN n.k",
+             "MATCH (n:L) WHERE n.v IN [date('2020-01-01'), 5] RETURN n.k",
+             "MATCH (n:L) WHERE n.v = point({latitude:1.0, longitude:2.0}) RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 4503599627370495 * 2 RETURN n.k"])
+
     def test_38_exclusive_equal_string_bounds(self):
         # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
         # shortcut must only apply when both bounds are inclusive.
@@ -1408,3 +1424,57 @@ class testIndexScanFlow():
             self.env.assertEqual(g.query(q).result_set, expected, message=q)
 
         g.delete()
+
+    def test_44_bool_is_not_a_number_in_the_index(self):
+        # A Bool must not be indexed as 1/0: `= 1` returned `true` and
+        # `= true` returned `1` (#2963, #363), also inside AND for arrays.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'int'}), (:L {v:true, k:'bool'}), (:L {v:0, k:'zero'}),"
+            " (:L {v:false, k:'false'})",
+            ["MATCH (n:L) WHERE n.v = 1 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = true RETURN n.k",
+             "MATCH (n:L) WHERE n.v = false RETURN n.k",
+             "MATCH (n:L) WHERE n.v IN [true, 0] RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 2 RETURN n.k"],
+            expected_rows=[[['int']], [['bool']], [['false']], [['bool'], ['zero']],
+                           [['int'], ['zero']], [['int'], ['zero']]])
+        # Bool bounds are not served by the index; the label scan decides.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'int'}), (:L {v:true, k:'bool'}), (:L {v:false, k:'false'})",
+            ["MATCH (n:L) WHERE n.v >= false RETURN n.k",
+             "MATCH (n:L) WHERE n.v < true RETURN n.k"])
+        self._index_vs_scan(
+            [('L', 'arr')],
+            "CREATE (:L {k:4, arr:[true,'X']}), (:L {k:5, arr:[1,'x']})",
+            ["MATCH (n:L) WHERE 1 IN n.arr AND n.k > 0 RETURN n.k",
+             "MATCH (n:L) WHERE true IN n.arr RETURN n.k"],
+            expected_rows=[[[5]], [[4]]])
+
+    def test_45_string_range_follows_byte_order(self):
+        # The TAG key encoding must be order-preserving: ' ' (0x20) sorts
+        # before 'A', whatever the escape looks like (#2963).
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'John Smith', k:'js'}), (:L {v:'Johnny', k:'jy'}),"
+            " (:L {v:'a b', k:'ab'}), (:L {v:'a!', k:'a!'}), (:L {v:'a_b', k:'a_b'}),"
+            " (:L {v:'a\\\\b', k:'a\\\\b'}), (:L {v:'a[', k:'a['}), (:L {v:'', k:'empty'}),"
+            " (:L {v:true, k:'t'}), (:L {v:false, k:'f'})",
+            ["MATCH (n:L) WHERE n.v < 'JohnA' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a!' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a ' AND n.v < 'a_' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a[' RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= 'a\\\\b' RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 'a b' RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v = '' RETURN n.k"],
+            expected_rows=[[['empty'], ['js']],
+                           [['a['], ['a\\b'], ['a_b']],
+                           [['a!'], ['a['], ['a\\b'], ['ab']],
+                           [['a\\b'], ['a_b']],
+                           [['a!'], ['a['], ['a\\b'], ['ab'], ['empty'], ['js'], ['jy']],
+                           [['ab']],
+                           [['empty'], ['js'], ['jy']],
+                           [['empty']]])

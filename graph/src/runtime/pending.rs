@@ -149,7 +149,7 @@ fn lookup_sorted(
 /// whose composite-key component equals it. Other values (large integers the
 /// index stores rounded, NaN, the empty string, and any type it does not index)
 /// are checked by a scan instead. A string containing NUL is fine: the tag
-/// encoding escapes it to `_00` on both the write and the query path.
+/// encoding escapes it on both the write and the query path.
 fn is_value_valid_for_index_lookup(value: &Value) -> bool {
     match value {
         Value::Int(i) => !Index::int_loses_f64_precision(*i),
