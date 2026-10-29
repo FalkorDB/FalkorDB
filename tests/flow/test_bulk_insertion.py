@@ -797,7 +797,16 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # start bulk-insert
         start_time = time.perf_counter()
-        res = runner.invoke(bulk_insert, ['--server-url', f"redis://{self.env.host}:{self.port}",
+        # The loader builds its own redis client from the URL, and redis-py
+        # (>= 6) gives such a client a 5s socket timeout. A single GRAPH.BULK
+        # batch here is up to 64MB (millions of edges) and takes longer than
+        # that on an instrumented (coverage / ASAN) build: the loader then
+        # aborts with TimeoutError while the server is still applying the
+        # batch, leaving a partial graph (e.g. 2874998 of 4000000 edges).
+        # State the deadline in the URL instead.
+        url = (f"redis://{self.env.host}:{self.port}"
+               f"?socket_timeout={SOCKET_TIMEOUT}&socket_connect_timeout={SOCKET_TIMEOUT}")
+        res = runner.invoke(bulk_insert, ['--server-url', url,
                                           *nodes_args, *edges_args, graphname])
         # calculate the execution time
         execution_time = time.perf_counter() - start_time
@@ -811,7 +820,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertGreaterEqual(ping_count, execution_time / 2)
 
         # validate script results
-        self.env.assertEqual(res.exit_code, 0)
+        self.env.assertEqual(res.exit_code, 0, message=repr(res.exception))
         self.env.assertContains(f'{node_lbl_count} nodes created', res.output)
         self.env.assertContains(f'{edge_count} relations created', res.output)
 
