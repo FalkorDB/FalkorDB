@@ -492,6 +492,16 @@ class testTemporalDuration(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertIn("overflow", str(e))
 
+    def test_duration_trailing_number_is_null(self):
+        # a number with no unit is not a duration: null, as in C (it used to
+        # be dropped silently: duration('P1Y5') was P1Y)
+        for s in ['P5', 'P-', 'P1Y5', 'P1M2', 'PT4H5', 'PT1M5', 'PT-', 'P1Y-', 'P1Y5T1H', 'PT1.5']:
+            res = self.graph.query("RETURN duration($s)", {'s': s})
+            self.env.assertEqual(res.result_set[0][0], None)
+
+        res = self.graph.query("RETURN toString(duration('P1Y5M')), toString(duration('PT4H5M'))")
+        self.env.assertEqual(res.result_set[0], ['P1Y5M', 'PT4H5M'])
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """
