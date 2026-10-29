@@ -82,9 +82,10 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
             // child batch.
             let labels = &self.node_pattern.labels;
             let runtime = self.runtime;
-            match self.emitter.emit_lazy(|_b, _row| {
-                Ok(Some(RowIter::many(runtime.g.borrow().get_nodes(labels, 0))))
-            }) {
+            match self
+                .emitter
+                .emit_lazy(|_b, _row| Ok(Some(RowIter::many(runtime.graph().get_nodes(labels, 0)))))
+            {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {
                     Some(Ok(batch)) => self.emitter.seed(batch),
