@@ -101,6 +101,7 @@ The check fails when:
 | A statement hid nothing | The CVE is gone from the image (fixed, or its package removed): delete the statement. |
 | A statement's evidence no longer holds | The claim may now be false. Re-assess it before changing anything. |
 | A program listed in `[runtime]` is missing from the image | Update `[runtime]` to match `build/runtime/run.sh`. |
+| A tree listed in `[runtime]` holds a link to `/` or to a directory the link is in | `vex.py` does not follow such a link, so it cannot tell what the tree loads through it. Remove the link from the image, or make `vex.py` follow it. |
 
 ### Writing a statement
 

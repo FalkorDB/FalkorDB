@@ -283,14 +283,16 @@ class ImageFS:
     def names(self):
         """Every path a member can be opened by: its own name, and the same name
         through each symlink to a directory on the way (/lib/x for /usr/lib/x).
-        A link into a directory it is itself in is left out, so this ends."""
+        A link to "/" or to a directory it is itself in is left out, so this
+        ends; ancestor_links() lists those."""
         if self._names is None:
-            links = []
+            links, self._ancestor_links = [], []
             for p, m in self.members.items():
                 if m.issym():
                     t = self.resolve(p)
-                    if (t and t != "/" and not p.startswith(t + "/")
-                            and self.members.get(t) is not None and self.members[t].isdir()):
+                    if t == "/" or (t and p.startswith(t + "/")):
+                        self._ancestor_links.append((p, t))
+                    elif t and self.members.get(t) is not None and self.members[t].isdir():
                         links.append((p, t))
             names, new = set(self.members), set(self.members)
             for _ in range(8):  # names that pass through more than one link
@@ -301,6 +303,11 @@ class ImageFS:
                 new = added
             self._names = names
         return self._names
+
+    def ancestor_links(self):
+        """The (link, directory) pairs names() does not follow."""
+        self.names()
+        return self._ancestor_links
 
     def member(self, real):
         return self.members.get(real)
@@ -623,6 +630,12 @@ def runtime_roots(src, fs, image, os_name, errors):
         if real is None:
             errors.append(f"[runtime] lists the tree {t}, which is not in the {image} image")
             continue
+        # Through such a link the tree reaches files outside it, which
+        # names() leaves out: fail rather than miss what they load.
+        for link, d in fs.ancestor_links():
+            if link.startswith(real + "/"):
+                errors.append(f"the tree {t} holds {link}, a link to {d}, which it is in: "
+                              "vex.py cannot tell what the tree loads through it")
         roots |= loadable_named(lambda p: p.startswith(real + "/"))
     # Libraries the runtime loads by name: every one that matches counts,
     # whether or not this configuration loads it.
