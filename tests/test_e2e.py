@@ -2068,6 +2068,32 @@ def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
     assert res.result_set == []
 
 
+def test_union_branch_optional_match_filter_keeps_anonymous_scan():
+    """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
+    above the anonymous node's scan: the branch's `_anon_0` shares its id with
+    an outer variable, and was pushed onto the scan's Argument, where it is
+    unbound ("Variable _anon_0 not found", #2742)."""
+    query("CREATE (:L {k0: true})", write=True)
+
+    body = """
+        MATCH (n0:L)
+        CALL { WITH * RETURN n0 AS n1 }
+        CALL {
+            WITH n0, n1
+            RETURN n0 AS n2
+            UNION
+            OPTIONAL MATCH ({k0: true}), ()
+            WHERE true
+            %s
+            RETURN null AS n2
+        }
+        RETURN id(n0), id(n1), id(n2) ORDER BY id(n2)
+    """
+    for barrier in ["", "CALL { RETURN 0 AS __barrier }"]:
+        res = query(body % barrier)
+        assert res.result_set == [[0, 0, 0], [0, 0, None]]
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""
