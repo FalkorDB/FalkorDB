@@ -259,6 +259,74 @@ pub enum IndexQuery<T> {
     },
 }
 
+impl IndexQuery<Value> {
+    /// Build the index query for the evaluated list of `property IN list`,
+    /// kept as one `InList` (one attribute by construction; RediSearch
+    /// builds the same union from it as from an `Or` of `Equal`s). Every
+    /// non-null item is kept, including ones the index cannot serve (a
+    /// `date()`, a list), so that [`Self::can_be_served`] sees them and the
+    /// scan falls back; dropping them would lose the rows they match. A
+    /// null item never compares equal and is dropped.
+    #[must_use]
+    pub fn in_list(
+        key: &Arc<String>,
+        items: &Arc<thin_vec::ThinVec<Value>>,
+    ) -> Self {
+        let not_null = |v: &Value| !matches!(v, Value::Null);
+        let items = if items.iter().all(not_null) {
+            items.clone()
+        } else {
+            Arc::new(items.iter().filter(|v| not_null(v)).cloned().collect())
+        };
+        Self::InList {
+            key: key.clone(),
+            list: Value::List(items),
+        }
+    }
+
+    /// Whether the index answers this evaluated query exactly. When it
+    /// returns false the scan falls back to every entity of the label or
+    /// type, and the optimizer has kept the predicate as a post-filter.
+    #[must_use]
+    pub fn can_be_served(&self) -> bool {
+        // The value types `build_query_node` looks up exactly. Null is
+        // served as an empty result, which is what `= null` selects.
+        // Temporals have no Equal or Range arm, and a Point has no Equal
+        // arm (a radius query is the separate `Point` variant).
+        const fn is_indexable(v: &Value) -> bool {
+            match v {
+                Value::Int(i) => !Index::int_loses_f64_precision(*i),
+                Value::Float(_) | Value::String(_) | Value::Bool(_) | Value::Null => true,
+                _ => false,
+            }
+        }
+        match self {
+            Self::Equal { value, .. } => is_indexable(value),
+            Self::Range { min, max, .. } => {
+                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
+            }
+            Self::And(children) | Self::Or(children) => {
+                // An empty `Or([])` / `And([])` is not a valid index query:
+                // the RediSearch backend treats it as match-all, which is
+                // unsafe when an IN list had only null items (`IN [NULL]`).
+                // Fall back so the retained post-filter decides.
+                !children.is_empty() && children.iter().all(Self::can_be_served)
+            }
+            Self::ArrayContains { value, .. } => {
+                !matches!(value, Value::Null) && is_indexable(value)
+            }
+            // The same rule as an `Or` of its members: an empty list (`IN [NULL]`)
+            // falls back, and so does a list with any member the index cannot
+            // hold exactly.
+            Self::InList { list, .. } => matches!(
+                list,
+                Value::List(items) if !items.is_empty() && items.iter().all(is_indexable)
+            ),
+            Self::Point { .. } => true,
+        }
+    }
+}
+
 /// Lazy iterator over RediSearch query results.
 ///
 /// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
