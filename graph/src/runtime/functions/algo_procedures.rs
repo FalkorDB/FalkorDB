@@ -738,7 +738,7 @@ fn register_pagerank(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -844,7 +844,7 @@ fn register_wcc(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -964,7 +964,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -985,7 +985,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
-                    || (g.node_count() + g.deleted_nodes_count()) as usize,
+                    || g.node_id_bound() as usize,
                     Vec::len,
                 );
                 let sources: Vec<u64> = if n_nodes == 0 {
@@ -1252,7 +1252,7 @@ fn register_cdlp(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -2766,7 +2766,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                         adj.inner(),
                         std::ptr::null_mut(),
                     );
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -2791,7 +2791,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 // Unfiltered, the matrix spans every id up to the highest
                 // (deleted ids included, as above), so the source vector must too.
                 let node_vec_len = compact_to_id.as_ref().map_or_else(
-                    || g.node_count() + g.deleted_nodes_count(),
+                    || g.node_id_bound(),
                     |m| m.len() as u64,
                 );
                 GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
