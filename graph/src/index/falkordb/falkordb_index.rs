@@ -1098,6 +1098,8 @@ mod tests {
                 name: (Node, column.clone()),
                 work: tuples,
                 next,
+                read: 3,
+                catch_up_limit: None,
             }
         };
         let next = BuildCursor::Node(NodeId::from(3));
@@ -1590,6 +1592,8 @@ mod tests {
             name: (Node, (label.clone(), attr.clone())),
             work,
             next: Some(BuildCursor::Node(NodeId::from(11))),
+            read: 11,
+            catch_up_limit: None,
         }));
         assert_eq!(
             idx.numeric(Node, &label, &attr)

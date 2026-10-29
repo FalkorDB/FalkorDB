@@ -41,7 +41,7 @@ use std::time::Duration;
 
 use atomic_refcell::AtomicRefCell;
 
-use super::versioned::{IndexId, IndexerCommit};
+use super::versioned::{Dropped, IndexId, IndexerCommit};
 use crate::graph::graph::Graph;
 use crate::graph::mvcc_graph::MvccGraph;
 use crate::threadpool::ThreadPool;
@@ -63,11 +63,65 @@ pub trait BuildHost: Send + Sync {
     ) -> bool;
 }
 
-/// How many entities one indexer batch reads, as the earlier online build's step did (0742bcefb).
-pub const BATCH_ENTITIES: usize = 10_000;
+/// How a chain sizes its batches ([`Sizing::batch`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Sizing {
+    /// The fewest entities a batch reads.
+    pub(crate) floor: usize,
+    /// The most entities a batch reads.
+    pub(crate) cap: usize,
+    /// The most writers' changes a batch larger than `floor` catches up on at its commit, under
+    /// the host's locks ([`PreparedBatch::limit_catch_up`]).
+    ///
+    /// [`PreparedBatch::limit_catch_up`]: super::versioned::PreparedBatch::limit_catch_up
+    pub(crate) catch_up_max: u64,
+}
+
+/// The builder's sizing.
+///
+/// A batch costs about the pages of its column it touches, and a batch of scattered values
+/// touches most of them once the column is large. Batches of a fixed size make the build
+/// quadratic: 4,988 and 11,798 instructions per entity at 1M and 4M nodes, with 10,000-entity
+/// batches. A batch as large as what the build has read so far spreads each one over as many
+/// entities as the column holds: 1,472, 1,488 and 1,499 at 1M, 4M and 8M.
+/// - `floor`: 10,000 entities, the earlier online build's step (0742bcefb).
+/// - `cap`: 4M entities. A batch holds its tuples until it commits, 16 bytes each, so 64 MB. At
+///   8M it costs 1,499 per entity against 1,501 uncapped; a cap of 1M cost 1,736.
+/// - `catch_up_max`: 10,000. Inserting 10,000 scattered tuples into an 8M-entity column holds
+///   the locks for about 13 ms, and a batch at the floor never does more than that.
+pub(crate) const SIZING: Sizing = Sizing {
+    floor: 10_000,
+    cap: 4_000_000,
+    catch_up_max: 10_000,
+};
+
+impl Sizing {
+    /// Every batch reads `n` entities, and none limits its catch-up: for tests that set where
+    /// batches stop.
+    #[cfg(test)]
+    pub(crate) const fn fixed(n: usize) -> Self {
+        Self {
+            floor: n,
+            cap: n,
+            catch_up_max: u64::MAX,
+        }
+    }
+
+    /// How many entities the next batch of an index reads, when its batches have read `read` and
+    /// its chain halves them `shift` times ([`Chain::shift`]): `read` halved, between `floor` and
+    /// `cap`.
+    pub(crate) fn batch(
+        self,
+        read: u64,
+        shift: u32,
+    ) -> usize {
+        let size = usize::try_from(read.checked_shr(shift).unwrap_or(0)).unwrap_or(usize::MAX);
+        size.min(self.cap).max(self.floor)
+    }
+}
 
 /// What one turn did.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Turn {
     /// The index was not `Building`: it was built, or dropped.
     Idle,
@@ -77,6 +131,10 @@ pub(crate) enum Turn {
     /// it, or another batch committed on it. `more` if the index, created again or not, is
     /// `Building`: the next batch starts from its published cursor.
     Dropped { more: bool },
+    /// The batch published nothing: writers changed more of its index while it was read than its
+    /// commit may catch up on ([`Sizing::catch_up_max`]). The index is still `Building`, and the
+    /// chain's next batch is half the size.
+    TooLarge,
     /// The host refused, or the builder is stopping.
     Gone,
     /// The batch panicked, or its version was refused. Under the Redis module a panic ends the
@@ -143,8 +201,10 @@ impl Drop for Reading<'_> {
     }
 }
 
-/// One turn of index `id` of the graph `host` reaches, in `run`: one indexer batch of at most
-/// `entities` entities, published.
+/// One turn of index `id` of the graph `host` reaches, in `run`: one indexer batch, published. It
+/// reads as many entities as `sizing` gives for what the index's batches have read and the chain's
+/// `shift` ([`Sizing::batch`]). A batch larger than the floor publishes nothing if its commit
+/// would catch up on more than `sizing.catch_up_max` of writers' changes ([`Turn::TooLarge`]).
 ///
 /// The builder runs at most one turn per index at a time ([`Indexer`]). Two at once would still
 /// publish nothing wrong (the later commit finds the earlier batch on the index and publishes
@@ -155,7 +215,8 @@ pub(crate) fn run_turn(
     host: &dyn BuildHost,
     id: &IndexId,
     run: &Run,
-    entities: usize,
+    sizing: Sizing,
+    shift: u32,
 ) -> Turn {
     let Some(reading) = Reading::enter(run) else {
         return Turn::Gone;
@@ -165,8 +226,9 @@ pub(crate) fn run_turn(
     };
     let prepared = Arc::new(AtomicRefCell::new(published.borrow().new_build_version()));
     drop(published);
+    let entities = sizing.batch(prepared.borrow().index_build_read(id).unwrap_or(0), shift);
     let batch = prepared.borrow_mut().indexer_prepare(id, entities);
-    let Some(batch) = batch else {
+    let Some(mut batch) = batch else {
         // Freed while still counted, so GraphBLAS is not torn down under it.
         drop(prepared);
         drop(reading);
@@ -176,6 +238,10 @@ pub(crate) fn run_turn(
         drop(prepared);
         drop(reading);
         return Turn::Gone;
+    }
+    // A batch at the floor catches up on whatever writers changed: none can be smaller.
+    if entities > sizing.floor {
+        batch.limit_catch_up(sizing.catch_up_max);
     }
     // Not counted while publishing: whoever stops the builder may hold what publishing needs (the
     // Redis shutdown handler holds the GIL) while it waits for the turns reading.
@@ -199,6 +265,7 @@ pub(crate) fn run_turn(
                     more: mvcc.read().borrow().index_building(id),
                 }
             }
+            Some(IndexerCommit::Dropped(Dropped::CatchUpTooLarge)) => Turn::TooLarge,
             Some(IndexerCommit::Dropped(_)) => Turn::Dropped {
                 more: mvcc.read().borrow().index_building(id),
             },
@@ -224,9 +291,9 @@ pub(crate) fn run_turn(
 
 // ---- Running the turns ----
 
-/// A turn as an [`Indexer`] runs it: [`run_turn`] for the builder; a stand-in in the tests of how
-/// turns are scheduled.
-type TurnFn = dyn Fn(&dyn BuildHost, &IndexId, &Run) -> Turn + Send + Sync;
+/// A turn as an [`Indexer`] runs it, given its chain's [`Chain::shift`]: [`run_turn`] for the
+/// builder; a stand-in in the tests of how turns are scheduled.
+type TurnFn = dyn Fn(&dyn BuildHost, &IndexId, &Run, u32) -> Turn + Send + Sync;
 
 /// An index's chain of turns: the graph, by its host, and the index. It builds whatever `Building`
 /// index the graph has under that name, so an index dropped and created again while its chain runs
@@ -234,6 +301,10 @@ type TurnFn = dyn Fn(&dyn BuildHost, &IndexId, &Run) -> Turn + Send + Sync;
 struct Chain {
     host: Arc<dyn BuildHost>,
     id: IndexId,
+    /// How many times the chain halves its batches ([`Sizing::batch`]): one more after each turn
+    /// writers made too large to commit ([`Turn::TooLarge`]), one fewer after each that committed.
+    /// Each start of the pool starts it at 0.
+    shift: u32,
 }
 
 /// Which index of which graph a [`Chain`] builds: its host's address, which the chain keeps alive,
@@ -305,6 +376,7 @@ impl Indexer {
                 Chain {
                     host: Arc::clone(&known.host),
                     id: id.clone(),
+                    shift: 0,
                 }
             })
             .collect();
@@ -373,7 +445,7 @@ impl Indexer {
             return;
         };
         drop(state);
-        self.spawn(&pool, &run, Chain { host, id });
+        self.spawn(&pool, &run, Chain { host, id, shift: 0 });
     }
 
     /// Submit `chain`'s next turn to `run`'s pool.
@@ -393,7 +465,7 @@ impl Indexer {
     fn take_turn(
         self: &Arc<Self>,
         run: &Arc<Run>,
-        chain: Chain,
+        mut chain: Chain,
     ) {
         run.queued.fetch_sub(1, Ordering::SeqCst);
         if run.stopping() {
@@ -402,12 +474,17 @@ impl Indexer {
         // A panic in a turn is caught here only where no panic hook ends the process first, which
         // the Redis module's does.
         let turn = catch_unwind(AssertUnwindSafe(|| {
-            (self.turn)(chain.host.as_ref(), &chain.id, run)
+            (self.turn)(chain.host.as_ref(), &chain.id, run, chain.shift)
         }))
         .unwrap_or(Turn::Failed);
         if turn == Turn::Failed {
             eprintln!("native index: an indexer batch failed; it will be retried");
         }
+        chain.shift = match turn {
+            Turn::TooLarge => (chain.shift + 1).min(u64::BITS),
+            Turn::Committed { .. } => chain.shift.saturating_sub(1),
+            _ => chain.shift,
+        };
         let next = next_turn(&turn);
         if let Some(wait) = next
             && !wait.is_zero()
@@ -459,7 +536,9 @@ impl Indexer {
 /// index is done, and a commit that creates it again starts it again.
 fn next_turn(turn: &Turn) -> Option<Duration> {
     match turn {
-        Turn::Committed { more: true } | Turn::Dropped { more: true } => Some(Duration::ZERO),
+        Turn::Committed { more: true } | Turn::Dropped { more: true } | Turn::TooLarge => {
+            Some(Duration::ZERO)
+        }
         Turn::Failed => Some(FAILED_RETRY),
         Turn::Committed { more: false }
         | Turn::Dropped { more: false }
@@ -477,8 +556,8 @@ const STOP_WAIT: Duration = Duration::from_secs(2);
 
 /// The builder: the indexer every graph's commits start chains on.
 static BUILDER: LazyLock<Arc<Indexer>> = LazyLock::new(|| {
-    Indexer::new(Box::new(|host, id, run| {
-        run_turn(host, id, run, BATCH_ENTITIES)
+    Indexer::new(Box::new(|host, id, run, shift| {
+        run_turn(host, id, run, SIZING, shift)
     }))
 });
 
@@ -520,11 +599,46 @@ mod tests {
     use super::*;
     use crate::entity_type::EntityType;
 
+    /// A batch reads what its index's batches have read, halved once per shift, between the floor
+    /// and the cap. A fixed sizing reads its size whatever the count.
+    #[test]
+    fn a_batch_reads_what_its_index_has_read_between_the_floor_and_the_cap() {
+        let sizing = Sizing {
+            floor: 10,
+            cap: 1_000,
+            catch_up_max: 0,
+        };
+        for (read, shift, batch) in [
+            (0, 0, 10),
+            (9, 0, 10),
+            (400, 0, 400),
+            (400, 1, 200),
+            (400, 5, 12),
+            (400, 6, 10),
+            (5_000, 0, 1_000),
+            (5_000, 2, 1_000),
+            (5_000, 3, 625),
+            (u64::MAX, u64::BITS, 10),
+        ] {
+            assert_eq!(
+                sizing.batch(read, shift),
+                batch,
+                "{read} read, shift {shift}"
+            );
+        }
+        assert_eq!(Sizing::fixed(7).batch(5_000, 0), 7);
+        assert_eq!(Sizing::fixed(7).batch(0, 0), 7);
+    }
+
     /// After a turn that published or dropped its batch with more to build, the next one runs
     /// right away; after a failed one, a second later; after any other, there is none.
     #[test]
     fn a_turn_decides_when_the_next_one_runs() {
-        for more in [Turn::Committed { more: true }, Turn::Dropped { more: true }] {
+        for more in [
+            Turn::Committed { more: true },
+            Turn::Dropped { more: true },
+            Turn::TooLarge,
+        ] {
             assert_eq!(next_turn(&more), Some(Duration::ZERO), "{more:?}");
         }
         assert_eq!(next_turn(&Turn::Failed), Some(FAILED_RETRY));
@@ -606,7 +720,7 @@ mod tests {
         const TURNS: usize = 30;
         let seen = Arc::new(Mutex::new(Seen::default()));
         let in_turn = Arc::clone(&seen);
-        let indexer = Indexer::new(Box::new(move |host, id, _| {
+        let indexer = Indexer::new(Box::new(move |host, id, _, _| {
             let chain = chain_of(host, id);
             {
                 let mut seen = in_turn.lock().unwrap();
@@ -675,7 +789,7 @@ mod tests {
         let wait_go = Mutex::new(wait_go);
         let turns = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&turns);
-        let indexer = Indexer::new(Box::new(move |_, _, _| {
+        let indexer = Indexer::new(Box::new(move |_, _, _, _| {
             if counted.fetch_add(1, Ordering::Relaxed) == 0 {
                 in_turn.send(()).unwrap();
                 wait_go.lock().unwrap().recv().unwrap();
@@ -703,7 +817,7 @@ mod tests {
         let wait_go = Mutex::new(wait_go);
         let turns = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&turns);
-        let indexer = Indexer::new(Box::new(move |_, _, run| {
+        let indexer = Indexer::new(Box::new(move |_, _, run, _| {
             match counted.fetch_add(1, Ordering::SeqCst) {
                 // The first turn of the second start runs until the stop.
                 1 => {
@@ -763,7 +877,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(Seen::default()));
         let in_seen = Arc::clone(&seen);
         let held = a.clone();
-        let indexer = Indexer::new(Box::new(move |_, id, run| {
+        let indexer = Indexer::new(Box::new(move |_, id, run, _| {
             let in_run = (std::ptr::from_ref(run) as usize, id.clone());
             let nth = {
                 let mut seen = in_seen.lock().unwrap();
