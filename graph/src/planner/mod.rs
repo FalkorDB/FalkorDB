@@ -1859,9 +1859,35 @@ impl Planner {
             // traversals (especially self-loops / ExpandInto) are planned as
             // leaves and variable-length traversals sit above them.
             let mut sorted_rels: Vec<_> = relationships.to_vec();
+            // An endpoint the query constrains (inline attributes, or a WHERE
+            // predicate) is a cheap place to start: an index lookup or a short
+            // scan rather than every node of a label.
+            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                [&r.from, &r.to]
+                    .iter()
+                    .any(|n| n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id))
+            };
+            // A variable-length hop on an anchored endpoint leads the component
+            // when no fixed-length hop is anchored and nothing is bound yet.
+            // Planned last, as the sort below does by default, it would sit
+            // above a fixed-length hop that `select_scan_node` then starts from
+            // an unrelated label scan, and the var-length expansion runs from
+            // every candidate that scan finds (#2558).
+            let var_len_anchor_leads = !relationships.iter().any(|r| {
+                self.visited
+                    .contains(&(r.from.alias.id, r.from.alias.scope_id))
+                    || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
+                    || (r.min_hops.is_none()
+                        && r.all_shortest_paths == AllShortestPaths::No
+                        && anchored(r))
+            });
             sorted_rels.sort_by_key(|r| {
                 let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    i32::from(r.min_hops.is_some())
+                    if var_len_anchor_leads && r.min_hops.is_some() && anchored(r) {
+                        -1
+                    } else {
+                        i32::from(r.min_hops.is_some())
+                    }
                 } else {
                     2
                 };
