@@ -192,3 +192,62 @@ def test_index_scan_write_concurrent_with_writes():
     # Index on n.id so the MATCH above plans as a NodeByIndexScan.
     common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
     _hammer_under_write_load(_index_scan_write)
+
+def _multi_write_loop(stop, counter):
+    # Inline (MULTI/EXEC) writers commit on the main thread whenever they like,
+    # making any queued write that is still matching stale.
+    r = Redis(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+        socket_timeout=60,
+    )
+    while not stop.is_set():
+        p = r.pipeline(transaction=True)
+        p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
+        p.execute()
+        counter[0] += 1
+
+
+def test_queued_write_not_starved_by_inline_writers():
+    # A queued write matches as a reader and retries when an inline writer commits
+    # underneath it. Every retry loses to the next commit, so under a steady stream
+    # of inline writes it never finished (C finishes it in one pass, holding the
+    # write lock throughout). After a few stale runs it must run as a writer.
+    import threading
+    import time
+
+    common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
+    common.g.query("CREATE (:Marker {c: 0})")
+    slow = (
+        "MATCH (n:Big) WHERE n.v % 7 = 3 WITH count(n) AS c "
+        "MATCH (m:Marker) SET m.c = c RETURN c"
+    )
+    expected = len([v for v in range(1, 500001) if v % 7 == 3])
+
+    stop = threading.Event()
+    counter = [0]
+    threads = [
+        threading.Thread(target=_multi_write_loop, args=(stop, counter))
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    try:
+        time.sleep(0.5)
+        r = Redis(
+            host=os.environ.get("FALKORDB_HOST", "localhost"),
+            port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+            socket_timeout=30,
+        )
+        for _ in range(3):
+            start = time.time()
+            res = r.execute_command("GRAPH.QUERY", "test", slow)
+            assert res[1][0][0] == expected
+            assert time.time() - start < 20
+    finally:
+        stop.set()
+        for t in threads:
+            t.join()
+    assert counter[0] > 0
+    res = common.g.query("MATCH (m:Marker) RETURN m.c")
+    assert res.result_set[0][0] == expected
