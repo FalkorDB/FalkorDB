@@ -21,7 +21,7 @@ use super::encode::encode_numeric;
 use super::graph_writes;
 use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
-use super::versioned::{BuildState, IndexEntry, VersionedIndex};
+use super::versioned::{BuildState, IndexEntry, IndexId, VersionedIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -338,6 +338,8 @@ impl BuildCursor {
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
     edge_columns: HashMap<IndexKey, IndexEntry<IndexColumn>>,
+    /// Indexes created in this version and those before it: the next one's generation.
+    indexes_created: u64,
 }
 
 impl FalkorDbIndex {
@@ -450,9 +452,11 @@ impl FalkorDbIndex {
         column: IndexColumn,
         state: BuildState<BuildCursor>,
     ) {
+        self.indexes_created += 1;
+        let generation = self.indexes_created;
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            IndexEntry::new(column, state),
+            IndexEntry::new(column, state, generation),
         );
     }
 
@@ -548,6 +552,35 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Whether no index but `id` changed between `other` and this version: the same indexes, each
+    /// the same index (its generation) with the same number of indexer batches committed on it.
+    /// An indexer batch's commit asks this when no writer committed in between, so only batches
+    /// can have changed an index. The caller has already checked that `id` is the same index in
+    /// both, so equal counts of columns mean no other index was created or dropped.
+    pub(crate) fn only_index_changed(
+        &self,
+        other: &Self,
+        id: &IndexId,
+    ) -> bool {
+        let IndexId::Column(id_entity, id_key) = id;
+        for entity in [EntityType::Node, EntityType::Relationship] {
+            let (ours, theirs) = (self.columns(entity), other.columns(entity));
+            if ours.len() != theirs.len() {
+                return false;
+            }
+            for (key, our) in ours {
+                if entity == *id_entity && key == id_key {
+                    continue;
+                }
+                match theirs.get(key) {
+                    Some(their) if their.same_batches_as(our) => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
     }
 
     /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
