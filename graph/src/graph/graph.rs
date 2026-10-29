@@ -3238,7 +3238,7 @@ impl Graph {
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
                 relationship_matrix.fwd_m(),
-                Some(Descriptor::C),
+                Some(Descriptor::SC),
             );
             m.set_pattern(None, relationship_matrix.fwd_dp(), None);
         }
