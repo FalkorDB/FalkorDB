@@ -1564,16 +1564,11 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                Token::IdentifierOrKeyword {
-                    keyword: Some(token),
-                    ..
-                } => {
-                    if token == *clause {
-                        self.lexer.next();
-                        continue;
-                    }
-                    break;
-                }
+                // Anything else ends the pattern, including a repeated MATCH or
+                // CREATE keyword: it starts a new clause and is not folded into
+                // this one. Relationship uniqueness is scoped per MATCH clause,
+                // and a variable bound by one CREATE clause is visible to the
+                // next.
                 _ => break,
             }
         }
