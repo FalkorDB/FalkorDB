@@ -297,39 +297,14 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        if label_indexes.has_rs_index() {
-            // Adding fields to an existing RediSearch index. For most
-            // field types we append to the live spec, but adding a
-            // vector field forces a drop+rebuild: RediSearch's HNSW
-            // state on the existing vector field gets corrupted when
-            // the subsequent populate phase re-adds documents with
-            // ADD_REPLACE, leaving KNN queries returning fewer hits
-            // than the data warrants. Matches the C FalkorDB behavior
-            // (Index_Disable + Index_ConstructStructure).
-            let adds_vector = *index_type == IndexType::Vector;
-            if adds_vector {
-                label_indexes.recreate_index(label)?;
-            } else {
-                label_indexes.register_fields(&new_fields, field_options.as_ref())?;
-            }
-        } else {
-            let effective_stopwords = stopwords
-                .clone()
-                .or_else(|| label_indexes.stopwords().cloned());
-            let effective_language = language
-                .clone()
-                .or_else(|| label_indexes.language().cloned());
-            label_indexes.create_rs_index(
-                label,
-                effective_stopwords.as_ref(),
-                effective_language.as_ref(),
-            )?;
-            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
-        }
-
-        // Update the label indexes with global settings
+        // Apply the label-wide settings first, so every RediSearch index built
+        // below (fresh or recreated) is created with them.
         // Default to "english" for fulltext indexes when no language is specified,
         // matching RediSearch's default behavior.
+        // An explicit language/stopwords on a label that already has a RediSearch
+        // index (e.g. a range index came first) must rebuild it: both are fixed
+        // when the RediSearch index is created.
+        let sets_text_options = language.is_some() || stopwords.is_some();
         if label_indexes.language().is_none() && *index_type == IndexType::Fulltext {
             match language {
                 Some(lang) => label_indexes.set_language(Some(lang)),
@@ -340,6 +315,28 @@ impl Indexer {
         }
         if stopwords.is_some() && label_indexes.stopwords().is_none() {
             label_indexes.set_stopwords(stopwords);
+        }
+
+        if label_indexes.has_rs_index() {
+            // Adding fields to an existing RediSearch index. For most
+            // field types we append to the live spec, but adding a
+            // vector field forces a drop+rebuild: RediSearch's HNSW
+            // state on the existing vector field gets corrupted when
+            // the subsequent populate phase re-adds documents with
+            // ADD_REPLACE, leaving KNN queries returning fewer hits
+            // than the data warrants. Matches the C FalkorDB behavior
+            // (Index_Disable + Index_ConstructStructure).
+            let adds_vector = *index_type == IndexType::Vector;
+            if adds_vector || sets_text_options {
+                label_indexes.recreate_index(label)?;
+            } else {
+                label_indexes.register_fields(&new_fields, field_options.as_ref())?;
+            }
+        } else {
+            let stopwords = label_indexes.stopwords().cloned();
+            let language = label_indexes.language().cloned();
+            label_indexes.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
+            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
         }
 
         label_indexes.set_progress(0, total);
