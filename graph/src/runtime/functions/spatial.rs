@@ -202,5 +202,5 @@ pub fn register(funcs: &mut Functions) {
         }
     );
 
-    funcs.set_struct_fn("point", point_struct_pure, POINT_SLOTS);
+    funcs.set_struct_fn("point", point_struct_pure, POINT_SLOTS, false);
 }

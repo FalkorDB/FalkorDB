@@ -47,15 +47,86 @@ use crate::runtime::{ordermap::OrderMap, runtime::Runtime, value::Value};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::sync::Arc;
 
-fn get_int_field(
-    map: &OrderMap<Arc<String>, Value>,
-    field: &str,
-) -> Option<i64> {
-    map.get_str(field).and_then(|v| match v {
-        Value::Int(i) => Some(*i),
-        Value::Float(f) => Some(*f as i64),
-        _ => None,
-    })
+/// Largest slot count of any struct constructor (`localdatetime`).
+const MAX_SLOTS: usize = 10;
+
+/// The message C gives for an unknown map key, whichever constructor it is.
+const UNKNOWN_KEY: &str = "datetime components map contains an unknown key";
+
+/// Sub-second keys C accepts on `localtime` / `localdatetime`. They are
+/// type-checked but still dropped (#2585).
+const SUBSECOND_KEYS: &[&str] = &["millisecond", "microsecond", "nanosecond"];
+
+/// One map component, `None` when the key was not written. Absent and `null`
+/// are different: `{month: null}` is `Some(Value::Null)` and is rejected.
+type Components<'a> = [Option<&'a Value>; MAX_SLOTS];
+
+/// Sort a map's entries into `keys` slots in one pass. Keys match
+/// case-insensitively, as in C. A key in neither `keys` nor `extra` is an
+/// error, reported after any bad value like C does.
+fn map_components<'a>(
+    map: &'a OrderMap<Arc<String>, Value>,
+    keys: &[&str],
+    extra: &[&str],
+) -> Result<Components<'a>, String> {
+    let mut out: Components = [None; MAX_SLOTS];
+    let mut unknown = false;
+    for (k, v) in map.iter() {
+        if let Some(i) = keys.iter().position(|s| s.eq_ignore_ascii_case(k)) {
+            out[i] = Some(v);
+        } else if extra.iter().any(|s| s.eq_ignore_ascii_case(k)) {
+            int_component(v, k)?;
+        } else {
+            unknown = true;
+        }
+    }
+    if unknown {
+        return Err(UNKNOWN_KEY.to_string());
+    }
+    Ok(out)
+}
+
+/// Components of a rewritten positional call: `args` is the slot values
+/// followed by the presence mask (see `rewrite_struct_constructor`). A slot
+/// whose bit is clear was not written, whatever value sits in it.
+fn struct_components(args: &[Value]) -> Components<'_> {
+    let (mask, slots) = match args.split_last() {
+        Some((Value::Int(mask), slots)) => (*mask, slots),
+        _ => (0, &[][..]),
+    };
+    let mut out: Components = [None; MAX_SLOTS];
+    for (i, v) in slots.iter().enumerate() {
+        if mask >> i & 1 == 1 {
+            out[i] = Some(v);
+        }
+    }
+    out
+}
+
+/// A date/time component must be an integer: `null`, strings and floats are
+/// errors, not defaults (C: `<key> must be an integer value`).
+fn int_component(
+    v: &Value,
+    key: &str,
+) -> Result<i64, String> {
+    match v {
+        Value::Int(i) => Ok(*i),
+        _ => Err(format!("{key} must be an integer value")),
+    }
+}
+
+/// Validate the written components against `keys`; absent ones stay `None`.
+fn int_components(
+    vals: &[Option<&Value>],
+    keys: &[&str],
+) -> Result<[Option<i64>; MAX_SLOTS], String> {
+    let mut out = [None; MAX_SLOTS];
+    for (i, (v, key)) in vals.iter().zip(keys).enumerate() {
+        if let Some(v) = v {
+            out[i] = Some(int_component(v, key)?);
+        }
+    }
+    Ok(out)
 }
 
 /// Validate an optional date component against its inclusive range, with the
@@ -127,16 +198,28 @@ fn date_from_components(
         .ok_or_else(|| format!("Invalid date: year={year}, month={month}, day={day}"))
 }
 
-fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String> {
-    date_from_components(
-        get_int_field(map, "year"),
-        get_int_field(map, "month"),
-        get_int_field(map, "day"),
-        get_int_field(map, "week"),
-        get_int_field(map, "dayOfWeek"),
-        get_int_field(map, "quarter"),
-        get_int_field(map, "dayOfQuarter"),
-    )
+fn date_from_values(vals: &[Option<&Value>]) -> Result<NaiveDate, String> {
+    let c = int_components(&vals[..7], &DATE_SLOTS)?;
+    date_from_components(c[0], c[1], c[2], c[3], c[4], c[5], c[6])
+}
+
+/// Presence-masked positional args to validated ints, without the
+/// intermediate `Components` array: this is the per-row path.
+fn struct_ints(
+    args: &[Value],
+    keys: &[&str],
+) -> Result<[Option<i64>; MAX_SLOTS], String> {
+    let mask = match args.last() {
+        Some(Value::Int(mask)) => *mask,
+        _ => 0,
+    };
+    let mut out = [None; MAX_SLOTS];
+    for (i, key) in keys.iter().enumerate() {
+        if mask >> i & 1 == 1 {
+            out[i] = Some(int_component(&args[i], key)?);
+        }
+    }
+    Ok(out)
 }
 
 fn time_from_components(
@@ -151,22 +234,9 @@ fn time_from_components(
         .ok_or_else(|| format!("Invalid time: hour={hour}, minute={minute}, second={second}"))
 }
 
-fn time_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveTime, String> {
-    time_from_components(
-        get_int_field(map, "hour"),
-        get_int_field(map, "minute"),
-        get_int_field(map, "second"),
-    )
-}
-
-/// Extract i64 from positional slot arg (Int/Float/Null).
-#[inline]
-const fn slot_to_int(v: &Value) -> Option<i64> {
-    match v {
-        Value::Int(i) => Some(*i),
-        Value::Float(f) => Some(*f as i64),
-        _ => None,
-    }
+fn time_from_values(vals: &[Option<&Value>]) -> Result<NaiveTime, String> {
+    let c = int_components(&vals[..3], &LOCALTIME_SLOTS)?;
+    time_from_components(c[0], c[1], c[2])
 }
 
 // Parse date from ISO string formats.
@@ -538,7 +608,7 @@ pub const fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String
 pub fn date_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let d = date_from_map(map)?;
+            let d = date_from_values(&map_components(map, &DATE_SLOTS, &[])?)?;
             let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
             Ok(Value::Date(ts))
         }
@@ -555,7 +625,7 @@ pub fn date_pure(args: &[Value]) -> Result<Value, String> {
 pub fn localtime_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let t = time_from_map(map)?;
+            let t = time_from_values(&map_components(map, &LOCALTIME_SLOTS, SUBSECOND_KEYS)?)?;
             let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let dt = NaiveDateTime::new(epoch, t);
             Ok(Value::Time(dt.and_utc().timestamp()))
@@ -574,8 +644,9 @@ pub fn localtime_pure(args: &[Value]) -> Result<Value, String> {
 pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
         Some(Value::Map(map)) => {
-            let d = date_from_map(map)?;
-            let t = time_from_map(map)?;
+            let vals = map_components(map, &LOCALDATETIME_SLOTS, SUBSECOND_KEYS)?;
+            let d = date_from_values(&vals)?;
+            let t = time_from_values(&vals[7..])?;
             let dt = NaiveDateTime::new(d, t);
             Ok(Value::Datetime(dt.and_utc().timestamp()))
         }
@@ -590,34 +661,7 @@ pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
 
 pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
     match args.first() {
-        Some(Value::Map(map)) => {
-            let mut years = 0i64;
-            let mut months = 0i64;
-            let mut weeks = 0i64;
-            let mut days = 0i64;
-            let mut hours = 0i64;
-            let mut minutes = 0i64;
-            let mut seconds = 0i64;
-            for (k, v) in map.iter() {
-                let n = match v {
-                    Value::Int(i) => *i,
-                    Value::Float(f) => *f as i64,
-                    _ => continue,
-                };
-                match k.as_str() {
-                    "years" => years = n,
-                    "months" => months = n,
-                    "weeks" => weeks = n,
-                    "days" => days = n,
-                    "hours" => hours = n,
-                    "minutes" => minutes = n,
-                    "seconds" => seconds = n,
-                    _ => {}
-                }
-            }
-            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
-            Ok(Value::Duration(ts))
-        }
+        Some(Value::Map(map)) => duration_from_values(&map_components(map, &DURATION_SLOTS, &[])?),
         Some(Value::String(s)) => {
             let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
             let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
@@ -636,12 +680,12 @@ pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 
 /// Slot order: [years, months, weeks, days, hours, minutes, seconds]
-const DURATION_SLOTS: &[&str] = &[
+const DURATION_SLOTS: [&str; 7] = [
     "years", "months", "weeks", "days", "hours", "minutes", "seconds",
 ];
 
 /// Slot order: [year, month, day, week, dayOfWeek, quarter, dayOfQuarter]
-const DATE_SLOTS: &[&str] = &[
+const DATE_SLOTS: [&str; 7] = [
     "year",
     "month",
     "day",
@@ -652,10 +696,10 @@ const DATE_SLOTS: &[&str] = &[
 ];
 
 /// Slot order: [hour, minute, second]
-const LOCALTIME_SLOTS: &[&str] = &["hour", "minute", "second"];
+const LOCALTIME_SLOTS: [&str; 3] = ["hour", "minute", "second"];
 
 /// Slot order: [year, month, day, week, dayOfWeek, quarter, dayOfQuarter, hour, minute, second]
-const LOCALDATETIME_SLOTS: &[&str] = &[
+const LOCALDATETIME_SLOTS: [&str; 10] = [
     "year",
     "month",
     "day",
@@ -668,62 +712,88 @@ const LOCALDATETIME_SLOTS: &[&str] = &[
     "second",
 ];
 
-pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 7);
-    let years = slot_to_int(&args[0]).unwrap_or(0);
-    let months = slot_to_int(&args[1]).unwrap_or(0);
-    let weeks = slot_to_int(&args[2]).unwrap_or(0);
-    let days = slot_to_int(&args[3]).unwrap_or(0);
-    let hours = slot_to_int(&args[4]).unwrap_or(0);
-    let minutes = slot_to_int(&args[5]).unwrap_or(0);
-    let seconds = slot_to_int(&args[6]).unwrap_or(0);
-    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+/// Build a duration from validated components. Each must be a number; as in C
+/// a fraction carries into the smaller units (`days: 1.5` is `P1DT12H`).
+fn duration_from_values(vals: &[Option<&Value>]) -> Result<Value, String> {
+    let mut ints = [0i64; 7];
+    let mut floats = [0f64; 7];
+    let mut any_float = false;
+    for (i, (v, key)) in vals.iter().zip(&DURATION_SLOTS).enumerate() {
+        match v {
+            None => {}
+            Some(Value::Int(n)) => {
+                ints[i] = *n;
+                floats[i] = *n as f64;
+            }
+            Some(Value::Float(f)) => {
+                floats[i] = *f;
+                any_float = true;
+            }
+            Some(_) => return Err(format!("{key} must be a numerical value")),
+        }
+    }
+    let ts = if any_float {
+        construct_duration_secs_float(floats)?
+    } else {
+        let [y, mo, w, d, h, mi, s] = ints;
+        construct_duration_secs(y, mo, w, d, h, mi, s)?
+    };
     Ok(Value::Duration(ts))
 }
 
+/// Duration with fractional components, following C's `duration_from_epoch_utc`:
+/// components are 32-bit floats, whole years and months anchor the date, the
+/// fractions of a year / month count as 365.25 / 30.44 days, and the rest is
+/// summed in seconds and truncated toward zero.
+fn construct_duration_secs_float(c: [f64; 7]) -> Result<i64, String> {
+    let [years, months, weeks, days, hours, minutes, seconds] = c.map(|x| x as f32);
+    if !c.iter().all(|x| x.is_finite()) {
+        return Err("Duration overflow: components must be finite".to_string());
+    }
+    let (years, months) = (f64::from(years), f64::from(months));
+    let (years_int, months_int) = (years.trunc(), months.trunc());
+    let extra_days = (years - years_int) * 365.25 + (months - months_int) * 30.44;
+    let total = (f64::from(weeks * 7.0 + days) + extra_days) * 86400.0
+        + f64::from(hours * 3600.0)
+        + f64::from(minutes * 60.0)
+        + f64::from(seconds);
+    if !total.is_finite() || total.abs() >= 9.0e18 {
+        return Err("Duration overflow".to_string());
+    }
+    // years_int / months_int are saturated by the cast; construct_duration_secs
+    // rejects anything outside its range.
+    let base = construct_duration_secs(years_int as i64, months_int as i64, 0, 0, 0, 0, 0)?;
+    base.checked_add(total as i64)
+        .ok_or_else(|| "Duration overflow when combining components".to_string())
+}
+
+pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 8);
+    duration_from_values(&struct_components(args))
+}
+
 pub fn date_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 7);
-    let d = date_from_components(
-        slot_to_int(&args[0]),
-        slot_to_int(&args[1]),
-        slot_to_int(&args[2]),
-        slot_to_int(&args[3]),
-        slot_to_int(&args[4]),
-        slot_to_int(&args[5]),
-        slot_to_int(&args[6]),
-    )?;
+    debug_assert_eq!(args.len(), 8);
+    let c = struct_ints(args, &DATE_SLOTS)?;
+    let d = date_from_components(c[0], c[1], c[2], c[3], c[4], c[5], c[6])?;
     let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
     Ok(Value::Date(ts))
 }
 
 pub fn localtime_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 3);
-    let t = time_from_components(
-        slot_to_int(&args[0]),
-        slot_to_int(&args[1]),
-        slot_to_int(&args[2]),
-    )?;
+    debug_assert_eq!(args.len(), 4);
+    let c = struct_ints(args, &LOCALTIME_SLOTS)?;
+    let t = time_from_components(c[0], c[1], c[2])?;
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
     let dt = NaiveDateTime::new(epoch, t);
     Ok(Value::Time(dt.and_utc().timestamp()))
 }
 
 pub fn localdatetime_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 10);
-    let d = date_from_components(
-        slot_to_int(&args[0]),
-        slot_to_int(&args[1]),
-        slot_to_int(&args[2]),
-        slot_to_int(&args[3]),
-        slot_to_int(&args[4]),
-        slot_to_int(&args[5]),
-        slot_to_int(&args[6]),
-    )?;
-    let t = time_from_components(
-        slot_to_int(&args[7]),
-        slot_to_int(&args[8]),
-        slot_to_int(&args[9]),
-    )?;
+    debug_assert_eq!(args.len(), 11);
+    let c = struct_ints(args, &LOCALDATETIME_SLOTS)?;
+    let d = date_from_components(c[0], c[1], c[2], c[3], c[4], c[5], c[6])?;
+    let t = time_from_components(c[7], c[8], c[9])?;
     let dt = NaiveDateTime::new(d, t);
     Ok(Value::Datetime(dt.and_utc().timestamp()))
 }
@@ -862,14 +932,15 @@ pub fn register(funcs: &mut Functions) {
     funcs.set_pure_fn("localtime", localtime_pure, constructor_args());
     funcs.set_pure_fn("localdatetime", localdatetime_pure, constructor_args());
     funcs.set_pure_fn("duration", duration_pure, constructor_args());
-    funcs.set_struct_fn("date", date_struct_pure, DATE_SLOTS);
-    funcs.set_struct_fn("localtime", localtime_struct_pure, LOCALTIME_SLOTS);
+    funcs.set_struct_fn("date", date_struct_pure, &DATE_SLOTS, true);
+    funcs.set_struct_fn("localtime", localtime_struct_pure, &LOCALTIME_SLOTS, true);
     funcs.set_struct_fn(
         "localdatetime",
         localdatetime_struct_pure,
-        LOCALDATETIME_SLOTS,
+        &LOCALDATETIME_SLOTS,
+        true,
     );
-    funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
+    funcs.set_struct_fn("duration", duration_struct_pure, &DURATION_SLOTS, true);
 }
 
 #[cfg(test)]
@@ -894,6 +965,11 @@ mod tests {
         day_of_quarter: Option<i64>,
     ) -> Vec<Value> {
         let slot = |v: Option<i64>| v.map_or(Value::Null, Value::Int);
+        // bit i set = slot i written (year is slot 0, week 3, quarter 5, dayOfQuarter 6)
+        let mask = 1
+            | i64::from(week.is_some()) << 3
+            | i64::from(quarter.is_some()) << 5
+            | i64::from(day_of_quarter.is_some()) << 6;
         vec![
             Value::Int(year),
             Value::Null,
@@ -902,6 +978,7 @@ mod tests {
             Value::Null,
             slot(quarter),
             slot(day_of_quarter),
+            Value::Int(mask),
         ]
     }
 

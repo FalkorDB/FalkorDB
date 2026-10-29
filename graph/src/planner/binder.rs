@@ -2504,8 +2504,11 @@ fn collect_constant_args(
 /// Map literal with all-constant string keys, rewrite the call to pass
 /// positional arguments instead of the Map. Each Map entry feeds the
 /// matching positional slot; missing slots receive a `Constant(Null)` child.
-/// eval.rs detects the rewritten form via `func.struct_fn.is_some() &&
-/// num_children > 1` and dispatches through a stack `[Value; 10]` array.
+/// A masked constructor (`func.struct_masked`) also gets one trailing
+/// `Constant(Int)` child: a bitmask of the slots the literal wrote, which lets
+/// it tell an absent key from an explicit `null`.
+/// eval.rs detects the rewritten form via the child count and dispatches
+/// through a stack `[Value; 11]` array.
 /// Returns the (possibly rewritten) data + children.
 fn rewrite_struct_constructor(
     new_data: ExprIR<Variable>,
@@ -2552,15 +2555,23 @@ fn rewrite_struct_constructor(
     // Build positional children: one per slot, missing entries → Constant(Null).
     let mut new_children: Vec<DynTree<ExprIR<Variable>>> = Vec::with_capacity(slots.len());
     let mut remaining = entries;
-    for slot in slots {
-        let child = remaining
-            .remove(*slot)
-            .unwrap_or_else(|| DynTree::new(ExprIR::Constant(Value::Null)));
+    let mut mask = 0i64;
+    for (i, slot) in slots.iter().enumerate() {
+        let child = remaining.remove(*slot).map_or_else(
+            || DynTree::new(ExprIR::Constant(Value::Null)),
+            |child| {
+                mask |= 1 << i;
+                child
+            },
+        );
         new_children.push(child);
     }
     // Unknown keys → bail (preserve original semantics).
     if !remaining.is_empty() {
         return (new_data, children);
+    }
+    if func.struct_masked {
+        new_children.push(DynTree::new(ExprIR::Constant(Value::Int(mask))));
     }
 
     (new_data, new_children)

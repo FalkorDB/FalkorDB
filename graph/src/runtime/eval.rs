@@ -923,14 +923,18 @@ impl<'a> ExprEval<'a> {
                     // that killed the server in release.
                     if let Some(struct_fn) = func.struct_fn
                         && !func.struct_slots.is_empty()
-                        && node.num_children() == func.struct_slots.len()
+                        && node.num_children()
+                            == func.struct_slots.len() + usize::from(func.struct_masked)
                     {
                         let n = node.num_children();
-                        debug_assert!(n <= 10, "struct slots exceed the stack array");
-                        let mut slots: [Value; 10] = std::array::from_fn(|_| Value::Null);
+                        debug_assert!(n <= 11, "struct slots exceed the stack array");
+                        let mut slots: [Value; 11] = std::array::from_fn(|_| Value::Null);
                         for (i, child) in node.children().enumerate() {
-                            if !matches!(child.data(), ExprIR::Constant(Value::Null)) {
-                                slots[i] = self.eval_node(&child, env, agg_group_key)?;
+                            match child.data() {
+                                ExprIR::Constant(Value::Null) => {}
+                                // Constants (incl. the presence mask) need no dispatch.
+                                ExprIR::Constant(v) => slots[i] = v.clone(),
+                                _ => slots[i] = self.eval_node(&child, env, agg_group_key)?,
                             }
                         }
                         res.push(struct_fn(&slots[..n])?);
