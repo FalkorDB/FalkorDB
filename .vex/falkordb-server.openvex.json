@@ -2,7 +2,7 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/FalkorDB/FalkorDB/blob/main/.vex/falkordb-server.openvex.json",
   "author": "FalkorDB",
-  "timestamp": "2026-10-21T00:00:00Z",
+  "timestamp": "2026-10-29T00:00:00Z",
   "version": 1,
   "tooling": "build/vex/vex.py, from .vex/statements.toml",
   "statements": [
@@ -1392,19 +1392,6 @@
     },
     {
       "vulnerability": {
-        "name": "CVE-2026-34743"
-      },
-      "products": [
-        {
-          "@id": "pkg:rpm/redhat/xz-libs"
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "The flaw is in liblzma's lzma_index_append() after lzma_index_decoder() has decoded an empty index. No program or library in this image calls those functions, and nothing the image runs loads liblzma."
-    },
-    {
-      "vulnerability": {
         "name": "CVE-2026-35189"
       },
       "products": [
@@ -2049,22 +2036,6 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "The flaw needs a TLS server that moves a connection to a different SSL_CTX in the middle of a handshake by calling SSL_set_SSL_CTX(). redis-server never calls that function or installs the callbacks that would, and FalkorDB's module runs no TLS server."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-75803"
-      },
-      "products": [
-        {
-          "@id": "pkg:rpm/redhat/openssl"
-        },
-        {
-          "@id": "pkg:rpm/redhat/openssl-libs"
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_present",
-      "impact_statement": "The flaw is in EVP_Cipher() accepting an empty ChaCha20-Poly1305 or AES-OCB ciphertext without checking its tag, and was fixed in OpenSSL 3.5.8, the version in this image."
     },
     {
       "vulnerability": {
