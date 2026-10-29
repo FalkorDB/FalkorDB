@@ -605,8 +605,12 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         # there (matches what services mode does for cluster-shaped tests).
         if hasattr(env_obj.envRunner, "_getFileName"):
             env_obj.log_path = f"{env_obj.logDir}/{env_obj.envRunner._getFileName('master', '.log')}"
+            env_obj.replica_log_path = (
+                f"{env_obj.logDir}/{env_obj.envRunner._getFileName('slave', '.log')}"
+                if useSlaves else None)
         else:
             env_obj.log_path = None
+            env_obj.replica_log_path = None
         _wrap_get_connection_with_timeout(env_obj)
         db = _db_handle("localhost", env_obj.port)
         return (env_obj, db)
@@ -648,6 +652,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         # Services-mode shared container doesn't bind-mount its log; any test
         # that needs to read it should route to the spawn bucket instead.
         env_obj.log_path = None
+        env_obj.replica_log_path = None
         if hasattr(env_obj, "envRunner") and env_obj.envRunner is not None:
             env_obj.envRunner.port = port
             env_obj.envRunner.host = host
@@ -726,8 +731,9 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # log_path points at redis's --logfile output, bind-mounted into the
     # workspace by _log_mount_args. Same attribute name as Mode 1.
     env_obj.log_path = master_log_path
+    env_obj.replica_log_path = None
     if useSlaves:
-        replica_alias, _, _, _ = _spawn_falkordb(
+        replica_alias, _, _, env_obj.replica_log_path = _spawn_falkordb(
             test_image,
             falkordb_args=moduleArgs or "",
             redis_args=f"--replicaof {master_alias} 6379",

@@ -217,17 +217,15 @@ impl UdfRepo {
             .collect()
     }
 
-    /// Bulk load from deserialized data (for RDB load).
+    /// Bulk load from deserialized data (for RDB load), phase 1: validate
+    /// **all** libraries and build the list that would replace the live one,
+    /// without touching the repo. On any validation failure the live repo and
+    /// runtime function table remain unchanged; [`Self::install`] swaps them.
     ///
-    /// Validates **all** libraries in a staging area first. Only on full
-    /// success are the live repo contents atomically replaced and the
-    /// version bumped. On any validation failure the live repo and
-    /// runtime function table remain unchanged.
-    pub fn deserialize(
-        &self,
-        libs: &[(String, String)],
-    ) -> Result<Vec<UdfLibrary>, String> {
-        // Phase 1 – validate every library and build the staging list.
+    /// Two phases so a replica loading into a temporary database
+    /// (`repl-diskless-load swapdb`) can validate while the snapshot is read,
+    /// and install only once Redis swaps that database in.
+    pub fn stage(libs: &[(String, String)]) -> Result<Vec<UdfLibrary>, String> {
         let mut staged: Vec<UdfLibrary> = Vec::with_capacity(libs.len());
         for (name, code) in libs {
             let raw_names = js_context::validate_script(code).map_err(|e| {
@@ -243,9 +241,15 @@ impl UdfRepo {
                 function_names: qualified_names,
             });
         }
+        Ok(staged)
+    }
 
-        // Phase 2 – all validated; atomically swap the live repo.
-        let result = staged.clone();
+    /// Bulk load, phase 2: atomically replace the live libraries with a list
+    /// [`Self::stage`] validated, and bump the version.
+    pub fn install(
+        &self,
+        staged: Vec<UdfLibrary>,
+    ) {
         {
             let mut inner = self.inner.write();
 
@@ -259,7 +263,5 @@ impl UdfRepo {
             inner.libraries = staged;
         }
         self.version.fetch_add(1, Ordering::Release);
-
-        Ok(result)
     }
 }
