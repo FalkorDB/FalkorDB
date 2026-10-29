@@ -32,6 +32,12 @@ void rm_reset_n_alloced() {
 	n_alloced = 0;
 }
 
+// returns true if a capacity is configured and allocating 'n_bytes' more on
+// this thread would exceed it
+bool rm_would_exceed_mem_capacity(size_t n_bytes) {
+	return mem_capacity > 0 && (n_alloced + (int64_t)n_bytes) > mem_capacity;
+}
+
 // removes n_bytes from thread memory consumption
 static inline void _nmalloc_decrement(int64_t n_bytes) {
 	n_alloced -= n_bytes;
@@ -40,32 +46,52 @@ static inline void _nmalloc_decrement(int64_t n_bytes) {
 // adds nbytes to thread memory consumption
 static inline void _nmalloc_increment(int64_t n_bytes) {
 	n_alloced += n_bytes;
-	// check if capacity exceeded
-	if(n_alloced > mem_capacity) {
+}
+
+// guards an allocation of 'delta' additional bytes against the capacity
+// BEFORE the memory is actually requested from the system allocator
+// this is the key difference from a post-allocation check: a single huge
+// allocation (e.g. UNWIND range(1, 50000000)) would otherwise be handed to
+// the system allocator and OOM-kill the entire process long before any
+// post-hoc check could fire
+// if the allocation would exceed the capacity we raise a runtime exception,
+// which longjmps back to the query's exception handler (set in
+// ExecutionPlan_Execute) and unwinds without ever performing the allocation
+// if no exception handler is set (outside query execution) the raise is a
+// no-op and the caller proceeds with the allocation, preserving prior
+// behaviour for non-query contexts and never returning NULL to callers that
+// do not expect it
+static inline void _nmalloc_guard(int64_t delta) {
+	if(n_alloced + delta > mem_capacity) {
 		// set n_alloced to MIN to avoid further out of memory exceptions
 		// TODO: consider switching to double -inf
 		n_alloced = INT32_MIN;
 
-		// throw exception cause memory limit exceeded
-		ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
+		// abort the query before the oversized allocation is performed
+		ErrorCtx_RaiseRuntimeException(EMSG_QUERY_MEM_CONSUMPTION);
 	}
 }
 
 void *rm_alloc_with_capacity(size_t n_bytes) {
+	_nmalloc_guard(n_bytes);
 	void *p = RedisModule_Alloc_Orig(n_bytes);
 	_nmalloc_increment(n_bytes);
 	return p;
 }
 
 void *rm_realloc_with_capacity(void *ptr, size_t n_bytes) {
+	int64_t old_bytes = RedisModule_MallocSize(ptr);
+	// guard on the net growth of the reallocation
+	_nmalloc_guard((int64_t)n_bytes - old_bytes);
 	// remove bytes of original allocation
-	_nmalloc_decrement(RedisModule_MallocSize(ptr));
+	_nmalloc_decrement(old_bytes);
 	// track new allocation size
 	_nmalloc_increment(n_bytes);
 	return RedisModule_Realloc_Orig(ptr, n_bytes);
 }
 
 void *rm_calloc_with_capacity(size_t n_elem, size_t size) {
+	_nmalloc_guard((int64_t)n_elem * size);
 	void *p = RedisModule_Calloc_Orig(n_elem, size);
 	_nmalloc_increment(n_elem * size);
 	return p;
@@ -119,6 +145,10 @@ void rm_set_mem_capacity(int64_t cap) {
 #else
 
 void rm_reset_n_alloced() {
+}
+
+bool rm_would_exceed_mem_capacity(size_t n_bytes) {
+	return false;
 }
 
 void rm_set_mem_capacity(int64_t cap) {
