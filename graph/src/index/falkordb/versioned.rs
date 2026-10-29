@@ -250,6 +250,15 @@ impl<K: VersionedIndex> IndexEntry<K> {
             _ => Some(Discarded::Gone),
         }
     }
+
+    /// Whether `other` is this same index (the same generation) with the same indexer batches
+    /// committed on it.
+    pub(crate) fn same_batches_as(
+        &self,
+        other: &Self,
+    ) -> bool {
+        (self.generation, self.indexer_commits) == (other.generation, other.indexer_commits)
+    }
 }
 
 impl FalkorDbIndex {
@@ -286,28 +295,23 @@ impl Graph {
     ///   writer committed: [`IndexerCommit::Discarded`];
     /// - otherwise, nothing committed since: [`IndexerCommit::Same`];
     /// - otherwise only other indexes' batches did: [`IndexerCommit::Swap`].
+    ///
+    /// Columns are the only kind of index, so this reads the batch's column entry directly. A
+    /// second kind adds a variant to [`Prepared`], and the `let` below becomes a `match` on it,
+    /// each arm asking these same questions of its kind's entry ([`VersionedIndex::entry`]). Once
+    /// the arms differ only in the kind, move their body into one function generic over
+    /// [`VersionedIndex`].
     pub(crate) fn indexer_fit(
         &self,
         published: &Self,
         batch: &PreparedBatch,
     ) -> IndexerCommit {
-        let id = batch.id();
-        match &batch.0 {
-            Prepared::Column(batch) => self.fit_of::<IndexColumn>(published, &batch.name, &id),
-        }
-    }
-
-    /// [`Self::indexer_fit`] for one kind.
-    fn fit_of<K: VersionedIndex>(
-        &self,
-        published: &Self,
-        name: &K::Name,
-        id: &IndexId,
-    ) -> IndexerCommit {
-        let Some(ours) = K::entry(&self.falkordb_index, name) else {
+        let Prepared::Column(column) = &batch.0;
+        let Some(ours) = IndexColumn::entry(&self.falkordb_index, &column.name) else {
             return IndexerCommit::Discarded(Discarded::Gone);
         };
-        if let Some(why) = ours.discarded_against(K::entry(&published.falkordb_index, name)) {
+        let theirs = IndexColumn::entry(&published.falkordb_index, &column.name);
+        if let Some(why) = ours.discarded_against(theirs) {
             return IndexerCommit::Discarded(why);
         }
         if published.version != self.version {
@@ -316,7 +320,7 @@ impl Graph {
         // No writer committed, so only batches can have changed an index since.
         if self
             .falkordb_index
-            .same_batches_except(&published.falkordb_index, id)
+            .only_index_changed(&published.falkordb_index, &batch.id())
         {
             IndexerCommit::Same
         } else {
