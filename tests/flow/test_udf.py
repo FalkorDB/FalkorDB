@@ -1080,6 +1080,30 @@ class testUDF():
         except ResponseError as e:
             self.env.assertContains("unknown option given", str(e).lower())
 
+    def test_load_empty_lib_name_or_script(self):
+        """
+        GRAPH.UDF LOAD rejects an empty library name and an empty script,
+        with or without REPLACE, and registers nothing.
+        """
+
+        script = "falkor.register('f', function() { return 1; });"
+        cases = [
+            (["", script], "empty lib name"),
+            (["REPLACE", "", script], "empty lib name"),
+            (["", ""], "empty lib name"),
+            (["lib", ""], "empty script"),
+            (["REPLACE", "lib", ""], "empty script"),
+            (["x" * 513, ""], "empty script"),
+        ]
+        for args, msg in cases:
+            try:
+                self.db.execute_command("GRAPH.UDF", "LOAD", *args)
+                self.env.assertTrue(False, message=f"LOAD {args} should fail")
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        self._assert_any_udfs_missing()
+
     def test_load_udf_lib(self):
         """
         Test successful loading of a UDF library:
@@ -1832,6 +1856,35 @@ class test_udf_javascript():
                                          = localdatetime('2020-01-02T03:04:05'),
                                          rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
         self.env.assertEqual(res, [[True, True]])
+
+    def test_deeply_nested_result_is_an_error(self):
+        """
+        A UDF result nested past the conversion's depth limit is a query
+        error, not a stack overflow, and the server keeps answering.
+        """
+
+        script = """
+        function deep(n) { let a = null; for (let i = 0; i < n; i++) a = [a]; return a; }
+        function deepObj(n) { let o = null; for (let i = 0; i < n; i++) o = {k: o}; return o; }
+        function cyclic() { const a = []; a.push(a); return a; }
+        falkor.register('deep', deep);
+        falkor.register('deepObj', deepObj);
+        falkor.register('cyclic', cyclic);
+        """
+        self.db.udf_load("nest", script)
+
+        for q in ["RETURN nest.deep(300000)", "RETURN nest.deepObj(300000)",
+                  "RETURN nest.deep(1025)", "RETURN nest.cyclic()"]:
+            try:
+                self.graph.query(q)
+                assert False, f"expected an error for {q}"
+            except ResponseError as e:
+                self.env.assertContains("nesting exceeds the maximum depth", str(e))
+            self.env.assertTrue(self.db.connection.ping())
+
+        # At the limit, and in ordinary use, nested results still convert.
+        res = self.graph.query("RETURN size(nest.deep(1024)), nest.deep(2)").result_set
+        self.env.assertEqual(res, [[1, [[None]]]])
 
     def test_returning_undefined(self):
         """

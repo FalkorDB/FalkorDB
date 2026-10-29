@@ -49,7 +49,7 @@ on:
           Gate the image vehicle. True in the merge queue, where the published
           image is the thing being gated on. False on a pull request, where the
           artifact vehicle has already run the same suites and publishing an
-          image only exists so release-image.yml can retag one.
+          image only exists so release-tag.yml can retag one.
         required: false
         type: boolean
         default: false
@@ -69,7 +69,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "release"
       - name: Build
@@ -82,8 +82,10 @@ jobs:
           # LTO is off for the test build: the embedded C/Rust archives carry no
           # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
           CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Upload release binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-binary
           path: target/release/libfalkordb.so
@@ -96,7 +98,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "coverage"
           env-vars: "RUSTFLAGS"
@@ -104,7 +106,7 @@ jobs:
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
       - name: Upload coverage binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-binary
           path: target/debug/libfalkordb.so
@@ -119,7 +121,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download the engine
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-binary
           path: target/release
@@ -209,7 +211,7 @@ jobs:
   # Image vehicle only, like everything else that needs the RC image. Every
   # merge still passes through it: a fork pull request skips it, but its
   # merge-queue entry builds the image and scans it. And it scans what ships:
-  # `:edge` (rust-push.yml) and releases (release-image.yml) retag the queue's
+  # `:edge` (rust-push.yml) and releases (release-tag.yml) retag the queue's
   # rc-mg-<sha> image rather than rebuilding it.
   #
   # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
@@ -253,7 +255,7 @@ jobs:
 
       - name: Upload report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: trivy-report-${{ matrix.arch }}
           path: trivy-report.json
@@ -345,7 +347,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "release"
       # Cargo unit tests run against in-process code and don't touch redis.
@@ -358,6 +360,8 @@ jobs:
           # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
           # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
           CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Run pytest tests against the RC image
         run: |
           . /data/venv/bin/activate
@@ -384,7 +388,7 @@ jobs:
           done
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-service-logs
           path: tests/flow/logs/
