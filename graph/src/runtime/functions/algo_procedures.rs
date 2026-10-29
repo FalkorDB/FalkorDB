@@ -2355,9 +2355,12 @@ fn dijkstra_single_path(
     edges.reverse();
 
     // `costProp` is not what the search optimises for, just an attribute the
-    // caller asked to have reported: sum it over the winning path only.
+    // caller asked to have reported: sum it over the winning path only. Like
+    // C, an edge that lacks a configured `costProp` costs 1 (#3121), while no
+    // `costProp` at all reports 0.
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
     let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
-        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0)
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
     });
 
     Ok(Some((edges, labels[&target].weight, cost)))
