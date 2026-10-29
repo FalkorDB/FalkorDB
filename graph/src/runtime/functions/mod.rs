@@ -679,7 +679,7 @@ pub struct GraphFn {
     /// Optional positional-slot form used by the binder's struct-constructor
     /// rewrite: a call like `duration({months: i})` is rewritten into 7
     /// positional children, which eval.rs evaluates into a stack-allocated
-    /// `[Value; 10]` array and dispatches here — bypassing the
+    /// `[Value; 11]` array and dispatches here — bypassing the
     /// `ThinVec<Value>` heap alloc, `validate_args_type` walk, and the
     /// `RuntimeFn` dispatch hop used by the general `func` path. Only invoked
     /// when the child count equals `struct_slots.len()`, which is what the
@@ -689,6 +689,10 @@ pub struct GraphFn {
     /// positional children produced for `struct_fn`. Set in lockstep with
     /// `struct_fn`; both `Some` or both `None`.
     pub struct_slots: &'static [&'static str],
+    /// When true the rewritten call carries one extra trailing `Int` child:
+    /// a bitmask (bit `i` = slot `i`) of the slots the map literal wrote, so
+    /// `struct_fn` can tell an absent key from an explicit `null`.
+    pub struct_masked: bool,
     pub args_type: FnArguments,
     pub fn_type: FnType,
     pub ret_type: Type,
@@ -730,6 +734,7 @@ impl GraphFn {
             pure_args_type: Vec::new(),
             struct_fn: None,
             struct_slots: &[],
+            struct_masked: false,
             args_type,
             fn_type,
             ret_type,
@@ -755,6 +760,7 @@ impl GraphFn {
             pure_args_type: Vec::new(),
             struct_fn: None,
             struct_slots: &[],
+            struct_masked: false,
             args_type,
             fn_type,
             ret_type,
@@ -773,6 +779,7 @@ impl GraphFn {
             pure_args_type: Vec::new(),
             struct_fn: None,
             struct_slots: &[],
+            struct_masked: false,
             args_type: FnArguments::VarLength(Type::Any),
             fn_type: FnType::Udf,
             ret_type: Type::Any,
@@ -1027,12 +1034,13 @@ impl Functions {
     /// function. The binder rewrites Map-keyed constructor calls like
     /// `duration({months: i})` into positional children using `slots` for
     /// the slot order, and eval.rs dispatches them through `struct_fn` via
-    /// a stack `[Value; 10]` array.
+    /// a stack `[Value; 11]` array.
     pub fn set_struct_fn(
         &mut self,
         name: &str,
         struct_fn: fn(&[Value]) -> Result<Value, String>,
         slots: &'static [&'static str],
+        masked: bool,
     ) {
         let lower = name.to_lowercase();
         let existing = self
@@ -1041,6 +1049,7 @@ impl Functions {
             .unwrap_or_else(|| panic!("Function '{name}' not registered"));
         let inner =
             Arc::get_mut(existing).expect("function Arc must be unique at registration time");
+        inner.struct_masked = masked;
         inner.struct_fn = Some(struct_fn);
         inner.struct_slots = slots;
     }

@@ -238,3 +238,57 @@ def test_struct_constructor_accepted_arities():
     # duration decodes to a relativedelta, which compares cleanly to its parts
     duration = common.g.query("RETURN duration({days: 1, hours: 2})").result_set[0][0]
     assert (duration.days, duration.hours) == (1, 2)
+
+def test_temporal_map_components_are_validated():
+    """A key written in a temporal map constructor is validated, never turned
+    into a default (#3295): null / string / float date and time components, a
+    non-numeric duration component and an unknown key are errors with C's
+    messages, on both the positional fast path (map literal) and the map path
+    (a map in a variable). Absent keys still default."""
+    integer = "{} must be an integer value"
+    numeric = "{} must be a numerical value"
+    unknown = "datetime components map contains an unknown key"
+    for literal, message in [
+        ("date({year: 2020, month: null})", integer.format("month")),
+        ("date({year: '2020'})", integer.format("year")),
+        ("date({year: 2020, month: 1.5})", integer.format("month")),
+        ("date({year: 2020, month: 2.0})", integer.format("month")),
+        ("localtime({hour: null})", integer.format("hour")),
+        ("localtime({hour: 1.5})", integer.format("hour")),
+        ("localdatetime({year: 2020, hour: null})", integer.format("hour")),
+        ("date({year: 2020, foo: 5})", unknown),
+        ("localtime({hour: 1, foo: 5})", unknown),
+        ("localdatetime({year: 2020, foo: 5})", unknown),
+        ("duration({days: null})", numeric.format("days")),
+        ("duration({days: '1'})", numeric.format("days")),
+        ("duration({foo: 1})", unknown),
+    ]:
+        map_literal = literal[literal.index("(") + 1:-1]
+        func = literal[:literal.index("(")]
+        query_exception(f"RETURN {literal}", message)
+        query_exception(f"WITH {map_literal} AS m RETURN {func}(m)", message)
+
+    # a parameter / variable that is null is a written key too
+    for func, key, message in [
+        ("date({year: 2020, month: $p})", "month", integer),
+        ("duration({days: $p})", "days", numeric),
+    ]:
+        query_exception(f"RETURN {func}", message.format(key), {"p": None})
+
+    # absent keys default; valid components are untouched
+    r = lambda q, p=None: common.g.query(q, p).result_set[0][0]
+    assert r("RETURN date({year: 2020})") == datetime.date(2020, 1, 1)
+    assert r("RETURN date({year: 2020, month: $p})", {"p": 3}) == datetime.date(2020, 3, 1)
+    assert r("WITH {year: 2020, Month: 3} AS m RETURN date(m)") == datetime.date(2020, 3, 1)
+    assert r("RETURN localtime({hour: 1, millisecond: 5})") == datetime.time(1, 0)
+
+    # duration fractions carry into the smaller units, like C
+    for query, text in [
+        ("RETURN toString(duration({days: 1.5}))", "P1DT12H"),
+        ("RETURN toString(duration({hours: 1.5, minutes: 2.5, seconds: 0.5}))", "PT1H32M30S"),
+        ("RETURN toString(duration({years: 1.5}))", "P1Y6M1DT15H"),
+        ("RETURN toString(duration({months: 1.5}))", "P1M15DT5H16M48S"),
+        ("WITH {days: 1.5} AS m RETURN toString(duration(m))", "P1DT12H"),
+        ("RETURN toString(duration({days: $p}))", "P1DT12H"),
+    ]:
+        assert r(query, {"p": 1.5}) == text, query
