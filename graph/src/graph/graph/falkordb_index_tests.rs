@@ -3599,8 +3599,16 @@ fn the_builder_finishes_what_registering_and_commits_start_under_sustained_write
                 i += 1;
             }
         });
+        // Stops the writer however the wait ends: a wait that times out panics, and the scope
+        // would otherwise wait for the writer forever.
+        struct Done<'a>(&'a AtomicBool);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _done = Done(&done);
         wait_until("both indexes to be built", built);
-        done.store(true, Ordering::SeqCst);
     });
     online_build::stop();
 
