@@ -779,3 +779,40 @@ class testEffects_03_CompoundSequences(_EffectsBase):
         self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
 
+    def test09_a_label_removed_from_a_node_that_never_had_it_committed(self):
+        # #3448. A REMOVE of a label the statement itself staged has nothing to
+        # remove at commit. Staging it anyway put a REMOVE_LABELS on the wire;
+        # when the node was also created and deleted in the statement, that
+        # record named a node the replica does not hold yet, the replica
+        # refused the payload, and the primary forced a full resync.
+        self.set_effects_config()
+        failures_before = self.effect_failures()
+        full_before = self.master.info()["sync_full"]
+        diverged_before = self.replica_log_diverged()
+
+        res = self.query_and_sync("CREATE (n:Foo3448) REMOVE n:Foo3448 DELETE n")
+        # Counted as C counts it, although nothing is removed at commit.
+        self.env.assertEqual(res.labels_removed, 1)
+
+        self.query_and_sync("CREATE (:Keep3448)")
+        res = self.query_and_sync(
+            "MATCH (n:Keep3448) SET n:Tmp3448 REMOVE n:Tmp3448")
+        self.env.assertEqual(res.labels_removed, 1)
+        self.assert_agree("MATCH (n:Keep3448) RETURN labels(n)", [[["Keep3448"]]])
+        # The add was cancelled, but `Tmp3448` stays registered on both sides.
+        self.assert_agree("CALL db.labels() YIELD label WHERE label = 'Tmp3448' "
+                          "RETURN label", [["Tmp3448"]])
+
+        # Re-setting a committed label and removing it does remove it.
+        res = self.query_and_sync(
+            "MATCH (n:Keep3448) SET n:Keep3448 REMOVE n:Keep3448")
+        self.env.assertEqual(res.labels_removed, 1)
+        self.assert_agree("MATCH (n:Keep3448) RETURN count(n)", [[0]])
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused a payload")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="a staged-only label removal forced a resync")
+        if diverged_before is not None:
+            self.env.assertEqual(self.replica_log_diverged(), diverged_before)
+        self.assert_graph_eq()
