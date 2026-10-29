@@ -462,3 +462,38 @@ class testPathFilter(FlowTestsBase):
         # the server is still usable after all of the above
         query = "MATCH (n) RETURN count(n)"
         self.env.assertEqual(self.graph.query(query).result_set, [[2]])
+
+    def test19_path_filter_cannot_declare_variable(self):
+        # A pattern predicate only tests variables already in scope; a named
+        # variable it would introduce is undefined, as in C and openCypher.
+        # https://github.com/FalkorDB/FalkorDB/issues/1334
+        self.graph.query("CREATE (:L {x:'a'})-[:R]->(:L {x:'b'})")
+
+        for query in ["MATCH (n0) WITH * WHERE () -- (n1) RETURN *",
+                      "MATCH (n) WHERE (n)-[:R]->(m) RETURN n",
+                      "MATCH (n) WHERE (n)-[r:R]->() RETURN n",
+                      "MATCH (n) WHERE NOT (n)<-[:R]-(m) RETURN n",
+                      "MATCH (n) WHERE n.x = 'a' OR (n)-[:R]->(m) RETURN n",
+                      "MATCH (n) RETURN [x IN [1] WHERE (n)-->(m)]"]:
+            msg = assert_error_reply(self.env, self.conn, "GRAPH.QUERY", GRAPH_ID, query)
+            self.env.assertContains("not defined", msg or "")
+
+        # anonymous aliases, and names bound by the query, a list
+        # comprehension or a pattern comprehension are fine
+        query = "MATCH (n) WHERE (n)-[:R]->() RETURN n.x"
+        self.env.assertEqual(self.graph.query(query).result_set, [['a']])
+
+        query = "MATCH (n), (m) WHERE (n)-[:R]->(m) RETURN n.x, m.x"
+        self.env.assertEqual(self.graph.query(query).result_set, [['a', 'b']])
+
+        query = "MATCH (n) WITH n WHERE (n)-[:R]->() RETURN n.x"
+        self.env.assertEqual(self.graph.query(query).result_set, [['a']])
+
+        query = """MATCH (n) WITH collect(n) AS ns
+                   RETURN [x IN ns WHERE (x)-[:R]->() | x.x]"""
+        self.env.assertEqual(self.graph.query(query).result_set, [[['a']]])
+
+        query = """MATCH (n)
+                   RETURN [(n)-[:R]->(m) WHERE (m)<-[:R]-(n) | m.x] AS ms
+                   ORDER BY n.x"""
+        self.env.assertEqual(self.graph.query(query).result_set, [[['b']], [[]]])
