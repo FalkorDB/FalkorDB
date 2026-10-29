@@ -320,3 +320,16 @@ class testCentrality(FlowTestsBase):
         # the final node has no outgoing edges -> score is exactly 0
         self.env.assertEqual(scores[N - 1], 0.0)
 
+
+    def test_unknown_label_or_relationship_type(self):
+        """An unknown nodeLabels / relationshipTypes entry is an error (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+        for config, msg in [("{nodeLabels: ['Nope']}", "harmonic centrality configuration contains non-existent label:Nope"),
+                            ("{nodeLabels: ['A', 'Nope']}", "harmonic centrality configuration contains non-existent label:Nope"),
+                            ("{relationshipTypes: ['Nope']}", "harmonic centrality configuration contains non-existent type:Nope")]:
+            try:
+                self.graph.query(f"CALL algo.HarmonicCentrality({config}) YIELD node RETURN node")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), msg)
