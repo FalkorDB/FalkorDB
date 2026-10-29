@@ -1325,20 +1325,20 @@ impl Tensor {
     pub fn iter_from(
         &self,
         (src, dst, edge): (u64, u64, u64),
-    ) -> Iter<'_> {
+    ) -> IterFrom<'_> {
         self.wait_fwd();
-        let mut it = Iter::with_base(
-            self,
-            BaseIter::Forward(versioned_matrix::Iter::<Uint64Extract>::from_layers_at(
+        IterFrom {
+            t: self,
+            base: versioned_matrix::EntryIter::<Uint64Extract>::from_layers_at(
                 &self.m,
                 &self.dp,
                 &self.dm,
                 (src, dst),
                 u64::MAX,
-            )),
-        );
-        it.from = Some((src, dst, edge));
-        it
+            ),
+            pair: None,
+            from: Some((src, dst, edge)),
+        }
     }
 
     /// How many `(src, dst)` pairs end at one of `dsts`: the selected rows of
@@ -1750,11 +1750,9 @@ pub struct Iter<'a> {
     base: BaseIter,
     src: u64,
     dest: u64,
-    /// The rest of the current multi-edge pair's edge ids, ascending, read from its `me` row as
-    /// they are yielded.
-    pair: Option<versioned_matrix::Iter>,
-    /// Where [`Tensor::iter_from`] starts: in its first pair, edge ids below this one are skipped.
-    from: Option<(u64, u64, u64)>,
+    /// Buffered, ascending edge ids for the current multi-edge pair.
+    buf: Vec<u64>,
+    buf_pos: usize,
 }
 
 impl<'a> Iter<'a> {
@@ -1764,27 +1762,17 @@ impl<'a> Iter<'a> {
         max_row: u64,
         transpose: bool,
     ) -> Self {
-        Self::with_base(
+        Self {
             t,
-            if transpose {
+            base: if transpose {
                 BaseIter::Backward(t.mt.iter(min_row, max_row))
             } else {
                 BaseIter::Forward(t.fwd_iter(min_row, max_row))
             },
-        )
-    }
-
-    fn with_base(
-        t: &'a Tensor,
-        base: BaseIter,
-    ) -> Self {
-        Self {
-            t,
-            base,
             src: 0,
             dest: 0,
-            pair: None,
-            from: None,
+            buf: Vec::new(),
+            buf_pos: 0,
         }
     }
 
@@ -1809,8 +1797,8 @@ impl<'a> Iter<'a> {
             BaseIter::Forward(it) => it.seek(min_row, max_row),
             BaseIter::Backward(it) => it.seek(min_row, max_row),
         }
-        self.pair = None;
-        self.from = None;
+        self.buf.clear();
+        self.buf_pos = 0;
     }
 }
 
@@ -1818,12 +1806,11 @@ impl Iterator for Iter<'_> {
     type Item = (u64, u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // The rest of the current multi-edge pair's (ascending) edge ids.
-        if let Some(pair) = &mut self.pair {
-            if let Some((_, id)) = pair.next() {
-                return Some((self.src, self.dest, id));
-            }
-            self.pair = None;
+        // Drain buffered (ascending) edge ids for the current multi-edge pair.
+        if self.buf_pos < self.buf.len() {
+            let id = self.buf[self.buf_pos];
+            self.buf_pos += 1;
+            return Some((self.src, self.dest, id));
         }
 
         // Next base pair, oriented as (src, dest) with its inline value.
@@ -1852,26 +1839,72 @@ impl Iterator for Iter<'_> {
             };
             self.src = src;
             self.dest = dest;
-            // `iter_from`'s first pair starts at its edge; every later pair at its first.
+
+            if inline == MULTI_EDGE {
+                // Multi-edge pair: all ids live in `me`, already in ascending
+                // column (edge-id) order.
+                let (block, key) = compound_key(self.src, self.dest);
+                self.buf.clear();
+                if let Some(me) = self.t.me_block(block) {
+                    for (_, id) in me.iter(key, key) {
+                        self.buf.push(id);
+                    }
+                }
+                // Promotion completeness says a MULTI_EDGE pair always has ids in
+                // `me`. If one does not — a corrupt or partially decoded tensor —
+                // skip the pair rather than panicking on a read path, which is what
+                // `get` already does for a missing block.
+                let Some(&id) = self.buf.first() else {
+                    debug_assert!(false, "MULTI_EDGE pair ({src}, {dest}) has no ids in `me`");
+                    continue;
+                };
+                self.buf_pos = 1;
+                return Some((self.src, self.dest, id));
+            }
+            return Some((self.src, self.dest, inline));
+        }
+    }
+}
+
+/// [`Tensor::iter_from`]'s iterator: [`Iter`]'s forward walk, from an edge. The forward layers and
+/// each multi-edge pair's ids are read by entry iterators, which start where they are asked to,
+/// and a pair's ids are read as they are yielded rather than buffered whole, so a walk that stops
+/// inside a long pair reads none of its rest.
+pub struct IterFrom<'a> {
+    t: &'a Tensor,
+    base: versioned_matrix::EntryIter<Uint64Extract>,
+    /// The current multi-edge pair, and the rest of its edge ids, ascending.
+    pair: Option<(u64, u64, versioned_matrix::EntryIter)>,
+    /// Where the walk starts: in its first pair, edge ids below this one are skipped.
+    from: Option<(u64, u64, u64)>,
+}
+
+impl Iterator for IterFrom<'_> {
+    type Item = (u64, u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((src, dest, ids)) = &mut self.pair {
+            if let Some((_, id)) = ids.next() {
+                return Some((*src, *dest, id));
+            }
+            self.pair = None;
+        }
+        loop {
+            let (src, dest, inline) = self.base.next()?;
+            // The first pair starts at the walk's edge; every later pair at its first.
             let from_edge = match self.from.take() {
                 Some((fs, fd, edge)) if (fs, fd) == (src, dest) => edge,
                 _ => 0,
             };
-
             if inline == MULTI_EDGE {
-                // Multi-edge pair: all ids live in `me`, in ascending column (edge-id) order,
-                // and are read as they are yielded.
-                let (block, key) = compound_key(self.src, self.dest);
+                let (block, key) = compound_key(src, dest);
                 let Some(me) = self.t.me_block(block) else {
                     debug_assert!(false, "MULTI_EDGE pair ({src}, {dest}) has no `me` block");
                     continue;
                 };
                 let mut ids = me.iter_at((key, from_edge), key);
-                // Promotion completeness says a MULTI_EDGE pair always has ids in
-                // `me`. If one does not — a corrupt or partially decoded tensor —
-                // skip the pair rather than panicking on a read path, which is what
-                // `get` already does for a missing block. Past `from_edge`, an empty
-                // rest of the pair is expected.
+                // A pair with no ids is skipped, as [`Iter`] does. Past `from_edge`, an empty rest
+                // of the pair is expected.
                 let Some((_, id)) = ids.next() else {
                     debug_assert!(
                         from_edge > 0,
@@ -1879,13 +1912,13 @@ impl Iterator for Iter<'_> {
                     );
                     continue;
                 };
-                self.pair = Some(ids);
-                return Some((self.src, self.dest, id));
+                self.pair = Some((src, dest, ids));
+                return Some((src, dest, id));
             }
             if inline < from_edge {
                 continue;
             }
-            return Some((self.src, self.dest, inline));
+            return Some((src, dest, inline));
         }
     }
 }

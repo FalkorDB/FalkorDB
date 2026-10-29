@@ -1681,8 +1681,7 @@ pub trait IterExtract {
     /// `it` must be a valid attached `GxB_Iterator` positioned on a valid entry.
     unsafe fn extract(it: GxB_Iterator) -> Self::Item;
 
-    /// [`Self::extract`] for an iterator attached as an entry iterator
-    /// ([`Iter::from_entry`]), which reads its position differently.
+    /// [`Self::extract`] for an [`EntryIter`], whose iterator reads its position differently.
     ///
     /// # Safety
     /// `it` must be a valid `GxB_Iterator` attached by `GxB_Matrix_Iterator_attach` and
@@ -1761,9 +1760,6 @@ pub struct Iter<E: IterExtract = BoolExtract> {
     depleted: bool,
     /// The maximum row index for the iterator.
     max_row: u64,
-    /// Whether `inner` is attached as an entry iterator ([`Self::from_entry`]) rather than a
-    /// row iterator.
-    entries: bool,
     _extract: PhantomData<E>,
 }
 
@@ -1823,55 +1819,8 @@ impl<E: IterExtract> Iter<E> {
             inner: null_mut(),
             depleted: true,
             max_row: 0,
-            entries: false,
             _extract: PhantomData,
         }
-    }
-
-    /// An iterator over `m` from its first entry at or after `(row, col)`, in `(row, col)`
-    /// order, through row `max_row`.
-    ///
-    /// It finds that entry by binary search over the matrix's entry positions
-    /// (`GxB_Matrix_Iterator_seek`), so it reads none of the entries before it. [`Self::new`]
-    /// starts at a row instead, and a caller wanting the middle of a long row would walk its
-    /// columns there one at a time. Positions map to entries in `(row, col)` order whatever the
-    /// matrix's format; in a bitmap a seek lands on the next present entry.
-    #[must_use]
-    pub fn from_entry<T>(
-        m: &Matrix<T>,
-        (row, col): (u64, u64),
-        max_row: u64,
-    ) -> Self {
-        let mut it = Self::detached(m);
-        it.max_row = max_row;
-        it.entries = true;
-        unsafe {
-            let mut iter = MaybeUninit::uninit();
-            let info = GxB_Iterator_new(iter.as_mut_ptr());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Iterator_new failed: {info:?}"
-            );
-            it.inner = iter.assume_init();
-            let info = GxB_Matrix_Iterator_attach(it.inner, it.matrix(), null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            // The first position whose entry is at or after `(row, col)`.
-            let (mut lo, mut hi) = (0, GxB_Matrix_Iterator_getpmax(it.inner));
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                if GxB_Matrix_Iterator_seek(it.inner, mid) != GrB_Info::GrB_SUCCESS {
-                    hi = mid;
-                } else if entry_index(it.inner) < (row, col) {
-                    lo = GxB_Matrix_Iterator_getp(it.inner) + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            it.depleted = GxB_Matrix_Iterator_seek(it.inner, lo) != GrB_Info::GrB_SUCCESS
-                || entry_index(it.inner).0 > max_row;
-        }
-        it
     }
 
     /// Attach the GraphBLAS iterator if this is still detached.
@@ -1905,12 +1854,6 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) {
-        if self.entries {
-            // Attached as an entry iterator: free it, and attach a row iterator below.
-            unsafe { GxB_Iterator_free(&raw mut self.inner) };
-            self.inner = null_mut();
-            self.entries = false;
-        }
         self.attach();
         unsafe {
             let mut info = GxB_rowIterator_seekRow(self.inner, min_row);
@@ -1943,14 +1886,6 @@ impl<E: IterExtract> Iterator for Iter<E> {
         if self.depleted {
             return None;
         }
-        if self.entries {
-            unsafe {
-                let item = E::extract_entry(self.inner);
-                self.depleted = GxB_Matrix_Iterator_next(self.inner) != GrB_Info::GrB_SUCCESS
-                    || entry_index(self.inner).0 > self.max_row;
-                return Some(item);
-            }
-        }
         unsafe {
             let item = E::extract(self.inner);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
@@ -1973,18 +1908,109 @@ impl<E: IterExtract> Iterator for Iter<E> {
     }
 }
 
+/// An iterator over a matrix's entries from the first one at or after a given `(row, col)`, in
+/// `(row, col)` order, through a last row.
+///
+/// [`Iter`] starts at a row, so a caller wanting the middle of a long row would walk its columns
+/// there one at a time. This one finds its first entry by binary search over the matrix's entry
+/// positions (`GxB_Matrix_Iterator_seek`), so it reads none of the entries before it. It is a
+/// type of its own rather than a mode of [`Iter`], so that the `next` every scan runs per entry
+/// carries no check for it.
+pub struct EntryIter<E: IterExtract = BoolExtract> {
+    m: Arc<Handle>,
+    /// The underlying GraphBLAS iterator, attached as an entry iterator.
+    inner: GxB_Iterator,
+    /// Indicates whether the iterator is depleted.
+    depleted: bool,
+    /// The maximum row index for the iterator.
+    max_row: u64,
+    _extract: PhantomData<E>,
+}
+
+unsafe impl<E: IterExtract> Send for EntryIter<E> {}
+unsafe impl<E: IterExtract> Sync for EntryIter<E> {}
+
+impl<E: IterExtract> Drop for EntryIter<E> {
+    /// Frees the GraphBLAS iterator, before the matrix's [`Handle`] (fields drop after this body).
+    fn drop(&mut self) {
+        unsafe { GxB_Iterator_free(&raw mut self.inner) };
+    }
+}
+
+impl<E: IterExtract> EntryIter<E> {
+    /// An iterator over `m` from its first entry at or after `(row, col)`, through row `max_row`.
+    ///
+    /// Positions map to entries in `(row, col)` order whatever the matrix's format; in a bitmap a
+    /// seek lands on the next present entry.
+    #[must_use]
+    pub fn new<T>(
+        m: &Matrix<T>,
+        (row, col): (u64, u64),
+        max_row: u64,
+    ) -> Self {
+        unsafe {
+            let mut iter = MaybeUninit::uninit();
+            let info = GxB_Iterator_new(iter.as_mut_ptr());
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Iterator_new failed: {info:?}"
+            );
+            let mut it = Self {
+                m: m.m.clone(),
+                inner: iter.assume_init(),
+                depleted: true,
+                max_row,
+                _extract: PhantomData,
+            };
+            let info = GxB_Matrix_Iterator_attach(it.inner, it.m.0, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // The first position whose entry is at or after `(row, col)`.
+            let (mut lo, mut hi) = (0, GxB_Matrix_Iterator_getpmax(it.inner));
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if GxB_Matrix_Iterator_seek(it.inner, mid) != GrB_Info::GrB_SUCCESS {
+                    hi = mid;
+                } else if entry_index(it.inner) < (row, col) {
+                    lo = GxB_Matrix_Iterator_getp(it.inner) + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            it.depleted = GxB_Matrix_Iterator_seek(it.inner, lo) != GrB_Info::GrB_SUCCESS
+                || entry_index(it.inner).0 > max_row;
+            it
+        }
+    }
+}
+
+impl<E: IterExtract> Iterator for EntryIter<E> {
+    type Item = E::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.depleted {
+            return None;
+        }
+        unsafe {
+            let item = E::extract_entry(self.inner);
+            self.depleted = GxB_Matrix_Iterator_next(self.inner) != GrB_Info::GrB_SUCCESS
+                || entry_index(self.inner).0 > self.max_row;
+            Some(item)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
     use super::super::test_init::ensure_init;
-    use super::{Iter, Matrix, Uint64Extract};
+    use super::{EntryIter, Matrix, Uint64Extract};
 
-    /// An iterator started at an entry yields exactly the entries at or after it, through its last
-    /// row, in order: what a row iterator over the whole matrix yields with the earlier entries
+    /// An entry iterator yields exactly the entries at or after its start, through its last row,
+    /// in order: what a row iterator over the whole matrix yields with the earlier entries
     /// dropped. Every target, present or not, between and past the entries, on sparse and on
-    /// hypersparse storage. Seeking it to a row range afterwards reads that range as a row
-    /// iterator does.
+    /// hypersparse storage.
     #[test]
     fn an_entry_seek_starts_at_the_first_entry_at_or_after_it() {
         ensure_init();
@@ -2011,24 +2037,11 @@ mod tests {
                             .filter(|&(r, c, _)| (r, c) >= (row, col) && r <= max_row)
                             .collect();
                         let got: Vec<(u64, u64, u64)> =
-                            Iter::<Uint64Extract>::from_entry(&m, (row, col), max_row).collect();
+                            EntryIter::<Uint64Extract>::new(&m, (row, col), max_row).collect();
                         assert_eq!(got, want, "hyper {hyper}, from ({row}, {col}) to {max_row}");
                     }
                 }
             }
-            let mut it = Iter::<Uint64Extract>::from_entry(&m, (10, 5), u64::MAX);
-            it.next();
-            it.seek(3, 4);
-            let want: Vec<(u64, u64, u64)> = all
-                .iter()
-                .copied()
-                .filter(|&(r, _, _)| (3..=4).contains(&r))
-                .collect();
-            assert_eq!(
-                it.collect::<Vec<_>>(),
-                want,
-                "hyper {hyper}: re-seeked by rows"
-            );
         }
     }
 
