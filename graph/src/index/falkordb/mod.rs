@@ -23,6 +23,9 @@ pub mod numeric;
 pub mod pending_writes;
 
 #[cfg(feature = "index-falkordb")]
+pub mod unique;
+
+#[cfg(feature = "index-falkordb")]
 pub mod versioned;
 
 /// The error a scan raises when the native index cannot serve a predicate.

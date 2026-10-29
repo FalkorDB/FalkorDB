@@ -24,7 +24,7 @@
 //! lookup hides only edges that are deleted and not yet reused.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -38,21 +38,6 @@ use super::falkordb_index::{BuildCursor, IndexColumn};
 use super::numeric::EncodedTuples;
 use super::pending_writes::IndexChanges;
 use super::versioned::IndexId;
-
-/// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`. The native index then maintains node
-/// Range indexes alone, and the graph skips the redundant RediSearch feed on the write path.
-/// Read once and cached.
-///
-/// This exists only to benchmark the native write cost against RediSearch without the double
-/// write. It is not a shipping mode: it drops the string and geo entries RediSearch still
-/// serves.
-pub fn index_only_writes() -> bool {
-    static INDEX_ONLY: OnceLock<bool> = OnceLock::new();
-    *INDEX_ONLY.get_or_init(|| {
-        std::env::var("FALKORDB_INDEX_ONLY")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
-}
 
 // ---- Nodes ----
 
