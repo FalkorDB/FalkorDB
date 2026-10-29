@@ -39,6 +39,7 @@ use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
+    pending::Pending,
     row::RowView,
     runtime::Runtime,
     value::Value,
@@ -695,6 +696,24 @@ impl<'a> CondTraverseOp<'a> {
         // 311 early return). Rows where from is unbound trigger fall-back.
         let mut row_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
         let mut col_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
+        // A node deleted earlier in this commit segment matches nothing: its
+        // edges are only dropped at commit (`DETACH DELETE` defers them), so
+        // e.g. `DETACH DELETE a MERGE (a)-[:R]->(x:B)` would otherwise match an
+        // edge that is about to disappear. Take the snapshot once per batch so
+        // rows pay nothing when nothing was deleted.
+        let (has_deleted_edges, deleted_nodes) = {
+            let pending = runtime.pending.borrow();
+            (
+                pending.has_deleted_relationships(),
+                pending.has_deleted_nodes().then(|| pending.deleted_nodes()),
+            )
+        };
+        if has_deleted_edges {
+            // The matrix product cannot tell a deleted edge from a live one
+            // between the same pair; the per-row path can.
+            drop(g);
+            return false;
+        }
         let from_alias = if transposed {
             &rp.to.alias
         } else {
@@ -718,6 +737,12 @@ impl<'a> CondTraverseOp<'a> {
                 drop(g);
                 return false;
             };
+            if deleted_nodes
+                .as_ref()
+                .is_some_and(|d| d.contains(u64::from(src_id)))
+            {
+                continue;
+            }
             // Pre-filter src by label (= L_src * F in C's algebra).
             if !state
                 .fwd_src_label_ids
@@ -785,6 +810,9 @@ impl<'a> CondTraverseOp<'a> {
 
         for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
+            if deleted_nodes.as_ref().is_some_and(|d| d.contains(dest_raw)) {
+                continue;
+            }
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids
                 .iter()
@@ -947,6 +975,7 @@ impl<'a> CondTraverseOp<'a> {
             return Ok(());
         }
         let g = runtime.graph();
+        let pending = runtime.pending.borrow();
 
         // Map from_id/to_id to the matrix's src/dst dimensions.
         let (fwd_src_id, fwd_dst_id) = if transposed {
@@ -982,6 +1011,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                &pending,
             );
         } else {
             let need_bwd_rev =
@@ -1024,6 +1054,7 @@ impl<'a> CondTraverseOp<'a> {
                     from_id,
                     to_id,
                     &g,
+                    &pending,
                     rp,
                     batch,
                     row_idx,
@@ -1068,6 +1099,7 @@ impl<'a> CondTraverseOp<'a> {
                     from_id,
                     to_id,
                     &g,
+                    &pending,
                     rp,
                     batch,
                     row_idx,
@@ -1132,6 +1164,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        pending: &Pending,
     ) {
         let iters = state.union.as_deref_mut().expect("multi-type state");
         let need_bwd_rev = iters.rev.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
@@ -1173,6 +1206,7 @@ impl<'a> CondTraverseOp<'a> {
                 from_id,
                 to_id,
                 g,
+                &pending,
                 rp,
                 batch,
                 row_idx,
@@ -1217,6 +1251,7 @@ impl<'a> CondTraverseOp<'a> {
                 from_id,
                 to_id,
                 g,
+                &pending,
                 rp,
                 batch,
                 row_idx,
@@ -1238,6 +1273,7 @@ impl<'a> CondTraverseOp<'a> {
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
         g: &crate::graph::graph::Graph,
+        pending: &Pending,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
@@ -1248,7 +1284,15 @@ impl<'a> CondTraverseOp<'a> {
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
     ) {
+        // Entities deleted earlier in this commit segment match nothing, even
+        // though the tensors only drop them at commit (`DETACH DELETE` defers a
+        // node's edges). Probed only when something was deleted.
+        let has_deleted_nodes = pending.has_deleted_nodes();
+        let has_deleted_edges = pending.has_deleted_relationships();
         for (src, dst) in pairs {
+            if has_deleted_nodes && (pending.is_node_deleted(src) || pending.is_node_deleted(dst)) {
+                continue;
+            }
             // Per-pair label validation replaces the per-query rmxm/lmxm
             // restriction on the relationship matrix. `(src, dst)` here are
             // the raw matrix coordinates (before `is_reverse` swap).
@@ -1285,6 +1329,9 @@ impl<'a> CondTraverseOp<'a> {
                 'outer: for &tidx in edge_type_indices {
                     for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
+                        if has_deleted_edges && pending.is_relationship_deleted(id) {
+                            continue;
+                        }
                         if !super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                             found_id = Some(id);
                             break 'outer;
@@ -1304,6 +1351,9 @@ impl<'a> CondTraverseOp<'a> {
             for &tidx in edge_type_indices {
                 for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                     let id = RelationshipId::from(raw_id);
+                    if has_deleted_edges && pending.is_relationship_deleted(id) {
+                        continue;
+                    }
                     // Relationship uniqueness: skip edges already bound to other
                     // relationship variables in this MATCH clause.
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {

@@ -936,3 +936,33 @@ class testGraphMergeFlow():
         res = g.query("MATCH (a:A), (b:B) MERGE p = (a)-[r:R]->(b) RETURN r.k ORDER BY r.k")
         self.env.assertEqual(res.result_set, [[1], [2]])
         g.delete()
+
+    def test43_merge_traverse_from_detach_deleted_node(self):
+        """
+        Same as test42 but the other endpoint is unbound, so the MERGE pattern
+        is a traversal (CondTraverse) rather than an ExpandInto: it must not
+        expand out of a node deleted earlier in the query
+        https://github.com/FalkorDB/FalkorDB/issues/3463
+        """
+
+        queries = ["""MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[r:R]->(x:B) RETURN count(r)""",
+                   """MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[:R]->(x:B)""",
+                   """MATCH (a:A) DETACH DELETE a
+                      MERGE (a)-[r:R]->(x) RETURN count(r)""",
+                   """MATCH (b:B) DETACH DELETE b
+                      MERGE (a:A)-[r:R]->(b) RETURN count(r)"""]
+
+        con = self.env.getConnection()
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+            msg = assert_error_reply(self.env, con, "GRAPH.QUERY", GRAPH_ID, q)
+            self.env.assertContains("endpoint was not found", msg or "")
+
+            # the failed query left the graph as it was
+            actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
+                                         RETURN count(r)""")
+            self.env.assertEqual(actual.result_set, [[1]])
