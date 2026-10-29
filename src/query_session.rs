@@ -196,6 +196,29 @@ impl QuerySession {
         }
     }
 
+    /// Enter **writer** mode for a write that began as a reader and keeps losing
+    /// its version to other writers: it takes the GIL and the write lock first and
+    /// holds them for the whole query, so nothing can commit under it. What
+    /// escalation re-checks after taking the locks is re-checked here, since the
+    /// write may have waited a long time since it was admitted.
+    ///
+    /// # Errors
+    ///
+    /// The refusal [`Self::upgrade_to_write`] would give: the graph was removed, or
+    /// this instance may no longer originate the write.
+    pub fn begin_writer_checked(
+        graph: &Arc<RwLock<ThreadedGraph>>,
+        facts: WriteFacts,
+    ) -> Result<Self, WriteAbort> {
+        let mut session = Self::begin_writer(graph);
+        session.facts = facts;
+        if !crate::graph_core::graph_is_registered(graph) {
+            return Err(WriteAbort::GraphUnregistered);
+        }
+        reauthorize_write(facts)?;
+        Ok(session)
+    }
+
     /// The facts this session was begun with, to begin another for the same
     /// write.
     pub const fn facts(&self) -> WriteFacts {

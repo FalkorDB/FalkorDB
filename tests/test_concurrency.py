@@ -192,3 +192,122 @@ def test_index_scan_write_concurrent_with_writes():
     # Index on n.id so the MATCH above plans as a NodeByIndexScan.
     common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
     _hammer_under_write_load(_index_scan_write)
+
+def _multi_write_loop(stop, counter):
+    # Inline (MULTI/EXEC) writers commit on the main thread whenever they like,
+    # making any queued write that is still matching stale.
+    r = Redis(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+        socket_timeout=60,
+    )
+    while not stop.is_set():
+        p = r.pipeline(transaction=True)
+        p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
+        p.execute()
+        counter[0] += 1
+
+
+def test_queued_write_not_starved_by_inline_writers():
+    # A queued write matches as a reader and retries when an inline writer commits
+    # underneath it. Every retry loses to the next commit, so under a steady stream
+    # of inline writes it never finished (C finishes it in one pass, holding the
+    # write lock throughout). After a few stale runs it must run as a writer.
+    import threading
+    import time
+
+    common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
+    common.g.query("CREATE (:Marker {c: 0})")
+    slow = (
+        "MATCH (n:Big) WHERE n.v % 7 = 3 WITH count(n) AS c "
+        "MATCH (m:Marker) SET m.c = c RETURN c"
+    )
+    expected = len([v for v in range(1, 500001) if v % 7 == 3])
+
+    stop = threading.Event()
+    counter = [0]
+    threads = [
+        threading.Thread(target=_multi_write_loop, args=(stop, counter))
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    try:
+        time.sleep(0.5)
+        r = Redis(
+            host=os.environ.get("FALKORDB_HOST", "localhost"),
+            port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+            socket_timeout=30,
+        )
+        for _ in range(3):
+            start = time.time()
+            res = r.execute_command("GRAPH.QUERY", "test", slow)
+            assert res[1][0][0] == expected
+            assert time.time() - start < 20
+    finally:
+        stop.set()
+        for t in threads:
+            t.join()
+    assert counter[0] > 0
+    res = common.g.query("MATCH (m:Marker) RETURN m.c")
+    assert res.result_set[0][0] == expected
+
+
+def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
+    # GRAPH.BULK builds its batch as a reader and builds it again when an inline
+    # writer commits underneath it, so the same unbounded retry applied. After a few
+    # stale builds it must build as a writer.
+    import threading
+    import time
+    from click.testing import CliRunner
+    from falkordb_bulk_loader.bulk_insert import bulk_insert
+
+    rows = 400000
+    csv_path = tmp_path / "Item.csv"
+    with open(csv_path, "w") as f:
+        f.write("v\n")
+        f.writelines(f"{i}\n" for i in range(rows))
+
+    host = os.environ.get("FALKORDB_HOST", "localhost")
+    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379")))
+    stop = threading.Event()
+    counter = [0]
+
+    def hammer():
+        r = Redis(host=host, port=port, socket_timeout=60)
+        # The graph key exists from the batch's BEGIN; start only then, so the
+        # hammer never creates the graph itself.
+        while not stop.is_set() and b"test" not in r.execute_command("GRAPH.LIST"):
+            time.sleep(0.001)
+        while not stop.is_set():
+            p = r.pipeline(transaction=True)
+            p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
+            p.execute()
+            counter[0] += 1
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    result = {}
+
+    def load():
+        result["res"] = CliRunner().invoke(
+            bulk_insert,
+            ["--server-url", f"redis://{host}:{port}", "--nodes", str(csv_path), "test"],
+        )
+
+    loader = threading.Thread(target=load)
+    start = time.time()
+    loader.start()
+    try:
+        loader.join(timeout=30)
+        elapsed = time.time() - start
+    finally:
+        stop.set()
+        for t in threads:
+            t.join()
+    loader.join()
+    assert elapsed < 30
+    assert result["res"].exit_code == 0, result["res"].output
+    assert f"{rows} nodes created" in result["res"].output
+    assert counter[0] > 0
