@@ -976,13 +976,13 @@ pub(super) fn select_scan_node(
         // Order greedily instead: repeatedly take a hop with an endpoint
         // already bound, orient it to start from that endpoint, and mark its
         // other end bound. The chain is left alone if no such order exists.
-        let initial_bound: HashSet<u32> = {
-            let mut b = HashSet::new();
-            b.insert(best_node.alias.id);
-            if let Some(child) = &existing_child {
-                b.extend(collect_subtree_variables(&child.root()));
-            }
-            b
+        // `best_node` is bound only by the scan built for it. A kept child gets
+        // no such scan, so only what the child binds counts: seeding
+        // `best_node` anyway would place a filter on it before the hop that
+        // binds it.
+        let initial_bound: HashSet<u32> = match &existing_child {
+            Some(child) => collect_subtree_variables(&child.root()),
+            None => HashSet::from([best_node.alias.id]),
         };
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
