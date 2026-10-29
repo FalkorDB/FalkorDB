@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_stacked_filters_keep_their_order():
+    # The optimizer merges the second MATCH's filter into the first's. The
+    # first one must still run first: it is what keeps `1 / (n.v - 1)` from
+    # dividing by zero.
+    query("UNWIND range(1, 5) AS i CREATE (:N {v: i})", write=True)
+    res = query(
+        "MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[15]]
+    res = query(
+        "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[9]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
