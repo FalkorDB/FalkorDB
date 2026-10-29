@@ -507,10 +507,14 @@ struct BatchCursor {
     within_pair_edge_id: Option<u64>,
 }
 
+/// `published_at` is a version the committed graph must have reached before
+/// population reads it: `None` for a statement that wrote no data, so the
+/// committed graph already holds every entity there is to index.
 fn populate_index(
     kind: IndexKind,
     label: Arc<String>,
     indexer: Indexer,
+    published_at: Option<u64>,
 ) {
     // Capture the field snapshot and ticket in one read-side critical
     // section so the documents we build match the generation we own.
@@ -525,6 +529,7 @@ fn populate_index(
         0,
         BatchCursor::default(),
         snapshot.ticket,
+        published_at,
     );
 }
 
@@ -533,6 +538,7 @@ fn populate_index(
 /// Node and edge indexes share this loop; the only kind-specific bits
 /// are which matrix we walk (label matrix vs relationship tensor) and
 /// which attribute store we read.
+#[allow(clippy::too_many_arguments)]
 fn populate_index_batch(
     kind: IndexKind,
     label: Arc<String>,
@@ -541,6 +547,7 @@ fn populate_index_batch(
     mut progress: u64,
     cursor: BatchCursor,
     ticket: crate::index::indexer::PopulationTicket,
+    published_at: Option<u64>,
 ) {
     spawn(
         move || {
@@ -581,14 +588,27 @@ fn populate_index_batch(
                     return;
                 }
 
-                let Some(graph) = indexer.get_graph() else {
-                    // Graph not yet committed — reschedule this batch.
+                let graph = indexer
+                    .get_graph()
+                    .filter(|g| published_at.is_none_or(|v| g.borrow().version >= v));
+                let Some(graph) = graph else {
+                    // Graph not yet committed, or not yet the version that
+                    // created this index — reschedule this batch.
                     // MvccGraph::commit() will set the indexer's graph
-                    // reference, so the next attempt will find it.
+                    // reference, so a later attempt will find it.
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, ticket);
+                    populate_index_batch(
+                        kind,
+                        label,
+                        indexer,
+                        attrs,
+                        progress,
+                        cursor,
+                        ticket,
+                        published_at,
+                    );
                     return;
                 };
 
@@ -751,7 +771,16 @@ fn populate_index_batch(
             }
 
             if do_recurse {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, ticket);
+                populate_index_batch(
+                    kind,
+                    label,
+                    indexer,
+                    attrs,
+                    progress,
+                    next_cursor,
+                    ticket,
+                    published_at,
+                );
             }
         },
         Some(0),
@@ -3597,6 +3626,21 @@ impl Graph {
         attrs: &Vec<Arc<String>>,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
+        self.create_index_populated_at(index_type, entity_type, label, attrs, options, None)
+    }
+
+    /// [`Self::create_index`], for a version that wrote data the index covers:
+    /// background population waits until `published_at` is the committed
+    /// version, since it reads the committed graph.
+    pub fn create_index_populated_at(
+        &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &Vec<Arc<String>>,
+        options: Option<IndexOptions>,
+        published_at: Option<u64>,
+    ) -> Result<(), String> {
         match entity_type {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
@@ -3607,7 +3651,12 @@ impl Graph {
                 for attr in attrs {
                     self.add_node_attribute_name(attr);
                 }
-                populate_index(IndexKind::Node, label.clone(), self.node_indexer.clone());
+                populate_index(
+                    IndexKind::Node,
+                    label.clone(),
+                    self.node_indexer.clone(),
+                    published_at,
+                );
             }
             EntityType::Relationship => {
                 // get-or-create the relationship type so that
@@ -3619,7 +3668,12 @@ impl Graph {
                 for attr in attrs {
                     self.add_rel_attribute_name(attr);
                 }
-                populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
+                populate_index(
+                    IndexKind::Edge,
+                    label.clone(),
+                    self.edge_indexer.clone(),
+                    published_at,
+                );
             }
         }
         #[cfg(feature = "index-falkordb")]
@@ -4004,6 +4058,19 @@ impl Graph {
         label: &Arc<String>,
         attrs: &[Arc<String>],
     ) -> Result<usize, String> {
+        self.drop_index_populated_at(index_type, entity_type, label, attrs, None)
+    }
+
+    /// [`Self::drop_index`], with the remaining fields' repopulation waiting
+    /// for `published_at` as in [`Self::create_index_populated_at`].
+    pub fn drop_index_populated_at(
+        &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        published_at: Option<u64>,
+    ) -> Result<usize, String> {
         // Expand an empty `attrs` to the full set of fields of `index_type`
         // (matches the `target_attrs` derivation in `Indexer::drop_index`);
         // otherwise an empty-attr drop would bypass constraint protection.
@@ -4061,7 +4128,7 @@ impl Graph {
                     .drop_index(index_type, *entity_type, label, &effective_attrs);
                 if remaining > 0 {
                     indexer.recreate_index(label)?;
-                    populate_index(kind, label.clone(), indexer.clone());
+                    populate_index(kind, label.clone(), indexer.clone(), published_at);
                 } else {
                     drop_index_bg(label.clone(), indexer.clone());
                 }
