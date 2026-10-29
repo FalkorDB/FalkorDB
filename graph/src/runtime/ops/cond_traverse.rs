@@ -123,7 +123,7 @@ struct CtState {
     /// reverse half of a bidirectional expansion. Seeking this by destination
     /// replaces what would otherwise be a full edge-matrix scan per input
     /// row (O(V·E) for the whole query).
-    bwd_iter: Option<std::cell::RefCell<Iter>>,
+    bwd_iter: Option<std::cell::RefCell<BwdIter>>,
     /// Multi-type patterns only: per-type iterators streamed as a union
     /// (`fwd_iter`/`rev_iter`/`bwd_iter` then stay empty and unused). Boxed and
     /// optional so single-type operators — the common case — keep exactly
@@ -329,21 +329,70 @@ fn empty_edge_iter() -> Iter {
     VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
-/// Build an `Iter` over the TRANSPOSED (dst → src) pair matrix, for
+/// Most relationship types for which an untyped destination-bound expansion
+/// streams the per-type transposes instead of transposing the adjacency matrix.
+const MAX_STREAMED_BWD_TYPES: usize = 16;
+
+/// The transposed (dst → src) pair stream of an untyped or single-type
+/// pattern: one iterator, or a merge of every type's transpose.
+enum BwdIter {
+    One(Iter),
+    Union(UnionIter),
+}
+
+impl BwdIter {
+    fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        match self {
+            Self::One(it) => it.seek(min_row, max_row),
+            Self::Union(it) => it.seek(min_row, max_row),
+        }
+    }
+}
+
+impl Iterator for BwdIter {
+    type Item = (u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::One(it) => it.next(),
+            Self::Union(it) => it.next(),
+        }
+    }
+}
+
+/// Build the stream over the TRANSPOSED (dst → src) pair matrix, for
 /// expansions where only the destination is bound. Tensors maintain their
-/// transpose (`mt`) incrementally, so the single-type case is free; the
-/// untyped case pays one O(E) GraphBLAS transpose — amortized over the whole
-/// operator, unlike the per-row full scan this replaces.
+/// transpose (`mt`) incrementally, so the single-type case is free. The
+/// untyped case has no maintained transpose of the adjacency matrix: building
+/// one is an O(E) GraphBLAS transpose per execution, which made a one-row
+/// lookup cost time proportional to the graph. With few types the merge of
+/// each type's transpose (the same pairs, deduplicated) is used instead, and
+/// only a graph with many types pays the one transpose, amortized over the
+/// operator's rows.
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<Iter> {
+) -> Option<BwdIter> {
     debug_assert!(types.len() <= 1, "several types stream through UnionIter");
     match types.first() {
-        None => Some(g.adjacency_matrix().transpose().iter(0, u64::MAX)),
+        None => {
+            let tensors = g.relationship_tensors();
+            if tensors.len() <= MAX_STREAMED_BWD_TYPES {
+                let iters = tensors.iter().map(|t| t.matrix_t().iter(0, u64::MAX));
+                Some(BwdIter::Union(UnionIter::new(iters.collect())))
+            } else {
+                Some(BwdIter::One(
+                    g.adjacency_matrix().transpose().iter(0, u64::MAX),
+                ))
+            }
+        }
         Some(t) => g
             .get_relationship_matrix(t)
-            .map(|t| t.matrix_t().iter(0, u64::MAX)),
+            .map(|t| BwdIter::One(t.matrix_t().iter(0, u64::MAX))),
     }
 }
 
@@ -988,7 +1037,8 @@ impl<'a> CondTraverseOp<'a> {
                 state.rev_iter.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
             if (need_bwd_fwd || need_bwd_rev) && state.bwd_iter.is_none() {
                 state.bwd_iter = Some(std::cell::RefCell::new(
-                    build_transposed_iter(&g, &rp.types).unwrap_or_else(empty_edge_iter),
+                    build_transposed_iter(&g, &rp.types)
+                        .unwrap_or_else(|| BwdIter::One(empty_edge_iter())),
                 ));
             }
 

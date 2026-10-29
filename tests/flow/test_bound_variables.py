@@ -103,3 +103,31 @@ class testBoundVariables(FlowTestsBase):
 
         # make sure no nodes were returned
         self.env.assertEqual(len(res.result_set), 0)
+
+    # An incoming hop from a node bound by a previous traverse must find the
+    # sources through the per-type transposes, not a transpose of the whole
+    # adjacency matrix (#3573). Covers the few-type and many-type paths.
+    def test_incoming_hop_from_bound_node(self):
+        for n_types in (3, 20):
+            g = self.db.select_graph(f"incoming_hop_{n_types}")
+            try:
+                g.query("UNWIND range(0, 59) AS i CREATE (:n {id: 'test' + toString(i)})")
+                for k in range(n_types):
+                    g.query(f"MATCH (a:n), (b:n) WHERE id(b) = (id(a) * 7 + {k * 5 + 1}) % 60 "
+                            f"AND id(a) % {n_types} = {k} CREATE (a)-[:R{k}]->(b)")
+                g.query("MATCH (a:n {id: 'test0'}), (b:n {id: 'test7'}) CREATE (a)-[:R0]->(b), (b)-[:R1]->(a)")
+                for i in range(0, 60, 7):
+                    for tail in ("", "WHERE x.id <> 'none'"):
+                        q = (f"MATCH (:n {{id: 'test{i}'}})-[]->(m)<-[]-(x:n) {tail} "
+                             "RETURN id(m), id(x) ORDER BY id(m), id(x)")
+                        got = g.query(q).result_set
+                        # Independent oracle: hop backwards from m over the
+                        # typed relationships only.
+                        want = set()
+                        for k in range(n_types):
+                            want |= {tuple(r) for r in g.query(
+                                f"MATCH (:n {{id: 'test{i}'}})-[]->(m)<-[:R{k}]-(x:n) "
+                                "RETURN id(m), id(x)").result_set}
+                        self.env.assertEqual(sorted(set(map(tuple, got))), sorted(want))
+            finally:
+                g.delete()
