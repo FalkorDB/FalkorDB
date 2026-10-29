@@ -1769,6 +1769,21 @@ impl<'a> Runtime<'a> {
         values
     }
 
+    /// Whether node `id` reads differently through this runtime than from the
+    /// committed graph: it was deleted earlier in the query (answered from the
+    /// snapshot) or has staged label/attribute changes. When it does not, a
+    /// caller can read the committed graph directly and skip building the
+    /// [`Self::get_node_labels`] / [`Self::get_node_attrs`] copies.
+    #[must_use]
+    pub fn node_differs_from_committed(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        let deleted = self.deleted_nodes.borrow();
+        (!deleted.is_empty() && deleted.contains_key(&id))
+            || self.pending.borrow().node_has_changes(id)
+    }
+
     pub fn get_node_labels(
         &self,
         id: NodeId,

@@ -464,6 +464,24 @@ const fn node_value(id: NodeId) -> Value {
     Value::Node(id)
 }
 
+/// Reject a configuration naming a label or relationship type the graph does
+/// not have, with the procedure's C error message for each.
+fn check_known_labels_and_types(
+    g: &Graph,
+    labels: &[Arc<String>],
+    rel_types: &[Arc<String>],
+    unknown_label: impl Fn(&str) -> String,
+    unknown_type: impl Fn(&str) -> String,
+) -> Result<(), String> {
+    if let Some(l) = labels.iter().find(|l| g.get_label_id(l).is_none()) {
+        return Err(unknown_label(l));
+    }
+    if let Some(t) = rel_types.iter().find(|t| g.get_type_id(t).is_none()) {
+        return Err(unknown_type(t));
+    }
+    Ok(())
+}
+
 /// Collect all active node IDs from the graph matching ANY of the given labels.
 /// If labels is empty, returns all active node IDs.
 fn collect_node_ids(
@@ -709,7 +727,12 @@ fn register_pagerank(funcs: &mut Functions) {
             let rel_type = opt_string(&args[1], "relationshipType")?;
 
             let g = runtime.graph();
-            if g.node_count() == 0 {
+            // As in C, a label or relationship type the graph does not have
+            // selects nothing, so there is nothing to rank.
+            if g.node_count() == 0
+                || label.as_ref().is_some_and(|l| g.get_label_id(l).is_none())
+                || rel_type.as_ref().is_some_and(|t| g.get_type_id(t).is_none())
+            {
                 return Ok(empty_procedure_batch());
             }
 
@@ -742,9 +765,13 @@ fn register_pagerank(funcs: &mut Functions) {
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let active = collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
-                        .into_iter()
-                        .collect();
+                    let active: FxHashSet<u64> =
+                        collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
+                            .into_iter()
+                            .collect();
+                    if active.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
                     let (lag_adj, _id_to_compact, compact_to_id, _n) =
                         build_compact_adj_from_tensors(&g, &rel_types, &active);
                     (lag_adj, Some(compact_to_id))
@@ -943,6 +970,13 @@ fn register_betweenness(funcs: &mut Functions) {
             };
 
             let g = runtime.graph();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("betweenness configuration, unknown label {l}"),
+                |t| format!("betweenness configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1231,6 +1265,13 @@ fn register_cdlp(funcs: &mut Functions) {
             };
 
             let g = runtime.graph();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("labelPropagation configuration, unknown label {l}"),
+                |t| format!("labelPropagation configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1389,13 +1430,28 @@ fn register_msf(funcs: &mut Functions) {
                 sorted_ids.sort_unstable();
                 let n = sorted_ids.len() as u64;
 
-                // Use Vec-based mapping for O(1) compact ID lookup
-                // Map: original_id -> compact_id (for fast lookups)
+                // Original id -> compact id, where the multi-edge pass needs it.
+                // A table indexed by original id is the fast lookup, but it costs
+                // 8 bytes per id *up to the highest active one*, and deleted ids
+                // stay in the id space: one surviving high id made it gigabytes.
+                // So it is built only when the id range is within 4x the active
+                // count (at most 32 bytes per active node); a sparser graph finds
+                // the compact id as the position in `sorted_ids` by binary search,
+                // which holds nothing beyond the `n` ids already there.
                 let max_id = sorted_ids.last().copied().unwrap_or(0);
-                let mut id_to_compact_vec = vec![u64::MAX; (max_id + 1) as usize];
-                for (compact, &orig) in sorted_ids.iter().enumerate() {
-                    id_to_compact_vec[orig as usize] = compact as u64;
-                }
+                let dense_map: Option<Vec<u64>> = (max_id < n.saturating_mul(4)).then(|| {
+                    let mut map = vec![u64::MAX; max_id as usize + 1];
+                    for (compact, &orig) in sorted_ids.iter().enumerate() {
+                        map[orig as usize] = compact as u64;
+                    }
+                    map
+                });
+                let compact_of = |orig: u64| -> Option<u64> {
+                    match &dense_map {
+                        Some(map) => map.get(orig as usize).copied().filter(|&c| c != u64::MAX),
+                        None => sorted_ids.binary_search(&orig).ok().map(|c| c as u64),
+                    }
+                };
 
                 // Iterate relationships and fill weighted compact matrix.
                 // The chosen relationship per node pair is tracked in
@@ -1681,15 +1737,11 @@ fn register_msf(funcs: &mut Functions) {
                             );
                             for (key, se) in keys.iter().zip(&vals) {
                                 let (src, dst) = compound_key_inverse(block, *key);
-                                let src_original = src as usize;
-                                let dst_original = dst as usize;
-                                if src_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[src_original] != u64::MAX
-                                    && dst_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[dst_original] != u64::MAX
+                                if let (Some(src_compact), Some(dst_compact)) =
+                                    (compact_of(src), compact_of(dst))
                                 {
-                                    ov_rows.push(id_to_compact_vec[src_original]);
-                                    ov_cols.push(id_to_compact_vec[dst_original]);
+                                    ov_rows.push(src_compact);
+                                    ov_cols.push(dst_compact);
                                     ov_vals.push(*se);
                                 }
                             }
@@ -2704,11 +2756,13 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             let g = runtime.graph();
-            for rt in &rel_types {
-                if g.get_type_id(rt).is_none() {
-                    return Err(format!("Relationship type '{rt}' does not exist"));
-                }
-            }
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("harmonic centrality configuration contains non-existent label:{l}"),
+                |t| format!("harmonic centrality configuration contains non-existent type:{t}"),
+            )?;
 
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
