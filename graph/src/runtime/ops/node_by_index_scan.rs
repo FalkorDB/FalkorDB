@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -328,12 +328,12 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
                             .query_index_numeric_nodes(self.index, &q)
                         {
-                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            Some(Ok(rows)) => Some(Box::new(rows)),
                             // The column exists and will serve this once its build reaches
                             // every entity. Until then scan the label for what it will answer:
                             // the planner dropped the predicate it handed this op, so the scan
                             // must check it itself.
-                            Some(NumericAnswer::NotReady(recheck)) => {
+                            Some(Err(recheck)) => {
                                 let runtime = self.runtime;
                                 // Resolved once per scan. No node holds a name the graph has
                                 // never seen.

@@ -18,7 +18,7 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// values they hold *then* ([`VersionedIndex::indexer_read`]), adds them, and moves the cursor past
 /// them ([`IndexEntry::indexer_apply`]). The batch that reaches the end flips the index
 /// [`Ready`](Self::Ready). While [`Building`](Self::Building), a read the index would serve is
-/// answered [`NotReady`](super::falkordb_index::NumericAnswer::NotReady) and the read path scans
+/// answered with a [`Recheck`](super::falkordb_index::Recheck) and the read path scans
 /// instead. `CREATE INDEX` takes one batch over every entity, so its index is `Ready` when it
 /// returns.
 ///

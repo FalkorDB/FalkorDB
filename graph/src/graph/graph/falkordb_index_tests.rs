@@ -6,7 +6,7 @@ use super::{Graph, NodeId, RelationshipId};
 use crate::entity_type::EntityType;
 use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
-use crate::index::falkordb::falkordb_index::{BuildCursor, NumericAnswer};
+use crate::index::falkordb::falkordb_index::BuildCursor;
 use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::BuildState;
 use crate::index::index_docs::IndexDocs;
@@ -179,7 +179,7 @@ fn create_index_builds_the_column_from_live_nodes() {
         matches!(
             g.falkordb_index
                 .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
-            Some(NumericAnswer::Rows(_))
+            Some(Ok(_))
         ),
         "a Ready column serves reads"
     );
@@ -283,8 +283,8 @@ fn create_index_builds_the_column_from_live_edges() {
         g.falkordb_index
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
             .map(|answer| match answer {
-                NumericAnswer::Rows(rows) => rows.collect::<Vec<u64>>(),
-                NumericAnswer::NotReady(_) => panic!("a Ready column answered NotReady"),
+                Ok(rows) => rows.collect::<Vec<u64>>(),
+                Err(_) => panic!("a Ready column answered with a Recheck"),
             }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
@@ -1161,7 +1161,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     for batch in 0.. {
         assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
-            if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_nodes(&label, q) {
+            if let Some(Err(recheck)) = g.query_index_numeric_nodes(&label, q) {
                 let attr = g
                     .get_node_attribute_id(recheck.attribute())
                     .expect("registered") as u16;
@@ -1174,7 +1174,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
             }
         }
         for (i, q) in edge_queries.iter().enumerate() {
-            if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_edges(&ty, q) {
+            if let Some(Err(recheck)) = g.query_index_numeric_edges(&ty, q) {
                 let attr = g
                     .get_relationship_attribute_id(recheck.attribute())
                     .expect("registered") as u16;
@@ -1212,14 +1212,12 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     for (edges, i, scanned) in kept {
         let built = if edges {
             match g.query_index_numeric_edges(&ty, &edge_queries[i]) {
-                Some(NumericAnswer::Rows(rows)) => {
-                    rows.map(|(_, _, edge)| u64::from(edge)).collect()
-                }
+                Some(Ok(rows)) => rows.map(|(_, _, edge)| u64::from(edge)).collect(),
                 _ => panic!("edge query {i}: a built column serves it"),
             }
         } else {
             match g.query_index_numeric_nodes(&label, &node_queries[i]) {
-                Some(NumericAnswer::Rows(rows)) => rows.map(u64::from).collect(),
+                Some(Ok(rows)) => rows.map(u64::from).collect(),
                 _ => panic!("node query {i}: a built column serves it"),
             }
         };

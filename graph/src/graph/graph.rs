@@ -82,7 +82,7 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::falkordb_index::{NumericAnswer, Recheck};
+use crate::index::falkordb::falkordb_index::Recheck;
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
@@ -4110,18 +4110,18 @@ impl Graph {
 
     /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
-    /// three-way answer: rows, `NotReady` (column still building — scan), or `None` (cannot be
-    /// served). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its tree
-    /// snapshot, so it outlives this borrow.
+    /// three-way answer: `Ok(rows)`, `Err(recheck)` (column still building — scan), or `None`
+    /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
+    /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer<impl Iterator<Item = NodeId> + use<>>> {
+    ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, Recheck>> {
         self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
-            .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
+            .map(|answer| answer.map(|rows| rows.map(NodeId)))
     }
 
     /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
@@ -4129,14 +4129,15 @@ impl Graph {
     /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
     /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
-    /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes: rows,
-    /// `NotReady` (still building — scan), `None` (not servable).
+    /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
+    /// `Ok(rows)`, `Err(recheck)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
+    ) -> Option<Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>, Recheck>>
+    {
         let answer =
             self.falkordb_index
                 .query_numeric(EntityType::Relationship, type_name, query)?;
@@ -4144,9 +4145,9 @@ impl Graph {
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
         // the same lookup `endpoints_for_edge` does. Laziness matters here — a range scan
-        // under a LIMIT should stop at the limit, not materialize every match first. `map_rows`
-        // only runs on `Rows`, so a not-ready column does not even pay the refcount bump.
-        Some(answer.map_rows(|rows| {
+        // under a LIMIT should stop at the limit, not materialize every match first. `map` only
+        // runs on `Ok`, so a column still building does not even pay the refcount bump.
+        Some(answer.map(|rows| {
             let endpoints = Arc::clone(&self.edge_endpoints);
             rows.filter_map(move |eid| {
                 endpoints

@@ -212,40 +212,6 @@ impl VersionedIndex for IndexColumn {
     }
 }
 
-/// What the native index has to say about a query.
-///
-/// The three cases are deliberately distinct, because the no-fallback build treats them
-/// differently and collapsing any two of them is a bug:
-///
-/// * `Some(Rows(..))` — served natively.
-/// * `Some(NotReady(recheck))` — the column exists and will serve this, but its build has not
-///   reached every entity yet. The caller must fall back to a scan, keeping only the entities
-///   `recheck` admits. This is a *timing* state, not a capability gap, so it must never surface as
-///   an error.
-/// * `None` — the native index cannot serve this predicate at all. Under `index-falkordb` that
-///   is a hard error, because there is no other index to answer it.
-///
-/// Generic in the row iterator so the read path can retype the rows — raw docs to `NodeId`, or to
-/// `(src, dst, edge_id)` — without flattening the three cases back into an `Option` on the way.
-pub enum NumericAnswer<I = DocIter> {
-    Rows(I),
-    NotReady(Recheck),
-}
-
-impl<I> NumericAnswer<I> {
-    /// Map the rows, leaving `NotReady` alone. `f` runs only when there are rows, so a caller may
-    /// move setup into it that would be wasted on a not-ready column.
-    pub fn map_rows<J>(
-        self,
-        f: impl FnOnce(I) -> J,
-    ) -> NumericAnswer<J> {
-        match self {
-            Self::Rows(rows) => NumericAnswer::Rows(f(rows)),
-            Self::NotReady(recheck) => NumericAnswer::NotReady(recheck),
-        }
-    }
-}
-
 /// What the scan standing in for a column still building keeps: the entities whose `attribute`
 /// the column will answer the query with once it is built. The scan has to apply it, because
 /// nothing else re-checks its rows: the planner drops a predicate it hands to an index scan.
@@ -613,12 +579,13 @@ impl FalkorDbIndex {
     /// `IN` lists on one attribute. Yields docs — node ids for a node column, `edge_id`s for an
     /// edge column.
     ///
-    /// Three outcomes, and the caller must keep them apart (see [`NumericAnswer`]):
+    /// Three outcomes, and the caller must keep them apart, because the no-fallback build treats
+    /// each differently:
     ///
-    /// * [`Rows`](NumericAnswer::Rows) — served here, from a `Ready` column.
-    /// * [`NotReady`](NumericAnswer::NotReady) — a shape the column serves, on a column that is
-    ///   still `Building`. The caller scans and keeps what the [`Recheck`] admits; this is a timing
-    ///   state, never an error.
+    /// * `Some(Ok(rows))` — served here, from a `Ready` column.
+    /// * `Some(Err(recheck))` — a shape the column serves, on a column that is still `Building`.
+    ///   The caller scans and keeps what the [`Recheck`] admits. This is a timing state, not a
+    ///   capability gap, so it must never surface as an error.
     /// * `None` — any other shape, or no such column: a non-numeric value, an `And`, an `OR`
     ///   spanning attributes, geo, array-contains. A Range index also holds strings and geo, which
     ///   only RediSearch serves. Under `index-falkordb` there is no other index, and the caller
@@ -629,7 +596,7 @@ impl FalkorDbIndex {
         entity: EntityType,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer> {
+    ) -> Option<Result<DocIter, Recheck>> {
         // Which column to ask. `Equal`/`Range` are checked here because the column answers a bound
         // it cannot encode with "no rows" rather than `None`; an `IN` list or an `OR` is checked
         // by the column itself (`NumericIndex::keys`), which declines rather than answer part.
@@ -665,18 +632,18 @@ impl FalkorDbIndex {
         let entry = self.entry(entity, label, key)?;
         // Translate the query even while the column is building: the column declines a shape it
         // cannot serve whatever its state, and that must stay `None`. Only a shape it would serve
-        // is `NotReady`.
+        // is a `Recheck`.
         let (idx, keys) = match &entry.index {
             IndexColumn::Numeric(idx) => (idx, NumericIndex::keys(query)?),
         };
         if entry.is_building() {
             // Not every entity is indexed yet.
-            return Some(NumericAnswer::NotReady(Recheck {
+            return Some(Err(Recheck {
                 attribute: key.clone(),
                 keys,
             }));
         }
-        Some(NumericAnswer::Rows(idx.lookup(keys)))
+        Some(Ok(idx.lookup(keys)))
     }
 
     /// The first column still `Building`, with its cursor. Node columns first; `None` once every
@@ -753,23 +720,22 @@ mod tests {
         });
     }
 
-    /// Rows of an answer that must be `Rows`. Panics on the other two, rather than reporting them
-    /// as "no rows" — a test that expected rows and got `NotReady` or `None` has found a bug, and
-    /// collapsing all three into an empty `Vec` is exactly what hid one.
-    fn rows(answer: Option<NumericAnswer>) -> Vec<u64> {
+    /// Rows of an answer that must be `Some(Ok(..))`. Panics on the other two, rather than
+    /// reporting them as "no rows" — a test that expected rows and got a `Recheck` or `None` has
+    /// found a bug, and collapsing all three into an empty `Vec` is exactly what hid one.
+    fn rows(answer: Option<Result<DocIter, Recheck>>) -> Vec<u64> {
         match answer {
-            Some(NumericAnswer::Rows(it)) => it.collect(),
-            Some(NumericAnswer::NotReady(_)) => panic!("column is still Building"),
+            Some(Ok(it)) => it.collect(),
+            Some(Err(_)) => panic!("column is still Building"),
             None => panic!("predicate is not servable by the numeric index"),
         }
     }
 
     /// The build state machine at the column level. A `Building` column gates reads (answers
-    /// `NotReady`, so the caller scans rather than erroring) while indexer batches fill it. A live
-    /// write reaches it only below the cursor: one at or above is left to the batch that reaches
-    /// the entity. The batch that reaches the end flips the column `Ready`, and from then on a
-    /// batch changes
-    /// nothing.
+    /// with a `Recheck`, so the caller scans rather than erroring) while indexer batches fill it.
+    /// A live write reaches it only below the cursor: one at or above is left to the batch that
+    /// reaches the entity. The batch that reaches the end flips the column `Ready`, and from then
+    /// on a batch changes nothing.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -782,14 +748,11 @@ mod tests {
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
             rows(idx.query_numeric(Node, &label, &eq(v)))
         };
-        // `NotReady`, specifically — not `None`. A `Building` column is a timing state and the
+        // A `Recheck`, specifically — not `None`. A `Building` column is a timing state and the
         // caller scans; `None` means unservable, which the no-fallback build turns into a query
         // error. Collapsing the two errored every read against a still-building index.
         let building = |idx: &FalkorDbIndex, v: i64| {
-            matches!(
-                idx.query_numeric(Node, &label, &eq(v)),
-                Some(NumericAnswer::NotReady(_))
-            )
+            matches!(idx.query_numeric(Node, &label, &eq(v)), Some(Err(_)))
         };
         // What the column holds for `v`, whatever its state.
         let holds = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
@@ -818,7 +781,7 @@ mod tests {
             idx.next_building(),
             Some((Node, column.clone(), BuildCursor::new(Node)))
         );
-        assert!(building(&idx, 10), "empty Building → NotReady");
+        assert!(building(&idx, 10), "empty Building → Recheck");
 
         // Live writes before any batch: node 2 is created with 30, and node 1 goes 20 -> 25.
         // Both are at or above the cursor, so the column takes neither.
@@ -830,17 +793,14 @@ mod tests {
         );
         assert!(
             building(&idx, 30),
-            "still Building → NotReady after live writes"
+            "still Building → Recheck after live writes"
         );
         assert!(
-            matches!(
-                idx.query_numeric(Node, &label, &in_10_30),
-                Some(NumericAnswer::NotReady(_))
-            ),
-            "an IN list on a Building column is NotReady too"
+            matches!(idx.query_numeric(Node, &label, &in_10_30), Some(Err(_))),
+            "an IN list on a Building column is answered with a Recheck too"
         );
         // A shape the column declines stays `None` mid-build: that is a gap, not a timing state,
-        // and answering `NotReady` would let it scan quietly until the build finished.
+        // and answering with a `Recheck` would let it scan quietly until the build finished.
         let in_mixed = IndexQuery::InList {
             key: attr.clone(),
             list: Value::List(Arc::new(
@@ -1117,12 +1077,12 @@ mod tests {
         // Union order is unspecified, so compare sorted ids.
         let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
             match idx.query_numeric(entity, &label, q)? {
-                NumericAnswer::Rows(it) => {
+                Ok(it) => {
                     let mut ids: Vec<u64> = it.collect();
                     ids.sort_unstable();
                     Some(ids)
                 }
-                NumericAnswer::NotReady(_) => panic!("column is still Building"),
+                Err(_) => panic!("column is still Building"),
             }
         };
 

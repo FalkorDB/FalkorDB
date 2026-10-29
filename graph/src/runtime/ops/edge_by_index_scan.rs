@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
@@ -370,11 +370,11 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
                             .query_index_numeric_edges(label, &q)
                         {
-                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            Some(Ok(rows)) => Some(Box::new(rows)),
                             // Still building: scan the type for what the column will answer,
                             // checking the predicate the planner dropped. See
                             // `NodeByIndexScanOp`.
-                            Some(NumericAnswer::NotReady(recheck)) => {
+                            Some(Err(recheck)) => {
                                 // Resolved once per scan. No edge holds a name the graph has
                                 // never seen.
                                 let edges: Box<dyn Iterator<Item = EdgeRow>> =
