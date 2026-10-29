@@ -43,7 +43,7 @@ use crate::{
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
-    planner::IR,
+    planner::{IR, with_plan_stack},
     runtime::{
         batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
         ops::{
@@ -618,6 +618,12 @@ impl<'a> Runtime<'a> {
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
+        // Building, pulling and dropping the operator tree all recurse once
+        // per plan level.
+        with_plan_stack(&self.plan, || self.query_inner())
+    }
+
+    fn query_inner(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
         let labels_count = self.graph().labels_count();
