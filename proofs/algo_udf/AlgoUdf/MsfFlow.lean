@@ -4,10 +4,11 @@
 | --- | --- |
 | `Score`               | f64 score from `msf_score` :144 (abstracted: `num k` finite/±inf ordered, `nan`) |
 | `SE`, `keepMin`       | `ScoredEdge`, `msf_keep_min_score` :238 (binary op + monoid for `GrB_Matrix_reduce_Monoid`) |
-| `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1486 |
-| `componentKeys`       | MSF grouping :1832-1849 (component key = compact rep; isolated fallback keyed by *original* id) |
-| `flowAlign`           | maxFlow identity-compaction :3021-3075 and flow read-back :3226-3240 |
-| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3026-3028 |
+| `identity`            | the monoid identity `{score: +inf, edge: u64::MAX}` :1552 |
+| `componentKeys`       | MSF grouping :1888-1909 (component key = compact rep; isolated fallback keyed by *original* id) |
+| `flowAlign`           | maxFlow identity-compaction :3069-3125 and flow read-back :3297-3330 |
+| `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3078-3081 |
+| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1442-1465 (#3586) |
 
 GraphBLAS requires a monoid's operator to be associative and commutative with
 an identity (GrB spec §3.5, `GrB_Monoid_new`); `keepMin` is that operator.
@@ -87,6 +88,93 @@ index 1, missing) is keyed 5 ... and so is any component whose compact rep is 5.
 theorem msf_fallback_key_space_mixed :
     componentKeys [0, 5] (fun i => if i = 0 then some 0 else none) = [(0, 0), (5, 5)] := by
   decide
+
+/-! ## MSF original-id → compact-id map (#3586, fixes #3444) -/
+
+/-- The dense table `map[orig] = compact` filled by the loop at :1442-1445:
+`buildTbl ids 0 (replicate (max_id + 1) none)` (`u64::MAX` = `none`). -/
+def buildTbl : List Nat → Nat → List (Option Nat) → List (Option Nat)
+  | [], _, t => t
+  | o :: os, c, t => buildTbl os (c + 1) (t.set o (some c))
+
+theorem buildTbl_length (ids : List Nat) (c : Nat) (t : List (Option Nat)) :
+    (buildTbl ids c t).length = t.length := by
+  induction ids generalizing c t with
+  | nil => rfl
+  | cons o os ih => simp [buildTbl, ih]
+
+theorem buildTbl_get (ids : List Nat) (c : Nat) (t : List (Option Nat))
+    (hlt : ∀ o ∈ ids, o < t.length) (hnd : ids.Nodup) (x : Nat) :
+    (buildTbl ids c t)[x]? = if x ∈ ids then some (some (ids.idxOf x + c)) else t[x]? := by
+  induction ids generalizing c t with
+  | nil => simp [buildTbl]
+  | cons o os ih =>
+    have hnd' := List.nodup_cons.mp hnd
+    have hlt' : ∀ y ∈ os, y < (t.set o (some c)).length := by
+      intro y hy; simpa using hlt y (List.mem_cons_of_mem _ hy)
+    simp only [buildTbl]
+    rw [ih (c + 1) _ hlt' hnd'.2]
+    by_cases hx : x = o
+    · subst hx
+      simp only [List.mem_cons_self, if_true, hnd'.1]
+      simp [List.getElem?_set_self (hlt x (List.mem_cons_self ..))]
+    · by_cases hm : x ∈ os
+      · have hox : (o == x) = false := by simpa using Ne.symm hx
+        simp [hx, hm, List.idxOf_cons, hox]; omega
+      · simp [hx, hm, List.getElem?_set_ne, Ne.symm hx]
+
+/-- `compact_of` (:1450-1455) on main: the table when `max_id < 4 n`, else binary search of
+the sorted ids. `bsearch`: `slice::binary_search` on a sorted, duplicate-free list is
+`Ok(i)` exactly when `ids[i] = x` (std; AXIOMATISED as this spec). -/
+def bsearch (ids : List Nat) (x : Nat) : Option Nat := if x ∈ ids then some (ids.idxOf x) else none
+
+/-- The dense table exists only when the id range is within 4x the active count. -/
+def denseTable (ids : List Nat) (maxId : Nat) : Option (List (Option Nat)) :=
+  if maxId < ids.length * 4 then some (buildTbl ids 0 (List.replicate (maxId + 1) none)) else none
+
+def compactOf (ids : List Nat) (maxId : Nat) (x : Nat) : Option Nat :=
+  match denseTable ids maxId with
+  | some tbl => (tbl[x]?).bind id
+  | none => bsearch ids x
+
+/-- **#3444 fixed, correctness**: both branches answer the same: the compact id is the
+position in `sorted_ids` (every id is `≤ max_id`, ids distinct). -/
+theorem compactOf_eq (ids : List Nat) (maxId : Nat) (hmax : ∀ o ∈ ids, o ≤ maxId)
+    (hnd : ids.Nodup) (x : Nat) : compactOf ids maxId x = bsearch ids x := by
+  unfold compactOf
+  cases hd : denseTable ids maxId with
+  | none => rfl
+  | some tbl =>
+    unfold denseTable at hd
+    split at hd
+    · cases hd
+      simp only
+      rw [buildTbl_get ids 0 _ (by intro o ho; simpa [Nat.lt_succ_iff] using hmax o ho) hnd]
+      unfold bsearch
+      by_cases hx : x ∈ ids
+      · simp [hx]
+      · by_cases hle : x ≤ maxId
+        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
+        · simp [hx, List.getElem?_replicate, hle, Nat.lt_succ_iff]
+    · cases hd
+
+/-- **#3444 fixed, memory**: when a table is built its length is at most `4 n + ... `: at
+most 4 slots per active node (so at most 32 bytes/node); a sparse id space builds none. -/
+theorem denseTable_len (ids : List Nat) (maxId : Nat) (tbl : List (Option Nat))
+    (h : denseTable ids maxId = some tbl) : tbl.length ≤ ids.length * 4 := by
+  unfold denseTable at h
+  split at h
+  · cases h; simp [buildTbl_length]; omega
+  · cases h
+
+/-- One surviving high id (`#3444`): ids `[0, 10^9]` gave a 10^9-entry table before; now
+no table is built. -/
+theorem sparse_builds_no_table : denseTable [0, 1000000000] 1000000000 = none := by decide
+
+/-- HISTORICAL (before #3586): the table was always `max_id + 1` long. -/
+def preTableLen (maxId : Nat) : Nat := maxId + 1
+
+theorem pre3586_table_unbounded : preTableLen 1000000000 = 1000000001 ∧ (2 : Nat) * 4 < 1000000001 := by decide
 
 /-! ## maxFlow: flow read-back is aligned with edge metadata -/
 

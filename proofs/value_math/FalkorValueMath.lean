@@ -71,7 +71,7 @@ temporal `+ Duration` symmetric. CArith: `mul_agree_on_numeric`, `add_agree_str_
 TypeCheck: **`valueOfType_none_iff`** (`value_of_type` returns None iff the clean
 acceptance spec holds), **`validateArgsType_go_none`**, `validate_fixed_iff`,
 `numeric_body_cases`, `canReturnBoolean_of_accepts`, `isCompatibleWith_*`,
-`unionDisplay_*`, `regGet_lower`. MathFns: **`unary_no_panic`** (the nine `unreachable!()`
+`unionDisplay_*`, `regGet_builtin_ci`, `regGet_udf_case_sensitive`. MathFns: **`unary_no_panic`** (the nine `unreachable!()`
 arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
 `abs_agree_except`, `coalesce_spec`, `uuid_shape`. Conversion:
 `parseI64_sub_cStrtoll`, `toInteger_int_literals_agree`, **`toInteger_int_literal_agrees_c`**, `toBooleanList_eq`,
@@ -134,7 +134,7 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 
 ## Suspicions / latent
 
-- `Functions::is_aggregate(name)` (mod.rs:1079) does not lowercase; no caller today
+- `Functions::is_aggregate(name)` (mod.rs:1080) does not lowercase; no caller today
   (`isAggregate_case_sensitive`).
 - `heap_size`/`amortized_heap_size` charge a `Relationship` 24 bytes it does not own.
 - `Encode<19>` writes Map/Node/Rel/Path as NULL after only a `debug_assert!`
@@ -159,6 +159,23 @@ f64 ops and the RNG are structures (`Lower`, `FM`, `Rng`). Highlights: `add_spec
 `setStructFn_spec`, `canReturnEntity_sound/complete`, `version_mono`,
 `udf_uninit_noop`, `collect_fold`, `count_fold`, `sum_fold`, `avg_count`,
 `stdev_collects`, `percentile_collects`, `finalize_divisors`, `randFn_range`.
+## Re-target to main 1c0e6c8de (#3066, #3280)
+
+- **#3280 fixed** `dbms.functions` union spelling: `type_to_dbms_string` now flattens
+  (`collect_dbms_types`, procedures.rs:705), sorts by `DBMS_TYPE_ORDER` and dedups. The
+  divergence theorem `union_order_visible` is replaced by `union_order_is_c` (the member
+  list is strictly increasing in C's type order with exactly the collected members),
+  `canon_eq_of`, `union_perm_invariant` (declaration order irrelevant), and the concrete rows
+  `union_point_null` (`Null or Point`), `union_tofloat` (`String, Integer, Float, or Null`),
+  `union_nested`, `union_any`. The old model is kept as `pre3280TyString` /
+  `pre3280_declaration_order`.
+- **#3066 fixed** UDF names are case-sensitive: `register_udf`/`unregister_udf`
+  (mod.rs:1131/:1142) and the `Functions::get` UDF fallback (:1048) key by the exact name.
+  `Registry.udf_case_sensitive` and `TypeCheck.regGet_udf_case_sensitive` replace the
+  lowercasing assumptions; `regGet_lower` is replaced by `regGet_builtin_ci` (built-ins stay
+  case-insensitive). `dbms_functions` still drops a UDF whose lowercase name equals a
+  built-in's (`keepUdf`, unchanged).
+
 ## Wave 6 (`Trig.lean`, `Procedures.lean`, `ConvReg.lean`, `IndexDdl.lean`)
 
 trig.rs, procedures.rs, path.rs, entity_type.rs, index_ddl.rs and the rest of conversion.rs:
@@ -174,8 +191,7 @@ Live (Rust 18920 vs C 18921, empty + populated graph): `db.labels`, `db.relation
 `db.propertyKeys`, `db.meta.stats` (also after deletes), `dbms.procedures` identical.
 Divergences: `db.indexes`/`db.constraints` same rows, different row order; `db.indexes`
 `info` is only `{fields:[{name}]}` (C: full RediSearch info, and edge indexes list
-`range:_src_id`/`range:_dest_id`); `dbms.functions` union spellings follow declaration
-order (`union_order_visible`: Rust `Point or Null`, C `Null or Point`), `reducible` differs
+`range:_src_id`/`range:_dest_id`); `reducible` differs
 for hasLabels/length/nodes/relationships, internal-op rows differ; `createNodeIndex`
 C form `('L','p')` rejected (known stub, test_effects_shapes.py:670) and alone under
 GRAPH.QUERY it fails with the misleading "graph.RO_QUERY is to be executed only on read-only

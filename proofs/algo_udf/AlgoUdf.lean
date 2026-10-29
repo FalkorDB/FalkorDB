@@ -3,7 +3,7 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
+`graph/src/udf/` (all files). Rust source of truth: origin/main 1c0e6c8de (re-targeted from e860645bb: #3058, #3586, #3066, #3464 — see "Fixed on main (re-target e860645bb → 1c0e6c8de)"); earlier: 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
 re-targeted to 8743953a8 (#3079), `type_convert.rs` to cab3cf192 (#3074, #3336 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in
@@ -22,7 +22,7 @@ Every `bug_*` test asserts C's answer and fails today.
 | `AlgoUdf.MsfFlow`    | `msf_keep_min_score` monoid laws, MSF component keys, maxFlow flow/edge alignment and super-node freshness |
 | `AlgoUdf.Marshal`/`MarshalThm` | `value_to_js` / `js_to_value` over an abstract f64 and QuickJS value/heap model (cyclic values included) |
 | `AlgoUdf.Nesting`/`MarshalCap` | #3336: the depth cap `MAX_UDF_VALUE_NESTING`, `value_to_js_at` / `js_to_value_at` with an explicit stack |
-| `AlgoUdf.Repo`       | `UdfRepo::load`/`delete` + the lowercase-keyed function registry |
+| `AlgoUdf.Repo`       | `UdfRepo::load`/`delete` + the case-sensitive function registry (#3066) |
 | `AlgoUdf.Neighbors`  | `collect_edges`, `js_get_neighbors` filters |
 | `AlgoUdf.Graph`      | shared graph view for the path searches (`Edge`, weighted `Walk`, hop `HWalk`/`NWalk`, `node_successors`) |
 | `AlgoUdf.DijkstraModel`/`DijkstraInv`/`Dijkstra` | `dijkstra_single_path`, `DijkstraItem::{cmp,partial_cmp}` |
@@ -33,7 +33,7 @@ Every `bug_*` test asserts C's answer and fails today.
 | `AlgoUdf.AlgoBfsReg` | `algo_bfs` result assembly, `register` and every `register_*` |
 | `AlgoUdf.UdfTraverse`| `js_traverse_impl` (`graph.traverse`) |
 | `AlgoUdf.UdfClasses` | `CURRENT_GRAPH` slot, `create_js_node/edge/path`, `getNodeById`, `iterateNodes/Edges`, the native entry points |
-| `AlgoUdf.UdfNodeView` | #3454: which view (`Runtime` vs committed `Graph`) `create_js_node` reads labels/attributes from |
+| `AlgoUdf.UdfNodeView` | #3454 (fixed by #3464): which view (`Runtime` vs committed `Graph`) `create_js_node` reads labels/attributes from; `set_node_labels`, `set_node_attrs` |
 | `AlgoUdf.UdfContext` | `caught_error_message`, timeouts, `validate_script`, `ensure_context_current`, `rebuild_context`, `call_udf_bridge` |
 | `AlgoUdf.UdfGlobals` | the JS `falkor.register` bodies, `collect_*`, `js_value_to_log_string` |
 | `AlgoUdf.UdfRepoOps` | `UdfRepo::{new,default,version,bump_version,flush,list,get_all_libraries,serialize,deserialize}`, `init_udf_repo`, `get_udf_repo` |
@@ -122,12 +122,12 @@ Known before this wave (counterexamples added):
   `Compact.wcc_compact_component_id_not_member`.
 * HarmonicCentrality source vector sized `node_count` not `node_id_bound` (:2777) —
   `Compact.unfiltered_drops_high_ids`.
-* pageRank with an unknown label errors (:727-778) — `Compact.pagerank_unknown_label_compact_empty`.
+* pageRank with an unknown label errors — **FIXED by #3058** (`Compact.pre3058_pagerank_unknown_label_compact_empty`; now `pagerank_unknown_label_empty`).
 * Forged `__falkor_type` markers accepted (type_convert.rs:351-358) —
   `Marshal.forged_node_marker`, `forged_edge_marker`.
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
-* Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) —
-  `Repo.collision_accepted`, `dotted_collision`, `delete_breaks_other`, `case_folded`.
+* Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) — **FIXED by #3066**
+  (`Repo.pre3066_collision_accepted`, `pre3066_delete_breaks_other`, `pre3066_case_folded`; `dotted_collision` stays as the reason the check compares qualified names).
 * getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
@@ -143,7 +143,7 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 3. **FIXED by #3074** — vecf32 holding ±inf cannot pass through a UDF (type_convert.rs:239-241).
    `Marshal.vecf32_inf_not_roundtrip`; `bug_udf_vecf32_inf_rejected` (C [inf]).
 4. betweenness / HarmonicCentrality with an unknown nodeLabels entry return no rows;
-   C errors ("unknown label Nope"). `bug_betweenness_unknown_label_is_empty_not_error`.
+   C errors ("unknown label Nope"). `bug_betweenness_unknown_label_is_empty_not_error` — **FIXED by #3058** (`Compact.checkKnown_*`).
 
 ## Fixed on main (re-target a9377c636 → 8743953a8)
 * #3074 (`7a81c83b0`, issue #3073) — `js_to_value` keeps -0.0 a Float (type_convert.rs:203),
@@ -209,15 +209,42 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
   outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
   1×1, by column). `bug3349_one_node_projection_fails`; property `ProjectionTotal`.
 
-## Gap closed 2026-10-22 (live-checked on main b84473a7f vs C; **Open**)
-* #3454 `UdfNodeView`: `jsNode` took labels/attrs as free parameters, hiding the data
-  source. Now `rsJsNode` reads the committed graph (`create_js_node` js_classes.rs:129,
-  :151, :161; `type_convert.rs:184` drops the runtime) while `labels(n)` reads
-  `Runtime::get_node_labels` (runtime.rs:1666, deleted-node snapshot :1671).
-  `bug3454_deleted_node_empty` (UDF `labels = []`, `labels(n) = [P]`),
-  `bug3454_edge_source_empty` (`r.source` after DETACH DELETE, js_classes.rs:257);
-  properties `RuntimeFirstNode`, `RuntimeFirstEdgeEnds` (`spec_runtime_first`,
-  `spec_edge_ok` prove the fixed spec satisfies them).
+## Gap closed 2026-10-22 (#3454) — **FIXED by #3464** (see below)
+`UdfNodeView` modelled `create_js_node` reading the committed graph while `labels(n)` reads the
+runtime; the counterexamples are now `pre3454_deleted_node_empty`, `pre3454_edge_source_empty`.
+
+## Fixed on main (re-target e860645bb → 1c0e6c8de)
+* #3058 (fixes #3056) — `check_known_labels_and_types` (algo_procedures.rs:469) makes betweenness (:973),
+  labelPropagation (:1268) and HarmonicCentrality (:2759) error on an unknown `nodeLabels` /
+  `relationshipTypes` entry with C's messages; pageRank returns an empty result (:729-735, :772-774) for an
+  unknown label / type or an empty label. `Compact.checkKnown`, `checkKnown_ok_iff`,
+  `checkKnown_unknown_label_errors`, `checkKnown_unknown_type_errors`, `checkKnown_label_first`,
+  `known_messages`; `pagerankPath`, `pagerank_unknown_label_empty`, `pagerank_unknown_type_empty`,
+  `pagerank_compact_nonempty` (LAGraph is never handed a 0x0 matrix), `pagerank_known_label_full`.
+  Historical: `prePagerankPath`, `pre3058_pagerank_unknown_label_compact_empty`.
+  Still open (unchanged): `Compact.unfiltered_drops_high_ids` (HarmonicCentrality, #3044; fix PR #3045 not merged).
+* #3586 (fixes #3444) — algo.MSF builds the original-id → compact-id table only when `max_id < 4 n`, else
+  binary-searches `sorted_ids` (algo_procedures.rs:1442-1455, :1741). `MsfFlow.buildTbl_get`, `compactOf_eq`
+  (both branches answer `bsearch`), `denseTable_len` (table ≤ 4 slots per active node), `sparse_builds_no_table`;
+  historical `pre3586_table_unbounded`. `bsearch` = `slice::binary_search` on a sorted duplicate-free list: its
+  std spec is assumed.
+* #3066 (fixes #3065) — registry keys are the case-sensitive qualified names (functions/mod.rs:1066, :1131-1145,
+  js_context.rs:261, :292) and `UdfRepo::load` (repository.rs:118-132) rejects a qualified name another
+  library owns, compared with `eq_ignore_ascii_case`. `Repo.load` (with `replace`), `collides`,
+  `collision_rejected`, `collision_rejected_replace`, `dotted_collision_rejected`, `replace_self_ok`,
+  `same_lib_cases_coexist`, `case_sensitive`, `CrossFoldUnique`, `load_preserves_crossFold`,
+  `keysUnique_of_crossFold`, `delete_preserves_after3066`. Historical: `preLoad`, `pre3066_collision_accepted`,
+  `pre3066_delete_breaks_other`, `pre3066_case_folded`. `UdfContext` is parameterised by the key function
+  (`low`); the real code now instantiates it with the identity.
+* #3464 (fixes #3454) — `create_js_node(ctx, id, graph, runtime)` (js_classes.rs:134) reads through the runtime
+  when `Runtime::node_differs_from_committed` (runtime.rs:1772) holds (deleted this query, or
+  `Pending::node_has_changes`, pending.rs:755), else the committed graph; edges and paths pass the runtime on;
+  new helpers `set_node_labels` :203, `set_node_attrs` :220. `UdfNodeView.rs_runtime_first`, `rs_edge_ok`,
+  `RT.not_differs` (the fast path agrees with the runtime view), `jsNode_eq_helpers`,
+  `fixed3454_deleted_node`, `fixed3454_edge_source`. Historical: `preRsJsNode`, `pre3454_deleted_node_empty`,
+  `pre3454_edge_source_empty`. Callers without a runtime (getNeighbors, getNodeById, iterateNodes, traverse) still
+  pass `None`.
+* #3280 — `dbms.functions` / `fulltext.drop` (procedures.rs, graph.rs): not in this project.
 -/
 import AlgoUdf.Value
 import AlgoUdf.Config

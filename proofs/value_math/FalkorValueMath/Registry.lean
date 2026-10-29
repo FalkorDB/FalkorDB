@@ -6,7 +6,8 @@ the global `FUNCTIONS` (`OnceLock`) and the UDF registry (`OnceLock<RwLock<HashM
 `AtomicU64` version), modelled as sequential state.
 
 Assumptions as structures/hypotheses, not axioms:
-* `Lower` — Rust `str::to_lowercase` (idempotent).
+* `Lower` — Rust `str::to_lowercase` (idempotent); used by the built-in registry only: the UDF
+  registry is case-sensitive since #3066.
 * the QuickJS UDF bridge `call_udf_bridge` (FFI) — an abstract function argument.
 * concurrency: `RwLock` writes are serialised and `fetch_add` is atomic, so a run of the
   UDF operations is some sequential interleaving; theorems are about sequences of ops.
@@ -355,13 +356,13 @@ theorem setPureFn_spec (m : Fns S) (name : String) (args : List Ty) :
   | none => simp [e] at this
   | some g => rfl
 
-/-- `Functions::iter` (mod.rs:1074): `functions.values()`. -/
+/-- `Functions::iter` (mod.rs:1075): `functions.values()`. -/
 def iter (m : Fns S) : List (GraphFn S) := m.map (·.2)
 
 theorem iter_mem (m : Fns S) (g : GraphFn S) : g ∈ iter S m ↔ ∃ k, (k, g) ∈ m := by
   simp [iter]
 
-/-! ## `init_functions`, `get_functions` (mod.rs:1103, :1164) -/
+/-! ## `init_functions`, `get_functions` (mod.rs:1104, :1166) -/
 
 /-- One module's `register`: a sequence of `add`s (here: names; panics on a duplicate). -/
 def registerAll (m : Fns S) : List (String × GraphFn S) → Option (Fns S)
@@ -399,7 +400,7 @@ theorem registerAll_ok (entries : List (String × GraphFn S)) :
     refine ⟨m', by simp [registerAll, hfree, h1], ?_⟩
     rw [h2]; simp
 
-/-- `static FUNCTIONS: OnceLock<Functions>` and `init_functions` (mod.rs:1103):
+/-- `static FUNCTIONS: OnceLock<Functions>` and `init_functions` (mod.rs:1104):
 `FUNCTIONS.set(funcs)` — `Err(funcs)` if already initialised (the first value stays). -/
 def initFunctions (cell : Option (Fns S)) (built : Fns S) : Option (Fns S) × Except (Fns S) Unit :=
   match cell with
@@ -411,45 +412,45 @@ theorem initFunctions_once (built1 built2 : Fns S) :
     let (c2, r2) := initFunctions S c1 built2
     r1 = .ok () ∧ c2 = some built1 ∧ r2 = .error built2 := ⟨rfl, rfl, rfl⟩
 
-/-- `get_functions` (mod.rs:1164): `expect` — `none` (panic) before init. -/
+/-- `get_functions` (mod.rs:1166): `expect` — `none` (panic) before init. -/
 def getFunctions (cell : Option (Fns S)) : Option (Fns S) := cell
 
 theorem getFunctions_after_init (b : Fns S) : getFunctions S (initFunctions S none b).1 = some b := rfl
 
-/-! ## UDF registry (mod.rs:1091-1161) -/
+/-! ## UDF registry (mod.rs:1091-1163) -/
 
 structure UdfState where
   reg : Option (Fns S)       -- `UDF_FUNCTIONS` (`OnceLock`): `None` until `init_udf_functions`
   version : Nat              -- `UDF_VERSION`
 
-/-- `udf_version` (mod.rs:1099): an atomic load. -/
+/-- `udf_version` (mod.rs:1100): an atomic load. -/
 def udfVersion (st : UdfState S) : Nat := st.version
 
-/-- `init_udf_functions` (mod.rs:1124): set once; later calls are ignored. -/
+/-- `init_udf_functions` (mod.rs:1125): set once; later calls are ignored. -/
 def initUdf (st : UdfState S) : UdfState S :=
   match st.reg with
   | none => { st with reg := some [] }
   | some _ => st
 
-/-- `register_udf` (mod.rs:1129): insert (replacing) under the lowered name, bump version. -/
+/-- `register_udf` (mod.rs:1131): insert (replacing) under the case-sensitive name (#3066: no longer lowered), bump version. -/
 def registerUdf (st : UdfState S) (name : String) (g : GraphFn S) : UdfState S :=
   match st.reg with
   | none => st
-  | some m => ⟨some ((Lo.lower name, g) :: m.filter (·.1 ≠ Lo.lower name)), st.version + 1⟩
+  | some m => ⟨some ((name, g) :: m.filter (·.1 ≠ name)), st.version + 1⟩
 
-/-- `unregister_udf` (mod.rs:1140). -/
+/-- `unregister_udf` (mod.rs:1142; case-sensitive since #3066). -/
 def unregisterUdf (st : UdfState S) (name : String) : UdfState S :=
   match st.reg with
   | none => st
-  | some m => ⟨some (m.filter (·.1 ≠ Lo.lower name)), st.version + 1⟩
+  | some m => ⟨some (m.filter (·.1 ≠ name)), st.version + 1⟩
 
-/-- `flush_udfs` (mod.rs:1148). -/
+/-- `flush_udfs` (mod.rs:1150). -/
 def flushUdfs (st : UdfState S) : UdfState S :=
   match st.reg with
   | none => st
   | some _ => ⟨some [], st.version + 1⟩
 
-/-- `get_udf_functions` (mod.rs:1157): snapshot of the values, empty before init. -/
+/-- `get_udf_functions` (mod.rs:1159): snapshot of the values, empty before init. -/
 def getUdfFunctions (st : UdfState S) : List (GraphFn S) :=
   match st.reg with
   | none => []
@@ -459,14 +460,14 @@ theorem initUdf_idem (st : UdfState S) : initUdf S (initUdf S st) = initUdf S st
   unfold initUdf; cases h : st.reg <;> simp [h]
 
 theorem registerUdf_spec (st : UdfState S) (m : Fns S) (h : st.reg = some m) (n : String) (g : GraphFn S) :
-    let st' := registerUdf S Lo st n g
+    let st' := registerUdf S st n g
     st'.version = st.version + 1 ∧ g ∈ getUdfFunctions S st' ∧
-      (st'.reg.bind fun m => lookup S m (Lo.lower n)) = some g := by
+      (st'.reg.bind fun m => lookup S m (n)) = some g := by
   simp [registerUdf, h, getUdfFunctions, iter, lookup]
 
 theorem unregisterUdf_spec (st : UdfState S) (m : Fns S) (h : st.reg = some m) (n : String) :
-    let st' := unregisterUdf S Lo st n
-    st'.version = st.version + 1 ∧ (st'.reg.bind fun m => lookup S m (Lo.lower n)) = none := by
+    let st' := unregisterUdf S st n
+    st'.version = st.version + 1 ∧ (st'.reg.bind fun m => lookup S m (n)) = none := by
   simp only [unregisterUdf, h, Option.bind_some, true_and]
   simp only [lookup, Option.map_eq_none_iff, List.find?_eq_none]
   intro p hp; simp at hp; simpa using hp.2
@@ -475,9 +476,26 @@ theorem flushUdfs_spec (st : UdfState S) (m : Fns S) (h : st.reg = some m) :
     getUdfFunctions S (flushUdfs S st) = [] ∧ (flushUdfs S st).version = st.version + 1 := by
   simp [flushUdfs, h, getUdfFunctions, iter]
 
+/-- **#3066 (fixed)**: UDF names are case-sensitive, as in C. A UDF registered as `n` is not
+found under a different spelling `m ≠ n`, and unregistering `m` leaves it in place.
+(Pre-#3066 both keys went through `to_lowercase`, so `Foo` and `foo` collided.) -/
+theorem udf_case_sensitive (st : UdfState S) (m0 : Fns S) (h : st.reg = some m0)
+    (n m : String) (g : GraphFn S) (hne : n ≠ m) :
+    ((registerUdf S st n g).reg.bind fun r => lookup S r m) = lookup S m0 m ∧
+    (((unregisterUdf S (registerUdf S st n g) m).reg.bind fun r => lookup S r n) = some g) := by
+  have hne' : (n == m) = false := by simpa using hne
+  have hp : (fun a : String × GraphFn S => !decide (a.fst = n) && decide (a.fst = m)) =
+      (fun x => x.fst == m) := by
+    funext a
+    by_cases ha : a.fst = m
+    · have : a.fst ≠ n := fun e => hne (e ▸ ha)
+      simp [ha, hne.symm]
+    · simp [ha]
+  simp [registerUdf, unregisterUdf, h, lookup, List.find?, hne', hp, hne]
+
 /-- Before `init_udf_functions` every mutation is a no-op and does NOT bump the version. -/
 theorem udf_uninit_noop (st : UdfState S) (h : st.reg = none) (n : String) (g : GraphFn S) :
-    registerUdf S Lo st n g = st ∧ unregisterUdf S Lo st n = st ∧ flushUdfs S st = st ∧
+    registerUdf S st n g = st ∧ unregisterUdf S st n = st ∧ flushUdfs S st = st ∧
     getUdfFunctions S st = [] := by
   simp [registerUdf, unregisterUdf, flushUdfs, getUdfFunctions, h]
 
@@ -487,13 +505,13 @@ inductive Op where
   | reg (n : String) (g : GraphFn S) | unreg (n : String) | flush
 
 def Op.apply (st : UdfState S) : Op S → UdfState S
-  | .reg n g => registerUdf S Lo st n g
-  | .unreg n => unregisterUdf S Lo st n
+  | .reg n g => registerUdf S st n g
+  | .unreg n => unregisterUdf S st n
   | .flush => flushUdfs S st
 
 theorem version_mono (st : UdfState S) (o : Op S) :
-    st.version ≤ (o.apply S Lo st).version ∧
-    (st.reg.isSome → (o.apply S Lo st).version = st.version + 1) := by
+    st.version ≤ (o.apply S st).version ∧
+    (st.reg.isSome → (o.apply S st).version = st.version + 1) := by
   cases o <;> simp only [Op.apply, registerUdf, unregisterUdf, flushUdfs] <;>
     cases st.reg <;> simp
 

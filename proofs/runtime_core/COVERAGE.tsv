@@ -38,19 +38,20 @@ graph/src/runtime/runtime.rs	materialize_node_property	1654	CONDITIONAL	RelAcces
 graph/src/runtime/runtime.rs	materialize_node_property_values	1668	CONDITIONAL	Accessors.materialize_eq || CONDITIONAL on hbg (Graph batch read = per-id by-index read; graph.rs, not linked)
 graph/src/runtime/runtime.rs	materialize_relationship_property	1716	CONDITIONAL	RelAccessors.materializeRelProp: materializeRelProp_eq || CONDITIONAL on hName/hbg (Graph by-name and batch reads agree with the by-index read; graph.rs, not linked)
 graph/src/runtime/runtime.rs	materialize_relationship_property_values	1728	CONDITIONAL	RelAccessors.materializeRel: materializeRel_eq || CONDITIONAL on hName/hbg (Graph by-name and batch reads agree with the by-index read; graph.rs, not linked)
-graph/src/runtime/runtime.rs	get_node_labels	1772	PROVEN	Accessors.getLabelIds; hasLabelId_iff, hasLabel_iff
-graph/src/runtime/runtime.rs	node_has_label	1802	PROVEN	Accessors.hasLabel_iff
-graph/src/runtime/runtime.rs	label_id	1823	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
-graph/src/runtime/runtime.rs	node_has_label_id	1837	PROVEN	Accessors.hasLabelId_iff
-graph/src/runtime/runtime.rs	get_node_attrs	1851	CONDITIONAL	Accessors.attrs_agree (and reuse_diverges witness) || CONDITIONAL on hc (Graph all-attrs read agrees with the by-index read; graph.rs, not linked) and hdisj (fails under #2876, reuse_diverges)
-graph/src/runtime/runtime.rs	get_relationship_attrs	1869	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree || CONDITIONAL on hName/hc (Graph by-name and all-attrs reads agree with the by-index read; graph.rs, not linked)
-graph/src/runtime/runtime.rs	get_relationship_endpoints	1889	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
-graph/src/runtime/runtime.rs	get_relationship_type	1902	PROVEN	RelAccessors.relType: relType_spec
-graph/src/runtime/runtime.rs	get_node_indegree	1916	PROVEN	Accessors.degree_exact (endp = dst, types = [])
-graph/src/runtime/runtime.rs	get_node_indegree_by_type	1933	PROVEN	Accessors.degree_exact (endp = dst)
-graph/src/runtime/runtime.rs	get_node_outdegree	1951	PROVEN	Accessors.degree_exact (endp = src, types = [])
-graph/src/runtime/runtime.rs	get_node_outdegree_by_type	1968	PROVEN	Accessors.degree_exact (endp = src)
-graph/src/runtime/runtime.rs	map_to_index_options	1993	PROVEN	Misc.vectorOptions/fulltextUnknown/phonetic: vector_requires_dimension, vector_requires_similarity, vector_similarity_lowered (#3094), vector_negative_refused, natOpt_ok, fulltextUnknown_none_iff, phonetic_codes (other fulltext keys are direct type matches)
+graph/src/runtime/runtime.rs	node_differs_from_committed	1778	PROVEN	Accessors.differs_spec, not_differs_labels (guard false ⇒ get_node_labels = committed labels), not_differs_attrs (⇒ get_node_attrs = committed all-attrs), reads_differ_imp_differs; differs_overapprox (sufficient, not exact; #3464); Pending side proofs/pending_commit PC.nodeHasChanges_spec
+graph/src/runtime/runtime.rs	get_node_labels	1787	PROVEN	Accessors.getLabelIds; hasLabelId_iff, hasLabel_iff
+graph/src/runtime/runtime.rs	node_has_label	1817	PROVEN	Accessors.hasLabel_iff
+graph/src/runtime/runtime.rs	label_id	1838	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
+graph/src/runtime/runtime.rs	node_has_label_id	1852	PROVEN	Accessors.hasLabelId_iff
+graph/src/runtime/runtime.rs	get_node_attrs	1866	CONDITIONAL	Accessors.attrs_agree (and reuse_diverges witness) || CONDITIONAL on hc (Graph all-attrs read agrees with the by-index read; graph.rs, not linked) and hdisj (fails under #2876, reuse_diverges)
+graph/src/runtime/runtime.rs	get_relationship_attrs	1884	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree || CONDITIONAL on hName/hc (Graph by-name and all-attrs reads agree with the by-index read; graph.rs, not linked)
+graph/src/runtime/runtime.rs	get_relationship_endpoints	1904	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
+graph/src/runtime/runtime.rs	get_relationship_type	1917	PROVEN	RelAccessors.relType: relType_spec
+graph/src/runtime/runtime.rs	get_node_indegree	1931	PROVEN	Accessors.degree_exact (endp = dst, types = [])
+graph/src/runtime/runtime.rs	get_node_indegree_by_type	1948	PROVEN	Accessors.degree_exact (endp = dst)
+graph/src/runtime/runtime.rs	get_node_outdegree	1966	PROVEN	Accessors.degree_exact (endp = src, types = [])
+graph/src/runtime/runtime.rs	get_node_outdegree_by_type	1983	PROVEN	Accessors.degree_exact (endp = src)
+graph/src/runtime/runtime.rs	map_to_index_options	2008	PROVEN	Misc.vectorOptions/fulltextUnknown/phonetic: vector_requires_dimension, vector_requires_similarity, vector_similarity_lowered (#3094), vector_negative_refused, natOpt_ok, fulltextUnknown_none_iff, phonetic_codes (other fulltext keys are direct type matches)
 graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	Misc.drainPending_spec
 graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
 graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	60	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)

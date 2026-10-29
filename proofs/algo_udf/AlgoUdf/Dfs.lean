@@ -3,13 +3,13 @@ import AlgoUdf.Graph
 
 | here | there |
 | --- | --- |
-| `FP`                 | `FoundPath = (Vec<(RelationshipId, NodeId, NodeId)>, f64, f64)` :2081 |
-| `fpLt`               | `cmp_found_path(a, b) == Ordering::Less` :2092 (weight, cost, hops) |
-| `insertSorted`       | `results.insert(results.partition_point(|kept| cmp(kept, found) == Less), found)` :2453-2455 (linear scan; equal to the binary search on the sorted vector the k-branch keeps) |
-| `recordB`            | `record_found_path` :2407, including every `*bound = ..` update |
-| `Frame`              | one depth of the search: `levels[d]`, `nodes[d]`, and (d > 0) `edges[d-1]` with its prefix weight/cost — Rust keeps the three vectors in lock-step (push :2537-2560, pop :2564-2570) |
-| `succsRev`           | `node_successors` :2153 (reversed: `Vec::pop` takes the last) |
-| `step`               | one iteration of the `loop` :2502-2571; `none` = `break` at depth 0 |
+| `FP`                 | `FoundPath = (Vec<(RelationshipId, NodeId, NodeId)>, f64, f64)` :2133 |
+| `fpLt`               | `cmp_found_path(a, b) == Ordering::Less` :2144 (weight, cost, hops) |
+| `insertSorted`       | `results.insert(results.partition_point(|kept| cmp(kept, found) == Less), found)` :2505-2507 (linear scan; equal to the binary search on the sorted vector the k-branch keeps) |
+| `recordB`            | `record_found_path` :2459, including every `*bound = ..` update |
+| `Frame`              | one depth of the search: `levels[d]`, `nodes[d]`, and (d > 0) `edges[d-1]` with its prefix weight/cost — Rust keeps the three vectors in lock-step (push :2589-2612, pop :2616-2622) |
+| `succsRev`           | `node_successors` :2205 (reversed: `Vec::pop` takes the last) |
+| `step`               | one iteration of the `loop` :2554-2623; `none` = `break` at depth 0 |
 | `DS.log`             | ghost: every path passed to `record_found_path` (proof-only) |
 | `Cfg`                | `PathAlgoConfig` fields read here |
 
@@ -21,7 +21,7 @@ Results:
   from the source and every kept result is a simple path of 1..maxLen hops from
   the source (ending at the target for SPpaths) whose reported weight / cost
   are its exact edge sums, within `maxCost`.
-* `dfs_no_panic` — the `expect`s at :2567-2568 and the `levels[depth]` index
+* `dfs_no_panic` — the `expect`s at :2619-2620 and the `levels[depth]` index
   never fail (the frame stack is never empty, so the three Rust vectors never
   underflow).
 * `recordB_*` — the bound only ever decreases and only to the weight of a kept

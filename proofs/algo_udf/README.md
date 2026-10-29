@@ -94,8 +94,8 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 |---|---|---|---|
 | 1 | `wcc_compact_component_id_not_member` | WCC and CDLP with `nodeLabels` return a compact index as the component id, not a node id | **Open** |
 | 2 | `unfiltered_drops_high_ids` | HarmonicCentrality sizes its source vector by node count, not the id bound, so nodes with high ids (after deletes) are dropped | **Open** |
-| 3 | `pagerank_unknown_label_compact_empty` | `pageRank` with an unknown label errors | **Open** |
-| 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness and HarmonicCentrality with an unknown `nodeLabels` entry return no rows; C errors "unknown label" | **Open** |
+| 3 | `pre3058_pagerank_unknown_label_compact_empty` | `pageRank` with an unknown label errored (a 0x0 matrix reached LAGraph) | Fixed by #3058 (#3056): `pagerank_unknown_label_empty`, `pagerank_compact_nonempty` |
+| 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness, labelPropagation and HarmonicCentrality with an unknown `nodeLabels` / `relationshipTypes` entry returned no rows; C errors | Fixed by #3058 (#3056): `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `known_messages` |
 | 5 | `pre3113_cost_default_diverges` | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), but also with a configured one the edge lacks, where C charges 1 (row 19) |
 | 6 | `forged_node_marker`, `forged_edge_marker` | A UDF result object carrying a forged `__falkor_type` marker is trusted, which panics the reply or creates a dangling edge (W3-algo-1) | **Open** |
 | 7 | `pre3074_neg_zero_not_preserved` | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
@@ -103,7 +103,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 9 | `pre3074_vecf32_inf_not_roundtrip` | A vector holding ±inf could not pass through a UDF | Fixed by #3074 (`vecf32_inf_rt`) |
 | 10 | `pre3079_validate_lacks_graph` | The validation context at `GRAPH.UDF LOAD` had no `graph` global | Fixed by #3079 (`graph_global_in_both`) |
 | 11 | `pre3336_self_array_overflows`, `pre3336_nestArr_overflows` | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
-| 12 | `collision_accepted`, `dotted_collision`, `delete_breaks_other`, `case_folded` | Library and function names can collide after qualification or case folding, and deleting one library can break another | **Open** |
+| 12 | `pre3066_collision_accepted`, `dotted_collision`, `pre3066_delete_breaks_other`, `pre3066_case_folded` | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
 | 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Open** (#3083; PR #3084) |
 | 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Open** |
 | 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
@@ -112,7 +112,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
 | 19 | `bug3121_fastpath_missing_cost_zero` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks costs 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne`; the enumeration path satisfies it (`rust_enum_ok`) | **Open** (#3121) |
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
-| 21 | `bug3454_deleted_node_empty`, `bug3454_edge_source_empty` (`UdfNodeView.lean`) | `create_js_node` reads the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` sees `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE is likewise empty. Properties `RuntimeFirstNode`, `RuntimeFirstEdgeEnds` (the runtime-first spec satisfies both) | **Open** (#3454) |
+| 21 | `pre3454_deleted_node_empty`, `pre3454_edge_source_empty` (`UdfNodeView.lean`) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
 
 Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
 
@@ -137,7 +137,7 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `Betweenness.lean` | #3380: betweenness `samplingSeed`, the seeded draw loop, and C's sampler and defaults |
 | `CostProp.lean` | #3121: `edge_numeric_attr` with `costProp` configured vs. absent; C's `_sum_path_cost` |
 | `LagContract.lean` | #3349: GraphBLAS storage orientation and `LAGraph_CheckGraph`'s `LAGRAPH_INVALID_GRAPH` outcome |
-| `MsfFlow.lean` | MSF's min-score monoid and component keys; maxFlow alignment |
+| `MsfFlow.lean` | MSF's min-score monoid and component keys; the original-id to compact-id map (#3586: `compactOf_eq`, `denseTable_len`); maxFlow alignment |
 | `Graph.lean` | The graph view for the path searches: `Edge`, weighted `Walk`, hop walks, `node_successors` |
 | `DijkstraModel.lean`, `DijkstraInv.lean`, `Dijkstra.lean` | `dijkstra_single_path`: model, invariant preservation, `dijkstra_correct` |
 | `BfsModel.lean`, `BfsBound.lean` | `bfs_find_bound` and its soundness/completeness |
@@ -151,7 +151,7 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `Neighbors.lean` | `collect_edges`, `getNeighbors` filters |
 | `UdfTraverse.lean` | `graph.traverse` |
 | `UdfClasses.lean` | The JS `graph`/`node`/`edge`/`path` objects and native entry points |
-| `UdfNodeView.lean` | #3454: the runtime vs committed-graph view `create_js_node` reads; property `RuntimeFirstNode` |
+| `UdfNodeView.lean` | #3454, fixed by #3464: the runtime vs committed-graph view `create_js_node` reads (`node_differs_from_committed` fast path); property `RuntimeFirstNode` |
 | `UdfContext.lean` | Error messages, timeouts, script validation, context rebuild, the call bridge |
 | `UdfGlobals.lean` | The JS `falkor.register` bodies, globals, log strings |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

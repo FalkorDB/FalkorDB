@@ -191,9 +191,9 @@ theorem drop_blocked (cs : List Constraint) (et : EType) (label : String) (field
     (dropped : Nat) (c : Constraint) (hc : c ∈ cs) (hu : c.ct = .unique) (he : c.et = et)
     (hl : c.label = label) (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs))
     (hp : a ∈ c.props) :
-    dropIndex (fun x => dependsOn cs et label x true) fieldsOfType attrs dropped =
+    dropIndex (fun x => dependsOn cs et label x true) fieldsOfType label attrs dropped =
       .error "Index supports constraint" := by
-  apply dropIndex_protects _ _ _ _ a ha
+  apply dropIndex_protects _ _ _ _ _ a ha
   simp only [dependsOn, Bool.true_and, List.any_eq_true, Bool.and_eq_true, beq_iff_eq,
     List.contains_iff_mem]
   exact ⟨c, hc, ⟨⟨⟨hu, he⟩, hl⟩, hp⟩⟩

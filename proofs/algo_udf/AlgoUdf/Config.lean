@@ -8,12 +8,12 @@ Line-by-line models of the config helpers in
 | --- | --- |
 | `optString`          | `opt_string` :278 |
 | `validateConfigMap`  | `validate_config_map` :290 |
-| `strList`            | `extract_node_labels` :303, `extract_rel_types` :321, `relTypes` in `parse_common_path_config` :1934 |
+| `strList`            | `extract_node_labels` :303, `extract_rel_types` :321, `relTypes` in `parse_common_path_config` :1986 |
 | `parseConfig`        | `parse_config` :345 |
-| `samplingSize`       | betweenness `samplingSize` :926-936 |
-| `maxIterations`      | labelPropagation `maxIterations` :1221-1231 |
-| `maxLen`             | `parse_common_path_config` maxLen :1962-1970 |
-| `pathCount`          | `parse_common_path_config` pathCount :1993-2002 |
+| `samplingSize`       | betweenness `samplingSize` :953-963 |
+| `maxIterations`      | labelPropagation `maxIterations` :1255-1265 |
+| `maxLen`             | `parse_common_path_config` maxLen :2014-2022 |
+| `pathCount`          | `parse_common_path_config` pathCount :2045-2054 |
 -/
 namespace AlgoUdf.Config
 open AlgoUdf

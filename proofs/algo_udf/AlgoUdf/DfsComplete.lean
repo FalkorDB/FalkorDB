@@ -6,7 +6,7 @@ import AlgoUdf.DfsSound
 `vis`) whose first step is drawn from `S` and every later step from
 `node_successors`, with finite weights, every prefix cost within `maxCost`, at
 most `maxLen` hops in total, ending at the target (any node for SSpaths) and —
-for SPpaths — not passing through the target before its end (:2547-2558).
+for SPpaths — not passing through the target before its end (:2599-2610).
 
 `explore` (the subtree lemma): from any reachable frame whose pending list is
 `L`, the loop comes back to the same frame with `L` exhausted, having handed

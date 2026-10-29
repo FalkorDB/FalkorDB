@@ -4,11 +4,11 @@ import AlgoUdf.Config
 
 | here | there (`algo_procedures.rs`) |
 | --- | --- |
-| `algoBfs`         | `algo_bfs` :1063-1205; LAGraph's BFS output is the input `Lag` (AXIOMATISED: `LAGr_BreadthFirstSearch_Extended` level/parent vectors, extracted in ascending index order) |
-| `relOf p c`       | `g.get_src_dest_relationships(parent, child, &rel_types).next()` :1144 |
+| `algoBfs`         | `algo_bfs` :1097-1239; LAGraph's BFS output is the input `Lag` (AXIOMATISED: `LAGr_BreadthFirstSearch_Extended` level/parent vectors, extracted in ascending index order) |
+| `relOf p c`       | `g.get_src_dest_relationships(parent, child, &rel_types).next()` :1178 |
 | `Entry`, `addProc`| `Functions::add_procedure` (functions/mod.rs:943-965: panics on a duplicate lowercase name) |
 | `registerX`       | `register_pagerank` :702 … `register_maxflow` :2847, via `cypher_fn!` (functions/mod.rs:328-352) |
-| `register`        | `register` :687 |
+| `register`        | `register` :705 |
 -/
 namespace AlgoUdf.AlgoBfsReg
 open AlgoUdf AlgoUdf.Config
@@ -23,7 +23,7 @@ structure Lag where
 inductive BfsOut | empty | rows (nodes : List Nat) (edges : List Nat)
   deriving DecidableEq, Repr
 
-/-- The `want_edges` branch :1112-1140. -/
+/-- The `want_edges` branch :1146-1174. -/
 def edgesBranch (src : Nat) (hasDel : Bool) (del : Nat → Bool) (relOf : Nat → Nat → Option Nat) :
     List (Nat × Nat) → List Nat × List Nat
   | [] => ([], [])
@@ -33,7 +33,7 @@ def edgesBranch (src : Nat) (hasDel : Bool) (del : Nat → Bool) (relOf : Nat �
     else if hasDel && (del c || del p) then (ns, es)
     else (c :: ns, (match relOf p c with | some e => [e] | none => []) ++ es)
 
-/-- The level branch :1145-1158. -/
+/-- The level branch :1179-1192. -/
 def levelBranch (src : Nat) (hasDel : Bool) (del : Nat → Bool) : List (Nat × Nat) → List Nat
   | [] => []
   | (c, _) :: t =>
@@ -186,7 +186,7 @@ def registerSsPaths (fs : List Entry) := addProc fs eSs
 def registerHarmonic (fs : List Entry) := addProc fs eHarmonic
 def registerMaxflow (fs : List Entry) := addProc fs eMaxflow
 
-/-- `register` :687 in its call order. -/
+/-- `register` :705 in its call order. -/
 def register (fs : List Entry) : Option (List Entry) :=
   registerPagerank fs >>= registerWcc >>= registerBetweenness >>= registerBfs >>= registerCdlp >>=
     registerMsf >>= registerSpPaths >>= registerSsPaths >>= registerHarmonic >>= registerMaxflow

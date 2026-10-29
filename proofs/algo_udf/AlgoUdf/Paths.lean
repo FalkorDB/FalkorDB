@@ -2,14 +2,14 @@
 
 | here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
 | --- | --- |
-| `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2121 |
-| `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2092 (weights modelled as `Int`: finite weights only) |
-| `record`              | `record_found_path` :2407 |
-| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2399 and `enumerate_paths` :2521 (since #3113) |
-| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, 0.0)` :2308 |
-| `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:587) |
-| `nextNode`            | `build_path_batch` :2575 node reconstruction |
-| `useDijkstra`         | `run_path_algo` fast-path guard :2619-2629 |
+| `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2173 |
+| `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2144 (weights modelled as `Int`: finite weights only) |
+| `record`              | `record_found_path` :2459 |
+| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2451 and `enumerate_paths` :2573 (since #3113) |
+| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, 0.0)` :2360 |
+| `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:605) |
+| `nextNode`            | `build_path_batch` :2627 node reconstruction |
+| `useDijkstra`         | `run_path_algo` fast-path guard :2671-2681 |
 -/
 namespace AlgoUdf.Paths
 
@@ -149,7 +149,7 @@ theorem cost_no_prop_hops (n : Nat) : pathCostRust (List.replicate n none) = n :
     rw [foldl_add_start, ih]; simp; omega
 
 /-- `dijkstra_single_path` (the `pathCount 1`, no `maxCost`, no `maxLen` fast path) still
-reports a missing cost as 0 (:2308). C's single-path fast path does the same: live, a
+reports a missing cost as 0 (:2360). C's single-path fast path does the same: live, a
 2-hop `algo.SPpaths({sourceNode:a, targetNode:c, relTypes:['R']})` yields `pathCost 0`
 on both (rt8 re-check, C `bin/macos-arm64v8-release/falkordb.so`); with `maxLen:5` or
 `pathCount:2` C yields 2, which is what `pathCostRust` gives. -/

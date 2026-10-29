@@ -9,11 +9,11 @@ the configuration separate.
 | here | there |
 | --- | --- |
 | `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs:2104-2117` (`prop.map_or(default, …)`, one `default` for both cases) |
-| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `0.0` (`:2308`) |
-| `rustEnumCost`    | `bfs_find_bound` `:2399` and `enumerate_paths` `:2521`, default `1.0` |
+| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `0.0` (`:2360`) |
+| `rustEnumCost`    | `bfs_find_bound` `:2451` and `enumerate_paths` `:2573`, default `1.0` |
 | `cResolve`        | `GraphContext_GetAttributeID` (`proc_sp_paths.c:350`): an unknown name is `ATTRIBUTE_ID_NONE` |
 | `cFastCost`       | C `_sum_path_cost` as run live (`c.so`): `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)` |
-| `cEnumCost`       | C DFS `GraphEntity_GetNumericPropertyOrDefault(.., cost_prop, SI_LongVal(1))` (`proc_sp_paths.c:615,670`) |
+| `cEnumCost`       | C DFS `GraphEntity_GetNumericPropertyOrDefault(.., cost_prop, SI_LongVal(1))` (`proc_sp_paths.c:633,670`) |
 
 `costProp` is `none` (not configured), `some true` (configured, the attribute name
 exists in the graph) or `some false` (configured, a name no entity has).

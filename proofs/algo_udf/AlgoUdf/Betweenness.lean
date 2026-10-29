@@ -57,8 +57,8 @@ def rustSources (s n seed : Nat) : List Nat :=
   else if seed = 0 then seed0Loop n s
   else drawLoop n s seed []
 
-/-- The Rust run with no `samplingSeed`: nothing reads a clock (`:940` gives 0 and the
-seed-0 branch `:1002` is `i % n_nodes`), so the clock argument is ignored. -/
+/-- The Rust run with no `samplingSeed`: nothing reads a clock (`:966` gives 0 and the
+seed-0 branch `:1035` is `i % n_nodes`), so the clock argument is ignored. -/
 def rustSeedless (s n : Nat) (_clock : Nat) : List Nat := rustSources s n 0
 
 /-! ## C (origin/master) -/

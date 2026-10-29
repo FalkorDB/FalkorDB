@@ -7,7 +7,7 @@ contracts of the stores underneath (attribute/label name tables, attribute store
 read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
 Rust repros: `graph/tests/lean_runtime_core.rs`
 (`cargo test -p graph --test lean_runtime_core`); `bug_*` tests assert the correct
-answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main ca36bfa15 (after #3436).
+answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to main 1c0e6c8de (after #3464, which inserted `node_differs_from_committed` at `:1778`, moving every row from `get_node_labels` on by +15).
 
 | here | there |
 | --- | --- |
@@ -21,6 +21,7 @@ answer and FAIL today, `agrees_*` pass. `runtime.rs` line numbers are pinned to 
 | `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:620-667`) |
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:816`), `children_to_recurse` (`:758`) |
 | `Accessors.*` | entity accessors `runtime.rs:1483-1984` (attrs, memo, labels, degrees, endpoints/type) |
+| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs:1778`) + `Pending::node_has_changes` (`pending.rs:760`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
 | `Misc.*`      | `check_timeout` (`:531`), `check_mem_capacity` (`:541`), `map_to_index_options` (`:1993`; #3094 required vector keys, fulltext unknown-key refusal), `drain_pending` / `edge_already_used` (`ops/mod.rs:127,155`) |
 | (reused)      | `evaluate_id_filter` (`:1415-1479`) is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: since #3394 no range on a graph with no nodes) |
 

@@ -2,7 +2,7 @@ import FalkorValueMath.Value
 import FalkorValueMath.Registry
 /-!
 # `graph/src/runtime/functions/procedures.rs`, `functions/path.rs`, `entity_type.rs`
-(origin/main 3fec7d7c9)
+(origin/main 1c0e6c8de)
 
 A procedure returns a `Batch` built by `Batch::from_columns`; here a batch is its column
 list (`List (List (V F))`, `Column::Ints(xs)` read back as `V.int`). Graph reads
@@ -28,7 +28,7 @@ never read a missing or misaligned column.
 | `dbmsProcedures` | `dbms_procedures` :437 |
 | `dbmsFunctions`, `mergePicks` | `dbms_functions` :469 (+ `BUILTIN_ENTRIES` :531, `BUILTIN_LOWER_NAMES` :543) |
 | `buildColumns` | `build_columns` :557 |
-| `tyValue`, `tyString`, `formatUnion`, `formatUnionStrings` | :616, :649, :694, :706 |
+| `tyValue`, `tyString`, `collectTys`/`collectTysL` + `canonTypes` (`DBMS_TYPE_ORDER`), `formatUnion`, `formatUnionStrings` | :613, :646, :705, :717, :729 |
 | `pathNodes`, `pathRels`, `pathSigs` | path.rs `nodes` :29, `relationships` :52, `register` :25 |
 | `EntityType.fmt` | entity_type.rs:26 |
 -/
@@ -239,7 +239,7 @@ def dbmsProcedures (fns : List Ent) : Cols F :=
   let ps := sortByName (fns.filter isProc)
   [ps.map (fun f => .str f.name), ps.map (fun f => .str (if f.write then "WRITE" else "READ"))]
 
-/-- `format_union` (:694) / `format_union_strings` (:706): the same text. -/
+/-- `format_union` (:717) / `format_union_strings` (:729): the same text. -/
 def formatUnion : List String → String
   | [] => ""
   | [a] => a
@@ -252,22 +252,49 @@ def anyNames : List String :=
   ["Map", "Node", "Edge", "List", "Path", "Datetime", "Date", "Time", "Duration", "String",
    "Boolean", "Integer", "Float", "Null", "Pointer", "Point", "Vectorf32"]
 
-mutual
-/-- `type_to_dbms_string` (:649). -/
-def tyString : Ty → String
-  | .any => formatUnion anyNames
+/-- The single-type spelling of a non-composite type (the leaf arms of `type_to_dbms_string`). -/
+def leafString : Ty → String
   | .null => "Null" | .bool => "Boolean" | .int => "Integer" | .float => "Float"
   | .string => "String" | .list _ => "List" | .map => "Map" | .node => "Node"
   | .rel => "Edge" | .path => "Path" | .vecf32 => "Vectorf32" | .point => "Point"
   | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
-  | .union ts => formatUnionStrings (tyStrings ts)
-  | .optional t => tyString t
-def tyStrings : List Ty → List String
+  | .any | .union _ | .optional _ => ""
+
+mutual
+/-- `collect_dbms_types` (:705): the spellings a type stands for, nested unions / `Optional` /
+`Any` flattened (`Any` = all of `DBMS_TYPE_ORDER`). -/
+def collectTys : Ty → List String
+  | .union ts => collectTysL ts
+  | .optional t => collectTys t
+  | .any => anyNames
+  | t => [leafString t]
+def collectTysL : List Ty → List String
   | [] => []
-  | t :: ts => tyString t :: tyStrings ts
+  | t :: ts => collectTys t ++ collectTysL ts
 end
 
-/-- `type_to_dbms_value` (:616): interned spellings; `Union` built; `Optional` unwraps. -/
+/-- Position in `DBMS_TYPE_ORDER` (C's `SIType` bit order); unknown = its length. -/
+def typePos (s : String) : Nat := anyNames.findIdx (· == s)
+
+/-- `strs.sort_by_key(position in DBMS_TYPE_ORDER)` (stable). -/
+def sortByPos (l : List String) : List String := l.mergeSort (fun a b => decide (typePos a ≤ typePos b))
+
+/-- `Vec::dedup`: drop a member equal to its predecessor. -/
+def dedupAdj : List String → List String
+  | a :: b :: t => if a = b then dedupAdj (b :: t) else a :: dedupAdj (b :: t)
+  | l => l
+
+/-- The union branch of `type_to_dbms_string` (:662-675): collect, sort by C order, dedup. -/
+def canonTypes (l : List String) : List String := dedupAdj (sortByPos l)
+
+/-- `type_to_dbms_string` (:646). -/
+def tyString : Ty → String
+  | .any => formatUnion anyNames
+  | .union ts => formatUnionStrings (canonTypes (collectTysL ts))
+  | .optional t => tyString t
+  | t => leafString t
+
+/-- `type_to_dbms_value` (:613): interned spellings; `Union` built; `Optional` unwraps. -/
 def tyValue : Ty → V F
   | .any => .str (formatUnion anyNames)          -- ANY_UNION (:607)
   | .null => .str "Null" | .bool => .str "Boolean" | .int => .str "Integer"
@@ -331,7 +358,7 @@ def yieldsOf (n : String) : List String := ((procRegs.find? (·.1 = n)).map (·.
 
 /-! ## Theorems -/
 
-theorem procRegs_nodup : (procRegs.map (·.1)).Nodup := by decide
+theorem procRegs_nodup : (procRegs.map (·.1)).Nodup := by decide +kernel
 
 theorem mapM_length {α β} {f : α → Option β} : ∀ {l : List α} {r : List β}, l.mapM f = some r → r.length = l.length
   | [], r, h => by simp at h; subst h; rfl
@@ -541,13 +568,160 @@ theorem any_string : tyString .any =
 
 example : formatUnion ["Integer", "Float", "Null"] = "Integer, Float, or Null" := rfl
 
-/-- **Divergence (live)**: the Rust union spelling follows declaration order; C prints
-union members in its fixed type-bit order. `distance`/`point`/`vecf32`/`tofloat` rows of
-`dbms.functions()` differ only by this (Rust `Point or Null`, C `Null or Point`;
-Rust `String, Float, Integer, or Null`, C `String, Integer, Float, or Null`). -/
-theorem union_order_visible :
-    tyString (.union [.point, .null]) = "Point or Null" ∧ tyString (.union [.null, .point]) = "Null or Point" :=
-  ⟨rfl, rfl⟩
+-- Every spelling a type collects is one of C's 17 type names.
+mutual
+theorem collectTys_mem : (t : Ty) → ∀ x ∈ collectTys t, x ∈ anyNames
+  | .union ts => by simpa [collectTys] using collectTysL_mem ts
+  | .optional t => by simpa [collectTys] using collectTys_mem t
+  | .any => by simp [collectTys]
+  | .null | .bool | .int | .float | .string | .list _ | .map | .node | .rel | .path | .vecf32
+  | .point | .datetime | .date | .time | .duration => by
+      intro x hx; simp [collectTys, leafString] at hx; subst hx; decide
+theorem collectTysL_mem : (ts : List Ty) → ∀ x ∈ collectTysL ts, x ∈ anyNames
+  | [] => by simp [collectTysL]
+  | t :: ts => by
+      intro x hx
+      simp only [collectTysL, List.mem_append] at hx
+      exact hx.elim (collectTys_mem t x) (collectTysL_mem ts x)
+end
+
+/-- `typePos` is injective on C's type names. -/
+theorem typePos_inj : ∀ a ∈ anyNames, ∀ b ∈ anyNames, typePos a = typePos b → a = b := by
+  unfold anyNames typePos; decide
+
+theorem mem_dedupAdj : ∀ (l : List String) (x : String), x ∈ dedupAdj l ↔ x ∈ l
+  | [], x => by simp [dedupAdj]
+  | [a], x => by simp [dedupAdj]
+  | a :: b :: t, x => by
+      unfold dedupAdj
+      by_cases h : a = b
+      · subst h; simp only [if_true, mem_dedupAdj (a :: t) x]; simp
+      · simp only [h, if_false, List.mem_cons, mem_dedupAdj (b :: t) x]
+
+theorem dedupAdj_strict : ∀ (l : List String), (∀ x ∈ l, x ∈ anyNames) →
+    l.Pairwise (fun a b => typePos a ≤ typePos b) →
+    (dedupAdj l).Pairwise (fun a b => typePos a < typePos b)
+  | [], _, _ => by simp [dedupAdj]
+  | [a], _, _ => by simp [dedupAdj]
+  | a :: b :: t, hm, hp => by
+      unfold dedupAdj
+      have hp' := List.pairwise_cons.1 hp
+      have hbt : (b :: t).Pairwise (fun a b => typePos a ≤ typePos b) := hp'.2
+      have hm' : ∀ x ∈ b :: t, x ∈ anyNames := fun x hx => hm x (List.mem_cons_of_mem _ hx)
+      have ih := dedupAdj_strict (b :: t) hm' hbt
+      by_cases h : a = b
+      · simp [h]; exact ih
+      · simp only [h, if_false]
+        refine List.pairwise_cons.2 ⟨?_, ih⟩
+        intro x hx
+        rw [mem_dedupAdj] at hx
+        have hax : typePos a ≤ typePos x := hp'.1 x hx
+        have hbx : typePos b ≤ typePos x ∨ x = b := by
+          rcases List.mem_cons.1 hx with rfl | ht
+          · exact Or.inr rfl
+          · exact Or.inl ((List.pairwise_cons.1 hbt).1 x ht)
+        have hab : typePos a ≤ typePos b := hp'.1 b (List.mem_cons_self ..)
+        refine Nat.lt_of_le_of_ne hax fun heq => h ?_
+        have hbe : typePos b = typePos a := by
+          rcases hbx with hb | rfl
+          · omega
+          · exact heq.symm
+        exact typePos_inj a (hm a (List.mem_cons_self ..)) b (hm b (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
+          hbe.symm
+
+/-- The canonical member list of any list of C type names: strictly increasing in C's
+fixed order, with exactly the same members. -/
+theorem canon_props (l : List String) (hm : ∀ x ∈ l, x ∈ anyNames) :
+    (canonTypes l).Pairwise (fun a b => typePos a < typePos b) ∧
+    ∀ x, x ∈ canonTypes l ↔ x ∈ l := by
+  have hmem : ∀ x ∈ sortByPos l, x ∈ anyNames := fun x hx => hm x ((List.mem_mergeSort).1 hx)
+  refine ⟨dedupAdj_strict _ hmem ?_, fun x => ?_⟩
+  · have := List.pairwise_mergeSort (le := fun a b => decide (typePos a ≤ typePos b))
+      (fun a b c h1 h2 => by simp only [decide_eq_true_eq] at *; omega)
+      (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) l
+    exact this.imp (fun h => by simpa using h)
+  · unfold canonTypes
+    rw [mem_dedupAdj]; exact List.mem_mergeSort
+
+/-- A strictly C-ordered list with the right members IS the canonical list. -/
+theorem canon_eq_of (l c : List String) (hm : ∀ x ∈ l, x ∈ anyNames)
+    (hc : c.Pairwise (fun a b => typePos a < typePos b)) (hiff : ∀ x, x ∈ c ↔ x ∈ l) :
+    canonTypes l = c := by
+  have h := canon_props l hm
+  have nd1 : (canonTypes l).Nodup := h.1.imp (fun h e => by subst e; omega)
+  have nd2 : c.Nodup := hc.imp (fun h e => by subst e; omega)
+  have hp : (canonTypes l).Perm c := by
+    rw [List.perm_ext_iff_of_nodup nd1 nd2]
+    intro x; rw [h.2, hiff]
+  exact List.Perm.eq_of_pairwise (fun a b _ _ h1 h2 => by omega) h.1 hc hp
+
+/-- **#3280 (fixed): the union spelling is C's.** For any union, the member list that
+`type_to_dbms_string` formats is strictly increasing in C's fixed type order
+(`DBMS_TYPE_ORDER`, so no duplicates), whatever order or nesting the signature declares,
+and it contains exactly the single types the union stands for. -/
+theorem union_order_is_c (ts : List Ty) :
+    (canonTypes (collectTysL ts)).Pairwise (fun a b => typePos a < typePos b) ∧
+    ∀ x, x ∈ canonTypes (collectTysL ts) ↔ x ∈ collectTysL ts :=
+  canon_props _ (collectTysL_mem ts)
+
+/-- Declaration order is irrelevant: the spelling of a union depends only on the set of
+types it stands for (the former divergence `Point or Null` vs C `Null or Point` is gone). -/
+theorem union_perm_invariant (ts us : List Ty) (h : ∀ x, x ∈ collectTysL ts ↔ x ∈ collectTysL us) :
+    tyString (.union ts) = tyString (.union us) := by
+  have h2 := union_order_is_c us
+  have : canonTypes (collectTysL ts) = canonTypes (collectTysL us) :=
+    canon_eq_of _ _ (collectTysL_mem ts) h2.1 (fun x => by rw [h2.2, h])
+  simp only [tyString, this]
+
+/-- Spelling of a union whose collected members are exactly `c` (strictly C-ordered). -/
+theorem union_spelling (ts : List Ty) (c : List String)
+    (hc : c.Pairwise (fun a b => typePos a < typePos b)) (h : ∀ x, x ∈ c ↔ x ∈ collectTysL ts) :
+    tyString (.union ts) = formatUnion c := by
+  simp only [tyString, formatUnionStrings, canon_eq_of _ c (collectTysL_mem ts) hc h]
+
+/-- The `dbms.functions()` rows that used to differ from C now match it:
+`distance`/`point` (`Point or Null` -> `Null or Point`) ... -/
+theorem union_point_null :
+    tyString (.union [.point, .null]) = "Null or Point" ∧
+    tyString (.union [.null, .point]) = "Null or Point" :=
+  ⟨union_spelling _ ["Null", "Point"] (by decide)
+      (fun x => by simp [collectTysL, collectTys, leafString]; grind),
+   union_spelling _ ["Null", "Point"] (by decide)
+      (fun x => by simp [collectTysL, collectTys, leafString])⟩
+
+/-- ... and `tofloat` (`String, Float, Integer, or Null` -> `String, Integer, Float, or Null`). -/
+theorem union_tofloat :
+    tyString (.union [.string, .float, .int, .null]) = "String, Integer, Float, or Null" :=
+  union_spelling _ ["String", "Integer", "Float", "Null"] (by decide)
+    (fun x => by simp [collectTysL, collectTys, leafString]; grind)
+
+/-- Nested unions and `Optional` flatten; duplicates collapse. -/
+theorem union_nested :
+    tyString (.union [.union [.int, .null], .optional .int, .float]) = "Integer, Float, or Null" :=
+  union_spelling _ ["Integer", "Float", "Null"] (by decide)
+    (fun x => by simp [collectTysL, collectTys, leafString]; grind)
+
+/-- `Any` inside a union expands to all 17 types: the same text as `Any` itself. -/
+theorem union_any : tyString (.union [.int, .any]) = tyString .any :=
+  union_spelling _ anyNames (by decide)
+    (fun x => by
+      simp only [collectTysL, collectTys, leafString, List.append_nil, List.mem_append,
+        List.mem_singleton]
+      constructor
+      · intro h; exact Or.inr h
+      · rintro (rfl | h)
+        · decide
+        · exact h)
+
+/-- Historical (pre-#3280): Rust spelled a union in declaration order (`Point or Null`).
+Kept as the old model. -/
+def pre3280TyString : Ty → String
+  | .union ts => formatUnionStrings (ts.map leafString)
+  | t => tyString t
+
+theorem pre3280_declaration_order :
+    pre3280TyString (.union [.point, .null]) = "Point or Null" ∧
+    pre3280TyString (.union [.null, .point]) = "Null or Point" := ⟨rfl, rfl⟩
 
 /-! ## path.rs -/
 

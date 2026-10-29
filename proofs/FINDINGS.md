@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-29): proofs cite `origin/main` @ e860645bb.
+Current state (2026-10-29): proofs cite `origin/main` @ 1c0e6c8de.
 There is one Lake project per area under `proofs/<area>/` (38 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -16,7 +16,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2677 non-FFI, non-test functions, 2660 are PROVEN and 17 CONDITIONAL (proven only
+2684 non-FFI, non-test functions, 2667 are PROVEN and 17 CONDITIONAL (proven only
 under an undischarged hypothesis about other Rust code, named in the row);
 1288 FFI functions are AXIOMATISED; 0 unlisted, 0 unmatched.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
@@ -246,13 +246,13 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **Algo / UDF**:
   - WCC and CDLP with nodeLabels return a compact index instead of a node id;
   - HarmonicCentrality sizes by node count instead of the id bound;
-  - library-name collisions and case folding;
+  - library-name collisions and case folding (*fixed by #3066, 017da3f02; closes #3065*);
   - the validation context has no `graph` global;
   - -0.0 comes back as Int 0;
   - `getNeighbors` lists a self-loop twice;
   - a UDF map with a `constructor` key is taken for a Date;
   - a vecf32 holding inf is rejected;
-  - unknown labels in betweenness/harmonic return nothing instead of an error.
+  - unknown labels in betweenness/harmonic return nothing instead of an error (*fixed by #3058, 06cae76d1; closes #3056*).
 - **Value / math**:
   - toInteger turns negatives below i64::MIN into MIN (#2955, PR #2989);
   - `coalesce()` accepts zero arguments (#2956, PR #2990).
@@ -293,7 +293,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - a lone `CALL db.idx.fulltext.createNodeIndex({label:'W'})` under GRAPH.QUERY fails with a misleading "graph.RO_QUERY is to be executed only on read-only queries" (`procedure_call.rs:67`);
   - `db.idx.fulltext.drop` on a missing index errors (C does nothing);
   - `db.idx.fulltext.queryNodes(1,2)` errors (C returns empty).
-  - Output differences: `db.indexes` and `db.constraints` row order; `db.indexes` `info` holds only field names (C returns full RediSearch info and `_src_id`/`_dest_id` for edge indexes); `dbms.functions` union type order (`Point or Null` vs `Null or Point`).
+  - Output differences: `db.indexes` and `db.constraints` row order; `db.indexes` `info` holds only field names (C returns full RediSearch info and `_src_id`/`_dest_id` for edge indexes); `dbms.functions` union type order (`Point or Null` vs `Null or Point`; *fixed by #3280, 8650ce07e*).
 - **W5-udf-1** — `graph.traverse([a],{returnType:'edges'})` returns a self-loop twice (`js_classes.rs:770`): Rust `[1,0,1]`, C `[1,0]`. PR #3084 may cover `collect_edges`; check.
 - **W5-udf-2** — `graph.traverse([a])` leaves `a` out when it is its own neighbour, because the start node is pre-marked visited (`js_classes.rs:744`): Rust `[1]`, C `[0,1]`.
 - **W5-udf-3** — `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'" (`js_classes.rs:195`, `:352`); C returns the neighbours.
@@ -356,7 +356,7 @@ Twelve Rust bugs filed on 2026-10-21 were reproduced against main b84473a7f and 
 - #3451 (rt/path_builder): PathBuilder infers a var-length segment's direction by comparing the VLT path's first node with the previous path node (`path_builder.rs:102-110`); on a cycle (n = m) that says "forward", so `MATCH p=(a{id:0})<-[:R*3..3]-(a)` on `0→1→2→0` gives `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]`. Main is correct on every non-cyclic walk (`vltMain_follows_of_ne`). Lean bug3451_main_violates, bug3451_cycle_not_reversed; property PathFollowsPattern; fix vltFix_follows.
 - #3452 (rt/expand_into): ExpandInto skips pending-deleted edges but never checks for pending-deleted endpoints (`expand_into.rs:197-228`), while `DETACH DELETE` of a committed node defers its edges to commit (`delete.rs:191-216`). So `MATCH (a:A),(b:B) DETACH DELETE a MERGE (a)-[r:R]->(b) RETURN count(r)` returns 1 and creates no relationship (C creates a dangling edge). Lean (now history) `pre3463_violates`, `pre3463_matches_doomed_edge`; property LiveExpandInto. **Fixed by #3463** (`expand_into.rs:158-160`: no row when either endpoint is pending-deleted): `EIP.expandIntoP_live`. Still open, needs an owner: `CondTraverseOp` never reads `Pending`, so `DETACH DELETE a MERGE (a)-[r:R]->(x:B)` still matches the doomed edge (`EIP.bug_condTraverse_main_violates`; from the code, not yet run live).
 - #3453 (rt/include_pending): `get_pending_nodes_with_labels` (pending.rs:1040-1055) reads `set_labels` only, with no deleted filter and ignoring committed labels; `deleted_node` (:772) leaves `set_labels`, and `SetOp` (set.rs:403) stages labels the node already has, so `IncludePendingOp::next` (include_pending.rs:161-209) yields a deleted node, duplicates a row, and misses a node whose labels are split between committed and staged. Lean bug3453_yields_deleted_node, bug3453_duplicate_row, bug3453_misses_split_multilabel, bug3453_pendingWithLabels_yields_deleted; property IncludePendingExact; fix includePendingFixed_exact.
-- #3454 (udf/create_js_node): `create_js_node` (js_classes.rs:129) takes only the committed Graph and reads `g.get_node_labels`/`get_node_all_attrs` (:151, :161); `type_convert.rs:184` and `create_js_edge`'s endpoints (:257-258) drop the runtime, so a node deleted in the same query is `[[], NULL]` in the UDF while `labels(n)`/`n.name` (Runtime::get_node_labels, deleted snapshot runtime.rs:1671) give `[P]`, `A`. Lean bug3454_deleted_node_empty, bug3454_edge_source_empty; property RuntimeFirstNode.
+- #3454 (udf/create_js_node; *fixed by #3464, 1c0e6c8de*): `create_js_node` (js_classes.rs:129) takes only the committed Graph and reads `g.get_node_labels`/`get_node_all_attrs` (:151, :161); `type_convert.rs:184` and `create_js_edge`'s endpoints (:257-258) drop the runtime, so a node deleted in the same query is `[[], NULL]` in the UDF while `labels(n)`/`n.name` (Runtime::get_node_labels, deleted snapshot runtime.rs:1671) give `[P]`, `A`. Lean bug3454_deleted_node_empty, bug3454_edge_source_empty; property RuntimeFirstNode.
 
 ### Gaps closed: #3483 (2026-10-26)
 - #3483 (srv/idx, crash): AOF replay of 152 `GRAPH.DELETE`s of indexed graphs crashes 6.0.3 in `RM_FreeString` (7/20 starts here; `illegal decrRefCount … type 0, encoding 8, refcount 0`, the embstr "N/A"). `graph_free` drops the graph on `std::thread::spawn` with no GIL (`src/graph_core.rs:1797`); `SpecHandle::drop` → `RediSearch_DropIndex` → `IndexError_Clear` frees RediSearch's process-global `NA_rstr` (`deps/RediSearch@ea1a6f4 src/info/index_error.c:91`), while the main thread's `create_rs_index` holds it (`:42`). The refcount is a plain int, so updates are lost and the key is freed early. C pins RediSearch 311f90126, which has no `NA_rstr`. Fix: FalkorDB/RediSearch#29 (errors borrow `NA_rstr`). Lean `SC.Guarded.bug3483_naRef_race` (lockset of create `{gil, indexer}`, drop `{rsGlobal}`, last `IndexRelease` `{}`: empty); fixed `rs29_naRef_free`.
@@ -382,6 +382,10 @@ Confirmed bug found by these reviews (pre-existing on main, not caused by any of
 - **#3439 (srv, crash)**: a queued write calls `release_locks()` (`graph_core.rs:858`) and then serializes its reply with per-access borrows of its now-published version (`reply.rs:428-470`). An inline write inside `MULTI` that fails after a Commit runs `resync_published_indexes` (`pending.rs:1684`), whose `borrow_mut` on that version panics on the main thread ("already immutably borrowed"), killing the server. Repro `proofs/runtime_core/repro_3439.py P 20 2 1 0` after `CREATE INDEX FOR (n:L) ON (n.v)`: Rust main 9212add39 and b6567cb97 die within ~1 s; C survives (494 failed writes in 20 s, `:L` count 0). Lean `Protocol.writer_reply_race`, `writer_reply_race_rev`. Suggested fix: serialize the reply before `release_locks`, or have resync update the index without `borrow_mut` on the published cell.
 
 ### Merged
+- 2026-10-29 (later) on main (now 1c0e6c8de): #3058 (closes #3056), #3586 (closes #3444), #3066 (closes #3065), #3464 (closes #3454), #3280 (dbms.functions union spelling, fulltext.drop message). Proofs re-targeted: 38 projects green; 2667 PROVEN + 17 CONDITIONAL of 2684 non-FFI, non-test fns (99.4% proven, all covered); 0 unlisted, 0 unmatched. No new bug or C divergence found.
+  - Fixed, counterexamples kept as `pre<PR>_` history: #3056 (`algo_udf` `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `pagerank_unknown_label_empty`, `pagerank_compact_nonempty`; `pre3058_pagerank_unknown_label_compact_empty`); #3444 (`MsfFlow.compactOf_eq`, `denseTable_len`, `sparse_builds_no_table`; `pre3586_table_unbounded`); #3065 (`Repo.collision_rejected`, `dotted_collision_rejected`, `case_sensitive`, `load_preserves_crossFold`; `value_math` `Registry.udf_case_sensitive`, `regGet_udf_case_sensitive`; `pre3066_*`); #3454 (`UdfNodeView.rs_runtime_first`, `fixed3454_deleted_node`, `fixed3454_edge_source`; `pre3454_*`); dbms.functions unions (`value_math` `union_order_is_c`, `union_perm_invariant`; `pre3280_declaration_order`); fulltext.drop `:L` message (`graph_queries` `dropIndex_none_noattr`; `pre3280_empty_attrs_diverged`).
+  - New fast path from #3464, `Runtime::node_differs_from_committed` / `Pending::node_has_changes`, proven sufficient (guard false ⇒ runtime reads equal the committed graph: `runtime_core` `Accessors.not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs`; `pending_commit` `PC.nodeHasChanges_spec`). It over-approximates (`differs_overapprox`), which costs speed only.
+  - Still open: HarmonicCentrality sizes by node count (#3044, `unfiltered_drops_high_ids`); fix in #3045.
 - 2026-10-29 on main (now e860645bb): #3524 (closes #2776), #3067 (closes #3039), #2977 (closes #2969), #3263 (GRAPH.UDF LOAD rejects an empty name or script), #3492 (multi-type traversals stream per-type iterators; fixes `delta_lmxm`), #2351 / #3538 / #3550 (native index: a column's build state, indexer batches, managed index generic over its kind, fair lock handover), #3515 (emitter debug_assert dropped). Proofs re-targeted: 38 projects green; 2660 PROVEN + 17 CONDITIONAL of 2677 non-FFI, non-test fns (99.4% proven, all covered); 0 unlisted, 0 unmatched.
   - Fixed, counterexamples kept as `pre<PR>_` history: #2776 wider, all six `SET x = …` shapes (Node/Rel ← Map/Node/Rel) now clear pending attributes (`ops_apply` `setAttrItem_replace_shapes`, `fixed3524_clears_pending`; `pending_commit` `fixed3524_replace_clears_staged`; `pre3524_noClear_keeps_pending`, `pre3524_replace_keeps_staged`); W2-apply-3 / #3039 (`MergeEager.mainMerge_batch_independent`, `mainMerge_noSet_eq_ref`, `fixed3067_batch_independent`; `pre3067_batch_dependent`); W2-agg-2 (`GroupId.gid_inj`, `distinct_by_group_id_exact`, `fixed2977_collision_example`; `pre2977_hashed_dedup_merges_groups`); W5-udf-4 (`udfLoad_nonempty`, `fixed3263_empty_lib_name`, `fixed3263_empty_script`; `pre3263_empty_name_accepted`).
   - #3492 fixed a `delta_lmxm` bug the proofs had not logged: the output was masked by the pattern of `F*dm`, so with `x→z` deleted and `y→z` live in one frontier row the output `z` was dropped (`graphblas_wrappers` `pre3492_drops_live_path`). `delta_lmxm` moves from AXIOMATISED to PROVEN: `deltaLmxm_spec`, `deltaLmxm_correct` (= `F*(M-DM+DP)` given `dm ⊆ m`), `delta_lmxm_keeps_live_path`. The streaming union equals the merged matrix it replaced, pair for pair and in order (`ops_traverse` `union_stream`, `union_stream_eq_merged`, `deltaInto_eff`, `union_collapse_directed_keys_nodup`).

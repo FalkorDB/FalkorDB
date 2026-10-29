@@ -631,4 +631,99 @@ def relLookup {X : Type} (del : Nat → Option X) (pend : Nat → Option X) (com
 theorem relLookup_deleted {X : Type} (del pend : Nat → Option X) (com : Nat → X) (id : Nat) (x : X)
     (h : del id = some x) : relLookup del pend com id = x := by simp [relLookup, h]
 
+/-! ### `node_differs_from_committed` (#3464, `runtime.rs:1778`, `Pending::node_has_changes` `pending.rs:760`)
+
+The guard a caller (the UDF node objects, `js_classes.rs`) uses to read the committed
+graph directly instead of building the `get_node_labels` / `get_node_attrs` copies.
+Statement proved: it is **sufficient** (guard false ⇒ both reads equal the committed
+graph's) and so every node whose reads differ is flagged; it is **not exact** (a staged
+set of an already-present label, or a snapshot equal to the committed state, trip it
+without changing a read: `differs_overapprox`), which only costs speed. -/
+
+/-- The four staged maps as key sets: `set_labels`, `remove_labels`, `new_nodes_attrs`,
+`existing_nodes_attrs`. -/
+structure Keys where
+  setK : List Nat
+  remK : List Nat
+  newK : List Nat
+  exK : List Nat
+
+/-- `Pending::node_has_changes`'s inner `fn has` (`pending.rs:764`). -/
+def hasKey (m : List Nat) (id : Nat) : Bool := !m.isEmpty && decide (id ∈ m)
+
+/-- `Pending::node_has_changes` (`pending.rs:760`). -/
+def nodeHasChanges (k : Keys) (id : Nat) : Bool :=
+  hasKey k.setK id || hasKey k.remK id || hasKey k.newK id || hasKey k.exK id
+
+/-- `Runtime::node_differs_from_committed` (`runtime.rs:1778`). -/
+def differs (w : W) (k : Keys) (id : Nat) : Bool :=
+  (!w.deletedEmpty && (w.deleted id).isSome) || nodeHasChanges k id
+
+/-- Representation: the view of a node absent from a staged map is empty. -/
+def Keys.coherent (w : W) (k : Keys) : Prop :=
+  (∀ id, id ∉ k.setK → w.setL id = []) ∧ (∀ id, id ∉ k.remK → w.remL id = []) ∧
+  (∀ id, id ∉ k.newK → w.newAttrs id = none) ∧ (∀ id, id ∉ k.exK → w.exAttrs id = none)
+
+theorem hasKey_eq (m : List Nat) (id : Nat) : hasKey m id = decide (id ∈ m) := by
+  cases m with
+  | nil => simp [hasKey]
+  | cons a m => simp [hasKey]
+
+/-- **PROVEN**: the guard is true only for a node deleted by this query or with a staged
+label/attribute change. -/
+theorem differs_spec (w : W) (k : Keys) (id : Nat) :
+    differs w k id = true ↔
+      ((w.deletedEmpty = false ∧ (w.deleted id).isSome = true) ∨
+        id ∈ k.setK ∨ id ∈ k.remK ∨ id ∈ k.newK ∨ id ∈ k.exK) := by
+  simp [differs, nodeHasChanges, hasKey_eq, or_assoc]
+
+/-- **PROVEN** (headline, labels): guard false ⇒ `get_node_labels` is the committed label
+list. -/
+theorem not_differs_labels (w : W) (k : Keys) (hd : w.deletedOk) (hk : k.coherent w) (id : Nat)
+    (h : differs w k id = false) : getLabelIds w id = w.committedLabels id := by
+  have h' := (not_congr (differs_spec w k id)).mp (by simp [h])
+  simp only [not_or, not_and] at h'
+  obtain ⟨hdel, hs, hr, -, -⟩ := h'
+  have hnone : w.deleted id = none := by
+    cases hde : w.deletedEmpty
+    · cases hw : w.deleted id with
+      | none => rfl
+      | some _ => exact absurd (by simp [hw]) (hdel hde)
+    · exact hd hde id
+  simp [getLabelIds, hnone, labelIds, hk.1 id hs, hk.2.1 id hr]
+
+/-- **PROVEN** (headline, attributes): guard false ⇒ `get_node_attrs` is the committed
+all-attributes listing. -/
+theorem not_differs_attrs (w : W) (k : Keys) (hd : w.deletedOk) (hk : k.coherent w) (id : Nat)
+    (h : differs w k id = false) : getNodeAttrs w id = w.committedAll id := by
+  have h' := (not_congr (differs_spec w k id)).mp (by simp [h])
+  simp only [not_or, not_and] at h'
+  obtain ⟨hdel, -, -, hn, he⟩ := h'
+  have hnone : w.deleted id = none := by
+    cases hde : w.deletedEmpty
+    · cases hw : w.deleted id with
+      | none => rfl
+      | some _ => exact absurd (by simp [hw]) (hdel hde)
+    · exact hd hde id
+  simp [getNodeAttrs, hnone, updateNodeAttrs, hk.2.2.1 id hn, hk.2.2.2 id he]
+
+/-- **PROVEN**: contrapositive — a node that reads differently from the committed graph
+is always flagged. -/
+theorem reads_differ_imp_differs (w : W) (k : Keys) (hd : w.deletedOk) (hk : k.coherent w) (id : Nat)
+    (h : getLabelIds w id ≠ w.committedLabels id ∨ getNodeAttrs w id ≠ w.committedAll id) :
+    differs w k id = true := by
+  cases hh : differs w k id
+  · rcases h with h | h
+    · exact absurd (not_differs_labels w k hd hk id hh) h
+    · exact absurd (not_differs_attrs w k hd hk id hh) h
+  · rfl
+
+/-- The guard is not exact: a node deleted with a snapshot equal to the committed state
+trips it though no read changes. -/
+theorem differs_overapprox :
+    ∃ (w : W) (k : Keys), differs w k 0 = true ∧
+      getLabelIds w 0 = w.committedLabels 0 ∧ getNodeAttrs w 0 = w.committedAll 0 := by
+  refine ⟨{ reuseWorld with deleted := fun _ => some ⟨[], []⟩, deletedEmpty := false },
+    ⟨[], [], [], []⟩, by decide, by decide, by decide⟩
+
 end RuntimeCore.Accessors

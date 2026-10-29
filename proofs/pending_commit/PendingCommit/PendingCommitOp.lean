@@ -439,4 +439,63 @@ theorem commit_spec (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × St
       ⟨c5.imp, c5.act, rfl, by simp [d5, f5, e3, e2, e1]⟩, rfl, rfl, hok⟩
   · cases h6
 
+/-! ## `node_has_changes` (#3464, pending.rs:760)
+
+The O(1) guard the runtime uses to skip building the `get_node_labels` /
+`get_node_attrs` copies: true iff the node is a key of one of the four staged maps
+(`has` skips an empty map before hashing, which cannot change the answer: an empty map
+has no key). When it is false, both overlays (`update_node_labels`, `update_node_attrs`)
+are the identity. -/
+
+/-- inner `fn has` (:764): `!m.is_empty() && m.contains_key(&id)`. -/
+def hasKey {V : Type} (m : FMap V) (id : Nat) : Bool := !m.isEmpty && (fget m id).isSome
+
+/-- `Pending::node_has_changes` (:760). -/
+def nodeHasChanges (p : P) (id : Nat) : Bool :=
+  hasKey p.setL id || hasKey p.remL id || hasKey p.newN id || hasKey p.existN id
+
+/-- **`hasKey_eq`**: the empty-map short-cut changes nothing. -/
+theorem hasKey_eq {V : Type} (m : FMap V) (id : Nat) : hasKey m id = (fget m id).isSome := by
+  cases m with
+  | nil => simp [hasKey, fget]
+  | cons q m => simp [hasKey]
+
+/-- **`nodeHasChanges_spec`**: true iff `id` is a key of `set_labels`, `remove_labels`,
+`new_nodes_attrs` or `existing_nodes_attrs`. -/
+theorem nodeHasChanges_spec (p : P) (id : Nat) :
+    nodeHasChanges p id = true ↔
+      ((fget p.setL id).isSome ∨ (fget p.remL id).isSome ∨ (fget p.newN id).isSome ∨
+        (fget p.existN id).isSome) := by
+  simp [nodeHasChanges, hasKey_eq, Bool.or_eq_true, or_assoc]
+
+/-- **`nodeHasChanges_false_labels`**: no staged change ⇒ `update_node_labels` leaves the
+committed label test untouched (`Labels.overlay` over empty staged sets is the matrix). -/
+theorem nodeHasChanges_false_labels (p : P) (id : Nat) (h : nodeHasChanges p id = false)
+    (C : Nat → Bool) (l : Nat) :
+    Labels.overlay C ⟨(fget p.setL id).getD [], (fget p.remL id).getD []⟩ l = C l := by
+  have h' : ¬ ((fget p.setL id).isSome ∨ (fget p.remL id).isSome ∨ (fget p.newN id).isSome ∨
+      (fget p.existN id).isSome) := fun hh => by
+    have := (nodeHasChanges_spec p id).mpr hh; rw [h] at this; cases this
+  simp only [not_or, Option.not_isSome_iff_eq_none] at h'
+  obtain ⟨h1, h2, -, -⟩ := h'
+  simp [Labels.overlay, h1, h2]
+
+/-- **`nodeHasChanges_false_attrs`**: no staged change ⇒ `update_node_attrs` is the identity. -/
+theorem nodeHasChanges_false_attrs (p : P) (id : Nat) (h : nodeHasChanges p id = false)
+    (nm : Nat → Option String) (o : OM) : updA nm p.newN p.existN id o = o := by
+  have h' : ¬ ((fget p.setL id).isSome ∨ (fget p.remL id).isSome ∨ (fget p.newN id).isSome ∨
+      (fget p.existN id).isSome) := fun hh => by
+    have := (nodeHasChanges_spec p id).mpr hh; rw [h] at this; cases this
+  simp only [not_or, Option.not_isSome_iff_eq_none] at h'
+  obtain ⟨-, -, h3, h4⟩ := h'
+  simp [updA, h3, h4]
+
+/-- The guard is only sufficient, not necessary: a staged set of an already-committed
+label changes nothing but still trips it. -/
+theorem nodeHasChanges_overapprox :
+    ∃ p : P, nodeHasChanges p 0 = true ∧
+      ∀ l, Labels.overlay (fun _ => true) ⟨(fget p.setL 0).getD [], (fget p.remL 0).getD []⟩ l = true := by
+  refine ⟨(⟨[], [], [], [], [], [], [], [], [], [], [], [], [(0, [1])], []⟩ : P), by decide, ?_⟩
+  intro l; simp [Labels.overlay, fget]
+
 end PendingCommit.PC

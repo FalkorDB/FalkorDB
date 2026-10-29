@@ -8,18 +8,18 @@ for *any* indexer behaviour.
 
 | here | there (graph.rs) |
 | --- | --- |
-| `populateStart`   | `populate_index` :508 |
-| `dropBg`          | `drop_index_bg` :755 |
-| `createIndex`     | `create_index` :3570 / `create_index_sync` :3617 |
-| `syncDocs`        | `populate_indexes_sync` :3661 (one label/type) |
-| `commitDocs`      | `commit_index_kind` :3910 (via `commit_index` :3799, `commit_index_locked` :3812) |
-| `commitEdgeDocs`  | `commit_edge_index_locked` :3834 (via `commit_edge_index` :3822) |
-| `commitIndexDocs` | `commit_index_docs` :3785 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
-| `dropIndex`       | `drop_index` :3964 |
-| `indexInfo`       | `index_info` :4301 |
-| `memEstimate`, `labelPass` | `memory_usage_report` :4752 sampling arithmetic and seen-dedup |
-| `encodeOp`        | `encode_payload` :4926 dispatch |
-| `getPlan`         | `get_plan` :1273 cache decision |
+| `populateStart`   | `populate_index` :510 |
+| `dropBg`          | `drop_index_bg` :761 |
+| `createIndex`     | `create_index` :3592 / `create_index_sync` :3639 |
+| `syncDocs`        | `populate_indexes_sync` :3683 (one label/type) |
+| `commitDocs`      | `commit_index_kind` :3946 (via `commit_index` :3835, `commit_index_locked` :3848) |
+| `commitEdgeDocs`  | `commit_edge_index_locked` :3870 (via `commit_edge_index` :3858) |
+| `commitIndexDocs` | `commit_index_docs` :3821 (native apply, then `commit_index`/`commit_edge_index` per non-empty kind) |
+| `dropIndex`, `noSuchIndexMsg` | `drop_index` :4000 (message :4085) |
+| `indexInfo`       | `index_info` :4343 |
+| `memEstimate`, `labelPass` | `memory_usage_report` :4794 sampling arithmetic and seen-dedup |
+| `encodeOp`        | `encode_payload` :4968 dispatch |
+| `getPlan`         | `get_plan` :1305 cache decision |
 -/
 namespace GQ
 variable {V : Type}
@@ -152,7 +152,7 @@ theorem commitDocs_every_id (adds rems : List (Nat × List Nat)) (names : List S
   · cases h
     exact ⟨_, _, List.mem_map.2 ⟨_, hs, rfl⟩, _, List.mem_map.2 ⟨id, hi, rfl⟩⟩
 
-/-- `commit_index_docs` (graph.rs:3785): first `apply_index_writes` (the native index's
+/-- `commit_index_docs` (graph.rs:3821): first `apply_index_writes` (the native index's
 staged `docs.native`, a no-op without `index-falkordb`; its semantics belong to
 proofs/index_layer), then the RediSearch node documents iff `node_adds`/`node_removes` is
 non-empty, then the edge documents iff `edge_adds`/`edge_removes` is non-empty. The ops
@@ -202,19 +202,49 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
       · have : y.2.2 ≠ e := fun h => hnd.1 (h ▸ List.mem_map_of_mem hm')
         simp [this, ih hnd.2 hm']
 
+/-- The "no such index" text (graph.rs:4085-4092): `:L` when no attribute is named
+(`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
+def noSuchIndexMsg (label : String) (attrs : List String) : String :=
+  let attrList := ", ".intercalate attrs
+  let a := if attrList = "" then "" else "(" ++ attrList ++ ")"
+  "Unable to drop index on :" ++ label ++ a ++ ": no such index."
+
 /-- `drop_index`: empty attrs expand to the index type's fields; a UNIQUE
 constraint over any of them blocks the drop; otherwise the indexer decides. -/
-def dropIndex (dependsOn : String → Bool) (fieldsOfType : List String) (attrs : List String)
-    (dropped : Nat) : Except String Nat :=
+def dropIndex (dependsOn : String → Bool) (fieldsOfType : List String) (label : String)
+    (attrs : List String) (dropped : Nat) : Except String Nat :=
   let eff := if attrs = [] then fieldsOfType else attrs
   if eff.any dependsOn then .error "Index supports constraint"
-  else if dropped > 0 then .ok dropped else .error "no such index"
+  else if dropped > 0 then .ok dropped else .error (noSuchIndexMsg label attrs)
 
-theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType attrs : List String) (dropped : Nat)
+theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List String) (label : String)
+    (attrs : List String) (dropped : Nat)
     (a : String) (ha : a ∈ (if attrs = [] then fieldsOfType else attrs)) (hd : dependsOn a = true) :
-    dropIndex dependsOn fieldsOfType attrs dropped = .error "Index supports constraint" := by
+    dropIndex dependsOn fieldsOfType label attrs dropped = .error "Index supports constraint" := by
   unfold dropIndex
   rw [if_pos (List.any_eq_true.2 ⟨a, ha, hd⟩)]
+
+/-- **#3280 (fixed)**: dropping an index that does not exist (no constraint in the way)
+reports `Unable to drop index on :L: no such index.` when no attribute was named, as C. -/
+theorem dropIndex_none_noattr (dependsOn : String → Bool) (fieldsOfType : List String)
+    (label : String) (h : fieldsOfType.any dependsOn = false) :
+    dropIndex dependsOn fieldsOfType label [] 0 =
+      .error ("Unable to drop index on :" ++ label ++ ": no such index.") := by
+  simp [dropIndex, h, noSuchIndexMsg]
+
+/-- With attributes named, the message lists them all: `:L(a, b)`. -/
+example : noSuchIndexMsg "L" ["a", "b"] = "Unable to drop index on :L(a, b): no such index." := by
+  decide +kernel
+
+/-- Historical (pre-#3280): the attribute list was always printed, giving `:L()` for
+`db.idx.fulltext.drop('L')` where C prints `:L`. -/
+def pre3280NoSuchIndexMsg (label : String) (attrs : List String) : String :=
+  "Unable to drop index on :" ++ label ++ "(" ++ ", ".intercalate attrs ++ "): no such index."
+
+theorem pre3280_empty_attrs_diverged :
+    pre3280NoSuchIndexMsg "L" [] = "Unable to drop index on :L(): no such index." ∧
+    noSuchIndexMsg "L" [] = "Unable to drop index on :L: no such index." := by
+  decide +kernel
 
 /-- `index_info`: node infos tagged `NODE`, then edge infos tagged `RELATIONSHIP`. -/
 def indexInfo {I} (nodeInfos edgeInfos : List I) : List (String × I) :=

@@ -18,66 +18,69 @@ graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_maybe_borrow
 graph/src/runtime/functions/algo_procedures.rs	extract_vector_f64	429	AXIOMATISED	GrB_Vector_extractTuples_FP64: (index,value) pairs
 graph/src/runtime/functions/algo_procedures.rs	extract_vector_i64	446	AXIOMATISED	GrB_Vector_extractTuples_INT64: (index,value) pairs
 graph/src/runtime/functions/algo_procedures.rs	node_value	463	PROVEN	AlgoGlue.nodeValue_spec
-graph/src/runtime/functions/algo_procedures.rs	collect_node_ids	469	PROVEN	AlgoGlue.collectNodeIds_spec (get_nodes({l}) AXIOMATISED accessor), mem_activeNodes
-graph/src/runtime/functions/algo_procedures.rs	active_node_set	493	PROVEN	AlgoGlue.mem_activeNodes (Graph::get_nodes(∅), graph.rs:2177-2198)
-graph/src/runtime/functions/algo_procedures.rs	build_bool_pattern	521	AXIOMATISED	GxB_Matrix_build_Scalar iso build, duplicates collapse
-graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	552	PROVEN	Compact.compactEdges_sound (id_to_compact / sorted_ids); LagContract.compactBuild (GrB_Matrix_new n×n orientation, :609)
-graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	618	PROVEN	Compact.compactEdges_sound (both orientations pushed); LagContract.compactBuild (GrB_Matrix_new n×n orientation, :679)
-graph/src/runtime/functions/algo_procedures.rs	register	687	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
-graph/src/runtime/functions/algo_procedures.rs	register_pagerank	702	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	707	PROVEN	Compact.pagerank_unknown_label_compact_empty, unfiltered_rows_exact; LAGr_PageRank AXIOMATISED; LagContract.projectedRun — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
-graph/src/runtime/functions/algo_procedures.rs	register_wcc	812	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_wcc	817	PROVEN	Compact.wcc_compact_component_id_not_member, unfiltered_component_ids_are_members (LagWcc hypothesis); LagContract.projectedRun (LAGRAPH_INVALID_GRAPH outcome) — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
-graph/src/runtime/functions/algo_procedures.rs	register_betweenness	913	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_betweenness	918	PROVEN	Config.samplingSize_wraps, Compact.seed0_sources_lt, seed0_samples_deleted; LAGr_Betweenness AXIOMATISED; Betweenness.rustSources (seeded loop :991-1012) — #3380 open: bug3380_default_size_16, bug3380_seedless_deterministic, bug3380_seeded_fewer_sources refute DefaultSizeMatchesC/SeedlessRunVaries/SourcesExact; also LagContract.bug3349_one_node_projection_fails (1-node projection)
-graph/src/runtime/functions/algo_procedures.rs	register_bfs	1058	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBfs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1063	PROVEN	AlgoBfsReg.edgesBranch_aligned, branches_agree, levelBranch_no_src, algoBfs_deleted_src, algoBfs_null (LAGr_BreadthFirstSearch_Extended AXIOMATISED)
-graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1208	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eCdlp; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1213	PROVEN	Compact.wcc_compact_component_id_not_member (same assembly), Config.maxIterations_wraps_to_zero
-graph/src/runtime/functions/algo_procedures.rs	register_msf	1320	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_msf	1325	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed; GraphBLAS build/extract/LAGraph_msf AXIOMATISED
-graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1929	PROVEN	Config.maxLen_wraps, maxLen_small, pathCount
-graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	PROVEN	PathDispatch.parseSp_ok, parseSp_missing, parseSp_not_node
-graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
-graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2070	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
-graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2092	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
-graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2104	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop (W2-traverse-5 fixed by #3113 8a66c01e5; pre3113_cost_default_diverges kept); CostProp.edgeNumericAttr (costProp configured vs absent kept apart) — #3121 open: bug3121_fastpath_missing_cost_zero refutes MissingCostIsOne on the :2308 fast path (enumeration satisfies it: rust_enum_ok)
-graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2121	PROVEN	Paths.far_outgoing, far_incoming, far_both
-graph/src/runtime/functions/algo_procedures.rs	node_successors	2153	PROVEN	Graph.mem_succs, succs_map_fst_sublist
-graph/src/runtime/functions/algo_procedures.rs	cmp	2188	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
-graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2203	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
-graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2219	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates; reported cost refuted by CostProp.bug3121_fastpath_missing_cost_zero (#3121)
-graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2322	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
-graph/src/runtime/functions/algo_procedures.rs	record_found_path	2407	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
-graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2471	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
-graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2575	PROVEN	Paths.nextNode_far
-graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2606	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
-graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2657	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2662	PROVEN	PathDispatch.algoSp_spec
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2669	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2674	PROVEN	PathDispatch.algoSs_spec
-graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2683	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2688	PROVEN	Compact.harmonic_correct_iff, unfiltered_drops_high_ids
-graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2847	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2852	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	check_known_labels_and_types	469	PROVEN	Compact.checkKnown, checkKnown_ok_iff, checkKnown_unknown_label_errors, checkKnown_unknown_type_errors, checkKnown_label_first, known_messages (Graph::get_label_id/get_type_id AXIOMATISED as the predicates)
+graph/src/runtime/functions/algo_procedures.rs	collect_node_ids	487	PROVEN	AlgoGlue.collectNodeIds_spec (get_nodes({l}) AXIOMATISED accessor), mem_activeNodes
+graph/src/runtime/functions/algo_procedures.rs	active_node_set	511	PROVEN	AlgoGlue.mem_activeNodes (Graph::get_nodes(∅), graph.rs:2177-2198)
+graph/src/runtime/functions/algo_procedures.rs	build_bool_pattern	539	AXIOMATISED	GxB_Matrix_build_Scalar iso build, duplicates collapse
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	570	PROVEN	Compact.compactEdges_sound (id_to_compact / sorted_ids); LagContract.compactBuild (GrB_Matrix_new n×n orientation, :609)
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	636	PROVEN	Compact.compactEdges_sound (both orientations pushed); LagContract.compactBuild (GrB_Matrix_new n×n orientation, :679)
+graph/src/runtime/functions/algo_procedures.rs	register	705	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
+graph/src/runtime/functions/algo_procedures.rs	register_pagerank	720	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	725	PROVEN	Compact.pagerankPath, pagerank_unknown_label_empty, pagerank_unknown_type_empty, pagerank_compact_nonempty (fixed by #3058; historical pre3058_pagerank_unknown_label_compact_empty), unfiltered_rows_exact; LAGr_PageRank AXIOMATISED; LagContract.projectedRun — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
+graph/src/runtime/functions/algo_procedures.rs	register_wcc	839	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_wcc	844	PROVEN	Compact.wcc_compact_component_id_not_member, unfiltered_component_ids_are_members (LagWcc hypothesis); LagContract.projectedRun (LAGRAPH_INVALID_GRAPH outcome) — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
+graph/src/runtime/functions/algo_procedures.rs	register_betweenness	940	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_betweenness	945	PROVEN	Config.samplingSize_wraps, Compact.seed0_sources_lt, seed0_samples_deleted; LAGr_Betweenness AXIOMATISED; Betweenness.rustSources (seeded loop :991-1012) — #3380 open: bug3380_default_size_16, bug3380_seedless_deterministic, bug3380_seeded_fewer_sources refute DefaultSizeMatchesC/SeedlessRunVaries/SourcesExact; also LagContract.bug3349_one_node_projection_fails (1-node projection); Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_bfs	1092	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBfs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1097	PROVEN	AlgoBfsReg.edgesBranch_aligned, branches_agree, levelBranch_no_src, algoBfs_deleted_src, algoBfs_null (LAGr_BreadthFirstSearch_Extended AXIOMATISED)
+graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1242	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eCdlp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1247	PROVEN	Compact.wcc_compact_component_id_not_member (same assembly), Config.maxIterations_wraps_to_zero; Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_msf	1361	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_msf	1366	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed, compactOf_eq, denseTable_len (id map, #3586); GraphBLAS build/extract/LAGraph_msf AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1981	PROVEN	Config.maxLen_wraps, maxLen_small, pathCount
+graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2067	PROVEN	PathDispatch.parseSp_ok, parseSp_missing, parseSp_not_node
+graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2103	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
+graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2122	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
+graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2144	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2156	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop (W2-traverse-5 fixed by #3113 8a66c01e5; pre3113_cost_default_diverges kept); CostProp.edgeNumericAttr (costProp configured vs absent kept apart) — #3121 open: bug3121_fastpath_missing_cost_zero refutes MissingCostIsOne on the :2308 fast path (enumeration satisfies it: rust_enum_ok)
+graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2173	PROVEN	Paths.far_outgoing, far_incoming, far_both
+graph/src/runtime/functions/algo_procedures.rs	node_successors	2205	PROVEN	Graph.mem_succs, succs_map_fst_sublist
+graph/src/runtime/functions/algo_procedures.rs	cmp	2240	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
+graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2255	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
+graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2271	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates; reported cost refuted by CostProp.bug3121_fastpath_missing_cost_zero (#3121)
+graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2374	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2459	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2523	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2627	PROVEN	Paths.nextNode_far
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2658	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2709	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2714	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2721	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2726	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2735	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2740	PROVEN	Compact.harmonic_correct_iff, unfiltered_drops_high_ids (#3044 open; fix PR #3045 unmerged); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2901	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2906	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
 graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
 graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
 graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear
 graph/src/udf/js_classes.rs	collect_edges	97	PROVEN	Neighbors.outgoing_ok, self_loop_twice
-graph/src/udf/js_classes.rs	create_js_node	129	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode reads the committed graph: bug3454_deleted_node_empty (open #3454, property RuntimeFirstNode)
-graph/src/udf/js_classes.rs	create_js_edge	213	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node without runtime: UdfNodeView.bug3454_edge_source_empty (open #3454, property RuntimeFirstEdgeEnds)
-graph/src/udf/js_classes.rs	create_js_path	289	PROVEN	UdfClasses.jsPath_length
-graph/src/udf/js_classes.rs	js_get_neighbors_entry	349	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_neighbors	368	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
-graph/src/udf/js_classes.rs	throw_js_error	498	PROVEN	UdfClasses.entryErr_spec (throwJs)
-graph/src/udf/js_classes.rs	js_get_node_by_id	510	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
-graph/src/udf/js_classes.rs	js_get_node_by_id_impl	517	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
-graph/src/udf/js_classes.rs	js_iterate_nodes	553	PROVEN	UdfClasses.iterNodes_all, iter_errors
-graph/src/udf/js_classes.rs	js_iterate_nodes_impl	560	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
-graph/src/udf/js_classes.rs	js_iterate_edges	608	PROVEN	UdfClasses.iter_errors
-graph/src/udf/js_classes.rs	js_iterate_edges_impl	615	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
-graph/src/udf/js_classes.rs	js_traverse	658	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
-graph/src/udf/js_classes.rs	js_traverse_impl	676	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
+graph/src/udf/js_classes.rs	create_js_node	134	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed; historical pre3454_deleted_node_empty)
+graph/src/udf/js_classes.rs	set_node_labels	203	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
+graph/src/udf/js_classes.rs	set_node_attrs	220	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
+graph/src/udf/js_classes.rs	create_js_edge	246	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464; historical pre3454_edge_source_empty)
+graph/src/udf/js_classes.rs	create_js_path	322	PROVEN	UdfClasses.jsPath_length
+graph/src/udf/js_classes.rs	js_get_neighbors_entry	382	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_neighbors	401	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
+graph/src/udf/js_classes.rs	throw_js_error	531	PROVEN	UdfClasses.entryErr_spec (throwJs)
+graph/src/udf/js_classes.rs	js_get_node_by_id	543	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_node_by_id_impl	550	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
+graph/src/udf/js_classes.rs	js_iterate_nodes	586	PROVEN	UdfClasses.iterNodes_all, iter_errors
+graph/src/udf/js_classes.rs	js_iterate_nodes_impl	593	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
+graph/src/udf/js_classes.rs	js_iterate_edges	641	PROVEN	UdfClasses.iter_errors
+graph/src/udf/js_classes.rs	js_iterate_edges_impl	648	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
+graph/src/udf/js_classes.rs	js_traverse	691	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
+graph/src/udf/js_classes.rs	js_traverse_impl	709	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
 graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
 graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
 graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
@@ -96,13 +99,13 @@ graph/src/udf/repository.rs	default	67	PROVEN	UdfRepoOps.rnew_spec
 graph/src/udf/repository.rs	new	74	PROVEN	UdfRepoOps.rnew_spec
 graph/src/udf/repository.rs	version	83	PROVEN	UdfRepoOps.bump_spec
 graph/src/udf/repository.rs	bump_version	89	PROVEN	UdfRepoOps.bump_spec
-graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collision_accepted, case_folded, dotted_collision; UdfGlobals.empty_lib_name_mismatch
-graph/src/udf/repository.rs	delete	140	PROVEN	Repo.delete_preserves, delete_breaks_other
-graph/src/udf/repository.rs	flush	157	PROVEN	UdfRepoOps.flush_spec
-graph/src/udf/repository.rs	list	170	PROVEN	UdfRepoOps.list_shows_raw, list_filter, strip_qual
-graph/src/udf/repository.rs	get_all_libraries	205	PROVEN	UdfRepoOps.getAll_spec
-graph/src/udf/repository.rs	serialize	211	PROVEN	UdfRepoOps.serialize_roundtrip
-graph/src/udf/repository.rs	deserialize	226	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
+graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collides, collision_rejected, dotted_collision_rejected, replace_self_ok, case_sensitive, load_preserves_crossFold, keysUnique_of_crossFold (fixed by #3066; historical pre3066_*); UdfGlobals.empty_lib_name_mismatch
+graph/src/udf/repository.rs	delete	156	PROVEN	Repo.delete_preserves, delete_breaks_other
+graph/src/udf/repository.rs	flush	173	PROVEN	UdfRepoOps.flush_spec
+graph/src/udf/repository.rs	list	186	PROVEN	UdfRepoOps.list_shows_raw, list_filter, strip_qual
+graph/src/udf/repository.rs	get_all_libraries	221	PROVEN	UdfRepoOps.getAll_spec
+graph/src/udf/repository.rs	serialize	227	PROVEN	UdfRepoOps.serialize_roundtrip
+graph/src/udf/repository.rs	deserialize	242	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
 graph/src/udf/type_convert.rs	with_stack	80	AXIOMATISED	stacker::maybe_grow (psm stack-switching FFI): runs f and returns its result on a fresh segment when the stack is low; transparent in the model (one fromF/toF level = one with_stack call)
 graph/src/udf/type_convert.rs	udf_nesting_error	87	PROVEN	Nesting.nestErr, nestErr_eq; MarshalCap.self_array_error, fromJs_nestArr_past, toJs_nestList_past
 graph/src/udf/type_convert.rs	value_to_js	97	PROVEN	Marshal.toJs (= toF at depth 0): toJs_frames, toJs_past_cap, toJs_eq_pre3336, nestList_rt, toJs_nestList_past (#3336); int_roundtrip, float_rt_iff, neg_zero_rt, node_rt, rel_rt, point_rt, datetime_rt, vecf32_rt, map_never_marked, constructor_key_roundtrips; cap_asymmetry_vecf32

@@ -123,7 +123,7 @@ structure Cache where
 /-- `rebuild_context`: the old state is dropped first (so a failed rebuild
 leaves `None`); every library is evaluated in order, the first failure aborts
 with its formatted message; then each qualified name found in the JS registry
-is cached under its lowercase. -/
+is cached under its name as registered (`low` = identity since #3066, js_context.rs:261; it was `to_lowercase`). -/
 def rebuild (low : String → String) (libs : List Lib) (evalLib : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) : Except String Cache :=
   match libs.find? (fun l => (evalLib l).toBool == false) with
@@ -164,8 +164,8 @@ theorem ensureCurrent_version (low : String → String) (st : Option Cache) (v :
       · cases hc; rfl
     · intro h; cases h
 
-/-- Cached keys are exactly the lowercased qualified names the scripts really
-registered. -/
+/-- Cached keys are exactly the (`low` of the) qualified names the scripts really
+registered; case-sensitive (`low = id`) since #3066. -/
 theorem rebuild_keys (low : String → String) (libs : List Lib) (ev : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) (c : Cache) (h : rebuild low libs ev raw v = .ok c) :
     ∀ k, k ∈ c.funcs ↔ ∃ l ∈ libs, ∃ q ∈ l.fns, q ∈ raw ∧ k = low q := by
@@ -197,7 +197,7 @@ def mapCallErr (msg : List Char) : String :=
     "out of memory"
   else "UDF Exception: " ++ String.ofList msg
 
-/-- `call_udf_bridge`: lookup by lowercase name, convert args, call, convert
+/-- `call_udf_bridge`: lookup by exact name (`low = id` since #3066, js_context.rs:292), convert args, call, convert
 back; the graph slot is set before the call and cleared after it whatever the
 outcome. Returns the result and the final graph slot. -/
 def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (slot : Option γ) (g : γ)

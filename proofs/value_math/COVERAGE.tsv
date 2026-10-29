@@ -120,17 +120,17 @@ graph/src/runtime/functions/mod.rs	add_procedure	951	PROVEN	Registry.addProcedur
 graph/src/runtime/functions/mod.rs	add_var_len	979	PROVEN	Registry.addVarLen: addVarLen_name (stores lowered name)
 graph/src/runtime/functions/mod.rs	set_pure_fn	1009	PROVEN	Registry.setPureFn/update: setPureFn_spec, update_spec, update_none
 graph/src/runtime/functions/mod.rs	set_struct_fn	1031	PROVEN	Registry.setStructFn/update: setStructFn_spec
-graph/src/runtime/functions/mod.rs	get	1048	PROVEN	regGet_lower
-graph/src/runtime/functions/mod.rs	iter	1074	PROVEN	Registry.iter: iter_mem
-graph/src/runtime/functions/mod.rs	is_aggregate	1079	PROVEN	isAggregate_case_sensitive (latent, no caller)
-graph/src/runtime/functions/mod.rs	udf_version	1099	PROVEN	Registry.udfVersion: version_mono
-graph/src/runtime/functions/mod.rs	init_functions	1103	PROVEN	Registry.registerAll/initFunctions: registerAll_ok (no panic iff lowered names distinct), initFunctions_once
-graph/src/runtime/functions/mod.rs	init_udf_functions	1124	PROVEN	Registry.initUdf: initUdf_idem
-graph/src/runtime/functions/mod.rs	register_udf	1129	PROVEN	Registry.registerUdf: registerUdf_spec, udf_uninit_noop, version_mono
-graph/src/runtime/functions/mod.rs	unregister_udf	1140	PROVEN	Registry.unregisterUdf: unregisterUdf_spec, version_mono
-graph/src/runtime/functions/mod.rs	flush_udfs	1148	PROVEN	Registry.flushUdfs: flushUdfs_spec, version_mono
-graph/src/runtime/functions/mod.rs	get_udf_functions	1157	PROVEN	Registry.getUdfFunctions: registerUdf_spec, flushUdfs_spec, udf_uninit_noop
-graph/src/runtime/functions/mod.rs	get_functions	1164	PROVEN	Registry.getFunctions: getFunctions_after_init
+graph/src/runtime/functions/mod.rs	get	1048	PROVEN	TypeCheck regGet: regGet_builtin_ci (built-ins case-insensitive), regGet_udf_case_sensitive (#3066)
+graph/src/runtime/functions/mod.rs	iter	1075	PROVEN	Registry.iter: iter_mem
+graph/src/runtime/functions/mod.rs	is_aggregate	1080	PROVEN	isAggregate_case_sensitive (latent, no caller)
+graph/src/runtime/functions/mod.rs	udf_version	1100	PROVEN	Registry.udfVersion: version_mono
+graph/src/runtime/functions/mod.rs	init_functions	1104	PROVEN	Registry.registerAll/initFunctions: registerAll_ok (no panic iff lowered names distinct), initFunctions_once
+graph/src/runtime/functions/mod.rs	init_udf_functions	1125	PROVEN	Registry.initUdf: initUdf_idem
+graph/src/runtime/functions/mod.rs	register_udf	1131	PROVEN	Registry.registerUdf: registerUdf_spec, udf_case_sensitive (#3066), udf_uninit_noop, version_mono
+graph/src/runtime/functions/mod.rs	unregister_udf	1142	PROVEN	Registry.unregisterUdf: unregisterUdf_spec, udf_case_sensitive (#3066), version_mono
+graph/src/runtime/functions/mod.rs	flush_udfs	1150	PROVEN	Registry.flushUdfs: flushUdfs_spec, version_mono
+graph/src/runtime/functions/mod.rs	get_udf_functions	1159	PROVEN	Registry.getUdfFunctions: registerUdf_spec, flushUdfs_spec, udf_uninit_noop
+graph/src/runtime/functions/mod.rs	get_functions	1166	PROVEN	Registry.getFunctions: getFunctions_after_init
 graph/src/runtime/functions/aggregation.rs	register	49	PROVEN	AggScalar.aggRegistered: aggRegistered_nodup
 graph/src/runtime/functions/aggregation.rs	collect	55	PROVEN	AggScalar.collect: collect_fold
 graph/src/runtime/functions/aggregation.rs	count	77	PROVEN	AggScalar.count: count_fold
@@ -174,9 +174,10 @@ graph/src/runtime/functions/procedures.rs	dbms_procedures	434	PROVEN	Procedures 
 graph/src/runtime/functions/procedures.rs	dbms_functions	466	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
 graph/src/runtime/functions/procedures.rs	build_columns	554	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
 graph/src/runtime/functions/procedures.rs	type_to_dbms_value	613	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
-graph/src/runtime/functions/procedures.rs	type_to_dbms_string	646	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_visible (divergence)
-graph/src/runtime/functions/procedures.rs	format_union	691	PROVEN	Procedures formatUnion: any_string, examples
-graph/src/runtime/functions/procedures.rs	format_union_strings	703	PROVEN	Procedures formatUnion_strings_eq
+graph/src/runtime/functions/procedures.rs	type_to_dbms_string	646	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_is_c (#3280: strictly C-ordered, same members), canon_eq_of, union_perm_invariant, union_point_null, union_tofloat, union_nested, union_any
+graph/src/runtime/functions/procedures.rs	collect_dbms_types	705	PROVEN	Procedures collectTys/collectTysL: collectTys_mem (members in the 17 C names), union_nested, union_any
+graph/src/runtime/functions/procedures.rs	format_union	717	PROVEN	Procedures formatUnion: any_string, examples
+graph/src/runtime/functions/procedures.rs	format_union_strings	729	PROVEN	Procedures formatUnion_strings_eq
 graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + path_no_panic (validated Path|Null never hits unreachable!)
 graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
 graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic

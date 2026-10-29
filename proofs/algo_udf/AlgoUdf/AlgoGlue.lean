@@ -10,10 +10,10 @@ import AlgoUdf.Dfs
 | `indexOp`, `valueOp`     | `msf_scored_edge_index_op` :176, `msf_scored_edge_value_op` :200 (null guard = no write) |
 | `scoreOf`                | `msf_score_of` :266 |
 | `nodeValue`              | `node_value` :463 |
-| `collectNodeIds`         | `collect_node_ids` :469 (label scans AXIOMATISED as `scan`; FxHashSet + `sort_unstable`) |
+| `collectNodeIds`         | `collect_node_ids` :487 (label scans AXIOMATISED as `scan`; FxHashSet + `sort_unstable`) |
 | `activeNodes`            | `active_node_set` :493 / `Graph::get_nodes(∅, 0)` (graph.rs:2253-2274) |
 | `Own`, `lifecycle`       | `create_lagraph_graph` :372, `delete_lagraph_graph` :397, `_borrowed` :404, `_maybe_borrowed` :417 under the LAGraph ownership contract |
-| `cmpKey`                 | `cmp_found_path` :2092 (= `Dfs.fpLt`) |
+| `cmpKey`                 | `cmp_found_path` :2144 (= `Dfs.fpLt`) |
 -/
 namespace AlgoUdf.AlgoGlue
 open AlgoUdf

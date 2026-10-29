@@ -11,6 +11,15 @@ of `pending.rs` (68 non-test) 66 are PROVEN and `check_node_constraint` /
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
 Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `1d15bf713`.
 
+## Re-target to 1c0e6c8de (from e860645bb)
+
+#3464 added `node_has_changes` (pending.rs:760, inner `has` :764); every row below it moved +22
+(`commit` is now :1256). `PC.nodeHasChanges_spec` (true iff the node is a key of `set_labels`,
+`remove_labels`, `new_nodes_attrs`, `existing_nodes_attrs`), `hasKey_eq` (the `is_empty` short-cut
+is a no-op), `nodeHasChanges_false_labels` / `_false_attrs` (false ⇒ both overlays are the
+identity), `nodeHasChanges_overapprox` (sufficient, not exact). Runtime side: runtime_core
+`Accessors.not_differs_labels/_attrs`.
+
 ## Re-target to 1d15bf713 (from 0f45a8685)
 
 No function this project models changed: #3250 touches only `rebuild_derived_matrices`

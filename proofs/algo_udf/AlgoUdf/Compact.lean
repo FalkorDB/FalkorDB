@@ -2,14 +2,15 @@
 
 | here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
 | --- | --- |
-| `idx`, `ids`            | `build_compact_adj_from_tensors` :552 / `..._symmetric_...` :618: `sorted_ids` (compact → id) and `id_to_compact` |
+| `idx`, `ids`            | `build_compact_adj_from_tensors` :570 / `..._symmetric_...` :636: `sorted_ids` (compact → id) and `id_to_compact` |
 | `compactEdges`          | the tensor loops in the same two functions (edge kept iff both ends are active) |
 | `LagWcc`                | AXIOMATISED spec of `LAGr_ConnectedComponents` / `LAGraph_cdlp` output |
-| `wccRows`               | algo.WCC result assembly :884-897 (algo.labelPropagation :1293-1305 is identical) |
+| `wccRows`               | algo.WCC result assembly :911-924 (algo.labelPropagation :1327-1339 is identical) |
 | `unfilteredRows`        | the `compact_to_id = None` branch of every procedure + `is_node_deleted` skip |
-| `harmonicRows`          | algo.HarmonicCentrality :2777-2826 |
-| `pagerankPath`          | algo.pageRank `use_unfiltered` :727-729 |
-| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :974-994 |
+| `harmonicRows`          | algo.HarmonicCentrality :2829-2878 |
+| `pagerankPath`          | algo.pageRank early exits :729-735, `use_unfiltered` :750-752, empty active set :772-774 (#3058) |
+| `checkKnown`            | `check_known_labels_and_types` :469 (betweenness :973, labelPropagation :1268, HarmonicCentrality :2759) |
+| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :1001-1021 |
 
 LAGraph is not modelled; its output contract is a hypothesis (`LagWcc`), citing
 LAGraph's `LAGr_ConnectedComponents` doc: "component(i) = r where r is the
@@ -42,7 +43,7 @@ structure LagWcc (n : Nat) (comp : Nat → Nat) : Prop where
   lt : ∀ i, i < n → comp i < n
 
 /-- Rust's rows on the compact path: node mapped through `ids`, component id
-pushed as-is (`component_ids.push(comp_id)`, :895). -/
+pushed as-is (`component_ids.push(comp_id)`, :922). -/
 def wccRows (ids : List Nat) (comp : Nat → Nat) : List (Nat × Nat) :=
   (List.range ids.length).map fun i => (ids.getD i 0, comp i)
 
@@ -100,7 +101,7 @@ theorem unfiltered_rows_nodup (bound : Nat) (alive : Nat → Bool) :
   (List.nodup_range).filter _
 
 /-- HarmonicCentrality's unfiltered source vector has length `node_count`, not
-`node_id_bound` (:2780-2782). A live id `≥ node_count` is dropped. -/
+`node_id_bound` (:2832-2834). A live id `≥ node_count` is dropped. -/
 def harmonicRows (nodeCount : Nat) (alive : Nat → Bool) : List Nat :=
   unfilteredRows nodeCount alive
 
@@ -120,21 +121,158 @@ theorem unfiltered_drops_high_ids :
     harmonicRows 4 alive = [1, 2, 3] ∧ unfilteredRows 5 alive = [1, 2, 3, 4] := by
   decide
 
+/-! ## Unknown labels / relationship types (#3058, fixes #3056) -/
+
+/-- `check_known_labels_and_types` (:469): the first label the graph does not have, else
+the first relationship type it does not have, becomes the procedure's own error. -/
+def checkKnown (hasLabel hasType : String → Bool) (labels types : List String)
+    (unkL unkT : String → String) : Except String Unit :=
+  match labels.find? (fun l => !hasLabel l) with
+  | some l => .error (unkL l)
+  | none =>
+    match types.find? (fun t => !hasType t) with
+    | some t => .error (unkT t)
+    | none => .ok ()
+
+/-- Accepts exactly when every named label and relationship type exists. -/
+theorem checkKnown_ok_iff (hasLabel hasType : String → Bool) (labels types : List String)
+    (unkL unkT : String → String) :
+    checkKnown hasLabel hasType labels types unkL unkT = .ok () ↔
+      (∀ l ∈ labels, hasLabel l = true) ∧ (∀ t ∈ types, hasType t = true) := by
+  unfold checkKnown
+  cases hl : labels.find? (fun l => !hasLabel l) with
+  | some l =>
+    have := List.find?_some hl
+    have hm := List.mem_of_find?_eq_some hl
+    simp only [Except.error.injEq, reduceCtorEq, false_iff, not_and]
+    intro h
+    have := h _ hm
+    simp_all
+  | none =>
+    have hl' := List.find?_eq_none.mp hl
+    cases ht : types.find? (fun t => !hasType t) with
+    | some t =>
+      have := List.find?_some ht
+      have hm := List.mem_of_find?_eq_some ht
+      simp only [reduceCtorEq, false_iff, not_and]
+      intro _ h
+      have := h _ hm
+      simp_all
+    | none =>
+      have ht' := List.find?_eq_none.mp ht
+      simp only [true_iff]
+      refine ⟨fun l hm => ?_, fun t hm => ?_⟩
+      · have := hl' l hm; simpa using this
+      · have := ht' t hm; simpa using this
+
+/-- **#3056 fixed**: an unknown label is an error, never an empty result. -/
+theorem checkKnown_unknown_label_errors (hasLabel hasType : String → Bool) (labels types : List String)
+    (unkL unkT : String → String) (l : String) (hm : l ∈ labels) (hn : hasLabel l = false) :
+    ∃ m, checkKnown hasLabel hasType labels types unkL unkT = .error m := by
+  cases h : checkKnown hasLabel hasType labels types unkL unkT with
+  | error m => exact ⟨m, rfl⟩
+  | ok u =>
+    cases u
+    have := (checkKnown_ok_iff hasLabel hasType labels types unkL unkT).mp h
+    have := this.1 l hm
+    simp_all
+
+theorem checkKnown_unknown_type_errors (hasLabel hasType : String → Bool) (labels types : List String)
+    (unkL unkT : String → String) (t : String) (hm : t ∈ types) (hn : hasType t = false) :
+    ∃ m, checkKnown hasLabel hasType labels types unkL unkT = .error m := by
+  cases h : checkKnown hasLabel hasType labels types unkL unkT with
+  | error m => exact ⟨m, rfl⟩
+  | ok u =>
+    cases u
+    have := (checkKnown_ok_iff hasLabel hasType labels types unkL unkT).mp h
+    have := this.2 t hm
+    simp_all
+
+/-- A label error wins over a type error (labels are checked first, :476-481). -/
+theorem checkKnown_label_first :
+    checkKnown (fun l => l == "A") (fun t => t == "R") ["B"] ["S"] (fun l => "label " ++ l)
+      (fun t => "type " ++ t) = .error "label B" := rfl
+
+/-- The per-procedure messages (C's): betweenness :973-978, labelPropagation :1268-1273,
+HarmonicCentrality :2759-2765. -/
+theorem known_messages :
+    checkKnown (fun _ => false) (fun _ => true) ["Nope"] []
+      (fun l => s!"betweenness configuration, unknown label {l}") (fun t => t) =
+        .error "betweenness configuration, unknown label Nope" ∧
+    checkKnown (fun _ => true) (fun _ => false) [] ["R"] (fun l => l)
+      (fun t => s!"labelPropagation configuration, unknown relationship-type {t}") =
+        .error "labelPropagation configuration, unknown relationship-type R" ∧
+    checkKnown (fun _ => false) (fun _ => true) ["Nope"] []
+      (fun l => s!"harmonic centrality configuration contains non-existent label:{l}") (fun t => t) =
+        .error "harmonic centrality configuration contains non-existent label:Nope" :=
+  ⟨rfl, rfl, rfl⟩
+
 /-! ## pageRank fast-path choice -/
 
-/-- `use_unfiltered`: no label, or the label covers all nodes. `none` = compact
-path with that many active nodes. -/
-def pagerankPath (label : Option Nat) (nodeCount : Nat) : Option Nat :=
+/-- HISTORICAL (before #3058): `use_unfiltered`: no label, or the label covers all nodes.
+`none` = compact path with that many active nodes. -/
+def prePagerankPath (label : Option Nat) (nodeCount : Nat) : Option Nat :=
   match label with
   | none => none
   | some cnt => if cnt = nodeCount then none else some cnt
 
-/-- BUG (confirmed, `bug_pagerank_unknown_label_errors`): an unknown label has
-`label_node_count = 0 ≠ node_count`, so a 0×0 compact matrix reaches
+/-- Pre-#3058 BUG (`bug_pagerank_unknown_label_errors`, fixed by #3058): an unknown label has
+`label_node_count = 0 ≠ node_count`, so a 0×0 compact matrix reached
 `LAGr_PageRank`, which rejects it (LAGraph doc: n must be > 0). -/
-theorem pagerank_unknown_label_compact_empty (nc : Nat) (h : 0 < nc) :
-    pagerankPath (some 0) nc = some 0 := by
-  simp [pagerankPath]; omega
+theorem pre3058_pagerank_unknown_label_compact_empty (nc : Nat) (h : 0 < nc) :
+    prePagerankPath (some 0) nc = some 0 := by
+  simp [prePagerankPath]; omega
+
+/-- What algo.pageRank does after the early exits (:729-780). -/
+inductive PRPath
+  | empty                 -- `empty_procedure_batch()`
+  | unfiltered
+  | compact (n : Nat)     -- `build_compact_adj_from_tensors` over `n` active nodes
+  deriving DecidableEq, Repr
+
+/-- algo.pageRank's path choice on main. `label`: `none` no label argument, `some none` a
+label the graph does not have, `some (some c)` a label with `c` live nodes; `relOk`: the
+relationship type is absent or known. Returns the 0-node / unknown label / unknown type
+early exits (:729-735), the `use_unfiltered` test (:750-752), and the empty-active-set
+exit (:772-774). -/
+def pagerankPath (nodeCount : Nat) (label : Option (Option Nat)) (relOk : Bool) : PRPath :=
+  if nodeCount = 0 || label == some none || !relOk then .empty
+  else match label with
+    | none => .unfiltered
+    | some none => .empty
+    | some (some c) => if c = nodeCount then .unfiltered else if c = 0 then .empty else .compact c
+
+/-- **#3056 fixed**: an unknown label or relationship type selects nothing: an empty
+result, no LAGraph call. -/
+theorem pagerank_unknown_label_empty (nc : Nat) (relOk : Bool) :
+    pagerankPath nc (some none) relOk = .empty := by
+  unfold pagerankPath; split <;> simp_all
+
+theorem pagerank_unknown_type_empty (nc : Nat) (label : Option (Option Nat)) :
+    pagerankPath nc label false = .empty := by
+  unfold pagerankPath; simp
+
+/-- LAGraph is never handed an empty matrix: the compact path always has `n > 0`. -/
+theorem pagerank_compact_nonempty (nc : Nat) (label : Option (Option Nat)) (relOk : Bool) (n : Nat)
+    (h : pagerankPath nc label relOk = .compact n) : 0 < n := by
+  unfold pagerankPath at h
+  split at h
+  · cases h
+  · split at h <;> try cases h
+    rename_i c
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · cases h; omega
+
+/-- A known label covering everything is the unfiltered path, as before. -/
+theorem pagerank_known_label_full (nc : Nat) (h : 0 < nc) :
+    pagerankPath nc (some (some nc)) true = .unfiltered := by
+  unfold pagerankPath; simp; omega
+
+/-- The case #3056 reported: node_count 3, label unknown. -/
+theorem pagerank_unknown_label_example : pagerankPath 3 (some none) true = .empty := by decide
 
 /-! ## betweenness sources -/
 

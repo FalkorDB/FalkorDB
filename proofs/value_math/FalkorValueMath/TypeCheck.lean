@@ -497,21 +497,31 @@ structure Registry where
 def alookup (m : List (String × Entry)) (k : String) : Option Entry :=
   (m.find? (·.1 = k)).map (·.2)
 
-/-- `Functions::get` (mod.rs:1048): built-in of the same kind, else (for scalar/UDF
-lookups) the UDF registry. -/
+/-- `Functions::get` (mod.rs:1048): built-in (lowered name) of the same kind, else (for
+scalar/UDF lookups) the UDF registry under the exact, case-sensitive name (#3066). -/
 def regGet (r : Registry) (name : String) (k : FnKind) : Option Entry :=
   let l := r.lower name
   match alookup r.builtins l with
   | some e => if fnTypeEq e.kind k then some e else udfFallback
   | none => udfFallback
 where
-  udfFallback := if k = .function ∨ k = .udf then alookup r.udfs (r.lower name) else none
+  udfFallback := if k = .function ∨ k = .udf then alookup r.udfs name else none
 
-/-- Lookup is case-insensitive. -/
-theorem regGet_lower (r : Registry) (hidem : ∀ s, r.lower (r.lower s) = r.lower s)
-    (name : String) (k : FnKind) :
-    regGet r (r.lower name) k = regGet r name k := by
-  simp [regGet, regGet.udfFallback, hidem]
+/-- Built-in lookup is case-insensitive: a built-in of the right kind found under the
+lowered name is returned for every spelling that lowers to it (also for the lowered name,
+as `lower` is idempotent). -/
+theorem regGet_builtin_ci (r : Registry) (hidem : ∀ s, r.lower (r.lower s) = r.lower s)
+    (name : String) (k : FnKind) (e : Entry)
+    (he : alookup r.builtins (r.lower name) = some e) (hk : fnTypeEq e.kind k = true) :
+    regGet r name k = some e ∧ regGet r (r.lower name) k = some e := by
+  simp [regGet, he, hk, hidem]
+
+/-- **#3066 (fixed)**: the UDF fallback is case-sensitive, as in C: it is keyed by the name
+as written (pre-#3066 it used `to_lowercase`, so `Foo` found a UDF registered as `foo`). -/
+theorem regGet_udf_case_sensitive (r : Registry) (name : String) (k : FnKind)
+    (hk : k = .function ∨ k = .udf) (hb : alookup r.builtins (r.lower name) = none) :
+    regGet r name k = alookup r.udfs name := by
+  simp [regGet, hb, regGet.udfFallback, hk]
 
 /-- `Functions::is_aggregate(name)` (mod.rs:1079) does **not** lower its argument. -/
 def regIsAggregate (r : Registry) (name : String) : Bool :=

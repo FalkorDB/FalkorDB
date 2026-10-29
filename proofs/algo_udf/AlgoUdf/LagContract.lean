@@ -12,8 +12,8 @@ one-node projection. This file adds that outcome to the axiomatised contract.
 | `newOrient`   | GraphBLAS `GxB_Matrix_new_arena` (`deps/GraphBLAS` ea79e35, `Source/matrix/GxB_Matrix_new_arena.c:89-101`): `ncols == 1` → by column; `nrows == 1` → by row; else the global format (by row) |
 | `checkGraph`  | `LAGraph_CheckGraph` (`deps/LAGraph` d01064d, `src/utility/LAGraph_CheckGraph.c:46-56`): non-square or not `GrB_ROWMAJOR` → `LAGRAPH_INVALID_GRAPH` |
 | `Algo`, `checks` | `LAGr_ConnectedComponents` → `LG_CC_FastSV6/7` (`CheckGraph` at :263/:279), `LAGr_PageRank` (:76), `LAGr_Betweenness` (:131) check; `LAGraph_cdlp` does not |
-| `compactBuild` | `build_compact_adj_from_tensors` `:609` / `..._symmetric_...` `:679`: `GrB_Matrix_new(&compact, GrB_BOOL, n, n)` with `n` = projection size |
-| `projectedRun` | `algo_wcc` `:861-881`, `algo_pagerank` `:748-778`, `algo_betweenness` `:974-1026`: `if info != 0 { return Err(format!("… failed: {info}")) }` — no special case for `n = 1` |
+| `compactBuild` | `build_compact_adj_from_tensors` `:627` / `..._symmetric_...` `:697`: `GrB_Matrix_new(&compact, GrB_BOOL, n, n)` with `n` = projection size |
+| `projectedRun` | `algo_wcc` `:888-908`, `algo_pagerank` `:766-796`, `algo_betweenness` `:1001-1053`: `if info != 0 { return Err(format!("… failed: {info}")) }` — no special case for `n = 1` |
 
 AXIOMATISED (as definitions, no Lean `axiom`): the two FFI functions above. When the
 check passes, the algorithm returns one entry per compact index (the existing `LagWcc`
