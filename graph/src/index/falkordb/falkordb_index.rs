@@ -19,7 +19,7 @@ use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
 use super::graph_writes;
-use super::numeric::{DocIter, EncodedTuples, NumericIndex};
+use super::numeric::{DocIter, EncodedTuples, KeySet, NumericIndex};
 use super::pending_writes::{IndexWrite, PendingIndexWrites, last_write_wins};
 use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 
@@ -209,6 +209,33 @@ impl VersionedIndex for IndexColumn {
         batch: &mut EncodedTuples,
     ) {
         self.add_encoded(batch);
+    }
+}
+
+/// How to answer a query by scanning while its column is still building: keep the entities whose
+/// `attribute` value encodes to one of `keys`, the keys the built column would look up. Built from
+/// the same keys, the scan keeps exactly what the column will answer. It is the only check the
+/// scanned rows get: the planner removes a predicate it hands to an index scan.
+#[derive(Clone, Debug)]
+pub struct ScanFilter {
+    attribute: Arc<String>,
+    keys: KeySet,
+}
+
+impl ScanFilter {
+    /// The attribute the query is on.
+    #[must_use]
+    pub const fn attribute(&self) -> &Arc<String> {
+        &self.attribute
+    }
+
+    /// Whether the built column answers the query with an entity whose attribute is `value`.
+    #[must_use]
+    pub fn matches(
+        &self,
+        value: &Value,
+    ) -> bool {
+        encode_numeric(value).is_some_and(|key| self.keys.contains(key))
     }
 }
 
@@ -548,29 +575,46 @@ impl FalkorDbIndex {
         }
     }
 
-    /// Answer an index query for `(entity, label)` from the numeric column, on a `Ready` column
-    /// only. Served: a numeric `Equal`/`Range`, an `IN` list whose values are all numeric, and an
-    /// `OR` of equalities and `IN` lists on one attribute. A Range index also holds strings and geo
-    /// (served by RediSearch), so anything else returns `None` to fall through — a non-numeric
-    /// value, an `And`, an `OR` spanning attributes — and so does a missing column, and so does a
-    /// `Building` column (not every entity is indexed yet, so RediSearch answers). Yields docs —
-    /// node ids for a node column, `edge_id`s for an edge column. The read path routes here and
-    /// falls through to RediSearch on `None`.
+    /// Answer an index query for `(entity, label)` from the numeric column. Served: a numeric
+    /// `Equal`/`Range`, an `IN` list whose values are all numeric, and an `OR` of equalities and
+    /// `IN` lists on one attribute. Yields docs — node ids for a node column, `edge_id`s for an
+    /// edge column.
+    ///
+    /// Three outcomes, and the caller must keep them apart, because the no-fallback build treats
+    /// each differently:
+    ///
+    /// * `Some(Ok(rows))` — served here, from a `Ready` column.
+    /// * `Some(Err(scan_filter))` — a shape the column serves, on a column that is still
+    ///   `Building`. The caller scans and keeps what the [`ScanFilter`] matches. This is a timing
+    ///   state, not a capability gap, so it must never surface as an error.
+    /// * `None` — any other shape, or no such column: a non-numeric value, an `And`, an `OR`
+    ///   spanning attributes, geo, array-contains. A Range index also holds strings and geo, which
+    ///   only RediSearch serves. Under `index-falkordb` there is no other index, and the caller
+    ///   turns this into an error.
     #[must_use]
     pub fn query_numeric(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<DocIter> {
+    ) -> Option<Result<DocIter, ScanFilter>> {
         // Which column to ask. `Equal`/`Range` are checked here because the column answers a bound
         // it cannot encode with "no rows" rather than `None`; an `IN` list or an `OR` is checked
-        // by the column itself (`NumericIndex::query`), which declines rather than answer part.
+        // by the column itself (`NumericIndex::keys`), which declines rather than answer part.
         let key = match query {
-            IndexQuery::Equal { key, value } if encode_numeric(value).is_some() => key,
+            // `= null` holds for nothing, so it is answered with no rows rather than declined as a
+            // value no column indexes.
+            IndexQuery::Equal { key, value }
+                if matches!(value, Value::Null) || encode_numeric(value).is_some() =>
+            {
+                key
+            }
+            // Likewise a range with a null bound: the column's key set for it is empty.
             IndexQuery::Range { key, min, max, .. }
-                if min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
-                    && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()) =>
+                if [min, max]
+                    .into_iter()
+                    .flatten()
+                    .all(|v| matches!(v, Value::Null) || encode_numeric(v).is_some()) =>
             {
                 key
             }
@@ -587,12 +631,20 @@ impl FalkorDbIndex {
             _ => return None,
         };
         let entry = self.entry(entity, label, key)?;
+        // Translate the query even while the column is building: the column declines a shape it
+        // cannot serve whatever its state, and that must stay `None`. Only a shape it would serve
+        // is a `ScanFilter`.
+        let (idx, keys) = match &entry.index {
+            IndexColumn::Numeric(idx) => (idx, NumericIndex::keys(query)?),
+        };
         if entry.is_building() {
-            return None; // Building — not every entity is indexed yet; RediSearch answers
+            // Not every entity is indexed yet.
+            return Some(Err(ScanFilter {
+                attribute: key.clone(),
+                keys,
+            }));
         }
-        match &entry.index {
-            IndexColumn::Numeric(idx) => idx.query(query),
-        }
+        Some(Ok(idx.lookup(keys)))
     }
 
     /// The first column still `Building`, with its cursor. Node columns first; `None` once every
@@ -669,11 +721,22 @@ mod tests {
         });
     }
 
-    /// The build state machine at the column level. A `Building` column gates reads (returns
-    /// `None`, so the caller falls back) while indexer batches fill it. A live write reaches it
-    /// only below the cursor: one at or above is left to the batch that reaches the entity. The
-    /// batch that reaches the end flips the column `Ready`, and from then on a batch changes
-    /// nothing.
+    /// Rows of an answer that must be `Some(Ok(..))`. Panics on the other two, rather than
+    /// reporting them as "no rows" — a test that expected rows and got a `ScanFilter` or `None`
+    /// has found a bug, and collapsing all three into an empty `Vec` is exactly what hid one.
+    fn rows(answer: Option<Result<DocIter, ScanFilter>>) -> Vec<u64> {
+        match answer {
+            Some(Ok(it)) => it.collect(),
+            Some(Err(_)) => panic!("column is still Building"),
+            None => panic!("predicate is not servable by the numeric index"),
+        }
+    }
+
+    /// The build state machine at the column level. A `Building` column gates reads (answers
+    /// with a `ScanFilter`, so the caller scans rather than erroring) while indexer batches fill
+    /// it. A live write reaches it only below the cursor: one at or above is left to the batch
+    /// that reaches the entity. The batch that reaches the end flips the column `Ready`, and from
+    /// then on a batch changes nothing.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -684,8 +747,13 @@ mod tests {
         };
         let key = |v: i64| encode_numeric(&Value::Int(v)).unwrap();
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
-            idx.query_numeric(Node, &label, &eq(v))
-                .map_or_else(Vec::new, Iterator::collect)
+            rows(idx.query_numeric(Node, &label, &eq(v)))
+        };
+        // A `ScanFilter`, specifically — not `None`. A `Building` column is a timing state and
+        // the caller scans; `None` means unservable, which the no-fallback build turns into a
+        // query error. Collapsing the two errored every read against a still-building index.
+        let building = |idx: &FalkorDbIndex, v: i64| {
+            matches!(idx.query_numeric(Node, &label, &eq(v)), Some(Err(_)))
         };
         // What the column holds for `v`, whatever its state.
         let holds = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
@@ -714,7 +782,7 @@ mod tests {
             idx.next_building(),
             Some((Node, column.clone(), BuildCursor::new(Node)))
         );
-        assert!(hits(&idx, 10).is_empty(), "empty Building → None");
+        assert!(building(&idx, 10), "empty Building → ScanFilter");
 
         // Live writes before any batch: node 2 is created with 30, and node 1 goes 20 -> 25.
         // Both are at or above the cursor, so the column takes neither.
@@ -725,8 +793,26 @@ mod tests {
             "writes at or above the cursor wait for the batch"
         );
         assert!(
-            idx.query_numeric(Node, &label, &in_10_30).is_none(),
-            "an IN list on a Building column falls through too"
+            building(&idx, 30),
+            "still Building → ScanFilter after live writes"
+        );
+        assert!(
+            matches!(idx.query_numeric(Node, &label, &in_10_30), Some(Err(_))),
+            "an IN list on a Building column is answered with a ScanFilter too"
+        );
+        // A shape the column declines stays `None` mid-build: that is a gap, not a timing state,
+        // and answering with a `ScanFilter` would let it scan quietly until the build finished.
+        let in_mixed = IndexQuery::InList {
+            key: attr.clone(),
+            list: Value::List(Arc::new(
+                [Value::Int(10), Value::String(arc("x"))]
+                    .into_iter()
+                    .collect(),
+            )),
+        };
+        assert!(
+            idx.query_numeric(Node, &label, &in_mixed).is_none(),
+            "a mixed IN list is unservable whatever the column's state"
         );
 
         // A batch indexes nodes 0..=2 at their current values, and stops before node 3.
@@ -745,10 +831,7 @@ mod tests {
             Some(next),
         )));
         assert_eq!(idx.next_building(), Some((Node, column.clone(), next)));
-        assert!(
-            hits(&idx, 10).is_empty(),
-            "still Building after a partial batch"
-        );
+        assert!(building(&idx, 10), "still Building after a partial batch");
 
         // Now node 1, below the cursor, goes 25 -> 26 and the column takes it at once. Node 3, at
         // the cursor, gets 45, and node 5, above it, is created with 50: the column takes neither.
@@ -776,9 +859,8 @@ mod tests {
         );
         assert_eq!(hits(&idx, 10), vec![0]);
         assert_eq!(
-            idx.query_numeric(Node, &label, &in_10_30)
-                .map(Iterator::collect::<Vec<u64>>),
-            Some(vec![0, 2]),
+            rows(idx.query_numeric(Node, &label, &in_10_30)),
+            vec![0, 2],
             "a Ready column serves the IN list"
         );
         assert_eq!(hits(&idx, 26), vec![1]);
@@ -907,8 +989,7 @@ mod tests {
             key: key.clone(),
             value: Value::Int(30),
         };
-        let hit: Vec<u64> = idx.query_numeric(Node, &label, &eq).unwrap().collect();
-        assert_eq!(hit, vec![1]);
+        assert_eq!(rows(idx.query_numeric(Node, &label, &eq)), vec![1]);
         let rg = IndexQuery::Range {
             key: key.clone(),
             min: Some(Value::Int(10)),
@@ -917,6 +998,30 @@ mod tests {
             include_max: true,
         };
         assert!(idx.query_numeric(Node, &label, &rg).is_some());
+
+        // A null bound holds for nothing, so it is answered with no rows rather than declined.
+        let null_min = IndexQuery::Range {
+            key: key.clone(),
+            min: Some(Value::Null),
+            max: None,
+            include_min: false,
+            include_max: true,
+        };
+        assert_eq!(
+            rows(idx.query_numeric(Node, &label, &null_min)),
+            Vec::<u64>::new()
+        );
+        let null_max = IndexQuery::Range {
+            key: key.clone(),
+            min: Some(Value::Int(10)),
+            max: Some(Value::Null),
+            include_min: true,
+            include_max: false,
+        };
+        assert_eq!(
+            rows(idx.query_numeric(Node, &label, &null_max)),
+            Vec::<u64>::new()
+        );
 
         // A string on the same Range index must fall through (RediSearch owns the TAG entries).
         let str_eq = IndexQuery::Equal {
@@ -972,11 +1077,14 @@ mod tests {
         };
         // Union order is unspecified, so compare sorted ids.
         let served = |entity, q: &IndexQuery<Value>| -> Option<Vec<u64>> {
-            idx.query_numeric(entity, &label, q).map(|it| {
-                let mut ids: Vec<u64> = it.collect();
-                ids.sort_unstable();
-                ids
-            })
+            match idx.query_numeric(entity, &label, q)? {
+                Ok(it) => {
+                    let mut ids: Vec<u64> = it.collect();
+                    ids.sort_unstable();
+                    Some(ids)
+                }
+                Err(_) => panic!("column is still Building"),
+            }
         };
 
         assert_eq!(
