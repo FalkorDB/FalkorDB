@@ -471,7 +471,8 @@ thread_local! {
 /// Take the module GIL for the duration of the returned guard.
 ///
 /// The one entry point for code that needs the GIL outside a query — telemetry's
-/// flush thread, and the native index builder publishing a batch
+/// flush thread, `GRAPH.BULK` freeing its arguments and cleaning up off the main thread
+/// (`commands::bulk_insert`), and the native index builder publishing a batch
 /// (`graph_core::RedisBuildHost`). Keeping these the *only* other callers is what lets the
 /// ordering rule be enforced by construction rather than by convention.
 ///
