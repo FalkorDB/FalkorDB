@@ -72,3 +72,30 @@ class testAOFReplay():
         # rather than skipped.
         result = graph.query("MATCH (n) RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 2)
+
+    def test02_cancelled_write_survives_aof_replay(self):
+        # A write whose every entity is created and deleted in the same query
+        # (`CREATE (a:A {p:1}) DELETE a`) still registers `A` and `p` and moves
+        # the node id space. It used to put nothing in the AOF: the commit only
+        # built a payload when `Pending::effects_count` was non-zero, and that
+        # count does not include cancelled entities. The next write's payload
+        # then announced label `B` at id 1 to a replay that would assign it 0,
+        # the replay refused it, and a refused payload during AOF load shuts the
+        # server down.
+        self.conn.flushall()
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("appendonly", "yes")
+        self._wait_for_aof_rewrite()
+
+        graph = self.db.select_graph(GRAPH_ID)
+        graph.query("CREATE (a:A {p:1}) DELETE a")
+        graph.query("OPTIONAL MATCH (n:Nope) SET n:L6")
+        graph.query("CREATE (:B {q:2})")
+
+        self.conn.execute_command("DEBUG", "LOADAOF")
+
+        self.env.assertTrue(self.conn.ping())
+        result = graph.query("MATCH (n) RETURN id(n), labels(n), n.q")
+        self.env.assertEqual(result.result_set, [[0, ["B"], 2]])
+        result = graph.query("CALL db.labels() YIELD label RETURN collect(label)")
+        self.env.assertEqual(result.result_set, [[["A", "L6", "B"]]])
