@@ -285,6 +285,40 @@ impl VersionedIndex for IndexColumn {
         self.refresh(state, name, written, batch_version, published);
     }
 
+    fn indexer_insert(
+        &mut self,
+        (entity, key): &(EntityType, IndexKey),
+        batch: &EncodedTuples,
+        written: &RoaringTreemap,
+        from: BuildCursor,
+        next: Option<BuildCursor>,
+        published: &Graph,
+    ) {
+        let mut adds = EncodedTuples::scalars(
+            batch
+                .scalar
+                .iter()
+                .filter(|&&(_, id)| !written.contains(id))
+                .copied()
+                .collect(),
+        );
+        // The written entities in the batch's range, as the published version has them. Those
+        // below `from` are right in this copy already.
+        let mut current = EncodedTuples::default();
+        graph_writes::entity_tuples(published, *entity, key, written, self, &mut current);
+        adds.scalar
+            .extend(current.scalar.into_iter().filter(|&(_, id)| {
+                published.build_place(*entity, id).is_some_and(|at| {
+                    !at.precedes(from) && next.is_none_or(|next| at.precedes(next))
+                })
+            }));
+        self.add_encoded(&mut adds);
+    }
+
+    fn batch_len(batch: &EncodedTuples) -> usize {
+        batch.len()
+    }
+
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
     /// encoded and sorted ([`graph_writes::scan`]).
     fn indexer_read(

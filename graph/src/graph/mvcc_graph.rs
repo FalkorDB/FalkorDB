@@ -223,9 +223,10 @@ impl MvccGraph {
     /// - nothing: `prepared` is published as it is;
     /// - only other indexes' batches: `batch`'s index is put into a new build version of the
     ///   published one, which is published ([`Graph::with_batch_index`]);
-    /// - writers, and no other batch on `batch`'s index: its index as `prepared` has it, caught up
-    ///   on the entities the writers changed in it, is put into a new build version of the
-    ///   published one, which is published ([`Graph::caught_up_onto`]);
+    /// - writers, and no other batch on `batch`'s index: the index caught up on the entities the
+    ///   writers changed in it, by refreshing them in `prepared`'s copy or by inserting the batch
+    ///   less them into the published copy, whichever costs less, is put into a new build version
+    ///   of the published one, which is published ([`Graph::caught_up_onto`]);
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
     ///   Another batch on the index is a bug in the builder's one chain per index, and is reported
@@ -259,8 +260,10 @@ impl MvccGraph {
             IndexerCommit::Swap => Arc::new(AtomicRefCell::new(
                 prepared.borrow().with_batch_index(&graph.borrow(), batch),
             )),
-            IndexerCommit::CatchUp(_) => Arc::new(AtomicRefCell::new(
-                prepared.borrow().caught_up_onto(&graph.borrow(), batch),
+            IndexerCommit::CatchUp(how) => Arc::new(AtomicRefCell::new(
+                prepared
+                    .borrow()
+                    .caught_up_onto(&graph.borrow(), batch, how),
             )),
             IndexerCommit::Dropped(why) => {
                 if why == Dropped::AnotherBatch {
