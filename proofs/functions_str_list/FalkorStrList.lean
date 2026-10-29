@@ -1,0 +1,1494 @@
+import FalkorStrList.Misc
+import FalkorStrList.Entity
+import FalkorCore.Int64
+/-
+# String and list functions: totality and spec agreement
+
+A Lean 4 model of FalkorDB-rs's Cypher string and list functions
+(`graph/src/runtime/functions/{string,list,internal}.rs`, eager `range` in
+`math.rs`, and the list/regex/quantifier arms of `graph/src/runtime/eval.rs`),
+checked against the openCypher spec and the C implementation (`master`
+branch, `src/arithmetic/{string,list}_funcs/*.c`, `src/util/strutil.c`).
+Build: `cd proofs/functions_str_list && lake build` (Lean 4.35, core only).
+No `sorry`/`admit`/`axiom`; headline theorems use only `propext`,
+`Quot.sound`, `Classical.choice`. Repros: `graph/tests/lean_functions_str_list.rs`
+(`cargo test -p graph --test lean_functions_str_list -- --nocapture`).
+Coverage per Rust fn: `COVERAGE.tsv`.
+
+## What is modelled
+
+| here | there |
+| --- | --- |
+| `InI64`, `wrap` (proofs/core), `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
+| `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:573-584` |
+| `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1722-1750` |
+| `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
+| `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs:41-54`, `list.remove` `list.rs:165-189` (`listRemoveDebug`/`Release`: pre-#2952, historical) |
+| `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:253-267,292-310` |
+| `head`, `last`, `tail`, `size`, reverse | `list.rs:57-154` |
+| `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-310` |
+| `rangeIter` | `RangeIter::next` after #2899, `eval.rs:114-127`, built at `eval.rs:1236-1241` (debug: checked `+=`) |
+| `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1616-1660`; loop `eval.rs:979-1016` |
+| `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1762-1785` (via `list_contains`, `eval.rs:1708`) |
+| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1040-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
+| `pre2954_comprehensionRust` | the same arm before #2954 (every source through `eval_iter_expr`'s UNWIND fallback) |
+| `reduceList` | `ExprIR::Reduce`, `eval.rs:1035-1061` |
+| `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
+| `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs:51-101`; C `AR_SUBSTRING` |
+| `left`, `right`, `cLeft`, `cRight` | `string.rs:207-299`; C `AR_LEFT`, `AR_RIGHT` |
+| `cReverseBytes` | C `AR_REVERSE` (writes each code point's bytes leftwards) |
+| `ltrim`, `rtrim`, `trimRust`, `trimC` | `string.rs:233-274`; C `AR_LTRIM`/`AR_RTRIM`/`AR_TRIM` |
+| `splitAux` | std `str::split` contract, used by `split`, `string.rs:125-129` |
+| `findFirst`, `cSplit`, `splitC` | C `AR_SPLIT` |
+| `splitRust` | `split`, `string.rs:103-137` |
+| `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:183-205` (std `str::replace`); C `AR_REPLACE` |
+| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:138-165`; C `str_tolower` (utf8proc simple map) |
+| `isMatchRust`, `isMatchSpec` | `regex_matches` `internal.rs:100-120`, `RegexFnKind::Matches` `eval.rs:1274` |
+| `expandRust` | `Regex::replace_all(_, &str)` `$`-expansion, `string.rs:462,469`, `eval.rs:1294-1302` |
+| `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:324-386` |
+| `startsWith` | `internal_starts_with`, `internal.rs:32-48` (ends/contains analogous) |
+| `cmpFloatModel` | `compare_floats` `value.rs:1801` as used by `list.sort` `list.rs:213` |
+
+## Proven (91 theorems in this file; main ones)
+
+* Indexing `l[i]` is total for every i64 (incl. `i64::MIN`), `len+i` cannot
+  overflow, and equals the spec (negative from the end, else null)
+  (`getElement_noOverflow`, `getElement_inBounds`, `getElement_spec`).
+* Slicing `l[a..b]` never panics: after the early return, `0 ≤ s ≤ e ≤ len`
+  (`getElements_bounds`); it equals the clamped spec (`getElements_spec`).
+* `list.remove`: since #2952 (`remove_span`, saturating end) it equals the spec
+  for all i64 inputs in every build and never panics (`listRemove_eq_spec`,
+  `removeSpan_wf`, `listRemove_huge_count`). Historical: before #2952 release
+  matched the spec by accident (`listRemoveRelease_eq_spec`) and debug
+  overflowed.
+* `list.insert*` normalisation can't overflow and yields a valid split point (`insertNorm_safe`).
+* Eager `range`: every element lies between start and end, so no overflow
+  for any i64 arguments (`range_elems_between`, `range_noOverflow`).
+* Quantifiers: `all` = Kleene AND fold, `any` = Kleene OR fold,
+  `none = NOT any`, `single` characterised (`all_is_kand`, `any_is_kor`,
+  `none_is_not_any`, `single_spec`).
+* `IN`: false iff no element compares Equal and none touches NULL (`contains_false_iff`).
+* `substring`: the byte-length guard is harmless (`substring2_spec`,
+  `substring3_spec`); Rust = C on all inputs (`substring3_agrees_C`).
+* `left`/`right`: Rust = C on all inputs (`left_agrees_C`, `right_agrees_C`), spec (`left_right_spec`).
+* `reverse` on strings: C's byte output = UTF-8 of Rust's `chars().rev()` (`reverse_agrees_C`).
+* `trim`: Rust (`ltrim∘rtrim`) = C (`rtrim∘ltrim`) (`trim_agrees_C`); `ltrim_idem`, `ltrim_head`.
+* `toLower`/`toUpper` never error since #2953 (`toLower_total`) and equal C when the
+  case mapping is simple (`case_agrees_C_if_simple`).
+* `split`: std's scanner = C's find-first algorithm for every non-empty
+  delimiter (`splitAux_eq_cSplit`), and all empty-string branches agree (`split_agrees_C`).
+* `string.join`: when `compute_join_length` succeeds it equals the joined
+  length, so the `debug_assert_eq!` holds (`joinLen_correct`).
+* `size` counts code points, `size ≤ bytes`, additive under `+`.
+
+## CONFIRMED bugs (Rust repro fails; outputs recorded live vs C on ports 18270/18271)
+
+A. **`list.sort` panics on NaN — FIXED by #2912 (b033aecc6).** Was: `list.rs:213`
+   (`sort_by` with `compare_value`): NaN is `Less` both ways, so std's sort panicked
+   and killed the server. Query:
+   `WITH [x IN range(1,40) | CASE WHEN x % 3 = 0 THEN 0.0/0.0 ELSE toFloat(x % 7) END] AS l RETURN size(list.sort(l))`
+   (C 40). Main sorts by `Value::sort_cmp` (`list.rs:210`), a total preorder
+   (proofs/value_order `Main.scMain_total`); the float arm is modelled here
+   (`listSort_float_cmp_antisymmetric`).
+B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
+   inline `(normalized + count)`: `list.remove([1,2,3], 1, 9223372036854775807)`
+   panicked in debug ("attempt to add with overflow"); release returned `[1]`
+   by accident (proved). C `[1]`. Test `bug_list_remove_count_overflow`.
+   The fix (`remove_span`, `saturating_add`) is modelled and proved correct
+   (`listRemove_eq_spec`).
+C. **`=~` is unanchored** — `internal.rs:112`, `eval.rs:1274`
+   (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
+   openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
+   ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
+   Fix: compile `^(?:pat)$` (binder `rewrite_compiled_regex` and runtime path).
+D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
+   #2953 (e7eb853b1).** Was: `toLower('A�')` → error "Invalid UTF8 string";
+   C → `'a�'`. A Rust `String` is always valid UTF-8, so the check could only
+   misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
+   check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
+   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`).
+E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
+   `eval.rs:1302`: `replaceRegEx('abc','b','$0x')` → `'ac'`, `'[$0]'` → `'a[b]c'`;
+   C copies literally: `'a$0xc'`, `'a[$0]c'`. Test `bug_replace_regex_dollar_expansion`.
+   Fix: `regex::NoExpand(repl)`.
+F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
+   #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
+   `[x IN null | x]` → `[]` (C `null`), `[x IN 5 | x]` → `[5]` (C type error);
+   Main streams only a list
+   literal or `range(..)` and evaluates any other source with `eval_node`: List
+   iterates, Null gives null, anything else errors "Type mismatch: expected List or
+   Null but was <name>" (`comprehension_eq_spec`, `comprehension_null`,
+   `comprehension_scalar_err`, `comprehensionSourceCheck_err` in `Entity.lean`).
+
+## Divergences recorded, not bugs (or C is wrong)
+
+* Case mapping: Rust uses full Unicode mapping, C simple: `toUpper('ß')` Rust
+  `'SS'` (size 2) vs C `'ẞ'`; `toLower('İ')` `'i̇'` vs `'i'`; `toLower('ΑΣ')`
+  final sigma `'ας'` vs `'ασ'`; `toUpper('ﬁ')` `'FI'` vs `'ﬁ'`. Neo4j matches Rust.
+* `string.matchRegEx('ab','(a)|(b)')`: Rust `null` for non-participating
+  groups, C `''` (deliberate per comment at `string.rs:487`).
+* `'a' + (0.0/0.0)`: Rust `'aNaN'`, C `'anan'`.
+* `STARTS WITH`/`ENDS WITH`/`CONTAINS` with a non-string: Rust `null` (openCypher), C error.
+* C bugs: index/slice bounds truncated to int32 (`[1,2,3][4294967296]` → C `1`,
+  `[1,2,3][MIN..MAX]` → C `[1, 2]`) (`cGetElement_truncates`, `cGetElements_truncates`);
+  `replace(s,'',t)` inserts inside multibyte chars → invalid UTF-8
+  (`cReplace_empty_breaks_utf8`); `range(0, 5000000000)` crashed the C server (Rust: "Range too large").
+* Regex dialect: Rust `regex` crate vs C oniguruma Java syntax (no
+  backreferences/lookaround in Rust) — not modelled.
+
+## Unconfirmed / variants of known issues
+
+* (fixed by #2899) `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64`
+  was `i64::MIN` and `-self.step` overflowed — debug panic "attempt to negate with
+  overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release was correct
+  (`[10]`). Variant of #2894; now
+  `rangeIter_eq_range` / `rangeIter_examples`.
+
+## Gaps / assumptions
+
+* Strings are lists of code points; UTF-8 byte-level facts used are
+  `utf8Size ≥ 1` only. C's byte-wise `strstr`/`strncmp` matching is assumed to
+  coincide with code-point matching for valid UTF-8 (self-synchronisation),
+  which is not proven; `prefix_chars_to_bytes` proves one direction.
+* std `str::split`/`str::replace`/`step_by`, the `regex` crate, and Unicode case
+  tables are specified, not verified; the regex engine is an abstract span predicate.
+* `Value::compare_value` is abstract here (see `proofs/value_order`).
+* `keys`, `labels`, `properties` read graph attribute storage: not covered.
+* `string.join` lengths are modelled as code-point lengths; Rust uses bytes,
+  and the identity is the same.
+
+
+## Wave 5 (`FalkorStrList/Entity.lean`, `FalkorStrList/Misc.lean`)
+
+entity.rs (all 15 fns) over an accessor model (deleted snapshot > pending > committed),
+plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House decision
+(deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
+`deleteNode_preserves_all`; **CONFIRMED BUG** `deleteNode_labels_iff` /
+`labels_lost_after_delete`: the DELETE snapshot copies committed labels
+(ops/delete.rs:286, :466 `g.get_node_label_ids(id)`), so labels staged by SET/REMOVE earlier
+in the same query are lost/resurrected. Repro: `lean_functions_str_list::
+bug_deleted_node_labels_ignore_staged_set` (`MATCH (n:A) SET n:C DELETE n RETURN labels(n), n:C`
+→ Rust `['A']|false`, expected `['A','C']|true`; C returns `[]`) and
+`..._staged_remove` (`REMOVE n:A … DELETE n RETURN labels(n)` → Rust `['A']`, expected `[]`).
+Re-checked at origin/main 5e475e6c9: no modelled function changed. #3436 only swaps `rt.g.borrow()` for `rt.graph()` (borrow plumbing,
+same graph); #3462 makes `DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
+`deleteRel` are the `snapshot = true` case, so unchanged) and delete.rs pins moved to :286/:466, so W4-fn-1 is still open (the
+snapshot still copies the committed label ids); #2988 is `temporal.rs` (functions_temporal). COVERAGE.tsv rows unchanged.
+
+Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
+`parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
+`parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
+(`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
+Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
+`toLower`/`toUpper` (bug D fixed; `toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
+(string.rs −4/−16 after the deletion, eval.rs +11 after #3294/#2951). The eval.rs
+changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
+literal) touch no arm modelled here.
+Re-targeted to 8621212fc: no modelled function changed. #2904 (`fd2c76a6c`, `^` in eval.rs
+and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3007, #3043 and
+#3419 touch no row of this project; value.rs rows re-pinned (+7 after the import block,
+`add_slow` :961, `Contains::contains` impl :1867).
+Re-targeted to 737dfb5da: #2899 (`e63165cb5`, closes #2894) rewrote `RangeIter` (exact
+`remaining` count, signed `step`, advance only while another element is due): the
+`i64::MIN` negation variant is gone;
+new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
+no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
+the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
+(temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
+Re-targeted to b6567cb97: #2954 (closes #2928) fixes bug F — `ListComprehension` now
+evaluates a non-literal, non-`range` source with `eval_node` (null → null, scalar → type
+error). New `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
+`comprehension_scalar_err`, `comprehension_literal_range_unchanged`. `Value::name` now
+spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
+`typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
+after `type_of`), value.rs (+2 after `Value::name`).
+Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
+`capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
+-/
+
+namespace FalkorStrList
+open FalkorCore
+
+/-! ## Machine integers
+
+Rust `i64` values are modelled as `Int` together with the range predicate
+`InI64`. A debug build panics exactly when an arithmetic result leaves that
+range; a release build (the `[profile.release]` in `Cargo.toml` sets no
+`overflow-checks`) wraps, which is `wrap`. `asUsize` is Rust's `x as usize`
+on a 64-bit target. -/
+
+def I32MAX : Int := 2147483647
+-- `I64MIN`/`I64MAX`, `InI64` (range) and `wrap` (release wrap) are proofs/core's
+-- (`FalkorCore/Int64.lean`).
+def asUsize (x : Int) : Nat := (x % 18446744073709551616).toNat
+/-- C's `(int32_t)x` truncation, as used by `AR_SUBSCRIPT` / `AR_SLICE`. -/
+def trunc32 (x : Int) : Int := (x + 2147483648) % 4294967296 - 2147483648
+
+theorem asUsize_wrap64 (x : Int) (h0 : 0 ≤ x) (h1 : x < 18446744073709551616) :
+    asUsize (wrap x) = x.toNat := by
+  unfold asUsize wrap; omega
+
+/-! ## `[l][i]` — `ExprIR::GetElement` (`eval.rs:573-584`) -/
+
+/-- `eval.rs:578-584`: `normalized_index = if i < 0 { len + i } else { i }`,
+then `values[normalized_index as usize]` under the guard `0 ≤ n < len`. -/
+def getElementIdx (len : Nat) (i : Int) : Int := if i < 0 then (len : Int) + i else i
+
+def getElement (l : List α) (i : Int) : Option α :=
+  let n := getElementIdx l.length i
+  if 0 ≤ n ∧ n < l.length then l[n.toNat]? else none
+
+/-- `len + i` never overflows: `len ≤ i64::MAX` and `i < 0`. -/
+theorem getElement_noOverflow (len : Nat) (i : Int) (hl : (len : Int) ≤ I64MAX)
+    (hi : InI64 i) : InI64 (getElementIdx len i) := by
+  unfold getElementIdx InI64 I64MAX at *; split <;> omega
+
+/-- The unchecked `values[n as usize]` is in bounds whenever the guard holds, so
+indexing is total (no panic for any `i : i64`, including `i64::MIN`). -/
+theorem getElement_inBounds (l : List α) (i : Int)
+    (h : 0 ≤ getElementIdx l.length i ∧ getElementIdx l.length i < l.length) :
+    (getElementIdx l.length i).toNat < l.length := by omega
+
+/-- Spec: non-negative indices count from the front, negative from the back
+(`l[-1]` is the last element); anything outside `[-len, len)` is null. -/
+theorem getElement_spec (l : List α) (i : Int) :
+    getElement l i =
+      if 0 ≤ i then l[i.toNat]?
+      else if -(l.length : Int) ≤ i then l[(l.length + i).toNat]? else none := by
+  unfold getElement getElementIdx
+  by_cases h : i < 0
+  · simp only [h, if_true]
+    have : ¬ 0 ≤ i := by omega
+    simp only [this, if_false]
+    by_cases h2 : -(l.length : Int) ≤ i
+    · simp only [h2, if_true]; rw [if_pos (by omega)]
+    · simp only [h2, if_false]; rw [if_neg (by omega)]
+  · simp only [h, if_false]
+    have : 0 ≤ i := by omega
+    simp only [this, if_true]
+    by_cases h2 : i < l.length
+    · simp [h2]
+    · simp only [h2, and_false, if_false]
+      rw [List.getElem?_eq_none]; omega
+
+/-- C truncates the index to `int32_t` before normalising (`list_funcs.c`,
+`AR_SUBSCRIPT`). -/
+def cGetElement (l : List α) (i : Int) : Option α := getElement l (trunc32 i)
+
+/-- C and Rust disagree at `2^32`: C reads element 0, Rust returns null
+(openCypher: null). Live: `RETURN [1,2,3][4294967296]` → C `1`, Rust `null`. -/
+theorem cGetElement_truncates :
+    cGetElement [1, 2, 3] 4294967296 = some 1 ∧ getElement [1, 2, 3] 4294967296 = none := by
+  decide
+
+/-! ## `[l][a..b]` — `get_elements` (`eval.rs:1722-1750`) -/
+
+/-- `eval.rs:1729-1737`, the two normalisations, line by line. -/
+def sliceStart (len : Nat) (s : Int) : Int := if s < 0 then max ((len : Int) + s) 0 else s
+def sliceEnd (len : Nat) (e : Int) : Int := if e < 0 then max ((len : Int) + e) 0 else min e len
+
+def getElements (l : List α) (s e : Int) : List α :=
+  let s' := sliceStart l.length s
+  let e' := sliceEnd l.length e
+  if s' > e' then [] else (l.drop s'.toNat).take (e' - s').toNat
+
+/-- Totality of `values[start as usize..end as usize]` (`eval.rs:1742`): when
+the `start > end` early return is not taken, `0 ≤ start ≤ end ≤ len`, so the
+slice never panics — for every pair of `i64` bounds. -/
+theorem getElements_bounds (len : Nat) (s e : Int) (h : ¬ sliceStart len s > sliceEnd len e) :
+    0 ≤ sliceStart len s ∧ sliceStart len s ≤ sliceEnd len e ∧ sliceEnd len e ≤ len := by
+  unfold sliceStart sliceEnd at *
+  split <;> split <;> omega
+
+theorem getElements_noOverflow (len : Nat) (x : Int) (hl : (len : Int) ≤ I64MAX)
+    (hx : InI64 x) (hneg : x < 0) : InI64 ((len : Int) + x) := by
+  simp only [InI64, I64MIN, I64MAX] at *; omega
+
+/-- The clamp of the openCypher spec: negative bounds count from the end,
+then everything is clamped into `[0, len]`. -/
+def clampIdx (len : Nat) (x : Int) : Nat :=
+  (if x < 0 then max ((len : Int) + x) 0 else min x len).toNat
+
+/-- **Spec agreement.** `l[a..b]` is exactly the elements at positions
+`clamp a ≤ k < clamp b`. Rust does not clamp `start` from above; the lemma
+shows that an over-long start is caught by the `start > end` early return. -/
+theorem getElements_spec (l : List α) (s e : Int) :
+    getElements l s e =
+      (l.drop (clampIdx l.length s)).take (clampIdx l.length e - clampIdx l.length s) := by
+  unfold getElements sliceStart sliceEnd clampIdx
+  by_cases hs : s < 0 <;> by_cases he : e < 0 <;> simp only [hs, he, if_true, if_false]
+  all_goals
+    split
+    · -- early return: the spec side is empty too
+      rename_i hgt
+      by_cases hd : l.length ≤ (clampIdx l.length s)
+      all_goals first
+        | (rw [List.drop_eq_nil_of_le (by unfold clampIdx at *; simp only [hs] at *; omega)]; simp)
+        | (rw [show ∀ a b : Nat, a ≤ b → a - b = 0 from fun a b h => by omega]; simp; omega)
+    · rename_i hle
+      congr 2 <;> omega
+
+/-- C slice: both bounds truncated to `int32_t` (`list_funcs.c`, `AR_SLICE`).
+Live: `RETURN [1,2,3][-9223372036854775808..9223372036854775807]` → C `[1, 2]`
+(the bounds became `0..-1`), Rust `[1, 2, 3]` (spec). -/
+def cGetElements (l : List α) (s e : Int) : List α := getElements l (trunc32 s) (trunc32 e)
+
+theorem cGetElements_truncates :
+    cGetElements [1, 2, 3] I64MIN I64MAX = [1, 2] ∧
+    getElements [1, 2, 3] I64MIN I64MAX = [1, 2, 3] := by decide
+
+/-! ## `list.remove(l, idx, count)` (`list.rs:165-189`, `remove_span` `list.rs:41-54`)
+
+Since #2952 (07e712944) the span is computed by `remove_span`, which clamps the
+end with `saturating_add`: `listRemove` / `removeSpan` below model that code.
+`listRemoveDebug` / `listRemoveRelease` are kept as the **historical** model of
+the pre-#2952 inline arithmetic (`(normalized + count) as usize`), whose debug
+build overflowed. -/
+
+inductive Out (α : Type) where
+  | ok (l : List α)
+  | panic (msg : String)
+  deriving DecidableEq, Repr
+
+def removeNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + idx else idx
+
+/-- Historical (pre-#2952) debug build: `(normalized + count)` was a checked add. -/
+def listRemoveDebug (l : List α) (idx count : Int) : Out α :=
+  let len : Int := l.length
+  let n := removeNorm l.length idx
+  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then .ok l
+  else if ¬ InI64 (n + count) then .panic "attempt to add with overflow"
+  else
+    let e := min (n + count).toNat l.length
+    .ok (l.take n.toNat ++ l.drop e)
+
+/-- Historical (pre-#2952) release build: the add wraps, then `as usize`, then `.min(vs.len())`. -/
+def listRemoveRelease (l : List α) (idx count : Int) : List α :=
+  let len : Int := l.length
+  let n := removeNorm l.length idx
+  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
+  else
+    let e := min (asUsize (wrap (n + count))) l.length
+    l.take n.toNat ++ l.drop e
+
+/-- Spec (and C): drop `count` elements starting at the normalised index. -/
+def listRemoveSpec (l : List α) (idx count : Int) : List α :=
+  let len : Int := l.length
+  let n := removeNorm l.length idx
+  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
+  else l.take n.toNat ++ l.drop (n + count).toNat
+
+/-- …but the release build is right by accident: a wrapped (negative) sum
+becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
+list shorter than `i64::MAX` and every `i64` pair. -/
+theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : InI64 idx) :
+    InI64 (removeNorm len idx) := by
+  unfold removeNorm at *; simp only [InI64, I64MIN, I64MAX] at *; split <;> omega
+
+theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
+    listRemoveRelease l idx count = listRemoveSpec l idx count := by
+  have hn := removeNorm_range l.length idx hl hi
+  unfold listRemoveRelease listRemoveSpec
+  simp only []
+  generalize removeNorm l.length idx = n at *
+  simp only [InI64, I64MIN, I64MAX] at *
+  split
+  · rfl
+  · rename_i hg
+    have h0 : 0 ≤ n + count := by omega
+    have h1 : n + count < 18446744073709551616 := by omega
+    rw [asUsize_wrap64 _ h0 h1]
+    congr 1
+    by_cases hle : (n + count).toNat ≤ l.length
+    · rw [Nat.min_eq_left hle]
+    · rw [Nat.min_eq_right (by omega), List.drop_eq_nil_of_le (Nat.le_refl _),
+        List.drop_eq_nil_of_le (by omega)]
+
+/-- `i64::saturating_add`. -/
+def satAdd64 (a b : Int) : Int :=
+  if a + b > I64MAX then I64MAX else if a + b < I64MIN then I64MIN else a + b
+
+/-- `remove_span` (`list.rs:41-54`): `None` when nothing is removed, else the
+`start..end` span; `end = (normalized.saturating_add(count) as usize).min(len)`.
+`normalized ≥ 0` there, so the saturated sum is non-negative and `as usize` is
+the identity (`toNat`). -/
+def removeSpan (len : Nat) (idx count : Int) : Option (Nat × Nat) :=
+  let n := removeNorm len idx
+  if n < 0 ∨ n ≥ (len : Int) ∨ count ≤ 0 then none
+  else some (n.toNat, min (satAdd64 n count).toNat len)
+
+/-- `list_remove` (`list.rs:165-189`) on a list argument: the original list when
+`remove_span` is `None`, else `vs[..start] ++ vs[end..]`. The same in debug and
+release: no arithmetic in it can overflow (`removeSpan_wf`). -/
+def listRemove (l : List α) (idx count : Int) : List α :=
+  match removeSpan l.length idx count with
+  | none => l
+  | some (s, e) => l.take s ++ l.drop e
+
+/-- The unit test `remove_span_clamps_huge_count` (`list.rs:364`), as a theorem. -/
+theorem removeSpan_clamps_huge_count :
+    removeSpan 3 1 I64MAX = some (1, 3) ∧ removeSpan 3 (-1) I64MAX = some (2, 3) ∧
+    removeSpan 3 0 2 = some (0, 2) ∧ removeSpan 3 3 1 = none ∧
+    removeSpan 3 I64MIN 1 = none ∧ removeSpan 3 1 0 = none := by decide
+
+/-- The span is well formed: `start < end ≤ len`, so `vs.len() - (end - start)`
+and both slices are in bounds (no panic). -/
+theorem removeSpan_wf (len : Nat) (idx count : Int) (s e : Nat)
+    (hl : (len : Int) ≤ I64MAX)
+    (h : removeSpan len idx count = some (s, e)) : s < e ∧ e ≤ len := by
+  unfold removeSpan satAdd64 at h
+  generalize removeNorm len idx = n at *
+  unfold I64MAX I64MIN at *
+  by_cases hg : n < 0 ∨ n ≥ (len : Int) ∨ count ≤ 0
+  · rw [if_pos hg] at h; cases h
+  · rw [if_neg hg] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    split <;> (try split) <;> omega
+
+/-- **Bug B fixed.** The debug overflow input now returns C's `[1]`. -/
+theorem listRemove_huge_count : listRemove [1, 2, 3] 1 I64MAX = [1] := by decide
+
+/-- `list.remove` equals the spec (and C) for every list shorter than
+`i64::MAX` and every `i64` index and count, in debug and release alike. -/
+theorem listRemove_eq_spec (l : List α) (idx count : Int)
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
+    listRemove l idx count = listRemoveSpec l idx count := by
+  have hn := removeNorm_range l.length idx hl hi
+  unfold listRemove listRemoveSpec removeSpan
+  generalize removeNorm l.length idx = n at *
+  simp only [InI64, I64MIN, I64MAX] at *
+  by_cases hg : n < 0 ∨ n ≥ (l.length : Int) ∨ count ≤ 0
+  · simp only [if_pos hg]
+  · simp only [if_neg hg]
+    have hsat : (satAdd64 n count).toNat = min (n + count).toNat 9223372036854775807 := by
+      unfold satAdd64; unfold I64MAX I64MIN
+      split <;> (try split) <;> omega
+    rw [hsat]
+    congr 1
+    have hM : (n + count).toNat ≤ 9223372036854775807 ∨ l.length ≤ min (n + count).toNat 9223372036854775807 := by omega
+    rcases hM with hM | hM
+    · rw [Nat.min_eq_left hM]
+      by_cases hle : (n + count).toNat ≤ l.length
+      · rw [Nat.min_eq_left hle]
+      · rw [Nat.min_eq_right (by omega), List.drop_eq_nil_of_le (Nat.le_refl _),
+          List.drop_eq_nil_of_le (by omega)]
+    · rw [List.drop_eq_nil_of_le (as := l) (by omega), List.drop_eq_nil_of_le (as := l) (by omega)]
+
+/-- The fix agrees with the old release build wherever that was defined: the
+historical release model already matched the spec (`listRemoveRelease_eq_spec`). -/
+theorem listRemove_eq_preRelease (l : List α) (idx count : Int)
+    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
+    listRemove l idx count = listRemoveRelease l idx count := by
+  rw [listRemove_eq_spec l idx count hl hi hc, listRemoveRelease_eq_spec l idx count hl hi hc]
+
+/-! ## `list.insert` / `list.insertListElements` normalisation
+(`list.rs:253-267`, `list.rs:305-310`) -/
+
+def insertNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + idx + 1 else idx
+
+/-- `len + idx + 1` never overflows, and when the range guard passes the
+position is a valid split point for `vs[..pos]` / `vs[pos..]`. -/
+theorem insertNorm_safe (len : Nat) (idx : Int) (hl : (len : Int) < I64MAX) (hi : InI64 idx) :
+    InI64 (insertNorm len idx) ∧
+    (¬ (insertNorm len idx < 0 ∨ insertNorm len idx > len) → (insertNorm len idx).toNat ≤ len) := by
+  unfold insertNorm at *; simp only [InI64, I64MIN, I64MAX] at *
+  constructor
+  · split <;> omega
+  · intro h; split at * <;> omega
+
+/-- `-1` inserts after the last element (C's `bounds_inclusive`). -/
+theorem insertNorm_minus_one (len : Nat) : insertNorm len (-1) = len := by
+  unfold insertNorm; simp only [show (-1 : Int) < 0 by decide, if_true]; omega
+
+/-! ## `head` / `last` / `tail` / `reverse` / `size` on lists (`list.rs:57-154`) -/
+
+def head (l : List α) : Option α := if l.isEmpty then none else l[0]?
+def last (l : List α) : Option α := l.getLast?
+def tail (l : List α) : List α := if l.isEmpty then [] else l.drop 1
+
+theorem head_eq (l : List α) : head l = l.head? := by cases l <;> rfl
+theorem tail_eq (l : List α) : tail l = l.tail := by cases l <;> rfl
+theorem tail_length (l : List α) : (tail l).length = l.length - 1 := by
+  rw [tail_eq]; simp
+theorem last_eq_head_reverse (l : List α) : last l = l.reverse.head? := by
+  unfold last; simp [List.head?_reverse]
+theorem reverse_involutive (l : List α) : l.reverse.reverse = l := List.reverse_reverse l
+theorem size_concat (a b : List α) : (a ++ b).length = a.length + b.length := List.length_append
+
+/-! ## Eager `range(start, end, step)` (`math.rs:251-310`) -/
+
+/-- `math.rs:274-287`: `|end - start| / |step| + 1`, computed in `i128`, so no
+overflow is possible (it is plain `Int` arithmetic here). -/
+def rangeLen (start stop step : Int) : Nat :=
+  ((if stop ≥ start then stop - start else start - stop).natAbs / step.natAbs) + 1
+
+/-- `(start..=end).step_by(step)` / `(end..=start).rev().step_by(|step|)`:
+std's `step_by` on an inclusive range yields `start + k*step` while it stays
+inside the range; it never computes an element outside it, so it cannot
+overflow. That is modelled directly as the element list. -/
+def rangeElems (start stop step : Int) : List Int :=
+  (List.range (rangeLen start stop step)).map (fun (k : Nat) => start + (k : Int) * step)
+
+inductive ROut where
+  | ok (l : List Int)
+  | err (msg : String)
+  deriving DecidableEq, Repr
+
+def range (start stop step : Int) : ROut :=
+  if step = 0 then .err "ArgumentError: step argument to range() can't be 0"
+  else if (start > stop ∧ step > 0) ∨ (start < stop ∧ step < 0) then .ok []
+  else if rangeLen start stop step > 4294967295 then .err "Range too large"
+  else .ok (rangeElems start stop step)
+
+/-- Every element of `range` lies between `start` and `end`, hence inside
+`i64`: the eager `range` cannot overflow for any `i64` arguments (contrast
+with the pre-#2899 lazy `RangeIter`, #2894; the current one is `rangeIter_eq_range`). -/
+theorem range_elems_between (start stop step : Int) (hs : step ≠ 0)
+    (hdir : ¬ ((start > stop ∧ step > 0) ∨ (start < stop ∧ step < 0)))
+    (x : Int) (hx : x ∈ rangeElems start stop step) :
+    min start stop ≤ x ∧ x ≤ max start stop := by
+  unfold rangeElems rangeLen at hx
+  simp only [List.mem_map, List.mem_range] at hx
+  obtain ⟨k, hk, rfl⟩ := hx
+  have hk' : k ≤ (if stop ≥ start then stop - start else start - stop).natAbs / step.natAbs := by omega
+  have hmul : k * step.natAbs ≤ (if stop ≥ start then stop - start else start - stop).natAbs :=
+    (Nat.le_div_iff_mul_le (by omega)).mp hk'
+  have hmulI : ((k * step.natAbs : Nat) : Int) ≤
+      ((if stop ≥ start then stop - start else start - stop).natAbs : Int) := by exact_mod_cast hmul
+  push_cast at hmulI
+  by_cases hsg : step > 0
+  · have hab : (step.natAbs : Int) = step := by omega
+    have hup : stop ≥ start := by omega
+    simp only [hup, if_true] at hmulI
+    rw [hab] at hmulI
+    have : ((stop - start).natAbs : Int) = stop - start := by omega
+    rw [this] at hmulI
+    have h0 : 0 ≤ (k : Int) * step := Int.mul_nonneg (by omega) (by omega)
+    constructor <;> omega
+  · have hneg : step < 0 := by omega
+    have hab : (step.natAbs : Int) = -step := by omega
+    have hdn : start ≥ stop := by omega
+    rw [hab] at hmulI
+    by_cases heq : stop ≥ start
+    · have : start = stop := by omega
+      subst this
+      have hk0 : k = 0 := by simp at hk'; omega
+      subst hk0; simp
+    · simp only [heq, if_false] at hmulI
+      have : ((start - stop).natAbs : Int) = start - stop := by omega
+      rw [this] at hmulI
+      have h0 : 0 ≤ (k : Int) * -step := Int.mul_nonneg (by omega) (by omega)
+      rw [Int.mul_neg] at hmulI h0
+      constructor <;> omega
+
+theorem range_noOverflow (start stop step : Int) (h1 : InI64 start) (h2 : InI64 stop)
+    (l : List Int) (hr : range start stop step = .ok l) : ∀ x ∈ l, InI64 x := by
+  intro x hx
+  unfold range at hr
+  split at hr
+  · cases hr
+  · split at hr
+    · cases hr; simp at hx
+    · split at hr
+      · cases hr
+      · cases hr
+        rename_i hs hdir _
+        have := range_elems_between start stop step hs hdir x hx
+        simp only [InI64] at *; omega
+
+/-- The two C/TCK checks: first and last elements. -/
+theorem range_examples :
+    range 0 10 3 = .ok [0, 3, 6, 9] ∧ range 10 0 (-3) = .ok [10, 7, 4, 1] ∧
+    range 10 0 I64MIN = .ok [10] ∧ range 1 0 1 = .ok [] := ⟨rfl, rfl, rfl, rfl⟩
+
+/-! ## Lazy `RangeIter::next` before #2899 (history)
+
+Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`eval.rs:1215` at
+8621212fc); for `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluated
+`-self.step`, which overflowed before the (#2894) `+=`. -/
+
+/-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:114-127`)
+
+`eval_iter_expr` (`eval.rs:1236-1241`) builds `RangeIter { current: start, step,
+remaining: length }` with the signed `step` (no negation any more) and the same
+`length` as the eager `range` (`rangeLen`). `next` yields `current`, decrements
+`remaining` and advances `current += step` only while `remaining > 0`. Debug build:
+the `+=` is checked. -/
+
+def rangeIter (step : Int) : Nat → Int → Except String (List Int)
+  | 0, _ => .ok []
+  | r + 1, cur =>
+    if r = 0 then .ok [cur]
+    else if InI64 (cur + step) then (rangeIter step r (cur + step)).map (cur :: ·)
+    else .error "attempt to add with overflow"
+
+/-- The lazy iterator is the element list as long as every element it is due to
+yield is an `i64` (it never computes the one past the last). -/
+theorem rangeIter_of_inRange (step : Int) :
+    ∀ (r : Nat) (cur : Int), (∀ k : Nat, k < r → InI64 (cur + k * step)) →
+      rangeIter step r cur = .ok ((List.range r).map fun (k : Nat) => cur + (k : Int) * step)
+  | 0, _, _ => rfl
+  | r + 1, cur, h => by
+    by_cases hr : r = 0
+    · subst hr; simp [rangeIter]
+    · have h1 : InI64 (cur + step) := by have := h 1 (by omega); simpa using this
+      have ih := rangeIter_of_inRange step r (cur + step) (fun k hk => by
+        have := h (k + 1) (by omega)
+        have e : cur + step + (k : Int) * step = cur + ((k + 1 : Nat) : Int) * step := by
+          push_cast; rw [Int.add_mul]; omega
+        rwa [e])
+      have hl : ((List.range (r + 1)).map fun (k : Nat) => cur + (k : Int) * step) =
+          cur :: ((List.range r).map fun (k : Nat) => cur + step + (k : Int) * step) := by
+        simp only [List.range_succ_eq_map, List.map_cons, List.map_map]
+        congr 1
+        · simp
+        · apply List.map_congr_left; intro k _
+          simp only [Function.comp]; push_cast; rw [Int.add_mul]; omega
+      simp only [rangeIter, hr, ↓reduceIte, h1, ih, hl]; rfl
+
+/-- **#2894 / #2899, fixed**: `UNWIND range(a, b, step)` (lazy) yields exactly the list
+the eager `range(a, b, step)` returns, for every `i64` `a`, `b`, `step`, and never
+overflows — including `step = i64::MIN`
+and ranges ending on `i64::MAX`/`i64::MIN`. -/
+theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI64 stop)
+    (l : List Int) (hr : range start stop step = .ok l) (hne : l ≠ []) :
+    rangeIter step (rangeLen start stop step) start = .ok l := by
+  unfold range at hr
+  split at hr
+  · cases hr
+  · split at hr
+    · cases hr; exact absurd rfl hne
+    · split at hr
+      · cases hr
+      · cases hr
+        rename_i hs hdir _
+        apply rangeIter_of_inRange
+        intro k hk
+        have hx : start + k * step ∈ rangeElems start stop step := by
+          unfold rangeElems; exact List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
+        have := range_elems_between start stop step hs hdir _ hx
+        simp only [InI64] at *; omega
+
+/-- The examples of `range_iter_stops_at_i64_bounds` (`eval.rs` unit test) and
+the former debug panic `UNWIND range(10, 0, i64::MIN)`. -/
+theorem rangeIter_examples :
+    rangeIter 1 (rangeLen (I64MAX - 1) I64MAX 1) (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
+    rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] ∧
+    rangeIter I64MIN (rangeLen 10 0 I64MIN) 10 = .ok [10] ∧
+    rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
+
+/-! ## Quantifiers `all/any/none/single` (`eval_quantifier`, `eval.rs:1616-1660`) -/
+
+/-- The three predicate outcomes the loop at `eval.rs:988-1004` counts. -/
+inductive K where | t | f | n
+  deriving DecidableEq, Repr
+
+inductive QType where | all | any | none | single
+  deriving DecidableEq, Repr
+
+def cnt (xs : List K) (k : K) : Nat := (xs.filter (· == k)).length
+
+/-- `eval_quantifier`, branch for branch. `.n` result is `Value::Null`. -/
+def evalQuantifier : QType → Nat → Nat → Nat → K
+  | .all, _, f, n => if f > 0 then .f else if n > 0 then .n else .t
+  | .any, t, _, n => if t > 0 then .t else if n > 0 then .n else .f
+  | .none, t, _, n => if t > 0 then .f else if n > 0 then .n else .t
+  | .single, t, _, n =>
+      if t = 1 ∧ n = 0 then .t else if t > 1 then .f else if n > 0 then .n else .f
+
+/-- Kleene three-valued AND / OR / NOT (openCypher's logic). -/
+def kand : K → K → K
+  | .f, _ => .f | _, .f => .f | .n, _ => .n | _, .n => .n | .t, .t => .t
+def kor : K → K → K
+  | .t, _ => .t | _, .t => .t | .n, _ => .n | _, .n => .n | .f, .f => .f
+def knot : K → K | .t => .f | .f => .t | .n => .n
+
+def quant (q : QType) (xs : List K) : K := evalQuantifier q (cnt xs .t) (cnt xs .f) (cnt xs .n)
+
+theorem cnt_cons (x : K) (xs : List K) (k : K) :
+    cnt (x :: xs) k = cnt xs k + (if x = k then 1 else 0) := by
+  unfold cnt; cases x <;> cases k <;> simp [List.filter_cons] <;> omega
+
+theorem fold_kand (xs : List K) :
+    xs.foldr kand .t = (if cnt xs .f > 0 then .f else if cnt xs .n > 0 then .n else .t) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    rw [List.foldr_cons, ih]; simp only [cnt_cons]
+    cases x <;> by_cases hf : cnt xs .f > 0 <;> by_cases hn : cnt xs .n > 0 <;> simp [hf, hn, kand] <;> omega
+
+theorem fold_kor (xs : List K) :
+    xs.foldr kor .f = (if cnt xs .t > 0 then .t else if cnt xs .n > 0 then .n else .f) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    rw [List.foldr_cons, ih]; simp only [cnt_cons]
+    cases x <;> by_cases hf : cnt xs .t > 0 <;> by_cases hn : cnt xs .n > 0 <;> simp [hf, hn, kor] <;> omega
+
+/-- `all(x IN l WHERE p)` is the Kleene conjunction of the predicates. -/
+theorem all_is_kand (xs : List K) : quant .all xs = xs.foldr kand .t := by
+  rw [fold_kand]; rfl
+
+/-- `any(x IN l WHERE p)` is the Kleene disjunction. -/
+theorem any_is_kor (xs : List K) : quant .any xs = xs.foldr kor .f := by
+  rw [fold_kor]; rfl
+
+/-- `none(...) = NOT any(...)`. -/
+theorem none_is_not_any (xs : List K) : quant .none xs = knot (quant .any xs) := by
+  unfold quant evalQuantifier
+  by_cases ht : cnt xs .t > 0 <;> by_cases hn : cnt xs .n > 0 <;> simp [ht, hn, knot]
+
+/-- `single`: true iff exactly one true and no unknowns; false as soon as two
+trues are seen (whatever the nulls); otherwise unknown if some null. -/
+theorem single_spec (xs : List K) :
+    quant .single xs =
+      if cnt xs .t > 1 then .f
+      else if cnt xs .n > 0 then .n
+      else if cnt xs .t = 1 then .t else .f := by
+  unfold quant evalQuantifier
+  by_cases h1 : cnt xs .t > 1
+  · simp only [h1, if_true]; rw [if_neg (by omega)]
+  · simp only [h1, if_false]
+    by_cases h2 : cnt xs .n > 0
+    · simp only [h2, if_true]; rw [if_neg (by omega)]
+    · simp only [h2, if_false]
+      by_cases h3 : cnt xs .t = 1 <;> simp [h3] <;> omega
+
+/-! ## `x IN list` — `Contains for ThinVec<Value>` (`value.rs:1762-1785`)
+
+Parametric in the element comparison `cmp : α → α → (Ordering × Dis)`; the
+comparison itself is `value_order`'s subject. -/
+
+inductive Dis where | none | null | nan | disjoint
+  deriving DecidableEq, Repr
+
+/-- `value.rs:1767-1783`, with `is_null` accumulated left to right. -/
+def containsLoop (cmp : α → Ordering × Dis) : Bool → List α → K
+  | isNull, [] => if isNull then .n else .f
+  | isNull, x :: xs =>
+    let (res, dis) := cmp x
+    let isNull := isNull || dis == .null
+    if res == .eq then (if dis == .null then .n else .t) else containsLoop cmp isNull xs
+
+def contains (cmp : α → Ordering × Dis) (xs : List α) : K := containsLoop cmp false xs
+
+/-- `IN` is true iff some element compares `Equal` *definitely* with no
+earlier element comparing `Equal` under a NULL; false iff nothing compares
+`Equal` and no comparison touched NULL. -/
+theorem contains_false_iff (cmp : α → Ordering × Dis) (xs : List α) :
+    contains cmp xs = .f ↔ ∀ x ∈ xs, (cmp x).1 ≠ .eq ∧ (cmp x).2 ≠ .null := by
+  unfold contains
+  suffices h : ∀ b, containsLoop cmp b xs = .f ↔ b = false ∧ ∀ x ∈ xs, (cmp x).1 ≠ .eq ∧ (cmp x).2 ≠ .null by
+    simp [h]
+  induction xs with
+  | nil => intro b; cases b <;> simp [containsLoop]
+  | cons x xs ih =>
+    intro b
+    simp only [containsLoop, List.forall_mem_cons]
+    rcases hc : cmp x with ⟨r, d⟩
+    by_cases hr : r = .eq
+    · subst hr; cases d <;> simp
+    · have : (r == Ordering.eq) = false := by cases r <;> simp_all
+      simp only [this, Bool.false_eq_true, if_false, ih]
+      cases b <;> cases d <;> simp [hr]
+
+/-- The empty list never contains anything, not even null. -/
+theorem contains_nil (cmp : α → Ordering × Dis) : contains cmp [] = .f := rfl
+
+/-! ## Comprehension / reduce / quantifier sources
+
+Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1040-1085`) streams a list literal or
+`range(..)` through `eval_iter_expr` (`eval.rs:1226`) and evaluates any other source with
+`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error. Before,
+every source went through `eval_iter_expr`, whose fallback arm is UNWIND's (`Null` → no
+rows, scalar → one row). Quantifiers (`eval.rs:1005-1012`) and `reduce` already returned
+`Null` for a null source and raised for a scalar, as does C. -/
+
+inductive Src where | null | scalar (i : Int) | list (l : List Int)
+  deriving DecidableEq, Repr
+
+/-- The syntactic shape of a comprehension source after #2954: a list literal or a
+`range(..)` call (both always yield a list), or any other expression, given by the
+value `eval_node` returns. -/
+inductive CSrc where | literal (l : List Int) | range (l : List Int) | other (v : Src)
+  deriving DecidableEq, Repr
+
+/-- The value a source expression denotes. -/
+def CSrc.val : CSrc → Src
+  | .literal l | .range l => .list l
+  | .other v => v
+
+inductive COut where | null | list (l : List Int) | err
+  deriving DecidableEq, Repr
+
+/-- `ListComprehension` before #2954 (no WHERE, identity projection): every source
+through `eval_iter_expr`'s UNWIND fallback. Historical. -/
+def pre2954_comprehensionRust : Src → COut
+  | .null => .list []
+  | .scalar i => .list [i]
+  | .list l => .list l
+
+/-- `ListComprehension` on main (no WHERE, identity projection): literal / `range`
+stream, any other source is matched on its evaluated value. -/
+def comprehensionRust : CSrc → COut
+  | .literal l | .range l => .list l
+  | .other .null => .null
+  | .other (.scalar _) => .err
+  | .other (.list l) => .list l
+
+/-- C / openCypher, and Rust's own `reduce`/quantifier arms. -/
+def comprehensionSpec : Src → COut
+  | .null => .null
+  | .scalar _ => .err
+  | .list l => .list l
+
+/-- Main agrees with C / openCypher on every source. -/
+theorem comprehension_eq_spec (s : CSrc) : comprehensionRust s = comprehensionSpec s.val := by
+  cases s with
+  | literal l => rfl
+  | range l => rfl
+  | other v => cases v <;> rfl
+
+/-- `[x IN null | x]` is `null`. -/
+theorem comprehension_null : comprehensionRust (.other .null) = .null := rfl
+
+/-- `[x IN 5 | x]` is a type error. -/
+theorem comprehension_scalar_err (i : Int) : comprehensionRust (.other (.scalar i)) = .err := rfl
+
+/-- List-valued sources are unchanged by #2954: a literal, a `range`, or any expression
+evaluating to a list gives what the pre-#2954 code gave. -/
+theorem comprehension_literal_range_unchanged (l : List Int) :
+    comprehensionRust (.literal l) = pre2954_comprehensionRust (.list l) ∧
+    comprehensionRust (.range l) = pre2954_comprehensionRust (.list l) ∧
+    comprehensionRust (.other (.list l)) = pre2954_comprehensionRust (.list l) :=
+  ⟨rfl, rfl, rfl⟩
+
+theorem comprehension_agrees_on_lists (l : List Int) :
+    pre2954_comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
+
+/-- `reduce(acc = init, x IN l | body)` (`eval.rs:1035-1061`) is `foldl`. -/
+def reduceList (body : β → α → β) (init : β) (l : List α) : β := l.foldl body init
+theorem reduce_nil (body : β → α → β) (init : β) : reduceList body init [] = init := rfl
+theorem reduce_append (body : β → α → β) (init : β) (a b : List α) :
+    reduceList body init (a ++ b) = reduceList body (reduceList body init a) b := List.foldl_append
+
+/-! ## Strings
+
+A Rust `String` is valid UTF-8, so it is modelled by its code points
+(`Str := List Char`, what `.chars()` yields). Byte-level quantities — `s.len()`
+in Rust, `strlen` in C — are `blen`, the sum of `Char.utf8Size`. The
+bytes themselves are `String.utf8EncodeChar`. -/
+
+abbrev Str := List Char
+
+def blen (s : Str) : Nat := (s.map Char.utf8Size).sum
+
+theorem blen_cons (c : Char) (s : Str) : blen (c :: s) = c.utf8Size + blen s := by
+  simp [blen]
+
+theorem length_le_blen (s : Str) : s.length ≤ blen s := by
+  induction s with
+  | nil => simp [blen]
+  | cons c s ih => rw [blen_cons]; have := Char.utf8Size_pos c; simp; omega
+
+/-- Dropping `k ≤ length` code points removes at least `k` bytes. -/
+theorem blen_drop_le (s : Str) (k : Nat) : blen (s.drop k) + k ≤ blen s + (k - s.length) := by
+  induction s generalizing k with
+  | nil => simp [blen]
+  | cons c s ih =>
+    cases k with
+    | zero => simp
+    | succ k =>
+      simp only [List.drop_succ_cons, blen_cons, List.length_cons]
+      have := ih k; have := Char.utf8Size_pos c; omega
+
+theorem length_drop_le_bytes (s : Str) (k : Nat) (hk : k < blen s) :
+    (s.drop k).length ≤ blen s - k := by
+  have h1 := length_le_blen (s.drop k)
+  have h2 := blen_drop_le s k
+  by_cases hkl : k ≤ s.length
+  · omega
+  · rw [List.drop_eq_nil_of_le (by omega)]; simp
+
+inductive SOut where
+  | ok (s : Str)
+  | err (msg : String)
+  deriving DecidableEq, Repr
+
+/-! ### `substring` (`string.rs:51-101`) -/
+
+/-- `string.rs:64-74`. Note the guard compares the *code point* index against
+the *byte* length `s.len()`. -/
+def substring2 (s : Str) (start : Int) : SOut :=
+  if start < 0 then .err "start must be a non-negative integer"
+  else if start ≥ blen s then .ok []
+  else .ok (s.drop start.toNat)
+
+/-- `string.rs:77-96`. -/
+def substring3 (s : Str) (start length : Int) : SOut :=
+  if start < 0 then .err "start must be a non-negative integer"
+  else if start.toNat ≥ blen s then .ok []
+  else if length < 0 then .err "length must be a non-negative integer"
+  else .ok ((s.drop start.toNat).take length.toNat)
+
+/-- C `AR_SUBSCRIPT`'s sibling `AR_SUBSTRING` (`string_funcs.c`): byte-length
+guard, `length = MIN(length, suffix_len)` with `suffix_len` in *bytes*, then
+code-point walks. -/
+def cSubstring3 (s : Str) (start length : Int) : SOut :=
+  if start < 0 then .err "start must be a non-negative integer"
+  else if start ≥ blen s then .ok []
+  else if length < 0 then .err "length must be a non-negative integer"
+  else .ok ((s.drop start.toNat).take (min length.toNat (blen s - start.toNat)))
+
+/-- **Spec** (openCypher, 0-based code points): the byte-length guard is
+harmless — past the last code point `drop` is already empty. -/
+theorem substring2_spec (s : Str) (start : Int) :
+    substring2 s start =
+      if start < 0 then .err "start must be a non-negative integer" else .ok (s.drop start.toNat) := by
+  unfold substring2
+  split
+  · rfl
+  · split
+    · rw [List.drop_eq_nil_of_le]; have := length_le_blen s; omega
+    · rfl
+
+/-- Rust and C agree on every input: `take (min len suffix_bytes)` is
+`take len` because a suffix has no more code points than bytes. -/
+theorem substring3_agrees_C (s : Str) (start length : Int) :
+    substring3 s start length = cSubstring3 s start length := by
+  unfold substring3 cSubstring3
+  split
+  · rfl
+  · rename_i h0
+    have e : (start.toNat ≥ blen s) ↔ (start ≥ (blen s : Int)) := by omega
+    by_cases hb : start ≥ (blen s : Int)
+    · rw [if_pos (e.mpr hb), if_pos hb]
+    · rw [if_neg (fun h => hb (e.mp h)), if_neg hb]
+      split
+      · rfl
+      · congr 1
+        have hk : start.toNat < blen s := by omega
+        have := length_drop_le_bytes s start.toNat hk
+        by_cases hm : length.toNat ≤ blen s - start.toNat
+        · rw [Nat.min_eq_left hm]
+        · rw [Nat.min_eq_right (by omega), List.take_of_length_le (by omega),
+            List.take_of_length_le (by omega)]
+
+theorem substring3_spec (s : Str) (start length : Int) (h0 : 0 ≤ start) (hl : 0 ≤ length) :
+    substring3 s start length = .ok ((s.drop start.toNat).take length.toNat) := by
+  unfold substring3
+  rw [if_neg (by omega)]
+  split
+  · rw [List.drop_eq_nil_of_le]; · simp
+    have := length_le_blen s; omega
+  · rw [if_neg (by omega)]
+
+/-- Shared divergence (Rust = C): a negative length is *not* rejected when the
+start is already past the end — `substring('abc', 10, -1)` is `''`. -/
+theorem substring3_negative_length_past_end :
+    substring3 ['a', 'b', 'c'] 10 (-1) = .ok [] ∧
+    substring3 ['a', 'b', 'c'] 0 (-1) = .err "length must be a non-negative integer" := by decide
+
+/-- UTF-8: `substring('héllo', 1, 3)` is `'éll'` (code points, not bytes). -/
+theorem substring_multibyte :
+    substring3 "héllo".toList 1 3 = .ok "éll".toList ∧ substring2 "héllo".toList 5 = .ok [] := by
+  decide
+
+/-! ### `left` / `right` (`string.rs:207-299`) -/
+
+def left (s : Str) (n : Int) : SOut :=
+  if n < 0 then .err "length must be a non-negative integer" else .ok (s.take n.toNat)
+
+/-- `string.rs:289-290`: `chars().count().saturating_sub(n as usize)`. -/
+def right (s : Str) (n : Int) : SOut :=
+  if n < 0 then .err "length must be a non-negative integer"
+  else .ok (s.drop (s.length - n.toNat))
+
+/-- C `AR_LEFT`: `strlen(s) <= newlen` (bytes) returns the whole string. -/
+def cLeft (s : Str) (n : Int) : SOut :=
+  if n < 0 then .err "length must be a non-negative integer"
+  else if (blen s : Int) ≤ n then .ok s else .ok (s.take n.toNat)
+
+/-- C `AR_RIGHT`: `start = str_length(s) - newlen` in `int64_t`. -/
+def cRight (s : Str) (n : Int) : SOut :=
+  if n < 0 then .err "length must be a non-negative integer"
+  else if (s.length : Int) - n ≤ 0 then .ok s else .ok (s.drop ((s.length : Int) - n).toNat)
+
+theorem left_agrees_C (s : Str) (n : Int) : left s n = cLeft s n := by
+  unfold left cLeft
+  split
+  · rfl
+  · split
+    · rw [List.take_of_length_le]; have := length_le_blen s; omega
+    · rfl
+
+theorem right_agrees_C (s : Str) (n : Int) : right s n = cRight s n := by
+  unfold right cRight
+  split
+  · rfl
+  · split
+    · rw [show s.length - n.toNat = 0 by omega]; rfl
+    · congr 2; omega
+
+theorem left_right_spec (s : Str) (n : Nat) :
+    left s n = .ok (s.take n) ∧ right s n = .ok (s.drop (s.length - n)) ∧
+    (s.drop (s.length - n)).length = min n s.length ∧
+    s.take (s.length - n) ++ s.drop (s.length - n) = s := by
+  refine ⟨?_, ?_, ?_, List.take_append_drop _ _⟩
+  · unfold left; simp
+  · unfold right; simp
+  · simp; omega
+
+/-! ### `size` / `reverse` (`list.rs:64-71`, `list.rs:149`) -/
+
+/-- `size(s)` counts code points, like C's `str_length`. -/
+def size (s : Str) : Nat := s.length
+
+theorem str_size_concat (a b : Str) : size (a ++ b) = size a + size b := List.length_append
+theorem size_reverse (s : Str) : size s.reverse = size s := List.length_reverse
+theorem size_le_bytes (s : Str) : size s ≤ blen s := length_le_blen s
+
+/-- C `AR_REVERSE` walks code points forward and writes each one's bytes
+immediately to the left of what it already wrote. -/
+def cReverseBytes (enc : Char → List UInt8) : Str → List UInt8 → List UInt8
+  | [], acc => acc
+  | c :: t, acc => cReverseBytes enc t (enc c ++ acc)
+
+theorem cReverseBytes_eq (enc : Char → List UInt8) (s : Str) (acc : List UInt8) :
+    cReverseBytes enc s acc = s.reverse.flatMap enc ++ acc := by
+  induction s generalizing acc with
+  | nil => rfl
+  | cons c t ih => simp [cReverseBytes, ih, List.flatMap_append]
+
+/-- **Rust and C reverse agree byte for byte**: C's output is the UTF-8
+encoding of `s.chars().rev()`. -/
+theorem reverse_agrees_C (s : Str) :
+    cReverseBytes String.utf8EncodeChar s [] = s.reverse.flatMap String.utf8EncodeChar := by
+  rw [cReverseBytes_eq]; simp
+
+/-- Both reverse *code points*, not grapheme clusters: a combining accent
+moves to the other letter (`reverse('éa')` = `'áe'`, live on both). -/
+theorem reverse_moves_combining_mark :
+    ['e', '́', 'a'].reverse = ['a', '́', 'e'] := by decide
+
+/-! ### `trim` / `ltrim` / `rtrim` (`string.rs:233-274`) -/
+
+def isSp (c : Char) : Bool := c == ' '
+/-- `trim_start_matches(' ')` and C `AR_LTRIM`. Only U+0020 is trimmed. -/
+def ltrim (s : Str) : Str := s.dropWhile isSp
+/-- `trim_end_matches(' ')` and C `AR_RTRIM`. -/
+def rtrim (s : Str) : Str := (s.reverse.dropWhile isSp).reverse
+/-- Rust `trim_matches(' ')` strips the end first… -/
+def trimRust (s : Str) : Str := ltrim (rtrim s)
+/-- …C `AR_TRIM` is `AR_RTRIM(AR_LTRIM(s))`. -/
+def trimC (s : Str) : Str := rtrim (ltrim s)
+
+theorem rtrim_cons (c : Char) (t : Str) :
+    rtrim (c :: t) = if isSp c ∧ rtrim t = [] then [] else c :: rtrim t := by
+  unfold rtrim
+  rw [List.reverse_cons, List.dropWhile_append]
+  by_cases he : (List.dropWhile isSp t.reverse).isEmpty
+  · have he' : List.dropWhile isSp t.reverse = [] := List.isEmpty_iff.mp he
+    rw [if_pos he, he']
+    by_cases hc : isSp c
+    · simp [List.dropWhile, hc]
+    · simp [List.dropWhile, hc]
+  · have he' : List.dropWhile isSp t.reverse ≠ [] := fun h => he (List.isEmpty_iff.mpr h)
+    rw [if_neg he]
+    simp [he']
+
+theorem trim_agrees_C (s : Str) : trimRust s = trimC s := by
+  unfold trimRust trimC
+  induction s with
+  | nil => rfl
+  | cons c t ih =>
+    rw [rtrim_cons]
+    by_cases hc : isSp c
+    · have hl : ltrim (c :: t) = ltrim t := by simp [ltrim, List.dropWhile, hc]
+      rw [hl, ← ih]
+      by_cases hr : rtrim t = []
+      · simp [hc, hr, ltrim]
+      · simp [hc, hr, ltrim, List.dropWhile]
+    · have hl : ltrim (c :: t) = c :: t := by simp [ltrim, List.dropWhile, hc]
+      rw [hl, rtrim_cons]
+      simp [hc, ltrim, List.dropWhile]
+
+theorem ltrim_head (s : Str) : ∀ c, (ltrim s).head? = some c → c ≠ ' ' := by
+  intro c h
+  unfold ltrim at h
+  have := List.head_dropWhile_not (p := isSp) (l := s)
+  induction s with
+  | nil => simp at h
+  | cons x xs ih =>
+    by_cases hx : isSp x
+    · simp [List.dropWhile, hx] at h; exact ih h (by
+        intro w; exact List.head_dropWhile_not (p := isSp) (l := xs) w)
+    · simp [List.dropWhile, hx] at h; subst h; simpa [isSp] using hx
+
+theorem ltrim_idem (s : Str) : ltrim (ltrim s) = ltrim s := by
+  unfold ltrim
+  induction s with
+  | nil => rfl
+  | cons x xs ih =>
+    by_cases hx : isSp x
+    · simp only [List.dropWhile, hx]; exact ih
+    · simp [List.dropWhile, hx]
+
+/-- Only spaces: tabs and newlines survive (both engines). -/
+theorem trim_only_spaces : trimRust ['\t', ' ', 'a', '\n'] = ['\t', ' ', 'a', '\n'] := by decide
+
+/-! ### `split(s, delim)` (`string.rs:103-137`)
+
+Rust delegates to std `str::split`, whose contract is: the pieces between
+non-overlapping matches found left to right. `splitAux` is that contract
+written as a character-at-a-time scanner (`cur` holds the piece so far,
+reversed). C `AR_SPLIT` (`string_funcs.c`) is a different algorithm — find
+the first match, emit the prefix, jump past the delimiter — and it is
+`cSplit`. Its final `if(rest_len > 0 || delimiter_found)` push always fires for
+a non-empty input: the loop is left either by `break` (not found, so
+`rest_len ≥ dlen > 0`), by the loop condition after a successful iteration
+(`delimiter_found`), or never entered (`rest_len = str_len > 0`); `cSplit`
+therefore always emits the rest. C matches bytes and Rust code points; for a
+valid UTF-8 delimiter the two coincide because UTF-8 is self-synchronising —
+that step is assumed, not proven (see gaps). -/
+
+theorem isPrefixOf_length {d s : Str} (h : d.isPrefixOf s = true) : d.length ≤ s.length :=
+  (List.isPrefixOf_iff_prefix.mp h).length_le
+
+def splitAux (d : Str) (hd : d ≠ []) (s cur : Str) : List Str :=
+  if h : d.isPrefixOf s then cur.reverse :: splitAux d hd (s.drop d.length) []
+  else match s with
+    | [] => [cur.reverse]
+    | c :: t => splitAux d hd t (c :: cur)
+termination_by s.length
+decreasing_by
+  · have := isPrefixOf_length h
+    have : d.length ≠ 0 := fun h0 => hd (List.length_eq_zero_iff.mp h0)
+    simp only [List.length_drop]; omega
+  · simp
+
+/-- First position where `d` occurs (`strncmp(start + len, d, dlen) == 0`). -/
+def findFirst (d : Str) : Str → Option Nat
+  | [] => if d.isPrefixOf [] then some 0 else none
+  | c :: t => if d.isPrefixOf (c :: t) then some 0 else (findFirst d t).map (· + 1)
+
+theorem findFirst_le (d s : Str) (i : Nat) (h : findFirst d s = some i) : i + d.length ≤ s.length := by
+  induction s generalizing i with
+  | nil =>
+    simp only [findFirst] at h; split at h
+    · rename_i hp; cases h; have := isPrefixOf_length hp; simpa using this
+    · cases h
+  | cons c t ih =>
+    simp only [findFirst] at h; split at h
+    · rename_i hp; cases h; have := isPrefixOf_length hp; simpa using this
+    · cases hf : findFirst d t with
+      | none => simp [hf] at h
+      | some j => simp [hf] at h; subst h; have := ih j hf; simp; omega
+
+def cSplit (d : Str) (hd : d ≠ []) (s : Str) : List Str :=
+  match hf : findFirst d s with
+  | none => [s]
+  | some i => s.take i :: cSplit d hd (s.drop (i + d.length))
+termination_by s.length
+decreasing_by
+  have := findFirst_le d s i hf
+  have : d.length ≠ 0 := fun h0 => hd (List.length_eq_zero_iff.mp h0)
+  simp only [List.length_drop]; omega
+
+/-- One unfolding of the scanner, stated against `findFirst`. -/
+theorem splitAux_step (d : Str) (hd : d ≠ []) (s cur : Str) :
+    splitAux d hd s cur =
+      match findFirst d s with
+      | none => [cur.reverse ++ s]
+      | some i => (cur.reverse ++ s.take i) :: splitAux d hd (s.drop (i + d.length)) [] := by
+  induction s generalizing cur with
+  | nil =>
+    rw [splitAux]
+    simp only [findFirst]
+    split <;> rename_i h <;> simp [h]
+  | cons c t ih =>
+    rw [splitAux]
+    simp only [findFirst]
+    by_cases h : d.isPrefixOf (c :: t) = true
+    · simp [h]
+    · simp only [h, dite_false, if_false, Bool.false_eq_true]
+      rw [ih]
+      cases findFirst d t with
+      | none => simp
+      | some j =>
+        simp only [Option.map_some, List.reverse_cons, List.append_assoc, List.singleton_append,
+          List.take_succ_cons, List.cons.injEq, and_true]
+        rw [show j + 1 + d.length = (j + d.length) + 1 by omega, List.drop_succ_cons]
+        try simp
+
+/-- **Rust's `split` and C's `AR_SPLIT` agree** for every non-empty delimiter. -/
+theorem splitAux_eq_cSplit (d : Str) (hd : d ≠ []) (s : Str) :
+    splitAux d hd s [] = cSplit d hd s := by
+  rw [splitAux_step, cSplit]
+  split
+  · split <;> simp_all
+  · rename_i i hf
+    split
+    · simp_all
+    · rename_i j hj
+      have hij : i = j := by simp_all
+      subst hij
+      simp only [List.reverse_nil, List.nil_append]
+      rw [splitAux_eq_cSplit d hd (s.drop (i + d.length))]
+termination_by s.length
+decreasing_by
+  have := findFirst_le d s _ (by assumption)
+  have : d.length ≠ 0 := fun h0 => hd (List.length_eq_zero_iff.mp h0)
+  simp only [List.length_drop]; omega
+
+/-- `string.rs:112-131`. -/
+def splitRust (s d : Str) : List Str :=
+  if s = [] then [[]]
+  else if hd : d = [] then s.map (fun c => [c])
+  else splitAux d hd s []
+
+/-- C `AR_SPLIT`, branch order as written (delimiter first). -/
+def splitC (s d : Str) : List Str :=
+  if hd : d = [] then (if s = [] then [[]] else s.map (fun c => [c]))
+  else if s = [] then [[]]
+  else cSplit d hd s
+
+theorem split_agrees_C (s d : Str) : splitRust s d = splitC s d := by
+  unfold splitRust splitC
+  by_cases hs : s = [] <;> by_cases hd : d = [] <;> simp [hs, hd, splitAux_eq_cSplit]
+
+theorem split_examples :
+    splitRust "a,b,".toList [','] = ["a".toList, "b".toList, []] ∧
+    splitRust "aaa".toList "aa".toList = [[], ['a']] ∧
+    splitRust [] [','] = [[]] ∧
+    splitRust "hé".toList [] = [['h'], ['é']] := by decide +kernel
+
+/-! ### `replace(s, search, repl)` (`string.rs:183-205`)
+
+std `str::replace` with a non-empty pattern is `split` then join; with an
+empty pattern it inserts `repl` before every code point and at the end. C
+(`AR_REPLACE`) advances one *byte* per empty match, so it inserts `repl`
+inside multi-byte sequences and produces invalid UTF-8. -/
+
+def replaceRust (s f t : Str) : Str :=
+  if hf : f = [] then t ++ s.flatMap (fun c => c :: t) else t.intercalate (splitAux f hf s [])
+
+/-- C on bytes for an empty search string: a match at every byte offset
+`0..=strlen`. -/
+def cReplaceEmptyBytes (b t : List UInt8) : List UInt8 := t ++ b.flatMap (fun x => x :: t)
+
+def utf8 (s : Str) : List UInt8 := s.flatMap String.utf8EncodeChar
+
+/-- Rust's empty-pattern output is always valid UTF-8 (it is a `String`);
+C's is not: `replace('é', '', '-')` gives bytes `2d c3 2d a9 2d`. Live:
+C `-h-\xc3-\xa9-l-l-o-`, Rust `-h-é-l-l-o-`. A C bug; Rust is correct. -/
+theorem cReplace_empty_breaks_utf8 :
+    cReplaceEmptyBytes (utf8 ['é']) (utf8 ['-']) = [0x2d, 0xc3, 0x2d, 0xa9, 0x2d] ∧
+    ByteArray.validateUTF8 ⟨#[0x2d, 0xc3, 0x2d, 0xa9, 0x2d]⟩ = false ∧
+    utf8 (replaceRust ['é'] [] ['-']) = [0x2d, 0xc3, 0xa9, 0x2d] := by decide
+
+theorem replace_examples :
+    replaceRust "aaa".toList "aa".toList ['b'] = "ba".toList ∧
+    replaceRust [] [] ['x'] = ['x'] ∧
+    replaceRust "abc".toList ['b'] [] = "ac".toList := by decide +kernel
+
+/-! ### `toLower` / `toUpper` (`string.rs:138-165`)
+
+`caseMap` abstracts Unicode case mapping. Rust uses std's *full* mapping
+(`char::to_lowercase` may yield several code points, and `str::to_lowercase`
+applies the final-sigma rule); C uses utf8proc's *simple* one-to-one mapping.
+C errors only on invalid byte sequences, which a Rust `String` cannot contain.
+
+Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred;
+main maps every string (`caseRust`). -/
+
+/-- Main (`string.rs:138,154`): `s.to_lowercase()` / `s.to_uppercase()`. -/
+def caseRust (full : Char → Str) (s : Str) : SOut := .ok (s.flatMap full)
+
+def caseC (simple : Char → Char) (s : Str) : SOut := .ok (s.map simple)
+
+/-- **Bug D fixed.** Main never errors: every string, including one holding
+U+FFFD, is case-mapped (`toLower('A�')` → `'a�'`, as C). -/
+theorem toLower_total (full : Char → Str) (s : Str) :
+    caseRust full s = .ok (s.flatMap full) := rfl
+
+theorem toLower_accepts_replacement (full : Char → Str) :
+    caseRust full ['A', '�'] = .ok (full 'A' ++ full '�') := by
+  simp [caseRust]
+
+/-- Main agrees with C on every string whenever the full mapping is the simple
+one (no multi-code-point or context-dependent mappings); in particular on
+strings holding U+FFFD, where pre-#2953 Rust errored. -/
+theorem case_agrees_C_if_simple (simple : Char → Char) (s : Str) :
+    caseRust (fun c => [simple c]) s = caseC simple s := by
+  simp only [caseRust, caseC]
+  congr 1
+  induction s with
+  | nil => rfl
+  | cons c t ih => simp [List.flatMap_cons, ih]
+
+/-- If the full mapping were one-to-one, `size` would be preserved as in C;
+it is not (`'ß' ↦ "SS"`), so `size(toUpper('ß'))` is 2 in Rust and 1 in C.
+openCypher defers to the host (Neo4j/Java: full mapping, `"SS"`), so this is
+a recorded divergence, not a bug. -/
+theorem case_size_preserved_if_simple (full : Char → Str) (h : ∀ c, (full c).length = 1)
+    (s : Str) : caseRust full s = .ok (s.flatMap full) ∧
+    (s.flatMap full).length = s.length := by
+  refine ⟨rfl, ?_⟩
+  induction s with
+  | nil => rfl
+  | cons c t ih => simp only [List.flatMap_cons, List.length_append, h, List.length_cons]; rw [ih]; omega
+
+/-! ### `=~` (`internal.rs:100-120`, `eval.rs:1274`)
+
+`Regex::is_match` is *unanchored*: it asks for a match anywhere. openCypher
+(and Neo4j, following Java's `Pattern.matches`) requires the pattern to match
+the whole string. Abstracting the regex engine as a span predicate
+`m i j` ("the pattern matches `s[i..j]`"): -/
+
+def isMatchRust (n : Nat) (m : Nat → Nat → Bool) : Bool :=
+  (List.range (n + 1)).any fun i => (List.range (n + 1)).any fun j => i ≤ j && m i j
+def isMatchSpec (n : Nat) (m : Nat → Nat → Bool) : Bool := m 0 n
+
+/-- Rust is implied by the spec (never a false negative)… -/
+theorem regex_spec_implies_rust (n : Nat) (m : Nat → Nat → Bool) (h : isMatchSpec n m = true) :
+    isMatchRust n m = true := by
+  unfold isMatchRust isMatchSpec at *
+  simp only [List.any_eq_true, List.mem_range, Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨0, by omega, n, by omega, by omega, h⟩
+
+/-- …but not conversely. Literal pattern `b` on `abc` (spans matching are
+exactly `[1,2)`): **Bug C**, repro `bug_regex_match_unanchored`
+(`'abc' =~ 'b'` → Rust `true`, spec `false`; C rejects `=~`). -/
+theorem regexMatches_unanchored :
+    let m : Nat → Nat → Bool := fun i j => i == 1 && j == 2
+    isMatchRust 3 m = true ∧ isMatchSpec 3 m = false := by decide
+
+/-! ### `string.replaceRegEx` replacement (`string.rs:469`, `eval.rs:1302`)
+
+`Regex::replace_all(text, &str)` interprets `$n` / `$name` / `${name}` in the
+replacement; C copies it verbatim. Model of the expansion on the `$0x` case:
+`$0x` names the (absent) group `0x`, which expands to the empty string. -/
+
+def expandRust (groupName : Str → Option Str) : Str → Str
+  | '$' :: rest =>
+    let name := rest.takeWhile (fun c => c.isAlphanum || c == '_')
+    if name = [] then '$' :: expandRust groupName rest
+    else (groupName name).getD [] ++ expandRust groupName (rest.drop name.length)
+  | c :: rest => c :: expandRust groupName rest
+  | [] => []
+termination_by s => s.length
+decreasing_by all_goals simp_wf <;> omega
+
+/-- **Bug E.** `replaceRegEx('abc','b','$0x')`: Rust `'ac'`, C `'a$0xc'`. -/
+theorem replaceRegex_dollar :
+    let g : Str → Option Str := fun n => if n = ['0'] then some ['b'] else none
+    expandRust g "$0x".toList = [] ∧ expandRust g "[$0]".toList = "[b]".toList := by decide +kernel
+
+/-! ### `string.join` length pre-computation (`string.rs:324-361`) -/
+
+/-- `compute_join_length`, `i32` checked arithmetic as `Option`. -/
+def joinLen (ls : List Nat) (dl : Nat) : Option Nat :=
+  if ls = [] then some 0
+  else
+    let n := ls.length
+    let total := dl * (n - 1) + ls.sum
+    if (dl : Int) > I32MAX ∨ (n : Int) > I32MAX ∨ (total + 1 : Int) > I32MAX then none else some total
+
+def joinStr (d : Str) : List Str → Str
+  | [] => []
+  | [x] => x
+  | x :: y :: t => x ++ d ++ joinStr d (y :: t)
+
+theorem joinStr_eq_intercalate (d : Str) (l : List Str) : joinStr d l = d.intercalate l := by
+  induction l with
+  | nil => rfl
+  | cons x t ih =>
+    cases t with
+    | nil => simp [joinStr]
+    | cons y t => simp [joinStr, ih, List.intercalate_cons_cons]
+
+theorem joinStr_length (d : Str) (l : List Str) :
+    (joinStr d l).length = (if l = [] then 0 else d.length * (l.length - 1)) + (l.map List.length).sum := by
+  induction l with
+  | nil => rfl
+  | cons x t ih =>
+    cases t with
+    | nil => simp [joinStr]
+    | cons y t =>
+      simp only [joinStr, List.length_append, ih]
+      simp [Nat.mul_succ]; omega
+
+/-- The `debug_assert_eq!(result.len(), capacity)` at `string.rs:384` holds:
+whenever `compute_join_length` succeeds its value is the joined length (here
+in code points of a byte-alphabet model: the lengths are byte lengths in Rust
+and the identity is the same). -/
+theorem joinLen_correct (d : Str) (l : List Str) (c : Nat)
+    (h : joinLen (l.map List.length) d.length = some c) : (joinStr d l).length = c := by
+  rw [joinStr_length]
+  unfold joinLen at h
+  by_cases hl : l = []
+  · subst hl; simp at h; simp [h]
+  · have : l.map List.length ≠ [] := by simp [hl]
+    simp only [this, if_false, List.length_map] at h
+    split at h
+    · cases h
+    · cases h; simp [hl]
+
+/-! ### String `+` (`value.rs:969-975`) -/
+
+theorem str_concat_size (a b : Str) : size (a ++ b) = size a + size b := List.length_append
+
+/-! ### `STARTS WITH` / `ENDS WITH` / `CONTAINS` (`internal.rs:32-84`) -/
+
+inductive SV where | str (s : Str) | int (i : Int) | null
+  deriving DecidableEq, Repr
+
+/-- `internal_starts_with`: any non-(String,String) pair is `Null`. -/
+def startsWith : SV → SV → K
+  | .str s, .str p => if p.isPrefixOf s then .t else .f
+  | _, _ => .n
+
+/-- A code-point prefix is a byte prefix (C compares bytes). The converse
+needs UTF-8's prefix-freeness and is not proven here. -/
+theorem prefix_chars_to_bytes (p s : Str) (h : p <+: s) : utf8 p <+: utf8 s := by
+  obtain ⟨t, rfl⟩ := h
+  exact ⟨utf8 t, by simp [utf8, List.flatMap_append]⟩
+
+/-- openCypher: a non-string operand gives null. Rust follows the spec; C
+raises "Type mismatch" (`RETURN 'abc' STARTS WITH 1`). -/
+theorem startsWith_nonString : startsWith (.str ['a']) (.int 1) = .n ∧
+    startsWith .null (.str []) = .n := ⟨rfl, rfl⟩
+
+theorem startsWith_empty (s : Str) : startsWith (.str s) (.str []) = .t := by
+  simp [startsWith]
+
+/-! ### `list.sort` (`list.rs:197`, comparator `:210`)
+
+Before #2912: `sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
+returns `Less` whenever `partial_cmp` is `None`. Main (b033aecc6):
+`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1891`) puts NaN
+above every number and equal to itself. -/
+
+def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
+  if aNaN || bNaN then .lt else o
+
+/-- `sort_cmp_f64` (value.rs:1891): `partial_cmp` (`o`, meaningful when neither is NaN),
+else `a.is_nan().cmp(&b.is_nan())`. -/
+def sortCmpF64Model (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
+  if aNaN || bNaN then compare aNaN bNaN else o
+
+/-- **Bug A fixed.** Main's float comparator is antisymmetric (swapping the operands,
+whose `partial_cmp` swaps too, reverses the answer) and NaN is equal to NaN and above
+every number. The whole of `sort_cmp` is a total preorder: proofs/value_order
+`Main.scMain_total`. -/
+theorem listSort_float_cmp_antisymmetric (aNaN bNaN : Bool) (o : Ordering) :
+    sortCmpF64Model bNaN aNaN o.swap = (sortCmpF64Model aNaN bNaN o).swap ∧
+    sortCmpF64Model true true o = .eq ∧ sortCmpF64Model true false o = .gt ∧
+    sortCmpF64Model false true o = .lt := by
+  cases aNaN <;> cases bNaN <;> simp [sortCmpF64Model] <;> decide
+
+end FalkorStrList

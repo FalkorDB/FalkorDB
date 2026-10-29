@@ -1,0 +1,25 @@
+name = "falkor-pr3438-review"
+defaultTargets = ["Pr3438Review"]
+
+[[lean_lib]]
+name = "Pr3438Review"
+
+# attribute_store.rs encode model (`PendingCommit.Content.encode`, `window`).
+[[require]]
+name = "falkor-pending-commit"
+path = "../pending_commit"
+
+# RDB layout / round trip (`GraphPersist.Persist.encPayload`, `multi_load`, `load_encode`).
+[[require]]
+name = "falkor-graph-persist"
+path = "../graph_persist"
+
+# Matrix::encode container protocol (`GBWGlue.encodeM`, `UnloadLoad`, `PtrBlind`).
+[[require]]
+name = "falkor-graphblas-wrappers"
+path = "../graphblas_wrappers"
+
+# Tensor pair states, invariants, `encVal` (`VMTensor`, `VMTensorOps`).
+[[require]]
+name = "falkor-versioned-matrix"
+path = "../versioned_matrix"

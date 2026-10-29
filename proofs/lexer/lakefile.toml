@@ -1,0 +1,6 @@
+name = "falkor-lexer"
+defaultTargets = ["FalkorLexer"]
+
+[[lean_lib]]
+name = "FalkorLexer"
+roots = ["FalkorLexer", "FalkorLexerExtra"]

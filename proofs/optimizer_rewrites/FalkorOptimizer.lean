@@ -1,0 +1,275 @@
+/-
+# Optimizer rewrites: which passes preserve the query result, and which do not
+
+**Re-targeted to main 8621212fc.** #2904 (`fd2c76a6c`, closes #2902): `^` propagates
+operand errors and type-checks its operands. `Basic.eval` gains `pow` (`powV`) and
+`Err.notFound`; `sub`/`div` bodies are factored into `subV`/`divV` (same values).
+New `ConstEval`: the plan-time constant evaluator (`evalG` with every variable an
+error) is sound — `constEval_sound` — which discharges `hconst` for
+`eliminate_whole_filter` and `htrue` for `andLoop_drop_true`
+(`constTrue_filter`, `andLoop_drop_constTrue`): `is_constant_true` and
+`eliminate_true_filters` move from CONDITIONAL to PROVEN. The other commits since 289c201fe do not touch
+`graph/src/planner/optimizer/`.
+
+A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
+(origin/main `0f45a8685`), except `select_scan_node.rs`, `utilize_index.rs` and
+`utilize_node_by_id.rs`'s #2390 changes (another agent's). Each pass is judged against a reference semantics of the IR:
+rows are association lists (`Basic.Row`), expressions follow `eval.rs`
+(three-valued, errors short-circuit, `AND` exactly as `eval.rs:674`), `Filter`
+keeps `true` and drops `false`/`null` (`filter.rs:48-80`), and operators are
+list functions (`cp`, `extend`, `take`, `drop`, `mergeSort`, …). A rewrite is
+correct if it preserves the result multiset — and row order where ORDER BY
+applies — and does not make a succeeding query fail.
+
+Files: `Basic` (rows, eval, Filter, push-down, merge, eliminate_true_filters),
+`References` (the "is this variable read?" oracle `optimizer/references.rs` behind
+reduce_expand_into / reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse,
+introduced by #2390; also the a9377c636 and PR #2918 oracles), `References2` (the tree walks:
+ancestor-only for the three `reduce_*` passes, whole-plan for fusion since #2390), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
+reorder_labels, hash join, the push-down routing and exclusion list).
+Each file's header maps its definitions to Rust `file:line`.
+Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
+references, count extraction, fusion preconditions, Project/Aggregate outputs),
+`Sequence` (`optimize` sequencing, the tree rebuilds, edge-filter absorption).
+`PushPlan` (gap closed 2026-10-20: push_filters_down on a plan tree with write
+effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
+re-ordering, #2556).
+`AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
+AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
+Build: `lake build` — 165 theorems, no `sorry`/`admit`/`axiom`. Every production row of
+COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). Rust source: origin/main `0f45a8685` (re-targeted across #2390,
+d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
+#3335: filters rebuilt with `and_of`).
+
+## Proven (plain English)
+
+* `eval_andL` — the binary AND fold is the Rust n-ary `And` loop.
+* `eval_congr` — an expression depends only on the variables it mentions.
+* `push_cp_left` / `push_cp_right` — a conjunct covered by one CartesianProduct
+  branch (and not bound by the other) can move into that branch.
+* `push_extend` — …and below any per-row operator that keeps its input
+  columns (Unwind, CondTraverse, Apply, ProcedureCall).
+* `push_sort_perm` + `push_sort_sorted` — below Sort: same multiset, still sorted.
+* `push_limit_const` — below Limit only when the verdict is constant (Apply-argument case).
+* `merge_child_first_row` — merging stacked filters is exact *if the inner
+  conjunct comes first* (and is not NULL).
+* `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`,
+  and (#2904) `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` —
+  eliminate_true_filters is exact: the plan-time constant verdict is the runtime
+  verdict on every row (before #2904 false for `^`, #2902).
+* `refsNew_complete` — #2390's `ir_references_variable` (references.rs) sees every read of every
+  IR variant of a plan the planner built (`PlanInv`: inline maps are Filters —
+  proofs/planner_build `planMatch_stripped`); `refsNew_sound` — it reports only reads or
+  variables the operator binds; `iqLoop_iff` — the index-query stack loop finds an operand at any
+  `And`/`Or` depth; `setItemsRefs_iff`, `exprRefs_iff`.
+* `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check (since #2390)
+  sees every reader of the intermediate and both edges, inside or outside the hops.
+* `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` — PR #2918 (its walk is still
+  not merged); `ancestors_le_outside` — the old oracle erred only toward collapsing.
+* `fuse_same_support` — anonymous-chain fusion keeps the set of rows (and,
+  `fuse_changes_multiplicity`, collapses paths to pairs exactly as C does).
+* `fuse_optional_correct` — Optional-over-traverse fusion is column-exact.
+* `flip_holds`, `step_correct`, `step_no_wrap`, `idFilter_correct` —
+  `evaluate_id_filter` is exact for integer bounds in `[0, 2^63)`; its `+1`/`-1` never wrap.
+* `reorder_perm`, `reorder_preserves` — reorder_labels cannot change results.
+* `vhj_correct` — ValueHashJoin equals Filter(=) over CP whenever key equality
+  coincides with Cypher `=`.
+* `reduce_count_correct` — the count is the label cardinality of the plan-time graph.
+* `routesScoped_sound` — routing on `(id, scope)` only pushes where the variable is bound.
+
+* Wave 5: `passes_order`, `applyAll_sound` (each pass preserving a relation ⇒
+  `optimize` does), `optimize_nested`; `rebuildHJ_id`/`rebuildHJ_sound`
+  (`rebuild_with_hash_joins` is a copy plus sound local rewrites);
+  `rebuildCP_off`/`_on`, `splitCP_perm`; `findVlt_spec`, `absorb_correct`
+  (absorbing edge-only conjuncts into the var-length traverse's per-hop filter
+  keeps the rows, under the per-edge reading both engines use);
+  `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
+  `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
+  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new`.
+  W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
+  `Pr2845.filter_pushed_through_boundary`, fix `fixed_keeps_filter`/`fixed_conservative`.
+
+## CONFIRMED bugs (Rust repro: `cargo test -p graph --test lean_optimizer_rewrites`;
+## Cypher compared on live servers, Rust release module vs C `bin/macos-arm64v8-release/falkordb.so`)
+
+1. **Filter pushed below LIMIT / SKIP** — `push_filters_down.rs:165-178` does not
+   exclude `Limit`/`Skip` (Lean `limit_skip_not_excluded`, `limit_not_transparent`,
+   `skip_not_transparent`). 5 nodes v=1..5:
+   `MATCH (n:N) WITH n ORDER BY n.v LIMIT 2 MATCH (m:N) WHERE n.v > 1 RETURN count(*)`
+   → Rust 10, C 10, openCypher 5. `… SKIP 1 MATCH (m:N) WHERE n.v = 5` → 0 / 0 / 5.
+   Shared with C (spec bug). Fix: add `IR::Limit | IR::Skip` to the exclusion list
+   (or allow only conjuncts whose vars are all Apply-inherited — `push_limit_const`).
+   Tests `bug_filter_pushed_below_limit`, `bug_filter_pushed_below_skip`.
+2. **Filter merge evaluates the pushed (outer) conjunct first** — `push_filters_down.rs:122`
+   `for f in [&filter, &child_filter]`. `MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1/(n.v-1) = 0 RETURN count(*)`
+   → Rust `Division by zero`, C 15. Lean `merge_order_rust_errors`.
+   Fix: `[&child_filter, &filter]` (`merge_child_first_row`). Test `bug_filter_merge_evaluates_outer_conjunct_first`.
+3. **NodeByIdSeek with a negative bound** — `runtime.rs:1319` `id as u64`:
+   `MATCH (n) WHERE id(n) > -1 RETURN count(n)` → Rust 0, C 5 (also `>= -5`: both 0,
+   `<= -1`: both all = #2266). Lean `id_gt_neg_empty`, `id_le_neg_all`. Fix: clamp
+   negative Int bounds (Gt/Ge → no constraint; Lt/Le/Eq → empty) before the cast.
+   Test `bug_node_by_id_gt_negative_returns_nothing`.
+4. **NodeByIdSeek errors on non-integer bounds** — `runtime.rs:1324`: `id(n) = null`,
+   `= 1.0`, `= '1'`, `> 1.5`, `= true` → Rust "Node ID must be an integer"; C returns
+   0 rows; the Filter being replaced returns 0 rows (null) or, for `1.0`, node 1.
+   Lean `id_eq_null_errors`. Fix: only rewrite when the bound is an Int at runtime,
+   else fall back to a Filter (Null → empty, whole Float → Int). Test `bug_node_by_id_null_errors`.
+5. **Hash join drops Int/Float pairs near 2^53** — `replace_cartesian_with_hash_join.rs`
+   introduces `ValueHashJoin`, whose key (`value_hash_join.rs:153 key_as_i64`) is exact
+   while `=` compares via `i as f64`. Nodes x=9007199254740993, x=9007199254740992.0:
+   `MATCH (a:L),(b:L) WHERE a.x = b.x RETURN count(*)` → Rust 2, C 4; `(a.x=b.x)=true`
+   → 4 on both. Lean `hash_join_drops_row` (and `vhj_correct` for when it is safe).
+   Root is the Int/Float equality of #2891, but this is the optimizer changing a
+   result. Test `bug_hash_join_disagrees_with_filter_on_int_float`.
+6. **(known #2557, new path — no longer reproduces on 8743953a8: Rust = C (1,1)…(5,1);
+   push_filters_down.rs is unchanged by #2390, so most likely #2845's CALL-body entry
+   projection, merged before a9377c636; `id_only_routing_unsound` still describes the id-only
+   routing)** Uncorrelated `CALL {}` filter pushed onto `Argument`:
+   `MATCH (o1:N) CALL { MATCH (q:N) WHERE q.v = 1 RETURN q } RETURN o1.v, q.v`
+   → Rust (1,1),(1,2)…(1,5); C (1,1),(2,1)…(5,1). Scope-blind ids (mod.rs:91-109)
+   plus Apply Case 2 inheritance (push_filters_down.rs:214-261). Lean
+   `id_only_routing_unsound`. Test `known_2557_call_subquery_filter_reads_outer_variable`.
+7. **(known #2896) — per-operator part FIXED by #2390 (d2c42e032), sibling part still open.**
+   a9377c636's `ir_references_variable` missed Unwind/ForEach lists, Create/Merge pattern
+   properties, ProcedureCall args, LoadCsv, Skip/Limit, index-scan queries:
+   `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w` → Rust [1],[3] of [1],[2],[3];
+   `… CREATE (:C {w: r.w})` created 2 of 3; `FOREACH` likewise; `()-[r*1..1]->() UNWIND r` lost rows.
+   On 8743953a8 all of these match C (live); Lean `pre2390_misses_*` (historical) and
+   `refsNew_complete` / `refsNew_sees_*`. **Still open**: the three `reduce_*` passes walk
+   ancestors only, so a reader in a sibling subtree is missed —
+   `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3;
+   `RETURN [(a)-->(b) | r.w]` → Rust `[1]`, C three rows (Lean `main_misses_call_sibling`);
+   and the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
+   RETURN count(*)` → Rust 1, C 2; Lean `refsNew_misses_sibling_edges`).
+
+8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:118`
+   `optimized_plan.node(idx).parent().unwrap()`: `CALL db.labels() YIELD label MATCH (n)`
+   (accepted because `inner_validate` skips everything after a CALL — planner_build bug 6)
+   plans `NodeByLabelScan`/`AllNodeScan` as the root → **Rust server crash**
+   ("called `Option::unwrap()` on a `None` value"); C: `Query cannot conclude with MATCH`.
+   Lean `root_scan_has_no_parent`. Fix: `let Some(parent) = …parent() else { continue }`.
+   Since #3297 (main b84473a7f) validation rejects that query (planner_build
+   `call_then_match_rejected`), so this repro no longer reaches the `unwrap()`; the `unwrap()`
+   itself remains (hazard, no known query reaches it).
+
+## Gap closed 2026-10-20 (#748, #997, #3352) — `PushPlan`
+
+The push-down theorems above compare result rows only and route by `(id, scope)`.
+`PushPlan` gives push_filters_down a plan tree with graph state that writes
+change, and the routing exactly as main computes it (bare ids, `get_variables`
+walking through `Aggregate`, Case 1/Case 2 inheritance). Property `EffectSound`
+(rows **and** the graph left behind are kept); `RowSound` is the old criterion;
+`RoutesBound` (a pushed conjunct reads only variables available where it lands).
+
+9. **#748 / #997: a constant-false WHERE after `CALL { MERGE/CREATE }` is pushed into
+   the Apply's left branch, so the write never runs** — `push_filters_down.rs:264-276`
+   (`all` over an empty variable set is vacuously true, so the conjunct enters every
+   child, including the rows that feed the write-bearing right branch).
+   `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0` →
+   Rust 0 nodes, C 1; with `WITH *` both 1. `CALL { CREATE () } UNWIND 0 AS x MATCH ()
+   WHERE false RETURN 0` → Rust 0, C 1; the CASE-wrapped false → 1 on both. Lean
+   `bug748_merge_skipped`, `bug997_create_skipped` (`¬ EffectSound`), `bug748_rows_only_blind`
+   / `bug997_rows_only_blind` (the rows-only criterion holds on them), controls
+   `bug748_with_star_control`, `bug997_case_control`; `bug748_fixed`/`bug997_fixed` for a write barrier.
+10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
+   (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
+   left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
+   into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
+   (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
+   Argument → `n = 1, e = null` (C 123). Lean `bug3352_plan`, `bug3352_routes_unbound`
+   (`¬ RoutesBound`), `bug3352_slot_collision_drops_match` (`¬ RowSound`); `bug3352_fixed`
+   for `(id, scope)` routing. Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
+
+## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
+
+The push-down proofs judged where `push_filters_down` moves a Filter, but no
+model followed an inline-attr Filter through `select_scan_node`'s chain
+rebuild. `PushPlan` now has `IR::CondTraverse` with its relationship and
+`transposed` (`Op.hop`), the rebuild branch of `select_scan_node`
+(`selectScan`, select_scan_node.rs:681-1260) and the property
+`KeepsFiltersBound` (a rewrite never moves a Filter below the operator that
+binds what it reads).
+
+11. **#2556: an inline property filter lands below the hop that binds it** —
+   with the bottom hop's outer child kept (`Unwind`), `initial_bound` still
+   seeds the best endpoint (`select_scan_node.rs:979-990`); `t {id:100}` wins
+   the endpoint choice on cardinality, so `t` is "bound" before any hop and
+   its Filter is placed after the first hop (:1202-1230).
+   `MATCH (x:Person {id:2}) WITH collect(x) AS fs UNWIND fs AS f MATCH
+   (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}),
+   (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)` → Rust 0, C 3 (live). Lean
+   `bug2556_plan`, `bug2556_t_seeded`, `bug2556_filter_below_binding`
+   (`¬ KeepsFiltersBound`, count 0 vs 3); `bug2556_fixed` (no seeding: the C plan);
+   `bug2556_push_not_cause` (`push_filters_down` leaves the Filter in place).
+
+## Shared with C / deviations from openCypher (not Rust regressions)
+
+* `reduce_count` bakes the count at plan time: `CREATE (:Z) RETURN 1 AS c UNION ALL
+  MATCH (n:Z) RETURN count(n) AS c` → 0 on Rust and C, `count(*)` sees the write
+  (1). Lean `reduce_count_stale`.
+* `fuse_anonymous_traverse` returns one row per (a, c) pair, as C does (`fuse_changes_multiplicity`).
+* `absorb_edge_filters_into_vlt` treats `WHERE r.w = 1` on a var-len list as per-hop
+  (C semantics); unabsorbed Rust errors on `r.w` over a Path, so absorption turns an
+  error into rows; `size(r) = 2` / `all(x IN r …)` are also absorbed per-hop and
+  error on both engines (openCypher: list predicates). Not modelled beyond this note.
+* `MATCH ()-[r]-() RETURN count(r)` counts each edge once on both engines (openCypher: twice).
+
+## Suspected, unconfirmed
+
+* `branch_output_variables` (push_filters_down.rs:65) takes `copies.0` as the
+  (Lean `branchOut_copy_new`)
+  Project's output, but `copies` is `(old, new)` (binder.rs:2234, project.rs:115) —
+  outputs are the new vars. Currently only makes push-down more conservative, but
+  with scope-blind ids it can also admit a conjunct whose id matches an old var.
+* Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
+* Pushing into one CP branch evaluates the conjunct even when the other branch is
+  empty, so a query can start to error (Lean `push_cp_left` needs `NoErr`).
+  Observed on C (`MATCH (n:P),(m:Missing) WHERE 1/(n.v-n.v)=0` → C error, Rust 0).
+
+## Open PRs touching these files (model = origin/main)
+
+* #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
+  oracle is superseded by #2390's references.rs): modelled as `readOutside`
+  (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
+* #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
+  `merge_child_first_row` order; fixes bug 2.
+* #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
+  env-resetting operator only its outputs survive; ids of the subtree minus its
+  children's) instead of `collect_subtree_variables` for the Apply left side —
+  narrows `id_only_routing_unsound`'s collision window (still ids only).
+* #3092 — `collect_subtree_variables` stops at Project/Aggregate (their outputs
+  only) instead of `get_variables` of the whole subtree — same direction as
+  #2981; `mem_subtreeIds` describes origin/main.
+* #3100 — exports `ir_references_variable` for the planner's CP-correlation check
+  (planner bug 2); no change to the oracle itself (needs a rebase onto references.rs).
+* #3054 — `reduce_expand_into` removes a collapsed (no longer emitted) edge from
+  its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the
+  emit-flag decision (`refsMain`) is unchanged.
+
+## Modelling gaps
+
+* Row values are a 4-constructor `Val`; Float, lists, maps, nodes are abstract.
+  Hash-join numbers use an explicit `toF` (exact for `[0, 2^54]`).
+* The Filter operator is vectorized (`VectorEval`); the model uses row-wise
+  `eval`, which the `AND` test queries agree with.
+* Laziness (a Limit above stopping upstream errors) is not modelled.
+* Unbound variables read as NULL; the real env apparently resolves by id and read
+  the outer `o1` in bug 6.
+* The tree rewrites themselves (index bookkeeping, `take_out`, `prune`) are
+  modelled as the algebraic identity they perform, not as orx-tree mutations;
+  `rebuild_with_hash_joins` re-processing is bounded by fuel (Rust relies on
+  each rewrite consuming one conjunct).
+* `absorb_correct` assumes the per-edge reading of an edge-only conjunct
+  (`Per.perEdge`) — C's semantics and Rust's when absorbed; openCypher would
+  reject `r.w` on a list.
+-/
+import FalkorOptimizer.Basic
+import FalkorOptimizer.ConstEval
+import FalkorOptimizer.References
+import FalkorOptimizer.References2
+import FalkorOptimizer.Passes
+import FalkorOptimizer.Helpers
+import FalkorOptimizer.Sequence
+import FalkorOptimizer.CallBoundary
+import FalkorOptimizer.AndOf
+import FalkorOptimizer.PushPlan

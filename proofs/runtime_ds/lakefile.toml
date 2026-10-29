@@ -1,0 +1,5 @@
+name = "falkor-runtime-ds"
+defaultTargets = ["FalkorRuntimeDS"]
+
+[[lean_lib]]
+name = "FalkorRuntimeDS"

@@ -1,0 +1,204 @@
+import Columnar.Column
+import Columnar.Batch
+import Columnar.Row
+import Columnar.Concat
+import Columnar.Emitter
+import Columnar.VectorExpr
+import Columnar.Arith
+import Columnar.Lanes
+import Columnar.Gather
+import Columnar.BatchMisc
+import Columnar.Dispatch
+import Columnar.CallBoundary
+import Columnar.VecEval
+import Columnar.CoreOps
+import Columnar.AndOrLane
+import Columnar.CaseLane
+import Columnar.FuncLane
+import Columnar.HasLabelsFn
+import Columnar.LaneWF
+import Columnar.CoreBridge
+import Columnar.RuntimeReads
+import Columnar.EvalBatch
+
+/-
+# Columnar batch layer: every columnar operation = its row-at-a-time definition
+
+Lean 4 model of `runtime/batch.rs`, `runtime/vectorized.rs`,
+`runtime/vector_expr.rs`, `runtime/row.rs` and
+`runtime/ops/batched_result_emitter.rs`. 262 theorems, no `sorry` / `admit` /
+`axiom`. `f64` is abstract (`FloatModel`); the one IEEE fact used —
+`partial_cmp` antisymmetry — is a class field (hypothesis). Per-module
+Lean↔Rust tables are in each file's header; per-function buckets in
+`COVERAGE.tsv`; Rust repros in `graph/tests/lean_columnar.rs`
+(`cargo test -p graph --test lean_columnar`).
+
+| module | there |
+| --- | --- |
+| `Column` | `Column`, `classify_*`, `NullBitmap`, `extend_active_slice` (`batch.rs:90-414`) |
+| `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
+| `Row` | `Row` (`row.rs`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1415-1447`) |
+| `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
+| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
+| `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
+| `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` |
+| `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
+
+## 2026-10-21: `VectorEval` is `ExprEval`, row by row, over the full engine value
+
+* **Values** are proofs/core's `FalkorCore.V F` (all sixteen variants; `Column.lean`), so the
+  lanes and expr_semantics' evaluator share one value type; `compare_value`'s null arms order
+  by `OrderedEnum::order` and `NOT` names the operand type, as in Rust.
+* **`VecEval`**: `VectorEval::eval` (vector_expr.rs:211-283) over proofs/expr_semantics' `E`, arms
+  in source order with their guards; `eval_sound` (every tree in scope, every set of valid
+  rows) and `evalValues_sound` (`eval_values`, :285). `Dispatch.lean` stays as the coarser
+  `Kind`/`Node` model of the same walk.
+* **`CoreOps`**: the engine's operations as expr_semantics' `Ops`; the shared forms agree —
+  `allEq_rowCmp` / `allNeq_rowCmp` (`all_equals` / `all_not_equals` = `compare_values` for
+  `=` / `<>`), `cmpResult_rowCmp` (the `< > <= >=` fast path), `caseHit_caseMatch`, `notRow_eq`;
+  `+ - * / %` are `valueArith`.
+* **Lanes against `ExprEval`**: `AndOrLane.evalAndOr_sound` (`eval_and_or`: each child is
+  evaluated over exactly the rows the per-row short-circuit loop reaches), `CaseLane.evalCase_sound`
+  (`eval_case`: a `WHEN` over the unclaimed rows, a `THEN` over the rows it claims),
+  `FuncLane.evalFunction_sound` (`eval_function`, the all-`Scalar` fold included),
+  `FuncLane.hasLabelsLane_sound` + `HasLabelsFn.hl_hasLabelsFn` (`eval_has_labels` against the
+  registry's `hasLabels`, entity.rs:62-127, with `validate_args_type` / `value_of_type`),
+  `LaneWF` (every lane returns `len` rows).
+* **`CoreBridge.lawful`**: the `Lawful` instance over a batch — every field proved from the
+  lane theorems; **`vec_sound`**: whenever `VectorEval::eval` returns a column, entry `i` is
+  `ExprEval::eval_node` on the batch row `rows[i]`. Its one runtime premise, `PropReads` (the
+  bulk property fetch = the per-row read), is a theorem for the runtime built from its
+  attribute state: **`RuntimeReads.matNode_eq` / `matRel_eq` / `propReads`**
+  (`materialize_{node,relationship}_property_values` vs `get_{node,relationship}_attribute`,
+  runtime.rs:1459-1658, the graph's batch and by-name reads being their definitions).
+* **`EvalBatch`**: proofs/expr_semantics' `BatchLaws` for `eval_batch` discharged
+  (`evalBatch_sound`).
+
+## Proved (plain English)
+* gather reads row `idx[k]` (value, bound bit, origin); gather∘gather composes;
+  gather never panics on physical indices and preserves WF.
+* `into_compacted` yields `active_len` dense rows equal, slot by slot, to the
+  active rows in order.
+* Selection vectors: active indices are `< len` and strictly increasing; Filter,
+  Limit, Skip and their compositions produce exactly `filter`/`take`/`drop` of the
+  active rows, provided `len ≤ 65536` (the `as u16` cast); past that the cast
+  wraps (`skip_u16_wraps`).
+* `write_column` = scatter: active row k reads `vals[k]`, inactive rows keep their value.
+* `set_column` binds exactly its slot; `classify_stored_column` and
+  `classify_exact_column` are lossless; `classify_column` is lossy (latent, no caller).
+* `concat` = per-row `BatchBuilder` concat (value and bound bit at every row and
+  slot, origins, row count) when no input batch is empty; the typed fast path
+  equals the fallback.
+* Emitter: `emit_lazy` conserves the `(row, item)` stream (no loss, duplication or
+  reordering), fills to `min(ceiling, remaining)`, all batches non-empty and
+  `≤ BATCH_SIZE`; the ceiling is in `[1, 1024]` (source semantics) and grows back;
+  every packed parent index is an active row, so `finish_batch`'s gather never panics.
+* ExpandInto `set_selection(0..remaining)` suspicion REFUTED (`expandTrim_ok`):
+  the output is dense with `n ≤ ceiling` rows, the trim fires only when
+  `remaining < n`, indices are `< n < 65536`, `produced ≤ cap`.
+* `compare_columns` = per-row comparison in every lane (int, float, int→float
+  promotion, flipped constant, pairwise, generic); `CmpOp::flip` sound (ints;
+  floats via IEEE antisymmetry); NaN makes orderings false and `<>` true.
+* `union_nulls` exact except (Values, non-null constant), which no typed lane sees.
+* Arithmetic lanes = `Value` arithmetic row by row, including the first error
+  (zero divisors fall to the generic lane; `Int ⊕ Int` never takes the float lane).
+* NOT, CASE (incl. laziness: THEN only on matched rows; value-form test =
+  `compare_value == (Equal, None)`), scalar function folding, `eval_variable`
+  (in the column space), and the Filter mask agree with the per-row evaluator.
+* `Row::insert_by_id` / `take` / `merge` (overlay of bound slots only);
+  `to_owned_row` agrees with `BatchRow::value_at` on every bound slot.
+
+## Findings
+Confirmed on the real code (pub API; no Cypher trigger found, so latent):
+1. `Batch::concat` (`batch.rs:1008-1015`) takes `bound_anywhere` from batches with
+   no active rows: a slot bound only in an empty batch comes out bound
+   (`Some(Null)`) where the per-row definition leaves it unbound (`None`).
+   Lean `empty_batch_binds`; test `latent_concat_empty_batch_binds_column`
+   (concat: bound true / `Some(null)`; per-row: false / `None`). Fix: skip
+   `active_len() == 0` batches in the fallback loop, as `concat_typed_column` does.
+2. `BatchRow::to_owned_row` (`batch.rs:1432`) drops trailing Unbound columns, so
+   `view.value_at(i) = Some(Null)` but `to_owned_row().value_at(i) = None`
+   ("Variable not found" in `resolve_var`). Lean `toOwned_trailing_unbound`; test
+   `latent_to_owned_row_drops_trailing_unbound_slot`. Same shape: `eval_variable`
+   reads Null beyond the column space where the per-row view errors
+   (`evalVariable_beyond`). 12 OPTIONAL/CALL/comprehension queries tried: all correct.
+
+Hazards (not bugs today): selection `u16` casts need `len ≤ 65536`, guaranteed
+only by `BATCH_SIZE` caps — exactly the guard #2922's miscompile drops (this
+build inlines it correctly: `probe_capped_unwind_batch_sizes` sees 1024-row
+batches; `agrees_skip_selection_large_cap` passes); no-alias emitter over a
+zero-column parent with no origins emits a 0-row batch (`finishLen_drops`;
+unreachable, ExpandInto always has columns; since #2845 a parent carrying origins is
+gathered, `finishLen_origins_kept`); `classify_column` lossy (no caller); columnar CASE/AND may
+report a different row's error message than the per-row path (both error).
+
+## Gaps
+f64 arithmetic/ordering abstract; `compare_value` beyond numerics/null abstract
+(`other`); MergePlan / `push_merged` / `push_planned` / `merge_over_input`,
+property fetch, `hasLabels`, operator dispatch/profiling not modelled; emitter
+lane layout (transpose, shared alias) not modelled; CASE/function proofs assume
+pure sub-expressions; BitSet/NullBitmap word packing is proofs/runtime_ds /
+proofs/ops_aggregate.
+
+## Wave-5 additions
+* `Gather`: the `GatherItem` trait proved ONCE (`gather_spec`: for a lawful lane, finishing the
+  pushed items sets column `cols b [i]` to `xs.map (val b i)`), then each of the 7 impls shown
+  lawful (`giNode_lawful` … `giValue_lawful`); `RowIter`; emitter constructors.
+* `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: since #2912 the float
+  lane is `sort_cmp_f64`, antisymmetric with NaN; the old `unwrap_or(Less)` lane was known #2891), builder push paths and merge plan, constructors/accessors,
+  `merge_over_input`, `clone_active_rows_seq_origin`, `size_hint`, `set_argument_batch`
+  (every Argument leaf gets the batch, emitter-backed nodes reset), `inspect_context`, `BatchOp::next`.
+
+## Re-target to 5e475e6c9 (#2973, #3436)
+* #2973 (closes #2922) rewrites `BatchedResultEmitter::with_binding`'s ceiling from the guarded arm
+  `Some(cap) if cap < BATCH_SIZE => cap.max(1)` to `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
+  BATCH_SIZE))` (batched_result_emitter.rs:563), plus two `debug_assert!`s (`pack_ceiling` in `[1,
+  BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`). The #2922 miscompile (LLVM 21-23.1.0 on
+  aarch64-apple-darwin dropped the guard) is a compiler bug, so the source semantics did not change:
+  `Emitter.withBinding` is now the clamp;
+  `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs` are unchanged. The `u16`
+  selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped, now stated without a
+  guard to drop.
+* #3436 swaps `rt.g.borrow()` for `rt.graph()` and inserts the `graph`/`graph_mut`/`graph_arc`/`HeldRead`
+  block in runtime.rs: `materialize_*` rows re-pinned (:1654, :1668, :1716, :1728), emitter rows shifted
+  by 3-4 (`seed` :578 … `new_without_alias` :784). `matNode_eq` / `matRel_eq` read the same graph.
+
+## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
+* `Column::compare_at` (batch.rs:399): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
+  `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
+  for every pair.
+  `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order
+  `Main.scMain_total`, `Main.compareAt_eq_scMain`.
+* `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true` (#2917).
+
+## Re-target to a9377c636 (#2845)
+* `BatchMisc.rowsOnly` (`Batch::rows_only`, batch.rs:853): `rowsOnly_spec` (len rows, no
+  column, origin 0, WF). `BatchMisc.hasOrigins` (`Batch::has_origins`, batch.rs:1312):
+  `hasOrigins_spec`, `hasOrigins_zero_not_unset` (it separates "all origins 0" from
+  "never stamped", which `origin_row` cannot). `Emitter.finishLen` takes the new
+  `has_origins` arm of `start_batch`. The per-row origin argument is in
+  `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
+
+## Re-target to 289c201fe
+Re-checked at origin/main `289c201fe`. Only #3294 (`2db1f22df`) touches a file here: the
+generic AND/OR path of `eval_and_or` (`vector_expr.rs:456-459`) now reports
+"Type mismatch: expected Boolean or Null but was <type>" (C's text). That row is covered by
+proofs/functions_temporal `VExpr.colEval_eq`, which keeps errors abstract, so no model or
+theorem changes. COVERAGE.tsv `vector_expr.rs` lines after `:456` re-cited (+3); `batch.rs`,
+`row.rs`, `vectorized.rs` and `batched_result_emitter.rs` are unchanged. Bug 1
+(`empty_batch_binds`) is still present.
+
+## Wave 6 (`Dispatch`)
+Re-checked at origin/main `0f45a8685`: #3335 (`b8321be81`) removed `VectorEval::eval`'s
+`Paren` arm (the binder now strips every `Paren`), so `Dispatch.eval` routes `.paren` to the
+catch-all `eval_per_row` and `Lawful` lost its `paren` field; `eval_sound` is unchanged.
+COVERAGE.tsv `vector_expr.rs` lines re-cited to `0f45a8685`.
+`VectorEval::eval` dispatch PROVEN: **`eval_sound`** — for every expression tree, given
+each arm's lane theorem (stated as `Lawful`), any column `eval` returns equals the per-row
+evaluator row by row; guards route each shape to exactly one arm (`eval_cmp`).
+`CmpOp::from_expr_ir` (`fromExprIR_sem`, `flip_sem`), `eval_values` (`evalValues_sound`),
+`property_values` (`propertyValues_spec`/`_none_iff`, bulk read = per-row read as the
+`Store.Lawful` contract), `eval_has_labels` (`hasLabels_sound`, incl. the unregistered-label
+shortcut; `hasLabels_typecheck_first` = test11's ordering), `eval_per_row`
+(`perRow_spec`, `perRow_error`), `new`.
+-/

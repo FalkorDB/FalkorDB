@@ -1,0 +1,5 @@
+name = "planner-build"
+defaultTargets = ["PlannerBuild"]
+
+[[lean_lib]]
+name = "PlannerBuild"
