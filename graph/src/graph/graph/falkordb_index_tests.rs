@@ -1860,14 +1860,15 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
 /// a->b, and its cursor moves to a->c. Either a->b is deleted and its id reused by d->a, ahead of
 /// the cursor, or c->d, ahead of it, is deleted and its id reused by a->a, behind it. Committed
 /// first, the batch is rebased onto by the writer's claim; committed after, it catches up on the
-/// writer. Either way each written edge is placed by its endpoints in the version that holds it,
-/// so the column holds exactly the edges below the cursor: nothing, or a->b and a->a. Built to the
-/// end, it is a one-pass build of the final data.
+/// writer, by refreshing or by inserting. Each written edge is placed by its endpoints in the
+/// version that holds it, so the column holds exactly the edges below the cursor: nothing, or a->b
+/// and a->a. Built to the end, it is a one-pass build of the final data.
 #[test]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     // (which edge is deleted, its id's new endpoints, the column after both commits)
     for (deleted, (src, dst), held) in [(0, (3, 0), vec![]), (2, (0, 0), vec![0, 2])] {
-        for writer_first in [false, true] {
+        // The batch first, or the writer first and the batch catching up each way.
+        for writer_first in [None, Some(CatchUp::Refresh), Some(CatchUp::Insert)] {
             ensure_graphblas();
             let mut g = Graph::new(64, 64, 10, 1, "t");
             let ty = Arc::new("R".to_string());
@@ -1907,7 +1908,7 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w);
                 g.apply_index_writes(&mut w);
             };
-            let what = format!("edge {deleted} reused, writer first: {writer_first}");
+            let what = format!("edge {deleted} reused, writer first: {writer_first:?}");
             let held_ids = |mvcc: &MvccGraph| {
                 contents(
                     &mvcc.read().borrow(),
@@ -1920,14 +1921,13 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
             };
 
             let (prepared, batch) = prepare(mvcc, &id, 1);
-            if writer_first {
+            if let Some(how) = writer_first {
                 commit_write(mvcc, write);
                 assert_eq!(held_ids(mvcc), Vec::<u64>::new(), "{what}: no batch yet");
+                CATCH_UP_BY.with(|by| by.set(Some(how)));
                 let committed = mvcc.commit_indexer_batch(&prepared, &batch);
-                assert!(
-                    matches!(committed, Some(IndexerCommit::CatchUp(_))),
-                    "{what}: {committed:?}"
-                );
+                CATCH_UP_BY.with(|by| by.set(None));
+                assert_eq!(committed, Some(IndexerCommit::CatchUp(how)), "{what}");
             } else {
                 let fork = mvcc.fork();
                 write(&mut fork.borrow_mut());
@@ -2624,8 +2624,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         SEEN.iter()
             .all(|how| counts.get(how).copied().unwrap_or(0) > 0)
     };
-    let check = |what: &str| {
-        let published = mvcc.read().read();
+    // Checks the version a commit published, taken while the commit still held the lock: by the
+    // time the check runs, another thread may have published over it.
+    let check = |published: &Arc<AtomicRefCell<Graph>>, what: &str| {
         let g = published.borrow();
         for (entity, key) in &columns {
             check_column(&g, *entity, key, what);
@@ -2733,10 +2734,23 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     // A batch's read takes milliseconds at full size; this one's, microseconds.
                     // The wait gives writers the time to commit while it is taken.
                     thread::sleep(Duration::from_micros(rng.random_range(0..200)));
-                    let how = mvcc
-                        .write()
-                        .commit_indexer_batch(&prepared, &batch)
-                        .expect("the slot is free under the lock");
+                    // A batch this small refreshes by cost only when nothing was written: its
+                    // `BATCH` tuples against `REFRESH_COST` per written entity. So each way of
+                    // catching up is forced now and then, on real writes.
+                    let forced = match rng.random_range(0..3) {
+                        0 => Some(CatchUp::Refresh),
+                        1 => Some(CatchUp::Insert),
+                        _ => None,
+                    };
+                    CATCH_UP_BY.with(|by| by.set(forced));
+                    let (how, published) = {
+                        let mvcc = &mut mvcc.write();
+                        let how = mvcc
+                            .commit_indexer_batch(&prepared, &batch)
+                            .expect("the slot is free under the lock");
+                        (how, mvcc.read())
+                    };
+                    CATCH_UP_BY.with(|by| by.set(None));
                     count(match how {
                         IndexerCommit::Same => "batch same",
                         IndexerCommit::Swap => "batch swapped",
@@ -2747,7 +2761,10 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                             "batch dropped, another batch"
                         }
                     });
-                    check(&format!("a batch on {}.{} ({how:?})", key.0, key.1));
+                    check(
+                        &published,
+                        &format!("a batch on {}.{} ({how:?})", key.0, key.1),
+                    );
                 }
             });
         }
@@ -2772,9 +2789,10 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         let version = mvcc.write().expect("the slot is free under the lock");
                         random_write(&mut version.borrow_mut(), op, &mut rng);
                         mvcc.commit(version).expect("the writer commits");
+                        let published = mvcc.read();
                         drop(mvcc);
                         count("writer holding the slot");
-                        check("a write holding the slot");
+                        check(&published, "a write holding the slot");
                         continue;
                     }
                     loop {
@@ -2790,13 +2808,14 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         match mvcc.claim(&fork) {
                             Ok(()) => {
                                 mvcc.commit(fork).expect("the writer commits");
+                                let published = mvcc.read();
                                 drop(mvcc);
                                 count(if over_batches {
                                     "writer over batches"
                                 } else {
                                     "writer claimed"
                                 });
-                                check("a claimed write");
+                                check(&published, "a claimed write");
                                 break;
                             }
                             Err(Claim::Stale) => count("writer stale"),
