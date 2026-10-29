@@ -1389,13 +1389,28 @@ fn register_msf(funcs: &mut Functions) {
                 sorted_ids.sort_unstable();
                 let n = sorted_ids.len() as u64;
 
-                // Use Vec-based mapping for O(1) compact ID lookup
-                // Map: original_id -> compact_id (for fast lookups)
+                // Original id -> compact id, where the multi-edge pass needs it.
+                // A table indexed by original id is the fast lookup, but it costs
+                // 8 bytes per id *up to the highest active one*, and deleted ids
+                // stay in the id space: one surviving high id made it gigabytes.
+                // So it is built only when the id range is within 4x the active
+                // count (at most 32 bytes per active node); a sparser graph finds
+                // the compact id as the position in `sorted_ids` by binary search,
+                // which holds nothing beyond the `n` ids already there.
                 let max_id = sorted_ids.last().copied().unwrap_or(0);
-                let mut id_to_compact_vec = vec![u64::MAX; (max_id + 1) as usize];
-                for (compact, &orig) in sorted_ids.iter().enumerate() {
-                    id_to_compact_vec[orig as usize] = compact as u64;
-                }
+                let dense_map: Option<Vec<u64>> = (max_id < n.saturating_mul(4)).then(|| {
+                    let mut map = vec![u64::MAX; max_id as usize + 1];
+                    for (compact, &orig) in sorted_ids.iter().enumerate() {
+                        map[orig as usize] = compact as u64;
+                    }
+                    map
+                });
+                let compact_of = |orig: u64| -> Option<u64> {
+                    match &dense_map {
+                        Some(map) => map.get(orig as usize).copied().filter(|&c| c != u64::MAX),
+                        None => sorted_ids.binary_search(&orig).ok().map(|c| c as u64),
+                    }
+                };
 
                 // Iterate relationships and fill weighted compact matrix.
                 // The chosen relationship per node pair is tracked in
@@ -1681,15 +1696,11 @@ fn register_msf(funcs: &mut Functions) {
                             );
                             for (key, se) in keys.iter().zip(&vals) {
                                 let (src, dst) = compound_key_inverse(block, *key);
-                                let src_original = src as usize;
-                                let dst_original = dst as usize;
-                                if src_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[src_original] != u64::MAX
-                                    && dst_original < id_to_compact_vec.len()
-                                    && id_to_compact_vec[dst_original] != u64::MAX
+                                if let (Some(src_compact), Some(dst_compact)) =
+                                    (compact_of(src), compact_of(dst))
                                 {
-                                    ov_rows.push(id_to_compact_vec[src_original]);
-                                    ov_cols.push(id_to_compact_vec[dst_original]);
+                                    ov_rows.push(src_compact);
+                                    ov_cols.push(dst_compact);
                                     ov_vals.push(*se);
                                 }
                             }
