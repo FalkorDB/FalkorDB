@@ -580,3 +580,117 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         result = self.graph.query(q)
         self.env.assertEquals(result.result_set, [])
+
+    def test18_fold_relationship_type_filter(self):
+        # a relationship-type predicate applied to a variable-length edge
+        # (e.g. WHERE type(e) <> 'A') is folded into the traversal's
+        # relationship-type set: excluded types are never expanded and the
+        # per-edge type() filter disappears entirely (no Filter op)
+        #
+        # NOTE: a genuine variable-length range is required. *1..1 collapses to
+        # a plain single-hop Conditional Traverse which this optimization (which
+        # only targets Conditional Variable Length Traverse) does not handle.
+        self.graph.delete()
+
+        # (a)-[:A]->(b)-[:B]->(c)-[:A]->(d), plus a typed, weighted shortcut
+        # (a)-[:C {w:200}]->(c)
+        # types: A -> {a->b, c->d}, B -> {b->c}, C -> {a->c}
+        self.graph.query(
+            """CREATE (a:N {name:'a'}), (b:N {name:'b'}),
+                      (c:N {name:'c'}), (d:N {name:'d'}),
+                      (a)-[:A]->(b), (b)-[:B]->(c), (c)-[:A]->(d),
+                      (a)-[:C {w:200}]->(c)""")
+
+        RNG = "*1..2"
+
+        # run the folded query, assert the per-edge Filter op was optimized
+        # away, and compare against the semantically-equivalent explicit-type
+        # pattern (which needs no filter, hence no fold). an empty 'ref' means
+        # the folded relationship-type set is empty => no 1..2-hop paths.
+        def check(where, ref, params=None):
+            q = f"MATCH (x)-[e{RNG}]->(y) {where} RETURN x.name, y.name"
+            if params is None:
+                # GRAPH.EXPLAIN can't bind params, so only assert the filter was
+                # optimized away for the non-parameterized queries
+                self.env.assertNotIn("Filter", str(self.graph.explain(q)))
+                got = sorted(self.graph.query(q).result_set)
+            else:
+                got = sorted(self.graph.query(q, params).result_set)
+            if ref:
+                exp = sorted(self.graph.query(
+                    f"MATCH (x)-[e:{ref}{RNG}]->(y) "
+                    "RETURN x.name, y.name").result_set)
+            else:
+                exp = []
+            self.env.assertEquals(got, exp)
+
+        # equality / inequality
+        check("WHERE type(e) = 'A'", "A")
+        check("WHERE type(e) <> 'A'", "B|C")
+
+        # IN / NOT IN
+        check("WHERE type(e) IN ['A', 'B']", "A|B")
+        check("WHERE NOT type(e) IN ['A', 'B']", "C")
+        check("WHERE NOT type(e) IN ['A', 'B', 'C']", "")        # empty set
+
+        # variants of NOT (normalized by De Morgan at build time)
+        check("WHERE NOT type(e) = 'A'", "B|C")
+        check("WHERE NOT type(e) <> 'A'", "A")
+        check("WHERE NOT (type(e) = 'A' OR type(e) = 'B')", "C")
+
+        # AND / OR combinations
+        check("WHERE type(e) = 'A' OR type(e) = 'C'", "A|C")
+        check("WHERE type(e) <> 'A' AND type(e) <> 'C'", "B")
+
+        # non-existent type: '=' matches nothing, '<>' is a no-op
+        check("WHERE type(e) = 'nope'", "")                      # empty set
+        check("WHERE type(e) <> 'nope'", "A|B|C")
+
+        # contradictions / repeated mentions collapse via intersection
+        check("WHERE type(e) = 'A' AND type(e) = 'B'", "")       # empty set
+        check("WHERE type(e) = 'A' AND type(e) = 'A'", "A")      # redundant
+        check("WHERE type(e) <> 'A' AND type(e) <> 'A'", "B|C")
+        check("WHERE type(e) = 'A' AND type(e) <> 'A'", "")      # empty set
+        check("WHERE type(e) IN ['A','B'] AND type(e) IN ['B','C']", "B")
+        check("WHERE type(e) IN ['A','B'] AND type(e) = 'C'", "") # empty set
+
+        # a list of only non-string / non-existent values can match no edge
+        check("WHERE type(e) IN [3]", "")                        # empty set
+        check("WHERE type(e) IN ['nope']", "")                   # empty set
+        check("WHERE type(e) IN ['A', 3]", "A")                  # mixed keeps A
+
+        # parameterized value / list ($rel, $rels)
+        check("WHERE type(e) = $rel", "A", {'rel': 'A'})
+        check("WHERE type(e) IN $rels", "B|C", {'rels': ['B', 'C']})
+        check("WHERE NOT type(e) IN $rels", "A", {'rels': ['B', 'C']})
+
+        # ------------------------------------------------ mixed (must NOT fold)
+        # 'type(e)=A OR e.w>100' mixes a type predicate with a property one;
+        # restricting the traversal to {A} would drop the C edge (w=200), so
+        # it must stay a per-edge filter. hand-verified over *1..2:
+        #   usable edges: a-A->b, c-A->d, a-C(w200)->c
+        #   1-hop: a-b, c-d, a-c ; 2-hop: a-c-d
+        got = sorted(self.graph.query(
+            "MATCH (x)-[e*1..2]->(y) WHERE type(e) = 'A' OR e.w > 100 "
+            "RETURN x.name, y.name").result_set)
+        self.env.assertEquals(
+            got, sorted([["a", "b"], ["c", "d"], ["a", "c"], ["a", "d"]]))
+
+        # ---------------------------------------------------------- zero-length
+        # an empty folded set keeps only the *0 self paths
+        got = sorted(self.graph.query(
+            "MATCH (x)-[e*0..2]->(y) WHERE type(e) = 'nope' "
+            "RETURN x.name, y.name").result_set)
+        self.env.assertEquals(
+            got, sorted([["a", "a"], ["b", "b"], ["c", "c"], ["d", "d"]]))
+
+        # ------------------------------------------------------- bidirectional
+        # folding must respect an undirected traversal too; the inline {name}
+        # keeps a legitimate node Filter, so only correctness is checked here
+        got = sorted(self.graph.query(
+            "MATCH (x {name:'b'})-[e*1..2]-(y) WHERE type(e) <> 'A' "
+            "RETURN x.name, y.name").result_set)
+        exp = sorted(self.graph.query(
+            "MATCH (x {name:'b'})-[e:B|C*1..2]-(y) "
+            "RETURN x.name, y.name").result_set)
+        self.env.assertEquals(got, exp)
