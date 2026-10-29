@@ -554,27 +554,33 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
-    /// Whether every index but `except` is the same index, with the same indexer batches committed
-    /// on it, here as in `other`: what an indexer batch's commit asks when no writer committed in
-    /// between, so that only batches can have changed an index.
-    pub(crate) fn same_batches_except(
+    /// Whether no index but `id` changed between `other` and this version: the same indexes, each
+    /// the same index (its generation) with the same number of indexer batches committed on it.
+    /// An indexer batch's commit asks this when no writer committed in between, so only batches
+    /// can have changed an index. The caller has already checked that `id` is the same index in
+    /// both, so equal counts of columns mean no other index was created or dropped.
+    pub(crate) fn only_index_changed(
         &self,
         other: &Self,
-        except: &IndexId,
+        id: &IndexId,
     ) -> bool {
-        [EntityType::Node, EntityType::Relationship]
-            .into_iter()
-            .all(|entity| {
-                let (ours, theirs) = (self.columns(entity), other.columns(entity));
-                ours.len() == theirs.len()
-                    && ours.iter().all(|(key, entry)| {
-                        matches!(except, IndexId::Column(e, k) if *e == entity && k == key)
-                            || theirs.get(key).is_some_and(|their| {
-                                (their.generation, their.indexer_commits)
-                                    == (entry.generation, entry.indexer_commits)
-                            })
-                    })
-            })
+        let IndexId::Column(id_entity, id_key) = id;
+        for entity in [EntityType::Node, EntityType::Relationship] {
+            let (ours, theirs) = (self.columns(entity), other.columns(entity));
+            if ours.len() != theirs.len() {
+                return false;
+            }
+            for (key, our) in ours {
+                if entity == *id_entity && key == id_key {
+                    continue;
+                }
+                match theirs.get(key) {
+                    Some(their) if their.same_batches_as(our) => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
     }
 
     /// The tree key `value` takes in column `(entity, label, attr)`, or `None` when there is no
