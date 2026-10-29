@@ -407,8 +407,10 @@ mod tests {
         // A member the index cannot hold (here a list; a `date()` alike) is kept by
         // `IndexQuery::in_list` so that the whole query falls back (#2958).
         let unservable = Value::List(Arc::new(vec![Value::Int(1)].into_iter().collect()));
-        let cases: [(&[Value], bool); 6] = [
-            (&[Value::Int(1), Value::Float(2.5), Value::Bool(true)], true),
+        let cases: [(&[Value], bool); 7] = [
+            (&[Value::Int(1), Value::Float(2.5), Value::Null], true),
+            // A Bool is not indexed (#2963): it falls back like a lossy int.
+            (&[Value::Int(1), Value::Bool(true)], false),
             (
                 &[Value::Int(1), Value::String(Arc::new("a".to_string()))],
                 true,

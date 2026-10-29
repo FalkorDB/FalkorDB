@@ -819,7 +819,7 @@ fn needs_post_filter(
 ) -> bool {
     // Whitelist the RHS subtree of `property IN [literal, ...]` only
     // when the list is non-empty *and* every direct element is a
-    // bare scalar literal (Null / Bool / Integer / Float / String).
+    // bare scalar literal (Null / Integer / Float / String).
     // Those are the exact cases the `InList` runtime path can push
     // into the index without fallback.
     //
@@ -834,7 +834,7 @@ fn needs_post_filter(
         && matches!(rhs.data(), ExprIR::List)
         && rhs.num_children() > 0
         && rhs.children().all(|child| match child.data() {
-            ExprIR::Constant(Value::Bool(_) | Value::Float(_) | Value::String(_)) => true,
+            ExprIR::Constant(Value::Float(_) | Value::String(_)) => true,
             // Large int64s can't round-trip through f64 exactly,
             // so the runtime will reject them and fall back to a
             // full scan — the Filter has to stay above to
@@ -901,7 +901,7 @@ fn is_non_indexable_subexpr(
 const fn is_exact_index_literal(v: &Value) -> bool {
     match v {
         Value::Int(i) => !Index::int_loses_f64_precision(*i),
-        Value::Null | Value::Bool(_) | Value::Float(_) | Value::String(_) => true,
+        Value::Null | Value::Float(_) | Value::String(_) => true,
         _ => false,
     }
 }

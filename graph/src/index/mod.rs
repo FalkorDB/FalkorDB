@@ -296,7 +296,7 @@ impl IndexQuery<Value> {
         const fn is_indexable(v: &Value) -> bool {
             match v {
                 Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_) | Value::String(_) | Value::Bool(_) | Value::Null => true,
+                Value::Float(_) | Value::String(_) | Value::Null => true,
                 _ => false,
             }
         }
@@ -623,23 +623,39 @@ const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /// Escape a TAG string value so it survives RediSearch's tag tokenizer and the
 /// query-side `tag_strtolower` strip pass, collapsing to a single literal
-/// token. Mirrors C FalkorDB's `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
-/// `src/index/tag_encode.c`): every byte `<= 0x20` (control bytes, whitespace
-/// and the `\1` tag separator), `\` (0x5c, the read-side strip target) and `_`
-/// (0x5f, the escape prefix itself) is emitted as `_` followed by two lowercase
-/// hex digits; all other bytes pass through verbatim. Applied symmetrically on
-/// the index write and query paths so the stored key and the query key match.
-/// No decoder exists — the encoded form is only ever the RediSearch index key;
-/// the real attribute value is served from FalkorDB's own attribute store.
+/// token, **and so the byte order of the keys is the byte order of the values**:
+/// a string range query compares these keys, so `a < b` must imply
+/// `enc(a) < enc(b)` (the old encoding of `' '` sorted after `'A'`, #2963).
+///
+/// The bytes the tag layer cannot carry are the controls and whitespace
+/// (`<= 0x20`, which includes the `\1` tag separator) and `\` (0x5c, the
+/// read-side strip target). Each source byte becomes a self-delimiting unit, and
+/// the units compare as the bytes do:
+///
+/// * `<= 0x21` -> `0x21, 0x22 + b` (`0x21` is itself escaped, so every other
+///   byte is `>= 0x22` and sorts after the escapes)
+/// * `[` (0x5b) -> `0x5b 0x5b`, `\` (0x5c) -> `0x5b 0x5d` (between `[` and `]`)
+/// * every other byte passes through verbatim.
+///
+/// The empty string, which RediSearch does not index as an empty tag, is the
+/// lone byte `0x21`. That is no other string's key (an escape is always two
+/// bytes) and it sorts before them all, as `''` does (#2963).
+///
+/// Applied symmetrically on the index write and query paths so the stored key
+/// and the query key match. No decoder exists: the encoded form is only ever
+/// the RediSearch index key; the real attribute value is served from
+/// FalkorDB's own attribute store.
 fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
+    if src.is_empty() {
+        return vec![0x21];
+    }
     let mut out = Vec::with_capacity(src.len());
     for &b in src {
-        if b <= 0x20 || b == b'\\' || b == b'_' {
-            out.push(b'_');
-            out.push(HEX_DIGITS[(b >> 4) as usize]);
-            out.push(HEX_DIGITS[(b & 0x0f) as usize]);
-        } else {
-            out.push(b);
+        match b {
+            0..=0x21 => out.extend_from_slice(&[0x21, 0x22 + b]),
+            b'[' => out.extend_from_slice(b"[["),
+            b'\\' => out.extend_from_slice(b"[]"),
+            _ => out.push(b),
         }
     }
     out
@@ -826,14 +842,11 @@ impl Document {
                 return;
             }
             match value {
-                Value::Bool(i) => {
-                    RediSearch_DocumentAddFieldNumber(
-                        self.rs_doc,
-                        field.name.as_ptr(),
-                        f64::from(*i),
-                        RSFLDTYPE_NUMERIC,
-                    );
-                }
+                // Booleans are not indexed. Stored as 1/0 in the numeric field
+                // they matched `= 1` / `= 0` and numeric ranges (#2963, #363);
+                // no index query is built for a Bool (`can_be_served`), so a
+                // Bool predicate is answered by a label scan and its filter.
+                Value::Bool(_) => {}
                 Value::Int(i) => {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
@@ -878,7 +891,6 @@ impl Document {
                     let mut string_cstrs: Vec<CString> = Vec::new();
                     for item in items.iter() {
                         match item {
-                            Value::Bool(b) => numerics.push(f64::from(*b)),
                             Value::Int(i) => numerics.push(*i as f64),
                             Value::Float(f) => numerics.push(*f),
                             Value::String(s) => {
@@ -1426,7 +1438,6 @@ impl Index {
         match value {
             Value::Int(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
-            Value::Bool(b) => Some(f64::from(*b)),
             _ => None,
         }
     }
@@ -1547,7 +1558,7 @@ impl Index {
         query: IndexQuery<Value>,
     ) -> *mut redisearch::RSQNode {
         match query {
-            // Numeric equality (Int, Float, Bool)
+            // Numeric equality (Int, Float)
             IndexQuery::Equal { ref key, ref value } if Self::value_to_numeric(value).is_some() => {
                 let d = Self::value_to_numeric(value).unwrap();
                 let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
@@ -1710,21 +1721,6 @@ impl Index {
                                 arr_name.as_ptr(),
                                 *f,
                                 *f,
-                                1,
-                                1,
-                            )
-                        }
-                    }
-                    Value::Bool(b) => {
-                        let Some(arr_name) = field.numeric_arr_name() else {
-                            return std::ptr::null_mut();
-                        };
-                        unsafe {
-                            RediSearch_CreateNumericNode(
-                                self.rs_ptr(),
-                                arr_name.as_ptr(),
-                                f64::from(*b),
-                                f64::from(*b),
                                 1,
                                 1,
                             )
@@ -2363,24 +2359,50 @@ mod tests {
 
     #[test]
     fn tag_encode_escapes_only_expected_bytes() {
-        // Bytes <= 0x20 (controls + space), '\\' (0x5c) and '_' (0x5f) become
-        // `_` + two lowercase hex digits; everything else passes through.
         assert_eq!(tag_encode_lower(b"plain"), b"plain");
-        assert_eq!(tag_encode_lower(b"a b"), b"a_20b"); // space
-        assert_eq!(tag_encode_lower(b"a\\b"), b"a_5cb"); // backslash
-        assert_eq!(tag_encode_lower(b"a_b"), b"a_5fb"); // the escape prefix itself
-        assert_eq!(tag_encode_lower(&[0x00]), b"_00"); // NUL
-        assert_eq!(tag_encode_lower(&[0x09]), b"_09"); // tab
-        assert_eq!(tag_encode_lower(&[0x01]), b"_01"); // FalkorDB tag separator
+        assert_eq!(tag_encode_lower(b""), [0x21]); // the empty string has a key of its own
+        assert_eq!(tag_encode_lower(b"a b"), [b'a', 0x21, 0x42, b'b']); // space
+        assert_eq!(tag_encode_lower(b"a_b"), b"a_b"); // `_` is no longer an escape
+        assert_eq!(tag_encode_lower(&[0x00]), [0x21, 0x22]); // NUL
+        assert_eq!(tag_encode_lower(&[0x01]), [0x21, 0x23]); // FalkorDB tag separator
+        assert_eq!(tag_encode_lower(b"!"), [0x21, 0x43]);
+        assert_eq!(tag_encode_lower(b"\\"), b"[]"); // backslash
+        assert_eq!(tag_encode_lower(b"["), b"[[");
         // Other punctuation (comma 0x2c) and high bytes pass through untouched.
         assert_eq!(tag_encode_lower(b"a,b"), b"a,b");
         assert_eq!(tag_encode_lower(&[0xff]), &[0xff]);
     }
 
     #[test]
+    fn tag_encode_is_order_preserving_and_injective() {
+        // Every pair of short strings over the bytes the escapes care about, and
+        // some neighbours, must compare the same before and after encoding.
+        let alphabet: Vec<u8> = (0u8..=0x23)
+            .chain([b'A', b'Z', b'[', b'\\', b']', b'_', b'a', 0x7f, 0x80, 0xff])
+            .collect();
+        let mut all: Vec<Vec<u8>> = vec![vec![]];
+        for &a in &alphabet {
+            all.push(vec![a]);
+            for &b in &alphabet {
+                all.push(vec![a, b]);
+            }
+        }
+        for x in &all {
+            let ex = tag_encode_lower(x);
+            assert!(
+                !ex.iter().any(|&c| c <= 0x20 || c == b'\\'),
+                "{x:?} encodes to a byte the tag layer cannot carry: {ex:?}"
+            );
+            for y in &all {
+                assert_eq!(x.cmp(y), ex.cmp(&tag_encode_lower(y)), "{x:?} vs {y:?}");
+            }
+        }
+    }
+
+    #[test]
     fn tag_encode_output_has_no_interior_nul() {
         // The encoded form is handed to CString::new, so it must never contain a
-        // 0x00 byte (NUL itself is escaped to "_00").
+        // 0x00 byte (NUL itself is escaped).
         let enc = tag_encode_lower(&[0x00, b'x', 0x20, 0xff, b'\\']);
         assert!(!enc.contains(&0x00), "encoded form contains NUL: {enc:?}");
     }

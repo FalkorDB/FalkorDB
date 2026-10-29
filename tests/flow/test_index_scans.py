@@ -1424,3 +1424,50 @@ class testIndexScanFlow():
             self.env.assertEqual(g.query(q).result_set, expected, message=q)
 
         g.delete()
+
+    def test_44_bool_is_not_a_number_in_the_index(self):
+        # A Bool must not be indexed as 1/0: `= 1` returned `true` and
+        # `= true` returned `1` (#2963, #363), also inside AND for arrays.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1, k:'int'}), (:L {v:true, k:'bool'}), (:L {v:0, k:'zero'}),"
+            " (:L {v:false, k:'false'})",
+            ["MATCH (n:L) WHERE n.v = 1 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = true RETURN n.k",
+             "MATCH (n:L) WHERE n.v = false RETURN n.k",
+             "MATCH (n:L) WHERE n.v IN [true, 0] RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 2 RETURN n.k"],
+            expected_rows=[[['int']], [['bool']], [['false']], [['bool'], ['zero']],
+                           [['int'], ['zero']], [['int'], ['zero']]])
+        self._index_vs_scan(
+            [('L', 'arr')],
+            "CREATE (:L {k:4, arr:[true,'X']}), (:L {k:5, arr:[1,'x']})",
+            ["MATCH (n:L) WHERE 1 IN n.arr AND n.k > 0 RETURN n.k",
+             "MATCH (n:L) WHERE true IN n.arr RETURN n.k"],
+            expected_rows=[[[5]], [[4]]])
+
+    def test_45_string_range_follows_byte_order(self):
+        # The TAG key encoding must be order-preserving: ' ' (0x20) sorts
+        # before 'A', whatever the escape looks like (#2963).
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'John Smith', k:'js'}), (:L {v:'Johnny', k:'jy'}),"
+            " (:L {v:'a b', k:'ab'}), (:L {v:'a!', k:'a!'}), (:L {v:'a_b', k:'a_b'}),"
+            " (:L {v:'a\\\\b', k:'a\\\\b'}), (:L {v:'a[', k:'a['}), (:L {v:'', k:'empty'})",
+            ["MATCH (n:L) WHERE n.v < 'JohnA' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a!' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a ' AND n.v < 'a_' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a[' RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= 'a\\\\b' RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 'a b' RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v = '' RETURN n.k"],
+            expected_rows=[[['empty'], ['js']],
+                           [['a['], ['a\\b'], ['a_b']],
+                           [['a!'], ['a['], ['a\\b'], ['ab']],
+                           [['a\\b'], ['a_b']],
+                           [['a!'], ['a['], ['a\\b'], ['ab'], ['empty'], ['js'], ['jy']],
+                           [['ab']],
+                           [['empty'], ['js'], ['jy']],
+                           [['empty']]])

@@ -1492,8 +1492,8 @@ class testUniqueConstraintLookup():
 
     def test05_values_the_index_cannot_match(self):
         g = self.g
-        # strings (NUL included) and booleans go through the index; arrays,
-        # large integers, NaN and the empty string are checked by a scan
+        # strings (NUL included) go through the index; booleans (not indexed),
+        # arrays, large integers, NaN and the empty string are checked by a scan
         for v in ["'abc'", "'a\\u0000b'", "'\\u0000'", "true", "[1, 2]",
                   "1152921504606846976", "0.0/0.0", "''"]:
             g.query(f"CREATE (:U {{id: {v}}})")
