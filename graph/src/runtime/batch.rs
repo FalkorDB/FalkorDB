@@ -1524,7 +1524,10 @@ pub enum BatchOp<'a> {
     /// Unwind lists into rows.
     Unwind(UnwindOp<'a>),
     /// Conditional traverse relationships.
-    CondTraverse(CondTraverseOp<'a>),
+    /// Boxed: at ~1.8 KiB it dwarfs every other operator (the next is ~380 B),
+    /// and an unboxed variant made every `BatchOp` that large, so building or
+    /// moving any operator tree (per-row `CALL {}`) copied kilobytes per node.
+    CondTraverse(Box<CondTraverseOp<'a>>),
     /// Expand into existing relationships.
     ExpandInto(ExpandIntoOp<'a>),
     /// Seek nodes by internal ID.

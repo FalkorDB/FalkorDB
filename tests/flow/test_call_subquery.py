@@ -3179,3 +3179,24 @@ updating clause.")
                }
                RETURN count(*)""",
             [[25]])
+
+    def test_60_row_whose_import_was_deleted_is_skipped(self):
+        # C does not run the sub-query for a row whose imported entity an
+        # earlier row deleted: the CREATE does not happen and a returning
+        # CALL {} yields no row for it, while a non-returning one passes its
+        # input row through.
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id: 1})")
+        self.get_res_and_assertEquals(
+            """MATCH (n:A {id: 1}) UNWIND [1, 2] AS i
+               CALL { WITH n CREATE (n)-[:R]->(n) DELETE n RETURN 1 AS z }
+               RETURN count(*)""",
+            [[1]])
+
+        self.graph.query("CREATE (:A {id: 1})")
+        self.get_res_and_assertEquals(
+            """MATCH (n:A {id: 1}) UNWIND [1, 2] AS i
+               CALL { WITH n CREATE (m:M) DELETE n }
+               RETURN i""",
+            [[1], [2]])
+        self.get_res_and_assertEquals("MATCH (m:M) RETURN count(m)", [[1]])

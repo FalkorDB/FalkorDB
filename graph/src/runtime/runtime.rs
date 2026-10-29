@@ -1026,7 +1026,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
-                Ok(BatchOp::CondTraverse(CondTraverseOp::new(
+                Ok(BatchOp::CondTraverse(Box::new(CondTraverseOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
@@ -1038,7 +1038,7 @@ impl<'a> Runtime<'a> {
                     *bind_relationship,
                     idx,
                     record_cap,
-                )))
+                ))))
             }
             IR::ExpandInto {
                 relationship: relationship_pattern,
