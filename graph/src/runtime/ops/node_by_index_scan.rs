@@ -333,18 +333,18 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                             // every entity. Until then scan the label for what it will answer:
                             // the planner dropped the predicate it handed this op, so the scan
                             // must check it itself.
-                            Some(Err(recheck)) => {
+                            Some(Err(scan_filter)) => {
                                 let runtime = self.runtime;
                                 // Resolved once per scan. No node holds a name the graph has
                                 // never seen.
                                 let nodes: Box<dyn Iterator<Item = NodeId>> = match g
-                                    .get_node_attribute_id(recheck.attribute())
+                                    .get_node_attribute_id(scan_filter.attribute())
                                 {
                                     Some(attr) => {
                                         let attr = attr as u16;
                                         Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
                                             move |&id| {
-                                                runtime.graph().node_admitted(id, attr, &recheck)
+                                                runtime.graph().node_matches(id, attr, &scan_filter)
                                             },
                                         ))
                                     }

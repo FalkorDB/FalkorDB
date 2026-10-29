@@ -284,7 +284,7 @@ fn create_index_builds_the_column_from_live_edges() {
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
             .map(|answer| match answer {
                 Ok(rows) => rows.collect::<Vec<u64>>(),
-                Err(_) => panic!("a Ready column answered with a Recheck"),
+                Err(_) => panic!("a Ready column answered with a ScanFilter"),
             }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
@@ -1161,27 +1161,27 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     for batch in 0.. {
         assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
-            if let Some(Err(recheck)) = g.query_index_numeric_nodes(&label, q) {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
                 let attr = g
-                    .get_node_attribute_id(recheck.attribute())
+                    .get_node_attribute_id(scan_filter.attribute())
                     .expect("registered") as u16;
                 let ids = g
                     .get_nodes(&labels, 0)
-                    .filter(|&id| g.node_admitted(id, attr, &recheck))
+                    .filter(|&id| g.node_matches(id, attr, &scan_filter))
                     .map(u64::from)
                     .collect();
                 kept.push((false, i, sorted(ids)));
             }
         }
         for (i, q) in edge_queries.iter().enumerate() {
-            if let Some(Err(recheck)) = g.query_index_numeric_edges(&ty, q) {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
                 let attr = g
-                    .get_relationship_attribute_id(recheck.attribute())
+                    .get_relationship_attribute_id(scan_filter.attribute())
                     .expect("registered") as u16;
                 let ids = g
                     .get_all_edges(&ty)
                     .into_iter()
-                    .filter(|&(_, _, edge)| g.relationship_admitted(edge, attr, &recheck))
+                    .filter(|&(_, _, edge)| g.relationship_matches(edge, attr, &scan_filter))
                     .map(|(_, _, edge)| u64::from(edge))
                     .collect();
                 kept.push((true, i, sorted(ids)));

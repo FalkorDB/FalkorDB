@@ -212,16 +212,17 @@ impl VersionedIndex for IndexColumn {
     }
 }
 
-/// What the scan standing in for a column still building keeps: the entities whose `attribute`
-/// the column will answer the query with once it is built. The scan has to apply it, because
-/// nothing else re-checks its rows: the planner drops a predicate it hands to an index scan.
+/// How to answer a query by scanning while its column is still building: keep the entities whose
+/// `attribute` value encodes to one of `keys`, the keys the built column would look up. Built from
+/// the same keys, the scan keeps exactly what the column will answer. It is the only check the
+/// scanned rows get: the planner removes a predicate it hands to an index scan.
 #[derive(Clone, Debug)]
-pub struct Recheck {
+pub struct ScanFilter {
     attribute: Arc<String>,
     keys: KeySet,
 }
 
-impl Recheck {
+impl ScanFilter {
     /// The attribute the query is on.
     #[must_use]
     pub const fn attribute(&self) -> &Arc<String> {
@@ -230,7 +231,7 @@ impl Recheck {
 
     /// Whether the built column answers the query with an entity whose attribute is `value`.
     #[must_use]
-    pub fn admits(
+    pub fn matches(
         &self,
         value: &Value,
     ) -> bool {
@@ -583,9 +584,9 @@ impl FalkorDbIndex {
     /// each differently:
     ///
     /// * `Some(Ok(rows))` — served here, from a `Ready` column.
-    /// * `Some(Err(recheck))` — a shape the column serves, on a column that is still `Building`.
-    ///   The caller scans and keeps what the [`Recheck`] admits. This is a timing state, not a
-    ///   capability gap, so it must never surface as an error.
+    /// * `Some(Err(scan_filter))` — a shape the column serves, on a column that is still
+    ///   `Building`. The caller scans and keeps what the [`ScanFilter`] matches. This is a timing
+    ///   state, not a capability gap, so it must never surface as an error.
     /// * `None` — any other shape, or no such column: a non-numeric value, an `And`, an `OR`
     ///   spanning attributes, geo, array-contains. A Range index also holds strings and geo, which
     ///   only RediSearch serves. Under `index-falkordb` there is no other index, and the caller
@@ -596,7 +597,7 @@ impl FalkorDbIndex {
         entity: EntityType,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<Result<DocIter, Recheck>> {
+    ) -> Option<Result<DocIter, ScanFilter>> {
         // Which column to ask. `Equal`/`Range` are checked here because the column answers a bound
         // it cannot encode with "no rows" rather than `None`; an `IN` list or an `OR` is checked
         // by the column itself (`NumericIndex::keys`), which declines rather than answer part.
@@ -632,13 +633,13 @@ impl FalkorDbIndex {
         let entry = self.entry(entity, label, key)?;
         // Translate the query even while the column is building: the column declines a shape it
         // cannot serve whatever its state, and that must stay `None`. Only a shape it would serve
-        // is a `Recheck`.
+        // is a `ScanFilter`.
         let (idx, keys) = match &entry.index {
             IndexColumn::Numeric(idx) => (idx, NumericIndex::keys(query)?),
         };
         if entry.is_building() {
             // Not every entity is indexed yet.
-            return Some(Err(Recheck {
+            return Some(Err(ScanFilter {
                 attribute: key.clone(),
                 keys,
             }));
@@ -721,9 +722,9 @@ mod tests {
     }
 
     /// Rows of an answer that must be `Some(Ok(..))`. Panics on the other two, rather than
-    /// reporting them as "no rows" — a test that expected rows and got a `Recheck` or `None` has
-    /// found a bug, and collapsing all three into an empty `Vec` is exactly what hid one.
-    fn rows(answer: Option<Result<DocIter, Recheck>>) -> Vec<u64> {
+    /// reporting them as "no rows" — a test that expected rows and got a `ScanFilter` or `None`
+    /// has found a bug, and collapsing all three into an empty `Vec` is exactly what hid one.
+    fn rows(answer: Option<Result<DocIter, ScanFilter>>) -> Vec<u64> {
         match answer {
             Some(Ok(it)) => it.collect(),
             Some(Err(_)) => panic!("column is still Building"),
@@ -732,10 +733,10 @@ mod tests {
     }
 
     /// The build state machine at the column level. A `Building` column gates reads (answers
-    /// with a `Recheck`, so the caller scans rather than erroring) while indexer batches fill it.
-    /// A live write reaches it only below the cursor: one at or above is left to the batch that
-    /// reaches the entity. The batch that reaches the end flips the column `Ready`, and from then
-    /// on a batch changes nothing.
+    /// with a `ScanFilter`, so the caller scans rather than erroring) while indexer batches fill
+    /// it. A live write reaches it only below the cursor: one at or above is left to the batch
+    /// that reaches the entity. The batch that reaches the end flips the column `Ready`, and from
+    /// then on a batch changes nothing.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -748,9 +749,9 @@ mod tests {
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
             rows(idx.query_numeric(Node, &label, &eq(v)))
         };
-        // A `Recheck`, specifically — not `None`. A `Building` column is a timing state and the
-        // caller scans; `None` means unservable, which the no-fallback build turns into a query
-        // error. Collapsing the two errored every read against a still-building index.
+        // A `ScanFilter`, specifically — not `None`. A `Building` column is a timing state and
+        // the caller scans; `None` means unservable, which the no-fallback build turns into a
+        // query error. Collapsing the two errored every read against a still-building index.
         let building = |idx: &FalkorDbIndex, v: i64| {
             matches!(idx.query_numeric(Node, &label, &eq(v)), Some(Err(_)))
         };
@@ -781,7 +782,7 @@ mod tests {
             idx.next_building(),
             Some((Node, column.clone(), BuildCursor::new(Node)))
         );
-        assert!(building(&idx, 10), "empty Building → Recheck");
+        assert!(building(&idx, 10), "empty Building → ScanFilter");
 
         // Live writes before any batch: node 2 is created with 30, and node 1 goes 20 -> 25.
         // Both are at or above the cursor, so the column takes neither.
@@ -793,14 +794,14 @@ mod tests {
         );
         assert!(
             building(&idx, 30),
-            "still Building → Recheck after live writes"
+            "still Building → ScanFilter after live writes"
         );
         assert!(
             matches!(idx.query_numeric(Node, &label, &in_10_30), Some(Err(_))),
-            "an IN list on a Building column is answered with a Recheck too"
+            "an IN list on a Building column is answered with a ScanFilter too"
         );
         // A shape the column declines stays `None` mid-build: that is a gap, not a timing state,
-        // and answering with a `Recheck` would let it scan quietly until the build finished.
+        // and answering with a `ScanFilter` would let it scan quietly until the build finished.
         let in_mixed = IndexQuery::InList {
             key: attr.clone(),
             list: Value::List(Arc::new(

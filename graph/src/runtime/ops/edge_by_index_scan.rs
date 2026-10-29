@@ -374,21 +374,24 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                             // Still building: scan the type for what the column will answer,
                             // checking the predicate the planner dropped. See
                             // `NodeByIndexScanOp`.
-                            Some(Err(recheck)) => {
+                            Some(Err(scan_filter)) => {
                                 // Resolved once per scan. No edge holds a name the graph has
                                 // never seen.
-                                let edges: Box<dyn Iterator<Item = EdgeRow>> =
-                                    match g.get_relationship_attribute_id(recheck.attribute()) {
-                                        Some(attr) => {
-                                            let attr = attr as u16;
-                                            Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                                runtime
-                                                    .graph()
-                                                    .relationship_admitted(edge, attr, &recheck)
-                                            }))
-                                        }
-                                        None => Box::new(std::iter::empty()),
-                                    };
+                                let edges: Box<dyn Iterator<Item = EdgeRow>> = match g
+                                    .get_relationship_attribute_id(scan_filter.attribute())
+                                {
+                                    Some(attr) => {
+                                        let attr = attr as u16;
+                                        Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                            runtime.graph().relationship_matches(
+                                                edge,
+                                                attr,
+                                                &scan_filter,
+                                            )
+                                        }))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                };
                                 Some(edges)
                             }
                             None => {

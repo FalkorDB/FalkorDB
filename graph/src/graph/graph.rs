@@ -82,7 +82,7 @@ use roaring::RoaringTreemap;
 use thiserror::Error;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::falkordb_index::Recheck;
+use crate::index::falkordb::falkordb_index::ScanFilter;
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
@@ -4110,7 +4110,7 @@ impl Graph {
 
     /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
-    /// three-way answer: `Ok(rows)`, `Err(recheck)` (column still building — scan), or `None`
+    /// three-way answer: `Ok(rows)`, `Err(scan_filter)` (column still building — scan), or `None`
     /// (cannot be served). `use<>` keeps the returned iterator free of the `&self` borrow — it
     /// owns its tree snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
@@ -4118,7 +4118,7 @@ impl Graph {
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, Recheck>> {
+    ) -> Option<Result<impl Iterator<Item = NodeId> + use<>, ScanFilter>> {
         self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
             .map(|answer| answer.map(|rows| rows.map(NodeId)))
@@ -4130,13 +4130,13 @@ impl Graph {
     /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
     /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
     /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes:
-    /// `Ok(rows)`, `Err(recheck)` (still building — scan), `None` (not servable).
+    /// `Ok(rows)`, `Err(scan_filter)` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>, Recheck>>
+    ) -> Option<Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>, ScanFilter>>
     {
         let answer =
             self.falkordb_index
@@ -4157,34 +4157,34 @@ impl Graph {
         }))
     }
 
-    /// Whether the scan standing in for a column still building keeps node `id`: whether the
-    /// column, once built, answers the query `recheck` came from with it. `attr` is `recheck`'s
-    /// attribute as [`Self::get_node_attribute_id`] resolves it, once per scan rather than once per
-    /// node. Reads the committed value, which is the one the column indexes.
+    /// Whether the scan standing in for a column still building keeps node `id`: whether its value
+    /// of `attr` matches `scan_filter`, so the built column would answer the query with it. `attr`
+    /// is the filter's attribute as [`Self::get_node_attribute_id`] resolves it, once per scan
+    /// rather than once per node. Reads the committed value, which is the one the column indexes.
     #[cfg(feature = "index-falkordb")]
     #[must_use]
-    pub fn node_admitted(
+    pub fn node_matches(
         &self,
         id: NodeId,
         attr: u16,
-        recheck: &Recheck,
+        scan_filter: &ScanFilter,
     ) -> bool {
         self.get_node_attribute_by_idx(id, attr)
-            .is_some_and(|value| recheck.admits(&value))
+            .is_some_and(|value| scan_filter.matches(&value))
     }
 
-    /// [`Self::node_admitted`] for relationship `id`, with `attr` resolved by
+    /// [`Self::node_matches`] for relationship `id`, with `attr` resolved by
     /// [`Self::get_relationship_attribute_id`].
     #[cfg(feature = "index-falkordb")]
     #[must_use]
-    pub fn relationship_admitted(
+    pub fn relationship_matches(
         &self,
         id: RelationshipId,
         attr: u16,
-        recheck: &Recheck,
+        scan_filter: &ScanFilter,
     ) -> bool {
         self.get_relationship_attribute_by_idx(id, attr)
-            .is_some_and(|value| recheck.admits(&value))
+            .is_some_and(|value| scan_filter.matches(&value))
     }
 
     #[must_use]
