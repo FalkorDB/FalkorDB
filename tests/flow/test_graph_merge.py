@@ -623,6 +623,17 @@ class testGraphMergeFlow():
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 
+    def test31b_relationship_alias_redeclared(self):
+        # a relationship variable repeated inside one MERGE pattern must be
+        # rejected, not silently merged into a single edge
+        for query in ["MERGE (a)-[r:R]->(b)-[r:R]->(c)",
+                      "MERGE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p"]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("The bound variable 'r' can't be redeclared in a MERGE clause", str(e))
+
     def test32_reset_op(self):
         # MERGE operation register a reset function validate that it works as expected
         res = self.graph.query("CREATE (a:A), (b:B)")
