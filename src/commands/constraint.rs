@@ -546,7 +546,7 @@ pub fn graph_constraint(
         g
     };
 
-    let mut tg = graph.write();
+    let tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
         return Err(redis_module::RedisError::String(
             "ERR another write is in progress, retry the query".into(),

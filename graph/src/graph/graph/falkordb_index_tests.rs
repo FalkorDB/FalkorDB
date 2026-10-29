@@ -1596,7 +1596,7 @@ fn prepare(
 
 /// One writer's unit of work on `mvcc`: claim the write slot, `write` into the fork, commit it.
 fn commit_write(
-    mvcc: &mut MvccGraph,
+    mvcc: &MvccGraph,
     write: impl FnOnce(&mut Graph),
 ) {
     let fork = mvcc.write().expect("the write slot is free");
@@ -1608,7 +1608,7 @@ fn commit_write(
 /// itself. The batch changes no data, so the data version stays, and the slot is free after.
 #[test]
 fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
-    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let data_version = mvcc.read().borrow().version;
 
@@ -1638,7 +1638,7 @@ fn an_indexer_batch_with_nothing_committed_since_publishes_its_version() {
 #[test]
 fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
     let (g, label, v, ty, w) = scan_fixture();
-    let mut mvcc = MvccGraph::from_graph(g);
+    let mvcc = MvccGraph::from_graph(g);
     let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
     let edges = IndexId::Column(EntityType::Relationship, (ty.clone(), w.clone()));
 
@@ -1675,16 +1675,71 @@ fn an_indexer_batch_after_another_columns_batch_swaps_its_column_in() {
     }
 }
 
+/// A reader keeps its borrow of the published version across an indexer batch's commit, however
+/// the batch goes in. The commit only reads the published version and publishes a version of its
+/// own; a `borrow_mut` of the published one would meet the reader's borrow, and `AtomicRefCell`
+/// would panic.
+#[test]
+fn an_indexer_batch_commit_leaves_a_borrowed_published_version_alone() {
+    // Same, and CatchUp after a writer: one column.
+    for overtaken in [false, true] {
+        let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+        let (prepared, batch) = prepare(&mvcc, &id, 2);
+        if overtaken {
+            commit_write(&mvcc, |g| set_attr(g, ids[0], &attr, Value::Int(15)));
+        }
+        let held = mvcc.read();
+        let reader = held.borrow();
+        let before = cursor(&reader, EntityType::Node, &label, &attr);
+
+        let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+        assert!(
+            matches!(
+                (overtaken, &committed),
+                (false, Some(IndexerCommit::Same)) | (true, Some(IndexerCommit::CatchUp(_)))
+            ),
+            "{committed:?}"
+        );
+        assert_eq!(cursor(&reader, EntityType::Node, &label, &attr), before);
+        assert_ne!(
+            cursor(&mvcc.read().borrow(), EntityType::Node, &label, &attr),
+            before,
+            "the batch's progress is published"
+        );
+    }
+
+    // Swap: another column's batch committed first.
+    let (g, label, v, ty, w) = scan_fixture();
+    let mvcc = MvccGraph::from_graph(g);
+    let nodes = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+    let edges = IndexId::Column(EntityType::Relationship, (ty, w));
+    let (node_version, node_batch) = prepare(&mvcc, &nodes, 3);
+    let (edge_version, edge_batch) = prepare(&mvcc, &edges, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&edge_version, &edge_batch),
+        Some(IndexerCommit::Same)
+    );
+    let held = mvcc.read();
+    let reader = held.borrow();
+    let before = cursor(&reader, EntityType::Node, &label, &v);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&node_version, &node_batch),
+        Some(IndexerCommit::Swap)
+    );
+    assert_eq!(cursor(&reader, EntityType::Node, &label, &v), before);
+}
+
 /// An indexer batch whose column a writer dropped, or dropped and created again, since its
 /// version was made publishes nothing. A column created again starts its build over: its next
 /// batch reads from the first node.
 #[test]
 fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
     for recreate in [false, true] {
-        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
+        let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30]);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
         let (prepared, batch) = prepare(&mvcc, &id, 2);
-        commit_write(&mut mvcc, |g| {
+        commit_write(&mvcc, |g| {
             drop_index_on(g, &label, &attr);
             if recreate {
                 create_index_on(g, &label, &attr);
@@ -1723,10 +1778,10 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
 #[test]
 fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
     for how in [CatchUp::Refresh, CatchUp::Insert] {
-        let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+        let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
         let (prepared, batch) = prepare(&mvcc, &id, 2);
-        commit_write(&mut mvcc, |g| {
+        commit_write(&mvcc, |g| {
             set_attr(g, ids[0], &attr, Value::Int(15));
             set_attr(g, ids[2], &attr, Value::Int(35));
         });
@@ -1771,10 +1826,10 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
     let budget = 2 * REFRESH_COST as usize;
     for (written, how) in [(1, CatchUp::Refresh), (3, CatchUp::Insert)] {
         let values: Vec<i64> = (0..=budget as i64).collect();
-        let (mut mvcc, label, attr, ids) = mvcc_building(&values);
+        let (mvcc, label, attr, ids) = mvcc_building(&values);
         let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
         let (prepared, batch) = prepare(&mvcc, &id, budget);
-        commit_write(&mut mvcc, |g| {
+        commit_write(&mvcc, |g| {
             for &id in &ids[..written] {
                 set_attr(g, id, &attr, Value::Int(1000));
             }
@@ -1809,7 +1864,7 @@ fn a_claim_with_nothing_to_rebase_leaves_the_fork_alone() {
 #[test]
 #[should_panic(expected = "a fork is claimed while it is borrowed")]
 fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let fork = mvcc.fork();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
@@ -1823,7 +1878,7 @@ fn a_borrowed_fork_to_rebase_stops_a_debug_build() {
 /// A change at or above the cursor is not, since a later batch reads it.
 #[test]
 fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
-    let (mut mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
+    let (mvcc, label, attr, ids) = mvcc_building(&[10, 20, 30, 40]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let fork = mvcc.fork();
     set_attr(&mut fork.borrow_mut(), ids[0], &attr, Value::Int(15));
@@ -1860,7 +1915,7 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
 /// out, so it is reported; here the report is allowed, to check what is published.
 #[test]
 fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let (first, first_batch) = prepare(&mvcc, &id, 1);
     let (second, second_batch) = prepare(&mvcc, &id, 2);
@@ -1886,7 +1941,7 @@ fn of_two_indexer_batches_on_one_column_only_the_first_publishes() {
 #[test]
 #[should_panic(expected = "two indexer batches raced")]
 fn a_race_of_two_indexer_batches_stops_a_debug_build() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let (first, first_batch) = prepare(&mvcc, &id, 1);
     let (second, second_batch) = prepare(&mvcc, &id, 1);
@@ -1898,7 +1953,7 @@ fn a_race_of_two_indexer_batches_stops_a_debug_build() {
 /// be claimed.
 #[test]
 fn a_fork_made_before_an_indexer_batch_commit_can_still_be_claimed() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let fork = mvcc.fork();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
@@ -1914,7 +1969,7 @@ fn a_fork_made_before_an_indexer_batch_commit_can_still_be_claimed() {
 /// nothing.
 #[test]
 fn an_indexer_batch_does_not_commit_while_a_writer_holds_the_slot() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let before = mvcc.read();
     let writer = mvcc.write().expect("the write slot is free");
@@ -1929,7 +1984,7 @@ fn an_indexer_batch_does_not_commit_while_a_writer_holds_the_slot() {
 /// the next writer can claim it.
 #[test]
 fn an_indexer_batch_commit_that_unwinds_releases_the_write_slot() {
-    let (mut mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20, 30]);
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let before = mvcc.read();
     let (prepared, batch) = prepare(&mvcc, &id, 2);
@@ -2160,7 +2215,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
         for (name, first, second) in writes {
             for batches_on in [[&v, &w], [&v, &v]] {
                 for order in &orders {
-                    let mut mvcc = MvccGraph::from_graph(template.new_version());
+                    let mvcc = MvccGraph::from_graph(template.new_version());
                     let mut forks: [Option<(Arc<AtomicRefCell<Graph>>, Arc<AtomicRefCell<Graph>>)>;
                         2] = [None, None];
                     let mut batches: [Option<(Arc<AtomicRefCell<Graph>>, PreparedBatch)>; 2] =
@@ -2637,7 +2692,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                     writes += 1;
                     let op = rng.random_range(0..100);
                     if rng.random_bool(0.3) {
-                        let mut mvcc = mvcc.write();
+                        let mvcc = mvcc.write();
                         let version = mvcc.write().expect("the slot is free under the lock");
                         random_write(&mut version.borrow_mut(), op, &mut rng);
                         mvcc.commit(version).expect("the writer commits");
@@ -2654,7 +2709,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         random_write(&mut fork.borrow_mut(), op, &mut rng);
                         // As a batch's, so batches commit while a fork waits to claim.
                         thread::sleep(Duration::from_micros(rng.random_range(0..200)));
-                        let mut mvcc = mvcc.write();
+                        let mvcc = mvcc.write();
                         let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
                         match mvcc.claim(&fork) {
                             Ok(()) => {
