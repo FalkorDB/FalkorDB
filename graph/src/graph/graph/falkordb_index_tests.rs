@@ -9,7 +9,7 @@ use crate::index::Field;
 use crate::index::falkordb::encode::encode_numeric;
 use crate::index::falkordb::falkordb_index::{BuildCursor, IndexColumn, IndexKey};
 use crate::index::falkordb::graph_writes;
-use crate::index::falkordb::online_build::{self, BuildHost, Indexer, Run, Turn, run_turn};
+use crate::index::falkordb::online_build::{self, BuildHost, Indexer, Run, Sizing, Turn, run_turn};
 use crate::index::falkordb::versioned::{
     BuildState, CatchUp, Discarded, IndexId, IndexerCommit, PreparedBatch, REFRESH_COST,
     VersionedIndex,
@@ -1873,6 +1873,136 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
     }
 }
 
+/// What a build has read ([`IndexEntry::read`]) moves with its cursor. Each batch adds its budget,
+/// and when a batch or a writer commits over another commit, the count goes where the cursor goes:
+/// a batch's swap, refresh or insert takes the batch's, and a writer's rebase the published copy's.
+/// An index created again starts over at 0.
+///
+/// [`IndexEntry::read`]: crate::index::falkordb::versioned::IndexEntry::read
+#[test]
+fn what_a_build_has_read_moves_with_its_cursor() {
+    let (mvcc, label, v, ids) = mvcc_building(&(0..30).collect::<Vec<_>>());
+    let w = Arc::new("w".to_string());
+    commit_write(&mvcc, |g| {
+        for &id in &ids {
+            set_attr(g, id, &w, Value::Int(id as i64));
+        }
+        create_index_on(g, &label, &w);
+    });
+    let on = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let (vid, wid) = (on(&v), on(&w));
+    let read = |id: &IndexId| mvcc.read().borrow().index_build_read(id);
+    assert_eq!((read(&vid), read(&wid)), (Some(0), Some(0)));
+
+    let (prepared, batch) = prepare(&mvcc, &vid, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(read(&vid), Some(2), "a batch adds its budget");
+
+    let (prepared, batch) = prepare(&mvcc, &vid, 3);
+    let (other, other_batch) = prepare(&mvcc, &wid, 4);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&other, &other_batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Swap)
+    );
+    assert_eq!((read(&vid), read(&wid)), (Some(5), Some(4)), "swapped in");
+
+    // One entity written after each batch was read: a batch of more than `REFRESH_COST` tuples
+    // refreshes it, and a batch of 3 inserts itself.
+    let mut expected = 5;
+    for (value, (size, how)) in [
+        (REFRESH_COST as usize + 1, CatchUp::Refresh),
+        (3, CatchUp::Insert),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (prepared, batch) = prepare(&mvcc, &vid, size);
+        commit_write(&mvcc, |g| {
+            set_attr(g, ids[0], &v, Value::Int(-1 - value as i64));
+        });
+        assert_eq!(
+            mvcc.commit_indexer_batch(&prepared, &batch),
+            Ok(IndexerCommit::CatchUp(how))
+        );
+        expected += size as u64;
+        assert_eq!(read(&vid), Some(expected), "{how:?}");
+    }
+
+    let fork = mvcc.fork();
+    set_attr(&mut fork.borrow_mut(), ids[1], &v, Value::Int(-2));
+    let (prepared, batch) = prepare(&mvcc, &vid, 2);
+    assert_eq!(
+        mvcc.commit_indexer_batch(&prepared, &batch),
+        Ok(IndexerCommit::Same)
+    );
+    assert_eq!(escalate(&mvcc, &fork), Ok(()));
+    mvcc.commit(fork).expect("the write commits");
+    assert_eq!(read(&vid), Some(expected + 2), "a rebased writer's");
+
+    commit_write(&mvcc, |g| {
+        g.falkordb_index.drop_column(EntityType::Node, &label, &v);
+        g.falkordb_index
+            .create_building(EntityType::Node, &label, &v);
+    });
+    assert_eq!(read(&vid), Some(0), "created again");
+}
+
+/// A batch whose catch-up is limited publishes nothing when the catch-up would do more than the
+/// limit: refresh more entities, or insert more tuples, whichever it chose. At the limit it
+/// catches up. A batch that published nothing leaves the index as it was, still `Building`.
+#[test]
+fn a_batch_publishes_nothing_rather_than_catch_up_past_its_limit() {
+    let budget = 3 * REFRESH_COST as usize;
+    for (written, how, work) in [
+        (2, CatchUp::Refresh, 2),
+        (3, CatchUp::Insert, budget as u64),
+    ] {
+        for limit in [work, work - 1] {
+            let values: Vec<i64> = (0..2 * budget as i64).collect();
+            let (mvcc, label, attr, ids) = mvcc_building(&values);
+            let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+            let (prepared, mut batch) = prepare(&mvcc, &id, budget);
+            batch.limit_catch_up(limit);
+            commit_write(&mvcc, |g| {
+                for &id in &ids[..written] {
+                    set_attr(g, id, &attr, Value::Int(-1));
+                }
+            });
+            let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+            let published = mvcc.read();
+            let published = published.borrow();
+            let what = format!("{written} written, limit {limit}");
+            if limit == work {
+                assert_eq!(committed, Ok(IndexerCommit::CatchUp(how)), "{what}");
+                assert_eq!(
+                    published.index_build_read(&id),
+                    Some(budget as u64),
+                    "{what}"
+                );
+            } else {
+                assert_eq!(
+                    committed,
+                    Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)),
+                    "{what}"
+                );
+                assert_eq!(
+                    cursor(&published, EntityType::Node, &label, &attr),
+                    Some(BuildCursor::new(EntityType::Node)),
+                    "{what}: the index as it was"
+                );
+                assert_eq!(published.index_build_read(&id), Some(0), "{what}");
+            }
+        }
+    }
+}
+
 /// A rebase needs the fork mutably only when it has something to do: with no indexer batch
 /// committed since it was made, a borrowed fork escalates, and is left alone.
 #[test]
@@ -2668,6 +2798,9 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
                                         IndexerCommit::Discarded(Discarded::AnotherBatch) => {
                                             "batch discarded, another batch"
                                         }
+                                        IndexerCommit::Discarded(Discarded::CatchUpTooLarge) => {
+                                            unreachable!("no batch here limits its catch-up")
+                                        }
                                     })
                                     .or_default() += 1;
                                 if run == CatchUp::Refresh
@@ -3076,6 +3209,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         IndexerCommit::Discarded(Discarded::AnotherBatch) => {
                             "batch discarded, another batch"
                         }
+                        IndexerCommit::Discarded(Discarded::CatchUpTooLarge) => {
+                            unreachable!("no batch here limits its catch-up")
+                        }
                     });
                     check(
                         &before,
@@ -3292,7 +3428,9 @@ fn a_turn_publishes_one_batch_and_says_whether_more_remain() {
     let id = IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let run = Run::new();
 
-    let turns: Vec<Turn> = (0..4).map(|_| run_turn(&reach, &id, &run, 2)).collect();
+    let turns: Vec<Turn> = (0..4)
+        .map(|_| run_turn(&reach, &id, &run, Sizing::fixed(2), 0))
+        .collect();
     assert_eq!(
         turns,
         [
@@ -3334,7 +3472,7 @@ fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
         });
 
         assert_eq!(
-            run_turn(&reach, &id, &run, 2),
+            run_turn(&reach, &id, &run, Sizing::fixed(2), 0),
             Turn::Discarded { more: again },
             "again: {again}"
         );
@@ -3356,7 +3494,7 @@ fn a_turn_on_an_index_dropped_or_created_again_publishes_nothing() {
             "the new index, untouched by the old one's batch"
         );
         let mut turns = 0;
-        while run_turn(&reach, &id, &run, 2) != Turn::Idle {
+        while run_turn(&reach, &id, &run, Sizing::fixed(2), 0) != Turn::Idle {
             turns += 1;
             assert!(turns < 10, "the new index is never built");
         }
@@ -3383,7 +3521,7 @@ fn a_turn_that_waited_while_the_builder_stopped_publishes_nothing() {
     let stopping = Arc::clone(&run);
     host.before_publish(move |_| stopping.stop());
 
-    assert_eq!(run_turn(&reach, &id, &run, 2), Turn::Gone);
+    assert_eq!(run_turn(&reach, &id, &run, Sizing::fixed(2), 0), Turn::Gone);
     assert_eq!(
         cursor(&host.mvcc.read().borrow(), EntityType::Node, &label, &attr),
         Some(BuildCursor::new(EntityType::Node)),
@@ -3428,7 +3566,9 @@ fn a_stop_waits_for_a_turn_still_reading() {
         host: Arc::downgrade(&host),
         held: parking_lot::Mutex::new(Some((holding, released))),
     });
-    let indexer = Indexer::new(Box::new(|host, id, run| run_turn(host, id, run, 2)));
+    let indexer = Indexer::new(Box::new(|host, id, run, shift| {
+        run_turn(host, id, run, Sizing::fixed(2), shift)
+    }));
     indexer.start(1);
     indexer.enqueue(
         reach,
@@ -3456,6 +3596,88 @@ fn a_stop_waits_for_a_turn_still_reading() {
     );
 }
 
+/// Under writers, a chain's batches shrink to what can commit, and grow back once they can. A batch
+/// larger than the floor that writers committed over publishes nothing, and the next one is half
+/// its size, down to the floor, which always commits; each batch that commits takes one halving
+/// back. Batches grow as the build reads, and it ends `Ready`, as a one-pass build of the final
+/// data.
+#[test]
+fn a_chains_batches_shrink_under_writers_and_grow_back() {
+    /// The turns a writer commits during, between the batch's read and its publish.
+    const WRITTEN_OVER: [usize; 3] = [5, 6, 7];
+    let values: Vec<i64> = (0..300).collect();
+    let (mvcc, label, attr, ids) = mvcc_building(&values);
+    let host = TestHost::new(mvcc);
+    let sizing = Sizing {
+        floor: 2,
+        cap: 1_000,
+        catch_up_max: 1,
+    };
+    let turns: Arc<parking_lot::Mutex<Vec<(usize, Turn)>>> = Arc::default();
+    let indexer = {
+        let (host, turns, attr, ids) = (
+            Arc::clone(&host),
+            Arc::clone(&turns),
+            attr.clone(),
+            ids.clone(),
+        );
+        Indexer::new(Box::new(move |reach, id, run, shift| {
+            let n = turns.lock().len();
+            let read = host.mvcc.read().borrow().index_build_read(id).unwrap_or(0);
+            if WRITTEN_OVER.contains(&n) {
+                let (attr, written) = (attr.clone(), [ids[n], ids[n + 100]]);
+                host.before_publish(move |mvcc| {
+                    commit_write(mvcc, |g| {
+                        for id in written {
+                            set_attr(g, id, &attr, Value::Int(-1));
+                        }
+                    });
+                });
+            }
+            let turn = run_turn(reach, id, run, sizing, shift);
+            turns.lock().push((sizing.batch(read, shift), turn));
+            turn
+        }))
+    };
+    indexer.start(1);
+    indexer.enqueue(
+        Arc::new(HostRef(Arc::downgrade(&host))),
+        IndexId::Column(EntityType::Node, (label.clone(), attr.clone())),
+    );
+    wait_until("the build to end", || {
+        cursor(&host.mvcc.read().borrow(), EntityType::Node, &label, &attr).is_none()
+    });
+    indexer.stop_within(Duration::from_secs(10));
+
+    let more = Turn::Committed { more: true };
+    assert_eq!(
+        *turns.lock(),
+        [
+            (2, more),
+            (2, more),
+            (4, more),
+            (8, more),
+            (16, more),
+            (32, Turn::TooLarge),
+            (16, Turn::TooLarge),
+            (8, Turn::TooLarge),
+            (4, more),
+            (9, more),
+            (22, more),
+            (67, more),
+            (134, more),
+            (268, Turn::Committed { more: false }),
+        ],
+        "doubling as the build reads, halving under writers down to what commits, and back"
+    );
+    let published = host.mvcc.read();
+    let g = published.borrow();
+    assert_eq!(
+        contents(&g, EntityType::Node, &label, &attr, &[]),
+        one_pass(&g, EntityType::Node, &label, &attr, &[]),
+    );
+}
+
 /// The builder end to end, as a host drives it. Registering a graph's host starts the build of the
 /// index its published version holds `Building` (a `CREATE INDEX` committed before any host was
 /// registered); a write that leaves it `Building` starts nothing more; a commit that creates
@@ -3465,7 +3687,7 @@ fn a_stop_waits_for_a_turn_still_reading() {
 /// The only test in this crate that uses the builder itself, which is one per process.
 #[test]
 fn the_builder_finishes_what_registering_and_commits_start_under_sustained_writes() {
-    let nodes = online_build::BATCH_ENTITIES * 3 / 2;
+    let nodes = online_build::SIZING.floor * 3 / 2;
     let values: Vec<i64> = (0..nodes as i64).collect();
     let (mvcc, label, v, ids) = mvcc_building(&values);
     let w = Arc::new("w".to_string());

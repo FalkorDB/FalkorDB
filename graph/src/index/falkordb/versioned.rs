@@ -105,6 +105,11 @@ pub(crate) struct IndexEntry<K: VersionedIndex> {
     /// of the published copy means no other batch committed on the index since the batch's
     /// version was made.
     pub(crate) indexer_commits: u64,
+    /// While `Building`: how many entities the build's batches have read ([`IndexerBatch::read`]),
+    /// which sizes the builder's next batch. Only a batch moves it, so it goes where the cursor
+    /// goes: a writer's rebase takes the published copy's, and a batch's catch-up the batch's.
+    /// Entities created or deleted behind the cursor do not change it.
+    pub(crate) read: u64,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
@@ -113,6 +118,15 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
     pub(crate) name: K::Name,
     pub(crate) work: K::Batch,
     pub(crate) next: Option<K::Cursor>,
+    /// How many entities the batch read, counted as its budget. A node batch that stops short of the
+    /// end reads exactly that many ([`VersionedIndex::indexer_read`]); an edge batch also reads the
+    /// rest of the multi-edge pair it stops in, so it can read more. One that reaches the end flips
+    /// the index `Ready`, after which the count is not read.
+    pub(crate) read: u64,
+    /// The most writers' changes the batch's commit catches up on, if it has to: entities
+    /// refreshed or tuples inserted, as [`CatchUp`] chooses. Past it the commit publishes nothing
+    /// ([`Discarded::CatchUpTooLarge`]). `None`: no limit.
+    pub(crate) catch_up_limit: Option<u64>,
 }
 
 /// An indexer batch of any kind, as the indexer's turn keeps it from the version it was applied
@@ -123,6 +137,19 @@ pub struct PreparedBatch(Prepared);
 /// [`PreparedBatch`] by kind.
 enum Prepared {
     Column(IndexerBatch<IndexColumn>),
+}
+
+impl PreparedBatch {
+    /// Have the batch's commit publish nothing rather than catch up on more than `limit` of
+    /// writers' changes under the host's locks ([`IndexerBatch::catch_up_limit`]).
+    pub(crate) fn limit_catch_up(
+        &mut self,
+        limit: u64,
+    ) {
+        match &mut self.0 {
+            Prepared::Column(batch) => batch.catch_up_limit = Some(limit),
+        }
+    }
 }
 
 /// How an indexer batch went in: what its commit published, given what committed since its
@@ -193,6 +220,9 @@ pub enum Discarded {
     /// Another batch committed on the same index since. The builder runs one chain of batches per
     /// index, so this is a bug in that exclusion, for the caller to report.
     AnotherBatch,
+    /// Writers changed more of the index while the batch was read than its commit may catch up
+    /// on ([`PreparedBatch::limit_catch_up`]). The index is unchanged, and still `Building`.
+    CatchUpTooLarge,
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
@@ -318,6 +348,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
             state,
             generation,
             indexer_commits: 0,
+            read: 0,
         }
     }
 
@@ -359,18 +390,20 @@ impl<K: VersionedIndex> IndexEntry<K> {
     }
 
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
-    /// or flip the index `Ready` when it is `None`. `false`, changing nothing, if the index is not
-    /// `Building`.
+    /// or flip the index `Ready` when it is `None`, and count the `read` entities. `false`,
+    /// changing nothing, if the index is not `Building`.
     pub(crate) fn indexer_apply(
         &mut self,
         work: &mut K::Batch,
         next: Option<K::Cursor>,
+        read: u64,
     ) -> bool {
         if !self.is_building() {
             return false;
         }
         self.index.indexer_add(work);
         self.indexer_commits += 1;
+        self.read = self.read.saturating_add(read);
         match (next, &mut self.state) {
             (
                 Some(next),
@@ -426,7 +459,7 @@ impl FalkorDbIndex {
         batch: &mut IndexerBatch<K>,
     ) -> bool {
         K::entry_mut(self, &batch.name)
-            .is_some_and(|entry| entry.indexer_apply(&mut batch.work, batch.next))
+            .is_some_and(|entry| entry.indexer_apply(&mut batch.work, batch.next, batch.read))
     }
 }
 
@@ -450,7 +483,8 @@ impl Graph {
     /// ([`Self::new_build_version`]), fits `published`, the current one:
     /// - its index was dropped or created again since, or another batch committed on it:
     ///   [`IndexerCommit::Discarded`];
-    /// - otherwise, a writer committed: [`IndexerCommit::CatchUp`];
+    /// - otherwise, a writer committed: [`IndexerCommit::CatchUp`], unless the catch-up would do
+    ///   more than the batch's limit ([`Discarded::CatchUpTooLarge`]);
     /// - otherwise, nothing committed since: [`IndexerCommit::Same`];
     /// - otherwise only other indexes' batches did: [`IndexerCommit::Swap`].
     ///
@@ -477,10 +511,16 @@ impl Graph {
                 BuildState::Building { written, .. } => written.since_last_indexer_step.len(),
                 BuildState::Ready => 0,
             });
-            return IndexerCommit::CatchUp(catch_up_by(
-                written,
-                IndexColumn::batch_len(&column.work),
-            ));
+            let batch_len = IndexColumn::batch_len(&column.work);
+            let how = catch_up_by(written, batch_len);
+            let work = match how {
+                CatchUp::Refresh => written,
+                CatchUp::Insert => batch_len as u64,
+            };
+            if column.catch_up_limit.is_some_and(|limit| work > limit) {
+                return IndexerCommit::Discarded(Discarded::CatchUpTooLarge);
+            }
+            return IndexerCommit::CatchUp(how);
         }
         // No writer committed, so only batches can have changed an index since, and none did if
         // none was published.
@@ -570,6 +610,7 @@ impl Graph {
         // The batch's state: its cursor, with nothing written since it.
         merged.state = ours.state.clone();
         merged.indexer_commits = ours.indexer_commits;
+        merged.read = ours.read;
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = merged;
         }
@@ -713,10 +754,31 @@ impl Graph {
         let entry = K::entry(&self.falkordb_index, &name)?;
         let from = entry.cursor()?;
         let (work, next) = entry.index.indexer_read(self, &name, from, budget);
-        let mut batch = IndexerBatch { name, work, next };
+        let mut batch = IndexerBatch {
+            name,
+            work,
+            next,
+            read: budget as u64,
+            catch_up_limit: None,
+        };
         self.falkordb_index
             .apply_indexer_batch(&mut batch)
             .then_some(batch)
+    }
+
+    /// How many entities the batches of index `id` have read in this version
+    /// ([`IndexEntry::read`]), or `None` if it is not `Building`.
+    pub(crate) fn index_build_read(
+        &self,
+        id: &IndexId,
+    ) -> Option<u64> {
+        match id {
+            IndexId::Column(entity, key) => {
+                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
+                    .filter(|entry| entry.is_building())
+                    .map(|entry| entry.read)
+            }
+        }
     }
 
     /// Whether index `id` is `Building` in this version.
