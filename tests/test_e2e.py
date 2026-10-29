@@ -2026,6 +2026,67 @@ def test_optional_match_null_merge():
 
 
 
+def test_merge_named_path_as_last_clause():
+    """`MERGE p=…` is planned as PathBuilder(Merge); as the last clause of a
+    query, a CALL {} body or a FOREACH body the preceding clause must feed the
+    Merge, not become a sibling of it (#2993)."""
+    query("CREATE (:A {v: 1})", write=True)
+
+    res = query("MATCH (a:A) MERGE p=(a)-[:T]->(x:X)", write=True)
+    assert res.nodes_created == 1
+    assert res.relationships_created == 1
+
+    res = query("UNWIND [1, 2] AS i MERGE p=(x:X {v: i})", write=True)
+    assert res.nodes_created == 2
+
+    res = query("MATCH (a:A) CALL { WITH a MERGE p=(a)-[:U]->(:X) }", write=True)
+    assert res.nodes_created == 1
+    assert res.relationships_created == 1
+
+    res = query("FOREACH (i IN [1] | CREATE (y:Y) MERGE p=(y)-[:T]->(:X))", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 1
+
+    # Merging again matches instead of creating.
+    res = query("MATCH (a:A) MERGE p=(a)-[:T]->(x:X)", write=True)
+    assert res.nodes_created == 0
+    assert res.relationships_created == 0
+
+    res = query("MATCH p=(:A)-[:T]->(:X) RETURN length(p)")
+    assert res.result_set == [[1]]
+
+
+def test_create_named_path_as_last_clause():
+    """`CREATE p=…` is planned as PathBuilder(Create) since #2829; as the last
+    clause it must be fed by the clause before it, like MERGE (#3282)."""
+    query("CREATE (:A), (:A)", write=True)
+
+    res = query("MATCH (a:A) CREATE p=(a)-[:R]->(:B)", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("UNWIND [1, 2] AS x CREATE p=(:N {x: x})", write=True)
+    assert res.nodes_created == 2
+    assert res.properties_set == 2
+
+    res = query(
+        "MATCH (a:A) CALL { WITH a CREATE p=(a)-[:S]->(:B) } RETURN count(*)",
+        write=True,
+    )
+    assert res.result_set == [[2]]
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("MATCH (a:A) FOREACH (i IN [1] | CREATE p=(a)-[:T]->(:B))", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 2
+
+    res = query("MATCH (:A)-[r]->(:B) RETURN type(r), count(*) ORDER BY type(r)")
+    assert res.result_set == [["R", 2], ["S", 2], ["T", 2]]
+    res = query("MATCH (n:N) RETURN n.x ORDER BY n.x")
+    assert res.result_set == [[1], [2]]
+
+
 def test_self_loop_hop_after_other_hops_keeps_them():
     """A fixed-length self-loop whose node is reached only through a later
     (var-length) hop must not drop the hops planned before it (#2999)."""
