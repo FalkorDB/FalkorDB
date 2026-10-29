@@ -1857,6 +1857,46 @@ class test_udf_javascript():
                                          rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
         self.env.assertEqual(res, [[True, True]])
 
+    def test_qualified_name_collisions(self):
+        """
+        As in C, two libraries may not claim the same qualified name (compared
+        ignoring case), and calls are case-sensitive.
+        """
+
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 1; });")
+        self.db.udf_load("a", "falkor.register('b.c', function() { return 1; });")
+
+        # `coll.f` collides with `Coll.f`
+        try:
+            self.db.udf_load("coll", "falkor.register('f', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("'coll.f' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[1]])
+
+        # library `a.b` registering `c` collides with `a`'s `b.c`
+        try:
+            self.db.udf_load("a.b", "falkor.register('c', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("function 'a.b.c' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN a.b.c()").result_set, [[1]])
+
+        # replacing a library with its own names is fine
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 3; });", replace=True)
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[3]])
+
+        # function names are case-sensitive
+        self.db.udf_load("cased", """falkor.register('f', function() { return 1; });
+                                     falkor.register('F', function() { return 2; });""")
+        res = self.graph.query("RETURN cased.f(), cased.F()").result_set
+        self.env.assertEqual(res, [[1, 2]])
+        try:
+            self.graph.query("RETURN CASED.f()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Unknown function", str(e))
+
     def test_deeply_nested_result_is_an_error(self):
         """
         A UDF result nested past the conversion's depth limit is a query
