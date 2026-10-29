@@ -126,7 +126,7 @@ build. Use it wherever the claim can be checked mechanically:
 
 | Check | Holds when |
 |---|---|
-| `{ check = "absent", paths = [...] }` | none of the paths exists |
+| `{ check = "absent", paths = [...] }` | nothing can be opened at any of the paths (a dangling symlink counts as absent) |
 | `{ check = "contains", path = "...", text = "..." }` | the file exists and contains the text: a setting the claim relies on, say |
 | `{ check = "lacks", path = "...", text = "..." }` | the file exists and does not contain the text |
 | `{ check = "no-import", symbols = [...] }` | no ELF file in the image has an undefined dynamic reference to any of the symbols. Calls inside one library (inside glibc, say) are invisible to it. `except = [paths]` leaves out files the claim accounts for, such as the `openssl` tool that gen-certs.sh runs. |

@@ -489,7 +489,12 @@ class Analysis:
                     else:
                         todo.append(interp)
                 continue
-            deps = [self.fs.canonical(e.interp)] if e.interp else []
+            deps = []
+            if e.interp:
+                interp = self.fs.canonical(e.interp)
+                if interp is None:
+                    missing.append(f"{real} needs interpreter {e.interp}")
+                deps.append(interp)
             for name in e.needed:
                 lib = self.find_library(name, posixpath.dirname(real), e)
                 if lib is None:
@@ -730,6 +735,9 @@ def cmd_check(args):
 def evaluate(ev, fs, an, runtime, pkg_files, versions, imports_index):
     check = ev["check"]
     if check == "absent":
+        # Absent means nothing can be opened at the path, so a dangling symlink
+        # counts as absent. owned() asks a different question, whether a package
+        # ships the file, and so treats every symlink as not file content.
         present = [p for p in ev["paths"] if fs.resolve(p) is not None]
         return f"present: {present}" if present else None
     if check in ("contains", "lacks"):
