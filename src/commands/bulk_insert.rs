@@ -889,7 +889,7 @@ pub fn graph_bulk_insert(
         return match result {
             Ok(()) => {
                 ctx.replicate_verbatim();
-                let reply = format!("{node_count} nodes created, {edge_count} relations created");
+                let reply = format!("{node_count} nodes created, {edge_count} edges created");
                 Ok(RedisValue::SimpleString(reply))
             }
             Err(e) => {
@@ -1051,8 +1051,7 @@ pub fn graph_bulk_insert(
             };
             match result {
                 Ok(()) => {
-                    let reply =
-                        format!("{node_count} nodes created, {edge_count} relations created");
+                    let reply = format!("{node_count} nodes created, {edge_count} edges created");
                     let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
                     raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
                 }

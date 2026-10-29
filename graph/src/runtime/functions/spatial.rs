@@ -32,36 +32,51 @@ use crate::runtime::{
 };
 use std::sync::Arc;
 
-/// Slot order: [latitude, longitude]
-const POINT_SLOTS: &[&str] = &["latitude", "longitude"];
+/// Build a point from the `latitude` / `longitude` entries of its map, with
+/// C's checks and messages: exactly two keys, both present, both numeric, both
+/// in range. `None` is a key the map lacks; `Some(Null)` is one set to `null`.
+fn point_from_map_entries(
+    key_count: usize,
+    latitude: Option<&Value>,
+    longitude: Option<&Value>,
+) -> Result<Value, String> {
+    if key_count != 2 {
+        return Err(String::from(
+            "A point map should have 2 elements, latitude and longitude",
+        ));
+    }
+    let latitude = latitude.ok_or("Did not find 'latitude' value in point map")?;
+    let longitude = longitude.ok_or("Did not find 'longitude' value in point map")?;
+    let (Some(latitude), Some(longitude)) = (numeric(latitude), numeric(longitude)) else {
+        return Err(String::from(
+            "'latitude' and 'longitude' values in point map were not both valid numerics",
+        ));
+    };
+    // C lets a NaN through (it fails neither side of the range test); a point is
+    // kept a real coordinate here. An infinity fails the range test, as in C.
+    // Ranges are checked before narrowing to `f32`, as C does, so a value just
+    // past a bound is not rounded onto it.
+    match (latitude, longitude) {
+        (lat, _) if lat.is_nan() => Err(String::from("latitude must be a finite number, got NaN")),
+        (_, lon) if lon.is_nan() => Err(String::from("longitude must be a finite number, got NaN")),
+        (-90.0..=90.0, -180.0..=180.0) => {
+            Ok(Value::Point(Point::new(latitude as f32, longitude as f32)))
+        }
+        (-90.0..=90.0, _) => Err(String::from(
+            "longitude should be within the -180 to 180 range",
+        )),
+        _ => Err(String::from(
+            "latitude should be within the -90 to 90 range",
+        )),
+    }
+}
 
-pub fn point_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 2);
-    let latitude = match &args[0] {
-        Value::Float(f) => *f as f32,
-        Value::Int(i) => *i as f32,
-        Value::Null => return Err(String::from("point() requires 'latitude' field")),
-        other => {
-            return Err(format!(
-                "Type mismatch: 'latitude' must be a number, got {}",
-                other.name()
-            ));
-        }
-    };
-    let longitude = match &args[1] {
-        Value::Float(f) => *f as f32,
-        Value::Int(i) => *i as f32,
-        Value::Null => return Err(String::from("point() requires 'longitude' field")),
-        other => {
-            return Err(format!(
-                "Type mismatch: 'longitude' must be a number, got {}",
-                other.name()
-            ));
-        }
-    };
-    let point = Point::new(latitude, longitude);
-    point.validate()?;
-    Ok(Value::Point(point))
+const fn numeric(value: &Value) -> Option<f64> {
+    match value {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f64),
+        _ => None,
+    }
 }
 
 pub fn register(funcs: &mut Functions) {
@@ -95,37 +110,11 @@ pub fn register(funcs: &mut Functions) {
         fn point(_, args) {
             let mut iter = args.iter();
             match iter.next() {
-                Some(Value::Map(map)) => {
-                    let latitude = map
-                        .get_str("latitude")
-                        .ok_or_else(|| String::from("point() requires 'latitude' field"))?;
-                    let latitude = match latitude {
-                        Value::Float(f) => *f as f32,
-                        Value::Int(i) => *i as f32,
-                        _ => {
-                            return Err(format!(
-                                "Type mismatch: 'latitude' must be a number, got {}",
-                                latitude.name()
-                            ));
-                        }
-                    };
-                    let longitude = map
-                        .get_str("longitude")
-                        .ok_or_else(|| String::from("point() requires 'longitude' field"))?;
-                    let longitude = match longitude {
-                        Value::Float(f) => *f as f32,
-                        Value::Int(i) => *i as f32,
-                        _ => {
-                            return Err(format!(
-                                "Type mismatch: 'longitude' must be a number, got {}",
-                                longitude.name()
-                            ));
-                        }
-                    };
-                    let point = Point::new(latitude, longitude);
-                    point.validate()?;
-                    Ok(Value::Point(point))
-                }
+                Some(Value::Map(map)) => point_from_map_entries(
+                    map.len(),
+                    map.get_str("latitude"),
+                    map.get_str("longitude"),
+                ),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }
@@ -201,6 +190,4 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
-
-    funcs.set_struct_fn("point", point_struct_pure, POINT_SLOTS);
 }
