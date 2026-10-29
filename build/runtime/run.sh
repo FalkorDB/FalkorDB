@@ -44,13 +44,31 @@ fix_data_dir_perms() {
 # The files gen-certs.sh generates in the TLS directory.
 TLS_FILES="ca.key ca.crt ca.txt openssl.cnf server.key server.crt
            client.key client.crt redis.key redis.crt redis.dh"
+# A CA supplied to sign with: gen-certs.sh only reads these when they exist.
+TLS_CA_FILES="ca.key ca.crt"
+
+is_tls_ca_file() {
+    case " $TLS_CA_FILES " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
 
 # Before root chowns those files, or generates them where falkordb cannot
 # write, each name must be absent or a regular file with a single link: a
-# symlink or hard link would make root chown, or write, a file elsewhere.
+# symlink or hard link would make root chown, or write, a file elsewhere. An
+# existing CA is only read, so it may be a link to one (a Kubernetes secret
+# projects its files as links); fix_tls_perms never chowns a linked one.
 check_tls_files() {
     for f in $TLS_FILES; do
         p="${FALKORDB_TLS_PATH}/$f"
+        if is_tls_ca_file "$f" && [ -e "$p" ]; then
+            if [ ! -f "$p" ]; then
+                echo "Error: $p is not a regular file."
+                return 1
+            fi
+            continue
+        fi
         if [ -L "$p" ] || { [ -e "$p" ] && [ -z "$(find "$p" -maxdepth 0 -type f -links 1)" ]; }; then
             echo "Error: $p is a link or not a regular file. Remove it to have it generated again."
             return 1
@@ -60,14 +78,28 @@ check_tls_files() {
 
 # gen-certs.sh writes its keys 0600. Hand falkordb the files it generates, and
 # only those, so a certificate mounted alongside is left alone: the ones an
-# older image generated as root, or the ones root generated just now.
+# older image generated as root, or the ones root generated just now. A CA
+# falkordb can already read stays as it is, since it is only read; one it
+# cannot read is handed over only if it is a regular file with a single link.
 # Returns non-zero when any of them was not handed over.
 fix_tls_perms() {
     rc=0
     for f in $TLS_FILES; do
-        if [ -e "${FALKORDB_TLS_PATH}/$f" ] &&
-            ! chown -h "$FALKORDB_USER:$FALKORDB_USER" "${FALKORDB_TLS_PATH}/$f"; then
-            echo "Warning: could not hand ${FALKORDB_TLS_PATH}/$f to $FALKORDB_USER."
+        p="${FALKORDB_TLS_PATH}/$f"
+        [ -e "$p" ] || continue
+        if is_tls_ca_file "$f"; then
+            # shellcheck disable=SC2016 # $1 is the inner shell's
+            if gosu "$FALKORDB_USER" sh -c '[ -r "$1" ]' sh "$p"; then
+                continue
+            fi
+            if [ -L "$p" ] || [ -z "$(find "$p" -maxdepth 0 -type f -links 1)" ]; then
+                echo "Warning: $FALKORDB_USER cannot read $p, and a link is not handed over."
+                rc=1
+                continue
+            fi
+        fi
+        if ! chown -h "$FALKORDB_USER:$FALKORDB_USER" "$p"; then
+            echo "Warning: could not hand $p to $FALKORDB_USER."
             rc=1
         fi
     done
@@ -106,22 +138,23 @@ if [ "${TLS:-0}" -eq "1" ]; then
     if [ "$(id -u)" = "0" ] && ! check_tls_files; then
         exit 1
     fi
-    # Where falkordb can write the TLS directory, root never writes in it:
-    # anything that can write there could swap a file for a link after the
-    # check above. falkordb is handed what is already there and generates the
-    # rest; when a file cannot be handed over, the container stops rather than
-    # have root write there. Elsewhere, falkordb cannot plant a link, so root
-    # generates the files and then hands them over, as before. SKIP_FIX_PERMS
-    # skips only the handing over.
+    # Where falkordb can write the TLS directory, falkordb generates the files,
+    # not root: anything that can write there could swap a file for a link
+    # after the check above. falkordb is first handed what is already there.
+    # When that fails (a read-only mount, or a CA falkordb cannot read),
+    # redis-server stays root and root generates the files, as before this
+    # image dropped privileges. Elsewhere, falkordb cannot plant a link, so
+    # root generates the files and then hands them over. SKIP_FIX_PERMS skips
+    # only the handing over.
     # shellcheck disable=SC2016 # $1 is the inner shell's
     if [ -n "$drop_privs" ] &&
         gosu "$FALKORDB_USER" sh -c '[ -w "$1" ]' sh "${FALKORDB_TLS_PATH}"; then
         if [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
-            echo "Error: $FALKORDB_USER can write ${FALKORDB_TLS_PATH}, so root does not generate files there." \
-                "Make the files above writable, or set SKIP_DROP_PRIVS=1 to run as root."
-            exit 1
+            keep_root
+            "${FALKORDB_BIN_PATH}/gen-certs.sh"
+        else
+            gosu "$FALKORDB_USER" "${FALKORDB_BIN_PATH}/gen-certs.sh"
         fi
-        gosu "$FALKORDB_USER" "${FALKORDB_BIN_PATH}/gen-certs.sh"
     else
         "${FALKORDB_BIN_PATH}/gen-certs.sh"
         if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
