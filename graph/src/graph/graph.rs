@@ -4507,14 +4507,15 @@ impl Graph {
 
     /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
     /// attributes' native columns is `Building` in this version: each such column counts as
-    /// pending, and the progress shown is theirs, in entities indexed out of the label's.
+    /// pending. The progress shown is the label's build as a whole, out of the label's or type's
+    /// entities, as C shows it: the least any of those columns has read.
     #[cfg(feature = "index-falkordb")]
     fn add_native_build(
         &self,
         entity: EntityType,
         info: &mut IndexInfo,
     ) {
-        let mut building = (0, 0, 0);
+        let mut building: Option<(i32, u64, u64)> = None;
         for attr in &info.field_order {
             let range = info
                 .fields
@@ -4523,11 +4524,12 @@ impl Graph {
             if range
                 && let Some((done, total)) = self.native_build_progress(entity, &info.label, attr)
             {
-                building = (building.0 + 1, building.1 + done, building.2 + total);
+                building = Some(building.map_or((1, done, total), |(columns, least, _)| {
+                    (columns + 1, least.min(done), total)
+                }));
             }
         }
-        let (columns, done, total) = building;
-        if columns > 0 {
+        if let Some((columns, done, total)) = building {
             info.pending += columns;
             info.progress = done;
             info.total = total;
