@@ -151,6 +151,13 @@ impl<'a> ExpandIntoOp<'a> {
                 ));
             }
         };
+        // A node deleted earlier in this commit segment matches nothing: its
+        // edges are only dropped at commit (`DETACH DELETE` defers them), so
+        // without this check e.g. `DETACH DELETE a MERGE (a)-[:R]->(b)` would
+        // match an edge that is about to disappear.
+        if pending.is_node_deleted(src) || pending.is_node_deleted(dst) {
+            return Ok(None);
+        }
 
         if synthetic_label {
             let has_all_labels = rp

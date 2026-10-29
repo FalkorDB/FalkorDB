@@ -88,6 +88,45 @@ impl Iterator for UnionIter {
     }
 }
 
+/// Encoded `(key, doc)` tuples for one column: what everything that moves a column's tuples in
+/// encoded form carries (a unit of work's collapsed adds and removes, an indexer batch).
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct EncodedTuples {
+    pub scalar: Vec<(u64, u64)>,
+}
+
+impl EncodedTuples {
+    /// Tuples of scalar values.
+    #[must_use]
+    pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
+        Self { scalar }
+    }
+
+    /// Whether there are no tuples.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scalar.is_empty()
+    }
+
+    /// How many tuples there are.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.scalar.len()
+    }
+
+    /// Empty the tuples, keeping their capacity for reuse.
+    pub fn clear(&mut self) {
+        self.scalar.clear();
+    }
+
+    /// Sort the tuples ascending and drop duplicates: the **sorted and unique** shape a tree's
+    /// bulk build requires.
+    pub fn sort_dedup(&mut self) {
+        self.scalar.sort_unstable();
+        self.scalar.dedup();
+    }
+}
+
 /// A numeric property index over one `(label, attribute)`: entity ids keyed by
 /// the order-preserving encoding of their value, so `n.x <predicate> v` is a
 /// tree range scan. Non-numeric and `NaN` values are not indexed (parity with
@@ -106,23 +145,6 @@ impl NumericIndex {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
-    /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
-    /// initial population — one sort + bottom-up page build, no per-item
-    /// traversal.
-    #[must_use]
-    pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
-        let mut pairs: Vec<(u64, u64)> = entries
-            .into_iter()
-            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        Self {
-            tree: Tree::from_sorted(&pairs),
-        }
     }
 
     /// Index `id` under `value`. A no-op for non-numeric / `NaN` values and
@@ -197,24 +219,29 @@ impl NumericIndex {
         out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
     }
 
-    /// Add already-encoded tuples — the adds a unit of work's staged writes collapsed to. Tuples
-    /// are never re-encoded: re-encoding a decoded key would be a second trip through a
-    /// many-to-one map.
+    /// Add already-encoded tuples: the adds a unit of work's staged writes collapsed to, or an
+    /// indexer batch. Tuples are never re-encoded: re-encoding a decoded key would be a second trip
+    /// through a many-to-one map. Into an empty index the tuples are bulk-built, bottom-up from
+    /// the sorted tuples, rather than merged in.
     pub fn add_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.insert_batch(pairs);
+        tuples.sort_dedup();
+        if self.tree.is_empty() {
+            self.tree = Tree::from_sorted(&tuples.scalar);
+        } else {
+            self.tree.insert_batch(&tuples.scalar);
+        }
     }
 
-    /// Remove already-encoded tuples — the removes a unit of work's staged writes collapsed to.
+    /// Remove already-encoded tuples: the removes a unit of work's staged writes collapsed to.
     pub fn remove_encoded(
         &mut self,
-        pairs: &mut [(u64, u64)],
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.remove_batch(pairs);
+        tuples.sort_dedup();
+        self.tree.remove_batch(&tuples.scalar);
     }
 
     /// Whether the index holds no tuples.
@@ -396,6 +423,24 @@ impl NumericIndex {
     /// An iterator over no entries (`lo > hi` yields nothing).
     fn empty(&self) -> DocIter {
         DocIter::One(self.tree.range(1, 0))
+    }
+
+    /// Bulk-build from `(value, id)` pairs in any order. Non-numeric / `NaN`
+    /// values are dropped. Far cheaper than repeated [`add`](Self::add) for
+    /// initial population — one sort + bottom-up page build, no per-item
+    /// traversal. The tree's tests compare it with incremental adds.
+    #[cfg(test)]
+    #[must_use]
+    pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
+        let mut pairs: Vec<(u64, u64)> = entries
+            .into_iter()
+            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        Self {
+            tree: Tree::from_sorted(&pairs),
+        }
     }
 }
 

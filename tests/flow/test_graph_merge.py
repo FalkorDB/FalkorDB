@@ -863,6 +863,57 @@ class testGraphMergeFlow():
         self.env.assertEqual(res.nodes_created, 2)
         g.delete()
 
+    def test41_merge_result_does_not_depend_on_batch_boundaries(self):
+        # MERGE matched batch by batch and created in between, so a row in a
+        # later batch saw an earlier batch's creation (after ON CREATE SET)
+        # while a row of the same batch did not (#3039). Like C, every row is
+        # now matched before anything is created.
+        g = self.db.select_graph("merge_batch_boundaries")
+        for last in [2, 1025, 3000]:
+            res = g.query(f"""UNWIND range(1, {last}) AS x WITH x WHERE x = 1 OR x = {last}
+                              MERGE (n:L {{v: CASE x WHEN 1 THEN 1 ELSE 2 END}})
+                              ON CREATE SET n.v = 2""")
+            self.env.assertEqual(res.nodes_created, 2)
+            g.delete()
+
+        # duplicates across batches still resolve to one node per pattern
+        res = g.query("""UNWIND range(1, 3000) AS x
+                         MERGE (n:Q {v: x % 7}) ON CREATE SET n.c = x
+                         RETURN count(*), count(DISTINCT n)""")
+        self.env.assertEqual(res.result_set, [[3000, 7]])
+        self.env.assertEqual(res.nodes_created, 7)
+        g.delete()
+
+    def test42_merge_edge_of_detach_deleted_node(self):
+        """
+        DETACH DELETE defers a node's edges to commit, but a MERGE later in
+        the same query must not match one of them: the endpoint is gone, so
+        the MERGE has to create, and creating on a deleted node is an error
+        https://github.com/FalkorDB/FalkorDB/issues/3452
+        """
+
+        queries = ["""MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE b
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]-(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[:R]->(b)"""]
+
+        con = self.env.getConnection()
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+            msg = assert_error_reply(self.env, con, "GRAPH.QUERY", GRAPH_ID, q)
+            self.env.assertContains("endpoint was not found", msg or "")
+
+            # the failed query left the graph as it was
+            actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
+                                         RETURN count(r)""")
+            self.env.assertEqual(actual.result_set, [[1]])
+
     def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
         # With every node bound and no named relationship, MERGE kept only the
         # first match. A path variable still tells parallel edges apart (#3040).

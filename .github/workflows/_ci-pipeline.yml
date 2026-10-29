@@ -82,6 +82,8 @@ jobs:
           # LTO is off for the test build: the embedded C/Rust archives carry no
           # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
           CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Upload release binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -358,6 +360,8 @@ jobs:
           # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
           # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
           CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Run pytest tests against the RC image
         run: |
           . /data/venv/bin/activate
