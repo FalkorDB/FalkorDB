@@ -1061,6 +1061,27 @@ class testUDF():
         self.env.assertEqual(res["attributes"]["id"], "edge_custom_id")
         self.env.assertEqual(res["attributes"]["role"], "dev")
 
+    def test_deleted_entities_seen_as_runtime_sees_them(self):
+        # Regression for #3454: a node deleted earlier in the same query must
+        # look the same to a UDF as it does to labels(n) / n.name, both when
+        # passed directly and as an edge endpoint (e.source).
+        script = """
+        function inspect_node(n) { return [n.labels, n.attributes.name]; }
+        function inspect_src(e) { return [e.source.labels, e.source.attributes.name]; }
+        falkor.register('inspect_node', inspect_node);
+        falkor.register('inspect_src', inspect_src);
+        """
+        self.db.udf_load("deleted", script, True)
+
+        self.graph.query("CREATE (:P {name: 'A'})-[:R]->(:Q {name: 'B'})")
+
+        q = """MATCH (n:P)-[r:R]->()
+               DETACH DELETE n
+               RETURN labels(n), n.name, deleted.inspect_node(n), deleted.inspect_src(r)"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.result_set, [[['P'], 'A', [['P'], 'A'], [['P'], 'A']]])
+
     def test_load_invalid_invocations(self):
         """
         Test invalid invocations of GRAPH.UDF LOAD:
