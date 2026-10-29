@@ -145,6 +145,18 @@ GrB_Info Delta_Matrix_synchronize
 ) {
 	ASSERT (C != NULL) ;
 
+	// Defensive: ASSERT() compiles to no-op in release. A NULL C here
+	// means the caller (e.g. Graph_GetRelationMatrix invoked during v18
+	// RDB-load of a graph snapshot with an unallocated relation matrix
+	// slot) handed us nothing. Returning GrB_NULL_POINTER lets the
+	// caller treat this as a recoverable error instead of crashing
+	// Redis in pthread_mutex_lock.
+	if (C == NULL) {
+		RedisModule_Log(NULL, "warning",
+			"Delta_Matrix_synchronize: NULL matrix — returning GrB_NULL_POINTER");
+		return GrB_NULL_POINTER ;
+	}
+
 	GrB_Info info = GrB_SUCCESS ;
 	uint64_t C_nrows = 0 ;
 	uint64_t C_ncols = 0 ;
