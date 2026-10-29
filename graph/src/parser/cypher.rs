@@ -3579,13 +3579,22 @@ mod tests {
         // Warm the allocator so the first parse is not charged for it.
         assert_eq!(parse(&small).unwrap(), 1);
 
-        let t = std::time::Instant::now();
-        parse(&small).unwrap();
-        let small_elapsed = t.elapsed();
-
-        let t = std::time::Instant::now();
-        parse(&large).unwrap();
-        let large_elapsed = t.elapsed();
+        // A single sample is at the mercy of a loaded CI runner (one run saw
+        // 6.5ms vs 183ms: a 28x ratio from a stall, not from the parser).
+        // Preemption only ever adds time, so the fastest of several runs is
+        // the best estimate of the real cost.
+        let fastest = |q: &str| {
+            (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    parse(q).unwrap();
+                    t.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let small_elapsed = fastest(&small);
+        let large_elapsed = fastest(&large);
 
         // 8x the input. Linear lands near 8x, the quadratic bug near 64x; the
         // bound sits between the two with room for a noisy CI machine.
