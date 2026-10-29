@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-29): proofs cite `origin/main` @ 1c0e6c8de.
+Current state (2026-10-29): proofs cite `origin/main` @ ee21013d6.
 There is one Lake project per area under `proofs/<area>/` (38 projects, including
 `native_index` and `core` — the shared `FalkorCore` library (pilot: Value `V F`, float model
 `F`, i64, orderings), imported by value_order, value_math, expr_semantics,
@@ -16,7 +16,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files: of
-2684 non-FFI, non-test functions, 2667 are PROVEN and 17 CONDITIONAL (proven only
+2685 non-FFI, non-test functions, 2668 are PROVEN and 17 CONDITIONAL (proven only
 under an undischarged hypothesis about other Rust code, named in the row);
 1288 FFI functions are AXIOMATISED; 0 unlisted, 0 unmatched.
 See `.claude/skills/proofs/SKILL.md` for how to work with them.
@@ -141,8 +141,8 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W2-apply-5** (low): batched Optional moves the NULL rows after the matched rows, which `collect()` exposes.
 - **W2-traverse-2**: the bidirectional dedup (`cond_traverse.rs:273-299`, `947-968`, `1267`) ignores other columns, keys on an intermediate node at 3 or more hops, and resets per batch.
 - **W2-traverse-3**: an undirected anonymous collapse gives one row per direction (`cond_traverse.rs:876-942`, `expand_into.rs:182-221`): 4 rows where C gives 2.
-- **W2-traverse-4**: allShortestPaths on a directed cycle returns the path reversed (`all_shortest_paths.rs:284-288`). C is also wrong.
-- **W2-traverse-5**: algo.SPpaths/SSpaths charge cost 0 per relationship without a `costProp` (`algo_procedures.rs:2308`, `2397`, `2518`). C charges 1.
+- **W2-traverse-4**: allShortestPaths on a directed cycle returns the path reversed (`all_shortest_paths.rs:284-288`). C is also wrong. *Fixed by #3112 (99013f34b; closes #3108), see Merged 2026-10-29.*
+- **W2-traverse-5**: algo.SPpaths/SSpaths charge cost 0 per relationship without a `costProp` (`algo_procedures.rs:2308`, `2397`, `2518`). C charges 1. *Fixed by #3580 (e8ad0d334; closes #3121), see Merged 2026-10-29; one new difference, below.*
 - **W2-agg-1**: clearing the global dedupers after each CALL{} (`apply.rs:283`) makes an outer `count(DISTINCT)` over-count: 6 where C gives 2.
 - **W2-agg-2**: per-group DISTINCT state is keyed by the FxHash of the group key (`aggregate.rs:715`, `:959`), so colliding groups share one seen-set. *Fixed by #2977 (c652e505e), see Merged 2026-10-29.*
 - **W2-agg-4** (low): a per-row percentile argument is overwritten, so the last one wins (`aggregation.rs:539`, `:253`). **Fixed by #3007 (1d3b029e1; closes #2980)**: main keeps the first non-null row's percentile, as C does; `pct_first_wins`, `pct_stable`, `percentile_first_row` (counterexample removed; in 17ccc5412).
@@ -244,8 +244,8 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
   - trailing commas are accepted in calls;
   - `MATCH MATCH` is accepted.
 - **Algo / UDF**:
-  - WCC and CDLP with nodeLabels return a compact index instead of a node id;
-  - HarmonicCentrality sizes by node count instead of the id bound;
+  - WCC and CDLP with nodeLabels return a compact index instead of a node id (*fixed by #3032, ee21013d6; closes #3029*);
+  - HarmonicCentrality sizes by node count instead of the id bound (*fixed by #3045, 5497f6fc0; closes #3044*);
   - library-name collisions and case folding (*fixed by #3066, 017da3f02; closes #3065*);
   - the validation context has no `graph` global;
   - -0.0 comes back as Int 0;
@@ -382,10 +382,12 @@ Confirmed bug found by these reviews (pre-existing on main, not caused by any of
 - **#3439 (srv, crash)**: a queued write calls `release_locks()` (`graph_core.rs:858`) and then serializes its reply with per-access borrows of its now-published version (`reply.rs:428-470`). An inline write inside `MULTI` that fails after a Commit runs `resync_published_indexes` (`pending.rs:1684`), whose `borrow_mut` on that version panics on the main thread ("already immutably borrowed"), killing the server. Repro `proofs/runtime_core/repro_3439.py P 20 2 1 0` after `CREATE INDEX FOR (n:L) ON (n.v)`: Rust main 9212add39 and b6567cb97 die within ~1 s; C survives (494 failed writes in 20 s, `:L` count 0). Lean `Protocol.writer_reply_race`, `writer_reply_race_rev`. Suggested fix: serialize the reply before `release_locks`, or have resync update the index without `borrow_mut` on the published cell.
 
 ### Merged
+- 2026-10-29 (evening) on main (now ee21013d6): #3045 (closes #3044), #3032 (closes #3029), #3580 (closes #3121), #3112 (closes #3108). Proofs re-targeted: 38 projects green; 2668 PROVEN + 17 CONDITIONAL of 2685 non-FFI, non-test fns; 0 unlisted, 0 unmatched. Old counterexamples replaced by proofs of the fix (no history kept).
+  - Fixed: #3044 (`algo_udf` `Compact.harmonic_complete`, `unfiltered_keeps_high_ids`); #3029 (`Compact.wcc_rows_eq_spec`, `wcc_rows_component_is_member`); W2-traverse-5 / #3121 (`CostProp.fastpath_missing_cost_one`, `fast_eq_enum`, `Paths.dijkstra_cost_configured`); W2-traverse-4 / #3108 (`ops_traverse` `directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order`; `parser_grammar` `C.Pattern.aspRel_same_alias` for `(a)<-[*]-(a)`).
+  - New difference from C, confirmed live (Rust ee21013d6 vs C edge-c): a `costProp` that names an attribute no edge has charges 1 per edge on Rust and 0 on C. On `(1)-[:R {w:5}]->(2)-[:R]->(3)`, `algo.SPpaths({..., costProp:'nosuch'})` pathCost is Rust 2, C 0; `costProp:'w'` gives 6 on both, and no `costProp` gives 0 on both. Not filed yet.
 - 2026-10-29 (later) on main (now 1c0e6c8de): #3058 (closes #3056), #3586 (closes #3444), #3066 (closes #3065), #3464 (closes #3454), #3280 (dbms.functions union spelling, fulltext.drop message). Proofs re-targeted: 38 projects green; 2667 PROVEN + 17 CONDITIONAL of 2684 non-FFI, non-test fns (99.4% proven, all covered); 0 unlisted, 0 unmatched. No new bug or C divergence found.
   - Fixed (pre-fix counterexamples removed; in 17ccc5412): #3056 (`algo_udf` `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `pagerank_unknown_label_empty`, `pagerank_compact_nonempty`); #3444 (`MsfFlow.compactOf_eq`, `denseTable_len`, `sparse_builds_no_table`); #3065 (`Repo.collision_rejected`, `dotted_collision_rejected`, `case_sensitive`, `load_preserves_crossFold`; `value_math` `Registry.udf_case_sensitive`, `regGet_udf_case_sensitive`); #3454 (`UdfNodeView.rs_runtime_first`, `fixed3454_deleted_node`, `fixed3454_edge_source`); dbms.functions unions (`value_math` `union_order_is_c`, `union_perm_invariant`); fulltext.drop `:L` message (`graph_queries` `dropIndex_none_noattr`).
   - New fast path from #3464, `Runtime::node_differs_from_committed` / `Pending::node_has_changes`, proven sufficient (guard false ⇒ runtime reads equal the committed graph: `runtime_core` `Accessors.not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs`; `pending_commit` `PC.nodeHasChanges_spec`). It over-approximates (`differs_overapprox`), which costs speed only.
-  - Still open: HarmonicCentrality sizes by node count (#3044, `unfiltered_drops_high_ids`); fix in #3045.
 - 2026-10-29 on main (now e860645bb): #3524 (closes #2776), #3067 (closes #3039), #2977 (closes #2969), #3263 (GRAPH.UDF LOAD rejects an empty name or script), #3492 (multi-type traversals stream per-type iterators; fixes `delta_lmxm`), #2351 / #3538 / #3550 (native index: a column's build state, indexer batches, managed index generic over its kind, fair lock handover), #3515 (emitter debug_assert dropped). Proofs re-targeted: 38 projects green; 2660 PROVEN + 17 CONDITIONAL of 2677 non-FFI, non-test fns (99.4% proven, all covered); 0 unlisted, 0 unmatched.
   - Fixed (pre-fix counterexamples removed; in 17ccc5412): #2776 wider, all six `SET x = …` shapes (Node/Rel ← Map/Node/Rel) now clear pending attributes (`ops_apply` `setAttrItem_replace_shapes`, `fixed3524_clears_pending`; `pending_commit` `fixed3524_replace_clears_staged`); W2-apply-3 / #3039 (`MergeEager.mainMerge_batch_independent`, `mainMerge_noSet_eq_ref`, `fixed3067_batch_independent`); W2-agg-2 (`GroupId.gid_inj`, `distinct_by_group_id_exact`, `fixed2977_collision_example`); W5-udf-4 (`udfLoad_nonempty`, `fixed3263_empty_lib_name`, `fixed3263_empty_script`).
   - #3492 fixed a `delta_lmxm` bug the proofs had not logged: the output was masked by the pattern of `F*dm`, so with `x→z` deleted and `y→z` live in one frontier row the output `z` was dropped (`graphblas_wrappers`; counterexample removed; in 17ccc5412). `delta_lmxm` moves from AXIOMATISED to PROVEN: `deltaLmxm_spec`, `deltaLmxm_correct` (= `F*(M-DM+DP)` given `dm ⊆ m`), `delta_lmxm_keeps_live_path`. The streaming union equals the merged matrix it replaced, pair for pair and in order (`ops_traverse` `union_stream`, `union_stream_eq_merged`, `deltaInto_eff`, `union_collapse_directed_keys_nodup`).

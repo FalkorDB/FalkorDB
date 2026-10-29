@@ -37,10 +37,10 @@ graph/src/runtime/ops/node_by_id_seek.rs	NodeByIdSeekOp::next	55	PROVEN	Scans.id
 graph/src/runtime/ops/node_by_label_and_id_scan.rs	NodeByLabelAndIdScanOp::new	34	PROVEN	CTGlue.labelIdScanNew: ctors_spec
 graph/src/runtime/ops/node_by_label_and_id_scan.rs	NodeByLabelAndIdScanOp::next	59	PROVEN	Scans.labelIdScan_correct (take_while + filter = labelled ∩ range, given sorted get_nodes)
 graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::new	59	PROVEN	CTGlue.aspNew: ctors_spec
-graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::expand_row	85	PROVEN	ASP.bfs/relax/back/asp: asp_minimal (length = true shortest distance), asp_complete' (every shortest walk ≤ max_hops returned), asp_nodup (exactly once), fin_drained (BFS terminates), asp_sound; directed_cycle_backtrack_order + directed_cycle_not_a_walk (bug), undirected_cycle_repeats_edge (shared with C)
-graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::next	311	PROVEN	Drive.drive: uncapped_stream, drive_flatten
+graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::expand_row	85	PROVEN	ASP.bfs/relax/back/asp: asp_minimal (length = true shortest distance), asp_complete' (every shortest walk ≤ max_hops returned), asp_nodup (exactly once), fin_drained (BFS terminates), asp_sound; directed_cycle_walk_order + directed_cycle_is_a_walk + directed_cycle_reversed_order (#3112: cycles now walk order), undirected_cycle_repeats_edge (shared with C)
+graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::next	309	PROVEN	Drive.drive: uncapped_stream, drive_flatten
 graph/src/runtime/ops/path_builder.rs	PathBuilderOp::new	44	PROVEN	CTGlue.pathBuilderNew: pathBuilderNew_spec
-graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle; Value::Path branch PathVlt.vltMain: revWalk_reconstructs, vltMain_follows_of_ne (right on non-cyclic walks), property PathFollowsPattern violated on cycles bug3451_main_violates, fix vltFix_follows
+graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle (forward cycle list); Value::Path branch PathVlt.vltMain: revWalk_reconstructs, vltMain_follows_of_ne (right on non-cyclic walks), property PathFollowsPattern violated on cycles bug3451_main_violates, fix vltFix_follows
 graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1929	NOT COVERED	config parsing (tested against C: defaults differ, see bug 6)
 graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	NOT COVERED	config parsing
 graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	NOT COVERED	config parsing

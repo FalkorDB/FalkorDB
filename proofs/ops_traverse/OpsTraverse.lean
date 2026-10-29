@@ -23,6 +23,13 @@ import OpsTraverse.UnionGlue
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
+**Re-targeted to main ee21013d6** (from e860645bb): #3112 (fixes #3108) flips the allShortestPaths
+edge list to src→dst for cycles too (`all_shortest_paths.rs:283-289`: `if !reverse { path.reverse() }`, no
+`is_cycle` branch). `ASP.asp` drops its `isCycle` case; the W2-traverse-4 counterexamples became
+`directed_cycle_walk_order`, `directed_cycle_is_a_walk` (`0→1→2→0` gives `[0,1,2]`, a directed walk),
+`directed_cycle_reversed_order` (a reversed pattern keeps dst→src) and `pathbuilder_on_cycle` (nodes
+`0,1,2,0`). `AllShortestPathsOp::next` is now at line 309.
+
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) streams multi-type traversals
 instead of materialising the union. `UnionIter` (`cond_traverse.rs:245-278`) merges the per-type iterators
 (`UnionStream`: `drain_spec` = strictly ascending, each pair once, exactly the union of the types in the
@@ -172,10 +179,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    uniqueness scope): `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)` Rust 2 rows, C 4
    (Cypher 4); `OPTIONAL MATCH (y:Nope) MATCH (z:B) RETURN y, z.id` Rust
    `null|null` (Cypher `null|2`; C rejects the query).
-5. **allShortestPaths on a directed cycle returns the edge list backwards**
-   (`all_shortest_paths.rs:284-288`): `0→1→2→0`, `(a)-[*]->(a)`: Rust nodes
-   `[0,2,1,0]` rels `[3,2,1]`, expected `[0,1,2,0]`/`[1,2,3]` (C `[0,2,1,0]`/`[1,2,3]`,
-   also wrong). Lean `directed_cycle_backtrack_order`, `directed_cycle_not_a_walk`.
+5. **allShortestPaths on a directed cycle returned the edge list backwards -- FIXED by #3112**
+   (was `all_shortest_paths.rs:284-288`): `0→1→2→0`, `(a)-[*]->(a)` gave rels `[3,2,1]`; now
+   `[1,2,3]`. Lean `directed_cycle_walk_order`, `directed_cycle_is_a_walk`.
 6. **algo.SPpaths / SSpaths default relationship cost 0** (`functions/algo_procedures.rs:2308,
    2397, 2518`; C: 1 per edge): `maxCost: 1` without `costProp` returns
    `[0,1,3]` cost 0 (C `[0,3]` cost 1). Test `bug_sppaths_default_cost_is_zero`.
@@ -241,7 +247,8 @@ is now modelled at slot level (`SlotFeed.lean`), which catches #3372.
   pair list; emission *order* (stack vs recursion, `swap_remove`) is not modelled.
 * `get_nodes` (label-matrix intersection) is assumed sorted ascending.
 * allShortestPaths minimality/completeness are proved for the non-cycle case only;
-  the cycle case (`src = dst`) has the known ordering bug and is not claimed.
+  the cycle case (`src = dst`) is only checked on examples (`directed_cycle_walk_order`,
+  `directed_cycle_is_a_walk`, `directed_cycle_reversed_order`).
 * `shortestPath()` (bidirectional BFS in `runtime/eval.rs:1421`) and the
   `algo.*paths` procedures are differential-tested against C only.
 * Record caps, OPTIONAL null padding and emitter loops are modelled at row level

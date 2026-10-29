@@ -88,9 +88,9 @@ inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Nat) :
   | varLen {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = true → found = false →
       minTooBig rr.1 = false →
-      RelOk y gs.1 (aspRel rr.1 la) →
-      GAsp o x y cl la rr.2 true (vars ++ [(aspRel rr.1 la).alias, rr.2.alias])
-        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la)).2, gs.2) rr.2) s1 out s' →
+      RelOk y gs.1 (aspRel rr.1 la (decide (s.cur = .lt))) →
+      GAsp o x y cl la rr.2 true (vars ++ [(aspRel rr.1 la (decide (s.cur = .lt))).alias, rr.2.alias])
+        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la (decide (s.cur = .lt)))).2, gs.2) rr.2) s1 out s' →
       GAsp o x y cl la prev found vars gs s out s'
   | fixed {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = false → RelOk y gs.1 rr.1 →

@@ -7,7 +7,7 @@ import OpsTraverse.VarLen
 | `St`, `relax`       | the BFS body of `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:141-265`): cycle case `:215-238`, same-distance predecessor `:240-248`, first discovery `:249-263` |
 | `bfs`               | the `while let Some(current) = queue.pop_front()` loop (`:146-265`), fuel-bounded; neighbours via `step` (`:161-191`, self-loop once when undirected) |
 | `back`              | the DFS backtrack iterator (`:278-304`): push `edge` then continue at `prev`, stop at `src` with a non-empty list |
-| `asp`               | the whole row: reverse unless `is_cycle` (`:284-288`), reverse again for `AllShortestPaths::Reversed` (`:289-291`) |
+| `asp`               | the whole row: reverse always, cycles included (#3112; `:283-289`), reverse again for `AllShortestPaths::Reversed` (`:289-291`) |
 | `ends`, `buildNodes`| `PathBuilderOp`'s `Value::List` branch (`runtime/ops/path_builder.rs:148-172`): next node = the edge endpoint that differs from the previous node, via `Runtime::get_relationship_endpoints` |
 
 Edge-attribute filters (`:193-208`) are a pure pre-filter of the neighbour
@@ -83,7 +83,7 @@ def asp (g : Graph) (b : Bool) (src dst minH maxH : Nat) (reversed : Bool)
   let st := bfs g b src dst minH maxH isCycle fuel (st0 src)
   if (predsOf st dst).isEmpty then []
   else (back st src fuel dst []).map fun es =>
-    let es := if isCycle then es else es.reverse
+    let es := es.reverse
     if reversed then es.reverse else es
 
 /-! ## Every predecessor entry is a traversable edge -/
@@ -203,17 +203,19 @@ theorem asp_sound {g : Graph} {b : Bool} {src dst minH maxH fuel : Nat} (hne : s
 /-- `0 -e0-> 1 -e1-> 2 -e2-> 0` (the repro graph, ids shifted to 0). -/
 def gCycle : Graph := [⟨0, 0, 1⟩, ⟨1, 1, 2⟩, ⟨2, 2, 0⟩]
 
-/-- **Bug** (`lean_ops_traverse::bug_all_shortest_paths_directed_cycle_reversed`): on a
-directed cycle the edge list comes back in backtrack order. -/
-theorem directed_cycle_backtrack_order : asp gCycle false 0 0 1 10 false 10 = [[2, 1, 0]] := by
+/-- **Fixed by #3112** (was W2-traverse-4): on a directed cycle the edge list now comes
+back in walk order `0→1→2→0`, like any other path. -/
+theorem directed_cycle_walk_order : asp gCycle false 0 0 1 10 false 10 = [[0, 1, 2]] := by
   decide
 
-/-- …and that list is not a directed walk from the source: its first edge
-`e2 : 2→0` does not leave node 0. -/
-theorem directed_cycle_not_a_walk : ¬ Walk gCycle false 0 [2, 1, 0] 0 := by
-  intro h
-  cases h with
-  | cons hp _ => simp [mem_step, gCycle] at hp
+/-- …and that list is a directed walk from the source back to itself. -/
+theorem directed_cycle_is_a_walk : Walk gCycle false 0 [0, 1, 2] 0 := by
+  refine Walk.cons (n := 1) ?_ (Walk.cons (n := 2) ?_ (Walk.cons (n := 0) ?_ (Walk.nil 0))) <;>
+    simp [mem_step, gCycle]
+
+/-- A reversed pattern (`(a)<-[*]-(a)`) keeps the dst→src order on a cycle. -/
+theorem directed_cycle_reversed_order : asp gCycle false 0 0 1 10 true 10 = [[2, 1, 0]] := by
+  decide
 
 /-- Shared with C (`shared_with_c_undirected_asp_cycle_repeats_edge`): the
 undirected cycle closes on the edge it left by, so the "path" repeats it. -/
@@ -293,8 +295,8 @@ theorem buildNodes_walk {g : Graph} {b : Bool} (hwf : g.WF) :
     simp only [buildNodes, hn, lastOr, List.getLastD_cons]
     exact ih
 
-/-- The cycle case feeds PathBuilder a backward list: nodes `[2,1,0]` after
-`0`, i.e. the directed cycle `0→1→2→0` rendered as `0,2,1,0`. -/
-theorem pathbuilder_on_cycle : buildNodes gCycle 0 [2, 1, 0] = [2, 1, 0] := by decide
+/-- The cycle case now feeds PathBuilder a forward list: the directed cycle
+`0→1→2→0` is rendered as `0,1,2,0`. -/
+theorem pathbuilder_on_cycle : buildNodes gCycle 0 [0, 1, 2] = [1, 2, 0] := by decide
 
 end OpsTraverse.ASP

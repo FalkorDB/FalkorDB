@@ -3,7 +3,7 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main 1c0e6c8de (re-targeted from e860645bb: #3058, #3586, #3066, #3464 — see "Fixed on main (re-target e860645bb → 1c0e6c8de)"); earlier: 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
+`graph/src/udf/` (all files). Rust source of truth: origin/main ee21013d6 (re-targeted from 1c0e6c8de: #3045, #3032, #3580 — see "Fixed on main (re-target 1c0e6c8de → ee21013d6)"; before that from e860645bb: #3058, #3586, #3066, #3464 — see "Fixed on main (re-target e860645bb → 1c0e6c8de)"); earlier: 3fec7d7c9, re-checked at 5e475e6c9 (#3436 only: `rt.g.borrow()` -> `rt.graph()` in every `algo_procedures.rs` / `procedures.rs` registration, and `call_udf_bridge` takes `rt.graph_arc()` (the same `Arc` clone `rt.g.clone()` was) for `set_current_graph`; no function moved, nothing modelled changed); `js_globals.rs`
 re-targeted to 8743953a8 (#3079), `type_convert.rs` to cab3cf192 (#3074, #3336 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in
@@ -107,7 +107,7 @@ Every `bug_*` test asserts C's answer and fails today.
 ## Main theorems of earlier waves (all proven, zero sorry)
 * `Config.strList_ok`, `validate_ok`, `maxLen_small` — config parsing accepts exactly the documented shapes.
 * `Compact.compactEdges_sound`, `unfiltered_component_ids_are_members`,
-  `spec_component_is_member`, `unfiltered_rows_exact`/`_nodup`, `harmonic_correct_iff`.
+  `spec_component_is_member`, `wcc_rows_eq_spec`, `unfiltered_rows_exact`/`_nodup`, `harmonic_complete`.
 * `Paths.far_*`, `recordK_length`, `record1_min`, `record0_ties`, `nextNode_far`,
   `dijkstra_never_src_eq_dst`.
 * `MsfFlow.keepMin_comm`, `identity_neutral`, `flowAlign_aligned`, `superFresh`.
@@ -118,10 +118,10 @@ Every `bug_*` test asserts C's answer and fails today.
 
 ## CONFIRMED bugs (Rust vs C; Lean counterexample → cargo repro)
 Known before this wave (counterexamples added):
-* WCC/CDLP nodeLabels report compact index as component id (:891-895, :1298-1302) —
-  `Compact.wcc_compact_component_id_not_member`.
-* HarmonicCentrality source vector sized `node_count` not `node_id_bound` (:2777) —
-  `Compact.unfiltered_drops_high_ids`.
+* WCC/CDLP nodeLabels reported compact index as component id — **FIXED by #3032**
+  (`Compact.wcc_rows_eq_spec`, `wcc_compact_component_id_member`).
+* HarmonicCentrality source vector sized `node_count` not `node_id_bound` — **FIXED by #3045**
+  (`Compact.harmonic_complete`, `unfiltered_keeps_high_ids`).
 * pageRank with an unknown label errors — **FIXED by #3058** (`pagerank_unknown_label_empty`).
 * Forged `__falkor_type` markers accepted (type_convert.rs:351-358) —
   `Marshal.forged_node_marker`, `forged_edge_marker`.
@@ -133,8 +133,8 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
    (algo_procedures.rs bound and enumeration); C charges 1 per edge, so pathCost = hops
    without costProp and `maxCost` bounds hops. Now default 1.0 (:2399, :2521):
-   `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`. The Dijkstra fast path (:2308) still reports 0 and C's
-   fast path does too (live, `Paths.dijkstra_cost_no_prop`).
+   `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`. The Dijkstra fast path with no `costProp` reports 0, as C's does
+   (live, `Paths.dijkstra_cost_no_prop`); with a configured `costProp` it charges 1 since #3580.
 2. **FIXED by #3074** — UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
    `{name:'RegExp'}` becomes the string "[object Object]" (type_convert.rs:314-350).
    `Marshal.constructor_key_breaks_roundtrip`, `constructor_regexp_becomes_string`;
@@ -197,9 +197,9 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
   `bug3380_default_size_16` (default 16, C 32; property `DefaultSizeMatchesC`),
   `bug3380_seedless_deterministic` (no clock seed; `SeedlessRunVaries`),
   `bug3380_seeded_fewer_sources` (20 requested on 40 nodes, seed 7 → 15; `SourcesExact`).
-* #3121 `CostProp`: `costProp` configured vs. absent kept apart (`edge_numeric_attr` :2104).
-  `bug3121_fastpath_missing_cost_zero`: the Dijkstra fast path (:2308) charges a configured
-  but missing cost 0 (C 1); property `MissingCostIsOne` (the enumeration path satisfies it).
+* #3121 `CostProp`: `costProp` configured vs. absent kept apart (`edge_numeric_attr` :2167).
+  **FIXED by #3580**: the Dijkstra fast path (:2369-2375) charges a configured but missing cost 1
+  like C; `fastpath_missing_cost_one` (property `MissingCostIsOne` holds on both paths).
 * #3349 `LagContract`: the LAGraph contract now has the `LAGRAPH_INVALID_GRAPH` (-1000)
   outcome (`LAGraph_CheckGraph` rejects by-column storage; GraphBLAS stores n-by-1, hence
   1×1, by column). `bug3349_one_node_projection_fails`; property `ProjectionTotal`.
@@ -207,6 +207,24 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
 ## Gap closed 2026-10-22 (#3454) — **FIXED by #3464** (see below)
 `UdfNodeView` modelled `create_js_node` reading the committed graph while `labels(n)` reads the
 runtime; the counterexamples were removed (in 17ccc5412).
+
+## Fixed on main (re-target 1c0e6c8de → ee21013d6)
+* #3045 (fixes #3044) — HarmonicCentrality sizes its unfiltered source vector by `g.node_id_bound()`
+  (algo_procedures.rs:2848-2860); every `node_count() + deleted_nodes_count()` in the algo procedures became
+  `node_id_bound()` (:783, :893, :1020, :1315). `Compact.harmonic_complete` (every live node is a source
+  and reported), `unfiltered_keeps_high_ids` (ids 0..4, node 0 deleted: `[1,2,3,4]`; it was `[1,2,3]`).
+  Replaces the old counterexample `unfiltered_drops_high_ids`.
+* #3032 (fixes #3029) — new `compact_to_original` (:449) maps the WCC component / CDLP community id back to the
+  original node id on the `nodeLabels` path (:931-935, :1352-1356). `Compact.compactToOriginal`, `wcc_rows_eq_spec`
+  (Rust's rows equal the spec: the id is a node id), `wcc_rows_component_is_member`,
+  `wcc_compact_component_id_member` (active ids [0,2,3], LAGraph reps [0,1,1] → `[(0,0),(2,2),(3,2)]`),
+  `compactToOriginal_none`. Replaces `wcc_compact_component_id_not_member`.
+* #3580 (fixes #3121) — `dijkstra_single_path` charges `missing_cost` = 1 for an edge lacking a configured
+  `costProp` (0 with none) (:2369-2375). `CostProp.fastpath_missing_cost_one`, `fast_eq_enum`, `fast_unconfigured_agree`;
+  `Paths.dijkstra_cost_configured`, `dijkstra_cost_no_prop` (`dijkstraCostRust` now takes the configured flag).
+  Model note `CostProp.fast_unknown_name_hops`: a configured name the graph never saw costs 1 per edge in Rust
+  (the `c.so` model gives 0; newer master's `_sum_path_cost` gives 1); not re-run live.
+* #3112 touches `all_shortest_paths.rs` / `cypher.rs` only (ops_traverse / parser projects), nothing modelled here.
 
 ## Fixed on main (re-target e860645bb → 1c0e6c8de)
 * #3058 (fixes #3056) — `check_known_labels_and_types` (algo_procedures.rs:469) makes betweenness (:973),
@@ -216,7 +234,6 @@ runtime; the counterexamples were removed (in 17ccc5412).
   `checkKnown_unknown_label_errors`, `checkKnown_unknown_type_errors`, `checkKnown_label_first`,
   `known_messages`; `pagerankPath`, `pagerank_unknown_label_empty`, `pagerank_unknown_type_empty`,
   `pagerank_compact_nonempty` (LAGraph is never handed a 0x0 matrix), `pagerank_known_label_full`.
-  Still open (unchanged): `Compact.unfiltered_drops_high_ids` (HarmonicCentrality, #3044; fix PR #3045 not merged).
 * #3586 (fixes #3444) — algo.MSF builds the original-id → compact-id table only when `max_id < 4 n`, else
   binary-searches `sorted_ids` (algo_procedures.rs:1442-1455, :1741). `MsfFlow.buildTbl_get`, `compactOf_eq`
   (both branches answer `bsearch`), `denseTable_len` (table ≤ 4 slots per active node), `sparse_builds_no_table`. `bsearch` = `slice::binary_search` on a sorted duplicate-free list: its

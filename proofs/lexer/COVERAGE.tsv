@@ -53,38 +53,38 @@ graph/src/parser/cypher.rs	parse_with_clause	1293	NOT COVERED	parser routine not
 graph/src/parser/cypher.rs	parse_return_clause	1323	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	add_pattern_node	1359	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_pattern	1372	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_case_expression	1584	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_quantifier_expr	1616	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_reduce_expr	1675	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_shortest_path_expr	1753	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
-graph/src/parser/cypher.rs	parse_primary_expr	1942	MODELLED	PRIMARY_LEVELS premise checked per constructor shape (primary_levels); parsing itself not modelled
-graph/src/parser/cypher.rs	parse_list_operator_expression	2136	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_property_lookup	2167	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_expr	2184	PROVEN	runCall (parse_expr under nested): nested_depth_bound
-graph/src/parser/cypher.rs	parse_expr_inner	2195	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level10/litExpr: litExpr_min, litExpr_other (2^63 guard, #2910); bug fixed by #2910 dba677942
-graph/src/parser/cypher.rs	match_dot_property_separator	2663	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_ident	2682	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	try_parse_ident	2701	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_property_name	2713	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_named_exprs	2727	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_expression_list	2763	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	without_pattern_comprehensions	2792	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	reject_forbidden_pattern_comprehension	2803	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_list_literal_or_comprehension	2818	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	list_has_top_level_pipe	2892	NOT COVERED	parser routine not modelled by the lexer project (see proofs/parser_grammar C.ListGate)
-graph/src/parser/cypher.rs	parse_list_comprehension	2915	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_pattern_comprehension	2958	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_inline_properties	3006	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_node_pattern	3022	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_relationship_pattern	3045	MODELLED	fragment: hop bound casts i as u32 = asU32 (hop_truncation_bug, bug); rest not modelled
-graph/src/parser/cypher.rs	parse_labels	3193	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_map	3202	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_map_projection	3234	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_orderby	3292	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_set_clause	3310	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_set_items	3322	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
-graph/src/parser/cypher.rs	parse_remove_clause	3391	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	parse_remove_items	3403	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
-graph/src/parser/cypher.rs	parse_foreach_clause	3439	MODELLED	recursion shape only = foreachChain (foreach_unbounded, bug: bypasses nested)
-graph/src/parser/cypher.rs	reject_aggregate	3521	NOT COVERED	parser routine not modelled by the lexer project
-graph/src/parser/cypher.rs	find_aggregate_name	3533	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_case_expression	1587	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_quantifier_expr	1619	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_reduce_expr	1678	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_shortest_path_expr	1756	MODELLED	fragment: hop bound cast i as u32 = asU32 (hop_truncation_bug); rest not modelled
+graph/src/parser/cypher.rs	parse_primary_expr	1945	MODELLED	PRIMARY_LEVELS premise checked per constructor shape (primary_levels); parsing itself not modelled
+graph/src/parser/cypher.rs	parse_list_operator_expression	2139	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_property_lookup	2170	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_expr	2187	PROVEN	runCall (parse_expr under nested): nested_depth_bound
+graph/src/parser/cypher.rs	parse_expr_inner	2198	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level10/litExpr: litExpr_min, litExpr_other (2^63 guard, #2910); bug fixed by #2910 dba677942
+graph/src/parser/cypher.rs	match_dot_property_separator	2666	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_ident	2685	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	try_parse_ident	2704	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_property_name	2716	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_named_exprs	2730	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_expression_list	2766	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	without_pattern_comprehensions	2795	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	reject_forbidden_pattern_comprehension	2806	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_list_literal_or_comprehension	2821	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	list_has_top_level_pipe	2895	NOT COVERED	parser routine not modelled by the lexer project (see proofs/parser_grammar C.ListGate)
+graph/src/parser/cypher.rs	parse_list_comprehension	2918	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_pattern_comprehension	2961	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_inline_properties	3009	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_node_pattern	3025	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_relationship_pattern	3048	MODELLED	fragment: hop bound casts i as u32 = asU32 (hop_truncation_bug, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_labels	3196	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_map	3205	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_map_projection	3237	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_orderby	3295	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_set_clause	3313	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_set_items	3325	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_remove_clause	3394	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	parse_remove_items	3406	MODELLED	fragment: property-target loop = setTarget (set_target_unbounded, bug); rest not modelled
+graph/src/parser/cypher.rs	parse_foreach_clause	3442	MODELLED	recursion shape only = foreachChain (foreach_unbounded, bug: bypasses nested)
+graph/src/parser/cypher.rs	reject_aggregate	3524	NOT COVERED	parser routine not modelled by the lexer project
+graph/src/parser/cypher.rs	find_aggregate_name	3536	NOT COVERED	parser routine not modelled by the lexer project

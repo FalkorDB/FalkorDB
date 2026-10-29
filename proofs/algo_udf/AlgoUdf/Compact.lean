@@ -5,12 +5,13 @@
 | `idx`, `ids`            | `build_compact_adj_from_tensors` :570 / `..._symmetric_...` :636: `sorted_ids` (compact → id) and `id_to_compact` |
 | `compactEdges`          | the tensor loops in the same two functions (edge kept iff both ends are active) |
 | `LagWcc`                | AXIOMATISED spec of `LAGr_ConnectedComponents` / `LAGraph_cdlp` output |
-| `wccRows`               | algo.WCC result assembly :911-924 (algo.labelPropagation :1327-1339 is identical) |
+| `compactToOriginal`     | `compact_to_original` :451-456 (#3032): `compact_to_id.map_or(idx, \|m\| m[idx])` |
+| `wccRows`               | algo.WCC result assembly :922-935 (algo.labelPropagation :1343-1356 is identical); component id through `compact_to_original` since #3032 |
 | `unfilteredRows`        | the `compact_to_id = None` branch of every procedure + `is_node_deleted` skip |
-| `harmonicRows`          | algo.HarmonicCentrality :2829-2878 |
-| `pagerankPath`          | algo.pageRank early exits :729-735, `use_unfiltered` :750-752, empty active set :772-774 (#3058) |
-| `checkKnown`            | `check_known_labels_and_types` :469 (betweenness :973, labelPropagation :1268, HarmonicCentrality :2759) |
-| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :1001-1021 |
+| `harmonicRows`          | algo.HarmonicCentrality :2848-2860 source vector sized `node_id_bound()` since #3045 |
+| `pagerankPath`          | algo.pageRank early exits :729-735, `use_unfiltered` :750-752, empty active set :772-774 (#3058; line numbers pre-#3045/#3032) |
+| `checkKnown`            | `check_known_labels_and_types` :469 (betweenness :973, labelPropagation :1268, HarmonicCentrality :2759; pre-#3032 lines) |
+| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :1032-1052 |
 
 LAGraph is not modelled; its output contract is a hypothesis (`LagWcc`), citing
 LAGraph's `LAGr_ConnectedComponents` doc: "component(i) = r where r is the
@@ -42,25 +43,40 @@ a dense vector whose i-th entry is a vertex index `< n` (the representative). -/
 structure LagWcc (n : Nat) (comp : Nat → Nat) : Prop where
   lt : ∀ i, i < n → comp i < n
 
-/-- Rust's rows on the compact path: node mapped through `ids`, component id
-pushed as-is (`component_ids.push(comp_id)`, :922). -/
+/-- `compact_to_original` (#3032): `None` is the unfiltered path (identity), `some ids` the
+`nodeLabels` path (compact index → original node id). Rust indexes `m[idx]`; the model's
+`getD` is safe under `LagWcc.lt`. -/
+def compactToOriginal (m : Option (List Nat)) (idx : Nat) : Nat :=
+  m.elim idx (fun l => l.getD idx 0)
+
+/-- Rust's rows on the compact path: node mapped through `ids`, component id mapped back
+through `compact_to_original` (:931-935, since #3032). -/
 def wccRows (ids : List Nat) (comp : Nat → Nat) : List (Nat × Nat) :=
-  (List.range ids.length).map fun i => (ids.getD i 0, comp i)
+  (List.range ids.length).map fun i => (ids.getD i 0, compactToOriginal (some ids) (comp i))
 
 /-- What C (and Rust's own unfiltered path) report: the component id is a node id. -/
 def wccSpec (ids : List Nat) (comp : Nat → Nat) : List (Nat × Nat) :=
   (List.range ids.length).map fun i => (ids.getD i 0, ids.getD (comp i) 0)
 
-/-- On the unfiltered path the mapping is the identity, so the two agree. -/
+/-- **#3029 fixed by #3032**: on the `nodeLabels` path Rust's rows are exactly the spec's:
+the component / community id is a node id, not a compact index. -/
+theorem wcc_rows_eq_spec (ids : List Nat) (comp : Nat → Nat) : wccRows ids comp = wccSpec ids comp :=
+  rfl
+
+/-- The unfiltered path (`compact_to_id = None`) leaves the id alone. -/
+theorem compactToOriginal_none (idx : Nat) : compactToOriginal none idx = idx := rfl
+
+/-- On the unfiltered path the mapping is the identity, so Rust's rows equal the spec. -/
 theorem unfiltered_component_ids_are_members (n : Nat) (comp : Nat → Nat)
-    (h : LagWcc n comp) : wccRows (List.range n) comp = wccSpec (List.range n) comp := by
-  simp only [wccRows, wccSpec, List.length_range]
+    (h : LagWcc n comp) :
+    (List.range n).map (fun i => (i, compactToOriginal none (comp i))) = wccSpec (List.range n) comp := by
+  simp only [wccSpec, List.length_range, compactToOriginal_none]
   apply List.map_congr_left
   intro i hi
   have hi' := List.mem_range.mp hi
   simp [List.getD_eq_getElem?_getD, List.getElem?_range, hi', h.lt i hi']
 
-/-- The spec's component id is always a reported node. -/
+/-- The spec's component id is always a reported node, hence so is Rust's. -/
 theorem spec_component_is_member (ids : List Nat) (comp : Nat → Nat)
     (h : LagWcc ids.length comp) :
     ∀ p ∈ wccSpec ids comp, p.2 ∈ ids := by
@@ -69,19 +85,29 @@ theorem spec_component_is_member (ids : List Nat) (comp : Nat → Nat)
   obtain ⟨i, hi, rfl⟩ := hp
   simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (h.lt i hi)]
 
-/-- BUG (confirmed, `bug_wcc_label_filter_component_ids_are_compact_indices`):
-graph of `LABELLED` with nodeLabels:['A'] → active ids [0,2,3], edge 2–3; LAGraph
-returns representatives [0,1,1]; Rust reports component `1` for nodes 2 and 3,
-and 1 is not an :A node. -/
-theorem wcc_compact_component_id_not_member :
+theorem wcc_rows_component_is_member (ids : List Nat) (comp : Nat → Nat)
+    (h : LagWcc ids.length comp) :
+    ∀ p ∈ wccRows ids comp, p.2 ∈ ids := by
+  rw [wcc_rows_eq_spec]; exact spec_component_is_member ids comp h
+
+/-- The former counterexample, now fixed (`bug_wcc_label_filter_component_ids_are_compact_indices`):
+graph of `LABELLED` with nodeLabels:['A'] → active ids [0,2,3], edge 2–3; LAGraph returns
+representatives [0,1,1]; Rust now reports component `2` for nodes 2 and 3 (it reported the compact
+index `1`, which is not an :A node). -/
+theorem wcc_compact_component_id_member :
     let ids := [0, 2, 3]
     let comp := fun i => if i = 0 then 0 else 1
     LagWcc ids.length comp ∧
-    wccRows ids comp = [(0, 0), (2, 1), (3, 1)] ∧
-    wccSpec ids comp = [(0, 0), (2, 2), (3, 2)] ∧
-    (1 : Nat) ∉ ids := by
-  refine ⟨⟨fun i hi => ?_⟩, by decide, by decide, by decide⟩
-  simp at hi ⊢; split <;> omega
+    wccRows ids comp = [(0, 0), (2, 2), (3, 2)] ∧
+    (∀ p ∈ wccRows ids comp, p.2 ∈ ids) := by
+  refine ⟨⟨fun i hi => ?_⟩, by decide, ?_⟩
+  · simp at hi ⊢; split <;> omega
+  · have e : wccRows [0, 2, 3] (fun i => if i = 0 then 0 else 1) = [(0, 0), (2, 2), (3, 2)] := by
+      decide
+    intro p hp
+    rw [e] at hp
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+    rcases hp with rfl | rfl | rfl <;> simp
 
 /-! ## Deleted ids on the unfiltered path -/
 
@@ -100,25 +126,26 @@ theorem unfiltered_rows_nodup (bound : Nat) (alive : Nat → Bool) :
     (unfilteredRows bound alive).Nodup :=
   (List.nodup_range).filter _
 
-/-- HarmonicCentrality's unfiltered source vector has length `node_count`, not
-`node_id_bound` (:2832-2834). A live id `≥ node_count` is dropped. -/
-def harmonicRows (nodeCount : Nat) (alive : Nat → Bool) : List Nat :=
-  unfilteredRows nodeCount alive
+/-- HarmonicCentrality's unfiltered source vector has length `node_id_bound()` (:2848-2860,
+since #3045, fixes #3044); it was `node_count()`. `bound` is the vector length. -/
+def harmonicRows (bound : Nat) (alive : Nat → Bool) : List Nat :=
+  unfilteredRows bound alive
 
-theorem harmonic_correct_iff (nodeCount bound : Nat) (alive : Nat → Bool)
+/-- **#3044 fixed by #3045**: with the vector sized by the id bound, every live node is a
+source and reported, whatever was deleted. -/
+theorem harmonic_complete (bound : Nat) (alive : Nat → Bool)
     (hb : ∀ x, alive x = true → x < bound) :
-    (∀ x, x ∈ harmonicRows nodeCount alive ↔ x ∈ unfilteredRows bound alive) ↔
-      (∀ x, alive x = true → x < nodeCount) := by
+    ∀ x, x ∈ harmonicRows bound alive ↔ alive x = true := by
+  intro x
   simp only [harmonicRows, unfiltered_rows_exact]
-  constructor
-  · intro h x hx; exact ((h x).mpr ⟨hb x hx, hx⟩).1
-  · intro h x; exact ⟨fun ⟨_, a⟩ => ⟨hb x a, a⟩, fun ⟨_, a⟩ => ⟨h x a, a⟩⟩
+  exact ⟨fun h => h.2, fun a => ⟨hb x a, a⟩⟩
 
-/-- BUG (confirmed, `bug_harmonic_centrality_with_deleted_node`): ids 0..4, node 0
-deleted: node_count = 4, bound = 5, node 4 is never a source nor reported. -/
-theorem unfiltered_drops_high_ids :
+/-- The former counterexample (`bug_harmonic_centrality_with_deleted_node`): ids 0..4, node 0
+deleted: bound = 5, so node 4 is a source and reported (it used to be dropped with the
+`node_count = 4` length). -/
+theorem unfiltered_keeps_high_ids :
     let alive := fun x => decide (1 ≤ x ∧ x ≤ 4)
-    harmonicRows 4 alive = [1, 2, 3] ∧ unfilteredRows 5 alive = [1, 2, 3, 4] := by
+    harmonicRows 5 alive = [1, 2, 3, 4] := by
   decide
 
 /-! ## Unknown labels / relationship types (#3058, fixes #3056) -/

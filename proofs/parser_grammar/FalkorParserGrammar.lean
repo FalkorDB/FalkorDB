@@ -38,6 +38,18 @@ are in `proofs/lexer`, which this project does not repeat.
 * **`parse_deterministic`**: the parse is a function of the input
   (backtracking restores the saved position and anonymous counter).
 
+## Re-target to ee21013d6: #3112 (same-alias allShortestPaths arrow)
+
+`parse_pattern` now records `is_incoming` (the leading `<`, cypher.rs:1416-1418) before
+`parse_relationship_pattern`, because `(a)<-[*]-(a)` loses its direction once from/to are swapped
+(both ends share alias `a`). `C.Pattern.aspRel` takes that flag (`asp := rev` when
+`!bidir && (src.alias != la || inc)`), `C.Pattern.aspLoop` passes `c = .lt`, and `GAsp.varLen` carries
+`s.cur = .lt`. `aspRel_same_alias`: with `src.alias = la`, `<-` gives `.rev` and `->` gives `.fwd`.
+`aspLoop_sound`/`aspPart` soundness are unchanged apart from the extra argument. Lines of rows
+after cypher.rs:1413 shifted by +3 (COVERAGE.tsv). Docstring cites elsewhere in this project that
+point past line 1413 are from earlier targets and are not all re-pinned; COVERAGE.tsv is the
+authoritative line list.
+
 ## Gap closed 2026-10-20: #2502
 
 `C.PredicateBugs`: the property `PredEndsBeforeClause` (a WHERE pattern
@@ -104,8 +116,8 @@ extension flags (`CExt`); `GArgsE`/`GArgs` now demand an expression after every 
 | --- | --- | --- |
 | `call_validates_rest`, `call_transparent`, `match_last_after_call_rejected` | **Fixed by #3297** (b774fdfad; main b84473a7f): `inner_validate`'s CALL arm used to return `Ok(())` without validating the clauses after it (ast.rs:1167-1201 at b6567cb97); it now continues with `iter.next().map_or(Ok(()), …)` (ast.rs:1262-1263). | Before the fix `CALL db.labels() YIELD label MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label` **crashed the server** (panic at planner/optimizer/utilize_node_by_id.rs:118), `... MERGE ()-[:R\|S]->()` created an edge, `... UNWIND [1] AS x` was accepted. C rejects all four; so does main (flow `test_procedures.py`). |
 | `anon_name_collides` | Anonymous entities are named `_anon_N` (cypher.rs:3017, 3054, 3134), a name the user can write; `add_pattern_node` then merges the two nodes. | `CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)`: Rust 0, C 1. |
-| `create_named_path_drops_dup_rel` | In a named path a repeated relationship variable is rejected only for MATCH (cypher.rs:1530-1538). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)`: Rust creates 4 nodes, 1 relationship; C: "Variable `r` already declared". |
-| `merge_dup_rel_dropped` | Same for MERGE in an anonymous path (cypher.rs:1551-1564). | `MERGE (a)-[r:R]->(b)-[r:R]->(c)`: Rust 3 nodes, 1 relationship; C: "can't be redeclared in a MERGE clause". |
+| `create_named_path_drops_dup_rel` | In a named path a repeated relationship variable is rejected only for MATCH (cypher.rs:1533-1541). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)`: Rust creates 4 nodes, 1 relationship; C: "Variable `r` already declared". |
+| `merge_dup_rel_dropped` | Same for MERGE in an anonymous path (cypher.rs:1554-1567). | `MERGE (a)-[r:R]->(b)-[r:R]->(c)`: Rust 3 nodes, 1 relationship; C: "can't be redeclared in a MERGE clause". |
 | `set_paren_property_accepted` | The `=` arm of `parse_set_items` takes any primary as target (cypher.rs:3352-3366). | `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` sets x; C: syntax error. |
 | `type_colon_accepted` | `[:A:B]` (cypher.rs:3068-3078 continues on `:` alone). | Rust matches; C: syntax error. |
 

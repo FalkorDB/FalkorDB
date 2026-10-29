@@ -46,7 +46,7 @@ Yes, between two different nodes:
 - no path is returned twice (`asp_nodup`);
 - the BFS always finishes, within node-count + 1 iterations (`fin_drained`).
 
-When source and destination are the same node (a cycle) it is wrong; see bug 5.
+When source and destination are the same node (a cycle), only examples are checked (`directed_cycle_walk_order`, `directed_cycle_is_a_walk`); since #3112 the edge list is in walk order like any other path.
 
 **5. Do scans and LIMIT lose or duplicate rows?**
 
@@ -81,7 +81,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 4. **Show every step keeps it.** `inv_bstep` proves one iteration keeps `Inv`, and `inv_bfs` lifts that to the whole run.
 5. **Read off minimality.** A returned path follows predecessor edges, each one level closer to the source, so its length is the destination's recorded distance. By the invariant that distance is the true shortest distance, so no walk is shorter.
 
-The hypotheses are `src ≠ dst` (the cycle case has a known bug and is not claimed), `1 ≤ max_hops`, and `Graph.WF`. The last holds for every real graph.
+The hypotheses are `src ≠ dst` (the cycle case is checked on examples only), `1 ≤ max_hops`, and `Graph.WF`. The last holds for every real graph.
 
 ## Bugs found
 
@@ -93,7 +93,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
-| W2-traverse-4 | `directed_cycle_backtrack_order`, `directed_cycle_not_a_walk` | allShortestPaths on a directed cycle returns the edge list backwards (`all_shortest_paths.rs:284-288`): on `0→1→2→0`, `(a)-[*]->(a)` gives edges `[3,2,1]` instead of `[1,2,3]`. C is also wrong | **Open** (shared with C) |
+| W2-traverse-4 | `directed_cycle_walk_order`, `directed_cycle_is_a_walk`, `directed_cycle_reversed_order` | allShortestPaths on a directed cycle returned the edge list backwards (`0→1→2→0`, `(a)-[*]->(a)` gave `[3,2,1]`). C was also wrong | Fixed by #3112 (fixes #3108): walk order `[1,2,3]` |
 | W2-traverse-5 | none (Cypher repro only) | `algo.SPpaths`/`algo.SSpaths` charged cost 0 per relationship without `costProp`; C charges 1 | Fixed by #3113 (the single-path shortcut still charges 0, as C does) |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
 | #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
@@ -156,7 +156,7 @@ Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows a
 - **ExpandInto's `synthetic_label` branch** (`expand_into.rs:155-166`) reads committed labels only and is not modelled: no valid Cypher reaches it with pending label changes (#3452). Pending *deletes* are modelled (`ExpandIntoPending.lean`).
 - **Emission order.** Iterator `seek` is modelled as a filter of the full pair list, and the order rows come out in (stack vs recursion, `swap_remove`) is not modelled. The theorems are about which rows come out and how many.
 - **`get_nodes`** (label-matrix intersection) is assumed to return ids in ascending order.
-- **allShortestPaths cycles.** Minimality and completeness are proven for source ≠ destination only.
+- **allShortestPaths cycles.** Minimality and completeness are proven for source ≠ destination only; the cycle order is checked on examples.
 - **`shortestPath()` and the `algo.*` path procedures** are tested against C, not proven.
 - **RediSearch.** Index scans are proven under `IndexSound` (the index returns exactly the label's nodes that satisfy the query), which is an assumption about RediSearch.
 - **Batch packing.** Record caps, OPTIONAL null padding and the emitter loops are modelled at row level; how rows are packed into columnar batches is proven in `proofs/columnar`.

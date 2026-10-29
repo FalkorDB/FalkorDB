@@ -170,15 +170,25 @@ case-insensitively at cypher.rs:1384, 1389; case folding is lexical). -/
 def nmShortest : Nat := 4000001
 def nmAllShortest : Nat := 4000002
 
-/-- The rebuilt allShortestPaths relationship (cypher.rs:1441-1457). -/
-def aspRel (r : QRel Nat) (la : Nat) : QRel Nat :=
+/-- The rebuilt allShortestPaths relationship (cypher.rs:1444-1460). `inc` is whether the
+relationship began with `<` (`is_incoming`, cypher.rs:1416-1418, #3112): once from/to are
+swapped a same-alias `(a)<-[*]-(a)` has `src.alias = la`, so the arrow is what marks it
+reversed. -/
+def aspRel (r : QRel Nat) (la : Nat) (inc : Bool) : QRel Nat :=
   { QRel.new r.alias r.types r.attrs r.src r.dst r.bidir (some 1) r.maxH with
-    asp := if !r.bidir && r.src.alias != la then .rev else .fwd }
+    asp := if !r.bidir && (r.src.alias != la || inc) then .rev else .fwd }
+
+/-- **Fixed by #3112**: a same-alias `(a)<-[*]-(a)` (directed, `src.alias = la` after the
+swap) is marked `Reversed` because of its `<`; the outgoing `(a)-[*]->(a)` stays `Forward`. -/
+theorem aspRel_same_alias (r : QRel Nat) (la : Nat) (hd : r.bidir = false)
+    (hs : r.src.alias = la) :
+    (aspRel r la true).asp = .rev ∧ (aspRel r la false).asp = .fwd := by
+  simp [aspRel, hd, hs]
 
 /-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs:1433-1440). -/
 def minTooBig (r : QRel Nat) : Bool := match r.minH with | some m => decide (m > 1) | none => false
 
-/-- The allShortestPaths relationship loop (cypher.rs:1407-1492). -/
+/-- The allShortestPaths relationship loop (cypher.rs:1410-1495). -/
 def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Nat) : Nat → QNode Nat → Bool →
     List Nat → QG Nat × List Nat → P (Bool × List Nat × (QG Nat × List Nat))
   | 0, _, _, _, _ => fuelP
@@ -191,7 +201,7 @@ def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Nat) : Nat → QNo
         if found then fail
         else if minTooBig r then fail
         else
-          let r' := aspRel r leftAlias
+          let r' := aspRel r leftAlias (decide (c = .lt))
           let ag := gs.1.addRel r'
           if !ag.1 && clause = .match_ then fail
           else

@@ -55,10 +55,10 @@ The JavaScript side is modelled over a QuickJS heap, so a value that contains it
 
 **5. Do the algorithm results name the right nodes?**
 
-Mostly. The algorithms run on a compact adjacency matrix (index 0..n) and map results back to node ids (`compactEdges_sound`, `harmonic_correct_iff`). Two places get the mapping wrong; see [Bugs found](#bugs-found):
+Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map results back to node ids (`compactEdges_sound`, `harmonic_complete`). Two places used to get the mapping wrong; both are fixed (see [Bugs found](#bugs-found)):
 
-- WCC and CDLP with `nodeLabels` report a compact index as the component id (`wcc_compact_component_id_not_member`);
-- HarmonicCentrality sizes its vector by node count instead of the id bound (`unfiltered_drops_high_ids`).
+- WCC and CDLP with `nodeLabels` reported a compact index as the component id; `compact_to_original` (#3032) maps it back (`wcc_rows_eq_spec`, `wcc_compact_component_id_member`);
+- HarmonicCentrality sized its vector by node count instead of the id bound; it now uses `node_id_bound()` (#3045; `harmonic_complete`, `unfiltered_keeps_high_ids`).
 
 ## The headline theorems
 
@@ -91,11 +91,11 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `wcc_compact_component_id_not_member` | WCC and CDLP with `nodeLabels` return a compact index as the component id, not a node id | **Open** |
-| 2 | `unfiltered_drops_high_ids` | HarmonicCentrality sizes its source vector by node count, not the id bound, so nodes with high ids (after deletes) are dropped | **Open** |
+| 1 | `wcc_rows_eq_spec`, `wcc_compact_component_id_member` | WCC and CDLP with `nodeLabels` returned a compact index as the component id, not a node id | Fixed by #3032 (#3029) |
+| 2 | `harmonic_complete`, `unfiltered_keeps_high_ids` | HarmonicCentrality sized its source vector by node count, not the id bound, so nodes with high ids (after deletes) were dropped | Fixed by #3045 (#3044) |
 | 3 | removed (17ccc5412) | `pageRank` with an unknown label errored (a 0x0 matrix reached LAGraph) | Fixed by #3058 (#3056): `pagerank_unknown_label_empty`, `pagerank_compact_nonempty` |
 | 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness, labelPropagation and HarmonicCentrality with an unknown `nodeLabels` / `relationshipTypes` entry returned no rows; C errors | Fixed by #3058 (#3056): `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `known_messages` |
-| 5 | removed (17ccc5412) | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), but also with a configured one the edge lacks, where C charges 1 (row 19) |
+| 5 | removed (17ccc5412) | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), and since #3580 charges 1 for a configured one the edge lacks (row 19) |
 | 6 | `forged_node_marker`, `forged_edge_marker` | A UDF result object carrying a forged `__falkor_type` marker is trusted, which panics the reply or creates a dangling edge (W3-algo-1) | **Open** |
 | 7 | removed (17ccc5412) | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
 | 8 | removed (17ccc5412) | A map with a `constructor` key was taken for a `Date` or a `RegExp` | Fixed by #3074 |
@@ -109,7 +109,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 16 | `getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
-| 19 | `bug3121_fastpath_missing_cost_zero` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks costs 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne`; the enumeration path satisfies it (`rust_enum_ok`) | **Open** (#3121) |
+| 19 | `fastpath_missing_cost_one`, `fast_eq_enum` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks cost 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne` now holds on both paths | Fixed by #3580 (#3121) |
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
 | 21 | removed (17ccc5412) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
 
@@ -192,4 +192,4 @@ bash proofs/coverage.sh             # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A fix for one of the open bugs should turn its counterexample into `pre<PR>_` history and add the theorem that now holds, as #3074 did. If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+A fix for one of the open bugs should replace its counterexample with the theorem that now holds. If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

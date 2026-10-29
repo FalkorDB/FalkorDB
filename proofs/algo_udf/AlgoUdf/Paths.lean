@@ -6,7 +6,7 @@
 | `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2144 (weights modelled as `Int`: finite weights only) |
 | `record`              | `record_found_path` :2459 |
 | `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2451 and `enumerate_paths` :2573 (since #3113) |
-| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, 0.0)` :2360 |
+| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, missing_cost)` with `missing_cost` 1 if `costProp` is configured else 0 (:2369-2375, since #3580) |
 | `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:605) |
 | `nextNode`            | `build_path_batch` :2627 node reconstruction |
 | `useDijkstra`         | `run_path_algo` fast-path guard :2671-2681 |
@@ -148,14 +148,21 @@ theorem cost_no_prop_hops (n : Nat) : pathCostRust (List.replicate n none) = n :
     simp only [pathCostRust, List.replicate_succ, List.map_cons, List.foldl_cons] at ih ⊢
     rw [foldl_add_start, ih]; simp; omega
 
-/-- `dijkstra_single_path` (the `pathCount 1`, no `maxCost`, no `maxLen` fast path) still
-reports a missing cost as 0 (:2360). C's single-path fast path does the same: live, a
-2-hop `algo.SPpaths({sourceNode:a, targetNode:c, relTypes:['R']})` yields `pathCost 0`
-on both (rt8 re-check, C `bin/macos-arm64v8-release/falkordb.so`); with `maxLen:5` or
-`pathCount:2` C yields 2, which is what `pathCostRust` gives. -/
-def dijkstraCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)).foldl (· + ·) 0
+/-- `dijkstra_single_path` (the `pathCount 1`, no `maxCost`, no `maxLen` fast path) reports
+a missing cost as 1 when `costProp` is configured and 0 when it is not (:2369-2375, since
+#3580, fixes #3121). `cfg`: `config.cost_prop.is_some()`. C's single-path fast path charges 1
+for an edge lacking a configured `costProp`; with no `costProp` at all the C builds checked
+live (`bin/macos-arm64v8-release/falkordb.so`) report `pathCost 0`, as Rust does. -/
+def dijkstraCostRust (cfg : Bool) (attrs : List (Option Int)) : Int :=
+  (attrs.map (·.getD (if cfg then 1 else 0))).foldl (· + ·) 0
 
-theorem dijkstra_cost_no_prop : dijkstraCostRust [none, none] = 0 := by decide
+/-- No `costProp` configured: a 2-hop path reports `pathCost 0`. -/
+theorem dijkstra_cost_no_prop : dijkstraCostRust false [none, none] = 0 := by decide
+
+/-- **#3121 fixed**: with `costProp` configured the fast path charges 1 per edge lacking it,
+exactly like the enumeration path. -/
+theorem dijkstra_cost_configured (attrs : List (Option Int)) :
+    dijkstraCostRust true attrs = pathCostRust attrs := rfl
 
 theorem cost_default_agrees :
     pathCostRust [none, none] = 2 ∧ pathCostC [none, none] = 2 := by decide
