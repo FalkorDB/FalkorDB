@@ -56,6 +56,13 @@ pub struct Binder {
     /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Labels a `REMOVE n:L` earlier in the query stripped. They stay in
+    /// `node_labels`, whose full set is stamped on the MATCH before the
+    /// REMOVE, but are not carried to a projected variable: the WITH commits
+    /// the REMOVE, so a MATCH after it must not assume `L`. Kept per label
+    /// rather than per variable, since `n` may be reachable under other names
+    /// (`WITH n AS a, n AS b`, a CALL body's import).
+    removed_labels: OrderSet<Arc<String>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
@@ -78,6 +85,7 @@ impl Default for Binder {
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
+            removed_labels: OrderSet::default(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
         }
@@ -89,6 +97,24 @@ impl Default for Binder {
 enum ProjectionKind {
     With,
     Return,
+}
+
+/// The labels of a bound `REMOVE n:L1:L2` item, or `None` for a property
+/// removal.
+pub fn removed_node_labels(item: &QueryExpr<Variable>) -> Option<Vec<Arc<String>>> {
+    let root = item.root();
+    match root.data() {
+        ExprIR::FuncInvocation(func) if func.name == "hasLabels" => Some(
+            root.child(1)
+                .children()
+                .filter_map(|c| match c.data() {
+                    ExprIR::Constant(Value::String(label)) => Some(label.clone()),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 impl Binder {
@@ -479,6 +505,11 @@ impl Binder {
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
+                for item in &items {
+                    if let Some(labels) = removed_node_labels(item) {
+                        self.removed_labels.extend(labels);
+                    }
+                }
                 Ok(QueryIR::Remove(items))
             }
             QueryIR::LoadCsv {
@@ -900,6 +931,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
+                        removed_labels: OrderSet::default(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
                     };
@@ -972,6 +1004,24 @@ impl Binder {
         }
     }
 
+    /// Give the projected variable `to` the labels `from` still holds: the
+    /// accumulated ones minus any a REMOVE stripped.
+    fn carry_node_labels(
+        &mut self,
+        from: &Variable,
+        to: &Variable,
+    ) {
+        let Some(labels) = self.node_labels.get(&(from.scope_id, from.id)) else {
+            return;
+        };
+        let held = labels
+            .iter()
+            .filter(|l| !self.removed_labels.contains(*l))
+            .cloned()
+            .collect();
+        self.node_labels.insert((to.scope_id, to.id), held);
+    }
+
     /// Build projection pairs that map outer variables to fresh inner variables.
     /// For each imported variable, allocates a fresh inner ID via `project_name`
     /// and creates `(inner_var, ExprIR::Variable(outer_var))` pairs.
@@ -984,14 +1034,8 @@ impl Binder {
         for (name, outer_var) in imported {
             let inner_var = self.project_name(name, outer_var.ty.clone());
             // Carry forward node_labels for Node-typed imports
-            if outer_var.ty == Type::Node
-                && let Some(labels) = self
-                    .node_labels
-                    .get(&(outer_var.scope_id, outer_var.id))
-                    .cloned()
-            {
-                self.node_labels
-                    .insert((inner_var.scope_id, inner_var.id), labels);
+            if outer_var.ty == Type::Node {
+                self.carry_node_labels(outer_var, &inner_var);
             }
             let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
             projections.push((inner_var, outer_expr));
@@ -1103,11 +1147,8 @@ impl Binder {
                 }
                 let bound_var = self.project_name(&name, var.ty.clone());
                 // Carry forward labels for projected node variables.
-                if var.ty == Type::Node
-                    && let Some(labels) = self.node_labels.get(&(var.scope_id, var.id)).cloned()
-                {
-                    self.node_labels
-                        .insert((bound_var.scope_id, bound_var.id), labels);
+                if var.ty == Type::Node {
+                    self.carry_node_labels(&var, &bound_var);
                 }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
                 projected.push((bound_var, expr));
@@ -1130,14 +1171,8 @@ impl Binder {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
-                    if var_name.ty == Type::Node
-                        && let Some(labels) = self
-                            .node_labels
-                            .get(&(var_name.scope_id, var_name.id))
-                            .cloned()
-                    {
-                        self.node_labels
-                            .insert((bound_var.scope_id, bound_var.id), labels);
+                    if var_name.ty == Type::Node {
+                        self.carry_node_labels(var_name, &bound_var);
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1157,14 +1192,8 @@ impl Binder {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
-                    if var_name.ty == Type::Node
-                        && let Some(labels) = self
-                            .node_labels
-                            .get(&(var_name.scope_id, var_name.id))
-                            .cloned()
-                    {
-                        self.node_labels
-                            .insert((bound_var.scope_id, bound_var.id), labels);
+                    if var_name.ty == Type::Node {
+                        self.carry_node_labels(var_name, &bound_var);
                     }
                 }
                 projected.push((bound_var, expr));
