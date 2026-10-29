@@ -1014,3 +1014,43 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         finally:
             with_idx.delete()
             no_idx.delete()
+
+    # A row-invariant index query under bound endpoints is answered from the
+    # kept hit set after the first row (#3376). Every shape must still agree
+    # with the same query on a graph that has no index.
+    def test_bound_endpoint_hit_cache(self):
+        with_idx = self.db.select_graph("edge_idx_bound_cache")
+        no_idx = self.db.select_graph("edge_idx_bound_cache_plain")
+        setup = """UNWIND range(1, 40) AS i CREATE (:N {id: i})
+                   WITH 1 AS _ UNWIND range(1, 600) AS k
+                   MATCH (x:N {id: (k * 7) % 40 + 1}), (y:N {id: (k * 13) % 40 + 1})
+                   CREATE (x)-[:P {v: k}]->(y)"""
+        try:
+            with_idx.query("CREATE INDEX FOR (n:N) ON (n.id)")
+            create_edge_range_index(with_idx, 'P', 'v', sync=True)
+            with_idx.query(setup)
+            no_idx.query("CREATE INDEX FOR (n:N) ON (n.id)")
+            no_idx.query(setup)
+            for q in ["MATCH (a:N)-[r:P]->(b:N) WHERE r.v > 400 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)<-[r:P]-(b:N) WHERE r.v > 400 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)-[r:P]-(b:N) WHERE r.v > 590 RETURN id(r), a.id, b.id",
+                      "MATCH (a:N)-[r:P {v: 77}]->(b:N) RETURN id(r), a.id, b.id",
+                      "MATCH (a:N {id: 3})-[r:P]->(b) WHERE r.v > 100 RETURN id(r), b.id",
+                      "MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r), a.id, b.id"]:
+                self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
+                self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                     sorted(no_idx.query(q).result_set), message=q)
+            q = "MATCH (a:N)-[r:P]->(a) WHERE r.v > 1 RETURN id(r), a.id"
+            self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                 sorted(no_idx.query(q).result_set), message=q)
+            # A parameter is row-invariant too.
+            q = "MATCH (a:N)-[r:P]->(b:N) WHERE r.v > $m RETURN id(r), a.id, b.id"
+            self.env.assertEqual(sorted(with_idx.query(q, {'m': 450}).result_set),
+                                 sorted(no_idx.query(q, {'m': 450}).result_set))
+            # A bound value that changes per row must not be cached.
+            q = "UNWIND range(1, 40) AS i MATCH (a:N {id: i})-[r:P]->(b:N) WHERE r.v > i * 10 RETURN id(r), a.id, b.id"
+            self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                 sorted(no_idx.query(q).result_set))
+        finally:
+            with_idx.delete()
+            no_idx.delete()

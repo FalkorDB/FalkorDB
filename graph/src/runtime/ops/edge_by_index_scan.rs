@@ -22,11 +22,12 @@
 //!             output rows with edge + endpoint IDs
 //! ```
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::index::indexer::IndexQuery;
-use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
+use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
@@ -38,9 +39,144 @@ use crate::runtime::{
 // `NodeRef` supplies the `.root()` / `.idx()` methods used below via
 // trait import — it appears unused in signatures but removing it
 // breaks `value.root().idx()` etc.
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
+
+type EdgeHit = (NodeId, NodeId, RelationshipId);
+
+/// Every hit of one index query, oriented as the pattern matches them (an
+/// undirected pattern lists an edge in both orientations), with by-endpoint
+/// maps built on first use. Keys are the pattern's `from` / `to` node ids.
+struct IndexedHits {
+    all: Vec<EdgeHit>,
+    by_from: std::cell::OnceCell<HashMap<u64, Vec<EdgeHit>>>,
+    by_to: std::cell::OnceCell<HashMap<u64, Vec<EdgeHit>>>,
+}
+
+/// True when evaluating `expr` can not depend on the input row or change
+/// between rows: it holds only literals, parameters and list/map constructors.
+fn expr_is_row_invariant(expr: &QueryExpr<Variable>) -> bool {
+    expr.root().indices::<Bfs>().all(|idx| {
+        matches!(
+            expr.node(idx).data(),
+            ExprIR::Constant(_) | ExprIR::Parameter(_) | ExprIR::List | ExprIR::Map
+        )
+    })
+}
+
+fn query_is_row_invariant(q: &IndexQuery<QueryExpr<Variable>>) -> bool {
+    match q {
+        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
+            expr_is_row_invariant(value)
+        }
+        IndexQuery::Range { min, max, .. } => {
+            min.iter().chain(max.iter()).all(expr_is_row_invariant)
+        }
+        IndexQuery::And(qs) | IndexQuery::Or(qs) => qs.iter().all(query_is_row_invariant),
+        IndexQuery::Point { point, radius, .. } => {
+            expr_is_row_invariant(point) && expr_is_row_invariant(radius)
+        }
+        IndexQuery::InList { list, .. } => expr_is_row_invariant(list),
+    }
+}
+
+/// The edges the index returns for `q`, in graph order `(src, dst, edge)`.
+fn indexed_edges(
+    runtime: &Runtime,
+    label: &Arc<String>,
+    q: IndexQuery<Value>,
+) -> Box<dyn Iterator<Item = EdgeHit>> {
+    let g = runtime.graph();
+    // Edge index: a numeric Equal/Range on a column we own is served
+    // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+    // string/geo/composite or a missing column falls through to RediSearch during
+    // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+    #[cfg(feature = "index-falkordb")]
+    let it: Box<dyn Iterator<Item = EdgeHit>> =
+        if let Some(hit) = g.query_index_numeric_edges(label, &q) {
+            Box::new(hit)
+        } else {
+            Box::new(g.get_indexed_edges(label, q))
+        };
+    #[cfg(not(feature = "index-falkordb"))]
+    let it: Box<dyn Iterator<Item = EdgeHit>> = Box::new(g.get_indexed_edges(label, q));
+    it
+}
+
+/// The hits of a row-invariant index query, kept so each bound input row looks
+/// its endpoint up instead of re-running the index query and filtering every
+/// hit.
+struct HitCache {
+    /// True when the index query reads no input row (constants, parameters,
+    /// list/map literals only), so every row asks the index the same question.
+    row_invariant: bool,
+    /// Input rows that ran the index query with a bound endpoint so far. The
+    /// first such row streams (a one-row input pays no setup); the second makes
+    /// the hits worth keeping.
+    bound_rows: std::cell::Cell<usize>,
+    hits: std::cell::RefCell<Option<Arc<IndexedHits>>>,
+    transposed: bool,
+    bidirectional: bool,
+}
+
+impl HitCache {
+    /// The hits matching the bound endpoint(s) of the current row. `None` when
+    /// the caller must stream the index instead: the query reads the row, no
+    /// endpoint is bound, or this is the first bound row. Takes `q` out of the
+    /// option only when it returns hits.
+    fn lookup(
+        &self,
+        runtime: &Runtime,
+        label: &Arc<String>,
+        q: &mut Option<IndexQuery<Value>>,
+        bound_from: Option<NodeId>,
+        bound_to: Option<NodeId>,
+    ) -> Option<Vec<EdgeHit>> {
+        if !self.row_invariant || (bound_from.is_none() && bound_to.is_none()) {
+            return None;
+        }
+        let seen = self.bound_rows.get();
+        self.bound_rows.set(seen + 1);
+        if seen == 0 {
+            return None;
+        }
+        let transposed = self.transposed;
+        let bidirectional = self.bidirectional;
+        let hits = Arc::clone(self.hits.borrow_mut().get_or_insert_with(|| {
+            let mut all = Vec::new();
+            let built = q.take().expect("held until built");
+            for (src, dst, edge) in indexed_edges(runtime, label, built) {
+                all.push((src, dst, edge));
+                if bidirectional && src != dst {
+                    all.push((dst, src, edge));
+                }
+            }
+            Arc::new(IndexedHits {
+                all,
+                by_from: std::cell::OnceCell::new(),
+                by_to: std::cell::OnceCell::new(),
+            })
+        }));
+        // The pattern's `from` is the edge's dst when transposed.
+        let endpoint = move |&(src, dst, _): &EdgeHit, want_from: bool| -> u64 {
+            u64::from(if want_from == transposed { dst } else { src })
+        };
+        let (map, key) = match (bound_from, bound_to) {
+            (Some(id), _) => (&hits.by_from, (id, true)),
+            (None, Some(id)) => (&hits.by_to, (id, false)),
+            (None, None) => return None,
+        };
+        let map = map.get_or_init(|| {
+            let mut m: HashMap<u64, Vec<EdgeHit>> = HashMap::new();
+            for h in &hits.all {
+                m.entry(endpoint(h, key.1)).or_default().push(*h);
+            }
+            m
+        });
+        Some(map.get(&u64::from(key.0)).cloned().unwrap_or_default())
+    }
+}
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
 /// edge scan.
@@ -71,6 +207,8 @@ pub struct EdgeByIndexScanOp<'a> {
     /// the query (e.g. value is a list or date). The cache is
     /// dropped when the op is dropped.
     all_edges_cache: std::cell::RefCell<Option<Arc<Vec<(NodeId, NodeId, RelationshipId)>>>>,
+    /// Kept hits of a row-invariant index query; see [`HitCache`].
+    hit_cache: HitCache,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -109,6 +247,13 @@ impl<'a> EdgeByIndexScanOp<'a> {
             query,
             transposed,
             all_edges_cache: std::cell::RefCell::new(None),
+            hit_cache: HitCache {
+                row_invariant: query_is_row_invariant(query),
+                bound_rows: std::cell::Cell::new(0),
+                hits: std::cell::RefCell::new(None),
+                transposed,
+                bidirectional: relationship_pattern.bidirectional,
+            },
             idx,
         }
     }
@@ -333,26 +478,41 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
+                let bound_from = match view.value_at(rp.from.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
+                    _ => None,
+                };
+                let bound_to = match view.value_at(rp.to.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
+                    _ => None,
+                };
+                let transposed = self.transposed;
+                let same_endpoint_alias = rp.from.alias == rp.to.alias;
+                // The hit cache takes the query only when it returns hits.
+                let mut q = Some(q);
+                let usable = Self::can_utilize_index(q.as_ref().expect("just set"));
+                if usable
+                    && let Some(hits) =
+                        self.hit_cache
+                            .lookup(self.runtime, label, &mut q, bound_from, bound_to)
+                {
+                    return Ok(Some(RowIter::many(Box::new(hits.into_iter().filter(
+                        move |(src, dst, _)| {
+                            let (from_id, to_id) = if transposed {
+                                (*dst, *src)
+                            } else {
+                                (*src, *dst)
+                            };
+                            bound_from.is_none_or(|id| id == from_id)
+                                && bound_to.is_none_or(|id| id == to_id)
+                                && (!same_endpoint_alias || from_id == to_id)
+                        },
+                    )))));
+                }
+                let q = q.expect("a query that produced no hits is still held");
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        let g = self.runtime.graph();
-                        // Edge index: a numeric Equal/Range on a column we own is served
-                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
-                        // string/geo/composite or a missing column falls through to RediSearch during
-                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
-                        #[cfg(feature = "index-falkordb")]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
-                            Box::new(hit)
-                        } else {
-                            Box::new(g.get_indexed_edges(label, q))
-                        };
-                        #[cfg(not(feature = "index-falkordb"))]
-                        let it: Box<
-                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = Box::new(g.get_indexed_edges(label, q));
-                        it
+                        indexed_edges(self.runtime, label, q)
                     } else {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
@@ -397,16 +557,6 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // for `from_id == to_id`, non-loop edges leak through
                 // and the emitter (which binds the single shared
                 // alias once, via `from`) would surface them.
-                let bound_from = match view.value_at(rp.from.alias.id) {
-                    Some(Value::Node(id)) => Some(id),
-                    _ => None,
-                };
-                let bound_to = match view.value_at(rp.to.alias.id) {
-                    Some(Value::Node(id)) => Some(id),
-                    _ => None,
-                };
-                let transposed = self.transposed;
-                let same_endpoint_alias = rp.from.alias == rp.to.alias;
                 let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
                         Box::new(oriented_hits.filter(move |(src, dst, _)| {
