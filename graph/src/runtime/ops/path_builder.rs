@@ -18,8 +18,8 @@
 //!
 //! Handles variable-length relationships (stored as `Value::Path` or
 //! `Value::List` of edges) by inlining path elements and deduplicating
-//! shared endpoint nodes. Supports reversed VLT paths by detecting
-//! direction mismatches and walking edges in reverse order.
+//! shared endpoint nodes. A variable-length segment written `<-` (recorded
+//! at plan time in [`QueryPath::incoming`]) is spliced in reverse order.
 
 use std::sync::Arc;
 
@@ -71,7 +71,7 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                 .map(|row_idx| {
                     let mut elems = ThinVec::new();
                     let mut skip_next = false;
-                    for var in &path.vars {
+                    for (var_idx, var) in path.vars.iter().enumerate() {
                         if skip_next {
                             skip_next = false;
                             continue;
@@ -86,56 +86,15 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                         // node (which duplicates the preceding node already in elems)
                         // and the following endpoint variable.
                         if let Value::Path(path_elems) = &val {
-                            if path_elems.len() > 1 {
-                                // Check if VLT path direction matches the pattern
-                                // direction. For incoming patterns (m)<-[*]-(n), the
-                                // VLT traverses from n to m but the pattern starts
-                                // at m. Detect this by checking if the VLT path's
-                                // first node matches the preceding node in elems.
-                                let prev_id = elems.iter().rev().find_map(|v| {
-                                    if let Value::Node(id) = v {
-                                        Some(*id)
-                                    } else {
-                                        None
-                                    }
-                                });
-                                let vlt_first_matches = match path_elems.first() {
-                                    Some(Value::Node(id)) => prev_id == Some(*id),
-                                    _ => true,
-                                };
-                                if vlt_first_matches {
-                                    // Normal case: skip first node, append rest
-                                    for elem in path_elems.iter().skip(1) {
-                                        elems.push(elem.clone());
-                                    }
-                                } else {
-                                    // Reversed case: VLT path goes n->...->m but
-                                    // pattern needs m->...->n. Walk the relationships
-                                    // in reverse, using "other endpoint" to resolve nodes.
-                                    for elem in path_elems.iter().rev().skip(1) {
-                                        match elem {
-                                            Value::Relationship(rel) => {
-                                                elems.push(elem.clone());
-                                                let cur =
-                                                    elems.iter().rev().skip(1).find_map(|v| {
-                                                        if let Value::Node(id) = v {
-                                                            Some(*id)
-                                                        } else {
-                                                            None
-                                                        }
-                                                    });
-                                                let (src, dst) =
-                                                    self.runtime.get_relationship_endpoints(*rel);
-                                                let next = if cur == Some(src) { dst } else { src };
-                                                elems.push(Value::Node(next));
-                                            }
-                                            Value::Node(_) => {
-                                                // Skip intermediate nodes — we compute them from edges
-                                            }
-                                            other => elems.push(other.clone()),
-                                        }
-                                    }
-                                }
+                            // The binding runs from the relationship's `from`
+                            // to its `to`; for a pattern written `<-` that is
+                            // against the path, so it is spliced in reversed.
+                            // Either way the end at the preceding node is
+                            // dropped: elems already holds it.
+                            if path.is_incoming(var_idx) {
+                                elems.extend(path_elems.iter().rev().skip(1).cloned());
+                            } else {
+                                elems.extend(path_elems.iter().skip(1).cloned());
                             }
                             // Skip the following endpoint node variable (it
                             // duplicates the last node in the path).
