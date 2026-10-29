@@ -914,6 +914,46 @@ class testGraphMergeFlow():
                                          RETURN count(r)""")
             self.env.assertEqual(actual.result_set, [[1]])
 
+    def test43_merge_sees_labels_set_earlier_in_the_query(self):
+        # #3453: MERGE's node scan pairs the committed graph with this query's
+        # pending label changes. Each node it should see must come back exactly
+        # once, and a deleted one not at all.
+        g = self.db.select_graph("merge_pending_labels")
+
+        # A node given a label and then deleted is not a match: MERGE creates.
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B DELETE n MERGE (m:B) RETURN id(m) <> id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(g.query("MATCH (n) RETURN labels(n)").result_set, [[["B"]]])
+
+        # Re-setting a label the node already has does not match it twice.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("""MATCH (n:A) SET n:A
+                         MERGE (m:A) ON MATCH SET m.hits = coalesce(m.hits, 0) + 1
+                         RETURN m.hits""")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.nodes_created, 0)
+
+        # A node whose pattern labels are split between committed (A) and
+        # staged (B) matches.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B MERGE (m:A:B) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
+        self.env.assertEqual(g.query("MATCH (n) RETURN count(n)").result_set, [[1]])
+
+        # A label removed earlier in the query is not matched, even if another
+        # pattern label was staged.
+        g.delete()
+        g.query("CREATE (:A)")
+        res = g.query("MATCH (n:A) SET n:B REMOVE n:A MERGE (m:A:B) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[False]])
+        self.env.assertEqual(res.nodes_created, 1)
+        g.delete()
+
     def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
         # With every node bound and no named relationship, MERGE kept only the
         # first match. A path variable still tells parallel edges apart (#3040).
