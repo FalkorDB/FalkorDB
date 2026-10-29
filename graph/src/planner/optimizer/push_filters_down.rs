@@ -200,17 +200,24 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 inherited.extend(left_vars.iter());
             }
 
-            // Case 2: Filter is inside an Apply's right branch.
-            // The left branch's variables are available in the right branch
-            // via Argument propagation. Only applies when the filter is
-            // actually in the right subtree (not the left subtree itself).
+            // Case 2: Filter is inside the right branch of an Apply or an
+            // Optional (both feed their left branch's rows to the right one
+            // through Argument). The left branch's variables are available
+            // in the right branch. Only applies when the filter is actually
+            // in the right subtree (not the left subtree itself). The walk
+            // stops at the nearest such operator: an outer one's variables
+            // only reach this branch through the inner one's left branch, and
+            // ids are per scope, so inheriting them directly would let a
+            // `CALL {}` body variable pass for an outer one with the same id.
+            // When the left branch is a `Project`/`Aggregate` (a `CALL {}`
+            // import), only the variables it names are inherited.
             // Stop the ancestor walk at Merge nodes — Merge's internal
             // match sub-plan has its own Argument leaves that receive
             // variables from Merge's input, not from an enclosing Apply.
             {
                 let mut ancestor = idx;
                 while let Some(parent) = optimized_plan.node(ancestor).parent() {
-                    if matches!(parent.data(), IR::Apply) {
+                    if matches!(parent.data(), IR::Apply | IR::Optional(_)) {
                         // Only inherit left-branch variables if the filter
                         // is NOT inside the left branch (child 0) itself.
                         let left_child_idx = parent.child(0).idx();
@@ -231,7 +238,9 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             }
                         };
                         if !filter_in_left {
-                            let left_vars = collect_subtree_variables(&parent.child(0));
+                            let left = parent.child(0);
+                            let left_vars = branch_output_variables(&left)
+                                .unwrap_or_else(|| collect_subtree_variables(&left));
                             inherited.extend(left_vars);
                         }
                         break;
