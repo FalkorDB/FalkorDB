@@ -351,3 +351,43 @@ class testSlowLog():
             logged = {e[2]: e[4] for e in entries}
             self.env.assertContains(query[:STR_MAX_LEN - 1] + "...", logged)
             self.env.assertEqual(logged[body], params[:STR_MAX_LEN - 1] + "...")
+
+    def test08_update_refreshes_min_latency(self):
+        # Re-running a logged query slower updates its entry in place. That
+        # update used to leave the log's cached minimum latency stale (#3442):
+        # once the log was full, a query faster than every retained entry
+        # passed the admission check against the stale minimum and evicted a
+        # slower one. C recomputes the minimum on the update path too.
+
+        # make sure the graph key exists, so RESET works when run on its own
+        self.graph.query("RETURN 1")
+        self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
+
+        # Each tier is 4x the rows of the one below it, so the latency order
+        # Q1 < Q11 < Q2..Q10 < Q1-again holds with a 4x margin.
+        rows = 1_000_000
+
+        # Q1: the fastest entry, and so the log's cached minimum.
+        q1 = "UNWIND range(0, $n) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        self.graph.query(q1, {'n': rows})
+
+        # Q2..Q10 fill the log.
+        for d in range(2, 11):
+            self.graph.query(slow_query(rows * 16, d))
+        self.env.assertEqual(len(self.graph.slowlog()), 10)
+
+        # Q1 again, now the slowest: its entry is updated in place, and the
+        # true minimum moves up to the fastest of Q2..Q10.
+        self.graph.query(q1, {'n': rows * 64})
+
+        # Q11 is slower than Q1 was but faster than every retained entry: it
+        # must be rejected rather than evict one of Q2..Q10.
+        q11 = slow_query(rows * 4, 1)
+        self.graph.query(q11)
+
+        queries = [entry[2] for entry in self.graph.slowlog()]
+        self.env.assertEqual(len(queries), 10)
+        self.env.assertNotContains(q11, queries)
+        self.env.assertContains(q1, queries)
+        for d in range(2, 11):
+            self.env.assertContains(slow_query(rows * 16, d), queries)
