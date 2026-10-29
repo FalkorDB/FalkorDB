@@ -2698,6 +2698,16 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         }
     };
 
+    /// Counts a writer thread out however it ends, a panic included. The batch threads run until no
+    /// writer is left, so a writer that panicked without counting out would leave them spinning,
+    /// and the test hanging, instead of failing on the panic.
+    struct WriterLeft<'a>(&'a AtomicUsize);
+    impl Drop for WriterLeft<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::Release);
+        }
+    }
+
     let writers_left = AtomicUsize::new(3);
     let started = Instant::now();
     thread::scope(|scope| {
@@ -2751,6 +2761,7 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                 &seen_all,
             );
             scope.spawn(move || {
+                let _left = WriterLeft(writers_left);
                 let mut rng = StdRng::seed_from_u64(seed);
                 let mut writes = 0;
                 while writes < 150 || (!seen_all() && started.elapsed() < Duration::from_secs(30)) {
@@ -2793,7 +2804,6 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         }
                     }
                 }
-                writers_left.fetch_sub(1, Ordering::Release);
             });
         }
     });
