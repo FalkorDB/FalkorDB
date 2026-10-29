@@ -514,6 +514,19 @@ pub fn construct_duration_secs(
     anchor_ts
         .checked_add(extra)
         .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .and_then(check_date_range)
+}
+
+/// Largest day count whose civil year still fits the `i32` year that
+/// `civil_from_days` returns (about 2.1 billion years). Past it the year would
+/// silently wrap, so a duration or date beyond it is an error instead.
+const MAX_DATE_DAYS: i64 = i32::MAX as i64 * 365;
+
+pub fn check_date_range(ts: i64) -> Result<i64, String> {
+    if ts.div_euclid(86400).abs() > MAX_DATE_DAYS {
+        return Err("Date out of range".to_string());
+    }
+    Ok(ts)
 }
 
 /// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).

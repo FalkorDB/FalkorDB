@@ -419,6 +419,27 @@ class testTemporalLocalDateTime(FlowTestsBase):
         self.env.assertTrue(le)
         self.env.assertTrue(e)
 
+    def test_date_arithmetic_year_above_9999(self):
+        # a year past 9999 keeps every digit, as in C (%Y); it used to lose the
+        # leading digits (1e9 days gave 9933-01-03)
+        cases = [
+            ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-03'),
+            ("date('9999-12-31') + duration({days: 1})", '10000-01-01'),
+            ("date('9999-12-31') + duration({years: 20})", '10019-12-31'),
+            ("date('2026-01-01') + duration({days: 365000})", '3025-05-03'),
+        ]
+        for expr, expected in cases:
+            # toString only: the Python client cannot decode years above 9999
+            res = self.graph.query(f"RETURN toString({expr})")
+            self.env.assertEqual(res.result_set[0][0], expected)
+
+        # beyond what the year can hold is an error, not a wrapped date
+        try:
+            self.graph.query("RETURN date('2026-01-01') + duration({days: 3000000000000})")
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertIn("out of range", str(e))
+
 class testTemporalDuration(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

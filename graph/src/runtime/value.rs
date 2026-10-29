@@ -45,7 +45,7 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{construct_duration_secs, decompose_duration},
+            temporal::{check_date_range, construct_duration_secs, decompose_duration},
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -307,10 +307,17 @@ impl Value {
     pub fn format_date(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
         let (y, m, d) = civil_from_days(days);
-        let mut buf = [0u8; 10];
-        write_date_into(&mut buf, y, m, d);
-        // Safe: ASCII digits and '-'
-        unsafe { String::from_utf8_unchecked(buf.to_vec()) }
+        // Fast path: a year that fits the fixed `YYYY-MM-DD` layout.
+        if (0..=9999).contains(&y) {
+            let mut buf = [0u8; 10];
+            write_date_into(&mut buf, y, m, d);
+            // Safe: ASCII digits and '-'
+            return unsafe { String::from_utf8_unchecked(buf.to_vec()) };
+        }
+        // Years past 9999 keep every digit (C's `%Y` does the same: 10000-01-01,
+        // 2739933-01-03); a negative year keeps its sign.
+        let sign = if y < 0 { "-" } else { "" };
+        format!("{sign}{:04}-{m:02}-{d:02}", y.unsigned_abs())
     }
 
     // Format time as ISO-8601: "06:08:21"
@@ -731,7 +738,7 @@ fn add_duration_to_timestamp(
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
     let (days, time_of_day) = shift_months(ts, years, months);
-    Ok(days * 86400 + time_of_day + remaining_secs)
+    check_date_range(days * 86400 + time_of_day + remaining_secs)
 }
 
 /// Subtract a duration from a timestamp.
@@ -741,7 +748,7 @@ fn sub_duration_from_timestamp(
 ) -> Result<i64, String> {
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
     let (days, time_of_day) = shift_months(ts, -years, -months);
-    Ok(days * 86400 + time_of_day - remaining_secs)
+    check_date_range(days * 86400 + time_of_day - remaining_secs)
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
