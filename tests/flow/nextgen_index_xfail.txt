@@ -6,6 +6,11 @@
 #
 # Format: one `<file>:<Class>.<test>` per line. `#` comments and blank lines are ignored.
 # A leading `!` marks a test the check ignores in BOTH directions — see the last section.
+# Each group starts with one or more `error: <shape>` lines, what the native index's error says it
+# cannot serve, or `assertion: <message>` lines, an assertion that fails without such an error as
+# RLTest prints it; `*` stands for a name. A blank line ends the group. A listed test is accounted
+# for only if every failure it reports is one its group names; failing any other way is reported
+# like a failure the ledger does not list.
 #
 # The check is BIDIRECTIONAL and both directions fail the build:
 #   * a failure not listed here    -> a regression, or a gap nobody recorded
@@ -26,10 +31,10 @@
 
 # ---------------------------------------------------------------------------
 # Array-valued properties — `ArrayContains`.
-#   error: "an array-contains on `samples`"
 # The numeric encoder rejects lists outright, so an array-valued property is not in the numeric
 # column at all — there is nothing for the native index to answer from. Needs an array/list kind.
 # ---------------------------------------------------------------------------
+error: an array-contains on `*`
 test_index_scans:testIndexScanFlow.test_28_array_index
 test_index_scans:testIndexScanFlow.test_29_array_index
 test_index_scans:testIndexScanFlow.test_30_update_array_index
@@ -38,12 +43,12 @@ test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
 
 # ---------------------------------------------------------------------------
 # String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
-#   errors: "equality on `x` with a non-numeric value"
-#           "range on `x` with a non-numeric bound"
-#           "an IN list on `x` with a non-numeric value"
 # RediSearch owns strings today; there is no native text kind yet (docs 10-13). This is by far the
 # largest group, and one text kind closes all of it.
 # ---------------------------------------------------------------------------
+error: equality on `*` with a non-numeric value
+error: range on `*` with a non-numeric bound
+error: an IN list on `*` with a non-numeric value
 test_index_scans:testIndexScanFlow.test02_cartesian_product_index_scans_only
 test_index_scans:testIndexScanFlow.test03_cartesian_product_reused_index
 test_index_scans:testIndexScanFlow.test05_test_in_operator_string_props
@@ -61,10 +66,10 @@ test_edge_index_scans:testEdgeIndexRdbRoundtripFlow.test_undirected_pattern_emit
 
 # ---------------------------------------------------------------------------
 # Geo predicates on a Range index — `Point`.
-#   error: "a geo predicate on `location`"
 # `encode_numeric` takes only numbers, so a point property is not in the numeric column, and there
 # is no native geo kind yet. RediSearch serves these today.
 # ---------------------------------------------------------------------------
+error: a geo predicate on `*`
 test_index_scans:testIndexScanFlow.test13_point_index_scan
 
 # ---------------------------------------------------------------------------
@@ -84,6 +89,7 @@ test_index_scans:testIndexScanFlow.test13_point_index_scan
 # Only the same-key Equal+Range case is left here. An `Equal` is a degenerate range, so this one
 # collapses without any doc-stream intersection machinery.
 # ---------------------------------------------------------------------------
+error: a conjunction of 2 predicates [equality on `*`; range on `*`]
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
 test_index_scans:testIndexScanFlow.test_43_merged_filters_use_the_index
 
