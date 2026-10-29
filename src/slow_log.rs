@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
-use redis_module::raw;
+use valkey_module::raw;
 
 use crate::reply::format_g;
 

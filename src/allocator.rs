@@ -21,12 +21,12 @@ use std::thread_local;
 
 /// Global allocator that delegates to Redis while tracking allocations per-thread.
 ///
-/// This allocator wraps `redis_module::alloc::RedisAlloc` to ensure all memory
+/// This allocator wraps `valkey_module::alloc::ValkeyAlloc` to ensure all memory
 /// is allocated through Redis's memory management system (for proper memory
 /// limits and tracking), while adding per-thread allocation counting.
 ///
 /// # Usage
-/// Registered as the global allocator via the `redis_module!` macro's
+/// Registered as the global allocator via the `valkey_module!` macro's
 /// `allocator` parameter.
 pub struct ThreadCountingAllocator;
 
@@ -50,7 +50,7 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
         let ptr = unsafe { std::alloc::System.alloc(layout) };
         #[cfg(not(test))]
         let ptr = unsafe {
-            redis_module::alloc::RedisAlloc::alloc(&redis_module::alloc::RedisAlloc, layout)
+            valkey_module::alloc::ValkeyAlloc::alloc(&valkey_module::alloc::ValkeyAlloc, layout)
         };
         if !ptr.is_null() {
             TRACKING_ENABLED.with(|enabled| {
@@ -73,7 +73,11 @@ unsafe impl GlobalAlloc for ThreadCountingAllocator {
         };
         #[cfg(not(test))]
         unsafe {
-            redis_module::alloc::RedisAlloc::dealloc(&redis_module::alloc::RedisAlloc, ptr, layout);
+            valkey_module::alloc::ValkeyAlloc::dealloc(
+                &valkey_module::alloc::ValkeyAlloc,
+                ptr,
+                layout,
+            );
         };
         TRACKING_ENABLED.with(|enabled| {
             if enabled.get() {

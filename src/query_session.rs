@@ -24,8 +24,8 @@ use crate::graph_core::{ThreadedGraph, ffi};
 use graph::graph::{graph::Graph, mvcc_graph::CommitError};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
-use redis_module::{Context, ContextFlags, raw};
 use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
+use valkey_module::{Context, ContextFlags, raw};
 
 /// Which lock(s) a query holds.
 enum Mode {

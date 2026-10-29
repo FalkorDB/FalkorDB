@@ -25,15 +25,15 @@ use crate::{
         ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
         reply_invalid_graph_version, up_to_nul,
     },
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
+use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
@@ -41,8 +41,8 @@ static FILE_ID: AtomicI32 = AtomicI32::new(0);
 #[allow(unused_imports)]
 pub fn graph_query(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     let QueryFlags {
         compact,
         track_memory,
@@ -72,7 +72,10 @@ pub fn graph_query(
     let read_key = ctx.open_key(&key_str);
     let key_name: Arc<str> = Arc::from(key_str.to_string());
 
-    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = read_key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         drop(read_key);
         return query_mut(
@@ -92,7 +95,10 @@ pub fn graph_query(
     drop(read_key);
     let key = ctx.open_key_writable(&key_str);
     // Re-check: another client may have created it between our read and write open.
-    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         return query_mut(
             ctx,
@@ -123,7 +129,7 @@ pub fn graph_query(
         && provided_version != 0
     {
         reply_invalid_graph_version(ctx, 0);
-        return Ok(redis_module::RedisValue::NoReply);
+        return Ok(valkey_module::ValkeyValue::NoReply);
     }
 
     let result = query_mut(

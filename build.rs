@@ -22,7 +22,7 @@ fn main() {
         .expect("version encoding overflowed u32");
     assert!(
         i32::try_from(version_int).is_ok(),
-        "encoded version {version_int} exceeds i32::MAX; redis_module! `version:` takes i32"
+        "encoded version {version_int} exceeds i32::MAX; valkey_module! `version:` takes i32"
     );
     println!("cargo:rustc-env=FALKORDB_VERSION_INT={version_int}");
     println!("cargo:rerun-if-changed=Cargo.toml");

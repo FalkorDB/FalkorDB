@@ -26,10 +26,10 @@ use graph::runtime::{
     runtime::{QueryStatistics, ResultSummary, Runtime},
     value::Value,
 };
-use redis_module::{Context, raw};
 use std::fmt::Write;
 use std::os::raw::c_char;
 use std::sync::Arc;
+use valkey_module::{Context, raw};
 
 /// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
 /// but spells NaN `NaN` where C prints `nan`.
