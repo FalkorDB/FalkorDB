@@ -470,10 +470,11 @@ impl Graph {
         version
     }
 
-    /// A new build version of `published` with `batch`'s index as this version has it, caught up
-    /// on the entities writers changed in it since this version was made
-    /// ([`VersionedIndex::indexer_catch_up`]): for a batch that writers committed after
-    /// ([`IndexerCommit::CatchUp`]).
+    /// A new build version of `published` with `batch`'s index caught up on the entities writers
+    /// changed in it since this version was made, for a batch that writers committed after
+    /// ([`IndexerCommit::CatchUp`]), as `how` says: this version's copy with those entities
+    /// refreshed ([`VersionedIndex::indexer_catch_up`]), or `published`'s with the batch inserted
+    /// ([`VersionedIndex::indexer_insert`]).
     pub(crate) fn caught_up_onto(
         &self,
         published: &Self,
