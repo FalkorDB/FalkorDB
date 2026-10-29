@@ -285,6 +285,42 @@ impl VersionedIndex for IndexColumn {
         self.refresh(state, name, written, batch_version, published);
     }
 
+    fn indexer_insert(
+        &mut self,
+        (entity, key): &(EntityType, IndexKey),
+        batch: &EncodedTuples,
+        written: &RoaringTreemap,
+        from: BuildCursor,
+        next: Option<BuildCursor>,
+        published: &Graph,
+    ) {
+        let mut adds = EncodedTuples::scalars(
+            batch
+                .scalar
+                .iter()
+                .filter(|&&(_, id)| !written.contains(id))
+                .copied()
+                .collect(),
+        );
+        // The written entities in the batch's range, as the published version has them. Those
+        // below `from` are right in this copy already. Placed before they are read, so a write
+        // outside the range costs a place lookup under the host's locks, not an attribute read.
+        let in_range: RoaringTreemap = written
+            .iter()
+            .filter(|&id| {
+                published.build_place(*entity, id).is_some_and(|at| {
+                    !at.precedes(from) && next.is_none_or(|next| at.precedes(next))
+                })
+            })
+            .collect();
+        graph_writes::entity_tuples(published, *entity, key, &in_range, self, &mut adds);
+        self.add_encoded(&mut adds);
+    }
+
+    fn batch_len(batch: &EncodedTuples) -> usize {
+        batch.len()
+    }
+
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
     /// encoded and sorted ([`graph_writes::scan`]).
     fn indexer_read(
@@ -642,6 +678,16 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
+    /// Whether any column is still `Building`. Walks the columns' states without hashing a name,
+    /// so the per-write checks that only matter during a build cost next to nothing outside one.
+    #[must_use]
+    pub(crate) fn has_building_columns(&self) -> bool {
+        self.node_columns
+            .values()
+            .chain(self.edge_columns.values())
+            .any(IndexEntry::is_building)
+    }
+
     /// Ready this version to be published: each index's sets of written entities are settled
     /// ([`IndexEntry::publish`]).
     pub(crate) fn publish(&mut self) {
@@ -859,16 +905,6 @@ impl FalkorDbIndex {
                 .iter()
                 .find_map(|(key, entry)| Some((entity, key.clone(), entry.cursor()?)))
         })
-    }
-
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn has_building_columns(&self) -> bool {
-        self.node_columns
-            .values()
-            .chain(self.edge_columns.values())
-            .any(IndexEntry::is_building)
     }
 
     /// The build state of column `(entity, label, attr)`, if it exists.
