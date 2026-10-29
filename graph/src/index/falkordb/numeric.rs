@@ -299,6 +299,15 @@ impl NumericIndex {
         self.lookup(Self::point_keys(value))
     }
 
+    /// Entity ids stored under the encoded key `key`.
+    #[must_use]
+    pub fn point_key(
+        &self,
+        key: u64,
+    ) -> DocIter {
+        DocIter::One(self.tree.point(key))
+    }
+
     /// Entity ids whose value lies in the (optionally half-open) numeric range.
     /// A `None` bound is unbounded on that side; a non-numeric bound yields no
     /// matches. Results are in `(value, id)` order.

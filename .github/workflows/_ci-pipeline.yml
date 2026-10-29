@@ -497,6 +497,9 @@ jobs:
         # after the first suite, the other five never ran, and the reconciliation step was
         # skipped. `set +e` is then needed because an explicit `bash` runs with `-e -o pipefail`,
         # and a suite with failing tests would abort the step the same way.
+        #
+        # `test_constraint` is here because under the flag a unique constraint looks up duplicates
+        # in the native index, and every class in that file creates or enforces constraints.
         shell: bash
         run: |
           set +e
@@ -504,7 +507,8 @@ jobs:
           rc=0
           for t in tests/flow/test_index_create tests/flow/test_index_scans \
                    tests/flow/test_index_updates tests/flow/test_index_delete \
-                   tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates; do
+                   tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates \
+                   tests/flow/test_constraint; do
             TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
             status=${PIPESTATUS[0]}
             echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log

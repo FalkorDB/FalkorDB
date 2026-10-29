@@ -32,16 +32,21 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::falkordb_index::{EqualCandidates, FalkorDbIndex};
+#[cfg(not(feature = "index-falkordb"))]
+use crate::index::{
+    Index,
+    indexer::{IndexQuery, IndexType},
+};
+#[cfg(feature = "index-falkordb")]
+use itertools::Either;
 
 use crate::{
     entity_type::EntityType,
     graph::{
         constraint::{ConstraintStatus, ConstraintType},
         graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
-    },
-    index::{
-        Index,
-        indexer::{IndexQuery, IndexType},
     },
     runtime::{
         ordermap::OrderMap,
@@ -150,6 +155,7 @@ fn lookup_sorted(
 /// index stores rounded, NaN, the empty string, and any type it does not index)
 /// are checked by a scan instead. A string containing NUL is fine: the tag
 /// encoding escapes it to `_00` on both the write and the query path.
+#[cfg(not(feature = "index-falkordb"))]
 fn is_value_valid_for_index_lookup(value: &Value) -> bool {
     match value {
         Value::Int(i) => !Index::int_loses_f64_precision(*i),
@@ -160,29 +166,136 @@ fn is_value_valid_for_index_lookup(value: &Value) -> bool {
     }
 }
 
+/// The RediSearch lookup for one member of a unique constraint: an equality on
+/// every constrained property, when each is Range-indexed (`indexed`) and each
+/// value is one the index matches exactly.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_unique_query(
+    indexed: bool,
+    properties: &[Arc<String>],
+    values: Vec<Value>,
+) -> Option<IndexQuery<Value>> {
+    if !indexed || !values.iter().all(is_value_valid_for_index_lookup) {
+        return None;
+    }
+    let mut eqs = properties
+        .iter()
+        .zip(values)
+        .map(|(key, value)| IndexQuery::Equal {
+            key: key.clone(),
+            value,
+        })
+        .collect::<Vec<_>>();
+    Some(if eqs.len() == 1 {
+        eqs.pop().unwrap()
+    } else {
+        IndexQuery::And(eqs)
+    })
+}
+
+/// The native lookups for one member of a unique constraint: one per
+/// constrained property whose column can say which entities hold that
+/// property's value. Any one of them is enough, because `unique_violated`
+/// re-checks each candidate's whole key against the graph, so
+/// [`fewest_candidates`] reads only the smallest. `None` when no column can
+/// answer for any of them.
+#[cfg(feature = "index-falkordb")]
+fn native_unique_query<'g>(
+    index: &'g FalkorDbIndex,
+    entity: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+    values: &[Value],
+) -> Option<Vec<EqualCandidates<'g>>> {
+    let lookups: Vec<_> = properties
+        .iter()
+        .zip(values)
+        .filter_map(|(attr, value)| index.equal_candidates(entity, label, attr, value))
+        .collect();
+    (!lookups.is_empty()).then_some(lookups)
+}
+
+/// The lookups one unique-constraint check has read. `unique_violated` compares
+/// each candidate with every member's key, so a set of lookups read once has
+/// been checked for every member, and a member whose lookups are the same as an
+/// earlier member's needs no read. That is the case for a key with a member no
+/// column answers for (a string id, today) beside one most of the label shares
+/// (a tenant): every member looks up only the tenant, and reading it once per
+/// member would make a bulk insert quadratic.
+#[cfg(feature = "index-falkordb")]
+#[derive(Default)]
+struct ReadOnce(RefCell<FxHashSet<Vec<(usize, u64)>>>);
+
+#[cfg(feature = "index-falkordb")]
+impl ReadOnce {
+    /// The candidates of `lookups` ([`fewest_candidates`]), or none when an
+    /// earlier member had the same lookups.
+    fn candidates(
+        &self,
+        lookups: Vec<EqualCandidates<'_>>,
+    ) -> impl Iterator<Item = u64> + use<> {
+        let mut ids: Vec<_> = lookups.iter().map(EqualCandidates::id).collect();
+        ids.sort_unstable();
+        let first = self.0.borrow_mut().insert(ids);
+        first
+            .then(|| fewest_candidates(lookups))
+            .into_iter()
+            .flatten()
+    }
+}
+
+/// The candidates of the smallest of `lookups`, which all answer for one
+/// member's key. A key's first property may be shared by most of the label (a
+/// tenant), and reading its lookup for every member of a bulk insert costs a
+/// scan of that share per member. Each round takes one entity from every
+/// lookup, so the first to run out is the smallest, and finding it reads at
+/// most `lookups.len()` times as many entities as it returns. Each lookup's
+/// rows own their tree snapshot, so the result borrows nothing (`use<>`).
+#[cfg(feature = "index-falkordb")]
+fn fewest_candidates(lookups: Vec<EqualCandidates<'_>>) -> impl Iterator<Item = u64> + use<> {
+    let mut rows: Vec<_> = lookups.iter().map(EqualCandidates::rows).collect();
+    if rows.len() == 1 {
+        return Either::Left(rows.pop().expect("one lookup"));
+    }
+    let mut read = vec![Vec::new(); rows.len()];
+    loop {
+        for (i, it) in rows.iter_mut().enumerate() {
+            match it.next() {
+                Some(id) => read[i].push(id),
+                None => return Either::Right(read.swap_remove(i).into_iter()),
+            }
+        }
+    }
+}
+
 /// Whether a unique constraint is violated by this commit, given `members`: the
 /// affected entities (a subset of `affected`) carrying the constrained label or
 /// type.
 ///
-/// Like C's `EnforceUniqueEntity`, each member's values are looked up in the
-/// constraint's supporting index, so the cost is per member, not per entity in
-/// the label. The index lags only this commit (each `Commit` publishes its
-/// documents before the next runs), so a candidate it returns is re-verified
-/// against the graph, and members are compared among themselves. Without an
-/// operational index, or for a value it cannot match exactly, the label is
-/// scanned once for the whole set instead.
+/// Like C's `EnforceUniqueEntity`, each member's values are looked up in an
+/// index, so the cost is per member, not per entity in the label. A lookup only
+/// has to return a superset: the index may lag this commit (RediSearch gets a
+/// `Commit`'s documents after its checks) or key several values alike, so a
+/// candidate it returns is re-verified against the graph, and members are
+/// compared among themselves. When the index cannot answer for some member's
+/// values, the label is scanned once for the whole set instead.
+///
+/// `query_for` gives the lookup for one member's values, or `None` when the index
+/// cannot answer for them; `lookup` runs one. They are separate so that every
+/// member is checked before any lookup runs: one member the index cannot answer
+/// for sends the whole set to the scan, and lookups run before it would be wasted.
 ///
 /// `is_candidate` tells whether an entity the index or scan returned is still a
 /// live member of the label or type.
 #[allow(clippy::too_many_arguments)]
-fn unique_violated<Id, L, S>(
+fn unique_violated<Id, Q, L, S>(
     properties: &[Arc<String>],
     members: impl Iterator<Item = Id>,
     affected: &RoaringTreemap,
     attr: impl Fn(Id, &Arc<String>) -> Option<Value>,
     is_candidate: impl Fn(Id) -> bool,
-    indexed: bool,
-    lookup: impl Fn(IndexQuery<Value>) -> L,
+    query_for: impl Fn(Vec<Value>) -> Option<Q>,
+    lookup: impl Fn(Q) -> L,
     scan: impl FnOnce() -> S,
 ) -> bool
 where
@@ -192,7 +305,7 @@ where
 {
     let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut lookups = Vec::new();
-    let mut use_index = indexed;
+    let mut use_index = true;
     for id in members {
         // A NULL or absent constrained property: the entity does not participate.
         let Some(values) = properties
@@ -211,10 +324,10 @@ where
             return true;
         }
         if use_index {
-            if values.iter().all(is_value_valid_for_index_lookup) {
-                lookups.push(values);
+            if let Some(query) = query_for(values) {
+                lookups.push(query);
             } else {
-                // One value the index cannot match exactly sends the whole set
+                // One member the index cannot answer for sends the whole set
                 // to a single scan, so the lookups gathered so far are unused.
                 use_index = false;
                 lookups = Vec::new();
@@ -234,22 +347,7 @@ where
             }))
     };
     if use_index {
-        lookups.into_iter().any(|values| {
-            let mut eqs = properties
-                .iter()
-                .zip(values)
-                .map(|(key, value)| IndexQuery::Equal {
-                    key: key.clone(),
-                    value,
-                })
-                .collect::<Vec<_>>();
-            let query = if eqs.len() == 1 {
-                eqs.pop().unwrap()
-            } else {
-                IndexQuery::And(eqs)
-            };
-            lookup(query).any(collides)
-        })
+        lookups.into_iter().any(|query| lookup(query).any(collides))
     } else {
         scan().any(collides)
     }
@@ -1505,6 +1603,37 @@ impl Pending {
                 }
             }
             ConstraintType::Unique => {
+                // Under `index-falkordb` the native index answers, and RediSearch is not asked.
+                #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
+                let (query_for, lookup) = (
+                    |values: Vec<Value>| {
+                        native_unique_query(
+                            &g.falkordb_index,
+                            EntityType::Node,
+                            label,
+                            &constraint.properties,
+                            &values,
+                        )
+                    },
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        read_once.candidates(candidates).map(NodeId::from)
+                    },
+                );
+                #[cfg(not(feature = "index-falkordb"))]
+                let (query_for, lookup) = {
+                    let indexed = constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range));
+                    (
+                        move |values| {
+                            redisearch_unique_query(indexed, &constraint.properties, values)
+                        },
+                        |query| g.get_indexed_nodes(label, query),
+                    )
+                };
                 let violated = unique_violated(
                     &constraint.properties,
                     members.map(NodeId::from),
@@ -1515,11 +1644,8 @@ impl Pending {
                         !self.deleted_nodes.contains(node_id)
                             && self.constraint_node_has_label(g, node_id, label_id)
                     },
-                    constraint
-                        .properties
-                        .iter()
-                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range)),
-                    |query| g.get_indexed_nodes(label, query),
+                    query_for,
+                    lookup,
                     || {
                         g.get_label_matrix(label).into_iter().flat_map(|lm| {
                             lm.iter(0, u64::MAX)
@@ -1572,6 +1698,40 @@ impl Pending {
                 }
             }
             ConstraintType::Unique => {
+                // As for nodes. An edge column's ids are `edge_id`s.
+                #[cfg(feature = "index-falkordb")]
+                let read_once = ReadOnce::default();
+                #[cfg(feature = "index-falkordb")]
+                let (query_for, lookup) = (
+                    |values: Vec<Value>| {
+                        native_unique_query(
+                            &g.falkordb_index,
+                            EntityType::Relationship,
+                            type_name,
+                            &constraint.properties,
+                            &values,
+                        )
+                    },
+                    |candidates: Vec<EqualCandidates<'_>>| {
+                        read_once.candidates(candidates).map(RelationshipId::from)
+                    },
+                );
+                #[cfg(not(feature = "index-falkordb"))]
+                let (query_for, lookup) = {
+                    let indexed = constraint
+                        .properties
+                        .iter()
+                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range));
+                    (
+                        move |values| {
+                            redisearch_unique_query(indexed, &constraint.properties, values)
+                        },
+                        |query| {
+                            g.get_indexed_edges(type_name, query)
+                                .map(|(_, _, edge_id)| edge_id)
+                        },
+                    )
+                };
                 let violated = unique_violated(
                     &constraint.properties,
                     members.map(RelationshipId::from),
@@ -1580,14 +1740,8 @@ impl Pending {
                     // Both the index and the tensor hold edges of this type
                     // only, and a type never changes.
                     |edge_id| !self.deleted_relationships.contains(edge_id.into()),
-                    constraint
-                        .properties
-                        .iter()
-                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range)),
-                    |query| {
-                        g.get_indexed_edges(type_name, query)
-                            .map(|(_, _, edge_id)| edge_id)
-                    },
+                    query_for,
+                    lookup,
                     || {
                         g.get_relationship_matrix(type_name)
                             .into_iter()
@@ -2031,5 +2185,368 @@ mod property_nesting_tests {
             Err(INVALID_PROPERTY_MSG.into())
         );
         assert_eq!(validate_node_property(&Value::Null), Ok(()));
+    }
+}
+
+/// Unique constraints under `index-falkordb`: the native index answers a member's lookup when it
+/// can, and the label or type scan answers when it cannot. Each test checks the path a member
+/// takes (`native_unique_query`) as well as the verdict (`check_*_constraint`), because a verdict
+/// alone is the same whichever path reached it.
+#[cfg(all(test, feature = "index-falkordb"))]
+mod native_unique_tests {
+    use super::*;
+    use crate::graph::constraint::Constraint;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use crate::index::index_docs::IndexDocs;
+
+    fn arc(s: &str) -> Arc<String> {
+        Arc::new(s.to_string())
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(arc(s))
+    }
+
+    fn graph() -> Graph {
+        ensure_init();
+        let mut g = Graph::new(64, 64, 10, 1, "native_unique");
+        g.roll_id_batches().expect("a consistent space");
+        g
+    }
+
+    /// One `:U` node per row, holding that row's properties, written through the graph's write
+    /// path, so a native column on `:U` is maintained as a query would maintain it.
+    fn nodes(
+        g: &mut Graph,
+        rows: &[&[(&str, Value)]],
+    ) -> Vec<u64> {
+        let ids = g
+            .node_id_space()
+            .reserve(rows.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_nodes(&ids.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let label = g.get_label_id_mut("U");
+        let mut docs = IndexDocs::default();
+        g.set_nodes_labels_bulk(&ids, &vec![label.0 as u64; ids.len()], &mut docs, false);
+        let mut attrs = FxHashMap::default();
+        for (&id, row) in ids.iter().zip(rows) {
+            let mut row: Vec<(u16, Value)> = row
+                .iter()
+                .map(|(attr, value)| (g.get_or_create_node_attr_id(&arc(attr)), value.clone()))
+                .collect();
+            row.sort_by_key(|(attr, _)| *attr);
+            attrs.insert(id, row);
+        }
+        g.set_nodes_attributes(&attrs, &mut docs)
+            .expect("attributes set");
+        g.apply_index_writes(&mut docs);
+        ids
+    }
+
+    /// The verdict of a unique constraint on `:U`'s `props` for a commit that wrote `written`.
+    fn check_nodes(
+        g: &Graph,
+        props: &[&str],
+        written: u64,
+    ) -> Result<(), String> {
+        let constraint = Constraint::new(
+            ConstraintType::Unique,
+            EntityType::Node,
+            arc("U"),
+            props.iter().map(|p| arc(p)).collect(),
+        );
+        Pending::new().check_node_constraint(g, &constraint, &std::iter::once(written).collect())
+    }
+
+    /// Whether a member holding `values` at `props` is looked up in the native index, rather than
+    /// sent to the scan.
+    fn looked_up(
+        g: &Graph,
+        entity: EntityType,
+        label: &str,
+        props: &[&str],
+        values: &[Value],
+    ) -> bool {
+        let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+        native_unique_query(&g.falkordb_index, entity, &arc(label), &props, values).is_some()
+    }
+
+    /// A number is looked up in the native column, and the lookup finds the duplicate.
+    #[test]
+    fn a_numeric_duplicate_is_found_by_the_native_lookup() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("id", Value::Int(1))],
+                &[("id", Value::Int(1))],
+                &[("id", Value::Int(2))],
+            ],
+        );
+        assert!(looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["id"], ids[2]),
+            Ok(()),
+            "a value no other node holds"
+        );
+    }
+
+    /// A numeric column does not index strings. It must decline one rather than answer "no
+    /// rows", which would accept the duplicate; the scan finds it.
+    #[test]
+    fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("id", string("a"))],
+                &[("id", string("a"))],
+                &[("id", string("b"))],
+            ],
+        );
+        assert!(!looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[string("a")]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["id"], ids[2]),
+            Ok(()),
+            "a value no other node holds"
+        );
+    }
+
+    /// A column still building has not seen every entity, so it cannot rule a duplicate out and the
+    /// scan decides. The nodes exist before the column and no indexer batch runs, so the column holds
+    /// none of them: had it been trusted, it would have found nothing.
+    #[test]
+    fn a_building_column_sends_the_check_to_the_scan() {
+        let mut g = graph();
+        let ids = nodes(
+            &mut g,
+            &[&[("id", Value::Int(1))], &[("id", Value::Int(1))]],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("id"));
+        assert!(!looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["id"], ids[1]).is_err());
+    }
+
+    /// A key of a string and a number: the number is looked up, and each candidate's whole key is
+    /// checked against the graph, so a node sharing only the number is not a duplicate.
+    #[test]
+    fn a_mixed_key_looks_up_its_number_and_checks_the_whole_key() {
+        let mut g = graph();
+        for attr in ["s", "n"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+        }
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("s", string("x")), ("n", Value::Int(1))],
+                &[("s", string("x")), ("n", Value::Int(1))],
+                &[("s", string("y")), ("n", Value::Int(1))],
+            ],
+        );
+        assert!(looked_up(
+            &g,
+            EntityType::Node,
+            "U",
+            &["s", "n"],
+            &[string("x"), Value::Int(1)]
+        ));
+        assert!(check_nodes(&g, &["s", "n"], ids[1]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["s", "n"], ids[2]),
+            Ok(()),
+            "shares only the number"
+        );
+    }
+
+    /// A composite key reads its most selective column, whichever property it is. Every node
+    /// shares `tenant`, so its column returns the whole label for every member, while `id` returns
+    /// the one node holding that id. Reading the first property's column made a bulk insert cost a
+    /// scan of the tenant per inserted node.
+    #[test]
+    fn a_composite_key_reads_its_most_selective_column() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+        }
+        // 50 nodes of one tenant, then a duplicate of node 3's key.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", Value::Int(i))])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let read = |props: &[&str], values: &[Value]| -> usize {
+            let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+            let lookups = native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                values,
+            )
+            .expect("both columns answer");
+            fewest_candidates(lookups).count()
+        };
+        let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant.clone(), three.clone()]),
+            2,
+            "node 3 and its duplicate, not the tenant's 51"
+        );
+        assert_eq!(
+            read(&["id", "tenant"], &[three, tenant.clone()]),
+            2,
+            "the order of the properties does not matter"
+        );
+        assert_eq!(
+            read(&["tenant", "id"], &[tenant, absent]),
+            0,
+            "an id no node holds reads nothing"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
+        );
+    }
+
+    /// Members whose lookups are the same read them once per check. No column answers for a
+    /// string today, so every member of a `(tenant, id)` key with string ids looks up only the
+    /// tenant, whose column holds the whole label. The check compares each candidate with every
+    /// member's key, so reading the tenant once covers them all.
+    #[test]
+    fn members_with_the_same_lookups_read_them_once() {
+        let mut g = graph();
+        for attr in ["tenant", "id"] {
+            g.falkordb_index
+                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+        }
+        // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
+        let rows: Vec<[(&str, Value); 2]> = (0..50)
+            .chain([3])
+            .map(|i| [("tenant", Value::Int(7)), ("id", string(&format!("u{i}")))])
+            .chain([[("tenant", Value::Int(8)), ("id", string("u0"))]])
+            .collect();
+        let ids = nodes(
+            &mut g,
+            &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
+        );
+        let props = [arc("tenant"), arc("id")];
+        let lookups = |tenant: i64, id: &str| {
+            native_unique_query(
+                &g.falkordb_index,
+                EntityType::Node,
+                &arc("U"),
+                &props,
+                &[Value::Int(tenant), string(id)],
+            )
+            .expect("the tenant's column answers")
+        };
+        let once = ReadOnce::default();
+        assert_eq!(
+            once.candidates(lookups(7, "u1")).count(),
+            51,
+            "the first member reads the tenant"
+        );
+        assert_eq!(
+            once.candidates(lookups(7, "u2")).count(),
+            0,
+            "a member with the same lookups reads nothing more"
+        );
+        assert_eq!(
+            once.candidates(lookups(8, "u9")).count(),
+            1,
+            "another tenant is another lookup"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[50]).is_err());
+        assert_eq!(
+            check_nodes(&g, &["tenant", "id"], ids[4]),
+            Ok(()),
+            "shares only the tenant"
+        );
+    }
+
+    /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
+    #[test]
+    fn an_edge_duplicate_is_found_by_the_native_lookup() {
+        let mut g = graph();
+        let ty = arc("R");
+        g.falkordb_index
+            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+        let ends = g
+            .node_id_space()
+            .reserve(2, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_nodes(&ends.iter().copied().collect())
+            .expect("freshly reserved ids are creatable");
+        let ids = g
+            .relationship_id_space()
+            .reserve(3, &RoaringTreemap::new())
+            .expect("reserved");
+        g.create_relationships_bulk(&ty, &[ends[0]; 3], &[ends[1]; 3], &ids)
+            .expect("freshly reserved ids are creatable");
+        let attr = g.get_or_create_rel_attr_id(&arc("id"));
+        let attrs: FxHashMap<u64, Vec<(u16, Value)>> = ids
+            .iter()
+            .zip([1, 1, 2])
+            .map(|(&id, v)| (id, vec![(attr, Value::Int(v))]))
+            .collect();
+        let mut docs = IndexDocs::default();
+        g.import_relationship_attrs(&attrs, &mut docs);
+        g.apply_index_writes(&mut docs);
+
+        assert!(looked_up(
+            &g,
+            EntityType::Relationship,
+            "R",
+            &["id"],
+            &[Value::Int(1)]
+        ));
+        let constraint = Constraint::new(
+            ConstraintType::Unique,
+            EntityType::Relationship,
+            ty.clone(),
+            vec![arc("id")],
+        );
+        let check = |written: u64| {
+            Pending::new().check_edge_constraint(
+                &g,
+                &constraint,
+                &std::iter::once(written).collect(),
+            )
+        };
+        assert!(check(ids[1]).is_err());
+        assert_eq!(check(ids[2]), Ok(()), "a value no other edge holds");
     }
 }

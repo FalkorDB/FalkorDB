@@ -91,6 +91,27 @@ SETUP = [
     # the constraint goes OPERATIONAL (unlike the SIMILAR one, which fails).
     "CREATE INDEX FOR ()-[r:UREL]-() ON (r.uid)",
     "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[:UREL {uid: 1}]->(b), (a)-[:UREL {uid: 2}]->(b)",
+    # ---- write-path index-maintenance corpus --------------------------------
+    # Deliberately NOT constrained. A unique constraint adds its own duplicate
+    # check to every write, and that would be measured along with the index
+    # maintenance this corpus exists to isolate. `WIdx` carries `v` (indexed)
+    # beside `w` (not), so a write to each is identical apart from the index.
+    "CREATE INDEX FOR (n:WIdx) ON (n.id)",
+    "CREATE INDEX FOR (n:WIdx) ON (n.v)",
+    "UNWIND range(0, 999) AS i CREATE (:WIdx {id: i, v: i, w: i})",
+    # Deletion pool. Sized for one run of `mass delete indexed` with room to
+    # spare: its warmup and 50 reps take 5,100. Running dry does not fail, it
+    # quietly measures a no-op, and a `--reuse` run, which skips this setup,
+    # starts from the 900 an earlier run left.
+    "CREATE INDEX FOR (n:WDel) ON (n.v)",
+    "UNWIND range(0, 5999) AS i CREATE (:WDel {v: i})",
+    # Indexed label for creates and deletes.
+    "CREATE INDEX FOR (n:WTmp) ON (n.v)",
+    # Indexed label for `label churn indexed`; its twin, `WPlain`, has none.
+    "CREATE INDEX FOR (n:WExtra) ON (n.v)",
+    # Edge equivalent: `wv` indexed, `ww` not, no constraint.
+    "CREATE INDEX FOR ()-[r:WREL]-() ON (r.wv)",
+    "MATCH (a:WIdx {id: 0}), (b:WIdx {id: 1}) CREATE (a)-[:WREL {wv: 1, ww: 1}]->(b)",
 ]
 
 # Raw redis commands run after SETUP (redis-cli arg lists). {graph} is
@@ -619,6 +640,48 @@ QUERIES = [
     Q("expr sum computed",   False, "MATCH (p:Person) RETURN sum(p.age * 3 + 1)", cg=True),
     Q("expr case filter",    False, "MATCH (p:Person) WHERE (CASE WHEN p.age > 40 THEN 1 ELSE 2 END) = 1 RETURN count(p)", cg=True),
     Q("expr project computed", False, "MATCH (p:Person) WITH p.age * 2 AS d RETURN count(d)", cg=True),
+
+    # ---- write-path index maintenance ---------------------------------------
+    # Each indexed write is paired with the identical write to an UNINDEXED
+    # property of the same node, so the delta between the pair is the index
+    # maintenance cost and nothing else — same match, same commit, same
+    # attribute-store write.
+    #
+    # Values are incremented rather than assigned a constant: `SET n.v = 42`
+    # writes the same value every rep after the first, and an update that does
+    # not move the key is not the update this is meant to measure.
+    # Read-only baseline for the pair below: the same indexed lookup with no
+    # write at all. Both SET queries pay this lookup, and it is itself served by
+    # a different engine in each build, so it has to be measured separately
+    # before the pair's delta can be attributed to write-side maintenance.
+    Q("WIdx lookup only",      False, "MATCH (n:WIdx {id: 500}) RETURN n.w"),
+    Q("SET indexed prop",      True, "MATCH (n:WIdx {id: 500}) SET n.v = n.v + 1 RETURN n.v"),
+    Q("SET unindexed prop",    True, "MATCH (n:WIdx {id: 500}) SET n.w = n.w + 1 RETURN n.w"),
+    Q("SET += indexed map",    True, "MATCH (n:WIdx {id: 501}) SET n += {v: n.v + 1, x: 1} RETURN n.v"),
+    Q("SET += unindexed map",  True, "MATCH (n:WIdx {id: 501}) SET n += {w: n.w + 1, x: 1} RETURN n.w"),
+    # Create, then delete, as separate commits. A node created and deleted in one
+    # query is never committed, so it never reaches an index. The unindexed twins
+    # are `create node` and `delete node` on :Tmp; as there, the delete takes the
+    # nodes the create added.
+    Q("create indexed node",   True, "CREATE (:WTmp {v: 1})"),
+    Q("delete indexed node",   True, "MATCH (t:WTmp) WITH t LIMIT 1 DELETE t",
+      needs=("create indexed node",)),
+    # Mass delete — the `remove_batch` path, 100 nodes per rep. The label scan
+    # yields ids in order, so each rep deletes the lowest 100 left: adjacent keys.
+    # Explicit reps because this drains its pool (see the setup).
+    Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50),
+    # A label added or removed moves a node in or out of that label's columns.
+    # Each rep toggles the label, so every rep commits one direction; setting and
+    # removing it in one query would cancel before the commit.
+    Q("label churn indexed",   True, "MATCH (n:WIdx {id: 502}) WITH n, n:WExtra AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WExtra) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WExtra)"),
+    Q("label churn unindexed", True, "MATCH (n:WIdx {id: 503}) WITH n, n:WPlain AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WPlain) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WPlain)"),
+    # Edge pair.
+    Q("SET indexed edge prop",   True, "MATCH ()-[r:WREL]->() SET r.wv = r.wv + 1 RETURN r.wv"),
+    Q("SET unindexed edge prop", True, "MATCH ()-[r:WREL]->() SET r.ww = r.ww + 1 RETURN r.ww"),
 
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),
