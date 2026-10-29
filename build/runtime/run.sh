@@ -109,6 +109,7 @@ fix_tls_perms() {
 # Called when a fix-up above failed: falkordb could not use those files, so
 # redis-server stays root, as it ran before this image dropped privileges.
 keep_root() {
+    [ -n "$drop_privs" ] || return 0
     echo "Notice: running redis-server as root. Set SKIP_FIX_PERMS=1 to run it as $FALKORDB_USER regardless."
     drop_privs=""
 }
@@ -126,9 +127,13 @@ if [ ! -d "${FALKORDB_DATA_PATH}" ]; then
     mkdir -p "${FALKORDB_DATA_PATH}"
 fi
 
+# drop_privs: redis-server runs as falkordb. can_switch: root may switch to
+# falkordb at all, which keep_root does not change.
 drop_privs=""
+can_switch=""
 if [ "$(id -u)" = "0" ] && [ -z "${SKIP_DROP_PRIVS:-}" ] && has_cap 6 && has_cap 7; then
     drop_privs=1
+    can_switch=1
     if [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_data_dir_perms; then
         keep_root
     fi
@@ -140,14 +145,15 @@ if [ "${TLS:-0}" -eq "1" ]; then
     fi
     # Where falkordb can write the TLS directory, falkordb generates the files,
     # not root: anything that can write there could swap a file for a link
-    # after the check above. falkordb is first handed what is already there.
+    # after the check above. That holds when redis-server stays root for the
+    # data directory too. falkordb is first handed what is already there.
     # When that fails (a read-only mount, or a CA falkordb cannot read),
     # redis-server stays root and root generates the files, as before this
     # image dropped privileges. Elsewhere, falkordb cannot plant a link, so
     # root generates the files and then hands them over. SKIP_FIX_PERMS skips
     # only the handing over.
     # shellcheck disable=SC2016 # $1 is the inner shell's
-    if [ -n "$drop_privs" ] &&
+    if [ -n "$can_switch" ] &&
         gosu "$FALKORDB_USER" sh -c '[ -w "$1" ]' sh "${FALKORDB_TLS_PATH}"; then
         if [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
             keep_root
