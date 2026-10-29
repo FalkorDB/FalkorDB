@@ -125,7 +125,8 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
     /// the index `Ready`, after which the count is not read.
     pub(crate) read: u64,
     /// The most writers' changes the batch's commit catches up on, if it has to: entities
-    /// refreshed or tuples inserted, as [`CatchUp`] chooses. Past it the commit publishes nothing
+    /// refreshed, or tuples inserted, the batch's and those of the written entities it reads
+    /// again, as [`CatchUp`] chooses. Past it the commit publishes nothing
     /// ([`Discarded::CatchUpTooLarge`]). `None`: no limit.
     pub(crate) catch_up_limit: Option<u64>,
 }
@@ -514,9 +515,12 @@ impl Graph {
             });
             let batch_len = IndexColumn::batch_len(&column.work);
             let how = catch_up_by(written, batch_len);
+            // An insert adds the tuples of the entities no writer changed, and reads again every
+            // written entity in the batch's range. Capping that at the batch's `read`, its budget,
+            // lets nothing past the limit: only a budget above the limit is given one (SIZING).
             let work = match how {
                 CatchUp::Refresh => written,
-                CatchUp::Insert => batch_len as u64,
+                CatchUp::Insert => batch_len as u64 + written.min(column.read),
             };
             if column.catch_up_limit.is_some_and(|limit| work > limit) {
                 return IndexerCommit::Discarded(Discarded::CatchUpTooLarge);

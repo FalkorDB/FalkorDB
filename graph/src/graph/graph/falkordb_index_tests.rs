@@ -1986,14 +1986,15 @@ fn what_a_build_has_read_moves_with_its_cursor() {
 }
 
 /// A batch whose catch-up is limited publishes nothing when the catch-up would do more than the
-/// limit: refresh more entities, or insert more tuples, whichever it chose. At the limit it
-/// catches up. A batch that published nothing leaves the index as it was, still `Building`.
+/// limit: refresh more entities, or insert more tuples (the batch's, and one for each written
+/// entity it reads again), whichever it chose. At the limit it catches up. A batch that published
+/// nothing leaves the index as it was, still `Building`.
 #[test]
 fn a_batch_publishes_nothing_rather_than_catch_up_past_its_limit() {
     let budget = 3 * REFRESH_COST as usize;
     for (written, how, work) in [
         (2, CatchUp::Refresh, 2),
-        (3, CatchUp::Insert, budget as u64),
+        (3, CatchUp::Insert, budget as u64 + 3),
     ] {
         for limit in [work, work - 1] {
             let values: Vec<i64> = (0..2 * budget as i64).collect();
@@ -2029,6 +2030,55 @@ fn a_batch_publishes_nothing_rather_than_catch_up_past_its_limit() {
                 );
                 assert_eq!(published.index_build_read(&id), Some(0), "{what}");
             }
+        }
+    }
+}
+
+/// An insert catch-up counts the written entities it reads again, not only the batch's tuples. A
+/// batch reads twenty nodes that have no `v`, so it holds no tuple; a writer then gives all twenty
+/// a `v`. Inserting the batch means adding their twenty tuples, which a limit of 19 refuses and a
+/// limit of 20 lets through.
+#[test]
+fn an_insert_catch_up_counts_the_written_entities_it_reads_again() {
+    let n = 20;
+    let w = Arc::new("w".to_string());
+    let v = Arc::new("v".to_string());
+    for limit in [n as u64 - 1, n as u64] {
+        let (mut g, label, ids) = people_with(&w, &(0..n as i64).collect::<Vec<_>>());
+        create_index_on(&mut g, &label, &v);
+        let mvcc = MvccGraph::from_graph(g);
+        let id = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
+        let (prepared, mut batch) = prepare(&mvcc, &id, n);
+        batch.limit_catch_up(limit);
+        commit_write(&mvcc, |g| {
+            for &id in &ids {
+                set_attr(g, id, &v, Value::Int(1));
+            }
+        });
+        let committed = mvcc.commit_indexer_batch(prepared, &batch);
+        let published = mvcc.read();
+        if limit < n as u64 {
+            assert_eq!(
+                committed,
+                Ok(IndexerCommit::Discarded(Discarded::CatchUpTooLarge)),
+                "limit {limit}"
+            );
+            assert_eq!(
+                cursor(&published, EntityType::Node, &label, &v),
+                Some(BuildCursor::new(EntityType::Node)),
+                "limit {limit}: the index as it was"
+            );
+        } else {
+            assert_eq!(
+                committed,
+                Ok(IndexerCommit::CatchUp(CatchUp::Insert)),
+                "limit {limit}"
+            );
+            assert_eq!(
+                range_scan(&published, &label, &v, 1, 1),
+                ids,
+                "limit {limit}"
+            );
         }
     }
 }
