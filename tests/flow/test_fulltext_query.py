@@ -370,3 +370,37 @@ class testFulltextIndexQuery():
         )
         self.env.assertEqual(len(result.result_set), 5)
         self.env.assertEqual([row[0] for row in result.result_set], [0, 1, 2, 3, 4])
+
+    # A full-text index created with a language must stem the stored
+    # documents with that language, not English (#3546). Each case stores one
+    # inflected form and queries another, which only matches when the document
+    # and the query were stemmed by the same language. Run both with the index
+    # created before the data (commit path) and after it (population path).
+    def test06_fulltext_document_language(self):
+        cases = [
+            ("russian", "машины", "машина"),
+            ("italian", "mela", "mele"),
+        ]
+        for language, stored, queried in cases:
+            for index_first in (True, False):
+                graph = self.db.select_graph(f"lang_{language}_{index_first}")
+                node_index = f"CREATE FULLTEXT INDEX FOR (n:N) ON (n.v) OPTIONS {{language: '{language}'}}"
+                edge_index = f"CREATE FULLTEXT INDEX FOR ()-[e:E]-() ON (e.v) OPTIONS {{language: '{language}'}}"
+                data = "CREATE (:N {v: $s})-[:E {v: $s}]->(:M)"
+
+                if index_first:
+                    graph.query(node_index)
+                    graph.query(edge_index)
+                    wait_for_indices_to_sync(graph)
+                    graph.query(data, params={"s": stored})
+                else:
+                    graph.query(data, params={"s": stored})
+                    graph.query(node_index)
+                    graph.query(edge_index)
+                    wait_for_indices_to_sync(graph)
+
+                msg = f"{language} index_first={index_first}"
+                result = graph.query("CALL db.idx.fulltext.queryNodes('N', $q) YIELD node RETURN node.v", params={"q": queried})
+                self.env.assertEqual([r[0] for r in result.result_set], [stored], message=msg + " nodes")
+                result = graph.query("CALL db.idx.fulltext.queryRelationships('E', $q) YIELD relationship RETURN relationship.v", params={"q": queried})
+                self.env.assertEqual([r[0] for r in result.result_set], [stored], message=msg + " edges")
