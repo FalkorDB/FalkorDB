@@ -126,10 +126,8 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::clone(s))),
                 Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
-                Some(Value::Float(f)) => {
-                    // Format without trailing zeros; ensure at least one decimal
-                    let s = format!("{f}");
-                    Ok(Value::String(Arc::new(s)))
+                Some(&Value::Float(f)) => {
+                    Ok(Value::String(Arc::new(float_to_string(f))))
                 }
                 Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
                 Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
@@ -290,4 +288,57 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+}
+
+/// Cypher `toString(Float)`: the shortest representation that round-trips,
+/// always showing a fractional part, in the form of Java's `Double.toString`
+/// (what Neo4j prints): plain decimal for `1e-3 <= |f| < 1e7`, otherwise
+/// scientific with an upper-case `E` (`1.0E20`, `1.5E-7`). `NaN` and the
+/// infinities keep Rust's spelling.
+fn float_to_string(f: f64) -> String {
+    let abs = f.abs();
+    if abs == 0.0 || (1e-3..1e7).contains(&abs) {
+        // `{:?}` is shortest round-trip and appends `.0` to integral values.
+        return format!("{f:?}");
+    }
+    if !f.is_finite() {
+        return format!("{f}");
+    }
+    let sci = format!("{f:e}");
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    if mantissa.contains('.') {
+        format!("{mantissa}E{exp}")
+    } else {
+        format!("{mantissa}.0E{exp}")
+    }
+}
+
+#[cfg(test)]
+mod float_to_string_tests {
+    use super::float_to_string;
+
+    #[test]
+    fn matches_java_double_to_string() {
+        for (f, want) in [
+            (1.0, "1.0"),
+            (-2.0, "-2.0"),
+            (2.3, "2.3"),
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (1234567.0, "1234567.0"),
+            (1e7, "1.0E7"),
+            (1e20, "1.0E20"),
+            (-1.5e300, "-1.5E300"),
+            (0.001, "0.001"),
+            (1e-4, "1.0E-4"),
+            (1e-7, "1.0E-7"),
+            (1.25e-5, "1.25E-5"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+        ] {
+            assert_eq!(float_to_string(f), want, "{f:?}");
+        }
+    }
 }

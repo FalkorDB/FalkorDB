@@ -1130,6 +1130,25 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0][0], "0.9")
 
+        # integral floats keep a fractional part so they differ from Integers;
+        # shortest round-trip digits; Java Double.toString form (Neo4j) for
+        # magnitudes outside [1e-3, 1e7) (#2937)
+        for expr, want in [
+            ("1.0", "1.0"), ("-2.0", "-2.0"), ("2.3", "2.3"), ("0.0", "0.0"),
+            ("0.1+0.2", "0.30000000000000004"), ("1234567.0", "1234567.0"),
+            ("1e7", "1.0E7"), ("1e20", "1.0E20"), ("1.5e300", "1.5E300"),
+            ("1e-7", "1.0E-7"), ("0.001", "0.001"), ("0.0/0", "NaN"),
+        ]:
+            for fn in ("toString", "toStringOrNull"):
+                res = self.graph.query(f"RETURN {fn}({expr})")
+                self.env.assertEqual(res.result_set[0][0], want)
+        res = self.graph.query("RETURN [x IN [1, 2.3, 3.0, true, 'apa'] | toString(x)]")
+        self.env.assertEqual(res.result_set[0][0], ['1', '2.3', '3.0', 'true', 'apa'])
+
+        # other #2937 rows that stay as they are
+        res = self.graph.query("RETURN toInteger('1e3'), toFloat('0x10'), toInteger('0x10')")
+        self.env.assertEqual(res.result_set[0], [1000, None, None])
+
         # boolean
         query = """RETURN toString(true)"""
         actual_result = self.graph.query(query)
