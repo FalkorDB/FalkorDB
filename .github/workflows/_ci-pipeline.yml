@@ -500,6 +500,8 @@ jobs:
         #
         # `test_constraint` is here because under the flag a unique constraint looks up duplicates
         # in the native index, and every class in that file creates or enforces constraints.
+        # `test_memory_usage` is here because only this build reports the native index's size,
+        # and its test checks that size against what CREATE INDEX costs the server.
         shell: bash
         run: |
           set +e
@@ -508,7 +510,7 @@ jobs:
           for t in tests/flow/test_index_create tests/flow/test_index_scans \
                    tests/flow/test_index_updates tests/flow/test_index_delete \
                    tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates \
-                   tests/flow/test_constraint; do
+                   tests/flow/test_constraint tests/flow/test_memory_usage; do
             TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
             status=${PIPESTATUS[0]}
             echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log
