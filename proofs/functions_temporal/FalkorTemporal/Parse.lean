@@ -216,8 +216,8 @@ theorem parseTime_compact_rejects (s0 : String) (hc : ((s0.splitOn ".").headD s0
   simp [hc, hd]
 
 /-- The `W` dispatch comes before the #3125 guard, so the guard does not reach
-`parse_week_date`. That used to crash on `date('2020W1é')` (`&rest[..2]`, W2-temporal-3,
-`pre2950_week_slice_panics`); since #2950 it splits with `split_at_checked`
+`parse_week_date`. That used to crash on `date('2020W1é')` (`&rest[..2]`, W2-temporal-3);
+since #2950 it splits with `split_at_checked`
 (temporal.rs:285-287) and errors (`weekSlice_total`, `week_slice_errors`). -/
 theorem parseDate_week_first (s : String) (hW : s.contains 'W' = true) :
     parseDate C s = C.parseWeek s := by
@@ -269,26 +269,11 @@ structure DurAcc where
   seconds : Int := 0
 
 /-- `n * 7` on i64 in a release build wraps (`wrapMul` in Duration.lean). Used only by
-the pre-#2987 loop `pre2987_dateLoop`. -/
+the pre-#2987 loop (removed; in 17ccc5412). -/
 def wrap64 (x : Int) : Int := (x + 2 ^ 63) % 2 ^ 64 - 2 ^ 63
 
 /-- `i64::checked_*`: `some x` iff `x` is in i64 range. -/
 def chk64 (x : Int) : Option Int := if decide (-2 ^ 63 ≤ x) && decide (x < 2 ^ 63) then some x else none
-
-/-- Pre-#2987 (9d3869aa8) date-part loop: `W` and `D` wrapped in release. History. -/
-def pre2987_dateLoop : List Char → String → DurAcc → Except String DurAcc
-  | [], _, a => .ok a
-  | ch :: cs, buf, a =>
-    if ch.isDigit || ch == '-' then pre2987_dateLoop cs (buf.push ch) a
-    else match C.parseI64 buf with
-      | none => .error s!"Invalid number in duration: {buf}"
-      | some n =>
-        match ch with
-        | 'Y' => pre2987_dateLoop cs "" { a with years := n }
-        | 'M' => pre2987_dateLoop cs "" { a with months := n }
-        | 'W' => pre2987_dateLoop cs "" { a with days := wrap64 (a.days + wrap64 (n * 7)) }
-        | 'D' => pre2987_dateLoop cs "" { a with days := wrap64 (a.days + n) }
-        | _ => .error s!"Unknown duration component: {ch}"
 
 /-- The date-part loop (temporal.rs:405-431): digits and `-` accumulate, a letter commits
 the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
@@ -370,7 +355,7 @@ theorem dateLoop_day_overflow (cs : List Char) (buf : String) (a : DurAcc) (n : 
   simp [dateLoop, hp, hov]
 
 /-- The repro `duration('P2635249153387078803W')`: once the number parses, main errors
-(pre-#2987: `P5D`, `pre2987_week_string_wraps`). -/
+(pre-#2987: `P5D`). -/
 theorem week_string_overflow_errors (cs : List Char) (buf : String) (a : DurAcc)
     (hp : C.parseI64 buf = some 2635249153387078803) :
     dateLoop C ('W' :: cs) buf a =

@@ -51,7 +51,7 @@ Every `file:line` here is the PR branch. Imports, not copies: pending_commit
    live: a 300-entry matrix's `x` array is 4096 bytes on main, allocation slack
    included, and 2400 on the PR); `encodePR_bytes_eq` gives equality exactly when the
    copy unloads to the same container. (b) `pr_self_never_unloaded`;
-   history `pre3438_main_empties_self` (#3434; live: `nvals = 0` mid-encode on
+   (#3434; counterexample removed; in 17ccc5412; live: `nvals = 0` mid-encode on
    main). (c) `pr_no_leak_no_double_free`, `pr_panic_after_dup`,
    `pr_writes_self_content`, `pr_no_heap_addresses` (#3097 kept).
    The tensor fast path *depends* on (b): it is the first caller to pass the

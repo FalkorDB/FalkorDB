@@ -21,8 +21,8 @@ entry list and each operation *is* its proven content spec. `enc`/`keyOf`/`docOf
 | `tFromSorted` | `CowBTree::from_sorted` (`:190`) | cow_btree `fromSorted_wf`, index_layer (contents = input) |
 
 **The hypothesis these specs need, discharged.** They are proven under cow_btree's `TreeWF`. Before
-#3283 `remove_batch` did not preserve it (cow_btree Bug 3 = FINDINGS W7-btree-1, now
-`pre3283_rb_remove_batch_not_wf`), so the numeric-index rows that read through the tree were
+#3283 `remove_batch` did not preserve it (cow_btree Bug 3 = FINDINGS W7-btree-1;
+counterexample removed, in 17ccc5412), so the numeric-index rows that read through the tree were
 CONDITIONAL. #3283 (799968a8b) fixed it, and cow_btree now proves every tree the API can build is
 well-formed (`Reachable_wf_asserted`, from `removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`,
 `insert_spec`, `remove_spec`; `BRANCH_MAX >= 4` is the const assert). `Contract.lean` proves each

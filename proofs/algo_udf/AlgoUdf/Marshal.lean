@@ -15,8 +15,7 @@ import AlgoUdf.Nesting
 | `classify`, `runShape`, `pathArm`, `pathLoop`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :270-470 (dispatch / recursive arms; array :319, path :359, plain object :443), `js_to_value_at` :262-267 |
 | `fromJs`              | `js_to_value` :252 (= `js_to_value_at(.., 0)`) |
 | `esc`, `unesc`        | key escaping :171-177 / :458-462 |
-| `pre3336_toF`, `pre3336_fromF` | historical: both conversions before #3336 (`33a956360`): no depth check (`cap = none`) |
-| `pre3074_*`           | historical: `js_to_value` before #3074 (`7a81c83b0`) |
+| `pre3336_fromF`       | historical: `js_to_value` before #3336 (`33a956360`): no depth check (`cap = none`) |
 
 `with_stack` (:80, `stacker::maybe_grow`) only switches the machine stack; `f` counts conversion
 levels, which is what the depth cap bounds (`MarshalCap.lean`).
@@ -179,9 +178,6 @@ def toF (cap : Option Nat) : Nat → Nat → RV → R JsV
     always suffice, so the `none` arm is unreachable. -/
 def toJs (v : RV) : Except String JsV := Rget (toF (some MAX) (MAX + 1) 0 v)
 
-/-- HISTORICAL (before #3336, `33a956360`): `value_to_js` recursed with no depth check. -/
-def pre3336_toF (f : Nat) (v : RV) : R JsV := toF none f 0 v
-
 /-- u64 read of a marker id (`obj.get::<u64>`): a non-negative integral number. -/
 def asU64 : JsV → Option Nat
   | .num (.zero _) => some 0
@@ -205,35 +201,6 @@ def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except S
     else .error "Invalid Date value"
   | .regexp s => .ok (.str s)
   | .plain => do let kv ← props; pure (.map kv)
-
-/-- HISTORICAL (before #3074, `7a81c83b0`): Date / RegExp chosen by
-`obj.get("constructor").name`, which a plain object can carry as an own key. -/
-def pre3074_fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except String (List (List Char × RV))) : Except String RV :=
-  match ctorName ps kind with
-  | some "Date" => match kind with
-    | .date ms => if ms.finite then
-        (let secs := ms.toInt.tdiv 1000
-         match get ps "__falkor_temporal_type".toList with
-         | some (.str "date") => .ok (.date secs)
-         | _ => .ok (.datetime secs))
-      else .error "Invalid Date value"
-    | _ => .error "Date getTime error"
-  | some "RegExp" => match kind with
-    | .regexp s => .ok (.str s)
-    | _ => .ok (.str "[object Object]")  -- Object.prototype.toString
-  | _ => do let kv ← props; pure (.map kv)
-
-/-- HISTORICAL (before #3074): the number arm turned -0.0 into Int 0. -/
-def pre3074_num (f : F64) : RV := if f.integral && f.small then .int f.toInt else .float f
-
-/-- HISTORICAL (before #3074): vecf32 elements had to be finite. -/
-def pre3074_fromVec : List JsV → Except String RV
-  | [] => .ok (.vecf32 [])
-  | .num f :: xs => if f.finite then (do
-        let r ← pre3074_fromVec xs
-        match r with | .vecf32 t => pure (.vecf32 (f :: t)) | _ => .error "unreachable")
-      else .error "VecF32 element is not finite"
-  | _ :: _ => .error "VecF32 item error"
 
 /-- vecf32 arm (:324-336): every element converts (`arr.get::<f64>`, then `as f32`;
 the abstract `F64` already stands for the f32 value), inf / NaN included since #3074. -/

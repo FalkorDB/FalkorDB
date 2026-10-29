@@ -10,7 +10,6 @@ frame it as `-<text>\r\n` / `+<text>\r\n` (`Resp.respT`).
 | here | there |
 | --- | --- |
 | `scrub`, `legalResp` | `str_as_legal_resp_string` on the `fix/resp-string-bytes` fork branch (#3428, main b84473a7f): `s.bytes().map(\r \n NUL → space)`, then `CString::from_vec_unchecked` |
-| `pre3428_legalResp` | the same before #3428 (b6567cb97, fork `master`): `s.chars().map(\r \n NUL → b' ', c → c as u8)`, then `CString::new(..).unwrap()` |
 
 Before #3428 every char was truncated to its low byte (`c as u8`), so non-ASCII text was
 garbled (`é` U+00E9 became the lone byte 0xE9, not UTF-8) and any char whose low byte is 0
@@ -85,19 +84,6 @@ theorem legalResp_clean (s : String) (h : ∀ b ∈ bytesOf s, b ≠ 13 ∧ b �
   simp [scrub, h1, h2, h3]
 
 /-! ### History: before #3428 (b6567cb97) -/
-
-/-- `str_as_legal_resp_string` before #3428: `c as u8` per char (low byte of the code point),
-then `CString::new(..).unwrap()` — `none` is that `unwrap` panicking on an interior NUL. -/
-def pre3428_legalResp (cs : List Char) : Option (List UInt8) :=
-  let bs := cs.map fun c =>
-    if c = '\r' ∨ c = '\n' ∨ c = '\x00' then (32 : UInt8) else (c.val % 256).toUInt8
-  if bs.contains 0 then none else some bs
-
-/-- #3185: `一` (U+4E00) truncates to 0x00, so the old conversion panicked. -/
-theorem pre3428_cjk_panics : pre3428_legalResp ['一'] = none := by decide
-
-/-- …and `é` (U+00E9) was sent as the lone byte 0xE9, which is not UTF-8. -/
-theorem pre3428_latin1_garbled : pre3428_legalResp ['é'] = some [0xE9] := by decide
 
 /-- **PROVEN** (#3428): main sends `一` as its UTF-8 bytes. -/
 theorem legalResp_cjk : legalResp "一" = [0xE4, 0xB8, 0x80] := by decide

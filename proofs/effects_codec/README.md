@@ -31,7 +31,7 @@ No, for the value decoder. `decodeV_safe` says that for *any* bytes, `Value::dec
 - terminates (the Lean model needs a step budget, and `loop_fuel_enough` proves the budget never runs out: every turn reads a 4-byte tag);
 - reserves memory linearly (`decode_reserves_linear`): the list capacities one decode asks for sum to at most a quarter of the input's length.
 
-- **Before #3267, not the last one.** Each list's claimed width was checked against the remaining bytes alone, so every level of `[[[…` could claim the whole remainder. `hostile 10` (80 bytes) reserved 90 elements (`pre3267_hostile_quadratic`); 1 MB reserved about 256 GB, and the Rust test measured 2.3 GB of RSS from a client-sent `GRAPH.EFFECT`.
+- **Before #3267, not the last one.** Each list's claimed width was checked against the remaining bytes alone, so every level of `[[[…` could claim the whole remainder. `hostile 10` (80 bytes) reserved 90 elements; 1 MB reserved about 256 GB, and the Rust test measured 2.3 GB of RSS from a client-sent `GRAPH.EFFECT`.
 - **On main, yes.** `read_one` checks the claim together with the siblings its ancestors still owe (`guard_count(n + owed)`). `capTrace_linear` proves the bound for every input, and `hostile_refused_second_level` shows the crafted input is refused at its second level, as the Rust test asserts.
 
 **3. Do floats survive exactly, including NaN and `-0.0`?**
@@ -42,7 +42,7 @@ Yes. On this wire a float *is* its 64-bit pattern, so "round-trips" means bit fo
 
 Yes, under one stated assumption about zstd. `openPayload_maybeCompress`: whatever `maybe_compress` produces, `open_payload` returns the original record bytes, for payloads of any length.
 
-- **Before #3278, only below 4 GiB.** Both frame lengths were written `as u32`. A payload of 4 GiB of records or more that zstd shrank was framed with a wrapped length, and `pre3278_wrapped_frame_unreadable` proves no zstd can make such a frame open to its records. The replica would refuse it and loop on forced resyncs.
+- **Before #3278, only below 4 GiB.** Both frame lengths were written `as u32`. A payload of 4 GiB of records or more that zstd shrank was framed with a wrapped length, and no zstd can make such a frame open to its records (counterexample removed; in 17ccc5412). The replica would refuse it and loop on forced resyncs.
 - **On main, yes.** `maybe_compress` leaves such a payload uncompressed, and `frame_prefix` refuses a length that does not fit (`framePrefix_none`). `fmtReplicate_transparent` lifts this to `EffectsFormat::replicate`: what the replica receives opens to exactly the records the master built. `maybeCompress_shrinks`: a payload is only ever compressed when that makes it smaller.
 
 zstd and crc32 are outside Rust, so the proof does not model them. It takes their contract as the hypothesis `CodecOK`: decompressing what zstd compressed gives the input back, and crc32 returns a 32-bit number.
@@ -87,8 +87,8 @@ All but one. `bSim_lossy`: the similarity function of a vector index is normalis
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | the wave-1 `CREATE_NODE` counterexample, now the `#guard`s after `encRec_refuses_shape` in `Records.lean` | The v3 encoder wrote records its own reader rejects: a batch of zero ids, and a row block that is not `count × attrs`. The spare value was parsed as the next opcode | Fixed by #2916 (closes #2914); now `encRecord_ok_shape`, `readRecord_encRecord_wf` |
-| 2 | `pre3267_hostile_quadratic` | Nested lists could each claim the whole remaining buffer, so the decoder's reservations grew with the square of the payload (2.3 GB RSS from 1 MB) | Fixed by #3267 (`eaa65eeba`); now `capTrace_linear`, `hostile_refused_second_level` |
-| 3 | `pre3278_wrapped_frame_unreadable` | A payload of 4 GiB of records or more was compressed with a wrapped length that no replica can open | Fixed by #3278 (`dcbd445d1`, issue #3276); now `openPayload_maybeCompress` with no length hypothesis, `framePrefix_none` |
+| 2 | removed (17ccc5412) | Nested lists could each claim the whole remaining buffer, so the decoder's reservations grew with the square of the payload (2.3 GB RSS from 1 MB) | Fixed by #3267 (`eaa65eeba`); now `capTrace_linear`, `hostile_refused_second_level` |
+| 3 | removed (17ccc5412) | A payload of 4 GiB of records or more was compressed with a wrapped length that no replica can open | Fixed by #3278 (`dcbd445d1`, issue #3276); now `openPayload_maybeCompress` with no length hypothesis, `framePrefix_none` |
 
 Two findings are modelled but not bugs on main:
 
@@ -102,7 +102,7 @@ Two findings are modelled but not bugs on main:
 | `FalkorEffectsCodec.lean` | Root: the report header, imports, `#print axioms` for the headline theorems |
 | `Prim.lean` | `Bytes`, decode errors `DErr`, little-endian integers, `take`, `guardCount`, strings; "never panics" and "only consumes" combinators |
 | `Cursor.lean` | The real `Reader { buf, pos }` (`Rd`) and `EffectWrite`; every method refines the suffix model |
-| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with #3267's `owed`; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear`; the `pre3267_*` history |
+| `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with #3267's `owed`; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear`; the pre-#3267 counterexamples (removed; in 17ccc5412) history |
 | `Records.lean` | The original model of a subset of records (`Rec`, `encRec`, `readRec`, `readAll`), the abstract `IdCodec`, `readAll_concat`, the refused-shape `#guard`s |
 | `RecBlocks.lean` | `Blk` and `Blk.seq`: blocks for integers, strings, label sets, attribute ids, ids, rows, optional fields, counted lists |
 | `RecArms.lean` | Entity, constraint and status tags; `indexTypeOf`; attribute and schema references; index schemas (the encoder sorts them by id) |
@@ -110,7 +110,7 @@ Two findings are modelled but not bugs on main:
 | `RecFull.lean` | `Record` with all fourteen variants, `writeHeader`, `checkRowShape`, `encRecord`, `readRecord` |
 | `RecRT.lean` | `readRecord_encRecord` for every variant, `writeHeader_spec`, `checkEndpoints_ok`, `checkIndex_ok`, `relType_rt` |
 | `RecShape.lean` | #2916: `encRecord_ok_shape`, the refusal theorems, `readRecord_empty`, `readRecord_encRecord_wf` |
-| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat`; the `pre3278_*` history |
+| `Payload.lean` | `openPayload`, `maybeCompress`, `framePrefix`, the `Codec`/`CodecOK` hypothesis, `readAllRecords`, `records_concat`; the pre-#3278 counterexamples (removed; in 17ccc5412) history |
 | `Format.lean` | `format.rs`: `fmtReplicate_transparent`, `describe_spec`, `build_ok`, `payload.rs`/`announce.rs` glue, `LocalName` |
 | `ModRs.lean` | `effects/mod.rs`: version dispatch (`describeTop_spec`, `applyTop_spec`), `EffectsBuffer`; `v3/mod.rs` tags and `seal` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

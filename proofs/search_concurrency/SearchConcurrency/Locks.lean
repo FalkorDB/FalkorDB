@@ -333,14 +333,6 @@ enabled event: main holds the GIL waiting for queue space, the worker waits for 
 GIL. (Live: 11 workers, cap 1024, 1400 writes on one graph or 3000 over 16 graphs.) -/
 def deadState : Pool := { queue := 1, running := 1, mainBlocked := true, pendingClients := 1 }
 
-theorem pre3014_pool_deadlock_reachable :
-    let s0 : Pool := { queue := 0, running := 0, mainBlocked := false, pendingClients := 3 }
-    let s1 := { s0 with queue := 1, pendingClients := 2 }
-    let s2 := { s1 with queue := 0, running := 1 }
-    let s3 := { s2 with queue := 1, pendingClients := 1 }
-    s1 ∈ poolSucc 1 1 s0 ∧ s2 ∈ poolSucc 1 1 s1 ∧ s3 ∈ poolSucc 1 1 s2 ∧
-    deadState ∈ poolSucc 1 1 s3 ∧ stuck 1 1 deadState = true := by decide
-
 /-- The fix proposed before #3014: `spawn` from the main thread must not block (reject
 with "Max pending queries exceeded", or an unbounded queue as C's thpool has). #3014
 does both; its actual protocol is `succ3014` below. -/
@@ -433,7 +425,7 @@ theorem never_stuck_3014 (max : Nat) (s : P3014) (hw : 0 < w)
   · simp [h] at h4
 
 /-- **The main thread never blocks**: with a command pending, dispatching it (admitted or
-rejected) is always enabled — unlike `pre3014_pool_deadlock_reachable`'s `mainBlocked`. -/
+rejected) is always enabled (the pre-#3014 model blocked on a full queue). -/
 theorem main_never_blocks (max : Nat) (s : P3014) (h : s.pending > 0) :
     ∃ t ∈ succ3014 w max s, t.pending = s.pending - 1 := by
   by_cases hc : s.count < max

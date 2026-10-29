@@ -62,9 +62,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   arm preserves well-formedness (the fix, proved).
 * Counterexamples (all by `decide`, all reproduced in Rust):
   `gate_drops_cancelled`, `gate_drops_schema_only`, `next_payload_refused`,
-  `cancelled_edge_attr_dropped`. Historical, fixed by #3022 (`18fc277b9`):
-  `pre3022_update_dead_not_wf`, `pre3022_update_dead_breaks_wf`,
-  `pre3022_setlabels_dead_not_wf`, `pre3022_delete_endpoint_not_wf`.
+  `cancelled_edge_attr_dropped`. The ones fixed by #3022 (`18fc277b9`) are removed (in 17ccc5412).
 
 ## #3022 (`Liveness.lean`): every record that acts on an entity checks it is live
 
@@ -90,9 +88,7 @@ Builds with `lake build`; no `sorry`, `admit` or `axiom`.
   a repeat (`nodes.len() != ids.count()`, `apply.rs:222`). `applyRec .createNode` now
   checks `ids.Nodup` first; `applyRec_binv`/`apply_wf` re-proved. New
   `createNode_repeat_refused`, `createNode_ok_nodup`,
-  `a_repeated_node_id_in_one_create_is_refused` (the Rust test, by `decide`). History:
-  `pre3298_applyRec`, `pre3298_repeated_id_applies` (`[2, 3, 2]` applied, one node for
-  two). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
+  `a_repeated_node_id_in_one_create_is_refused` (the Rust test, by `decide`). The commit gate (W2-effects-1, `commit.rs:107-108`) is unchanged.
 
 ## Wave 4 additions (`Digests`, `ApplyHelpers`, `EmitDDL`)
 

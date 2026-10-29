@@ -208,15 +208,6 @@ def percentile (v p : AV F) : AV F → Res (AV F)
         .ok (.list [.float (if xs.isEmpty then num M p else q), .list (xs ++ [.float (num M v)])])
       | _ => .unreachable
 
-/-- The step before #3007 (main 289c201fe): every row overwrote the stored
-percentile, so the *last* row's percentile won (W2-agg: C keeps the first). -/
-def pre3007_percentile (v p : AV F) : AV F → Res (AV F)
-  | ctx => match v with
-    | .null => .ok ctx
-    | _ => match ctx with
-      | .list [.float _, .list xs] => .ok (.list [.float (num M p), .list (xs ++ [.float (num M v)])])
-      | _ => .unreachable
-
 theorem percentile_collects (p : AV F) (vs : List (AV F)) :
     ∀ q xs, ∃ q', foldAgg (fun v acc => percentile M v p acc) (.list [.float q, .list xs]) vs =
       .ok (.list [.float q', .list (xs ++ (vs.filter (! isNull ·)).map (fun v => .float (num M v)))]) := by
@@ -287,17 +278,6 @@ theorem percentile_first_row (rs : List (AV F × AV F)) :
     · have : v = .null := by cases v <;> simp_all [isNull]
       subst this
       simpa [foldPct, percentile_step_null, isNull, firstPct] using ih q
-
-/-- History (#2980, fixed by #3007): with two rows whose percentiles differ, the old
-step kept the *last* row's percentile `b`; main keeps the first row's `a`. -/
-theorem pre3007_percentile_last_wins (x y a b q : F) :
-    foldPct (pre3007_percentile M) (.list [.float q, .list []])
-        [(.float x, .float a), (.float y, .float b)] =
-      .ok (.list [.float b, .list [.float x, .float y]]) ∧
-    foldPct (percentile M) (.list [.float q, .list []])
-        [(.float x, .float a), (.float y, .float b)] =
-      .ok (.list [.float a, .list [.float x, .float y]]) := by
-  constructor <;> rfl
 
 /-- `stDev`/`stDevP` step on `[sum, values]`. -/
 def stdev : AV F → AV F → Res (AV F)

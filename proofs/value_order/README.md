@@ -72,15 +72,15 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912 (`pre2912_sortCmp_not_antisymmetric`) |
+| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912 (counterexample removed; in 17ccc5412) |
 | 2 | `mixed_numeric_not_transitive` | `2⁵³ = 2⁵³.0 = 2⁵³+1` but `2⁵³ < 2⁵³+1`: ints were rounded through `f64`. Same panic | Fixed by #2912 |
 | 3 | `map_order_not_transitive` | `compare_map` returned `Equal` at the first mixed-type value pair, which creates a cycle. Same panic | Fixed by #2912 |
-| 4 | `pre2917_map_neq_both_false` | `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were both false | Fixed by #2917 |
+| 4 | removed (17ccc5412) | `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were both false | Fixed by #2917 |
 | 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | Harmless: grouping now uses `sort_cmp` |
 | 6 | `nan_eq_irreflexive` | `NaN != NaN`, so each NaN row became its own group | Fixed by #2917 (`main_nans_one_key`) |
 | 7 | `fx_row_collision`, `fx_collision_general` | DISTINCT, `count(DISTINCT)` and the MERGE cache keep only the 64-bit Fx hash; a collision is one subtraction away and the second row is dropped | **Present on main** (#2780 closed as not planned) |
-| 8 | `pre2917_min_nan_picks_larger` | `min([1.0, NaN, 3.0])` returned 3.0 | Fixed by #2917 (`min_nan_ignored`) |
-| W9-hash-1 | `pre2917_float_nan_hash_differs` | `count(DISTINCT x)` over `[NaN, -NaN]` was 2 (C: 1) | Fixed by #2917 |
+| 8 | removed (17ccc5412) | `min([1.0, NaN, 3.0])` returned 3.0 | Fixed by #2917 (`min_nan_ignored`) |
+| W9-hash-1 | removed (17ccc5412) | `count(DISTINCT x)` over `[NaN, -NaN]` was 2 (C: 1) | Fixed by #2917 |
 
 ### The bug this project missed, and what changed
 

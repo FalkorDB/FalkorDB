@@ -8,8 +8,7 @@ New `ConstEval`: the plan-time constant evaluator (`evalG` with every variable a
 error) is sound — `constEval_sound` — which discharges `hconst` for
 `eliminate_whole_filter` and `htrue` for `andLoop_drop_true`
 (`constTrue_filter`, `andLoop_drop_constTrue`): `is_constant_true` and
-`eliminate_true_filters` move from CONDITIONAL to PROVEN. History:
-`pre2904_pow_constant_true`. The other commits since 289c201fe do not touch
+`eliminate_true_filters` move from CONDITIONAL to PROVEN. The other commits since 289c201fe do not touch
 `graph/src/planner/optimizer/`.
 
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
@@ -57,7 +56,7 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
 * `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`,
   and (#2904) `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` —
   eliminate_true_filters is exact: the plan-time constant verdict is the runtime
-  verdict on every row (before #2904 false for `^`, #2902: `pre2904_pow_constant_true`).
+  verdict on every row (before #2904 false for `^`, #2902).
 * `refsNew_complete` — #2390's `ir_references_variable` (references.rs) sees every read of every
   IR variant of a plan the planner built (`PlanInv`: inline maps are Filters —
   proofs/planner_build `planMatch_stripped`); `refsNew_sound` — it reports only reads or
@@ -66,7 +65,7 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
 * `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check (since #2390)
   sees every reader of the intermediate and both edges, inside or outside the hops.
 * `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` — PR #2918 (its walk is still
-  not merged); `pre2390_refs_sound`, `ancestors_le_outside` — the old oracle erred only toward collapsing.
+  not merged); `ancestors_le_outside` — the old oracle erred only toward collapsing.
 * `fuse_same_support` — anonymous-chain fusion keeps the set of rows (and,
   `fuse_changes_multiplicity`, collapses paths to pairs exactly as C does).
 * `fuse_optional_correct` — Optional-over-traverse fusion is column-exact.

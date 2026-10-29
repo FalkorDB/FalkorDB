@@ -1144,26 +1144,6 @@ historical note. -/
 /-- `IdList::from_segments` (:1183), since #2920: `run.start = segments.len()`. -/
 def fromSegments (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length, none⟩
 
-/-- **Historical** (before #2920, `2ef102ae0`): the run started AT the last decoded
-segment, `segments.len().saturating_sub(1)`, whatever that segment was. -/
-def fromSegmentsPre2920 (segs : List Seg) : St := ⟨segs, (flat segs).length, segs.length - 1, none⟩
-
-/-- **Historical counterexample, fixed by #2920 (`2ef102ae0`).** A decoded `[10, 9, 8]`
-(one `RangeDescending`), then `20, 22` with the bitmap winning at the second: the
-pre-fix collapse read the descending range back ascending. Rust repro was
-`push_after_decode_reorders_a_descending_tail`; main's regression test is
-`pushing_onto_a_decoded_list::a_descending_tail_is_not_reversed_by_a_later_collapse`. -/
-theorem pre2920_decoded_then_pushed_reorders :
-    ((pushAll [false, true] (fromSegmentsPre2920 [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
-      = some [8, 9, 10, 20, 22] := by decide
-
-/-- **Historical counterexample, fixed by #2920.** A decoded `[7, 7]` (one `Repeat`),
-then `20, 22` with the bitmap winning: the pre-fix run started at the `Repeat` and
-the `assert!` fired (`none`). Main's regression test:
-`a_repeat_tail_is_not_folded_into_a_later_collapse`. -/
-theorem pre2920_decoded_then_pushed_asserts :
-    pushAll [false, true] (fromSegmentsPre2920 [.rep 7 2]) [20, 22] = none := by decide
-
 /-- The same two inputs on the current `from_segments` keep every id in order. -/
 example : ((pushAll [false, true] (fromSegments [.rdesc 10 3]) [20, 22]).map (fun st => flat st.segs))
     = some [10, 9, 8, 20, 22] := by decide

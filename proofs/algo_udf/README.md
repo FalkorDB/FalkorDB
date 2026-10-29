@@ -46,11 +46,10 @@ A few changes are shared with C and are not bugs: an integral float comes back a
 
 **4. Can a deep or cyclic value crash the server through a UDF?**
 
-Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js`/`js_to_value` recursed with no limit, so a UDF returning a self-containing array (`a = [a]`) overflowed the stack (`pre3336_self_array_overflows`). Now both directions count depth against `MAX_UDF_VALUE_NESTING = 1024`:
+Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js`/`js_to_value` recursed with no limit, so a UDF returning a self-containing array (`a = [a]`) overflowed the stack (counterexample removed; in 17ccc5412). Now both directions count depth against `MAX_UDF_VALUE_NESTING = 1024`:
 
 - `fromJs_frames`, `toJs_frames`: at most cap + 1 levels are ever used, for any input, cyclic ones included;
 - `fromJs_past_cap`, `toJs_past_cap`: past the cap the result is an error, never an overflow;
-- `fromJs_eq_pre3336`, `toJs_eq_pre3336`: below the cap the result is exactly what the old code returned.
 
 The JavaScript side is modelled over a QuickJS heap, so a value that contains itself is a legal input to these theorems.
 
@@ -94,16 +93,16 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 |---|---|---|---|
 | 1 | `wcc_compact_component_id_not_member` | WCC and CDLP with `nodeLabels` return a compact index as the component id, not a node id | **Open** |
 | 2 | `unfiltered_drops_high_ids` | HarmonicCentrality sizes its source vector by node count, not the id bound, so nodes with high ids (after deletes) are dropped | **Open** |
-| 3 | `pre3058_pagerank_unknown_label_compact_empty` | `pageRank` with an unknown label errored (a 0x0 matrix reached LAGraph) | Fixed by #3058 (#3056): `pagerank_unknown_label_empty`, `pagerank_compact_nonempty` |
+| 3 | removed (17ccc5412) | `pageRank` with an unknown label errored (a 0x0 matrix reached LAGraph) | Fixed by #3058 (#3056): `pagerank_unknown_label_empty`, `pagerank_compact_nonempty` |
 | 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness, labelPropagation and HarmonicCentrality with an unknown `nodeLabels` / `relationshipTypes` entry returned no rows; C errors | Fixed by #3058 (#3056): `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `known_messages` |
-| 5 | `pre3113_cost_default_diverges` | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), but also with a configured one the edge lacks, where C charges 1 (row 19) |
+| 5 | removed (17ccc5412) | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path still reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), but also with a configured one the edge lacks, where C charges 1 (row 19) |
 | 6 | `forged_node_marker`, `forged_edge_marker` | A UDF result object carrying a forged `__falkor_type` marker is trusted, which panics the reply or creates a dangling edge (W3-algo-1) | **Open** |
-| 7 | `pre3074_neg_zero_not_preserved` | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
-| 8 | `pre3074_constructor_key_breaks_roundtrip`, `pre3074_constructor_regexp_becomes_string` | A map with a `constructor` key was taken for a `Date` or a `RegExp` | Fixed by #3074 |
-| 9 | `pre3074_vecf32_inf_not_roundtrip` | A vector holding ±inf could not pass through a UDF | Fixed by #3074 (`vecf32_inf_rt`) |
-| 10 | `pre3079_validate_lacks_graph` | The validation context at `GRAPH.UDF LOAD` had no `graph` global | Fixed by #3079 (`graph_global_in_both`) |
-| 11 | `pre3336_self_array_overflows`, `pre3336_nestArr_overflows` | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
-| 12 | `pre3066_collision_accepted`, `dotted_collision`, `pre3066_delete_breaks_other`, `pre3066_case_folded` | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
+| 7 | removed (17ccc5412) | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
+| 8 | removed (17ccc5412) | A map with a `constructor` key was taken for a `Date` or a `RegExp` | Fixed by #3074 |
+| 9 | removed (17ccc5412) | A vector holding ±inf could not pass through a UDF | Fixed by #3074 (`vecf32_inf_rt`) |
+| 10 | removed (17ccc5412) | The validation context at `GRAPH.UDF LOAD` had no `graph` global | Fixed by #3079 (`graph_global_in_both`) |
+| 11 | removed (17ccc5412) | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
+| 12 | `dotted_collision`; rest removed (17ccc5412) | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
 | 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Open** (#3083; PR #3084) |
 | 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Open** |
 | 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
@@ -112,7 +111,7 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
 | 19 | `bug3121_fastpath_missing_cost_zero` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks costs 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne`; the enumeration path satisfies it (`rust_enum_ok`) | **Open** (#3121) |
 | 20 | `bug3349_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection fail with -1000: the 1×1 compact matrix is stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal`; CDLP satisfies it (`cdlp_total`) | **Open** (#3349) |
-| 21 | `pre3454_deleted_node_empty`, `pre3454_edge_source_empty` (`UdfNodeView.lean`) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
+| 21 | removed (17ccc5412) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
 
 Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
 

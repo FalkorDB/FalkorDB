@@ -25,7 +25,7 @@ graph/src/runtime/ordermap.rs	OrderMap::index	209	PROVEN	indexM: indexM_eq, inde
 graph/src/runtime/ordermap.rs	OrderMap::into_iter	221	PROVEN	intoIterM: intoIterM_eq
 graph/src/runtime/ordermap.rs	OrderMap::extend	227	PROVEN	fromList (repeated insertL): fromList_nodup, getL_fromList_snoc
 graph/src/runtime/orderset.rs	OrderSet::default	27	PROVEN	emptyS: containsS_emptyS, emptyS_nodup
-graph/src/runtime/orderset.rs	OrderSet::from_vec	42	PROVEN	fromVecGo/fromVec: fromVec_nodup, fromVec_of_nodup, fromVec_sublist, containsS_fromVec, containsS_removeS_fromVec, fromVec_eq_fromListS, fromVec_drops_duplicates (#2905 dedup, first wins; history pre2905_fromVec_dup_survives_remove)
+graph/src/runtime/orderset.rs	OrderSet::from_vec	42	PROVEN	fromVecGo/fromVec: fromVec_nodup, fromVec_of_nodup, fromVec_sublist, containsS_fromVec, containsS_removeS_fromVec, fromVec_eq_fromListS, fromVec_drops_duplicates (#2905 dedup, first wins)
 graph/src/runtime/orderset.rs	OrderSet::insert	54	PROVEN	insertS: containsS_insertS, insertS_nodup, indexOf_insertS
 graph/src/runtime/orderset.rs	OrderSet::remove	68	PROVEN	removeS: containsS_removeS, removeS_nodup, removeS_sublist, indexOf_removeS
 graph/src/runtime/orderset.rs	OrderSet::iter	77	PROVEN	iterS: iterS_eq, iterS_insert_fresh

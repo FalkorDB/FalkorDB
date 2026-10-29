@@ -23,8 +23,8 @@ import FalkorValueMath.Misc
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History: `pre3339_decode_any_depth` (every nesting decoded, one frame per level),
-  `pre3339_validate_any_depth` (any depth was storable).
+* History (counterexamples removed; in 17ccc5412): before #3339 every nesting decoded, one frame per level,
+  and any depth was storable.
 -/
 
 namespace ValueMath
@@ -700,33 +700,6 @@ theorem validateProperty_nest (k : Nat) (x : V F) (hx : ∀ l, x ≠ .list l) (h
   rw [if_neg (by decide), validateItems_nest k 1 x hx hp (by decide), Nat.add_comm 1 k]
 
 /-! ## History (before #3339) -/
-
-/-- `is_valid_property` before #3339 (pending.rs:62 at 4a4f2a72f): lists of any depth. -/
-def pre3339_isValidProperty : V F → Bool → Bool
-  | .null, allowNull => allowNull
-  | .list l, _ => l.attach.all (fun ⟨x, _⟩ => pre3339_isValidProperty x false)
-  | v, _ => isValidProperty v false
-
-/-- **Historical (#2722)**: any nesting was a valid property, so `reduce(a = 1, i IN
-range(1, n) | [a])` could store a value whose drop / hash / RDB save recursed `n` frames;
-and the old decoder took any nesting back (one stack frame per level, the advisory's
-`GRAPH.RESTORE` payload). Fixed by #3339 (b080a44c1): `validateProperty_nest`,
-`decodeValue_refuses_past_cap`, `decode_reach`. -/
-theorem pre3339_isValid_any_depth (k : Nat) :
-    pre3339_isValidProperty (nest k (.int 1 : V F)) true = true := by
-  have : ∀ k b, pre3339_isValidProperty (nest k (.int 1 : V F)) b = true := by
-    intro k; induction k with
-    | zero => intro b; simp [nest, pre3339_isValidProperty, isValidProperty]
-    | succ k ih => intro b; simp [nest, pre3339_isValidProperty, ih]
-  exact this k true
-
-theorem pre3339_decode_any_depth (k : Nat) :
-    pre3339_decode co (sizeOf (nest k (.null : V F)) + 1) (encode co (nest k .null)) = some (nest k .null, []) := by
-  have hs : ∀ k, Storable (nest k (.null : V F)) := by
-    intro k; induction k with
-    | zero => trivial
-    | succ k ih => exact ⟨ih, trivial⟩
-  simpa using pre3339_decode_encode co _ (nest k .null) [] (by omega) (hs k)
 
 /-- …while the decoder now refuses the same input past the cap, with the nesting error. -/
 theorem decode_nest_deep (k : Nat) (hk : k > MAX_VALUE_NESTING) :

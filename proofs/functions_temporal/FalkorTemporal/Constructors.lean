@@ -17,7 +17,7 @@ import FalkorTemporal.Duration
 | `weekSlice`         | `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:285-287` |
 | `sliceOk`           | byte 2 of `rest` is a char boundary |
 | `formatDateDigits`  | `format_date` + `write_date_into` — `value.rs:307`, `value.rs:836` |
-| `pre2950_*`         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
+| pre-#2950 counterexamples (removed; in 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
 -/
 namespace FalkorTemporal
 
@@ -80,18 +80,6 @@ def weekPath (year week dow : Int) : Outcome :=
     -- weekday of jan4, Monday = 0 (1970-01-01 was a Thursday)
     let wd := (jan4 + 3) % 7
     let off := dow - 1
-    checkedAddDays jan4 ((week - 1) * 7 + off - wd)
-
-/-- The week branch before #2988 (`temporal.rs:94-109` at 5e475e6c9's parent): `dayOfWeek`
-was `0..=6` with 0 = Sunday. -/
-def pre2988_weekPath (year week dow : Int) : Outcome :=
-  if !inRange week 1 53 then .err
-  else if !inRange dow 0 6 then .err
-  else if !chronoYearOk year then .err
-  else
-    let jan4 := daysFromCivil year 1 4
-    let wd := (jan4 + 3) % 7
-    let off := if dow = 0 then 6 else dow - 1
     checkedAddDays jan4 ((week - 1) * 7 + off - wd)
 
 /-- `date_from_components`, quarter branch (`temporal.rs:109-119`). -/
@@ -258,7 +246,7 @@ theorem in_range_examples :
     quarterPath 1984 4 (some 92) = .ok (daysFromCivil 1984 12 31) := by decide +kernel
 
 /-- At chrono's year edges an in-range week whose date leaves chrono's range is now an
-error (pre-#2950 it panicked, `pre2950_week_edge_panics`). -/
+error (pre-#2950 it panicked). -/
 theorem week_edge_errors : weekPath (-262143) 1 1 = .err ∧ weekPath 262142 53 7 = .err := by
   decide +kernel
 
@@ -271,151 +259,7 @@ theorem dayOfWeek_zero_rejected : weekPath 2021 1 0 = .err := by decide +kernel
 theorem dayOfWeek_out_of_range_errors :
     weekPath 2021 1 8 = .err ∧ weekPath 2021 1 (-1) = .err := by decide +kernel
 
-/-- Pre-#2988 (history, the divergence W2-temporal-9): `dayOfWeek` was `0..6` with `0` =
-Sunday, so ISO `dayOfWeek: 7` was rejected (C and openCypher: `1..7`) and `0` accepted. -/
-theorem pre2988_dayOfWeek_seven_rejected : pre2988_weekPath 2021 1 7 = .err := by decide +kernel
-theorem pre2988_dayOfWeek_zero_is_sunday :
-    pre2988_weekPath 2021 1 0 = .ok (daysFromCivil 2021 1 10) := by decide +kernel
-
-/-- The fix only re-labels Sunday: on `dayOfWeek` `1..7` main is the old branch with `7`
-read as the old `0`. (Monday..Saturday are unchanged.) -/
-theorem weekPath_eq_pre2988 (year week dow : Int) (hd : 1 ≤ dow ∧ dow ≤ 7) :
-    weekPath year week dow = pre2988_weekPath year week (if dow = 7 then 0 else dow) := by
-  unfold weekPath pre2988_weekPath
-  by_cases h7 : dow = 7
-  · subst h7
-    simp [show inRange 7 1 7 = true from by decide, show inRange 0 0 6 = true from by decide]
-  · have h0 : dow ≠ 0 := by omega
-    have hin : inRange dow 1 7 = true := by
-      simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
-    have hin' : inRange dow 0 6 = true := by
-      simp only [inRange, Bool.and_eq_true, decide_eq_true_eq]; omega
-    simp [h7, h0, hin, hin']
-
 /-! ## Before #2950 (history): unchecked chrono arithmetic -/
-
-/-- `NaiveDate + TimeDelta` (chrono `Add` impl): panics when the result leaves chrono's range. -/
-def pre2950_dateAddDays (day n : Int) : Outcome :=
-  if !tdDaysOk n then .panic "TimeDelta::days out of bounds"
-  else if chronoYearOk (civilFromDaysI (day + n)).1 then .ok (day + n)
-  else .panic "`NaiveDate + TimeDelta` overflowed"
-
-/-- Pre-#2950 week branch (`temporal.rs:73-86` at 8621212fc), i64 arithmetic as `Int`
-(release wraps `(week - 1) * 7`; debug panics — both unmodelled beyond `tdDaysOk`). -/
-def pre2950_weekPath (year week dow : Int) : Outcome :=
-  if ¬ (0 ≤ dow ∧ dow ≤ 6) then .err
-  else if !chronoYearOk year then .err
-  else
-    let jan4 := daysFromCivil year 1 4
-    let wd := (jan4 + 3) % 7
-    let wk1Mon := jan4 - wd
-    match pre2950_dateAddDays wk1Mon ((week - 1) * 7) with
-    | .ok tm => pre2950_dateAddDays tm (if dow = 0 then 6 else dow - 1)
-    | o => o
-
-/-- Pre-#2950 quarter branch (`temporal.rs:89-96` at 8621212fc): `checked_add_signed` for
-the date but the *panicking* `Duration::days`, and no range check on `dayOfQuarter`. -/
-def pre2950_quarterPath (year quarter doq : Int) : Outcome :=
-  let qsm := (quarter - 1) * 3 + 1
-  if ¬ (1 ≤ qsm ∧ qsm ≤ 12) ∨ !chronoYearOk year then .err
-  else if !tdDaysOk (doq - 1) then .panic "TimeDelta::days out of bounds"
-  else
-    let base := daysFromCivil year qsm 1
-    if chronoYearOk (civilFromDaysI (base + (doq - 1))).1 then .ok (base + (doq - 1)) else .err
-
-/-- **Fixed by #2950 (W2-temporal-1, server crash)**: `date({week: 10000000000})` panicked in
-`NaiveDate + TimeDelta`. Main: `week_huge_errors`. -/
-theorem pre2950_week_panics :
-    pre2950_weekPath 1970 10000000000 1 = .panic "`NaiveDate + TimeDelta` overflowed" := by
-  decide +kernel
-
-/-- **Fixed by #2950**: a week count beyond ±1.5·10¹⁰ panicked earlier, in `TimeDelta::days`. -/
-theorem pre2950_week_panics_delta :
-    pre2950_weekPath 1970 20000000000 1 = .panic "TimeDelta::days out of bounds" := by
-  decide +kernel
-
-/-- **Fixed by #2950 (W2-temporal-2, server crash)**:
-`date({quarter: 2, dayOfQuarter: 9223372036854775807})`. Main: `quarter_doq_errors`. -/
-theorem pre2950_quarter_panics :
-    pre2950_quarterPath 1970 2 9223372036854775807 = .panic "TimeDelta::days out of bounds" := by
-  decide +kernel
-
-/-- **Fixed by #2950** (found while re-targeting; same crash class as W2-temporal-1): even
-an in-range week panicked at chrono's year edges, `date({year:-262143, week:1})` (week 1
-starts in -262144) and `date({year:262142, week:53, dayOfWeek:0})`. Main: `week_edge_errors`. -/
-theorem pre2950_week_edge_panics :
-    pre2950_weekPath (-262143) 1 1 = .panic "`NaiveDate + TimeDelta` overflowed" ∧
-    pre2950_weekPath 262142 53 0 = .panic "`NaiveDate + TimeDelta` overflowed" := by
-  decide +kernel
-
-/-- Pre-#2950 totality on a sane domain (`|week| ≤ 10⁶`, `|year| ≤ 200 000`). -/
-theorem pre2950_weekPath_total (year week dow : Int) (hy : -200000 ≤ year ∧ year ≤ 200000)
-    (hw : -1000000 ≤ week ∧ week ≤ 1000000) :
-    ∀ w, pre2950_weekPath year week dow ≠ .panic w := by
-  intro w
-  unfold pre2950_weekPath pre2950_dateAddDays
-  have hjan := jan4_bound year hy
-  have hwd0 := Int.emod_nonneg (daysFromCivil year 1 4 + 3) (by decide : (7:Int) ≠ 0)
-  have hwd1 := Int.emod_lt_of_pos (daysFromCivil year 1 4 + 3) (by decide : (0:Int) < 7)
-  generalize daysFromCivil year 1 4 = j at *
-  have yOk : chronoYearOk year = true := by
-    unfold chronoYearOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have td1 : tdDaysOk ((week - 1) * 7) = true := by
-    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have c1 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7) (by omega)
-  by_cases hd : 0 ≤ dow ∧ dow ≤ 6
-  · simp only [hd, ite_false, yOk, Bool.not_true, Bool.false_eq_true, td1, c1,
-      ite_true]
-    have td2 : tdDaysOk (if dow = 0 then 6 else dow - 1) = true := by
-      unfold tdDaysOk; split <;> simp only [Bool.and_eq_true, decide_eq_true_eq] <;> omega
-    have c2 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 +
-        (if dow = 0 then 6 else dow - 1)) (by split <;> omega)
-    simp only [td2, c2, Bool.not_true, Bool.false_eq_true, ite_false, ite_true]
-    intro h; cases h
-  · simp only [hd, not_false_eq_true, ite_true]
-    intro h; cases h
-
-/-- #2950 only removed panics: wherever the old week branch was used as intended (week in
-`1..53`, sane year), main returns the same date. -/
-theorem weekPath_eq_pre2950 (year week dow : Int) (hw : 1 ≤ week ∧ week ≤ 53)
-    (hd : 1 ≤ dow ∧ dow ≤ 6) (hy : -200000 ≤ year ∧ year ≤ 200000) :
-    weekPath year week dow = pre2950_weekPath year week dow := by
-  rw [weekPath_ok year week dow hw (by omega) hy]
-  have hd0 : dow ≠ 0 := by omega
-  have hd' : 0 ≤ dow ∧ dow ≤ 6 := by omega
-  have hjan := jan4_bound year hy
-  have hwd0 := Int.emod_nonneg (daysFromCivil year 1 4 + 3) (by decide : (7:Int) ≠ 0)
-  have hwd1 := Int.emod_lt_of_pos (daysFromCivil year 1 4 + 3) (by decide : (0:Int) < 7)
-  unfold pre2950_weekPath pre2950_dateAddDays
-  have yOk : chronoYearOk year = true := by
-    unfold chronoYearOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  generalize daysFromCivil year 1 4 = j at *
-  have td1 : tdDaysOk ((week - 1) * 7) = true := by
-    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have c1 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7) (by omega)
-  have td2 : tdDaysOk (dow - 1) = true := by
-    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have c2 := chronoYearOk_small (j - (j + 3) % 7 + (week - 1) * 7 + (dow - 1)) (by omega)
-  simp only [hd', hd0, not_true_eq_false, ite_false, yOk, Bool.not_true, Bool.false_eq_true, td1, c1,
-    td2, c2, ite_true, and_self]
-
-/-- Likewise for the quarter branch with `dayOfQuarter` in `1..92`. -/
-theorem quarterPath_eq_pre2950 (year quarter doq : Int) (hq : 1 ≤ quarter ∧ quarter ≤ 4)
-    (hd : 1 ≤ doq ∧ doq ≤ 92) (hy : -200000 ≤ year ∧ year ≤ 200000) :
-    quarterPath year quarter (some doq) = pre2950_quarterPath year quarter doq := by
-  rw [quarterPath_ok year quarter doq hq hd hy]
-  have hb : -82000000 ≤ daysFromCivil year ((quarter - 1) * 3 + 1) 1 ∧
-      daysFromCivil year ((quarter - 1) * 3 + 1) 1 ≤ 82000000 := by
-    unfold daysFromCivil; dsimp only; split <;> split <;> omega
-  unfold pre2950_quarterPath; dsimp only
-  have yOk : chronoYearOk year = true := by
-    unfold chronoYearOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have td : tdDaysOk (doq - 1) = true := by
-    unfold tdDaysOk; simp only [Bool.and_eq_true, decide_eq_true_eq]; omega
-  have c := chronoYearOk_small (daysFromCivil year ((quarter - 1) * 3 + 1) 1 + (doq - 1)) (by omega)
-  have q : ¬ (¬ (1 ≤ (quarter - 1) * 3 + 1 ∧ (quarter - 1) * 3 + 1 ≤ 12) ∨ !chronoYearOk year) := by
-    simp only [yOk, Bool.not_true, Bool.false_eq_true, or_false]; omega
-  simp only [q, td, c, Bool.not_true, Bool.false_eq_true, ite_false, ite_true]
 
 /-! ## `parse_week_date`: splitting a `str` at byte 2 -/
 
@@ -440,25 +284,12 @@ inductive SliceOutcome where
 /-- Main (`temporal.rs:285-287`): `rest.split_at_checked(2).ok_or_else(..)?`. -/
 def weekSlice (rest : List Char) : SliceOutcome := if sliceOk rest then .ok else .err
 
-/-- Pre-#2950: `rest[..2]` / `rest[2..]`. -/
-def pre2950_weekSlice (rest : List Char) : SliceOutcome := if sliceOk rest then .ok else .panic
-
 /-- **#2950 (W2-temporal-3 fixed)**: the week-string split never panics. -/
 theorem weekSlice_total (rest : List Char) : weekSlice rest ≠ .panic := by
   unfold weekSlice; split <;> intro h <;> cases h
 
-/-- …and agrees with the old slice wherever the old one did not panic. -/
-theorem weekSlice_eq_pre2950 (rest : List Char) (h : pre2950_weekSlice rest ≠ .panic) :
-    weekSlice rest = pre2950_weekSlice rest := by
-  unfold weekSlice pre2950_weekSlice at *; split <;> simp_all
-
 /-- `date('2020W1é')` is now an error ("Invalid week"), as in C ("Failed to parse date"). -/
 theorem week_slice_errors : weekSlice ['1', 'é'] = .err := by decide
-
-/-- **Fixed by #2950 (W2-temporal-3, server crash)**: `date('2020W1é')` — after the `W` the
-rest is `"1é"`, 3 bytes, so the `rest.len() <= 2` guard sent it to `rest[..2]`, which lands
-inside `é`. -/
-theorem pre2950_week_slice_panics : pre2950_weekSlice ['1', 'é'] = .panic := by decide
 
 /-- ASCII input never trips the slice. -/
 theorem sliceOk_ascii (a b : Char) (rest : List Char) (ha : a.toNat < 0x80) (hb : b.toNat < 0x80) :

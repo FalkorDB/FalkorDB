@@ -37,7 +37,7 @@ double free, unload of an emptied matrix, or allocating over a live handle.
 * **`pr_self_never_unloaded`** — every state along the PR's encode has `self`
   full with its original content: a lock-free reader of `self` sees the same
   matrix before, during and after.
-* **`pre3438_main_empties_self`** — main's sequence passes through a state where
+* **main empties `self`** (counterexample removed; in 17ccc5412) — main's sequence passes through a state where
   `self` is emptied (the #3434 window), then restores it. Confirmed live:
   `lean3438_matrix_encode_dup_vs_main` reads `self.nvals()` between main's
   unload and load — 0 for a 300-entry matrix; after the PR's encode `self`
@@ -218,14 +218,5 @@ theorem pr_panic_after_dup {C : Type} (s : Heap C) (sf cp k : Nat) (c : C) (h : 
     · subst hx; simp [upd, h.cp_free]
     · simp [upd, hx]
   simp [trace, step, h.sf_full, h.cp_free, hu, finalOf, hf]
-
-/-- **History, #3434**: main's sequence empties `sf` mid-encode, then restores it. -/
-theorem pre3438_main_empties_self {C : Type} (s : Heap C) (sf k : Nat) (c : C)
-    (h1 : s.mats sf = some (.full c)) (h3 : s.conts k = none) :
-    ∃ tr, trace s (mainOps sf k) = some tr ∧ (∃ s' ∈ tr, s'.mats sf = some .empty) ∧
-      (finalOf s tr).mats sf = some (.full c) := by
-  refine ⟨_, by simp [mainOps, trace, step, h1, h3, upd]; rfl, ?_, ?_⟩
-  · exact ⟨_, List.mem_cons_of_mem _ (List.mem_cons_self), by simp [upd]⟩
-  · simp [finalOf, upd]
 
 end Pr3438

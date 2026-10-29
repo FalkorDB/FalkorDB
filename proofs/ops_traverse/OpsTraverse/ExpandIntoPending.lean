@@ -27,7 +27,7 @@ so the pre-#3463 ExpandInto matched it: Rust returned 1 with "Relationships
 created: 0". The edge is doomed (deleted implicitly at commit). Main now yields
 no row for a pending-deleted endpoint, so MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`); the old counterexamples are `pre3463_*` on `expandIntoPre`.
+(`expandIntoP_live`); the old counterexamples are pre-#3463 counterexamples (removed; in 17ccc5412) on `expandIntoPre`.
 
 The issue's other half (the `synthetic_label` branch, `expand_into.rs:162-173`,
 reads committed labels only) has no valid-Cypher route to pending label state
@@ -137,26 +137,10 @@ def gAB1 : Graph := [⟨0, 0, 1⟩]
 not (it is deleted implicitly at commit). -/
 def pDetach : Pending := ⟨[0], []⟩
 
-/-- Pre-#3463 ExpandInto (the MERGE's match) found the doomed edge, so MERGE
-created nothing and `count(r)` was 1. -/
-theorem pre3463_matches_doomed_edge : expandIntoPre gAB1 pDetach false true 0 1 [] = [0] := by
-  decide
-
-/-- Collapse mode (`r` unread) matched it too. -/
-theorem pre3463_collapse_matches_doomed_edge :
-    expandIntoPre gAB1 pDetach false false 0 1 [] = [0] := by decide
-
 /-- Main matches nothing for a pending-deleted endpoint (either side). -/
 theorem main_3463_empty : expandIntoP gAB1 pDetach false true 0 1 [] = [] := by decide
 
 theorem main_3463_empty_dst : expandIntoP gAB1 ⟨[1], []⟩ false true 0 1 [] = [] := by decide
-
-/-- **The pre-#3463 operator violated `LiveExpandInto`.** -/
-theorem pre3463_violates : ¬ LiveExpandInto expandIntoPre := by
-  intro h
-  have := h gAB1 pDetach false true 0 1 [] (by unfold Graph.WF; decide) 0
-    (by rw [pre3463_matches_doomed_edge]; simp)
-  exact (this.2 ⟨0, 0, 1⟩ (by simp [gAB1]) rfl).1 (by simp [pDetach])
 
 /-! ## Open: the CondTraverse path of the same query (#3463 follow-up)
 

@@ -6,7 +6,7 @@ import FalkorCowBTree.Assert
 # Bug 3 (W7-btree-1, introduced by #2278, FIXED by #3283 799968a8b): `remove_batch` left a single-child
 # non-root branch, at any `BRANCH_MAX`
 
-HISTORY (the `pre3283_*` theorems, on the pre-#3283 model `pre3283_removeBatchTree` in `Batch.lean`).
+HISTORY (the pre-#3283 counterexamples (removed; in 17ccc5412) theorems and the pre-#3283 model were removed; in 17ccc5412).
 `Node::remove_batch` (`node.rs:483-538` before #3283) repaired under-full children with `merge_underfull`, one level
 at a time. A branch `X` that ends with one child is flagged under-full (`1 < BRANCH_MAX / 2` for
 `BRANCH_MAX >= 4`) — but only its parent `P` can repair it, and if `P` itself ends with `X` as its
@@ -36,7 +36,7 @@ The fix (#3283, issue #3237) is the first suggestion made here: after each `comb
 `merge_underfull_below` re-runs the repair over the produced node's children. The Rust test
 `remove_batch_never_leaves_a_single_child_branch` (`tests.rs:1640`) is the repro above.
 
-The `pre3283_*` theorems replay the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`;
+The pre-#3283 counterexamples (removed; in 17ccc5412) theorems replay the mechanism on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4`;
 `rb_remove_batch_fixed`, `rb_remove_batch_fixed_wf`, `rb_then_remove_fixed` replay the same input on
 main, and `removeBatchTree_wf_asserted` is the general statement (`BatchWF.lean`: `removeBatchTree_wf`).
 -/
@@ -61,30 +61,11 @@ def rb12b : Node :=
   .branch [4] [.branch [2] [.branch [1] [lf 0, lf 1], .branch [3] [lf 2, lf 3]],
                .branch [8, 10] [.branch [] [lf 4], .branch [9] [lf 8, lf 9], .branch [11] [lf 10, lf 11]]]
 
-theorem pre3283_rb_remove_batch : pre3283_removeBatchTree c24 3 rb12 [5, 6, 7] = some (rb12b, 3) := by
-  simp (config := {decide := true}) [pre3283_removeBatchTree, pre3283_removeBatch, route, subtract, stripEmpty, pre3283_mergeUnderfull,
-    cws, combine, delAt, setAt, collapse, rb12, rb12b, lf, c24]
-
-/-- ...which is not a well-formed tree: a non-root branch with one child. -/
-theorem pre3283_rb_remove_batch_not_wf : ¬ TreeWF c24 3 rb12b := by
-  simp [TreeWF, WFb, COK, rb12b, lf]
-
-/-- The contents are still right (`pre3283_removeBatchTree_spec`): only the shape is broken. -/
-theorem pre3283_rb_remove_batch_content : toList 3 rb12b = [0, 1, 2, 3, 4, 8, 9, 10, 11] := by
-  simp [toList, rb12b, lf]
-
 /-- One single-key `remove(4)` then leaves an empty non-root leaf as the leftmost page of the root's
     second child... -/
 def rb12c : Node :=
   .branch [4] [.branch [2] [.branch [1] [lf 0, lf 1], .branch [3] [lf 2, lf 3]],
                .branch [10] [.branch [8, 9] [.leaf [], lf 8, lf 9], .branch [11] [lf 10, lf 11]]]
-
-theorem pre3283_rb_then_remove : remove c24 3 rb12b 4 = (rb12c, 3) := by rfl
-
-/-- ...so `Node::min` of that child — computed by `pack_branches` for every non-first child whenever
-    `insert_batch` repacks the root — is the out-of-bounds panic. -/
-theorem pre3283_rb_min_panics : minOpt 2 (.branch [10] [.branch [8, 9] [.leaf [], lf 8, lf 9], .branch [11] [lf 10, lf 11]]) = none := by
-  rfl
 
 /-! ## On main (#3283) -/
 
@@ -96,7 +77,7 @@ theorem rb_remove_batch_fixed : ∃ t' h', removeBatchTree c24 3 rb12 [5, 6, 7] 
   exact ⟨t', h', he, hw, by rw [ht]; decide⟩
 
 /-- ...so a follow-up single-key `remove` (of any entry) keeps it well-formed: no empty page, no
-    `Node::min` panic (contrast `pre3283_rb_then_remove`, `pre3283_rb_min_panics`). -/
+    `Node::min` panic. -/
 theorem rb_then_remove_fixed (x : E) (hx : x < HI) : ∃ t' h', removeBatchTree c24 3 rb12 [5, 6, 7] = some (t', h') ∧
     TreeWF c24 (remove c24 h' t' x).2 (remove c24 h' t' x).1 := by
   obtain ⟨t', h', he, hw, _⟩ := rb_remove_batch_fixed

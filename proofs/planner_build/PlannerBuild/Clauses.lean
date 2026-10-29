@@ -415,14 +415,11 @@ theorem merge_path_last_skips_merge (p k : Nat) (m q y : Plan) (r : Rec V) (g : 
 
 /-- mod.rs:3134-3153: `Create(filtered)`, under a `PathBuilder` of the paths the
 clause itself declares (`filtered.paths()`) when there are any. Before #2829 it was
-`Create` alone and `CREATE p=(…) RETURN p` returned `null` (`pre2829_planCreate`). -/
+`Create` alone and `CREATE p=(…) RETURN p` returned `null`. -/
 def planCreate (p : Nat) (path : Option Nat) : Plan :=
   match path with
   | none => .node (.create p) []
   | some q => .node (.pathBuilder q) [.node (.create p) []]
-
-/-- **Historical** (before #2829): no `PathBuilder`, so a created path was never bound. -/
-def pre2829_planCreate (p : Nat) (_path : Option Nat) : Plan := .node (.create p) []
 
 /-- openCypher CREATE with an optional named path: create per record, then bind the path. -/
 def specCreatePath (p : Nat) (path : Option Nat) (T : Res V G) : Res V G :=

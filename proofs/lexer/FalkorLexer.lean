@@ -34,17 +34,17 @@ and machine-checked *counterexamples* for the places where a property is false
 
 | theorem | what is wrong |
 | --- | --- |
-| `pre2908_rs_block_comment_bug`  | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
-| `pre2908_rs_trailing_slash_bug` | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
-| `pre2908_rs_unterminated_bug`   | (fixed by #2908) an unterminated `/*` was accepted |
+| removed (17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
+| removed (17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
+| removed (17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
 | `foreach_unbounded`         | `FOREACH` nesting bypasses `nested`, so its recursion is unbounded |
 | `set_target_unbounded`      | `SET n.a.a…` / `REMOVE n.a.a…` targets bypass `check_depth` |
 | `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
-| `pre2910_crlf_bug`          | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
-| `pre2910_zero_exp_bug`      | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
-| `pre2910_min_noncanonical_bug` | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
-| `pre2910_min_postfix_bug`   | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
-| `pre2910_unesc_plus_bug`    | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
+| removed (17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
+| removed (17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
+| removed (17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
+| removed (17ccc5412) | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
+| removed (17ccc5412) | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
 
 ## What is modelled, and where it lives in the tree
 
@@ -441,51 +441,6 @@ one-char lookahead `next` in three states: the outer loop (`top`), inside
 counterexamples it had against `specSkip` (FINDINGS: #2901), all fixed by
 #2908 (`dfa326583`). -/
 
-inductive Pre2908Mode
-  | top    -- the outer `while let Some(' ' | '\t' | '\n' | '/') = next`
-  | slash  -- just read a `/`, deciding on the char after it
-  | line   -- inside `// ...`
-  | block  -- inside `/* ...`
-  deriving DecidableEq
-
-/-- Bytes `read_spaces` skips. The Rust keeps a running `len` and undoes the
-`/` with `len -= 1 + c.len_utf8()` when it is not a comment; here each state
-returns what it adds, so "undo" is "the `.slash` state adds 0". -/
-def pre2908Rs : Pre2908Mode → List Char → Nat
-  | .top, [] => 0
-  | .top, c :: r =>
-    if isWs c then 1 + pre2908Rs .top r                -- len += 1; next = chars.next()
-    else if c = '/' then pre2908Rs .slash r
-    else 0
-  | .slash, [] => 1                             -- len += 1; next = None ⇒ break  (BUG: lone '/')
-  | .slash, d :: r =>
-    if d = '/' then 1 + (u8 d + pre2908Rs .line r)            -- `//`
-    else if d = '*' then 1 + (u8 d + pre2908Rs .block r)      -- `/*`
-    else 0                                      -- len -= 1 + c.len_utf8(); break
-  | .line, [] => 0
-  | .line, c :: r => u8 c + (if c = '\n' then pre2908Rs .top r else pre2908Rs .line r)
-  | .block, [] => 0                             -- BUG: unterminated `/*` accepted
-  | .block, c :: r =>
-    if c = '*' then 1 + pre2908Rs .block r              -- len += 1; continue
-    else u8 c + (if c = '/' then pre2908Rs .top r else pre2908Rs .block r)   -- BUG: any '/' ends it
-
-/-- `/* a/ -1 //*/`: the old Rust stopped the comment after `/* a/` (plus the
-space: 6 bytes) and lexed `-1` as code, so `RETURN 5 /* a/ -1 //*/` gave 4
-(C FalkorDB: 5). Fixed by #2908 (`dfa326583`): `rs_block_comment_fixed`. -/
-theorem pre2908_rs_block_comment_bug :
-    pre2908Rs .top "/* a/ -1 //*/".toList = 6 ∧
-    specSkip 20 "/* a/ -1 //*/".toList = some 13 := by decide
-
-/-- `RETURN 1 /`: the dangling `/` was swallowed (C FalkorDB: syntax error).
-Fixed by #2908 (`dfa326583`): `rs_trailing_slash_fixed`. -/
-theorem pre2908_rs_trailing_slash_bug :
-    pre2908Rs .top " /".toList = 2 ∧ specSkip 5 " /".toList = some 1 := by decide
-
-/-- `RETURN 1 /* x`: an unterminated block comment was accepted (C: error).
-Fixed by #2908 (`dfa326583`): `rs_unterminated_fixed`. -/
-theorem pre2908_rs_unterminated_bug :
-    pre2908Rs .top "/* x".toList = 4 ∧ specSkip 10 "/* x".toList = none := by decide
-
 /-! ### Now: the three inputs, and the Rust regression tests of #2908 -/
 
 /-- The whole block comment is skipped, `/` inside it included, so
@@ -515,13 +470,6 @@ example : rs " /* a/b */ + 1".toList = 11 ∧ rs " /*/ ** / * */ 2 /**/".toList 
   refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [rs, rsSlash, rsBlock, rsLine, isWs] <;> decide
 
 /-! ### `\r` is whitespace (#2909, fixed by #2910 `dba677942`) -/
-
-/-- The whitespace arm before #2910: `b' ' | b'\t' | b'\n'`. -/
-def pre2910IsWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n'
-
-/-- Before #2910 `\r` was not whitespace: `read_spaces` stopped on it and a
-CRLF query failed to lex (C FalkorDB skips it). -/
-theorem pre2910_crlf_bug : pre2910IsWs '\r' = false ∧ isWs '\r' = true := by decide
 
 /-- **CRLF is whitespace** (`carriage_return_is_whitespace`): `read_spaces`
 skips a `\r`, alone or before `\n`, exactly as the openCypher `WHITESPACE`
@@ -1020,31 +968,6 @@ def unescF : Nat → List Char → Except String (List Char)
           else (unescF f r').map (fun t => '\\' :: e :: t)  -- unknown: kept as-is
     else (unescF f r).map (c :: ·)
 
-/-- (Historical) `cypher_unescape` before #2910 (`dba677942`): only the byte
-length of the hex run was checked, and `u32::from_str_radix` skips a leading `+`. -/
-def pre2910UnescF : Nat → List Char → Except String (List Char)
-  | 0, _ => .error "fuel"
-  | _ + 1, [] => .ok []
-  | f + 1, c :: r =>
-    if c = '\\' then
-      match r with
-      | [] => .error "Unterminated escape sequence at end of string"
-      | e :: r' =>
-        match simpleEsc e with
-        | some d => (pre2910UnescF f r').map (d :: ·)
-        | none =>
-          if e = 'u' ∨ e = 'U' then
-            let w := if e = 'u' then 4 else 8
-            let hex := r'.take w
-            if bytes hex ≠ w then .error "Invalid unicode escape"
-            else match fromStrRadix16 hex with
-              | none => .error "Invalid unicode escape"
-              | some v =>
-                if v.isValidChar then (pre2910UnescF f (r'.drop w)).map (Char.ofNat v :: ·)
-                else .error "Invalid unicode code point"   -- char::from_u32 = None
-          else (pre2910UnescF f r').map (fun t => '\\' :: e :: t)  -- unknown: kept as-is
-    else (pre2910UnescF f r).map (c :: ·)
-
 /-- The escapes Cypher.g4:553-554 gives a lower-case spelling to. -/
 def specSimple (e : Char) : Option Char :=
   if e = '\\' then some '\\' else if e = '\'' then some '\''
@@ -1262,13 +1185,6 @@ theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
       | none => simp [h2] at h
       | some t => simp [h2] at h; subst h; simp [unesc_agrees_spec f r t h2, Except.map]
 
-/-- (Historical, fixed by #2910 `dba677942`.) `\u+041`: `from_str_radix`
-skipped the `+`, so three hex digits decoded to `A`. The spec wants four hex
-digits; C FalkorDB rejects it. -/
-theorem pre2910_unesc_plus_bug :
-    (pre2910UnescF 10 "\\u+041".toList).toOption = some ['A'] ∧
-    specUnescF 10 "\\u+041".toList = none := by decide
-
 /-- **A `\u` / `\U` escape needs exactly its hex digits**
 (`test_unescape_unicode_requires_hex_digits`): `\u+041`, `\U+0000041`,
 `\u-041` and `\u 041` are rejected, as by the spec. -/
@@ -1341,14 +1257,6 @@ def str2int (radix : Nat) (ds : List Nat) : Except String Int :=
   else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
   else .error "Integer overflow"                -- IntErrorKind::PosOverflow
 
-/-- Before #2910: the `MIN_I64` table (lexer.rs:271-277 at `e8f8a3017`) held
-only the canonical spellings of `2^63`. -/
-def pre2910Str2int (radix : Nat) (ds : List Nat) : Except String Int :=
-  if ds = canon radix (2 ^ 63) then .ok I64MIN
-  else if ds = [] then .error "Invalid input"
-  else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
-  else .error "Integer overflow"
-
 /-- Level 9 of `parse_expr_inner` (cypher.rs:2224-2237, 2547-2565) — and
 `parse_literal` (cypher.rs:445-469), which has the same three cases — applied
 to one literal token, optionally preceded by `-`; a `Negate` node over a
@@ -1412,13 +1320,6 @@ theorem min_noncanonical_fixed :
     (evalLit true (str2int 16 (0 :: canon 16 (2 ^ 63)))).toOption = some I64MIN ∧
     specLit true 16 (0 :: canon 16 (2 ^ 63)) = some I64MIN := by decide
 
-/-- (Historical, fixed by #2910 `dba677942`.) `-0x08000000000000000` is
-`-2^63`, but only the canonical spelling was in `MIN_I64`, so the Rust
-reported an overflow (C FalkorDB: -9223372036854775808). -/
-theorem pre2910_min_noncanonical_bug :
-    (evalLit true (pre2910Str2int 16 (0 :: canon 16 (2 ^ 63)))).toOption = none ∧
-    specLit true 16 (0 :: canon 16 (2 ^ 63)) = some I64MIN := by decide
-
 /-- The tree shapes level 9 inspects (cypher.rs:2549-2564). -/
 inductive LitTree
   | const (v : Int)
@@ -1448,18 +1349,6 @@ def litExpr (neg pf : Bool) (v : Int) : Except String LitTree :=
   match level10 (.const v) pf with
   | .error e => .error e
   | .ok t => level9 (if neg then .negate t else t)
-
-/-- The pre-#2910 level 10: no guard. -/
-def pre2910LitExpr (neg pf : Bool) (v : Int) : Except String LitTree :=
-  level9 (if neg then .negate (if pf then .post (.const v) else .const v)
-          else (if pf then .post (.const v) else .const v))
-
-/-- (Historical, fixed by #2910 `dba677942`.) A postfix operator at level 10
-wrapped the constant before level 9 looked, so `9223372036854775808.x` was
-accepted as `(-2^63).x`: the literal's overflow was never reported (C
-FalkorDB: `Integer overflow '9223372036854775808'`). -/
-theorem pre2910_min_postfix_bug :
-    pre2910LitExpr false true I64MIN = .ok (.post (.const I64MIN)) := rfl
 
 /-- **`2^63` is accepted exactly when it is directly negated**
 (`unnegated_min_literal_overflows_under_postfix`): with or without a pf,

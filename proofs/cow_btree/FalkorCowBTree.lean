@@ -31,9 +31,8 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 | `rebalance`, `cws`, `combine` | `node.rs:219`, `:113` (`combine_with_sibling`), `:384` (+ `aos_combine` `:447`) |
 | `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:498-555`, `:180` |
 | `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-191` (`merge_underfull`), `:563-573` (`merge_underfull_below`) |
-| `pre3283_mergeUnderfull`, `pre3283_removeBatch`, `pre3283_removeBatchTree` (`Batch.lean`, history) | the same functions before #3283 |
 | `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:576`, `:212`, `:585` |
-| `route` (`pre2278_route`), `applyBatch`, `insertBatch` | `node.rs:284-304` (old `:194-206`), `:259`, `mod.rs:241` |
+| `route`, `applyBatch`, `insertBatch` | `node.rs:284-304` (old `:194-206`), `:259`, `mod.rs:241` |
 | `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:56`, `:90`, `mod.rs:190`, `leaf/mod.rs:50`/`:97`, `:471` |
 | `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
 | `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
@@ -73,18 +72,15 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 - `snapshot_isolated`, `snapshot_reads_committed`, `insertOne_shares_siblings` (`Snapshot.lean`).
 
 ## Bugs
-1. FIXED by #2278 (3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)` —
-   `pre2278_route_never_routes_TOP`, `pre2278_route_drops_TOP_example` (W1 #13, #2893 / PR #2897).
+1. FIXED by #2278 (3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)` (counterexample removed; in 17ccc5412) (W1 #13, #2893 / PR #2897).
 2. FIXED by #2897 (7b60f28db): `BRANCH_MAX = 3` passed the const assert but broke `remove` (and
-   `remove_batch`): historical `pre2897_b3_one_remove_not_wf`, `pre2897_b3_drained_is_empty_lies`,
-   `pre2897_b3_drained_min_panics` (W1 #13). The assert now requires `BRANCH_MAX >= 4`:
-   `pre2897_b3_excluded`, `constAssert_rejects_B3`, `asserted_single_child_underfull`, and
+   `remove_batch`) (counterexamples removed; in 17ccc5412) (W1 #13). The assert now requires
+   `BRANCH_MAX >= 4`: `constAssert_rejects_B3`, `asserted_single_child_underfull`, and
    `remove_spec_asserted` / `removeRet_spec_asserted` (no `4 ≤ B` premise left) in `Assert.lean`.
 3. FIXED by #3283 (799968a8b, issue #3237, W7-btree-1): `remove_batch` left a single-child non-root
    branch at any `BRANCH_MAX >= 4`; one later `remove` then left an empty non-root leaf and
-   `insert_batch` panicked in `Node::min`. Historical `pre3283_rb_remove_batch`,
-   `pre3283_rb_remove_batch_not_wf`, `pre3283_rb_then_remove`, `pre3283_rb_min_panics` (`BugsBatch.lean`,
-   with the Rust repro, now the test `remove_batch_never_leaves_a_single_child_branch`). On main:
+   `insert_batch` panicked in `Node::min`. (Counterexamples removed; in 17ccc5412.)
+   (`BugsBatch.lean`, with the Rust repro, now the test `remove_batch_never_leaves_a_single_child_branch`). On main:
    `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed`.
 
 ## Gaps

@@ -244,24 +244,6 @@ theorem match_last_after_call_rejected (p : QG Nat) (hp : vInlined p = .ok) :
 
 /-! ### History: before #3297 (b6567cb97 and earlier) -/
 
-/-- The pre-#3297 CALL arm: the argument check, then `Ok(())`. -/
-def pre3297_vCallArm (f : List Nat) (args : List ET) (_rest : List IR) : V := vCall f args
-
-/-- **BUG before #3297 (ast.rs:1167-1201 at b6567cb97)**: the CALL arm
-never validated the clauses after it, so `CALL db.labels() YIELD label
-MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label`
-were accepted (live: both crashed the server; C rejects both). -/
-theorem pre3297_call_skips_rest_validation (f : List Nat) (hf : f ≠ procCNI) (hd : f ≠ procFTDrop)
-    (rest : List IR) : pre3297_vCallArm f [] rest = .ok := by
-  simp [pre3297_vCallArm, vCall, hf, hd, V.andThen]
-
-/-- The MATCH-terminated tail the old arm accepted, which main rejects. -/
-theorem pre3297_match_last_after_call_accepted (p : QG Nat) (hp : vInlined p = .ok) :
-    pre3297_vCallArm [5] [] [.match_ p none false] = .ok ∧
-    validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err :=
-  ⟨by simp [pre3297_vCallArm, vCall, procCNI, procFTDrop, V.andThen],
-   match_last_after_call_rejected p hp⟩
-
 /-- `body_has_return` (cypher.rs:1105-1113). -/
 def bodyHasReturn : IR → Bool
   | .query cs _ => match cs.getLast? with

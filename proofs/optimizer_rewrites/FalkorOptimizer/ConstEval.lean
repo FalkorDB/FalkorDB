@@ -12,7 +12,7 @@ function calls (`self.rt()?`, eval.rs:278-282).
 Soundness needs: whenever an operator's result is `Ok`, every child it consulted
 was `Ok`, i.e. no operator swallows a child's error. Before #2904 the `Pow` arm
 did (`flat_map` over `Result`), so `WHERE x ^ true` was folded to `true`
-(#2902, `pre2904_pow_constant_true`). Since #2904 every modelled arm propagates
+(#2902). Since #2904 every modelled arm propagates
 errors with `?`, and `constEval_sound` proves the constant verdict is the runtime
 verdict on every row; this discharges `eliminate_whole_filter`'s and
 `andLoop_drop_true`'s hypotheses (`constTrue_filter`, `andLoop_drop_constTrue`).
@@ -22,7 +22,6 @@ verdict on every row; this discharges `eliminate_whole_filter`'s and
 | `evalG look` | `ExprEval::eval_node` with variable lookup `look` (`resolve_var`, eval.rs:287-293) |
 | `constEval`  | `ExprEval::constant().eval(.., NO_ROW, None)` — `look` always errors |
 | `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs:52-57); the slow path re-runs it on `substitute_params`' tree (Helpers.evX_subst: same value) |
-| `pre2904_powFlat` | the `Pow` arm before #2904: `flat_map(eval_node).reduce(apply_pow)` |
 -/
 namespace Falkor.Opt
 
@@ -140,27 +139,5 @@ theorem pow_true_type_error (x : Var) (r : Row) :
   cases r.get x <;> rfl
 
 /-! ### History: the `Pow` arm before #2904 broke soundness (#2902) -/
-
-/-- `apply_pow` before #2904: non-numeric operands gave `null`. -/
-def pre2904_powV : Val → Val → Val
-  | .int i, .int j => powNum i j
-  | _, _ => .null
-
-/-- The `Pow` arm before #2904 on two operand results: `flat_map` drops an `Err`,
-and a single surviving operand is returned unpowered. -/
-def pre2904_powFlat (a b : Except Err Val) : Except Err Val :=
-  match a, b with
-  | .ok x, .ok y => .ok (pre2904_powV x y)
-  | .ok x, .error _ | .error _, .ok x => .ok x
-  | .error e, .error _ => .error e
-
-/-- **BUG (#2902, fixed by #2904)**: the constant evaluator folded `x ^ true` to
-`true` (the variable's error dropped), so the Filter was removed — while at
-runtime `x ^ true` was `null` for every row and the Filter kept none. -/
-theorem pre2904_pow_constant_true (x : Var) (r : Row) :
-    pre2904_powFlat (.error .notFound) (.ok (.bool true)) = .ok (.bool true) ∧
-    pre2904_powFlat (.ok (r.get x)) (.ok (.bool true)) = .ok .null := by
-  refine ⟨rfl, ?_⟩
-  cases r.get x <;> rfl
 
 end Falkor.Opt

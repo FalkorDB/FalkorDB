@@ -102,15 +102,6 @@ theorem score_bound_dominant (n m : EP) (fv : FV) (b : List Nat) (c : Nat → Na
   simp only [hn, hm, ite_true, ite_false]
   split <;> split <;> split <;> split <;> omega
 
-/-- **Historical** (before #2390, d2c42e032): the score also added 2 for inline attributes, so an
-attributed endpoint counted its predicate twice and a filtered, attributed, labelled endpoint (5)
-outranked a bare bound one (3), contrary to the doc comment. -/
-def pre2390_scoreEndpoint (bound filtered attrs labelled : Bool) : Nat :=
-  (if bound then 3 else 0) + (if filtered then 2 else 0) + (if attrs then 2 else 0) + (if labelled then 1 else 0)
-
-theorem pre2390_score_bound_not_dominant :
-    pre2390_scoreEndpoint true false false false < pre2390_scoreEndpoint false true true true := by decide
-
 /-! ## Paths: `node_path` / `resolve_path` -/
 
 /-- `node_path`: push `sibling_idx` while a parent exists, then reverse. A node's

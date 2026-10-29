@@ -3,8 +3,8 @@ graph/src/runtime/functions/string.rs	register	31	PROVEN	Misc.stringRegistered: 
 graph/src/runtime/functions/string.rs	intern	36	PROVEN	Misc.intern (Pool structure): intern_id || Pool.intern_eq discharged: rustPool (StringPool::intern by-content lookup), intern_id_rust
 graph/src/runtime/functions/string.rs	substring	54	PROVEN	substring2_spec, substring3_spec, substring3_agrees_C
 graph/src/runtime/functions/string.rs	split	105	PROVEN	split_agrees_C, splitAux_eq_cSplit
-graph/src/runtime/functions/string.rs	string_to_lower	138	PROVEN	toLower_total, toLower_accepts_replacement, case_agrees_C_if_simple, case_size_preserved_if_simple; history pre2953_toLower_rejects_valid (BUG D fixed by #2953)
-graph/src/runtime/functions/string.rs	string_to_upper	154	PROVEN	toLower_total, case_agrees_C_if_simple (same caseRust model); history pre2953_toLower_rejects_valid (BUG D fixed by #2953)
+graph/src/runtime/functions/string.rs	string_to_lower	138	PROVEN	toLower_total, toLower_accepts_replacement, case_agrees_C_if_simple, case_size_preserved_if_simple; BUG D fixed by #2953
+graph/src/runtime/functions/string.rs	string_to_upper	154	PROVEN	toLower_total, case_agrees_C_if_simple (same caseRust model); BUG D fixed by #2953
 graph/src/runtime/functions/string.rs	string_replace	174	PROVEN	Misc.stringReplace/strReplace/replaceNE: strReplace_self, replaceNE_self, stringReplace_null; earlier: replaceRust, replace_examples, cReplace_empty_breaks_utf8
 graph/src/runtime/functions/string.rs	string_left	197	PROVEN	left_agrees_C, left_right_spec
 graph/src/runtime/functions/string.rs	string_ltrim	220	PROVEN	ltrim_idem, ltrim_head
@@ -25,8 +25,8 @@ graph/src/runtime/functions/list.rs	head	77	PROVEN	head_eq
 graph/src/runtime/functions/list.rs	last	98	PROVEN	last_eq_head_reverse
 graph/src/runtime/functions/list.rs	tail	113	PROVEN	tail_eq, tail_length
 graph/src/runtime/functions/list.rs	reverse	139	PROVEN	reverse_involutive, reverse_agrees_C
-graph/src/runtime/functions/list.rs	list_remove	162	PROVEN	listRemove_eq_spec, listRemove_huge_count; historical pre2952_listRemove_end_overflows (BUG B, fixed by #2952)
-graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Misc.listSort (Sorter structure: permutation law): listSort_perm, listSort_default, listSort_badAsc; comparator sort_cmp (#2912): listSort_float_cmp_antisymmetric (+ value_order Main.scMain_total); history pre2912_listSort_cmp_not_antisymmetric (BUG A fixed)
+graph/src/runtime/functions/list.rs	list_remove	162	PROVEN	listRemove_eq_spec, listRemove_huge_count; BUG B, fixed by #2952
+graph/src/runtime/functions/list.rs	list_sort	197	PROVEN	Misc.listSort (Sorter structure: permutation law): listSort_perm, listSort_default, listSort_badAsc; comparator sort_cmp (#2912): listSort_float_cmp_antisymmetric (+ value_order Main.scMain_total); BUG A fixed
 graph/src/runtime/functions/list.rs	list_insert	231	PROVEN	insertNorm_safe, insertNorm_minus_one
 graph/src/runtime/functions/list.rs	list_insert_list_elements	282	PROVEN	insertNorm_safe (same normalisation)
 graph/src/runtime/functions/list.rs	list_dedup	338	PROVEN	Misc.listDedup/dedupLoop: listDedup_spec (sublist + pairwise not =)
@@ -54,12 +54,12 @@ graph/src/runtime/functions/entity.rs	indegree	257	PROVEN	Entity.indegree/degree
 graph/src/runtime/functions/entity.rs	outdegree	273	PROVEN	Entity.outdegree/degree: degree_null, degree_deleted
 graph/src/runtime/functions/entity.rs	parse_degree_args	293	PROVEN	Entity.parseDegreeArgs/collectTypes/tyDisp: parseDegreeArgs_forms, collectTypes_strs, parseDegreeArgs_mismatch_names, parseDegreeArgs_examples (#3127 d739765e1)
 graph/src/runtime/functions/math.rs	range	251	PROVEN	range_elems_between, range_noOverflow, range_examples; lazy UNWIND form agrees: rangeIter_eq_range
-graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter: rangeIter_eq_range (lazy = eager range, never overflows), rangeIter_of_inRange, rangeIter_examples; pre-#2899 variant pre2899_rangeIter_negate_overflows
+graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter: rangeIter_eq_range (lazy = eager range, never overflows), rangeIter_of_inRange, rangeIter_examples
 graph/src/runtime/eval.rs	eval_compound/GetElement	535	PROVEN	getElement_spec, getElement_noOverflow, getElement_inBounds (arm at eval.rs:573)
 graph/src/runtime/eval.rs	eval_compound/GetElements	535	PROVEN	getElements_spec, getElements_bounds (arm at eval.rs:613)
 graph/src/runtime/eval.rs	eval_compound/In	535	PROVEN	contains_false_iff, contains_nil (arm at eval.rs:783)
 graph/src/runtime/eval.rs	eval_compound/Quantifier	535	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:992)
-graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	PROVEN	comprehensionRust/CSrc (#2954): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehension_literal_range_unchanged; Entity.comprehensionSourceCheck_err (arm at eval.rs:1040-1085); bug F fixed, pre2954_comprehension_diverges kept
+graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	PROVEN	comprehensionRust/CSrc (#2954): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehension_literal_range_unchanged; Entity.comprehensionSourceCheck_err (arm at eval.rs:1040-1085); bug F fixed
 graph/src/runtime/eval.rs	eval_compound/Reduce	535	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1048)
 graph/src/runtime/eval.rs	eval_iter_expr	1226	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLen/rangeIter (rangeIter_eq_range)
 graph/src/runtime/eval.rs	eval_compiled_regex	1302	MODELLED	isMatchRust, expandRust (BUG C, E)

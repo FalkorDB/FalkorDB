@@ -11,7 +11,7 @@ enforced gets exactly a `hasLabels(alias, missing)` filter, after which none
 are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
 `buildPatternSubPlan_restores`. #2390: `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
-`planComp_stripped`, `planMatch_stripped`), `pre2390_chainRel_from_on_pattern`.
+`planComp_stripped`, `planMatch_stripped`).
 -/
 namespace PlannerBuild.E
 
@@ -25,18 +25,6 @@ def chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
   | .fixed =>
     if r.frm.alias.id = r.to.alias.id then .expandInto (opRel r) (opEmit c lw r)
       (if st.bound r.frm.alias then [res] else [scanOn (opRel r).frm res])
-    else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) [res]
-    else .condTr (opRel r) (opEmit c lw r) [res]
-
-/-- Historical (4a4f2a72f mod.rs:2245-2262): the unbound self-loop's `ExpandInto(scan, res)`. -/
-def pre3102_chainOp (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR) : MP :=
-  match r.kind with
-  | .shortest => .shortest (opRel r) [res]
-  | .varLen => .cvlt (opRel r) (r.frm.alias.id != r.to.alias.id && st.bound r.frm.alias && st.bound r.to.alias)
-      none [res]
-  | .fixed =>
-    if r.frm.alias.id = r.to.alias.id then .expandInto (opRel r) (opEmit c lw r)
-      (if st.bound r.frm.alias then [res] else [scanOf (opRel r).frm, res])
     else if st.bound r.frm.alias && st.bound r.to.alias then .expandInto (opRel r) (opEmit c lw r) [res]
     else .condTr (opRel r) (opEmit c lw r) [res]
 
@@ -76,13 +64,6 @@ theorem chainRel_selfloop_unbound (st : MSt) (c : Comp) (lw : LW) (res : MP) (r 
     (hk : r.kind = .fixed) (hs : r.frm.alias.id = r.to.alias.id) (hb : st.bound r.frm.alias = false) :
     (chainRel st c lw res r).1.core = .expandInto (opRel r) (opEmit c lw r) [scanOn (opRel r).frm res] := by
   rw [chainRel_core]; simp [chainOp, hk, hs, hb]
-
-/-- Historical bug 4 / #2999 shape: before #3102 it was `ExpandInto(scan, res)`, and the
-runtime only builds child 0 (Match.lean `selfloop_ignores_chain`): the chain was dropped. -/
-theorem pre3102_chainOp_selfloop_unbound (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
-    (hk : r.kind = .fixed) (hs : r.frm.alias.id = r.to.alias.id) (hb : st.bound r.frm.alias = false) :
-    pre3102_chainOp st c lw res r = .expandInto (opRel r) (opEmit c lw r) [scanOf (opRel r).frm, res] := by
-  simp [pre3102_chainOp, hk, hs, hb]
 
 /-- **#2390**: a later hop lowers its `from` endpoint too (it used to be left on the
 CondTraverse's pattern, invisible to the optimizer), and its `to` endpoint even when bound. -/
@@ -126,23 +107,6 @@ theorem chainRel_stripped (st : MSt) (c : Comp) (lw : LW) (res : MP) (r : QR)
     by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk, hres]
 
-/-- Historical (a9377c636 mod.rs:2055-2236): a later hop lowered only its unbound `to`. -/
-def pre2390_chainRel (st : MSt) (c : Comp) (res : MP) (r : QR) : MP :=
-  let res := match r.kind with
-    | .shortest => .shortest r [res]
-    | .varLen =>
-      let cv := MP.cvlt r (r.frm.alias.id != r.to.alias.id && st.bound r.frm.alias && st.bound r.to.alias)
-        none [res]
-      if st.bound r.frm.alias then cv else withF (attrF r.frm) cv
-    | .fixed =>
-      if r.frm.alias.id = r.to.alias.id then
-        if st.bound r.frm.alias then withF (attrF r.frm) (.expandInto r (emitRel c r) [res])
-        else .expandInto r (emitRel c r) [withF (attrF r.frm) (scanOf r.frm), res]
-      else if st.bound r.frm.alias && st.bound r.to.alias then
-        withF (attrF r.to) (withF (attrF r.frm) (.expandInto r (emitRel c r) [res]))
-      else withF (relF r) (.condTr r (emitRel c r) [res])
-  if st.bound r.to.alias then res else withF (attrF r.to) res
-
 /-- `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)`-shape: a fixed later hop leaving a bound
 `b` with attrs. Before #2390 the CondTraverse kept `{x: 1}` on its pattern with no Filter
 (enforced only by its per-row re-check, which #2390 also removed); now it is a Filter. -/
@@ -150,11 +114,6 @@ def bV : V := ⟨1, 0⟩
 def qB : QR := { alias := ⟨5, 0⟩, named := false, frm := { alias := bV, attrs := [("x", xOne)], ptr := 9 },
                  to := { alias := ⟨4, 0⟩ } }
 def stB : MSt := { visited := [bV], verified := [] }
-
-theorem pre2390_chainRel_from_on_pattern (c : Comp) :
-    (pre2390_chainRel stB c .arg qB).peel = [] ∧
-    (chainRel stB c [] .arg qB).1.peel = [attrEq bV ("x", xOne)] := by
-  constructor <;> rfl
 
 /-! ## Labels on already-bound endpoints (mod.rs:1858-1872) -/
 

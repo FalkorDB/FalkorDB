@@ -263,13 +263,4 @@ theorem write_timeout_agrees :
       = .ok (1, true) := by
   decide
 
-/-- Historical (confirmed live before #3000): Rust armed 100000 ms instead of C's 1 ms. -/
-theorem pre3000_write_timeout_divergence :
-    let c : TCfg := { timeoutMax := 100000, timeoutDefault := 0, legacy := 0 }
-    (parseQueryFlags c.timeoutMax (pre ++ [b "TIMEOUT", b "1"])).map (·.timeout) = .ok (some 1) ∧
-    pre3000_rustTimeout c (some 1) true = .ok (some 100000) ∧
-    (cReadFlags c (pre ++ [b "TIMEOUT", b "1"])).map (fun f => (f.timeout, f.timeoutRw))
-      = .ok (1, true) := by
-  decide
-
 end RedisLayer

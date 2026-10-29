@@ -104,16 +104,6 @@ def rustTimeout (c : TCfg) (pq : Option Int) (isWrite : Bool) : Except TErr (Opt
     else fallback c isWrite
   | none => fallback c isWrite
 
-/-- Historical: `compute_effective_timeout` before #3000 (`2e8172d76`) skipped the
-per-query timeout for every write. -/
-def pre3000_rustTimeout (c : TCfg) (pq : Option Int) (isWrite : Bool) : Except TErr (Option Nat) :=
-  match pq with
-  | some p =>
-    if c.timeoutMax > 0 ∧ p > c.timeoutMax then .error .exceedsMax
-    else if isWrite = false ∧ p > 0 then .ok (some p.toNat)
-    else fallback c isWrite
-  | none => fallback c isWrite
-
 /-! ## Decimal rendering, and the integer parsers on it -/
 
 /-- Canonical decimal rendering (what every client sends). -/
@@ -228,13 +218,6 @@ theorem rustTimeout_rw_uniform (c : TCfg) (pq : Option Int)
   cases pq with
   | none => simp [rustTimeout, fallback]; split <;> (try split) <;> simp_all <;> omega
   | some p => simp [rustTimeout, hrw, fallback]; split <;> (try split) <;> (try split) <;> simp_all <;> omega
-
-/-- Historical (#2998): the pre-#3000 code ignored a write's per-query timeout even
-with `timeout_rw` set. -/
-theorem pre3000_write_ignores_pq (c : TCfg) (p : Int)
-    (h : ¬ (c.timeoutMax > 0 ∧ p > c.timeoutMax)) :
-    pre3000_rustTimeout c (some p) true = pre3000_rustTimeout c none true := by
-  simp [pre3000_rustTimeout, h]
 
 /-- A per-query timeout above `TIMEOUT_MAX` is always rejected, for reads and writes. -/
 theorem rustTimeout_exceeds (c : TCfg) (p : Int) (w : Bool)

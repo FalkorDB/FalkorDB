@@ -62,7 +62,7 @@ structure St (β : Type) where
 
 /-- `with_binding` since #2973 (`:563`): `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`.
 The clamp form computes exactly what the guarded arm it replaced did
-(`Columnar.withBinding_eq_pre2973`, proofs/columnar `Columnar/Emitter.lean`; #2922 was an
+(proofs/columnar `Columnar/Emitter.lean`; #2922 was an
 LLVM miscompile of that arm). -/
 def initCeiling : Option Nat → Nat
   | some c => max 1 (min c BATCH_SIZE)

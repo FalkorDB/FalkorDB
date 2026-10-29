@@ -23,7 +23,7 @@ keys `L.name` — the qualified names `UdfRepo::load` computes
 (`runtime_keys_eq_qualified`). An empty library name breaks that agreement
 (`empty_lib_name_mismatch`). Since #3079 (`006428fc5`, issue #3077) both contexts
 install the same `graph` global (`graph_global_in_both`, `validate_runtime_same_graph`);
-before it the validation context had none (`pre3079_validate_lacks_graph`).
+before it the validation context had none.
 -/
 namespace AlgoUdf.UdfGlobals
 
@@ -54,10 +54,6 @@ def graphGlobal : List String :=
 
 /-- Globals installed by `setup_validate_globals`: `falkor.*`, then `setup_graph_global` (#3079). -/
 def validateGlobals : List String := ["falkor.register", "falkor.log"] ++ graphGlobal
-
-/-- HISTORICAL (before #3079, `006428fc5`): validation installed only `falkor.*`, so a
-library touching `graph` at top level failed to load though it would run. -/
-def pre3079_validateGlobals : List String := ["falkor.register", "falkor.log"]
 
 /-- `collect_validate_names`: every element must convert to a String. -/
 def collectNames (arr : List JVal) : Except String (List String) :=
@@ -127,10 +123,6 @@ theorem graph_global_in_both (g : String) (h : g ∈ graphGlobal) :
 
 theorem validate_runtime_same_graph :
     validateGlobals.filter (·.startsWith "graph.") = runtimeGlobals.filter (·.startsWith "graph.") := rfl
-
-/-- What #3079 fixed: `graph.traverse` existed at runtime but not during validation. -/
-theorem pre3079_validate_lacks_graph :
-    "graph.traverse" ∉ pre3079_validateGlobals ∧ "graph.traverse" ∈ runtimeGlobals := by decide
 
 theorem rRun_keys (lib : String) (hl : lib ≠ "") :
     ∀ (calls : List (String × JVal)) (reg out : List (String × Nat)),

@@ -301,19 +301,6 @@ theorem profileOps_all {α} (isCommit : α → Bool) (ops : List α) :
     profileOps isCommit ops = ops ∧ (profileOps isCommit ops).length = ops.length :=
   ⟨rfl, rfl⟩
 
-/-- Historical (before #2390, `d2c42e032`): `Commit` nodes were filtered out and the
-depth was the tree depth minus the `Commit` ancestors. Kept as a labelled note. -/
-def pre2390_profileDepth (anc : List Bool) : Nat := anc.length - (anc.filter id).length
-
-theorem pre2390_profileDepth_eq (anc : List Bool) :
-    pre2390_profileDepth anc = (anc.filter (! ·)).length := by
-  have : ∀ l : List Bool, (l.filter id).length + (l.filter (! ·)).length = l.length := by
-    intro l; induction l with
-    | nil => rfl
-    | cons a as ih => cases a <;> simp_all <;> omega
-  have := this anc
-  unfold pre2390_profileDepth; omega
-
 /-! ## Write detection (`execute_query` / `execute_profile`) -/
 
 inductive Op | commit | createIndex | dropIndex | other

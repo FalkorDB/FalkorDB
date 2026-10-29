@@ -46,7 +46,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 **3. Is removing an always-true filter exact?**
 
 - **Yes** (`constTrue_filter`, `andLoop_drop_constTrue`, `filter_true`, `filter_and_single`). The plan-time constant evaluator is the runtime `eval_node` with no row, so every variable is an error. `constEval_sound` proves that whenever it returns a value, every row gives that value. This holds because, since #2904, no modelled operator swallows a child's error.
-- Before #2904 that was **false for `^`** (#2902): the `Pow` arm dropped errors with `flat_map`, so `WHERE x ^ true` folded to `true` and its filter was removed (`pre2904_pow_constant_true`). Now `x ^ true` is not constant (`pow_var_not_constTrue`), and at runtime it is C's type error (`pow_true_type_error`).
+- Before #2904 that was **false for `^`** (#2902): the `Pow` arm dropped errors with `flat_map`, so `WHERE x ^ true` folded to `true` and its filter was removed. Now `x ^ true` is not constant (`pow_var_not_constTrue`), and at runtime it is C's type error (`pow_true_type_error`).
 - Since #3335 the rebuilt filter goes through `ExprIR::and_of`, which keeps the verdict, errors included (`flat_passes`, `flat_eval`, `scL_splice`).
 
 **4. Is the id seek exact?**
@@ -125,7 +125,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
 
-**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample is kept as `pre2904_pow_constant_true`.
+**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample was removed; in 17ccc5412.
 
 `refsNew_complete` also assumes `PlanInv`: inline property maps have already been turned into Filters. That is proven in [`../planner_build`](../planner_build) (`planMatch_stripped`), but the two projects are not linked, so here it is a stated assumption.
 
@@ -135,7 +135,7 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 |---|---|
 | `FalkorOptimizer.lean` | The report header and imports |
 | `Basic.lean` | Rows, `Val`, `eval` (three-valued, errors, `^` since #2904), Filter, push-down below CP/extend/Sort/Limit, filter merge, `eliminate_true_filters` |
-| `ConstEval.lean` | The plan-time constant evaluator and its soundness (`constEval_sound`, #2904); `pre2904_pow_constant_true` |
+| `ConstEval.lean` | The plan-time constant evaluator and its soundness (`constEval_sound`, #2904) |
 | `AndOf.lean` | `ExprIR::and_of` (#3335): splicing an AND into an AND keeps the runtime value |
 | `Helpers.lean` | Syntactic helpers: parameters, variable references, count extraction, fusion preconditions, Project/Aggregate outputs |
 | `Passes.lean` | Fusion, optional fusion, the id seek, `reduce_count`, `reorder_labels`, hash join, push-down routing and the exclusion list |

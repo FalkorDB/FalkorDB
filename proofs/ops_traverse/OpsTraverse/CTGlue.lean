@@ -61,7 +61,7 @@ theorem emptyIter_nil : emptyIter = [] := rfl
 (d2c42e032): the planner now lowers every fixed-length traverse's inline attrs to a
 `Filter` above the operator and embeds a stripped pattern (`planner/mod.rs:644`
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
-longer needs to inspect them. Historical model: `pre2390_eligible`. -/
+longer needs to inspect them. -/
 
 /-! ## `CondTraverseOp::new` (cond_traverse.rs:365) -/
 
@@ -154,28 +154,6 @@ theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List
   constructor
   · rintro ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩; exact ⟨h1, h2, h3, h4, h6⟩
   · rintro ⟨h1, h2, h3, h4, h6⟩; exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩
-
-/-- Historical (`pre2390`, a9377c636 cond_traverse.rs:302-310): a single hop also needed
-the edge's and both endpoints' inline attrs to be `{}`. Fixed shape by #2390 (d2c42e032). -/
-def pre2390_eligible (er bidir dedup : Bool) (sib : List Nat) (cb : List Bool)
-    (attrsEmpty fromEmpty toEmpty : Bool) : Bool :=
-  !er && !bidir && !dedup && sib.isEmpty && (!cb.isEmpty || (attrsEmpty && fromEmpty && toEmpty)) &&
-    cb.all (!·)
-
-/-- #2390 only widens the batched path: whatever was eligible before still is, and a hop with
-non-empty endpoint attrs is now eligible too (the planner's Filter enforces them). -/
-theorem pre2390_eligible_le (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
-    (ch : Option ChildCT) (a f t : Bool)
-    (h : pre2390_eligible er rp.bidir (ctNew rp er sib cb ch).dedup sib cb a f t = true) :
-    (ctNew rp er sib cb ch).eligible = true := by
-  simp only [pre2390_eligible, Bool.and_eq_true] at h
-  obtain ⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, _⟩, h6⟩ := h
-  simp only [ctNew, Bool.and_eq_true] at h3 ⊢
-  exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩
-
-theorem pre2390_widened :
-    pre2390_eligible false false false [] [] true false true = false ∧
-    (ctNew ⟨0, none, 1, 2, false⟩ false [] [] none).eligible = true := by decide
 
 /-! ## `build_state` (cond_traverse.rs:480) -/
 

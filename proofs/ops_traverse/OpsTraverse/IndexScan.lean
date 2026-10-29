@@ -368,19 +368,6 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
     · simp [h]; omega
     · simp [h, List.filter_cons]; omega
 
-/-- **Historical** (before #3081, ff3d24ba7; FINDINGS index_layer bug 11): the scan ignored
-`bidirectional`, so `MATCH ()-[r:R]-() WHERE r.v >= 1` returned one row per edge (C: two). -/
-def pre3081_edgeRow (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
-    (bFrom bTo : Option Nat) (sameAlias transposed : Bool) : List (Nat × Nat × Nat) :=
-  edgeRow idx all q bFrom bTo sameAlias transposed false
-
-theorem pre3081_undirected_once :
-    (pre3081_edgeRow (fun _ => [(1, 2, 0)]) [] (.eq "v" (.int 1)) none none false false).length = 1 ∧
-    (edgeRow (fun _ => [(1, 2, 0)]) [] (.eq "v" (.int 1)) none none false false true).length = 2 ∧
-    (edgeRow (fun _ => [(1, 1, 0)]) [] (.eq "v" (.int 1)) none none false false true).length = 1 := by
-  have h1 : losesPrecision 1 = false := by decide
-  simp [pre3081_edgeRow, edgeRow, orient, canUseE, canUse, indexable, h1]
-
 /-! ## Fulltext scans and the edge vector scan -/
 
 /-- node_by_fulltext_scan.rs:73-105 / edge_by_fulltext_scan.rs: label and query must be

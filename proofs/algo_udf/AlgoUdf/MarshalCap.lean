@@ -8,13 +8,10 @@ the QuickJS heap `H`, `toStep` is `value_to_js_at`'s check + `value_to_js_level`
 
 Main results (`MAX = MAX_UDF_VALUE_NESTING = 1024`):
 * `fromJs_frames`, `toJs_frames`: **`MAX + 1` conversion levels always suffice**, for every input —
-  including a self-containing JS array (`Hself`), which the old code recursed into forever
-  (`pre3336_self_array_overflows`).
+  including a self-containing JS array (`Hself`), which the old code recursed into forever.
 * `fromJs_past_cap`, `toJs_past_cap`: an input nested past the cap is an `Err`, never an overflow;
   exactly `udf_nesting_error()` for the Rust tests' shapes (`fromJs_nestArr_past`, `self_array_error`,
   `toJs_nestList_past`).
-* `fromJs_eq_pre3336`, `toJs_eq_pre3336`: at or below the cap the result is exactly what the
-  unbounded pre-#3336 code returned on any stack big enough to finish.
 * `fromJs_needs_all_frames`: the bound is tight (`MAX` frames do not suffice for `MAX` nested arrays);
   `pre3336_nestArr_overflows`: the old code needed `n + 1` frames for `n` nested arrays (the advisory's
   300,000-deep array).
@@ -482,41 +479,10 @@ theorem fromJs_past_cap (H : Heap) (v : JsV) (h : fitsJs H v = false) : ∃ e, f
   refine ⟨e, ?_⟩
   unfold fromJs; rw [fromF_eq_run, he]; rfl
 
-/-- **At or below the cap, `js_to_value` returns exactly what the unbounded pre-#3336 code returned**
-    on every stack big enough for that code to finish (here: any stack of `MAX + 1` levels or more). -/
-theorem fromJs_eq_pre3336 (H : Heap) (v : JsV) (h : fitsJs H v = true) (k : Nat) :
-    pre3336_fromF H (MAX + 1 + k) v = some (fromJs H v) := by
-  unfold pre3336_fromF
-  rw [fromF_eq_run, (fromStep H).run_eq_uncapped MAX _ 0 v h, ← fromF_eq_run]
-  exact fromF_big_stack H v k
-
-/-- ...and conversely the old code, whenever it finished at all, finished with the new answer. -/
-theorem pre3336_finished_eq (H : Heap) (v : JsV) (h : fitsJs H v = true) (f : Nat) (r : Except String RV)
-    (hf : pre3336_fromF H f v = some r) : fromJs H v = r := by
-  unfold pre3336_fromF at hf
-  have hne : (fromStep H).run none f 0 v ≠ none := by rw [← fromF_eq_run, hf]; exact fun h => nomatch h
-  have h1 := (fromStep H).run_mono_add none f 0 v hne (MAX + 1)
-  have h2 := fromJs_eq_pre3336 H v h f
-  unfold pre3336_fromF at h2
-  rw [show MAX + 1 + f = f + (MAX + 1) by omega, fromF_eq_run, h1, ← fromF_eq_run, hf] at h2
-  cases h2; rfl
-
 /-! ### A self-containing array (`const a = []; a.push(a)`) -/
 
 /-- The heap of `a = [a]`: cell 0 is an array whose only item is a reference to itself. -/
 def Hself : Heap := fun _ => .arr [.ref 0] []
-
-/-- HISTORICAL (before #3336, the advisory): the old conversion of `a = [a]` overflows **every** stack. -/
-theorem pre3336_self_array_overflows (f : Nat) : pre3336_fromF Hself f (.ref 0) = none := by
-  unfold pre3336_fromF
-  suffices ∀ f d, fromF Hself none f d (.ref 0) = none from this f 0
-  intro f
-  induction f with
-  | zero => intro d; rfl
-  | succ f ih =>
-    intro d
-    simp only [fromF, fromLevel, deref, Hself, classify_arr_nil]
-    simp only [runShape, chk, Bool.false_eq_true, ite_false, listLoop, ih, R.bind_none]
 
 /-- **#3336: it is now exactly `udf_nesting_error()`** (Rust test `a_self_containing_array_is_an_error`). -/
 theorem self_array_error : fromJs Hself (.ref 0) = .error nestErr := by
@@ -626,12 +592,6 @@ theorem toJs_past_cap (v : RV) (h : fitsV v = false) : ∃ e, toJs v = .error e 
   obtain ⟨e, he⟩ := toStep.run_past_cap MAX (MAX + 1) 0 v (by omega) (by omega) h
   refine ⟨e, ?_⟩
   unfold toJs; rw [toF_eq_run, he]; rfl
-
-theorem toJs_eq_pre3336 (v : RV) (h : fitsV v = true) (k : Nat) :
-    pre3336_toF (MAX + 1 + k) v = some (toJs v) := by
-  unfold pre3336_toF
-  rw [toF_eq_run, toStep.run_eq_uncapped MAX _ 0 v h, ← toF_eq_run]
-  exact toF_big_stack v k
 
 theorem toF_nestList_ok (c : Nat) : ∀ n f d, n + d ≤ c → n + 1 ≤ f →
     toF (some c) f d (nestList n) = R.ok (nestArr n)

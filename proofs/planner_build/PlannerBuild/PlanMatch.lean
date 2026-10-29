@@ -15,7 +15,6 @@ import PlannerBuild.Expr
 | `opRel`, `edgePred`, `topFilters` | mod.rs:2032-2043 (and 2201-2212); the edge Filter :2162-2169 / 2295-2301; both endpoints :2182-2187 / 2310-2315 |
 | `firstOp`/`firstRel`, `chainOp`/`chainRel` | first relationship mod.rs:2044-2196, the others mod.rs:2199-2321 |
 | `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
-| `pre2390_firstRel`, `pre2390_chainRel` | the same at a9377c636 (before #2390), kept for the fixed bug |
 | `nodeOnly` | node-only component mod.rs:1913-1990 |
 | `boundLabelFilters` | mod.rs:1858-1872 |
 | `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1853-2403 |
@@ -27,7 +26,7 @@ and `chainRel_lowers_from`/`_to` (both endpoints lowered for every operator kind
 not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter directly
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
 `firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`, and the
-fixed bug `pre2390_firstRel_varlen_drops` / `pre2390_chainRel_from_on_pattern`.
+fixed bug (counterexamples removed; in 17ccc5412).
 | `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1038-1049 |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;
@@ -436,7 +435,7 @@ theorem firstOp_peel (st : MSt) (c : Comp) (lw : LW) (r : QR) : (firstOp st c lw
 /-- **#2390's fix.** Both endpoints' inline attrs become Filters above the first hop for every
 operator kind and whether or not the endpoint was bound by an earlier clause — as long as
 that (alias, map) was not already lowered in this clause. Before #2390 a bound `from` of a
-var-length / shortest-path hop got none (`pre2390_firstRel_varlen_drops`). -/
+var-length / shortest-path hop got none. -/
 theorem firstRel_lowers_from (st : MSt) (c : Comp) (lw : LW) (r : QR) (f : Ex)
     (hk : (lowerN (edgePred lw r).2 r.to).2.contains (lwKey r.frm.alias r.frm.ptr) = false)
     (hf : inlineAttrsToFilter r.frm.alias r.frm.attrs = some f) :
@@ -504,38 +503,11 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
 def attrF (n : QN) : Option Ex := inlineAttrsToFilter n.alias n.attrs
 def relF (r : QR) : Option Ex := inlineAttrsToFilter r.alias r.attrs
 
-/-- `plan_match`'s first hop before #2390: endpoint filters only for *unbound* endpoints,
-the unstripped pattern embedded in the operator. -/
-def pre2390_firstRel (st : MSt) (c : Comp) (r : QR) : MP :=
-  let res := match r.kind with
-    | .shortest => .shortest r []
-    | .varLen =>
-      if st.bound r.frm.alias then
-        .cvlt r (r.frm.alias.id != r.to.alias.id && st.bound r.to.alias) none []
-      else .cvlt r false none [withF (attrF r.frm) (scanOf r.frm)]
-    | .fixed =>
-      if r.frm.alias.id = r.to.alias.id then
-        if st.bound r.frm.alias then withF (attrF r.frm) (.expandInto r (emitRel c r) [])
-        else .expandInto r (emitRel c r) [withF (attrF r.frm) (scanOf r.frm)]
-      else if st.bound r.frm.alias && st.bound r.to.alias then
-        withF (attrF r.to) (withF (attrF r.frm) (.expandInto r (emitRel c r) []))
-      else withF (relF r) (.condTr r (emitRel c r) [])
-  let res := if st.bound r.to.alias then res else withF (attrF r.to) res
-  if st.bound r.frm.alias then res else withF (attrF r.frm) res
-
 /-- `MATCH (a:N) WITH a MATCH (a {x: 1})-[:R*1..2]->(b)`: the bound `a`'s map `{x: 1}`. -/
 def aV : V := ⟨0, 0⟩
 def xOne : Ex := .node (.const (.int 1)) []
 def qVL : QR := { alias := ⟨2, 0⟩, named := false, frm := { alias := aV, attrs := [("x", xOne)], ptr := 7 },
                   to := { alias := ⟨1, 0⟩ }, kind := .varLen }
 def stA : MSt := { visited := [aV], verified := [] }
-
-/-- **Bug fixed by #2390 (d2c42e032)**: the old plan has no Filter for the bound `a` and the
-CondVarLenTraverse reads only the edge's attrs, so `x = 1` was never enforced (live: rows
-2, 3, 3; C 2, 3). The new plan lowers it. -/
-theorem pre2390_firstRel_varlen_drops (c : Comp) :
-    (pre2390_firstRel stA c qVL).peel = [] ∧
-    (firstRel stA c [] qVL).1.peel = [attrEq aV ("x", xOne)] := by
-  constructor <;> rfl
 
 end PlannerBuild.E

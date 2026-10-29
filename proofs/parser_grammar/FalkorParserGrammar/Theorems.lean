@@ -161,23 +161,6 @@ theorem slice_bounds_omitted :
       .ok (.node .getElems [lf (.var 3), lf (.int 1), lf (.int 2)]) [] := by
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- History (#3036, fixed by #3041): before #3041 a failed slice bound was
-silently replaced by `0` / `i64::MAX` (cypher.rs:2140-2148 at 8621212fc), with
-the lexer left wherever the failed bound stopped: `[1 + ..2]`, `[abs()..2]`,
-`[(..2]` (after `x`) were all read as `x[0..2]`. The bound parser is the current
-`parseExpr`, which did not change. -/
-theorem pre3041_slice_bound_error_swallowed :
-    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.int 1, .plus, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
-    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
-    pre3041_listOp (parseExpr 399) (lf (.var 3)) [.lparen, .dotdot, .int 2, .rbrack] =
-      .ok (.node .getElems [lf (.var 3), lf (.int 0), lf (.int 2)]) [] ∧
-    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.int 1, .plus, .dotdot, .int 2, .rbrack] = .err e) ∧
-    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.ident 7, .lparen, .rparen, .dotdot, .int 2, .rbrack] = .err e) ∧
-    (∃ e, listOp (parseExpr 399) (lf (.var 3)) [.lparen, .dotdot, .int 2, .rbrack] = .err e) := by
-  refine ⟨rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
-
 /-- **`listOp` never swallows a bound's error**: whenever the bound parser fails
 where a bound starts (not on `..` / `]`), `parse_list_operator_expression`
 fails at the same place. -/

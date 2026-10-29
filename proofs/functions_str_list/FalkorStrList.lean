@@ -28,7 +28,6 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `head`, `last`, `tail`, `size`, reverse | `list.rs:57-154` |
 | `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-310` |
 | `rangeIter` | `RangeIter::next` after #2899, `eval.rs:114-127`, built at `eval.rs:1236-1241` (debug: checked `+=`) |
-| `pre2899_rangeIterStepField` | `RangeIter`'s step field before #2899 (`step.unsigned_abs() as i64`) |
 | `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1616-1660`; loop `eval.rs:979-1016` |
 | `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1762-1785` (via `list_contains`, `eval.rs:1708`) |
 | `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1040-1085` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
@@ -43,7 +42,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `findFirst`, `cSplit`, `splitC` | C `AR_SPLIT` |
 | `splitRust` | `split`, `string.rs:103-137` |
 | `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:183-205` (std `str::replace`); C `AR_REPLACE` |
-| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:138-165`; C `str_tolower` (utf8proc simple map) (`pre2953_caseRust`: pre-#2953, historical) |
+| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:138-165`; C `str_tolower` (utf8proc simple map) |
 | `isMatchRust`, `isMatchSpec` | `regex_matches` `internal.rs:100-120`, `RegexFnKind::Matches` `eval.rs:1274` |
 | `expandRust` | `Regex::replace_all(_, &str)` `$`-expansion, `string.rs:462,469`, `eval.rs:1294-1302` |
 | `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:324-386` |
@@ -61,7 +60,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
   for all i64 inputs in every build and never panics (`listRemove_eq_spec`,
   `removeSpan_wf`, `listRemove_huge_count`). Historical: before #2952 release
   matched the spec by accident (`listRemoveRelease_eq_spec`) and debug
-  overflowed (`pre2952_listRemove_end_overflows`).
+  overflowed.
 * `list.insert*` normalisation can't overflow and yields a valid split point (`insertNorm_safe`).
 * Eager `range`: every element lies between start and end, so no overflow
   for any i64 arguments (`range_elems_between`, `range_noOverflow`).
@@ -90,15 +89,13 @@ A. **`list.sort` panics on NaN — FIXED by #2912 (b033aecc6).** Was: `list.rs:2
    `WITH [x IN range(1,40) | CASE WHEN x % 3 = 0 THEN 0.0/0.0 ELSE toFloat(x % 7) END] AS l RETURN size(list.sort(l))`
    (C 40). Main sorts by `Value::sort_cmp` (`list.rs:210`), a total preorder
    (proofs/value_order `Main.scMain_total`); the float arm is modelled here
-   (`listSort_float_cmp_antisymmetric`). The counterexample is kept as
-   `pre2912_listSort_cmp_not_antisymmetric`.
+   (`listSort_float_cmp_antisymmetric`).
 B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
    inline `(normalized + count)`: `list.remove([1,2,3], 1, 9223372036854775807)`
    panicked in debug ("attempt to add with overflow"); release returned `[1]`
    by accident (proved). C `[1]`. Test `bug_list_remove_count_overflow`.
    The fix (`remove_span`, `saturating_add`) is modelled and proved correct
-   (`listRemove_eq_spec`); the counterexample is kept as
-   `pre2952_listRemove_end_overflows`.
+   (`listRemove_eq_spec`).
 C. **`=~` is unanchored** — `internal.rs:112`, `eval.rs:1274`
    (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
    openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
@@ -109,8 +106,7 @@ D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
    C → `'a�'`. A Rust `String` is always valid UTF-8, so the check could only
    misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
    check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
-   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`). The
-   counterexample is kept as `pre2953_toLower_rejects_valid`.
+   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`).
 E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
    `eval.rs:1302`: `replaceRegEx('abc','b','$0x')` → `'ac'`, `'[$0]'` → `'a[b]c'`;
    C copies literally: `'a$0xc'`, `'a[$0]c'`. Test `bug_replace_regex_dollar_expansion`.
@@ -118,7 +114,7 @@ E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
 F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
    #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
    `[x IN null | x]` → `[]` (C `null`), `[x IN 5 | x]` → `[5]` (C type error);
-   counterexample kept as `pre2954_comprehension_diverges`. Main streams only a list
+   Main streams only a list
    literal or `range(..)` and evaluates any other source with `eval_node`: List
    iterates, Null gives null, anything else errors "Type mismatch: expected List or
    Null but was <name>" (`comprehension_eq_spec`, `comprehension_null`,
@@ -145,7 +141,7 @@ F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
 * (fixed by #2899) `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64`
   was `i64::MIN` and `-self.step` overflowed — debug panic "attempt to negate with
   overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release was correct
-  (`[10]`). Variant of #2894 (`pre2899_rangeIter_negate_overflows`); now
+  (`[10]`). Variant of #2894; now
   `rangeIter_eq_range` / `rangeIter_examples`.
 
 ## Gaps / assumptions
@@ -184,8 +180,7 @@ Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLab
 `parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
 (`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
 Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
-`toLower`/`toUpper` (bug D fixed; `pre2953_toLower_rejects_valid` kept as history,
-`toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
+`toLower`/`toUpper` (bug D fixed; `toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
 (string.rs −4/−16 after the deletion, eval.rs +11 after #3294/#2951). The eval.rs
 changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
 literal) touch no arm modelled here.
@@ -195,15 +190,14 @@ and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3
 `add_slow` :961, `Contains::contains` impl :1867).
 Re-targeted to 737dfb5da: #2899 (`e63165cb5`, closes #2894) rewrote `RangeIter` (exact
 `remaining` count, signed `step`, advance only while another element is due): the
-`i64::MIN` negation variant is gone (`pre2899_rangeIter_negate_overflows` kept as history);
+`i64::MIN` negation variant is gone;
 new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
 no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
 the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
 (temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
 Re-targeted to b6567cb97: #2954 (closes #2928) fixes bug F — `ListComprehension` now
 evaluates a non-literal, non-`range` source with `eval_node` (null → null, scalar → type
-error). Old model kept as `pre2954_comprehensionRust` / `pre2954_comprehension_diverges`;
-new `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
+error). New `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
 `comprehension_scalar_err`, `comprehension_literal_range_unchanged`. `Value::name` now
 spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
 `typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
@@ -349,7 +343,7 @@ Since #2952 (07e712944) the span is computed by `remove_span`, which clamps the
 end with `saturating_add`: `listRemove` / `removeSpan` below model that code.
 `listRemoveDebug` / `listRemoveRelease` are kept as the **historical** model of
 the pre-#2952 inline arithmetic (`(normalized + count) as usize`), whose debug
-build overflowed (`pre2952_listRemove_end_overflows`). -/
+build overflowed. -/
 
 inductive Out (α : Type) where
   | ok (l : List α)
@@ -383,14 +377,6 @@ def listRemoveSpec (l : List α) (idx count : Int) : List α :=
   let n := removeNorm l.length idx
   if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
   else l.take n.toNat ++ l.drop (n + count).toNat
-
-/-- **Bug B (historical; fixed by #2952, 07e712944).** Before #2952,
-`list.remove([1,2,3], 1, i64::MAX)` overflowed the add in a debug build.
-Rust repro: `lean_functions_str_list::bug_list_remove_count_overflow` panicked
-with "attempt to add with overflow". The current code is `listRemove` below
-(`listRemove_huge_count`, `listRemove_eq_spec`). -/
-theorem pre2952_listRemove_end_overflows :
-    listRemoveDebug [1, 2, 3] 1 I64MAX = .panic "attempt to add with overflow" := by decide
 
 /-- …but the release build is right by accident: a wrapped (negative) sum
 becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
@@ -623,12 +609,6 @@ Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`eval.rs
 8621212fc); for `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluated
 `-self.step`, which overflowed before the (#2894) `+=`. -/
 
-def pre2899_rangeIterStepField (step : Int) : Int := wrap step.natAbs
-
-theorem pre2899_rangeIter_negate_overflows :
-    pre2899_rangeIterStepField I64MIN = I64MIN ∧ ¬ InI64 (-(pre2899_rangeIterStepField I64MIN)) := by
-  decide
-
 /-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:114-127`)
 
 `eval_iter_expr` (`eval.rs:1236-1241`) builds `RangeIter { current: start, step,
@@ -670,7 +650,7 @@ theorem rangeIter_of_inRange (step : Int) :
 
 /-- **#2894 / #2899, fixed**: `UNWIND range(a, b, step)` (lazy) yields exactly the list
 the eager `range(a, b, step)` returns, for every `i64` `a`, `b`, `step`, and never
-overflows — including `step = i64::MIN` (contrast `pre2899_rangeIter_negate_overflows`)
+overflows — including `step = i64::MIN`
 and ranges ending on `i64::MAX`/`i64::MIN`. -/
 theorem rangeIter_eq_range (start stop step : Int) (h1 : InI64 start) (h2 : InI64 stop)
     (l : List Int) (hr : range start stop step = .ok l) (hne : l ≠ []) :
@@ -864,12 +844,6 @@ def comprehensionSpec : Src → COut
   | .null => .null
   | .scalar _ => .err
   | .list l => .list l
-
-/-- **Bug F (fixed by #2954).** Was: `[x IN null | x]` → Rust `[]`, C `null`;
-`[x IN 5 | x]` → Rust `[5]`, C type error. -/
-theorem pre2954_comprehension_diverges :
-    pre2954_comprehensionRust .null ≠ comprehensionSpec .null ∧
-    pre2954_comprehensionRust (.scalar 5) ≠ comprehensionSpec (.scalar 5) := by decide
 
 /-- Main agrees with C / openCypher on every source. -/
 theorem comprehension_eq_spec (s : CSrc) : comprehensionRust s = comprehensionSpec s.val := by
@@ -1328,27 +1302,13 @@ theorem replace_examples :
 applies the final-sigma rule); C uses utf8proc's *simple* one-to-one mapping.
 C errors only on invalid byte sequences, which a Rust `String` cannot contain.
 
-Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred
-(`pre2953_caseRust`); main maps every string (`caseRust`). -/
-
-/-- Pre-#2953 `string_to_lower`/`string_to_upper`: reject any U+FFFD. -/
-def pre2953_caseRust (full : Char → Str) (s : Str) : SOut :=
-  if '�' ∈ s then .err "Invalid UTF8 string" else .ok (s.flatMap full)
+Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred;
+main maps every string (`caseRust`). -/
 
 /-- Main (`string.rs:138,154`): `s.to_lowercase()` / `s.to_uppercase()`. -/
 def caseRust (full : Char → Str) (s : Str) : SOut := .ok (s.flatMap full)
 
 def caseC (simple : Char → Char) (s : Str) : SOut := .ok (s.map simple)
-
-/-- **Bug D (history, fixed by #2953 e7eb853b1).** On the valid string `"A�"`
-pre-#2953 Rust errored and C returns `"a�"`. Repro
-`bug_case_map_rejects_replacement_char`. -/
-theorem pre2953_toLower_rejects_valid (full : Char → Str) (simple : Char → Char) :
-    pre2953_caseRust full ['A', '�'] = .err "Invalid UTF8 string" ∧
-    caseC simple ['A', '�'] = .ok [simple 'A', simple '�'] := by
-  constructor
-  · unfold pre2953_caseRust; simp
-  · rfl
 
 /-- **Bug D fixed.** Main never errors: every string, including one holding
 U+FFFD, is case-mapped (`toLower('A�')` → `'a�'`, as C). -/
@@ -1369,11 +1329,6 @@ theorem case_agrees_C_if_simple (simple : Char → Char) (s : Str) :
   induction s with
   | nil => rfl
   | cons c t ih => simp [List.flatMap_cons, ih]
-
-/-- The fix only removed the U+FFFD branch: off it, main = pre-#2953. -/
-theorem caseRust_eq_pre2953 (full : Char → Str) (s : Str) (hs : '�' ∉ s) :
-    caseRust full s = pre2953_caseRust full s := by
-  simp [caseRust, pre2953_caseRust, hs]
 
 /-- If the full mapping were one-to-one, `size` would be preserved as in C;
 it is not (`'ß' ↦ "SS"`), so `size(toUpper('ß'))` is 2 in Rust and 1 in C.
@@ -1520,12 +1475,6 @@ above every number and equal to itself. -/
 
 def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then .lt else o
-
-/-- **Bug A (history, fixed by #2912 b033aecc6).** NaN was `Less` than 1.0 *and* 1.0
-`Less` than NaN, so the comparator was not antisymmetric; std's sort detected this and
-panicked, which killed the server. Repro: `bug_list_sort_nan_panics`. -/
-theorem pre2912_listSort_cmp_not_antisymmetric :
-    cmpFloatModel true false .gt = .lt ∧ cmpFloatModel false true .lt = .lt := ⟨rfl, rfl⟩
 
 /-- `sort_cmp_f64` (value.rs:1891): `partial_cmp` (`o`, meaningful when neither is NaN),
 else `a.is_nan().cmp(&b.is_nan())`. -/

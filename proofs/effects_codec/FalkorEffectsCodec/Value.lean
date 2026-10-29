@@ -18,7 +18,7 @@ import FalkorEffectsCodec.Prim
 **#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
 children the open frames still need after this one. Before, it checked `n` alone and
-every level of `[[[…` could claim the whole remainder (`pre3267_*` below: the
+every level of `[[[…` could claim the whole remainder (pre-#3267 counterexamples (removed; in 17ccc5412) below: the
 reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
 capacities one decode reserves sum to at most `remaining / 4`.
 | `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:63`) |
@@ -1004,41 +1004,6 @@ def hostile (k : Nat) : Bytes :=
   (List.range k).flatMap fun i => w32 T_ARRAY ++ w32 (2 * (k - i - 1))
 
 #guard (hostile 100).length = 800
-
-/-! ### Before #3267: the per-level guard (history) -/
-
-/-- `read_one`'s array arm before #3267: `guard_count(n, MIN_VALUE_BYTES)`, the
-claim checked against the remainder alone. Every other arm is unchanged. -/
-def pre3267_readOne (utf8 : Bytes → Bool) : R Step := do
-  let t ← u32
-  if t = T_ARRAY then do
-    let n ← u32
-    let n ← guardCount n MIN_VALUE_BYTES
-    if n = 0 then pure (.value (.list [])) else pure (.opened n)
-  else readBody utf8 0 t
-
-/-- `capTrace` over the pre-#3267 decoder (no `owed`). -/
-def pre3267_capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Bytes → List Nat
-  | 0, _, _ => []
-  | fuel + 1, st, r =>
-    match pre3267_readOne utf8 r with
-    | .error _ => []
-    | .ok (.opened n, r') => n :: pre3267_capTrace utf8 fuel (⟨[], n⟩ :: st) r'
-    | .ok (.value v, r') =>
-      match deliver v st with
-      | .more st' => pre3267_capTrace utf8 fuel st' r'
-      | _ => []
-
-def pre3267_hostileCaps (k : Nat) : Nat := (pre3267_capTrace (fun _ => true) (8 * k + 1) [] (hostile k)).sum
-
-/-- **Before #3267 the reservations were quadratic**: 80 bytes of `hostile 10`
-reserved 90 elements, past the 20 a linear bound allows. -/
-theorem pre3267_hostile_quadratic : pre3267_hostileCaps 10 = 90 := by decide
-
--- …`k (k - 1)` elements from `8 k` bytes. At 16 bytes per `Value` (the Rust
--- `size_of`), 1 MB of input reserved ~256 GB; the Rust test measured 2.3 GB RSS.
-#guard pre3267_hostileCaps 100 = 9900
-#guard pre3267_hostileCaps 1000 = 999000
 
 /-! ### On main: refused at the second level -/
 

@@ -30,9 +30,7 @@ pushed id, so in an edge case the collapsed list can be a few bytes longer than 
   direction belongs to the last decoded segment, extended in place), `push_dinv` (a push from `DInv`
   lands in `DInv` or `Inv`), `pushAll_dinv`, **`decoded_then_pushed_keeps_order`** (pushing any `xs`
   onto any well-formed decoded list gives `flat segs ++ xs`, for every collapse decision — no
-  reorder, no `assert!`), `readIds_then_pushed_keeps_order` (end to end from the wire). Historical:
-  `pre2920_decoded_then_pushed_reorders` / `_asserts` (the counterexamples on the pre-fix
-  `fromSegmentsPre2920`, `start = len - 1`).
+  reorder, no `assert!`), `readIds_then_pushed_keeps_order` (end to end from the wire).
 
 Headline results: `IdListWire.push_encode_decode`, `IdListWire.readIds_safe`,
 `IdListWire.readIds_never_panics`, `IdListPush.decoded_then_pushed_keeps_order`.

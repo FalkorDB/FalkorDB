@@ -55,7 +55,7 @@ string is non-empty. Both side conditions are necessary: see
 `bug_string_range_order` and `bug_empty_string_not_indexed`. The optimizer's
 equal-bounds case needs no side condition since #3072 (1c9994e37): with an
 exclusive side the node is empty (before, the premise `lo = hi → imn ∧ imx`
-was needed; `pre3072_exclusive_equal_bounds`). -/
+was needed). -/
 theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     (lo hi : Option Bytes) (imn imx : Bool) (hf : fields k = true)
     (hb : lo.isSome ∨ hi.isSome)

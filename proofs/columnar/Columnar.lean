@@ -145,8 +145,7 @@ proofs/ops_aggregate.
   pushed items sets column `cols b [i]` to `xs.map (val b i)`), then each of the 7 impls shown
   lawful (`giNode_lawful` … `giValue_lawful`); `RowIter`; emitter constructors.
 * `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: since #2912 the float
-  lane is `sort_cmp_f64`, antisymmetric with NaN; `pre2912_compareAt_nan_not_antisymmetric` is the
-  old `unwrap_or(Less)` lane, known #2891), builder push paths and merge plan, constructors/accessors,
+  lane is `sort_cmp_f64`, antisymmetric with NaN; the old `unwrap_or(Less)` lane was known #2891), builder push paths and merge plan, constructors/accessors,
   `merge_over_input`, `clone_active_rows_seq_origin`, `size_hint`, `set_argument_batch`
   (every Argument leaf gets the batch, emitter-backed nodes reset), `inspect_context`, `BatchOp::next`.
 
@@ -156,8 +155,7 @@ proofs/ops_aggregate.
   BATCH_SIZE))` (batched_result_emitter.rs:563), plus two `debug_assert!`s (`pack_ceiling` in `[1,
   BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`). The #2922 miscompile (LLVM 21-23.1.0 on
   aarch64-apple-darwin dropped the guard) is a compiler bug, so the source semantics did not change:
-  `Emitter.withBinding` is now the clamp, the old arm is kept as `pre2973_withBinding`, and
-  `withBinding_eq_pre2973` proves the two compute the same ceiling for every cap;
+  `Emitter.withBinding` is now the clamp;
   `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs` are unchanged. The `u16`
   selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped, now stated without a
   guard to drop.
@@ -168,7 +166,7 @@ proofs/ops_aggregate.
 ## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
 * `Column::compare_at` (batch.rs:399): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
   `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
-  for every pair; the NaN counterexample is `pre2912_compareAt_nan_not_antisymmetric`.
+  for every pair.
   `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order
   `Main.scMain_total`, `Main.compareAt_eq_scMain`.
 * `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true` (#2917).

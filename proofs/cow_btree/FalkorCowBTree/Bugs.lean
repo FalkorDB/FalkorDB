@@ -10,34 +10,8 @@ namespace CowBTree
 
 Before #2278 `apply_batch` gave the last child the upper bound `TOP = (u64::MAX, u64::MAX)` and kept a
 batch entry for a child only while `entry < upper`. `TOP < TOP` is false, so `TOP` was routed to *no*
-child, and the sweep simply ended — the entry was lost. The two theorems below are about the old
-sweep `pre2278_route`; `route_keeps_all` / `route_routes_TOP` (`Batch.lean`) prove the fix. -/
-
-/-- No slice handed to any child ever contains `TOP`, whatever the separators. -/
-theorem pre2278_route_never_routes_TOP (seps : List E) (hs : ∀ s ∈ seps, s ≤ TOP) :
-    ∀ (cs : List Node) (batch : List E), ∀ p ∈ pre2278_route seps cs batch, TOP ∉ p.2 := by
-  intro cs
-  induction cs generalizing seps with
-  | nil => intro batch p hp; simp [pre2278_route] at hp
-  | cons ch cs ih =>
-    intro batch p hp
-    simp only [pre2278_route, List.mem_cons] at hp
-    rcases hp with rfl | hp
-    · intro hT
-      have := mem_takeWhile_p hT
-      simp only [decide_eq_true_eq] at this
-      have hup : seps.head?.getD TOP ≤ TOP := by
-        cases seps with
-        | nil => simp
-        | cons s ss => simpa using hs s List.mem_cons_self
-      omega
-    · exact ih seps.tail (fun s h => hs s (List.mem_of_mem_tail h)) _ p hp
-
-/-- Concretely: a two-leaf root, batch `[TOP]` — the routed slices are all empty. -/
-theorem pre2278_route_drops_TOP_example :
-    pre2278_route [enc 2 0] [.leaf [enc 0 0, enc 1 0], .leaf [enc 2 0, enc 3 0]] [TOP] =
-      [(.leaf [enc 0 0, enc 1 0], []), (.leaf [enc 2 0, enc 3 0], [])] := by
-  simp [pre2278_route, enc, TOP, W]
+child, and the sweep simply ended — the entry was lost. The old sweep and its counterexamples were removed (in 17ccc5412);
+`route_keeps_all` / `route_routes_TOP` (`Batch.lean`) prove the fix. -/
 
 /-! ## Bug 2 (historical, FIXED by #2897, 7b60f28db): with `BRANCH_MAX = 3` remove broke the tree
 
@@ -46,8 +20,8 @@ branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:197`, reported at `:473`): a
 down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
 rebalance (`node.rs:212` guard) and drains to an empty non-root leaf. `is_empty()` then lies, and
 a later `insert_batch` hits `Node::min` on the empty leaf (out-of-bounds panic, `node.rs:234`) or the
-single-child `debug_assert` (`node.rs:71`). The `pre2897_b3_*` theorems below replay it on
-`CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `pre2897_b3_excluded`, and
+single-child `debug_assert` (`node.rs:71`). The `pre2897_b3_*` counterexamples (removed; in 17ccc5412) replayed it on
+`CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `constAssert_rejects_B3`, and
 `remove_spec_asserted` for every configuration the assert admits). -/
 
 def c23 : Cfg := ⟨2, 3, by decide, by decide⟩
@@ -65,27 +39,5 @@ theorem t5_shape : t5 = (.branch [2] [.branch [1] [.leaf [0], .leaf [1]], .branc
 theorem t5_wf : TreeWF c23 t5.2 t5.1 := by
   rw [t5_shape]
   simp [TreeWF, WFb, COK, Sorted, HI, W, c23]
-
-/-- One remove already leaves a single-child branch (`TreeWF` violated). -/
-theorem pre2897_b3_one_remove : remAll c23 t5 [0] =
-    (.branch [2] [.branch [] [.leaf [1]], .branch [3] [.leaf [2], .leaf [3, 4]]], 2) := by
-  rfl
-
-theorem pre2897_b3_one_remove_not_wf : ¬ TreeWF c23 (remAll c23 t5 [0]).2 (remAll c23 t5 [0]).1 := by
-  rw [pre2897_b3_one_remove]
-  simp [TreeWF, WFb, COK]
-
-/-- Removing everything leaves a tree with no entries whose `is_empty()` is `false`. -/
-theorem pre2897_b3_drained_is_empty_lies :
-    toList (remAll c23 t5 [0, 1, 2, 3, 4]).2 (remAll c23 t5 [0, 1, 2, 3, 4]).1 = [] ∧
-    isEmpty (remAll c23 t5 [0, 1, 2, 3, 4]).1 = false := by
-  decide
-
-/-- ...and its right subtree's `Node::min` is the panic case. -/
-theorem pre2897_b3_drained_min_panics :
-    remAll c23 t5 [0, 1, 2, 3, 4] =
-      (.branch [2] [.branch [] [.leaf []], .branch [] [.leaf []]], 2) ∧
-    minOpt 1 (.branch [] [.leaf []]) = none :=
-  ⟨rfl, rfl⟩
 
 end CowBTree

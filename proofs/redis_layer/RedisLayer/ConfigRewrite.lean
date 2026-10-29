@@ -20,7 +20,7 @@ server (#3413).
 
 **Fixed by #3419 (`8621212fc`, closes #3413):** `VKEY_MAX_ENTITY_COUNT` was registered with
 range `1..1073741824` while both other paths accept every `0..i64::MAX`
-(`pre3419_rewrite_refused`: FalkorDB Cloud's `4611686000000000000`, and `0`). Now
+(FalkorDB Cloud's `4611686000000000000`, and `0`; counterexample removed; in 17ccc5412). Now
 `vkey_rewrite_reloads_config` / `vkey_rewrite_reloads_load`: any value either path accepts
 is written by `CONFIG REWRITE` as a line the next start accepts, reading back the same value.
 
@@ -185,26 +185,6 @@ theorem vkey_rewrite_reloads_load (fs : FS) (td tm : Int) (args : List (List Nat
   · simp at hm
 
 /-! ## History and the open cases -/
-
-/-- The table before #3419 (`lib.rs:103` at `289c201fe`). -/
-def pre3419_table : List (String × Kind) :=
-  table.map fun e => if e.1 = "VKEY_MAX_ENTITY_COUNT" then (e.1, .i64 100000 1 1073741824) else e
-
-/-- **Bug before #3419 (#3413)**: `GRAPH.CONFIG SET` accepted `4611686000000000000` (what
-FalkorDB Cloud loads with) and `0`, and the rewritten line was refused on the next start. -/
-theorem pre3419_rewrite_refused :
-    validate .vkeyMax (dec 4611686000000000000) = .ok 4611686000000000000 ∧
-    nativeLoadIn pre3419_table "VKEY_MAX_ENTITY_COUNT" (rewriteVal 4611686000000000000) = none ∧
-    validate .vkeyMax (b "0") = .ok 0 ∧
-    nativeLoadIn pre3419_table "VKEY_MAX_ENTITY_COUNT" (rewriteVal 0) = none := by
-  have ht : pre3419_table.lookup "VKEY_MAX_ENTITY_COUNT" = some (.i64 100000 1 1073741824) := by
-    decide
-  refine ⟨?_, ?_, by decide, ?_⟩
-  · simp [validate, rustParseI64_dec 4611686000000000000 (by decide)]
-  · have hs := string2ll_dec 4611686000000000000 (by decide)
-    simp [nativeLoadIn, ht, rewriteVal, hs, Option.filter]
-  · have hs := string2ll_dec 0 (by decide)
-    simp [nativeLoadIn, ht, rewriteVal, hs, Option.filter]
 
 /-- **Still open (same class as #3413, not filed)**: values the module-load arguments accept
 whose rewritten line the table refuses. `CACHE_SIZE`/`THREAD_COUNT`/`NODE_CREATION_BUFFER`

@@ -5,7 +5,7 @@ import FalkorOpsApply.Merge
 `Merge.lean` models `MergeOp::next` as it was at ca36bfa15: the match sub-plan ran once per
 INPUT BATCH, so a row saw the creations (and `ON CREATE SET` rewrites) of earlier batches
 but not of earlier rows of its own batch. That model is kept there as history
-(`rustBatch`/`rustMerge`/`phaseA`, `pre3067_batch_dependent`).
+(`rustBatch`/`rustMerge`/`phaseA`).
 
 Since #3067 (b47d6d6a3) `MergeOp::match_all` (merge.rs:260-297) first consumes the whole
 child and runs the match sub-plan for every row, against the graph as it is before any
@@ -58,8 +58,7 @@ theorem matchAll_eq (cl : Clause α) (g : Graph) (bs : List (List α)) :
   | nil => rfl
   | cons b bs ih => simp only [matchAll, List.flatMap_cons, List.flatten_cons, List.map_append] at ih ⊢; rw [ih]
 
-/-- **The result does not depend on the batch boundaries** (the pre-#3067 model did:
-`pre3067_batch_dependent`). -/
+/-- **The result does not depend on the batch boundaries** (the pre-#3067 model did). -/
 theorem mainMerge_batch_independent (cl : Clause α) (allBound : Bool) (st : SState (α := α))
     (bs : List (List α)) : mainMerge cl allBound st bs = mainMerge cl allBound st [bs.flatten] := by
   simp only [mainMerge, matchAll_eq, List.flatten_cons, List.flatten_nil, List.append_nil]

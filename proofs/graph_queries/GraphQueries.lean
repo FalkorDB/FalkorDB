@@ -75,23 +75,19 @@ no longer needs a Nodup hypothesis),
 
 **Re-targeted to origin/main `1c0e6c8de`** (from `e860645bb`): #3280 makes the `drop_index`
 "no such index" error print `:L` (not `:L()`) when no attribute is named, as C: new
-`Index.noSuchIndexMsg`, `dropIndex` takes the label, `dropIndex_none_noattr`; history
-`pre3280NoSuchIndexMsg`, `pre3280_empty_attrs_diverged`. COVERAGE.tsv graph.rs lines re-cited.
+`Index.noSuchIndexMsg`, `dropIndex` takes the label, `dropIndex_none_noattr`. COVERAGE.tsv graph.rs lines re-cited.
 No other change to this project's modelled code.
 
 **Previously re-targeted to origin/main `1d15bf713`** (from `0f45a8685`): #3250 (`2eacf0ece`, #3246)
 makes `rebuild_derived_matrices` take `node_cap.max(saved)` before resizing — new
-`Ids.rebuildNodeMs`, `rebuild_never_shrinks`, `rebuild_keeps_entries`; history
-`pre3250_rebuildNodeMs`, `pre3250_rebuild_shrinks`. COVERAGE.tsv lines re-cited (+14 past
+`Ids.rebuildNodeMs`, `rebuild_never_shrinks`, `rebuild_keeps_entries`. COVERAGE.tsv lines re-cited (+14 past
 graph.rs:974). 234 theorems.
 
 **Previously re-targeted to origin/main `0f45a8685`** (from `cab3cf192`): #3277 (`13e849935`) adds
 `register_relationship_type` (:1274), which `get_type_id_mut` and
 `get_relationship_matrix_mut` both call, so every type registration resizes —
 `Schema.registerRelType`, `registerRelType_width`, `getTypeIdMut_width`,
-`getRelMatMut_new`, `Delete.type_cleared_after_registration` (bug 1 below fixed);
-the old model is kept as `pre3277_getTypeIdMut` with `pre3277_getTypeIdMut_stale_width`
-and `Delete.pre3277_stale_type_after_registration`. COVERAGE.tsv lines re-cited to
+`getRelMatMut_new`, `Delete.type_cleared_after_registration` (bug 1 below fixed). COVERAGE.tsv lines re-cited to
 `0f45a8685`. 230 theorems.
 
 ## CONFIRMED bugs (Rust vs C, live) — all three re-checked live at 2c874022a: still present
@@ -103,8 +99,7 @@ and `Delete.pre3277_stale_type_after_registration`. COVERAGE.tsv lines re-cited 
    `GRAPH.CONSTRAINT CREATE g MANDATORY RELATIONSHIP B PROPERTIES 1 x`;
    `MATCH ()-[r:A]->() DELETE r`; `MATCH (a{i:1}),(b{i:2}) CREATE (a)-[:C]->(b)`;
    `MATCH ()-[r]->() RETURN type(r)` → Rust `A`, C `C`. Same via replica
-   schema apply (effects/v3/apply.rs:559). Lean: `pre3277_stale_type_after_registration`;
-   now `type_cleared_after_registration`.
+   schema apply (effects/v3/apply.rs:559). Lean: now `type_cleared_after_registration` (counterexample removed; in 17ccc5412).
    Test `deleted_edge_type_survives_type_registration` (debug: panics
    GrB_DIMENSION_MISMATCH). Fix: call `self.resize()` in `get_type_id_mut`.
    (2c874022a: Rust `A`, C `C`.)

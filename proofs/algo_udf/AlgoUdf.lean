@@ -45,7 +45,7 @@ Every `bug_*` test asserts C's answer and fails today.
 * `Graph::get_node_relationships` yields out-edges then in-edges (self-loop in both).
 * QuickJS: `obj.set("__proto__", v)` never creates an own key; `obj.keys()`
   lists array-index keys first; `obj.get("constructor")` falls back to the
-  prototype's constructor (historical `pre3074_*` model only); `JS_IsDate` / `JS_IsRegExp`
+  prototype's constructor; `JS_IsDate` / `JS_IsRegExp`
   test the internal class (`Marshal.JsKind`); `Object.prototype.toString` gives "[object Object]";
   `new Date(ms)` is NaN beyond ±8.64e15 ms.
 * f64 is abstracted (`Marshal.F64`, `MsfFlow.Score`): only `==`, `<`, `floor`,
@@ -122,19 +122,18 @@ Known before this wave (counterexamples added):
   `Compact.wcc_compact_component_id_not_member`.
 * HarmonicCentrality source vector sized `node_count` not `node_id_bound` (:2777) —
   `Compact.unfiltered_drops_high_ids`.
-* pageRank with an unknown label errors — **FIXED by #3058** (`Compact.pre3058_pagerank_unknown_label_compact_empty`; now `pagerank_unknown_label_empty`).
+* pageRank with an unknown label errors — **FIXED by #3058** (`pagerank_unknown_label_empty`).
 * Forged `__falkor_type` markers accepted (type_convert.rs:351-358) —
   `Marshal.forged_node_marker`, `forged_edge_marker`.
 * -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) — **FIXED by #3066**
-  (`Repo.pre3066_collision_accepted`, `pre3066_delete_breaks_other`, `pre3066_case_folded`; `dotted_collision` stays as the reason the check compares qualified names).
+  (counterexamples removed; in 17ccc5412; `dotted_collision` stays as the reason the check compares qualified names).
 * getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
 New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 1. **FIXED by #3113 (`8a66c01e5`)** — SPpaths/SSpaths charged a missing cost as 0
    (algo_procedures.rs bound and enumeration); C charges 1 per edge, so pathCost = hops
    without costProp and `maxCost` bounds hops. Now default 1.0 (:2399, :2521):
-   `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`; historical
-   `pre3113_cost_default_diverges`. The Dijkstra fast path (:2308) still reports 0 and C's
+   `Paths.cost_agree`, `cost_no_prop_hops`, `cost_default_agrees`. The Dijkstra fast path (:2308) still reports 0 and C's
    fast path does too (live, `Paths.dijkstra_cost_no_prop`).
 2. **FIXED by #3074** — UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
    `{name:'RegExp'}` becomes the string "[object Object]" (type_convert.rs:314-350).
@@ -149,15 +148,13 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
 * #3074 (`7a81c83b0`, issue #3073) — `js_to_value` keeps -0.0 a Float (type_convert.rs:203),
   picks Date/RegExp by internal class (`JS_IsDate`/`JS_IsRegExp`, :313-345) instead of a
   `constructor` property, and lets non-finite vecf32 elements through (:236-244).
-  Now: `Marshal.float_rt_iff` (−0.0 excluded), `neg_zero_rt`, `num_eq_pre3074_off_negZero`,
+  Now: `Marshal.float_rt_iff` (−0.0 excluded), `neg_zero_rt`,
   `plain_obj_is_map`, `constructor_key_roundtrips`, `constructor_regexp_roundtrips`,
-  `vecf32_rt`, `vecf32_inf_rt`. Historical: `pre3074_neg_zero_not_preserved`,
-  `pre3074_constructor_key_breaks_roundtrip`, `pre3074_constructor_regexp_becomes_string`,
-  `pre3074_vecf32_inf_not_roundtrip`.
+  `vecf32_rt`, `vecf32_inf_rt`.
 * #3079 (`006428fc5`, issue #3077) — the validation context now defines the `graph` global
   (`setup_graph_global`, js_globals.rs:163-197, called from both setups).
   Now: `UdfGlobals.validate_runtime_same_globals`, `graph_global_in_both`,
-  `validate_runtime_same_graph`. Historical: `pre3079_validate_lacks_graph`.
+  `validate_runtime_same_graph`.
 
 ## Fixed on main (re-target 8743953a8 → cab3cf192)
 * #3336 (`33a956360`, GHSA-frmf-ffvc-mxx5) — `value_to_js` / `js_to_value` recurse through
@@ -166,12 +163,10 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
   is modelled over a QuickJS heap, so a self-containing array is an input. Generic `Step` theorems
   (`Nesting.lean`) instantiated for both directions (`MarshalCap.lean`):
   `fromJs_frames`, `toJs_frames` (MAX + 1 levels always suffice, any input, any heap);
-  `fromJs_past_cap`, `toJs_past_cap` (past the cap: an `Err`, never an overflow); `fromJs_eq_pre3336`,
-  `toJs_eq_pre3336`, `pre3336_finished_eq` (within the cap: exactly the old result on any stack the old
-  code finished on); `self_array_error`, `fromJs_nestArr_ok`/`_past`, `advisory_array_error`,
+  `fromJs_past_cap`, `toJs_past_cap` (past the cap: an `Err`, never an overflow);
+  `self_array_error`, `fromJs_nestArr_ok`/`_past`, `advisory_array_error`,
   `nestList_rt`, `toJs_nestList_past` (the Rust tests); `fromJs_needs_all_frames` (bound tight).
-  Historical: `pre3336_self_array_overflows` (the old code overflows every stack on `a = [a]`),
-  `pre3336_nestArr_overflows` (n nested arrays needed n + 1 levels).
+  Historical: `pre3336_nestArr_overflows` (n nested arrays needed n + 1 levels).
   `fromJs` now also models the `"path"` arm (:359-397), which the earlier model sent to the map branch.
 * Model finding (not a crash, not confirmed live): `cap_asymmetry_vecf32` — `value_to_js` counts only
   List/Map toward the cap, `js_to_value` also counts the array carrying a VecF32 (and the object carrying
@@ -211,7 +206,7 @@ reconstruction, js_context/js_globals glue and graph.traverse/iterate*.
 
 ## Gap closed 2026-10-22 (#3454) — **FIXED by #3464** (see below)
 `UdfNodeView` modelled `create_js_node` reading the committed graph while `labels(n)` reads the
-runtime; the counterexamples are now `pre3454_deleted_node_empty`, `pre3454_edge_source_empty`.
+runtime; the counterexamples were removed (in 17ccc5412).
 
 ## Fixed on main (re-target e860645bb → 1c0e6c8de)
 * #3058 (fixes #3056) — `check_known_labels_and_types` (algo_procedures.rs:469) makes betweenness (:973),
@@ -221,28 +216,24 @@ runtime; the counterexamples are now `pre3454_deleted_node_empty`, `pre3454_edge
   `checkKnown_unknown_label_errors`, `checkKnown_unknown_type_errors`, `checkKnown_label_first`,
   `known_messages`; `pagerankPath`, `pagerank_unknown_label_empty`, `pagerank_unknown_type_empty`,
   `pagerank_compact_nonempty` (LAGraph is never handed a 0x0 matrix), `pagerank_known_label_full`.
-  Historical: `prePagerankPath`, `pre3058_pagerank_unknown_label_compact_empty`.
   Still open (unchanged): `Compact.unfiltered_drops_high_ids` (HarmonicCentrality, #3044; fix PR #3045 not merged).
 * #3586 (fixes #3444) — algo.MSF builds the original-id → compact-id table only when `max_id < 4 n`, else
   binary-searches `sorted_ids` (algo_procedures.rs:1442-1455, :1741). `MsfFlow.buildTbl_get`, `compactOf_eq`
-  (both branches answer `bsearch`), `denseTable_len` (table ≤ 4 slots per active node), `sparse_builds_no_table`;
-  historical `pre3586_table_unbounded`. `bsearch` = `slice::binary_search` on a sorted duplicate-free list: its
+  (both branches answer `bsearch`), `denseTable_len` (table ≤ 4 slots per active node), `sparse_builds_no_table`. `bsearch` = `slice::binary_search` on a sorted duplicate-free list: its
   std spec is assumed.
 * #3066 (fixes #3065) — registry keys are the case-sensitive qualified names (functions/mod.rs:1066, :1131-1145,
   js_context.rs:261, :292) and `UdfRepo::load` (repository.rs:118-132) rejects a qualified name another
   library owns, compared with `eq_ignore_ascii_case`. `Repo.load` (with `replace`), `collides`,
   `collision_rejected`, `collision_rejected_replace`, `dotted_collision_rejected`, `replace_self_ok`,
   `same_lib_cases_coexist`, `case_sensitive`, `CrossFoldUnique`, `load_preserves_crossFold`,
-  `keysUnique_of_crossFold`, `delete_preserves_after3066`. Historical: `preLoad`, `pre3066_collision_accepted`,
-  `pre3066_delete_breaks_other`, `pre3066_case_folded`. `UdfContext` is parameterised by the key function
+  `keysUnique_of_crossFold`, `delete_preserves_after3066`. `UdfContext` is parameterised by the key function
   (`low`); the real code now instantiates it with the identity.
 * #3464 (fixes #3454) — `create_js_node(ctx, id, graph, runtime)` (js_classes.rs:134) reads through the runtime
   when `Runtime::node_differs_from_committed` (runtime.rs:1772) holds (deleted this query, or
   `Pending::node_has_changes`, pending.rs:755), else the committed graph; edges and paths pass the runtime on;
   new helpers `set_node_labels` :203, `set_node_attrs` :220. `UdfNodeView.rs_runtime_first`, `rs_edge_ok`,
   `RT.not_differs` (the fast path agrees with the runtime view), `jsNode_eq_helpers`,
-  `fixed3454_deleted_node`, `fixed3454_edge_source`. Historical: `preRsJsNode`, `pre3454_deleted_node_empty`,
-  `pre3454_edge_source_empty`. Callers without a runtime (getNeighbors, getNodeById, iterateNodes, traverse) still
+  `fixed3454_deleted_node`, `fixed3454_edge_source`. Callers without a runtime (getNeighbors, getNodeById, iterateNodes, traverse) still
   pass `None`.
 * #3280 — `dbms.functions` / `fulltext.drop` (procedures.rs, graph.rs): not in this project.
 -/

@@ -74,15 +74,6 @@ theorem float_rt_iff (f : F64) :
 /-- **#3074: -0.0 round trips as a Float** (as in C). -/
 theorem neg_zero_rt : rt (.float (.zero true)) := rfl
 
-/-- HISTORICAL (`bug_udf_negative_zero_becomes_integer_zero`, fixed by #3074 `7a81c83b0`):
-the number arm used to turn -0.0 into Int 0. -/
-theorem pre3074_neg_zero_not_preserved : pre3074_num (.zero true) = .int 0 := rfl
-
-/-- #3074 changed the number arm at -0.0 only. -/
-theorem num_eq_pre3074_off_negZero (f : F64) (h : f.negZero = false) :
-    (fromJs H0 (.num f)) = .ok (pre3074_num f) := by
-  simp [fromJs_num, pre3074_num, h]
-
 /-- Same mechanism, shared with C (live: both return `2` for `id(2.0)`): 2.0 → Int 2. -/
 theorem integral_float_becomes_int : (toJs (.float (.integ 2)) >>= fromJs H0) = .ok (.int 2) := rfl
 
@@ -138,11 +129,6 @@ theorem vecf32_finite_rt (xs : List F64) (_h : ∀ x ∈ xs, x.finite = true) :
 
 /-- `vecf32([1e39])` holds +inf and now comes back unchanged. -/
 theorem vecf32_inf_rt : rt (.vecf32 [.inf false]) := vecf32_rt _
-
-/-- HISTORICAL (`bug_udf_vecf32_inf_rejected`, fixed by #3074 `7a81c83b0`): the element
-loop refused a non-finite element. C returns `[inf]`. -/
-theorem pre3074_vecf32_inf_not_roundtrip :
-    (pre3074_fromVec [.num (.inf false)]).toOption = none := rfl
 
 /-! ## Maps -/
 
@@ -218,17 +204,6 @@ theorem constructor_key_roundtrips :
 /-- ... and so does `{constructor: {name: 'RegExp'}}`. -/
 theorem constructor_regexp_roundtrips :
     rt (.map [("constructor".toList, .map [("name".toList, .str "RegExp")])]) := rfl
-
-/-- HISTORICAL (`bug_udf_constructor_key_mistaken_for_date`, fixed by #3074 `7a81c83b0`):
-the constructor-name test failed a map whose own `constructor.name` is 'Date' ... -/
-theorem pre3074_constructor_key_breaks_roundtrip :
-    (pre3074_fromObjWith [("constructor".toList, .obj [("name".toList, .str "Date")] .plain)] .plain
-      (.ok [])).toOption = none := rfl
-
-/-- ... and turned one with 'RegExp' into the string "[object Object]". -/
-theorem pre3074_constructor_regexp_becomes_string :
-    (pre3074_fromObjWith [("constructor".toList, .obj [("name".toList, .str "RegExp")] .plain)] .plain
-      (.ok [])).toOption = some (.str "[object Object]") := rfl
 
 /-- Shared with C (live: both return `{}`): a `__proto__` key is lost. -/
 theorem proto_key_dropped :

@@ -16,13 +16,13 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
                widening, multi_pairs, degrees (no `unreachable!`), fold/dup/wait,
                encode's MSB values, `Iter::new/seek`.
 - **W4-matrix-1, fixed by #3250 (history):** `Tensor::resize` shrink never trimmed `me`
-  (0f45a8685 tensor.rs:814-828): `pre3250_shrink_orphans_me`; repro then
+  (0f45a8685 tensor.rs:814-828; counterexample removed; in 17ccc5412); repro then
   `cargo test -p graph --test lean_versioned_matrix tensor_shrink_keeps_orphan_me_rows`
   → after shrink `iter_edges` = [(0,0,3),(5,5,1),(5,5,2)], `edge_count` = 2
   (expected [(0,0,3)], 1); after grow + re-add (5,5,9): `get` = [9] but
   `iter_edges` also yields 1,2 and `edge_count` = 3 (expected 2). Not reachable
   from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
-  `node_cap` ≥ every node id (`pre3250_shrink_safe` proved that case correct).
+  `node_cap` ≥ every node id.
 
 Re-target to main 73077bb4a (#3033, #3086): no model change here. #3033 makes
 `Tensor::decode` (tensor.rs:1553) refuse a payload that breaks promotion

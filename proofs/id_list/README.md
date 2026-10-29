@@ -37,7 +37,7 @@ The concrete refusals are each a theorem (`refuses_reserved_bit`, `refuses_wrap`
 
 **4. Is it safe to push onto a decoded list?**
 
-- **Before #2920, no.** `from_segments` started the run at the last decoded segment. A later collapse could read a descending range back ascending (`pre2920_decoded_then_pushed_reorders`: decoded `[10,9,8]` plus `20,22` came back `[8,9,10,20,22]`) or hit the `assert!` (`pre2920_decoded_then_pushed_asserts`).
+- **Before #2920, no.** `from_segments` started the run at the last decoded segment. A later collapse could read a descending range back ascending (decoded `[10,9,8]` plus `20,22` came back `[8,9,10,20,22]`) or hit the `assert!`.
 - **On main, yes.** `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire.
 
 **5. Does collapsing to a bitmap actually save space?**
@@ -83,7 +83,7 @@ See [`../FINDINGS.md`](../FINDINGS.md) and [`REPORT.md`](REPORT.md) for the repr
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `pre2920_decoded_then_pushed_reorders`, `pre2920_decoded_then_pushed_asserts` | Pushing onto a decoded `IdList` reordered ids (decoded `[10,9,8]` + `20,22,…` → `[8,9,10,20,22,…]`) or panicked on a decoded `Repeat`. Latent: no production path pushed onto a decoded list | Fixed by #2920 (closes #2919; `decoded_then_pushed_keeps_order`) |
+| 1 | removed (17ccc5412) | Pushing onto a decoded `IdList` reordered ids (decoded `[10,9,8]` + `20,22,…` → `[8,9,10,20,22,…]`) or panicked on a decoded `Repeat`. Latent: no production path pushed onto a decoded list | Fixed by #2920 (closes #2919; `decoded_then_pushed_keeps_order`) |
 
 There are no open bugs and no CONDITIONAL rows.
 

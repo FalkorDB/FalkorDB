@@ -18,7 +18,7 @@
   value Redis holds under its key are the **same** `Arc`, holding the finished graph; no
   virtual key is registered; all placeholders are dropped.
 * `cache_size_on_load` — a loaded graph's query cache has the configured `CACHE_SIZE`
-  (#3262; `pre3262_cache_size_ignored` records the old constant 25).
+  (#3262; before, the constant 25).
 -/
 namespace GraphPersist.RedisType
 
@@ -227,12 +227,5 @@ theorem cache_size_on_load (configured : Nat) :
 /-! ### Historical: before #3262
 
 `redis_type.rs` passed the constant `DEFAULT_CACHE_SIZE = 25` to every RDB load. -/
-
-def pre3262_DEFAULT_CACHE_SIZE : Nat := 25
-def pre3262_cacheOnLoad (_configured : Nat) : Nat := pre3262_DEFAULT_CACHE_SIZE
-
-theorem pre3262_cache_size_ignored (configured : Nat) (h : configured ≠ 25) :
-    pre3262_cacheOnLoad configured ≠ cacheOnCreate configured := by
-  simp [pre3262_cacheOnLoad, cacheOnCreate, pre3262_DEFAULT_CACHE_SIZE]; omega
 
 end GraphPersist.RedisType

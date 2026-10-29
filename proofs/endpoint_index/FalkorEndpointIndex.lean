@@ -61,8 +61,7 @@ endpoints no longer fit.
   yields exactly the edge set, whatever tier boundaries it is given.
 * `clampStarts_mono`, `clampStarts_ordered` — #2905 (`1d15bf713`, origin/main this
   project is checked against): `prepare_tiers` clamps its starts monotone, so no tier
-  size underflows; a no-op on restore's ordered starts. History
-  `pre2905_unordered_underflows`.
+  size underflows; a no-op on restore's ordered starts.
 * `paged_at`, `ensurePages_spec` — `pages[i / P][i % P]` addresses the flat list
   under the page-shape invariant, and `ensure_pages` keeps the shape, only
   appends `EMPTY` slots and covers the requested length.
@@ -268,18 +267,6 @@ graph.rs:898-902) are left unchanged: the clamp is a no-op on the restore path. 
 theorem clampStarts_ordered {s1 s2 s3 len : Nat} (h : s1 ≤ s2 ∧ s2 ≤ s3 ∧ s3 ≤ len) :
     clampStarts s1 s2 s3 len = (s1, s2, s3) := by
   simp only [clampStarts, Prod.mk.injEq]; omega
-
-/-- History (#2903): before #2905 the starts were only `min(len)`-clamped, and the
-`debug_assert!(s1 <= s2 && s2 <= s3)` was all that stood between unordered starts and
-`s2 - s1` underflowing (a debug panic; a wrapped `usize` reservation in release).
-The Rust test's `[10, 5, 0]` with `len = 20` underflows by 5. -/
-def pre2905_starts (s1 s2 s3 len : Nat) : Nat × Nat × Nat := (min s1 len, min s2 len, min s3 len)
-
-theorem pre2905_unordered_underflows :
-    let c := pre2905_starts 10 5 0 20
-    c.2.1 < c.1 ∧ (c.2.1 + 2 ^ 64 - c.1) % 2 ^ 64 = 2 ^ 64 - 5 ∧
-    clampStarts 10 5 0 20 = (10, 10, 10) := by
-  decide
 
 end Ix
 

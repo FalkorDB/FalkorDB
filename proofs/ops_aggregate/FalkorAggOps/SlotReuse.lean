@@ -216,30 +216,6 @@ def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List Ke
   ∀ k ∈ keys, ∀ v, key k.name = some v →
     slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
 
-/-- What a reader saw at slot `j` of the old emitted row (`preFinishGroup`). -/
-def preEmitCell {E : Type} (isNull : Z → Bool) (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) (j : Nat) : Option (Option Z) :=
-  match preFinishGroup ev keys aggs key acc, finishVals ev keys aggs key acc with
-  | .ok b, .ok v => some (cell isNull b v j)
-  | _, _ => none
-
-/-- **#3150, before #3522 (ca36bfa15, was `bug3150_null_key_unbound`)**:
-`unbind_agg_accumulators` ran after the keys were written and cleared slot 0, which is the key `x`;
-its value `null` then made the column absent, and `reply_compact`'s `value_at(..).unwrap()`
-(reply.rs:655) panicked. With `'a' AS x` the slot was equally unbound but the non-null value kept
-the column present, so the reply printed `'a'` (live at 9d3869aa8: Rust panic / `a, 1`; C:
-`null, 1`). Fixed by #3522: `fixed3522_null_key_bound`. -/
-theorem pre3522_null_key_unbound :
-    let L := projLayout 0 items3150
-    slotAt (preFinishGroup finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1))) 0 = some none ∧
-    preEmitCell AV.isNull finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) 0 = some none ∧
-    preEmitCell AV.isNull finEv L.1 L.2 (upd env0 0 (.str 0)) (upd env0 0 (.int 1)) 0 =
-      some (some (.str 0)) ∧
-    ¬ PreKeysBound finEv L.1 L.2 (upd env0 0 .null) (upd env0 0 (.int 1)) := by
-  refine ⟨by decide, by decide, by decide, fun h => ?_⟩
-  have := h ⟨0, none⟩ (List.Mem.head _) .null rfl
-  revert this; decide
-
 /-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
 writes the keys (aggregate.rs:1184-1192), so on the same ids the null key `x` is bound to `null`
 and the column is present (live: `null, 1`, as C), and `KeysBound` holds. -/

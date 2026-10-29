@@ -238,7 +238,7 @@ end Props
 
 * `containsS_removeS` needs `Nodup`: with a duplicate, `remove` drops only the
   first copy. Before #2905 `from_vec` did not deduplicate, so it could build
-  such a set (`OrderSetExtra.pre2905_fromVec_dup_survives_remove`; Rust then:
+  such a set (counterexample removed; in 17ccc5412; Rust then:
   `graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`). Since #2905
   it drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
   `containsS_removeS_fromVec`), so every constructor yields a `Nodup` list.

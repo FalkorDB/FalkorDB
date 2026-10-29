@@ -22,7 +22,7 @@ killed the server (repro then: `graph/tests/lean_graphblas_wrappers.rs`
 expected type (`GrB_BOOL` / `GrB_UINT64`) so a well-formed blob of another type
 is refused too (`GrB_DOMAIN_MISMATCH`). `decodeBlob_never_dies` /
 `decodeU64_never_dies` prove no code kills the process; the old wrappers are
-kept as `pre2996_*` history.
+kept as pre-#2996 counterexamples (removed; in 17ccc5412) history.
 -/
 
 import GraphblasWrappers.GrbInfo
@@ -54,29 +54,10 @@ def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .propagate⟩
 (vector.rs:271-273). -/
 def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 256, .propagate⟩
 
-/-- History: `decode_blob` before #2996 (0f45a8685 vector.rs:211):
-`assert_eq!(info, SUCCESS, "GxB_Vector_deserialize failed")` at vector.rs:222. -/
-def pre2996_decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .assertPanic⟩
-
-/-- History: `Vector::<u64>::decode` before #2996 (0f45a8685 vector.rs:253). -/
-def pre2996_decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 253, .assertPanic⟩
-
 /-- `Vector::<bool>::decode` (vector.rs:350): the hardened path — validates
 lengths and NUL-termination, then `if info != SUCCESS { …free…; return Err }`
 for every GraphBLAS call. -/
 def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 350, .propagate⟩
-
-/-- **History (confirmed, fixed by #2996).** The old `decode_blob` (and
-`Vector::<u64>::decode`) `assertPanic`ed on a code that a corrupt blob reaches,
-so a crafted payload killed the process. -/
-theorem pre2996_decodeBlob_is_dos :
-    pre2996_decodeBlob.disp = .assertPanic ∧
-    Disposition.run pre2996_decodeBlob.disp Info.invalidObject = none := by
-  refine ⟨rfl, ?_⟩
-  decide
-
-theorem pre2996_decodeU64_is_dos :
-    Disposition.run pre2996_decodeU64.disp Info.invalidObject = none := by decide
 
 /-- **Main: the fix.** On every code — including `GrB_INVALID_OBJECT` from a
 corrupt blob and `GrB_DOMAIN_MISMATCH` from a blob of the wrong type — both
@@ -117,13 +98,6 @@ theorem decodeBool_safe (i : Info) :
 theorem decodeBool_never_dies (i : Info) :
     Disposition.run decodeBoolHardened.disp i ≠ none := by
   cases i <;> simp [decodeBoolHardened, Disposition.run]
-
-/-- History, side by side: before #2996, on the very same non-success code
-the two wrappers diverged — `decode` returned an error, `decode_blob` died. -/
-theorem pre2996_hardened_vs_blob_on_invalid_object :
-    Disposition.run decodeBoolHardened.disp Info.invalidObject = some false ∧
-    Disposition.run pre2996_decodeBlob.disp Info.invalidObject = none := by
-  refine ⟨?_, ?_⟩ <;> decide
 
 /-- Main: they now agree on every code. -/
 theorem hardened_eq_blob (i : Info) :

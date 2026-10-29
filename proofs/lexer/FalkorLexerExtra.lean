@@ -10,7 +10,7 @@ are from origin/main (737dfb5da).
   `pos(false)`: the `&str[pos..pos(true)]` slice `parse_named_exprs` takes
   (cypher.rs:2750) is well-ordered.
 * **`currentStr_ok`** — `current_str` never slices off a boundary.
-* **`lexNum_zero_exp`** — `0e5` is one float literal (#2910; `pre2910_zero_exp_bug`).
+* **`lexNum_zero_exp`** — `0e5` is one float literal (#2910).
 * **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes
   (lexer.rs:541, 558, 579, 606, 639) sits after an all-ASCII prefix, hence on a
   char boundary (`ascii_boundary`): `lex_numeric` never panics.
@@ -227,12 +227,6 @@ def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) 
       else none
   else if cur = '.' then some (some { st0 with isFloat := true })
   else some (some st0)
-
-/-- (Historical) the radix-prefix part before #2910 (`dba677942`): `0e…`
-fell into `Some(_) | None => return Ok((Token::Integer(0), len))`. -/
-def pre2910NumPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) :=
-  if cur = '0' ∧ (cs[it]? = some 'e' ∨ cs[it]? = some 'E') then none
-  else numPrefix cs cur it len
 
 /-- `lex_numeric` up to the final `take(len)` (lexer.rs:524-693). `cs` is
 `str[pos..]`, starting with the current char; entered on a digit with
@@ -463,11 +457,6 @@ theorem lexNum_zero_exp :
     (lexNum Char.isAlphanum "0e+1".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (4, true) ∧
     (lexNum Char.isAlphanum "0e-2".toList '0' 1 1).map (fun st => (st.len, st.isFloat)) = some (4, true) := by
   decide
-
-/-- (Historical) before #2910 `0e5` stopped after the `0`: `Integer(0)` of
-length 1, and `e5` was lexed as an identifier. -/
-theorem pre2910_zero_exp_bug : pre2910NumPrefix "0e5".toList '0' 1 1 = none ∧
-    numPrefix "0e5".toList '0' 1 1 ≠ none := by decide
 
 /-! ## `err_ctx` / `format_error` (lexer.rs:741-775) -/
 

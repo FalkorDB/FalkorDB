@@ -290,13 +290,6 @@ theorem deep_refused (r : List Nat) (st : List Frame) (h : MAX_VALUE_NESTING ≤
     go C (5 :: r) st = .error .tooDeep := by
   rw [go.eq_def]; simp [h]
 
-/-- Historical (before #3339, 4a4f2a72f): no cap — any depth was accepted, which the
-recursive drop/save/reply paths then walked. Witness: the deep-array prefix is no longer
-read as an open frame once the stack is full. -/
-theorem pre3339_uncapped_depth_now_refused :
-    go C (5 :: C.enc8 1) (List.replicate MAX_VALUE_NESTING ([], 1)) = .error .tooDeep :=
-  deep_refused C _ _ (by simp)
-
 /-- Every encoded value costs at least one byte (the bound `max_records` relies on). -/
 theorem enc_len_pos (v : BV) : 1 ≤ (enc C v).length := by
   cases v <;> simp [enc]
@@ -428,7 +421,7 @@ record's span then stored `(0, v₁), (0, v₂)` (**divergence, confirmed live**
 Since #3063 (`0f45a8685`) `import_attrs_resolved` keeps the first column only (proofs/
 pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`), and since #3026
 (`fb3d516d0`) the record itself already holds one entry per attribute
-(`readRecord_enc`, `keepFirst_nodup`; history `pre3026_two_entries_for_one_attr`). -/
+(`readRecord_enc`, `keepFirst_nodup`). -/
 theorem duplicate_header_ids : resolve [] [[112], [113], [112]] = [0, 1, 0] := by decide
 
 /-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs:598`, `:609-610`).
@@ -784,14 +777,5 @@ value (why the header cannot simply be deduplicated). -/
 theorem repeated_header_null_first :
     keepFirst [] ([0, 0].zip [.null, .long 3]) = [(0, .long 3)] := by
   simp [keepFirst, BV.isNull]
-
-/-- Historical (before #3026, `fb3d516d0`): `process_node_token`/`process_edge_token` pushed
-one entry per non-null column, so the record of header `p, q, p` carried two entries for `p`.
-(#3063 already deduplicated it downstream in `import_attrs_resolved`, first entry kept — see
-`keepFirst_plainRead` — so no stored entity changes; #3026 makes the parse itself correct.) -/
-theorem pre3026_two_entries_for_one_attr :
-    (plainRead ([0, 1, 0].zip [.long 1, .long 2, .long 3])).map Prod.fst = [0, 1, 0] ∧
-    ((keepFirst [] ([0, 1, 0].zip [.long 1, .long 2, .long 3])).map Prod.fst) = [0, 1] := by
-  simp [plainRead, keepFirst, BV.isNull]
 
 end RedisLayer.Bulk

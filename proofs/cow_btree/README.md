@@ -34,7 +34,7 @@ Yes, on main.
 
 - `insert_batch` used to drop the entry `(u64::MAX, u64::MAX)`. **Fixed by #2278**: `route_keeps_all` proves the batch sweep hands every entry to some child. `insertBatch_wf` proves `insert_batch` keeps `TreeWF` and leaves exactly the old entries plus the batch, strictly sorted.
 - `remove_batch` on a sorted batch leaves exactly the entries not in the batch, still sorted. An unsorted batch is the Rust `assert!` panic (`removeBatchTree_unsorted`).
-- Before #3283, `remove_batch` did **not** keep the tree well-formed: it could leave a non-root branch with one child (`pre3283_rb_remove_batch_not_wf`, Bug 3). **Fixed by #3283**: `removeBatchTree_wf` proves it now keeps `TreeWF`.
+- Before #3283, `remove_batch` did **not** keep the tree well-formed: it could leave a non-root branch with one child (Bug 3; counterexample removed; in 17ccc5412). **Fixed by #3283**: `removeBatchTree_wf` proves it now keeps `TreeWF`.
 - `from_sorted` builds a well-formed tree holding exactly its input (`fromSorted_wf`).
 
 **4. Is every tree a caller can hold well-formed?**
@@ -92,12 +92,12 @@ The Rust repros were run against the `cow_btree` sources (see [`../FINDINGS.md`]
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `pre2278_route_never_routes_TOP`, `pre2278_route_drops_TOP_example` | `insert_batch` routed `(u64::MAX, u64::MAX)` to no child, so the entry was silently lost | Fixed by #2278 (`route_keeps_all`, `route_routes_TOP`) |
-| 2 | `pre2897_b3_one_remove_not_wf`, `pre2897_b3_drained_is_empty_lies`, `pre2897_b3_drained_min_panics` | `BRANCH_MAX = 3` passed the const assert, but one `remove` broke the tree; after draining it, `is_empty` was wrong and `Node::min` panicked | Fixed by #2897 (issue #2893): `constAssert_rejects_B3`, `pre2897_b3_excluded` |
-| 3 (W7-btree-1) | `pre3283_rb_remove_batch`, `pre3283_rb_remove_batch_not_wf`, `pre3283_rb_then_remove`, `pre3283_rb_min_panics` | `remove_batch` could leave a non-root branch with one child at any `BRANCH_MAX >= 4`. One later single-key `remove` then left an empty non-root leaf, and the next `insert_batch` panicked in `Node::min` | Fixed by #3283 (issue #3237): `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed` |
-| W7-btree-2 | `pre3285_docBytes3_reads_garbage`, `pre3285_docBytes3_last_oob` in `../index_layer` (`LeafAosD.lean`) | `DOC_BYTES ∈ {3,5,6,7}` passed the const assert but `read_width` reads only 1/2/4/8, so `CowBTree::<256,256,3>` panicked on its second insert | Fixed by #3285 (issue #3238): the assert now requires `is_read_width(DOC_BYTES)` (`isReadWidth`, `constAssert`) |
+| 1 | removed (17ccc5412) | `insert_batch` routed `(u64::MAX, u64::MAX)` to no child, so the entry was silently lost | Fixed by #2278 (`route_keeps_all`, `route_routes_TOP`) |
+| 2 | removed (17ccc5412) | `BRANCH_MAX = 3` passed the const assert, but one `remove` broke the tree; after draining it, `is_empty` was wrong and `Node::min` panicked | Fixed by #2897 (issue #2893): `constAssert_rejects_B3` |
+| 3 (W7-btree-1) | removed (17ccc5412) | `remove_batch` could leave a non-root branch with one child at any `BRANCH_MAX >= 4`. One later single-key `remove` then left an empty non-root leaf, and the next `insert_batch` panicked in `Node::min` | Fixed by #3283 (issue #3237): `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed` |
+| W7-btree-2 | removed (17ccc5412), in `../index_layer` | `DOC_BYTES ∈ {3,5,6,7}` passed the const assert but `read_width` reads only 1/2/4/8, so `CowBTree::<256,256,3>` panicked on its second insert | Fixed by #3285 (issue #3238): the assert now requires `is_read_width(DOC_BYTES)` (`isReadWidth`, `constAssert`) |
 
-Bug 3 in more detail: before #3283 the batch path repaired under-full children one level at a time. If a branch ended with one child and its parent also ended with only that branch, the parent's merge loop did not run, and the lone-child branch was pushed into the merged node one level up, where nothing looked at it again. `BugsBatch.lean` replays this on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4` against the pre-#3283 model (`pre3283_removeBatchTree`), and its header has the Rust repro, which #3283 added as the test `remove_batch_never_leaves_a_single_child_branch`. On main the same input gives a well-formed tree (`rb_remove_batch_fixed`), and `removeBatchTree_wf` proves it for every input.
+Bug 3 in more detail: before #3283 the batch path repaired under-full children one level at a time. If a branch ended with one child and its parent also ended with only that branch, the parent's merge loop did not run, and the lone-child branch was pushed into the merged node one level up, where nothing looked at it again. `BugsBatch.lean` replays this on a 12-entry tree with `LEAF_MAX = 2`, `BRANCH_MAX = 4` (the pre-#3283 model was removed; in 17ccc5412), and its header has the Rust repro, which #3283 added as the test `remove_batch_never_leaves_a_single_child_branch`. On main the same input gives a well-formed tree (`rb_remove_batch_fixed`), and `removeBatchTree_wf` proves it for every input.
 
 Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. With `Reachable_wf_asserted` their hypothesis is discharged, and they are PROVEN (`native_index/FalkorNativeIndex/Contract.lean`).
 
@@ -114,12 +114,12 @@ Bug 3 was why [`../native_index`](../native_index) had 13 **CONDITIONAL** rows. 
 | `Cursor.lean` | The range cursor: `seek_rest`, `next_spec`, `range_spec` |
 | `Snapshot.lean` | Writer operations (`Op`, `applyOps`), `snapshot_isolated`, `insertOne_shares_siblings` |
 | `Bugs.lean` | Bug 1 (`pre2278_route_*`) and Bug 2 (`pre2897_b3_*`) counterexamples |
-| `Batch.lean` | The batch paths after #2278: routing fix, `subtract_eq`, `cws`, `stripEmpty`; the pre-#3283 `remove_batch` model and its content proofs (`pre3283_*`) |
+| `Batch.lean` | The batch paths after #2278: routing fix, `subtract_eq`, `cws`, `stripEmpty`; the pre-#3283 `remove_batch` model and its content proofs (pre-#3283 counterexamples (removed; in 17ccc5412)) |
 | `BatchWF.lean` | `remove_batch` after #3283: `muLoop`, `mubF`, `mergeUnderfull`, `removeBatch`, `removeBatchTree`; `Good`, `combine_good`, `muLoop_good`, `removeBatchTree_wf` |
 | `InsertBatchWF.lean` | `mergeWalk_spec`, `MinChain`, `packBranches_chain`, `buildRoot_wf`, `applyBatch_chain`, `insertBatch_wf`, `fromSorted_wf`, `Reachable`, `Reachable_wf` |
 | `Lookup.lean` | #2278 read-side additions: `firstDoc`, `containsKey`, insert/remove return flags |
 | `Extract.lean` | The generic cursor (`Extract`, `DocExtract`, `TupleExtract`) and `heap_bytes` |
-| `BugsBatch.lean` | Bug 3: the pre-#3283 `remove_batch` single-child branch (`pre3283_*`, with the Rust repro), the same input on main, `removeBatchTree_wf_asserted` |
+| `BugsBatch.lean` | Bug 3: the pre-#3283 `remove_batch` single-child branch (pre-#3283 counterexamples (removed; in 17ccc5412), with the Rust repro), the same input on main, `removeBatchTree_wf_asserted` |
 | `Assert.lean` | The const assert (`constAssert`, `isReadWidth`) and `remove_spec_asserted` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

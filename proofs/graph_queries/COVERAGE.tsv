@@ -14,7 +14,7 @@ graph/src/graph/graph.rs	drop_index_bg	761	PROVEN	Index.dropBg_spec
 graph/src/graph/graph.rs	grow_cap	808	PROVEN	Schema.growCap/growStep: growCap_ge_needed (needed <= GrB_INDEX_MAX), growCap_le_max, growCap_reaches, growCap_ge_cap, growCap_noop, growCap_chunked, growStep_small (#2911 checked/clamped step; total)
 graph/src/graph/graph.rs	new	824	PROVEN	Ids.newG_spec
 graph/src/graph/graph.rs	restore	869	PROVEN	Ids.restore_ids, restoreCap_covers, clampTiers_mono, restore_LInv, fillEndpoints_spec
-graph/src/graph/graph.rs	rebuild_derived_matrices	982	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose); #3250 node half Ids.rebuildNodeMs (node_cap = max(node_cap, saved)): rebuild_never_shrinks, rebuild_keeps_entries (tensor dims not on Ten; Tensor::resize in versioned_matrix); history pre3250_rebuild_shrinks
+graph/src/graph/graph.rs	rebuild_derived_matrices	982	PROVEN	Ids.rebuildRelType_complete (tensor rebuild_backward = GraphBLAS transpose); #3250 node half Ids.rebuildNodeMs (node_cap = max(node_cap, saved)): rebuild_never_shrinks, rebuild_keeps_entries (tensor dims not on Ten; Tensor::resize in versioned_matrix)
 graph/src/graph/graph.rs	trim_attr_stores	1020	PROVEN	Ids.trimAttrStores_id
 graph/src/graph/graph.rs	new_version	1026	PROVEN	Ids.newVersion_spec (fresh batch per version)
 graph/src/graph/graph.rs	name	1077	PROVEN	Accessors (field projection; newVersion_spec keeps it)
@@ -38,7 +38,7 @@ graph/src/graph/graph.rs	get_type_id	1220	PROVEN	Schema.getTypeIdMut_spec, Acces
 graph/src/graph/graph.rs	node_has_label	1232	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	node_has_label_id	1246	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	edge_has_type	1258	PROVEN	Schema.edgeHasType_iff
-graph/src/graph/graph.rs	get_type_id_mut	1271	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration; history pre3277_getTypeIdMut_stale_width, Delete.pre3277_stale_type_after_registration (W4-graph-1, confirmed live then)
+graph/src/graph/graph.rs	get_type_id_mut	1271	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration (W4-graph-1, confirmed live then; counterexample removed; in 17ccc5412)
 graph/src/graph/graph.rs	register_relationship_type	1293	PROVEN	Schema.registerRelType: registerRelType_width (relationship_type_matrix stays relationship_cap × |types|), getTypeIdMut_spec, getRelMatMut_new; Delete.type_cleared_after_registration
 graph/src/graph/graph.rs	get_plan	1305	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
 graph/src/graph/graph.rs	get_label_matrix	1376	PROVEN	Schema.labelNodeCount_eq (getLabelMat)
@@ -149,7 +149,7 @@ graph/src/graph/graph.rs	get_indexed_edges	4163	AXIOMATISED	RediSearch Indexer::
 graph/src/graph/graph.rs	get_all_edges	4178	PROVEN	Queries.allEdges_unknown
 graph/src/graph/graph.rs	fulltext_query_nodes	4191	AXIOMATISED	RediSearch fulltext_query delegation
 graph/src/graph/graph.rs	fulltext_query_edges	4206	AXIOMATISED	RediSearch fulltext_query_edges delegation
-graph/src/graph/graph.rs	vector_query_nodes	4230	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	vector_query_nodes	4230	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp, #3085)
 graph/src/graph/graph.rs	vector_query_edges	4290	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/graph/graph.rs	index_info	4343	PROVEN	Index.indexInfo_length
 graph/src/graph/graph.rs	constraints	4359	PROVEN	Constraints.two_phase_eq (constraints projection)

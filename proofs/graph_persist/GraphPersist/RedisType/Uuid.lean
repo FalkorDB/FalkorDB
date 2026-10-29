@@ -17,10 +17,7 @@ fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
   `(graph, slot)` its own counter value; `sameFields_iff`, `const_check_holds` — `same_fields`
   and the `const _` block's assertions, for every clock reading.
 
-History (before #3286): `a = (nanos as u64) ^ seq` fed all five fields.
-`pre3286_uuid_injective` (the name determines `a`), `pre3286_uuid_collision_iff` (two calls
-collide iff `t₁ ⊕ s₁ = t₂ ⊕ s₂`), `pre3286_uuid_collision_example` (counters `2, 3` at
-clocks `4, 5` ns collide), `pre3286_uuid_same_clock_distinct`.
+Before #3286, `a = (nanos as u64) ^ seq` fed all five fields (counterexample removed; in 17ccc5412).
 -/
 namespace GraphPersist.RedisType
 
@@ -49,18 +46,6 @@ theorem hex_inj : ∀ (w n m : Nat), hex w n = hex w m → n % 16 ^ w = m % 16 ^
     have ih := hex_inj w _ _ h1
     rw [Nat.pow_succ', Nat.mod_mul, Nat.mod_mul, h2, ih]
 
-/-- Before #3286, the five fields of `a = t ^ seq`: `(a >> 32) as u32`,
-`(a >> 16) as u16`, `a & 0xFFF`, `0x8000 | (b & 0x3FFF)`, `b & 0xFFFF_FFFF_FFFF`
-with `b = mixB a`. -/
-def pre3286_fields (a : Nat) : Nat × Nat × Nat × Nat × Nat :=
-  (a / 2 ^ 32 % 2 ^ 32, a / 2 ^ 16 % 2 ^ 16, a % 4096, 32768 + mixB a % 16384, mixB a % 2 ^ 48)
-
-/-- `format!("{:8x}-{:4x}-4{:3x}-{:4x}-{:14x}", ..)`, hex digits as numbers and the
-literal characters as distinct markers (`16` for `-`, `4` for the version digit). -/
-def pre3286_uuidStr (a : Nat) : List Nat :=
-  let f := pre3286_fields a
-  hex 8 f.1 ++ [16] ++ hex 4 f.2.1 ++ [16, 4] ++ hex 3 f.2.2.1 ++ [16] ++ hex 4 f.2.2.2.1 ++ [16] ++ hex 12 f.2.2.2.2
-
 /-- `u64` inverse of `MUL` modulo `2^48` (it is odd). -/
 def MINV : Nat := 263363948849317
 
@@ -88,65 +73,8 @@ theorem low48 (a : Nat) : ((mixB a % 2 ^ 48 + 2 ^ 48 - INC % 2 ^ 48) * MINV) % 2
       rw [show x + y - 2 ^ 48 + 2 ^ 48 - y = x by omega, Nat.mod_eq_of_lt h1]
   rw [Nat.mul_mod, e1, ← Nat.mul_mod, Nat.mul_assoc, Nat.mul_mod, minv_spec, Nat.mul_one, Nat.mod_mod]
 
-/-- History: **the pre-#3286 name determines `a`.** -/
-theorem pre3286_uuid_injective (a a' : Nat) (ha : a < 2 ^ 64) (ha' : a' < 2 ^ 64)
-    (h : pre3286_uuidStr a = pre3286_uuidStr a') : a = a' := by
-  simp only [pre3286_uuidStr, List.append_assoc, List.cons_append, List.nil_append] at h
-  obtain ⟨h1, h⟩ := List.append_inj h (by simp [hex_length])
-  simp only [List.cons.injEq, true_and] at h
-  obtain ⟨_, h⟩ := List.append_inj h (by simp [hex_length])
-  simp only [List.cons.injEq, true_and] at h
-  obtain ⟨_, h⟩ := List.append_inj h (by simp [hex_length])
-  simp only [List.cons.injEq, true_and] at h
-  obtain ⟨_, h⟩ := List.append_inj h (by simp [hex_length])
-  simp only [List.cons.injEq, true_and] at h
-  have f1 := hex_inj 8 _ _ h1
-  have f5 := hex_inj 12 _ _ h
-  simp only [pre3286_fields] at f1 f5
-  rw [show (16 : Nat) ^ 8 = 2 ^ 32 by decide, Nat.mod_mod, Nat.mod_mod] at f1
-  rw [show (16 : Nat) ^ 12 = 2 ^ 48 by decide, Nat.mod_mod, Nat.mod_mod] at f5
-  have hlow : a % 2 ^ 48 = a' % 2 ^ 48 := by rw [← low48 a, ← low48 a', f5]
-  have d1 := Nat.div_add_mod a (2 ^ 32)
-  have d2 := Nat.div_add_mod a' (2 ^ 32)
-  have q1 : a / 2 ^ 32 < 2 ^ 32 := by omega
-  have q2 : a' / 2 ^ 32 < 2 ^ 32 := by omega
-  rw [Nat.mod_eq_of_lt q1, Nat.mod_eq_of_lt q2] at f1
-  have m1 : a % 2 ^ 32 = a % 2 ^ 48 % 2 ^ 32 := by
-    rw [show (2 : Nat) ^ 48 = 2 ^ 32 * 2 ^ 16 by decide, Nat.mod_mul_right_mod]
-  have m2 : a' % 2 ^ 32 = a' % 2 ^ 48 % 2 ^ 32 := by
-    rw [show (2 : Nat) ^ 48 = 2 ^ 32 * 2 ^ 16 by decide, Nat.mod_mul_right_mod]
-  have hlo : a % 2 ^ 32 = a' % 2 ^ 32 := by rw [m1, m2, hlow]
-  omega
-
-/-- One pre-#3286 `uuid_v4` call: clock `t` (nanoseconds, truncated to `u64`) and counter `s`. -/
-def pre3286_uuid (t s : Nat) : List Nat := pre3286_uuidStr ((t % U64) ^^^ (s % U64))
-
 theorem xor_lt (x y : Nat) (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) : x ^^^ y < 2 ^ 64 :=
   Nat.xor_lt_two_pow hx hy
-
-/-- History: **collision iff the clocks and counters cancel.** -/
-theorem pre3286_uuid_collision_iff (t s t' s' : Nat) :
-    pre3286_uuid t s = pre3286_uuid t' s' ↔ ((t % U64) ^^^ (s % U64)) = ((t' % U64) ^^^ (s' % U64)) := by
-  have hm : ∀ x, x % U64 < 2 ^ 64 := fun x => Nat.mod_lt _ (by decide)
-  constructor
-  · intro h; exact pre3286_uuid_injective _ _ (xor_lt _ _ (hm _) (hm _)) (xor_lt _ _ (hm _) (hm _)) h
-  · intro h; simp [pre3286_uuid, h]
-
-/-- History: two pre-#3286 calls on the same clock reading never collided. -/
-theorem pre3286_uuid_same_clock_distinct (t s s' : Nat) (hs : s < U64) (hs' : s' < U64) (hne : s ≠ s') :
-    pre3286_uuid t s ≠ pre3286_uuid t s' := by
-  intro h
-  rw [pre3286_uuid_collision_iff] at h
-  apply hne
-  have e : (t % U64) ^^^ ((t % U64) ^^^ (s % U64)) = (t % U64) ^^^ ((t % U64) ^^^ (s' % U64)) := by rw [h]
-  rw [← Nat.xor_assoc, ← Nat.xor_assoc, Nat.xor_self, Nat.zero_xor, Nat.zero_xor,
-    Nat.mod_eq_of_lt hs, Nat.mod_eq_of_lt hs'] at e
-  exact e
-
-/-- **History (#3286): consecutive counters `2, 3` read at clocks `4 ns` and `5 ns`
-printed the same uuid**, and the second virtual key replaced the first one's slice. -/
-theorem pre3286_uuid_collision_example : pre3286_uuid 4 2 = pre3286_uuid 5 3 := by
-  rw [pre3286_uuid_collision_iff]; decide
 
 /-! ## On main: `uuid_fields` (#3286) -/
 
@@ -295,8 +223,7 @@ theorem vkeyName_suffix (g u : List Nat) : ∃ p, vkeyName g u = p ++ u := by
   · exact ⟨[123] ++ g ++ [125] ++ g ++ [95], by simp⟩
 
 /-- **Two equal virtual-key names, of any graphs, came from the same counter mod
-2^48**: the uuid is the name's fixed-length tail. (Before #3286 this failed:
-`pre3286_uuid_collision_example`.) -/
+2^48**: the uuid is the name's fixed-length tail. (Before #3286 this failed.) -/
 theorem vkeyName_uuid_counter (g g' : List Nat) (t t' s s' : Nat)
     (h : vkeyName g (uuid t s) = vkeyName g' (uuid t' s')) : s % 2 ^ 48 = s' % 2 ^ 48 := by
   obtain ⟨p, hp⟩ := vkeyName_suffix g (uuid t s)

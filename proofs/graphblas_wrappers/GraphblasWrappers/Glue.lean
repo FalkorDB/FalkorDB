@@ -8,7 +8,6 @@
 | `newMatrix`       | `MatrixType::new_matrix` (:290, impls :297, :306) |
 | `Desc`/`descOf`   | `enum Descriptor` (:224) / `From<Descriptor> for GrB_Descriptor` (:315) |
 | `encodeM`/`scrub` | `Encode<19> for Matrix` (:510), header pointers nulled (:527-543, #3097) |
-| `pre3097_encodeM` | the same before #3097 (raw header bytes) |
 | `MatH.inner`/`isSynced` | `inner` (:721) / `is_synced` (:833) |
 | `sparsityName`    | `sparsity_status` (:1103) |
 | `posB`/`posU`     | `IterExtract::pos` (:1562, impls :1579 bool, :1599 u64) |
@@ -179,12 +178,6 @@ def encodeM {M α : Type} (unload : M → Container α) (load : Container α →
   let c := unload m
   ([.bytes (scrub c.hdr), .vec c.x, .vec c.h, .vec c.p, .vec c.i, .vec c.b], load c)
 
-/-- Before #3097 (0f45a8685 matrix.rs:527-529): the raw header bytes. -/
-def pre3097_encodeM {M α : Type} (unload : M → Container α) (load : Container α → M) (m : M) :
-    List (Tok α) × M :=
-  let c := unload m
-  ([.bytes c.hdr, .vec c.x, .vec c.h, .vec c.p, .vec c.i, .vec c.b], load c)
-
 def UnloadLoad {M α : Type} (unload : M → Container α) (load : Container α → M) : Prop :=
   ∀ m, load (unload m) = m
 
@@ -229,13 +222,6 @@ theorem encodeM_no_heap_addresses {M α : Type} (unload : M → Container α)
   simp only [encodeM, List.mem_cons, Tok.bytes.injEq, reduceCtorEq, List.mem_nil_iff,
     or_false] at hmem
   subst hmem; exact scrub_ptr _
-
-/-- History: before #3097 a pointer field's value (a heap address) reached the payload. -/
-theorem pre3097_encode_leaks_heap_address :
-    ∃ (c : Container Unit), Tok.bytes c.hdr ∈ (pre3097_encodeM (fun _ : Unit => c) (fun _ => ()) ()).1 ∧
-      ∃ f ∈ c.hdr, f.ptr = true ∧ f.val ≠ 0 :=
-  ⟨⟨[⟨true, 0x7f00dead0000⟩], (), (), (), (), ()⟩, by simp [pre3097_encodeM], ⟨true, 0x7f00dead0000⟩,
-    by simp, rfl, by decide⟩
 
 /-- A decoder that reads the six tokens back in order recovers the container. -/
 def decodeC {α : Type} : List (Tok α) → Option (Container α)

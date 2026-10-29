@@ -12,7 +12,6 @@ already owns, compared ignoring ASCII case, as C does.
 | `collides`            | the `eq_ignore_ascii_case` scan over the other libraries' `function_names` :118-127 |
 | `delete`              | `UdfRepo::delete` :156 + the caller's `unregister_udf` loop (`unregister_udf` :1142) |
 | `Consistent`          | "LIST shows f ⇔ calling f runs f's body" |
-| `preLoad`, `pre3066_*` | the code before #3066 (keys lowercased, no collision check): historical |
 
 `to_lowercase` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only).
 -/
@@ -29,15 +28,6 @@ def qual (lib : String) (f : String) : String := lib ++ "." ++ f
 abbrev Reg := List (String × (String × String))
 
 def keys (low : String → String) (l : Lib) : List String := l.fns.map (fun f => low (qual l.name f))
-
-/-- HISTORICAL (before #3066): `load` (no replace, name not present): only library
-*names* are compared, then every lowercased qualified key is (re-)inserted,
-overwriting any colliding entry. -/
-def preLoad (low : String → String) (libs : List Lib) (reg : Reg) (l : Lib) :
-    Except String (List Lib × Reg) :=
-  if libs.any (·.name == l.name) then .error "library already registered"
-  else .ok (libs ++ [l],
-    l.fns.foldl (fun r f => (low (qual l.name f), (l.name, f)) :: r.filter (·.1 != low (qual l.name f))) reg)
 
 def delete (low : String → String) (libs : List Lib) (reg : Reg) (n : String) : List Lib × Reg :=
   let gone := (libs.filter (·.name == n)).flatMap (keys low)
@@ -102,28 +92,6 @@ theorem foldEq_refl (a : String) : foldEq a a = true := by
   unfold foldEq; exact beq_self_eq_true _
 
 /-! ## Historical: the code before #3066 (fixed by #3066) -/
-
-/-- Pre-#3066 BUG: `Coll` then `coll`, each registering `f`: the second load was
-accepted, the lowercased keys collide. -/
-theorem pre3066_collision_accepted :
-    let l1 : Lib := ⟨"Coll", ["f"]⟩
-    let l2 : Lib := ⟨"coll", ["f"]⟩
-    (preLoad asciiLow [l1] [("coll.f", ("Coll", "f"))] l2).toOption.isSome ∧
-    ¬ KeysUnique asciiLow [l1, l2] := by
-  refine ⟨by decide, fun h => ?_⟩
-  have := h ⟨"Coll", ["f"]⟩ (by simp) ⟨"coll", ["f"]⟩ (by simp) "f" (by simp) "f" (by simp) (by decide)
-  exact absurd this.1 (by decide)
-
-/-- ... and deleting `coll` unregistered `Coll.f` while LIST still showed it. -/
-theorem pre3066_delete_breaks_other :
-    let libs := [(⟨"Coll", ["f"]⟩ : Lib), ⟨"coll", ["f"]⟩]
-    let reg : Reg := [("coll.f", ("coll", "f"))]
-    (delete asciiLow libs reg "coll").1 = [⟨"Coll", ["f"]⟩] ∧
-    (delete asciiLow libs reg "coll").2 = [] := by decide
-
-/-- Pre-#3066 BUG: `f` and `F` in one library shared a lowercased key, so both ran
-`F`'s body. -/
-theorem pre3066_case_folded : asciiLow (qual "cased" "f") = asciiLow (qual "cased" "F") := by decide
 
 /-! ## After #3066: exact keys, collision check -/
 

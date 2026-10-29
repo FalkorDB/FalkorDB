@@ -64,27 +64,6 @@ def scalarFilter (xs : List Ex) (inp : FP) : FP :=
   | [] => inp
   | xs => .filter (andOf xs) inp
 
-/-- Pre-#3335 shape (`x` alone, else `And(xs)`) — what `and_of` reproduces when no
-scalar conjunct is itself an AND. -/
-def pre3335_scalarFilter (xs : List Ex) (inp : FP) : FP :=
-  match xs with
-  | [] => inp
-  | [x] => .filter x inp
-  | xs => .filter (.node .and xs) inp
-
-theorem scalarFilter_eq_pre3335 (xs : List Ex) (inp : FP) (h : ∀ x ∈ xs, x.d ≠ .and) :
-    scalarFilter xs inp = pre3335_scalarFilter xs inp := by
-  have hs : xs.flatMap (spliceOp .and) = xs := by
-    induction xs with
-    | nil => rfl
-    | cons x xs ih =>
-      rw [List.flatMap_cons, spliceOp_other _ _ (h x (by simp)), ih (fun y hy => h y (by simp [hy]))]; rfl
-  match xs, h, hs with
-  | [], _, _ => rfl
-  | [x], h, _ => simp [scalarFilter, pre3335_scalarFilter, andOf, flat_single _ _ _ (h x (by simp))]
-  | a :: b :: rest, _, hs =>
-    simp only [scalarFilter, pre3335_scalarFilter, andOf]; rw [flat_many _ _ _ (by rw [hs]; simp), hs]
-
 mutual
 def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
   | .node d cs, inp =>

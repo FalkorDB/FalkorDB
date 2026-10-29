@@ -79,14 +79,14 @@ Every bug was reproduced against the real Rust (`graph/tests/lean_lexer.rs`, not
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `pre2908_rs_block_comment_bug` | A block comment ended at the first `/`: `RETURN 5 /* a/ -1 //*/` gave 4 (C: 5) | Fixed by #2908 (`rs_block_comment_fixed`, `rs_agrees_spec`) |
-| 2 | `pre2908_rs_trailing_slash_bug` | A lone trailing `/` was skipped as whitespace | Fixed by #2908 (`rs_trailing_slash_fixed`) |
-| 3 | `pre2908_rs_unterminated_bug` | An unterminated `/*` was accepted | Fixed by #2908 (`rs_unterminated_fixed`, `rs_unterminated_general`) |
-| 4 | `pre2910_crlf_bug` | `\r` was not whitespace, so CRLF queries failed to parse | Fixed by #2910 (`rs_crlf`) |
-| 5 | `pre2910_zero_exp_bug` | `0e5` lexed as `0` then `e5` | Fixed by #2910 (`lexNum_zero_exp`) |
-| 6 | `pre2910_min_noncanonical_bug` | `-0x08000000000000000` was rejected as an overflow (C: `-9223372036854775808`) | Fixed by #2910 (`min_noncanonical_fixed`, `int_literal_correct`) |
-| 7 | `pre2910_min_postfix_bug` | `9223372036854775808.x` escaped the overflow check | Fixed by #2910 (`litExpr_min`) |
-| 8 | `pre2910_unesc_plus_bug` | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
+| 1 | removed (17ccc5412) | A block comment ended at the first `/`: `RETURN 5 /* a/ -1 //*/` gave 4 (C: 5) | Fixed by #2908 (`rs_block_comment_fixed`, `rs_agrees_spec`) |
+| 2 | removed (17ccc5412) | A lone trailing `/` was skipped as whitespace | Fixed by #2908 (`rs_trailing_slash_fixed`) |
+| 3 | removed (17ccc5412) | An unterminated `/*` was accepted | Fixed by #2908 (`rs_unterminated_fixed`, `rs_unterminated_general`) |
+| 4 | removed (17ccc5412) | `\r` was not whitespace, so CRLF queries failed to parse | Fixed by #2910 (`rs_crlf`) |
+| 5 | removed (17ccc5412) | `0e5` lexed as `0` then `e5` | Fixed by #2910 (`lexNum_zero_exp`) |
+| 6 | removed (17ccc5412) | `-0x08000000000000000` was rejected as an overflow (C: `-9223372036854775808`) | Fixed by #2910 (`min_noncanonical_fixed`, `int_literal_correct`) |
+| 7 | removed (17ccc5412) | `9223372036854775808.x` escaped the overflow check | Fixed by #2910 (`litExpr_min`) |
+| 8 | removed (17ccc5412) | `'\u+041'` decoded to `A` | Fixed by #2910 (`unesc_plus_rejected`) |
 | 9 | `set_target_unbounded` | `MATCH (n) SET n.a.a…(5000) = 1` builds its target outside `check_depth`; the binder then overflows its stack. C rejects it | **Open** (#2895, PR #2900 not merged) |
 | 10 | `foreach_unbounded` | Nested `FOREACH (x IN [1] \| FOREACH (…))` never goes through `nested`; 100 000 levels abort the process with a stack overflow (C crashes as well) | **Open** (#2895, PR #2900 not merged) |
 | 11 | `hop_truncation_bug` | A hop bound is cast `i as u32`, so `*4294967298` means `*2` | Not filed: C truncates the same way |

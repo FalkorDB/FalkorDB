@@ -100,24 +100,6 @@ theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
     · cases h
     · cases h; simp [setRelIds, Mat.removeMask, Ne.symm hw]
 
-/-- **History (W4-graph-1 / #3244, fixed by #3277).** End to end on the old model:
-register a fresh type through `get_type_id_mut`
-(`GRAPH.CONSTRAINT CREATE … RELATIONSHIP <new type>`, or a replica applying
-a schema record), then `DELETE` an existing edge: its old type stays in the
-type matrix. When the id is reused by an edge of a later type `t2 > t`,
-`get_relationship_type_id` (first entry of the row) still answers `t` —
-live repro: `type(r)` returns the deleted edge's type. -/
-theorem pre3277_stale_type_after_registration (O : IdSpaceOps) (g : G V) (snew : String) (e t : Nat)
-    (hn : snew ∉ g.types) (hw : g.relType.nc = g.types.length)
-    (ht : g.relType.get e t = true) (r : G V) (out : List (Nat × Nat × Nat × Nat))
-    (h : deleteRels O (pre3277_getTypeIdMut g snew).1 [e] = .ok (r, out)) :
-    r.relType.get e t = true := by
-  have hs := pre3277_getTypeIdMut_stale_width g snew hn hw
-  rw [deleteRels_stale O _ _ _ _ h (Nat.ne_of_lt hs)]
-  have hk : (pre3277_getTypeIdMut g snew).1.relType = g.relType := by
-    simp [pre3277_getTypeIdMut, (idx_none g.types snew).2 hn]
-  rw [hk]; exact ht
-
 /-- **`type_cleared_after_registration`** (#3277 fixed): registering a type through
 `get_type_id_mut` (constraint creation, a replica's schema record) no longer narrows
 `relationship_type_matrix`, so a later `DELETE` of an edge clears its type entry. -/

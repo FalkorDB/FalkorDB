@@ -117,15 +117,13 @@ Headline theorems:
 * `uuid_counter_distinct`, `counter_field_bijective`, `uuid_regression_pair_distinct` — since
   #3286 virtual-key names differ whenever their counters differ mod 2^48, whatever the clock;
   `vkeyName_uuid_counter`, `names_vname_inj` (discharges `Names.vname_inj`), `const_check_holds`
-  (`same_fields`: the Rust compile-time check holds for every clock). History:
-  `pre3286_uuid_injective`, `pre3286_uuid_collision_iff`, `pre3286_uuid_collision_example`.
-* `countCheck_in_bounds`, `countCheck_own` — #2996's deleted-id count check; history
-  `pre2996_count_wraps`.
+  (`same_fields`: the Rust compile-time check holds for every clock).
+* `countCheck_in_bounds`, `countCheck_own` — #2996's deleted-id count check.
 
 Confirmed live (Rust release build of origin/main vs C `bin/macos-arm64v8-release/falkordb.so`,
 ports 18910/18911, `CACHE_SIZE 1`):
 4. **FIXED by #3262 (`361f62ac1`)** — formerly RDB-loaded graphs ignored `CACHE_SIZE`
-   (`DEFAULT_CACHE_SIZE = 25`; `pre3262_cache_size_ignored`; after `DEBUG RELOAD` Rust
+   (`DEFAULT_CACHE_SIZE = 25`; after `DEBUG RELOAD` Rust
    `Cached execution: 1`, C `0`). Now every load passes `io_cache_size(rdb)`
    (`redis_type.rs:69`, the configured value): `cache_size_on_load`.
 5. **#2537 generalised**: `GRAPH.RESTORE k <payload>` crashes Rust (SIGSEGV in
@@ -138,7 +136,7 @@ ports 18910/18911, `CACHE_SIZE 1`):
 ## Re-target to origin/main 1d15bf713 (from 0f45a8685)
 * **#3286 (`bf11a2774`)** — `uuid_v4` prints `uuid_fields(t, seq)`: clock and counter in
   separate fields. `Uuid.lean` models `uuidFields`/`uuid` anew; the old `t ^ seq` model and
-  its theorems are kept as `pre3286_*` history. Bug 6 fixed.
+  its theorems are kept as pre-#3286 counterexamples (removed; in 17ccc5412) history. Bug 6 fixed.
 * **#2996 (`d99861124`)** — `RoaringTreemap::decode_with_count` refuses a count whose byte
   length overflows (`Layout.countCheck`). Bug 5 (#2537, `RM_LoadStringBuffer`) is in
   `buffered_io.rs`, which #2996 does not touch: still open.

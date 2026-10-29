@@ -8,7 +8,7 @@ step it calls the new `Node::merge_underfull_below` (`node.rs:560-573`) on every
 produced (one after a merge, two after a borrow), and then re-examines index `left`. `merge_underfull_below`
 re-runs `merge_underfull` over a produced branch's children when one of them is under-full. That
 repairs the lone-child branch that a combine used to carry one level up untouched (Bug 3,
-`BugsBatch.lean`, now `pre3283_*`).
+`BugsBatch.lean`, now pre-#3283 counterexamples (removed; in 17ccc5412)).
 
 ## Model
 
@@ -352,7 +352,7 @@ theorem mergeUnderfullBelow_branch (c : Cfg) (h : Nat) (seps : List E) (cs : Lis
       if cs.any (isUnderfull c) then .branch (mergeUnderfull c h seps cs).1 (mergeUnderfull c h seps cs).2
       else .branch seps cs := rfl
 
-/-- `Node::remove_batch` (`node.rs:498-555`), after #3283: as `pre3283_removeBatch`, but the repair is
+/-- `Node::remove_batch` (`node.rs:498-555`), after #3283: the repair is
     the new `merge_underfull` (line 553). -/
 def removeBatch (c : Cfg) : Nat → Node → List E → Node
   | _, .leaf es, batch => .leaf (subtract es batch)                   -- lines 503-516

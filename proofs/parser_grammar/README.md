@@ -53,7 +53,7 @@ Before #3104, `[(x {k: [(x {k: …})]})]` nested 18 levels deep (206 bytes) took
 
 - **The gate is exact on balanced brackets** (`pipeScan_exact`).
 - **Failed attempts are linear**: at most `808·(n+1)` on `n` bytes (`failed_attempts_linear`, `memoRun_nodup`).
-- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (`pre3041_gate_changes_result`): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
+- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. `Oracle.Bal` was **false** for the Rust until #3041 because of the slice-bound bug (counterexample removed; in 17ccc5412): `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]` was accepted before #3104 and a syntax error after (C's answer). #3041 makes a failed slice bound an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is no longer refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
 
 **5. Does `connected_components` split a pattern correctly?**
 
@@ -98,16 +98,16 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W3-parser-1 | `skipFilter_eof_diverges` | `RETURN shortestPath((a)-[{` at end of input: the filter-skip loop never ends, a worker spins forever, and 11 such queries stop all graph queries. C: syntax error | **Open** |
-| #3036 | `pre3041_slice_bound_error_swallowed` (history) | A slice bound that failed to parse became `0` or `i64::MAX`: `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error); `[(1..2]` was accepted | Fixed by #3041: `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err` |
+| #3036 | removed (17ccc5412) | A slice bound that failed to parse became `0` or `i64::MAX`: `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error); `[(1..2]` was accepted | Fixed by #3041: `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err` |
 | — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two). Same root cause as W2-binder-1 | **Open** |
 | — | `sign_sequences` | `+-1` is accepted, `- -1` and `-+1` are rejected; the grammar allows one sign (`- -1` is #2309) | **Open** |
-| W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected`; history `pre3297_call_skips_rest_validation`, `pre3297_match_last_after_call_accepted` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
+| W4-plan-4 | `call_validates_rest`, `match_last_after_call_rejected` | Nothing after a procedure CALL was validated: `… MERGE ()-[:R\|S]->()` created an edge, `… UNWIND [1] AS x` was accepted; C rejects all | **Fixed by #3297** (b774fdfad, main b84473a7f); the `parent().unwrap()` in `utilize_node_by_id` remains as a hazard |
 | W4-parse-1 | `anon_name_collides` | Anonymous entities are named `_anon_N`, a name users can write: `MATCH (_anon_0:A), (:B) RETURN count(*)` → Rust 0, C 1 | **Open** |
 | W4-parse-2 | `create_named_path_drops_dup_rel` | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` creates 1 relationship (C: "already declared"); since #2829 `RETURN p, q` also returns an inconsistent path | **Open** |
 | W4-parse-3 | `merge_dup_rel_dropped` | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` creates 1 relationship (C: error) | **Open** |
 | W4-parse-4 | `set_paren_property_accepted`, `type_colon_accepted` | `SET (n.x) = 5` and `[:A:B]` are accepted (C: syntax error) | **Open** |
 | #2502 | `bug2502_pred_swallows_match`, `bug2502_where_match_merged` (property `PredEndsBeforeClause`) | A WHERE pattern predicate is parsed by `parse_pattern(&Keyword::Match)` (cypher.rs:2119), whose separator (1562-1579) continues on `MATCH`, so the next MATCH clause is folded into the predicate: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` → Rust `'m' not defined`, C returns the rows; with `RETURN count(*)` Rust 1, C 2 | **Open** |
-| W3-parser-9 | `pre3041_gate_changes_result` (history) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
+| W3-parser-9 | removed (17ccc5412) | Exponential backtracking in nested `[(...)]` lists: 206 bytes took 49 s | Fixed by #3104 |
 | #3057 | `not_not_kept`, `is_null_then_predicate`, `call_trailing_comma_refused`, `set_bracket_paren_refused`, `match_match_refused`, `load_csv_with_from_refused` | `NOT NOT x` was parsed as `x`; `1 IS NULL IN [false]` was rejected; `abs(-1,)`, `SET [n).x = 5`, `MATCH MATCH` and `LOAD CSV WITH FROM` were accepted | Fixed by #3060 (the theorems are now the correct behaviour) |
 
 Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS xN` clauses crash the Rust server in planning or execution (W4-parse-5); C runs 5000.
@@ -126,10 +126,10 @@ Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS 
 | File | What's in it |
 |---|---|
 | `FalkorParserGrammar.lean` | The report header and imports |
-| `Model.lean` | The expression parser: tokens `Tok`, trees, frames, `step`, one function per level, `primary`, `listLit`, `listOp` (and `pre3041_listOp`) |
+| `Model.lean` | The expression parser: tokens `Tok`, trees, frames, `step`, one function per level, `primary`, `listLit`, `listOp` |
 | `Grammar.lean` | The reference: openCypher's expression rules (`G.*`) as a recursive-descent recogniser |
 | `NoPanic.lean` | `Good`, `Inv`, `parseExpr_no_panic` |
-| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, the #3060 fixes, `sign_sequences`, the #3041 slice fix and `pre3041_slice_bound_error_swallowed` |
+| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, the #3060 fixes, `sign_sequences`, the #3041 slice fix |
 | `Bounded.lean` | `bounded_agree` and the `known` disagreement classes; `bounded_bal` (balanced consumption) |
 | `Clauses.lean` | Clause-level fragments: the shortestPath filter skipper, SET/REMOVE targets, the projection-comma bug |
 | `Tactic.lean` | Proof helpers |

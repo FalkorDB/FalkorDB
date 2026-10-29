@@ -26,7 +26,7 @@ the interleaving is arbitrary (`Step` is a relation, any enabled event may fire)
 an unclaimed fork and claims the slot only when it escalates; an inline writer that
 committed in between makes the claim `Stale` and the write re-runs from the start
 (`execute_query_write`'s retry loop, `graph_core.rs:737`). The pre-#3290 protocol (slot
-claimed as a reader) is kept as `stepPre3290` for the historical counterexample.
+claimed as a reader) is no longer modelled (counterexample removed; in 17ccc5412).
 
 Transactions are lists of abstract writes; a version is the list of all writes it
 contains, in order. The private version is `base ++ pending`.
@@ -423,21 +423,6 @@ slot as a **reader** (old `graph_core.rs:748`, `MvccGraph::write` with no lock h
 the whole match phase, and took the GIL only at the first mutation. An inline writer in
 that window took the per-graph write lock fine and then failed the CAS: "another write is
 in progress, retry the query" (BUG 5, confirmed live 3/3; C creates the node). -/
-
-def stepPre3290 (s : S) : Ev → Option S
-  | .claim t => match s.slot with
-    | none => some { s with slot := some (t, s.pub, []) }
-    | some _ => none
-  | e => step (fun _ => true) s e
-
-def runPre3290 (s : S) : List Ev → Option S
-  | [] => some s
-  | e :: es => (stepPre3290 s e).bind (runPre3290 · es)
-
-theorem pre3290_multi_write_refused :
-    (runPre3290 init [.claim 1, .escalate 0]).isSome ∧
-    ((runPre3290 init [.claim 1, .escalate 0]).bind (stepPre3290 · (.claim 0))).isNone := by
-  decide
 
 /-- In the C protocol (no slot; claim = GIL), the same interleaving lets the inline
 writer through. -/

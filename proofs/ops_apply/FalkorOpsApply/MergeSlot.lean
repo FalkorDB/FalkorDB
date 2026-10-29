@@ -376,70 +376,7 @@ def before (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) : St :=
 
 /-! ### #3368 -/
 
-/-- **#3368, merge side.** Both counts are 1 and both sit, value-only, at the MERGE variable's
-slot 2. `b`'s MERGE hashes `Int 1` instead of `:B {id:'b1'}`, misses, creates `B b1` (node 1)
-and caches `[(2, node 1)]` under that key; `c`'s MERGE hashes the same `Int 1`, hits, and binds
-`c` to node 1: `labels(c), c.id` = `[B], 'b1'`, 2 nodes. Live (main): exactly that; C (and the
-fixed key here): `[C], 'c1'`, 3 nodes. -/
-theorem pre3050_bug3368_merge_takes_leftover_as_node :
-    keyVal (rustKey clC68 (row3_68 (.int 1))) = some (.int 1) ∧
-    (row3_68 (.int 1)).isBound clC68.var = false ∧
-    ¬ KeyFromBoundNodeOnly rustKey clC68 (row3_68 (.int 1)) ∧
-    outVar (run true rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 1)) ∧
-    nodes (run true rustKey (.int 1) clC68 (row3_68 (.int 1))) =
-      some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩] ∧
-    ¬ MergeBindsOwnNode rustKey clC68.erase (before true rustKey (.int 1)) (row3_68 (.int 1)) ∧
-    -- the fixed key: c = a new `C c1` node, 3 nodes (C's answer)
-    outVar (run true fixKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    nodes (run true fixKey (.int 1) clC68 (row3_68 (.int 1))) =
-      some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩, ⟨2, 2, .str 12⟩] := by
-  refine ⟨by decide, by decide, fun h => ?_, by decide, by decide, fun h => ?_, by decide, by decide⟩
-  · have := (h (.int 1) (by decide)).2
-    obtain ⟨_, h⟩ := this; cases h
-  · have := h _ _ rfl _ (List.mem_singleton_self _)
-    revert this; decide
-
-/-- The leftover only matters through key equality. Live on main, each matching the model:
-counts 2 then 1 (two `a` rows) → correct `[C] c1`; counts 2 and 2 (two `a`, two `b` rows) →
-`[B] b1` (and live `b2` is never created either: its row also hashes `Int 2` and hits `b1`'s
-entry — the same mechanism on one more row, not modelled here); `collect(1)` in both segments (leftover `[1]` twice) → `[B] b1`; `count(*)` then
-`collect(1)` (`1` vs `[1]`) → correct. So it fires whenever the two leftovers are equal, list
-or not; "does not fire for a list" holds only when a list meets an integer. -/
-theorem pre3050_bug3368_fires_iff_leftovers_equal :
-    outVar (run true rustKey (.int 2) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    outVar (run true rustKey (.int 2) clC68 (row3_68 (.int 2))) 2 = some (some (.node 1)) ∧
-    outVar (run true rustKey (.list [1]) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 1)) ∧
-    outVar (run true rustKey (.int 1) clC68 (row3_68 (.list [1]))) 2 = some (some (.node 2)) := by
-  decide
-
 /-! ### #3369 -/
-
-/-- **#3369, merge side.** `b`'s MERGE caches `[(2, node 1)]` under `Int 1` as above; `c` (id 3)
-holds the second count `Int 1`, value-only, so its MERGE hits that entry and re-inserts
-`(2, node 1)` — slot 2 is `r2` in this scope — leaving `c` an unbound `Int 1`, which the next
-operator reads as the column value: `RETURN c` gives `1`, `c.id` (inside `collect(c.id)`) fails
-with "Type mismatch: expected Map, Node, … but was Integer". Live (main): `RETURN c, c0, c1` →
-`1, 1, 1` with 2 nodes, the issue query → that error; C: `'c1'`, 3 nodes. -/
-theorem pre3050_bug3369_merge_leaves_int_in_node_var :
-    keyVal (rustKey clC69 (row3_69 (.int 1))) = some (.int 1) ∧
-    ¬ KeyFromBoundNodeOnly rustKey clC69 (row3_69 (.int 1)) ∧
-    outVar (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.int 1)) ∧
-    outVar (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) 2 = some (some (.node 1)) ∧
-    nodes (run true rustKey (.int 1) clC69 (row3_69 (.int 1))) =
-      some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩] ∧
-    ¬ MergeBindsOwnNode rustKey clC69.erase (before true rustKey (.int 1)) (row3_69 (.int 1)) ∧
-    outVar (run true fixKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
-  refine ⟨by decide, fun h => ?_, by decide, by decide, by decide, fun h => ?_, by decide⟩
-  · obtain ⟨_, h⟩ := (h (.int 1) (by decide)).2; cases h
-  · have := h _ _ rfl _ (List.mem_singleton_self _)
-    revert this; decide
-
-/-- #3369 controls (live on main, matching): `collect(1)` as the first fold (`[1]` vs `1`) →
-`'c1'`; `collect(1)` in both segments → `RETURN c` gives `[1]`. -/
-theorem pre3050_bug3369_controls :
-    outVar (run true rustKey (.list [1]) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) ∧
-    outVar (run true rustKey (.list [1]) clC69 (row3_69 (.list [1]))) 3 = some (some (.list [1])) := by
-  decide
 
 /-! ## On main (#3050 keys the cache by `(operator idx, hash)`) -/
 

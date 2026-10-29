@@ -38,7 +38,7 @@ moved (+151 from `:900`, +291 from `:1235`). The project now depends on graphbla
 **Re-targeted to main b29a2885c** (from 5e475e6c9): #3463 adds the pending-deleted endpoint
 check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
 model and satisfies `LiveExpandInto` (`expandIntoP_live`), old counterexamples renamed
-`pre3463_*`; `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
+pre-#3463 counterexamples (removed; in 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
 `Pending` (`bug_condTraverse_*`).
 
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
@@ -130,7 +130,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   (`run_complete`); index scans are sound pre-filters under the RediSearch
   contract (`scanRow_spec`); edge index scans honour bound endpoints (`edgeRow_sound`) and, since #3081
   (`ff3d24ba7`), read an undirected pattern both ways round, a self-loop once
-  (`orient_mem`, `orient_length`; historical `pre3081_undirected_once`).
+  (`orient_mem`, `orient_length`).
 * PathBuilder's "other endpoint" rule reconstructs any walk's nodes when edge
   ids are unique (`buildNodes_walk`).
 * The bidir dedup keeps unique keys and never loses a key (`dedupRows_keys_nodup`,
@@ -141,9 +141,9 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   CondTraverse / ExpandInto no longer evaluate inline attrs per row (the planner lowers
   them to a `Filter` and sets `emit_relationship` for an edge predicate), so the models'
   attr-free `processPairs` / `expandInto` are now literal; the batched F·A path lost its
-  inline-attr gate (`ctNew_eligible_iff`, `pre2390_eligible_le`: it only widened); and a
+  inline-attr gate (`ctNew_eligible_iff`: it only widened); and a
   var-length walk's absorbed edge filter now raises a type error on a non-boolean value,
-  exactly as `FilterOp` (`edgeVerdict_eq_filterRow`; was a silent skip, `pre2390_edgeVerdict_differs`).
+  exactly as `FilterOp` (`edgeVerdict_eq_filterRow`; was a silent skip).
 
 ## Confirmed bugs (Rust repro fails; C and/or openCypher disagree)
 
@@ -203,9 +203,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 10. **#3452: ExpandInto matched an edge whose endpoint is pending-deleted** — FIXED by
    #3463 (b29a2885c): `expand_into.rs:158-160` now yields no row when either endpoint
    is `is_node_deleted`. Property `EIP.LiveExpandInto` is proved for main
-   (`EIP.expandIntoP_live`); the old counterexamples are `EIP.pre3463_violates`,
-   `pre3463_matches_doomed_edge`, `pre3463_collapse_matches_doomed_edge` (on
-   `expandIntoPre`).
+   (`EIP.expandIntoP_live`); the old counterexamples were removed; in 17ccc5412.
 
 11. **#3463 follow-up: CondTraverse still matches an edge of a pending-deleted node**
    (`cond_traverse.rs` never reads `Pending`; `expand_row` `:900`, `process_pairs` `:1235`).

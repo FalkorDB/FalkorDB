@@ -18,7 +18,7 @@ The per-element evaluator is proofs/expr_semantics' `FalkorExpr.Eval.evalNode`
 * The frame property is expr_semantics' `evalNode_frame` (every arm); `RowAgree` on the real
   chunk batch and `Col.Sound` (the former premise `hS`) are `Concrete.rowAgree` /
   `Concrete.colOf_sound`.
-* History (closed 2026-10-21): `pre20261021_compound_cannot_short_circuit` — with an eager
+* History (closed 2026-10-21; counterexample removed; in 17ccc5412): with an eager
   catch-all, `E` could not express `false AND <error>` = `false`; the faithful arm does
   (`and_short_circuits`).
 -/
@@ -189,17 +189,6 @@ open FalkorCore FalkorExpr.Eval
 function — the shape `compound` had before 2026-10-21. -/
 def eagerC {F : Type} (g : Nat → List (V F) → Except String (V F)) : Compound (V F) :=
   fun t ths => (ths.mapM fun th => th ()) >>= g t
-
-/-- **History (closed 2026-10-21): why the old `E` could not model `AND`/`OR`/`CASE`.**
-Whatever value-only semantics an eager catch-all gives an operator, an erroring operand is
-reported before the operator runs — so no choice yields Rust's `false AND <error>` =
-`false`. `E` now has faithful `and` / `or` / `case` arms
-(`FalkorExpr.Eval.and_false_short_circuits`, `case_hit_lazy`) and its catch-all takes thunks. -/
-theorem pre20261021_compound_cannot_short_circuit {F : Type} (O : Ops (V F)) (ev : Ev (V F))
-    (g : Nat → List (V F) → Except String (V F)) (env : Option (Nat → Option (V F)))
-    (t : Nat) (a : V F) (bad : E (V F)) (e : String) (hbad : evalNode O ev (eagerC g) env bad = .error e) :
-    evalNode O ev (eagerC g) env (.compound t [.const a, bad]) = .error e := by
-  simp [evalNode, evalThunks, eagerC, hbad, bind, Except.bind, List.mapM_cons]
 
 /-- …and the faithful arm does short-circuit (live on main: `RETURN false AND 1/0 = 1` →
 `false`). -/

@@ -10,7 +10,7 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-571`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced (`pre2973_withBinding`) on aarch64-apple-darwin |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-571`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
 | `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:745`) |
 | `drain` | `drain_pending_entry` (`:623-648`) |
 | `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:677-718`, `:739-744`) |
@@ -32,23 +32,6 @@ def withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
   | some cap => max 1 (min cap BATCH_SIZE)
   | none => BATCH_SIZE
-
-/-- History: `with_binding` before #2973, a guarded arm,
-`Some(cap) if cap < BATCH_SIZE => cap.max(1), _ => BATCH_SIZE`. LLVM 21-23.1.0 on
-aarch64-apple-darwin dropped the guard (#2922, `withBindingMiscompiled`). -/
-def pre2973_withBinding (recordCap : Option Nat) : Nat :=
-  match recordCap with
-  | some cap => if cap < BATCH_SIZE then max cap 1 else BATCH_SIZE
-  | none => BATCH_SIZE
-
-/-- **#2973 is a rewrite of the source form only**: the clamp computes exactly what the guarded arm
-did, for every cap. -/
-theorem withBinding_eq_pre2973 (rc : Option Nat) : withBinding rc = pre2973_withBinding rc := by
-  cases rc with
-  | none => rfl
-  | some cap =>
-    simp only [withBinding, pre2973_withBinding, BATCH_SIZE]
-    by_cases h : cap < 1024 <;> simp [h] <;> omega
 
 /-- The doubling after each `emit_lazy`. -/
 def grow (c : Nat) : Nat := min (c * 2) BATCH_SIZE
@@ -74,8 +57,6 @@ def withBindingMiscompiled (recordCap : Option Nat) : Nat :=
   | none => BATCH_SIZE
 
 theorem miscompiled_differs : withBindingMiscompiled (some 1025) ≠ withBinding (some 1025) := by decide
-
-theorem miscompiled_differs_pre2973 : withBindingMiscompiled (some 1025) ≠ pre2973_withBinding (some 1025) := by decide
 
 variable {I : Type}
 

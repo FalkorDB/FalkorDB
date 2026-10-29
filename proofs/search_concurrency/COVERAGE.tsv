@@ -1,5 +1,5 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/threadpool.rs	new	67	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin.spawnNames_none (`with_names(size, None)`: unnamed workers); unbounded queue (#3014): Pool.spawn_never_blocks; historical Locks.pre3014_pool_deadlock_reachable (bounded_blocking(1024))
+graph/src/threadpool.rs	new	67	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin.spawnNames_none (`with_names(size, None)`: unnamed workers); unbounded queue (#3014): Pool.spawn_never_blocks (counterexample removed; in 17ccc5412)
 graph/src/threadpool.rs	named	72	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
 graph/src/threadpool.rs	with_names	79	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive)
 graph/src/threadpool.rs	spawn	124	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; PoolWithin.late_job_lost (job sent after the sentinels is accepted and never runs); Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
@@ -25,7 +25,7 @@ graph/src/graph/mvcc_graph.rs	from_graph	104	MODELLED	Mvcc.init (arbitrary pub)
 graph/src/graph/mvcc_graph.rs	read	112	PROVEN	Mvcc.snapshots_are_committed (Ev.read)
 graph/src/graph/mvcc_graph.rs	write	119	PROVEN	Mvcc Ev.claim (CAS + fork, write lock held since #3290): private_on_committed, reader_cannot_claim, refused_commit_releases_slot
 graph/src/graph/mvcc_graph.rs	fork	139	PROVEN	Mvcc Ev.forkW (version ver+1, no slot): one_commit_per_version, inline_write_ok (#3290)
-graph/src/graph/mvcc_graph.rs	claim	151	PROVEN	Mvcc Ev.claimFork (CAS, then version check ⇒ Stale + store(false)): one_commit_per_version, claimFork_stale, claimFork_on_committed, stale_then_rerun (#3290; historical pre3290_multi_write_refused)
+graph/src/graph/mvcc_graph.rs	claim	151	PROVEN	Mvcc Ev.claimFork (CAS, then version check ⇒ Stale + store(false)): one_commit_per_version, claimFork_stale, claimFork_on_committed, stale_then_rerun (#3290)
 graph/src/graph/mvcc_graph.rs	commit	186	PROVEN	Mvcc.no_lost_writes/history_linear/one_commit_per_version (Ev.commit, ver+1), refused_commit_releases_slot, valid_commit_publishes (Graph::validate as `valid`); schema_version/trim/fold not modelled
 graph/src/graph/mvcc_graph.rs	rollback	268	PROVEN	Mvcc.inv_step (Ev.rollback)
 graph/src/graph/mvcc_graph.rs	drop	274	NOT COVERED	cancel_indexing on drop
@@ -54,14 +54,14 @@ src/graph_core.rs	new	553	PROVEN	unbounded write channel (#3014); Locks.never_st
 src/graph_core.rs	from_mvcc	569	MODELLED	as new
 src/graph_core.rs	execute_query	587	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
 src/graph_core.rs	execute_profile	674	MODELLED	as execute_query
-src/graph_core.rs	execute_query_write	737	PROVEN	Mvcc fork/claimFork (#3290): inline_write_ok, stale_then_rerun, claimFork_on_committed (retry sees the inline write); historical pre3290_multi_write_refused (BUG 5)
+src/graph_core.rs	execute_query_write	737	PROVEN	Mvcc fork/claimFork (#3290): inline_write_ok, stale_then_rerun, claimFork_on_committed (retry sees the inline write) (BUG 5; counterexample removed; in 17ccc5412)
 src/graph_core.rs	reply_profile	891	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
 src/graph_core.rs	new	928	AXIOMATISED	RM_BlockClient FFI
 src/graph_core.rs	drop	936	AXIOMATISED	RM_UnblockClient FFI
 src/graph_core.rs	compute_effective_timeout	954	NOT COVERED	config arithmetic, not concurrency
 src/graph_core.rs	reply_invalid_graph_version	993	NOT COVERED	reply formatting
 src/graph_core.rs	admit	1007	PROVEN	Pool.acquireLoop/acquire_bounded; Locks.succ3014 dispatch (reject, never wait): main_never_blocks, inv3014_step
-src/graph_core.rs	query_mut	1018	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); historical pre3014_pool_deadlock_reachable; drain producer (send then CAS)
+src/graph_core.rs	query_mut	1018	PROVEN	Locks.main_never_blocks/never_stuck_3014/inv3014_step (admit + unbounded spawn, #3014); drain producer (send then CAS)
 src/graph_core.rs	query_sync	1222	PROVEN	Mvcc.inline_write_ok (inline writer = escalate 0 then claim; never refused by a matching queued write, #3290)
 src/graph_core.rs	profile_mut	1352	PROVEN	same admission/producer protocol as query_mut: Locks.main_never_blocks, never_stuck_3014
 src/graph_core.rs	profile_sync	1453	MODELLED	as query_sync
@@ -95,7 +95,7 @@ src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with
 graph/src/index/mod.rs	make_arr_names	122	PROVEN	Search.arrNames used by range_never_vector_or_text
 graph/src/index/mod.rs	new	138	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	155	MODELLED	Search.Field.vdim (vector_options.map dimension)
-graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; historical pre3087_*), docSet_temporal_not_indexed, docSet_eq_pre3076_off_temporal (historical pre3076_temporal_in_numeric), fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	set	717	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed; in 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
 graph/src/index/mod.rs	add_document	1907	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
 graph/src/index/mod.rs	register_fields	1181	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
 graph/src/index/mod.rs	bump_id	1049	PROVEN	Tickets.bump_inv, stale_release_isolated
@@ -104,16 +104,16 @@ graph/src/index/mod.rs	try_decrement_pending_for_generation	2129	PROVEN	Tickets.
 graph/src/index/mod.rs	pending_count_for_generation	2151	PROVEN	Tickets.pendingFor
 graph/src/index/mod.rs	pending_count	2165	PROVEN	Tickets.operational_iff
 graph/src/index/mod.rs	is_operational	2084	PROVEN	Tickets.operational_iff
-graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the entry exists); main_operational_complete, main_lost_order_complete; historical pre3086_createRange -> pre3086_second_index_never_populated (BUG 2, fixed by #3086)
+graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the entry exists); main_operational_complete, main_lost_order_complete (BUG 2, fixed by #3086; counterexample removed; in 17ccc5412)
 graph/src/index/indexer.rs	acquire_population_ticket	624	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	acquire_population_snapshot	642	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
 graph/src/index/indexer.rs	acquire_population_snapshots	664	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	release_population_ticket	686	PROVEN	Tickets.dec_inv
 graph/src/index/indexer.rs	is_ticket_current	698	PROVEN	Tickets.batch stale branch (inv_batch, main_lost_order_complete, fixed_trace_complete)
-graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch); historical pre3086_second_index_never_populated
+graph/src/index/indexer.rs	ticket_pending_changes	710	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
 graph/src/index/indexer.rs	enabled	720	PROVEN	Tickets.operational_iff
-graph/src/graph/graph.rs	populate_index_batch	534	PROVEN	Tickets.batch; inv_batch, main_operational_complete; historical pre3086_second_index_never_populated, pre3086_lucky_order_complete
-graph/src/graph/graph.rs	vector_query_nodes	4204	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp); historical Search.pre3088_huge_k_kills_server (#3085)
+graph/src/graph/graph.rs	populate_index_batch	534	PROVEN	Tickets.batch; inv_batch, main_operational_complete
+graph/src/graph/graph.rs	vector_query_nodes	4204	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed; in 17ccc5412)
 graph/src/graph/graph.rs	vector_query_edges	4264	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp)
 graph/src/runtime/runtime.rs	map_to_index_options	1993	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	Search.evalK (evalK_accepts_huge)

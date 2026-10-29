@@ -41,11 +41,9 @@ No function this project models changed: #3250 touches only `rebuild_derived_mat
   `normResolved_fits` (≤ 65,535 entries, so `set_span`'s `n as u16` is exact for any bulk
   header), `normResolved_get` (the *first* column of a repeated id wins, as C),
   `importResolved_spec` (no length precondition any more), `importResolved_reads`,
-  `resolved_duplicate_fixed`; history `pre3063_importResolved_spec`,
-  `pre3063_resolved_duplicate`.
+  `resolved_duplicate_fixed`.
 #3339 (b080a44c1): property validation bounds list nesting at `MAX_VALUE_NESTING` = 4096 —
-`PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`, history
-`PA.pre3339_isValid_any_depth`; the save/load consequence is value_math `stored_roundtrip`.
+`PA.validate_depth` (accepted ⇒ old-valid ∧ depth ≤ 4096), `PA.validate_nest`; the save/load consequence is value_math `stored_roundtrip`.
 
 ## Re-target to 2c874022a (#2846: the graph's `IdSpace` owns the ids)
 
@@ -153,7 +151,7 @@ Wave-4 findings:
   deduplicates ids; `setSpan_cast_exact` shows strictly ascending ids below
   `ATTRIBUTE_ID_NONE` always fit. Not reproduced (needs a 65,536-column bulk
   payload).
-* `pre3063_resolved_duplicate` (**fixed by #3063**: `resolved_duplicate_fixed`) — `import_attrs_resolved` kept duplicate ids
+* `import_attrs_resolved` (**fixed by #3063**: `resolved_duplicate_fixed`; counterexample removed; in 17ccc5412) — kept duplicate ids
   (`GRAPH.BULK` header repeating a column name): two entries for one id are
   stored, reads return the second (binary search), `attr_count` says 2. C
   stores duplicates too (`AttributeSet_AddNoClone` only asserts in debug); not
@@ -233,7 +231,7 @@ none; `UNWIND range(1,3) AS i SET n.v = i` Rust 1/1, C 3/3; `REMOVE n:A SET n:A`
 Rust none, C added 1/removed 1.
 
 Re-found but already known (the first is fixed since #3524): `SET x = m` / `SET r = {…}` kept staged attributes
-(#2776, fixed by #3524 af45ca776: `pre3524_replace_keeps_staged`, `fixed3524_replace_clears_staged`, `replace_reads_src`), `Labels added` counts schema labels (#2655),
+(#2776, fixed by #3524 af45ca776: `fixed3524_replace_clears_staged`, `replace_reads_src`), `Labels added` counts schema labels (#2655),
 plain DELETE detaches (#2573), #2876 shapes A/B.
 
 ## Suspicions (not confirmed)

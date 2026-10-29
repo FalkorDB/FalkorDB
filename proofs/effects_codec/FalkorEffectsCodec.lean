@@ -28,12 +28,10 @@ Re-targeted to origin/main `1d15bf713` (from `0f45a8685`):
 * **#3267 (`eaa65eeba`)** — `Value::decode` bounds a list's width against the whole stack (`owed`).
   `decodeV`/`readOne`/`loop` now carry `owed`; `decodeV_encV` and `decodeV_safe` re-proved (the
   `owed -= 1` never underflows: `owed = owedOf st`), new `capTrace_linear`/`decode_reserves_linear`
-  (reservations ≤ remaining / 4), `hostile_refused_second_level`. History: `pre3267_readOne`,
-  `pre3267_capTrace`, `pre3267_hostile_quadratic` (90 elements from 80 bytes).
+  (reservations ≤ remaining / 4), `hostile_refused_second_level`.
 * **#3278 (`dcbd445d1`, #3276)** — `maybe_compress` refuses a frame whose lengths overflow `u32`.
   `openPayload_maybeCompress`, `fmtReplicate_transparent`, `seal_transparent` lose their `< 2^32`
-  hypothesis; new `framePrefix_*`. History: `pre3278_maybeCompress`, `pre3278_openPayload_maybeCompress`,
-  `pre3278_wrapped_frame_unreadable`.
+  hypothesis; new `framePrefix_*`.
 
 Gaps: zstd/crc32 are hypotheses (`CodecOK`).
 `staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (NOT COVERED, TEST-ONLY).
@@ -66,5 +64,3 @@ open FalkorCodec in
 #print axioms capTrace_linear
 open FalkorCodec in
 #print axioms openPayload_maybeCompress
-open FalkorCodec in
-#print axioms pre3278_wrapped_frame_unreadable

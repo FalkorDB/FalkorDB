@@ -128,7 +128,7 @@ abbrev lf (o : Op) : RT := .node o []
 
 /-- A sub-parser's result. `err` keeps the lexer position (before #3041,
 `parse_list_operator_expression` carried on from wherever a failed
-`parse_expr` stopped; `pre3041_listOp`). `panic` is an `unwrap()` /
+`parse_expr` stopped). `panic` is an `unwrap()` /
 `unreachable!()` / `child(0)` on a childless node; `fuel` is the model's
 step budget running out (not a Rust behaviour). -/
 inductive Res (α : Type)
@@ -463,43 +463,6 @@ def listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
     | .fuel => .fuel
 
 /-! ### Before #3041 (main 8621212fc), kept as history -/
-
-/-- A failed `from`/`to` was *replaced by a default* rather than reported. -/
-def pre3041_orDefault (r : Out) (d : RT) : RT :=
-  match r with
-  | .ok t _ => t
-  | _ => d
-
-def pre3041_listOpTo (lhs : RT) (fromR toR : Out) (r : List Tok) : Res RT :=
-  match toR.rest r with
-  | .rbrack :: r' =>
-    .ok (.node .getElems [lhs, pre3041_orDefault fromR (lf (.int 0)),
-      pre3041_orDefault toR (lf (.int 9223372036854775807))]) r'
-  | r' => .err r'
-
-def pre3041_listOpFrom (pe : List Tok → Out) (lhs : RT) (fromR : Out) (ts : List Tok) : Res RT :=
-  match fromR.rest ts with
-  | .dotdot :: r =>
-    match pe r with
-    | .panic => .panic
-    | .fuel => .fuel
-    | .ok t r' => pre3041_listOpTo lhs fromR (.ok t r') r
-    | .err e => pre3041_listOpTo lhs fromR (.err e) r
-  | .rbrack :: r =>
-    match fromR with
-    | .ok f _ => .ok (.node .getElem [lhs, f]) r
-    | _ => .err r
-  | r => .err r
-
-/-- `parse_list_operator_expression` before #3041: `parse_expr` for `from`, and
-on `..` again for `to`, each `unwrap_or_else` a default; the lexer carried on
-from wherever the failed parse stopped. -/
-def pre3041_listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
-  match pe ts with
-  | .panic => .panic
-  | .fuel => .fuel
-  | .ok f r => pre3041_listOpFrom pe lhs (.ok f r) ts
-  | .err e => pre3041_listOpFrom pe lhs (.err e) ts
 
 -- `parse_map_projection` (3234-3290), after `{`:
 /-- One item of a map projection: `.*`, `.prop`, `key: expr` or `var`. -/

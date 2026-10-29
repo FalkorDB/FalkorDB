@@ -128,26 +128,16 @@ def typeOf : List EV → Res
 
 /-- `Value::name` (value.rs:1387). Since #2954 (b6567cb97) it spells `Relationship` as
 `Edge` and `VecF32` as `Vectorf32` (C's `SIType_ToString`); before, it printed
-`Relationship`/`VecF32` (`pre2954_valueName`). -/
+`Relationship`/`VecF32`. -/
 def valueName : EV → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"
   | .rel _ => "Edge" | .path _ => "Path" | .vecf32 => "Vectorf32" | .point => "Point"
   | .datetime => "Datetime" | .date => "Date" | .time => "Time" | .duration => "Duration"
 
-/-- `Value::name` before #2954. Historical. -/
-def pre2954_valueName : EV → String
-  | .rel _ => "Relationship" | .vecf32 => "VecF32" | v => valueName v
-
 /-- `typeOf()` is `Value::name` (entity.rs:57 since #2954). -/
 theorem typeName_eq_valueName : typeName = valueName := by
   funext v; cases v <;> rfl
-
-/-- The renames of #2954: only `Relationship` and `VecF32` changed. -/
-theorem pre2954_valueName_renames (e : Nat) :
-    pre2954_valueName (.rel e) = "Relationship" ∧ valueName (.rel e) = "Edge" ∧
-    pre2954_valueName .vecf32 = "VecF32" ∧ valueName .vecf32 = "Vectorf32" :=
-  ⟨rfl, rfl, rfl, rfl⟩
 
 /-- The source check `ExprIR::ListComprehension` applies (eval.rs:1055-1069, #2954) to a
 source that is neither a list literal nor `range(..)`: a list is iterated, null gives

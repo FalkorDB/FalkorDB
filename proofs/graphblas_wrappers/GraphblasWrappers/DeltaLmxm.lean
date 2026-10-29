@@ -296,11 +296,6 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
 
 /-! ## History: before #3492 (a3a99bdbc) -/
 
-/-- The pre-#3492 function (matrix.rs at ca36bfa15): the mask is the *pattern* of `F * dm`
-(`ANY_PAIR`), applied complemented with replace to `F * m`, then `F * dp` is added. -/
-def preDeltaLmxm (n : Nat) (F M DP DM : Pat) : Pat :=
-  fun i j => (!mxmAny n F DM i j && mxmAny n F M i j) || mxmAny n F DP i j
-
 /-- Node `1 = x`, `2 = y`, `3 = z`; frontier row `0 = {x, y}`; base edges `x→z`, `y→z`
 (`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs:1954). -/
 def cxF : Pat := fun i k => decide ((i, k) ∈ [(0, 1), (0, 2)])
@@ -308,13 +303,6 @@ def cxM : Pat := fun k j => decide ((k, j) ∈ [(1, 3), (2, 3)])
 def cxNone : Pat := fun _ _ => false
 def cxDM1 : Pat := fun k j => decide ((k, j) ∈ [(1, 3)])
 def cxDM2 : Pat := fun k j => decide ((k, j) ∈ [(1, 3), (2, 3)])
-
-/-- **Fixed by #3492 (a3a99bdbc).** With `x→z` deleted and `y→z` live, `F * (M - DM)`
-reaches `z`; the old function masked `(0,z)` out because `F * dm` reaches it. -/
-theorem pre3492_drops_live_path :
-    preDeltaLmxm 8 cxF cxM cxNone cxDM1 0 3 = false ∧
-      ∃ k, k < 8 ∧ cxF 0 k = true ∧ cxM k 3 = true ∧ cxDM1 k 3 = false := by
-  refine ⟨by decide, 2, by decide, by decide, by decide, by decide⟩
 
 /-- The same input through the current function keeps it, and still drops it when both
 paths are deleted. -/

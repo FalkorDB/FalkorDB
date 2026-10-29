@@ -11,7 +11,7 @@ graph/src/runtime/ops/set.rs	new	40	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	next	59	NOT COVERED	operator plumbing
 graph/src/runtime/ops/set.rs	set_batch	76	MODELLED	per-row set_inner
 graph/src/runtime/ops/set.rs	resolve_set_items	96	NOT COVERED	operator plumbing
-graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged; history Props.pre3524_replaceNoClear, pre3524_replace_keeps_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
+graph/src/runtime/ops/set.rs	set_inner	151	MODELLED	Props.replaceFrom: replace_reads_src (#3524: every `SET e = …` branch clears the staged attributes; reads = the source's last write), fixed3524_replace_clears_staged (fixed by #3524 af45ca776); the full per-item model is ops_apply SetRemove
 graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	125	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	138	PROVEN	Props.replaceFrom: replace_reads_src
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	38	NOT COVERED	operator plumbing / snapshot map building
@@ -109,14 +109,14 @@ graph/src/graph/attribute_store.rs	remove_all	1246	PROVEN	Content.removeAll_spec
 graph/src/graph/attribute_store.rs	insert_attrs_rows	1266	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
 graph/src/graph/attribute_store.rs	insert_attrs	1315	PROVEN	Content.insertAttrs_spec
 graph/src/graph/attribute_store.rs	import_attrs	1351	PROVEN	Content.importAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs_resolved	1388	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed; history pre3063_importResolved_spec, pre3063_resolved_duplicate
+graph/src/graph/attribute_store.rs	import_attrs_resolved	1388	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
 graph/src/graph/attribute_store.rs	structural_memory_usage	1414	PROVEN	Content.structural_partition
 graph/src/graph/attribute_store.rs	encode_with_range	1425	PROVEN	Content.encode_spec, encode_decode_roundtrip
 graph/src/graph/attribute_store.rs	decode	1466	PROVEN	Content.decode_unimplemented
 graph/src/graph/attribute_store.rs	decode_with_count	1476	PROVEN	Content.decode_spec, encode_decode_roundtrip
 graph/src/runtime/pending.rs	flatten_label_map	55	PROVEN	PA.flatten_spec
 graph/src/runtime/pending.rs	is_valid_property	73	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
-graph/src/runtime/pending.rs	validate_list_property	102	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest; history pre3339_isValid_any_depth (#3339 b080a44c1); save/load: value_math stored_roundtrip
+graph/src/runtime/pending.rs	validate_list_property	102	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest (#3339 b080a44c1); save/load: value_math stored_roundtrip
 graph/src/runtime/pending.rs	validate_property	119	PROVEN	PA.validateProperty: validate_depth, validate_nest, validate_spec
 graph/src/runtime/pending.rs	validate_node_property	128	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec
 graph/src/runtime/pending.rs	validate_relationship_property	133	PROVEN	PA.validateProperty (= validate_property): validate_depth, validate_spec

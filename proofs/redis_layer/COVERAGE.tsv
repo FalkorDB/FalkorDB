@@ -79,18 +79,18 @@ src/serializers/mod.rs	Header::from_graph	213	PROVEN	Serial.fromGraph: fromGraph
 src/serializers/mod.rs	null_terminated	245	PROVEN	Serial.nullTerm: strip_nullTerm
 src/serializers/mod.rs	strip_null_terminator	253	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
 src/serializers/mod.rs	Schema::encode	262	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
-src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff; history pre3514_encPh_off_read_on_by_c)
+src/serializers/mod.rs	encode_schema_index_block	338	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
 src/serializers/mod.rs	encode_constraint_block	445	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
 src/serializers/mod.rs	Schema::decode	473	PROVEN	Serial.decSchema: decSchema_encSchema
 src/serializers/mod.rs	decode_schema_entry	535	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	637	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; history pre3252_field_prefix_lost (W4-redis-2), pre3514_range_fulltext_loses_range, pre3514_range_vector_loses_range, pre3514_phonetic_no_kept (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	decode_index_field	637	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
 src/serializers/mod.rs	Schema::from_graph	727	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
-src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c; history pre3043_nan_in_list
+src/reply.rs	write_f	36	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
 src/reply.rs	format_value_to_string	49	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
 src/reply.rs	reply_with_str	113	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
 src/reply.rs	format_g	123	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
 src/reply.rs	reply_compact_value	145	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
-src/reply.rs	reply_verbose_value	357	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort; history pre3449_verboseRel, pre3449_record_renders_dead_rel); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
+src/reply.rs	reply_verbose_value	357	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
 src/reply.rs	reply_stats	541	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
 src/reply.rs	reply_result	630	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
 src/reply.rs	reply_verbose	679	PROVEN	Resp.resultCalls false: verbose_reply
@@ -126,7 +126,7 @@ src/graph_core.rs	WriteAttempt::from	776	PROVEN	GraphCore.Attempt.ofString: ofSt
 src/graph_core.rs	reply_profile	891	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
 src/graph_core.rs	BlockedClient::new	928	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
 src/graph_core.rs	BlockedClient::drop	936	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	954	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76; pre3000_write_timeout_divergence kept), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	compute_effective_timeout	954	PROVEN	Args.rustTimeout: rustTimeout_write_pq, rustTimeout_rw_uniform (#2998 fixed by #3000 2e8172d76), rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
 src/graph_core.rs	reply_invalid_graph_version	993	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
 src/graph_core.rs	admit	1007	PROVEN	GraphCore.admitQ: admit_bounded, capped (QueueSlot::try_acquire; never waits)
 src/graph_core.rs	query_mut	1018	PROVEN	GraphCore.dispatch/admitQ (#3014): stale_version, inline_uncapped, capped, admit_bounded
@@ -212,10 +212,10 @@ src/telemetry.rs	start_flusher_thread	963	PROVEN	Telemetry.start: start_idem
 src/telemetry.rs	shutdown_flusher_thread	1016	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
 src/telemetry.rs	flusher_loop	1051	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
 src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, prefix_isPrefix, prefix_boundary, prefix_longest, prefix_short, prefix_ascii
-src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3; pre3234_truncate_panics kept)
-src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3; pre3234_entry_hash_panics kept)
+src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3)
+src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3)
 src/slow_log.rs	SlowLog::new	81	PROVEN	SlowLog.SL.new: new_empty
-src/slow_log.rs	SlowLog::add	97	PROVEN	SlowLog.add: add_bounded, add_nodup, add_repeat_max, add_fast, add_entries_pre3442, add_minCache (the update arm recomputes min_latency since #3456, closes #3442; fixed3442_update_keeps_min_cache, fixed3442_trace; history pre3442_add, pre3442_update_breaks_min_cache, pre3442_faster_evicts_slower)
+src/slow_log.rs	SlowLog::add	97	PROVEN	SlowLog.add: add_bounded, add_nodup, add_repeat_max, add_fast, add_minCache (the update arm recomputes min_latency since #3456, closes #3442; fixed3442_update_keeps_min_cache, fixed3442_trace)
 src/slow_log.rs	SlowLog::reset	171	PROVEN	SlowLog.reset: reset_empty
 src/slow_log.rs	SlowLog::reply	181	PROVEN	SlowLog.replyLen: replyLen_len
 src/slow_log.rs	unix_now	218	AXIOMATISED	SystemTime::now (OS clock)
@@ -233,7 +233,7 @@ src/commands/bulk_insert.rs	read_f64_ne	83	PROVEN	Bulk.readNe (w = 8; from_ne_by
 src/commands/bulk_insert.rs	read_property	95	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
 src/commands/bulk_insert.rs	PropColumns::new	197	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
 src/commands/bulk_insert.rs	PropColumns::is_empty	212	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
-src/commands/bulk_insert.rs	PropColumns::read_record	218	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead; history pre3026_two_entries_for_one_attr (#3026)
+src/commands/bulk_insert.rs	PropColumns::read_record	218	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead (#3026)
 src/commands/bulk_insert.rs	parse_header	242	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); since #3026 the record keeps one entry per attribute (Bulk.keepFirst_nodup); header byte parse via cstr
 src/commands/bulk_insert.rs	discard_created_graph	283	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
 src/commands/bulk_insert.rs	HeldArgs::hold	324	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
@@ -281,7 +281,7 @@ src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memT
 src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
 src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
 src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part MODELLED in MultiDb.query (#2782 bug2782_same_name_other_db_aborts) and KeyName.rustReplicatedKey (#2653 bug2653_nonutf8_key_mangled refutes ReplicatedKeyIsStored)
-src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.reader_takes_no_slot); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort; history pre3449_record_renders_dead_rel
+src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two, reply shape only (+ GraphCore.writeSteps; write_version: QuerySession.reader_takes_no_slot); rendering of recorded rows: RelLookup.recordDelete/s3449abort, #3449 fixed by #3462 (inspect || snapshot_required): fixed3449_record_snapshot, fixed3449_record_abort
 src/commands/record.rs	graph_record	174	PROVEN	Commands.recordKey: recordKey_creates
 src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
 src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39): four_commands_share, garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes

@@ -34,7 +34,7 @@ graph/src/index/mod.rs	drop	642	PROVEN	Iter.DocLife.freed_once (consumed gate: e
 graph/src/index/mod.rs	new	658	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injective
 graph/src/index/mod.rs	new_edge	685	PROVEN	edgeKey; decode_edgeKey
 graph/src/index/mod.rs	id	713	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
-graph/src/index/mod.rs	set	717	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range (historical pre3076_temporal_in_numeric_range); vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams (historical pre3087_*)
+graph/src/index/mod.rs	set	717	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams
 graph/src/index/mod.rs	from_owned	926	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
 graph/src/index/mod.rs	as_ptr	931	PROVEN	Iter.RC (transient handle; not_freed while owned)
 graph/src/index/mod.rs	try_clone	937	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
@@ -51,12 +51,12 @@ graph/src/index/mod.rs	clone_for_update	1068	PROVEN	Meta.Idx.cloneForUpdate_eq
 graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
 graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
 graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text, pre3514_phonetic_no_was_on
-graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; #3514 history pre3514_phoneticEnabled, pre3514_phonetic_no_was_on, fixed3514_phonetic_no_is_off, pre3514_rule_differs_only_on_no
+graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
+graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; fixed3514_phonetic_no_is_off (#3514)
 graph/src/index/mod.rs	value_to_numeric	1357	PROVEN	valueToNumeric; equal_exact, numRange_exact
 graph/src/index/mod.rs	int_loses_f64_precision	1371	PROVEN	intLosesPrecision; intLosesPrecision_sound
-graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf (historical pre3081_open_bound_excludes_inf)
-graph/src/index/mod.rs	build_string_range_node	1419	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds (historical pre3072_exclusive_equal_bounds), bug_string_range_order
+graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
+graph/src/index/mod.rs	build_string_range_node	1419	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds, bug_string_range_order
 graph/src/index/mod.rs	build_query_node	1477	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
 graph/src/index/mod.rs	query	1691	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
 graph/src/index/mod.rs	query_edges	1714	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
@@ -223,7 +223,7 @@ graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediS
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	is_read_width	88	PROVEN	Leaf.isReadWidth: isReadWidth_iff, isReadWidth_upto16; LeafAosD.docBytesAssert_iff, docBytesAssert_rejects_3 (#3285)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width); historical LeafAosD.pre3285_docBytes3_reads_garbage
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	94	PROVEN	Leaf.readWidth_eq, readWidth_admitted (#3285: exact on every is_read_width width)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	150	PROVEN	Leaf.emptyTree_contents; LeafAosD.constAssert (const assert, #2897/#3285)
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	172	PROVEN	Leaf.emptyTree_contents (new = default); LeafAosD.constAssert
 graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	190	PROVEN	Leaf.fromSorted_contents, LeafAosD.asserted_fromSorted_contents (under the const assert)

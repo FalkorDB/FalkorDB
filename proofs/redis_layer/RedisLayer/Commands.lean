@@ -307,10 +307,6 @@ theorem udfLoad_nonempty (args : List String) (r : Bool) (l c : String)
     | flush => simp [udfLoadCheck] at h
     | list _ _ => simp [udfLoadCheck] at h
 
-/-- History (pre-#3263, W5-udf-4): the parse alone accepted an empty name. -/
-theorem pre3263_empty_name_accepted :
-    udfLoadParse ["", "code"] = .ok (.load false "" "code") := by decide
-
 theorem fixed3263_empty_lib_name :
     udfCmd ["GRAPH.UDF", "LOAD", "", "code"] = .error "empty lib name" ∧
     udfCmd ["GRAPH.UDF", "LOAD", "REPLACE", "", "code"] = .error "empty lib name" := by decide

@@ -104,11 +104,11 @@ scan.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
    - Fix: merge only conjuncts and disjuncts whose label matches the first one. Leave the rest in the post-filter, and bail on OR.
-5. FIXED by #3076 (e20300436). `pre3076_temporal_in_numeric_range` (old `mod.rs:797`).
+5. FIXED by #3076 (e20300436) (old `mod.rs:797`; counterexample removed; in 17ccc5412).
    - Query: `n.v > 0` matched a stored date: `['int']` → `['date','int']`. C: `['int']`.
    - Now temporals are not indexed (`mod.rs:803`): `Temporal.temporal_not_indexed`,
      `temporal_numRange_exact`, `temporal_equal_exact`, `fixed3076_temporal_in_numeric_range`.
-6. FIXED by #3072 (1c9994e37). `pre3072_exclusive_equal_bounds` (old `mod.rs:1434`).
+6. FIXED by #3072 (1c9994e37) (old `mod.rs:1434`; counterexample removed; in 17ccc5412).
    - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
    - Now an exclusive side with equal bounds is the empty node (`mod.rs:1433-1438`):
      `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
@@ -120,13 +120,13 @@ scan.
 8. `bug_bool_eq_int` (`mod.rs:760,1360`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
-9. FIXED by #3081 (ff3d24ba7). `pre3081_open_bound_excludes_inf` (old `mod.rs:1388,1395`).
+9. FIXED by #3081 (ff3d24ba7) (old `mod.rs:1388,1395`; counterexample removed; in 17ccc5412).
    - An absent bound became ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` missed stored ±inf: `['-inf','inf']` → `[]`. C has the same bug.
    - Now an absent bound is inclusive (`mod.rs:1402-1403`): `fixed3081_open_bound_includes_inf`, and `numRange_exact` covers stored ±inf.
 10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
 11. FIXED by #3081 (ff3d24ba7). Edge index scan with an undirected pattern (`runtime/ops/edge_by_index_scan.rs`; outside the model, found by the differential run).
     - Query: `MATCH ()-[r:R]-() WHERE r.v >= 1` returned each edge once instead of twice: `['e','e']` → `['e']`. C has the same bug.
-    - Now proved in `ops_traverse` (`IndexScan.orient_mem`, `orient_length`; historical `pre3081_undirected_once`).
+    - Now proved in `ops_traverse` (`IndexScan.orient_mem`, `orient_length`).
 12. Geo radius near the poles (RediSearch geohash is limited to |lat| ≤ 85.05).
     - Points at latitude 89.99: the full scan finds 21, the index finds 0.
     - C has the same bug. This is outside the axiomatised boundary; the fix would be to keep the distance filter and fall back beyond |lat| > 85.05.
@@ -200,30 +200,26 @@ carries the field's own non-zero dimension), `setVector_good`, `setVector_wrong_
 `registerOne`: an add only ever targets a field registered *with* params), `setVector_sub_pre`.
 This discharges, for vector fields, the `ht` premise of `query_eq_scan_filter` (the RS table
 holds `docOf` of every entity: a vector can no longer make RediSearch reject the document).
-HISTORICAL (fe619ac5f): `pre3087_dim_mismatch`, `pre3087_noparams` — W3-conc-3 / #3075 and the
-W5-idx-2 no-options shape; fixed by #3087.
+Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexamples removed; in 17ccc5412).
 
 ## Re-target to 8743953a8 (#3072, #3076, #2278)
 - `index/mod.rs`: #3076 dropped the temporal arm of `Document::set` (one line shorter from `mod.rs:797`)
   and #3072 added the equal-bounds guard (10 lines at `mod.rs:1430`); every citation is updated.
-  W2-index-5 (bug 5) and W2-index-6 (bug 6) are fixed: their counterexamples are now historical
-  `pre3076_*` / `pre3072_*` theorems next to the correctness theorems above.
+  W2-index-5 (bug 5) and W2-index-6 (bug 6) are fixed: their counterexamples were removed (in 17ccc5412); the correctness theorems are above.
 - `cow_btree` (#2278): `AosLeaf` is generic over `DOC_BYTES`. `LeafAosD.lean` models `doc_le_bytes`
   (`docLeBytes_spec`: the assert passes iff the doc fits; `docLeBytes_lossless`), the D-wide page
   (`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
   for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
   NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
   but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
-  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (now historical `pre3285_docBytes3_reads_garbage`,
-  `pre3285_docBytes3_last_oob`; FIXED by #3285, see below). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
+  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (FIXED by #3285, see below; counterexamples removed; in 17ccc5412). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
   `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
   `DOC_BYTES ∈ {1, 2, 4, 8}`.
 - Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).
 
 ## Re-target to e8f8a3017 (#3081)
 - `index/mod.rs`: #3081 (ff3d24ba7) makes an absent numeric bound inclusive (4 lines at
-  `mod.rs:1400`; later citations +4). Bug 9 is fixed (`pre3081_open_bound_excludes_inf` →
-  `fixed3081_open_bound_includes_inf`; `numRange_exact` drops its finite-only premise). Bug 11
+  `mod.rs:1400`; later citations +4). Bug 9 is fixed (`fixed3081_open_bound_includes_inf`; `numRange_exact` drops its finite-only premise). Bug 11
   (undirected edge-index scan once) is fixed in `edge_by_index_scan.rs`, proved in `ops_traverse`.
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
 
@@ -233,8 +229,7 @@ W5-idx-2 no-options shape; fixed by #3087.
   Every later line of `mod.rs` moved (+6 to `read_width` :94, +17 from `default` :150); citations updated.
   Bug 14 (W7-btree-2) is FIXED by #3285: `readWidth_admitted` (`read_width` loads exactly `w` bytes on
   every admitted width), `isReadWidth_upto16`, `docBytesAssert_iff`, `admitted_doc_read`,
-  `admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (vs `pre3285_assert_admitted_3`,
-  `docBytesAssert_vs_pre3285`: the asserts differ on exactly 3/5/6/7), and
+  `admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (the old and new asserts differ on exactly 3/5/6/7), and
   `asserted_fromSorted_contents` (`from_sorted` under the full const assert `constAssert`).
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.
 
@@ -268,8 +263,8 @@ W5-idx-2 no-options shape; fixed by #3087.
   (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off, like absent and empty.
   Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne_text` re-proved on it. Proved
   `phoneticEnabled_off_spellings` (the Rust unit test), `phoneticEnabled_code`, `phoneticEnabled_iff_ne_no`.
-  History: `pre3514_phoneticEnabled`, `pre3514_phonetic_no_was_on` (a C-written RDB turned phonetic on
-  for every fulltext index), `fixed3514_phonetic_no_is_off`, `pre3514_rule_differs_only_on_no`.
+  Before it a C-written RDB turned phonetic on for every fulltext index (counterexamples removed; in
+  17ccc5412); `fixed3514_phonetic_no_is_off` proves the fix.
   The RDB side of the same PR is in `proofs/redis_layer` (`SerialSchema.decField`).
 
 - Still present: bugs 1-4, 7, 8, 10, 12, 13.

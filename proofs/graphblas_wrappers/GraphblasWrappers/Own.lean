@@ -37,7 +37,7 @@ as the model's step, not proved.
 * `iter_frees_iterator_before_matrix` — `Iter::drop` frees its
   `GxB_Iterator` before its `Arc<Handle>` field can free the matrix.
 
-## Before #3090 (history, `pre3090_*`): `Arc<GrB_Matrix>` + `Arc::get_mut`
+## Before #3090: `Arc<GrB_Matrix>` + `Arc::get_mut`
 
 ```rust
 if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
@@ -48,8 +48,7 @@ if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
 
 `Arc::get_mut` returns `Some` iff the strong count is 1. So a drop did two
 things: **observe** the count (and free iff it is 1), then **decrement**. Two
-separate atomic operations, no lock across them. `pre3090_race_leaks` is the
-leak (test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs leaked);
+separate atomic operations, no lock across them. The leak is the one (test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs leaked);
 main's regression test is `graph/tests/matrix_concurrent_drop.rs`
 `concurrently_dropped_clones_free_the_matrix_once`.
 -/
@@ -93,27 +92,6 @@ def validTraces : List (List Ev) :=
   , [.obs true,  .obs false, .dec false, .dec true]    -- interleaved
   , [.obs false, .obs true,  .dec false, .dec true]    -- interleaved
   , [.obs false, .obs true,  .dec true,  .dec false] ] -- interleaved
-
-/-- **(pre-#3090) No double free.** Every interleaving of two concurrent drops
-freed the matrix at most once: the old bug was a leak only. -/
-theorem pre3090_never_double_free : ∀ t ∈ validTraces, (run start t).frees ≤ 1 := by
-  decide
-
-/-- **(pre-#3090) The leak.** Some interleaving freed the matrix *zero* times:
-both owners ran `Arc::get_mut` while the count was still 2, both saw `None`,
-and the GraphBLAS matrix was never freed (`bug_matrix_concurrent_drop_leaks`).
-Fixed by #3090: `arc_every_interleaving_frees_once`. -/
-theorem pre3090_race_leaks : ∃ t ∈ validTraces, (run start t).frees = 0 := by
-  refine ⟨[.obs true, .obs false, .dec true, .dec false], ?_, ?_⟩
-  · decide
-  · decide
-
-/-- **(pre-#3090) Sequential correctness.** The two serial traces freed exactly
-once, so the leak was purely a scheduling artefact. -/
-theorem pre3090_sequential_frees_once :
-    (run start [.obs true, .dec true, .obs false, .dec false]).frees = 1 ∧
-    (run start [.obs false, .dec false, .obs true, .dec true]).frees = 1 := by
-  decide
 
 /-! ## Main protocol (#3090): `Arc<Handle>`, free in `Handle::drop` -/
 
@@ -198,7 +176,7 @@ def arcOfEv : Ev → St → St
 def runArc (init : St) (t : List Ev) : St := t.foldl (fun s e => arcOfEv e s) init
 
 /-- **Bug 4 fixed (#3090).** Every one of the six two-owner interleavings —
-including the one `pre3090_race_leaks` exhibits — frees exactly once on main. -/
+including the leaking one — frees exactly once on main. -/
 theorem arc_every_interleaving_frees_once :
     ∀ t ∈ validTraces, (runArc start t).frees = 1 := by
   decide

@@ -197,61 +197,6 @@ theorem importAttrs_spec (d : D) (h : SInv d) (m : List (Nat × List Entry)) (hn
 /-- Stable sort by attribute id (`sort_by_key`, a stable merge sort). -/
 def sortById (es : List Entry) : List Entry := es.mergeSort (fun a b => a.1 ≤ b.1)
 
-/-- `import_attrs_resolved` before #3063 (cab3cf192 :1379): no null filter, stable sort
-by id, `set_span` — no dedup, no `ATTRIBUTE_ID_NONE` drop. -/
-def pre3063_importResolved (d : D) (data : List (Nat × List Entry)) : D × Nat :=
-  let items := (data.map (fun p => (p.1, sortById p.2))).filter (fun p => !p.2.isEmpty)
-  let r := runOps (fun d id ps => (dsetSpan d id ps, 0, ps.length)) d items
-  (r.1, r.2.2)
-
-/-- **`pre3063_importResolved_spec`**: each entity reads its entries sorted by id —
-duplicates and nulls included, since neither is filtered. -/
-theorem pre3063_importResolved_spec (d : D) (h : SInv d) (m : List (Nat × List Entry)) (hnd : (m.map (·.1)).Nodup)
-    (hfit : ∀ p ∈ m, p.2.length ≤ 65535) :
-    let r := pre3063_importResolved d m
-    SInv r.1 ∧ ∀ id, dread r.1 id = match lk m id with
-      | some ps => (if ps = [] then dread d id else sortById ps)
-      | none => dread d id := by
-  have hnd' := nodup_filter_map m sortById hnd
-  have hlen : ∀ ps, (sortById ps).length = ps.length := fun ps => (List.mergeSort_perm _ _).length_eq
-  obtain ⟨r1, r2, -⟩ := runOps_spec _ _ _ _ set_spec _ d h hnd' (by
-    intro p hp
-    simp only [List.mem_filter, List.mem_map] at hp
-    obtain ⟨⟨q, hq, rfl⟩, -⟩ := hp
-    simp only [hlen]; exact hfit q hq)
-  refine ⟨r1, fun id => ?_⟩
-  simp only [pre3063_importResolved]; rw [r2 id, lk_filter_map m _ id hnd]
-  cases lk m id with
-  | none => simp [after]
-  | some ps =>
-    have : sortById ps = [] ↔ ps = [] := by
-      constructor
-      · intro e; have := hlen ps; rw [e] at this; exact List.eq_nil_of_length_eq_zero this.symm
-      · intro e; subst e; exact List.eq_nil_of_length_eq_zero (hlen [])
-    by_cases hf : ps = []
-    · subst hf; have h0 := this.2 rfl; simp [h0, after]
-    · simp [hf, this, after]
-
-/-- **History (before #3063).** The duplicate-id case (`GRAPH.BULK` with a repeated header column, or a
-malformed RDB): both entries are stored, the binary search answers with the
-second, and `attr_count` says 2. -/
-theorem pre3063_resolved_duplicate :
-    let d := (pre3063_importResolved emptyD [(0, [(0, .inl 1), (0, .inl 2)])]).1
-    dread d 0 = [(0, .inl 1), (0, .inl 2)] ∧ spanGet (dread d 0) 0 = some (.inl 2) := by
-  have hs := (pre3063_importResolved_spec emptyD new_spec.1 [(0, [(0, .inl 1), (0, .inl 2)])] (by simp)
-    (by simp)).2 0
-  simp only [lk, ite_true] at hs
-  have e : dread emptyD 0 = [] := new_spec.2 0
-  have hsort : sortById [(0, .inl 1), (0, .inl 2)] = [(0, .inl 1), (0, .inl 2)] :=
-    List.mergeSort_of_pairwise (by simp)
-  rw [hsort] at hs
-  simp at hs
-  refine ⟨hs, ?_⟩
-  rw [hs]
-  have hl : BinSearch.loop [0, 0] 0 0 2 = 1 := by
-    rw [BinSearch.loop]; simp; rw [BinSearch.loop]; simp
-  simp [spanGet, BinSearch.bsearch, hl]
-
 
 /-! ## `import_attrs_resolved` since #3063 (0f45a8685, :1388)
 
@@ -513,7 +458,7 @@ theorem importResolved_reads (d : D) (h : SInv d) (m : List (Nat × List Entry))
   simp only [hps, hne, ite_false] at this
   rw [this, spanGet_eq _ (normResolved_sorted ps), normResolved_get ps (hb _ (lk_mem m id ps hps)) k]
 
-/-- **`resolved_duplicate_fixed`** (#3063): the header `p, p` of `pre3063_resolved_duplicate`
+/-- **`resolved_duplicate_fixed`** (#3063): the repeated-column header `p, p`
 now stores one entry, the first column's. -/
 theorem resolved_duplicate_fixed :
     let d := (importResolved emptyD [(0, [(0, .inl 1), (0, .inl 2)])]).1

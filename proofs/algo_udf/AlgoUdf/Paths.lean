@@ -157,15 +157,6 @@ def dijkstraCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)
 
 theorem dijkstra_cost_no_prop : dijkstraCostRust [none, none] = 0 := by decide
 
-/-- Historical: before #3113 the bound and the enumeration also used default 0. -/
-def pre3113_pathCostRust (attrs : List (Option Int)) : Int := (attrs.map (·.getD 0)).foldl (· + ·) 0
-
-/-- Historical BUG (confirmed live before #3113, `bug_sppaths_missing_cost_defaults_to_zero`):
-a 2-hop path whose edges carry no cost attribute (or no costProp at all) cost 2 in C and 0
-in Rust; with `maxCost: 1` C pruned it and Rust kept it (`bug_sppaths_max_cost_ignores_hops`). -/
-theorem pre3113_cost_default_diverges :
-    pre3113_pathCostRust [none, none] = 0 ∧ pathCostC [none, none] = 2 := by decide
-
 theorem cost_default_agrees :
     pathCostRust [none, none] = 2 ∧ pathCostC [none, none] = 2 := by decide
 

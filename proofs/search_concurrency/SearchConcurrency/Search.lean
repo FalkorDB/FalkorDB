@@ -10,7 +10,6 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:107` `Field`, `:137` `Field::new`, `:154` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
 | `docSet`                        | `mod.rs:717-871` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
-| `docSetPre3076`                 | historical: the range arm before #3076 (`e20300436`) wrote a temporal as a number |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:864-868` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs:3941` `commit_index_kind` / `graph.rs:655` population `build_doc` |
@@ -114,29 +113,10 @@ def docSetPre3087 (f : Field) (v : Val) : List RSAdd :=
   | .vector, .vecf32 d => [.vector f.name (d * 4)]
   | _, _ => docSet f v
 
-/-- HISTORICAL (before #3076, `e20300436`): the range arm wrote a temporal's raw
-number into the numeric field (`RediSearch_DocumentAddFieldNumber(.., *ts as f64, ..)`),
-so `n.v > 0` index scans matched dates. Every other arm as in `docSet`. -/
-def docSetPre3076 (f : Field) (v : Val) : List RSAdd :=
-  match f.ty, v with
-  | .range, .temporal => [.num f.name]
-  | _, _ => docSet f v
-
 /-- **#3076: a temporal value is never written to any RediSearch field**, on any
 index type, so no numeric index query can return it. -/
 theorem docSet_temporal_not_indexed (f : Field) : docSet f .temporal = [] := by
   unfold docSet; cases f.ty <;> rfl
-
-/-- What #3076 fixed: before it, a temporal on a range field landed in the numeric field. -/
-theorem pre3076_temporal_in_numeric (f : Field) (h : f.ty = .range) :
-    docSetPre3076 f .temporal = [.num f.name] := by
-  unfold docSetPre3076; rw [h]
-
-/-- #3076 changed only the temporal arm. -/
-theorem docSet_eq_pre3076_off_temporal (f : Field) (v : Val) (hv : v ≠ .temporal) :
-    docSet f v = docSetPre3076 f v := by
-  unfold docSetPre3076
-  cases hf : f.ty <;> cases v <;> simp_all
 
 /-- The `unreachable!()` arm: `Null`, `Map`, `Node`, `Relationship`, `Path` on a range field. -/
 def docSetPanics (f : Field) (v : Val) : Bool :=
@@ -147,9 +127,6 @@ def docSetPanics (f : Field) (v : Val) : Bool :=
 /-- The document for one entity: every (field, value) pair of the label's index. -/
 def buildDoc (fv : List (Field × Val)) : List RSAdd :=
   fv.flatMap fun p => docSet p.1 p.2
-
-def buildDocPre3087 (fv : List (Field × Val)) : List RSAdd :=
-  fv.flatMap fun p => docSetPre3087 p.1 p.2
 
 /-! ## RediSearch boundary (AXIOMATISED, as a hypothesis) -/
 
@@ -300,34 +277,6 @@ theorem good_vector_keeps_range_entry (rs : RediSearch)
     other_fields_never_dropped rs _ hreg (vecF, .vecf32 2) (by simp) _ (by simp [docSet, vecF])⟩
 
 /-! ### HISTORICAL (fe619ac5f): what the unguarded arm cost, fixed by #3087 (49f698d22) -/
-
-theorem pre3087_dim_mismatch_dropped_range_entry (rs : RediSearch)
-    (h : rs.dimOf "vector:v" = some 2) :
-    RSAdd.tag "range:name" ∉
-      rs.stored (buildDocPre3087 [(nameF, .str "a"), (vecF, .vecf32 3)]) := by
-  have hna : rs.accepts (buildDocPre3087 [(nameF, .str "a"), (vecF, .vecf32 3)]) = false := by
-    cases hc : rs.accepts (buildDocPre3087 [(nameF, .str "a"), (vecF, .vecf32 3)]) with
-    | false => rfl
-    | true =>
-      obtain ⟨k, hk, hnb⟩ := (rs.accepts_iff _).mp hc "vector:v" 12
-        (by simp [buildDocPre3087, docSetPre3087, docSet, nameF, vecF])
-      rw [h] at hk; cases hk; omega
-  simp [RediSearch.stored, hna]
-
-/-- Dimension 0 / no options: the field has no vector params (`dimOf = none`), so the
-old arm's vector add made RediSearch reject the whole document. -/
-theorem pre3087_noparams_dropped_range_entry (rs : RediSearch) (f : Field)
-    (hf : f.ty = .vector) (hn : rs.dimOf f.name = none) :
-    RSAdd.tag "range:name" ∉
-      rs.stored (buildDocPre3087 [(nameF, .str "a"), (f, .vecf32 3)]) := by
-  have hna : rs.accepts (buildDocPre3087 [(nameF, .str "a"), (f, .vecf32 3)]) = false := by
-    cases hc : rs.accepts (buildDocPre3087 [(nameF, .str "a"), (f, .vecf32 3)]) with
-    | false => rfl
-    | true =>
-      obtain ⟨k, hk, _⟩ := (rs.accepts_iff _).mp hc f.name 12
-        (by simp [buildDocPre3087, docSetPre3087, docSet, nameF, hf])
-      rw [hn] at hk; cases hk
-  simp [RediSearch.stored, hna]
 
 /-- The fixed `docSet` on those same no-params shapes adds no vector at all. -/
 theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)
@@ -626,19 +575,6 @@ def withCapacity (elem k mem : Nat) : Alloc :=
   if k * elem > isizeMax then .panicOverflow
   else if k * elem > mem then .abort
   else .ok (k * elem)
-
-/-- HISTORICAL — W3-conc-4 / #3085, **fixed by #3088 (89d68334a)**. At 49f698d22
-`vector_query_nodes`/`_edges` did `Vec::with_capacity(k)` (`graph.rs:4211` / `:4062`) and
-`(NodeId, f64)` is 16 bytes, so the user's `k` reached `with_capacity` verbatim and any
-`k` above `mem / 16` killed the server before RediSearch returned a single candidate.
-`CALL db.idx.vector.queryNodes('L','v',1000000000000000,vecf32([1,2]))` aborted the live
-server (SIGSEGV in the OOM path). Current code: `Knn.alloc_bounded`, `Knn.no_abort_any_k`. -/
-theorem pre3088_huge_k_kills_server (k mem : Nat) (_hk : evalK (.int k) = .ok k) (hm : mem < k * 16) :
-    withCapacity 16 k mem ≠ .ok (k * 16) := by
-  unfold withCapacity
-  split
-  · simp
-  · simp
 
 theorem evalK_accepts_huge : evalK (.int 1000000000000000) = .ok 1000000000000000 := rfl
 

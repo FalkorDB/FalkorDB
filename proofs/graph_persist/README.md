@@ -68,7 +68,7 @@ Yes:
 
 **6. Are virtual-key names unique?**
 
-- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (`pre3286_uuid_collision_iff`); counters 2 and 3 at clocks 4 ns and 5 ns collided (`pre3286_uuid_collision_example`), and the second virtual key replaced the first one's slice.
+- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (counterexample removed; in 17ccc5412); counters 2 and 3 at clocks 4 ns and 5 ns collided, and the second virtual key replaced the first one's slice.
 - **On main, yes, within a process.** `uuid_fields` keeps the clock in the first three fields and `seq × odd constant + c` in the last two. `counter_field_bijective` proves the last field is a bijection of `seq` modulo 2^48, and `uuid_counter_distinct` that two calls whose counters differ mod 2^48 never share a name, whatever the clock reads. `vkeyName_uuid_counter` lifts this to the full key names, and `names_vname_inj` discharges the `vname_inj` part of the naming assumption the SAVE theorems take (`VKeys.Names`).
 
 **7. Do UNIQUE constraints agree with C?**
@@ -117,10 +117,10 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 | 1 | `rust_C_unique_disagree`, `disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | **Open** (#2774) |
 | 2 | `constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | **Open** |
 | 3 | `enforcement_is_quadratic` | UNIQUE enforcement rebuilt a key map over the whole label for every affected node: `UNWIND range(1,8000) … CREATE` took 212 s (C 2.4 s) | Fixed by #3334 (closes #3330), modelled in [`../pending_commit`](../pending_commit) (`uniqueViolated_spec`). This project's theorem still describes the old scan |
-| 4 | `pre3262_cache_size_ignored` | RDB-loaded graphs ignored `CACHE_SIZE` and used 25 (W5-rdb-1) | Fixed by #3262 (`cache_size_on_load`) |
+| 4 | removed (17ccc5412) | RDB-loaded graphs ignored `CACHE_SIZE` and used 25 (W5-rdb-1) | Fixed by #3262 (`cache_size_on_load`) |
 | 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
-| 6 | `pre3286_uuid_collision_example` | Two virtual-key names could collide if the clock and counter lined up; a collision lost a virtual key's slice | Fixed by #3286 (`bf11a2774`): `uuid_counter_distinct`, `uuid_regression_pair_distinct` |
-| 7 | `pre2996_count_wraps` | A payload claiming `2^61` deleted ids passed the length check with an empty buffer (`count * 8` wrapped) and indexed past it | Fixed by #2996 (`d99861124`, closes #2994): `countCheck_in_bounds`. #2996 does not touch the reader, so bug 5 is unaffected |
+| 6 | removed (17ccc5412) | Two virtual-key names could collide if the clock and counter lined up; a collision lost a virtual key's slice | Fixed by #3286 (`bf11a2774`): `uuid_counter_distinct`, `uuid_regression_pair_distinct` |
+| 7 | removed (17ccc5412) | A payload claiming `2^61` deleted ids passed the length check with an empty buffer (`count * 8` wrapped) and indexed past it | Fixed by #2996 (`d99861124`, closes #2994): `countCheck_in_bounds`. #2996 does not touch the reader, so bug 5 is unaffected |
 
 Recorded but not bugs:
 

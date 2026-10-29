@@ -94,7 +94,7 @@ clauses after a procedure CALL are validated, `Ast.call_validates_rest`). Rust r
   `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter right above an
   operator with `emit_relationship` set); `walk_keeps_edge_attrs`; `planMatch_stripped` (no scan or
   fixed-length operator carries an inline map — the precondition of proofs/optimizer_rewrites
-  `refsNew_complete`); fixed bug `pre2390_firstRel_varlen_drops` (live: `MATCH (a:N) WITH a MATCH
+  `refsNew_complete`); fixed bug (counterexample removed; in 17ccc5412) (live: `MATCH (a:N) WITH a MATCH
   (a {x: 1})-[:R*1..2]->(b)` gave 2, 3, 3; now 2, 3 as C). Match: `rebuild_keeps_where` (bug 3 fixed).
 * Helpers (Misc/Fmt/Rename): `subtreeContains_iff`, `addArgs_leaves`, `stitchBelow_get`/`_ev`,
   `ensureInput_ev_local`/`_saturates`, `setIP_scansLeaf`, `redundant_optional_identity`, `renameProj_*`,
@@ -124,8 +124,7 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    Fix: Apply-wrap whenever `n` binds a variable any CP branch uses (or always for a previous clause).
    Tests `bug_prior_match_stitched_as_cartesian_branch`, `bug_prior_match_cartesian_branch_incoming`.
 3. **(FIXED by #2390, d2c42e032 — select_scan_node `filters_of` keeps the spine's Filters on
-   rebuild; live on 8743953a8: Rust 0 = C 0; Lean `rebuild_keeps_where`, historical
-   `pre2390_rebuild_drops_where`.)** **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
+   rebuild; live on 8743953a8: Rust 0 = C 0; Lean `rebuild_keeps_where`; counterexample removed, in 17ccc5412.)** **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
    stitching puts `Filter(φ, Scan a)` under the next clause's leaf CondTraverse (mod.rs:2815), the
    exact shape `is_planner_scan_subtree` (select_scan_node.rs:239) prunes and rebuilds as a bare scan.
    `MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b) RETURN count(r)` → Rust 2, C 0; also into writes:
@@ -139,7 +138,7 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    → Rust `[null,2,3]`, C `[1,2,3]`. Test `bug_self_loop_hop_drops_earlier_hops`.
    Now: `orderRels` (= `self_loops_after_binders`, HopOrder.lean) plans such a self-loop after the hop
    binding its node, and the no-binder case is `ExpandInto(Scan(res))` — `chainRel_selfloop_unbound`,
-   `Match.selfloop_scan_keeps_chain`; history `pre3102_chainOp_selfloop_unbound`, `selfloop_ignores_chain`.
+   `Match.selfloop_scan_keeps_chain`; history `selfloop_ignores_chain`.
 
 5. **`NOT (complex)` over an inline pattern predicate keeps NULL rows** (NEW): `expr_to_plan` plans
    `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))` (mod.rs:1543-1549); the
@@ -156,8 +155,7 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    `inner_validate`'s `Call` arm (parser/ast.rs:1224-1263) now continues with
    `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`. Lean `call_validates_rest`,
    `call_transparent`, `call_then_match_rejected`, `call_then_unwind_rejected`,
-   `call_then_create_multi_type_rejected` (each now gives C's error). Before the fix (history
-   `pre3297_callArm`, `pre3297_call_skips_rest`, `pre3297_call_then_match_accepted`):
+   `call_then_create_multi_type_rejected` (each now gives C's error). Before the fix:
    `CALL db.labels() YIELD label MATCH (n)` reached a scan at the plan root (`utilize_node_by_id`
    `parent().unwrap()`), `… UNWIND [1] AS x` was accepted, `… CREATE (a)-[:R|S]->(b)` created an edge.
    Still open independently: `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()`.
@@ -220,7 +218,7 @@ C 0. The binder half (`node_labels`) is in proofs/binder `RemoveLabels.lean`.
 ## Deviations vs openCypher (and C)
 * (FIXED by #2829, `eab2722c4`) `CREATE p=(…) RETURN p` → Rust `null` (the Create arm added no
   PathBuilder); now the path (openCypher), live `[(0), [0], (1)]`; C rejects (`'p' not defined`).
-  Lean `create_loop_correct` (historical `pre2829_planCreate`). Interplay with parser_grammar's
+  Lean `create_loop_correct`. Interplay with parser_grammar's
   `create_named_path_drops_dup_rel` (W4-parse-2): `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q`
   now returns `q = [(2), [0], (3)]`, a path through edge 0, whose endpoints are (0)→(1) — the dropped
   duplicate `r` is now visible as an inconsistent path (C rejects the query).

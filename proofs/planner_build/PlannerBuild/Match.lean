@@ -15,8 +15,7 @@ import PlannerBuild.Clauses
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
   the rebuild now carries the spine's Filters along (`filters_of`, select_scan_node.rs:250,
-  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where`; the old bare rebuild is
-  `pre2390_rebuild_drops_where`.
+  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where` (old bare rebuild: counterexample removed; in 17ccc5412).
 -/
 namespace PlannerBuild
 
@@ -203,12 +202,5 @@ theorem rebuild_keeps_where (φ s s' : Nat) :
     spineFilters (wrapFilters (spineFilters prev) (.node (.scan s') [])) = spineFilters prev ∧
       spineFilters prev = [φ] := by
   exact ⟨spineFilters_wrap _ _, rfl⟩
-
-/-- Historical (a9377c636): the rebuild was the bare scan (plus the node's inline-attr Filter),
-so the stitched WHERE vanished — live `MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b)
-RETURN count(r)` was 2 (C 0); on 8743953a8 both give 0. -/
-theorem pre2390_rebuild_drops_where (φ s' : Nat) :
-    spineFilters (.node (.scan s') []) = [] ∧ φ ∉ spineFilters (.node (.scan s') []) := by
-  simp [spineFilters]
 
 end PlannerBuild

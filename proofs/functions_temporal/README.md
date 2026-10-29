@@ -41,9 +41,9 @@ Not since #2950. Before it, three inputs crashed the server (W2-temporal-1 to -3
 
 - `dateFromComponents_total`: `date_from_components` returns a date or an error for **every** input, any integer in any of its seven slots. This is what `date(map)`, `localdatetime(map)` and their slot forms call;
 - `weekSlice_total`: the `W` string path never panics, and `date('2020W1é')` is an error (`week_slice_errors`);
-- `weekPath_ok`, `quarterPath_ok`, `weekPath_eq_pre2950`, `quarterPath_eq_pre2950`: in-range inputs give the same date as before. Only the panics changed.
+- `weekPath_ok`, `quarterPath_ok`: in-range inputs give the same date as before. Only the panics changed.
 
-The old crashes are kept as history (`pre2950_week_panics`, `pre2950_quarter_panics`, `pre2950_week_slice_panics`). While re-proving, one more pre-#2950 crash turned up: an in-range week whose date falls outside chrono's year range, such as `date({year:-262143, week:1})`. That is `pre2950_week_edge_panics`, and it is now an error (`week_edge_errors`).
+The old crashes' counterexamples were removed (in 17ccc5412). While re-proving, one more pre-#2950 crash turned up: an in-range week whose date falls outside chrono's year range, such as `date({year:-262143, week:1})`. It is now an error (`week_edge_errors`).
 
 **5. Do the parsers produce real dates?**
 
@@ -86,15 +86,15 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run lo
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-temporal-1 | `pre2950_week_panics`, `pre2950_week_panics_delta`, `pre2950_week_edge_panics` | `RETURN date({year:2020, week:10000000000})` **crashed the server** (chrono `NaiveDate + TimeDelta` overflow). C: "Invalid value for week". So did an in-range week at chrono's year edge, `date({year:-262143, week:1})` | Fixed by #2950 (`dateFromComponents_total`, `week_huge_errors`, `week_edge_errors`) |
-| W2-temporal-2 | `pre2950_quarter_panics` | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashed the server** (`TimeDelta::days` panics). C: error | Fixed by #2950 (`quarterPath_total`, `quarter_doq_errors`) |
-| W2-temporal-3 | `pre2950_week_slice_panics` | `RETURN date('2020W1é')` **crashed the server**: `&rest[..2]` is not on a char boundary | Fixed by #2950 (`weekSlice_total`, `week_slice_errors`) |
-| W2-temporal-4 | `pre2983_distance_nan` | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
-| W2-temporal-5 | `pre2984_sub_vs_add_neg` | `date('2020-03-31') - duration({months:1})` was 2020-02-29 (subtraction clamped the day), while `+ duration({months:-1})` was 2020-03-02 (C: 03-02) | Fixed by #2984 (`sub_eq_add_neg_months`: `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `sub_vs_add_neg`: both 03-02; `subDur_eq_pre2984`: unchanged for day ≤ 28) |
-| W2-temporal-6 | `pre2985_time_not_normalised` | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
+| W2-temporal-1 | removed (17ccc5412) | `RETURN date({year:2020, week:10000000000})` **crashed the server** (chrono `NaiveDate + TimeDelta` overflow). C: "Invalid value for week". So did an in-range week at chrono's year edge, `date({year:-262143, week:1})` | Fixed by #2950 (`dateFromComponents_total`, `week_huge_errors`, `week_edge_errors`) |
+| W2-temporal-2 | removed (17ccc5412) | `date({year:2020, quarter:2, dayOfQuarter:9223372036854775807})` **crashed the server** (`TimeDelta::days` panics). C: error | Fixed by #2950 (`quarterPath_total`, `quarter_doq_errors`) |
+| W2-temporal-3 | removed (17ccc5412) | `RETURN date('2020W1é')` **crashed the server**: `&rest[..2]` is not on a char boundary | Fixed by #2950 (`weekSlice_total`, `week_slice_errors`) |
+| W2-temporal-4 | removed (17ccc5412) | `distance()` between near-antipodal points was `NaN` (C: 20037518): `(1.0 - a).sqrt()` with `a` rounded above 1. 35 428 of 6 485 401 antipodal pairs on a 0.1° grid. Proven over an abstract float with the binary64 facts as hypotheses (`NanLaws`); the mechanism is also `#eval`'d in `Spatial.lean` | Fixed by #2983 (`distance_finite`: finite whenever the haversine term is not NaN) |
+| W2-temporal-5 | removed (17ccc5412) | `date('2020-03-31') - duration({months:1})` was 2020-02-29 (subtraction clamped the day), while `+ duration({months:-1})` was 2020-03-02 (C: 03-02) | Fixed by #2984 (`sub_eq_add_neg_months`: `ts - P{Y}Y{M}M = ts + P{-Y}Y{-M}M` for every timestamp; `sub_vs_add_neg`: both 03-02) |
+| W2-temporal-6 | removed (17ccc5412) | `localtime('01:00') + duration({days:1}) = localtime('01:00')` was `false` (C: `true`): time arithmetic wasn't reduced mod 86400 | Fixed by #2985 (`timeAddDur_eq_tod`, `timeSub_timeAdd`, `time_normalised`) |
 | W2-temporal-7 | `formatDate_not_injective` | `toString(date({year:12345}))` is `"2345-01-01"` (C: `"12345-01-01"`); `formatDate_injective_4digit` proves it is right for 4-digit years | **Open** |
-| W2-temporal-8 | `pre2987_week_string_wraps` | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
-| W2-temporal-9 | `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors`, `weekPath_eq_pre2988`; history `pre2988_dayOfWeek_seven_rejected`, `pre2988_dayOfWeek_zero_is_sunday` | The map form's `dayOfWeek` was 0..6 with 0 = Sunday, so `dayOfWeek:7` errored (C: accepted); the string form uses 1..7 | **Fixed** (#2988, closes #2936): ISO 1..7, 7 = Sunday |
+| W2-temporal-8 | removed (17ccc5412) | `duration('P2635249153387078803W')` was `P5D` in release (`n * 7` wrapped) and panicked in debug | Fixed by #2987 (`dateLoop_week_overflow`, `dateLoop_days_i64`: now an error, never a wrap) |
+| W2-temporal-9 | `dayOfWeek_seven_is_sunday`, `dayOfWeek_zero_rejected`, `dayOfWeek_out_of_range_errors` (counterexamples removed; in 17ccc5412) | The map form's `dayOfWeek` was 0..6 with 0 = Sunday, so `dayOfWeek:7` errored (C: accepted); the string form uses 1..7 | **Fixed** (#2988, closes #2936): ISO 1..7, 7 = Sunday |
 | — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
 | — | `civilFromDays_trunc` | `y - 1970` in `i32` inside `decompose_duration` overflows for durations whose year wraps | Suspected, not triggered in release |
 | — | `point_null_lat_msgs` | `point({latitude:null, …})` gives two different error messages for a literal map and a map value | Message only |

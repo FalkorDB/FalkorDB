@@ -77,20 +77,20 @@ Each was reproduced live with `proofs/index_layer/repro.py`, which runs each que
 | 2 (W2-index-2) | `bug_point_equality` | `n.v = point({latitude:1.0, longitude:2.0})` returns `[]`. C correct | **Open** |
 | 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Open** |
 | 4 (W2-index-4) | `bug_multilabel_and`, `bug_multilabel_or` | On `(n:A:B)` with A indexing `x` and B indexing `y`, `n.x = 1 AND n.y = 2` returns `[]`, and the `OR` loses rows. C correct | **Open** |
-| 5 (W2-index-5) | `pre3076_temporal_in_numeric_range` | `n.v > 0` matched a stored date | Fixed by #3076 (issue #2959): `fixed3076_temporal_in_numeric_range`, `temporal_not_indexed` |
-| 6 (W2-index-6) | `pre3072_exclusive_equal_bounds` | `n.v > 'a' AND n.v < 'a'` returned `'a'` | Fixed by #3072 (issue #2961): `fixed3072_exclusive_equal_bounds` |
+| 5 (W2-index-5) | removed (17ccc5412) | `n.v > 0` matched a stored date | Fixed by #3076 (issue #2959): `fixed3076_temporal_in_numeric_range`, `temporal_not_indexed` |
+| 6 (W2-index-6) | removed (17ccc5412) | `n.v > 'a' AND n.v < 'a'` returned `'a'` | Fixed by #3072 (issue #2961): `fixed3072_exclusive_equal_bounds` |
 | 7 | `tagEnc_not_monotone`, `bug_string_range_order`, `bug_string_range_order_gt` | The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong both ways: `n.v < 'JohnA'` misses `'John Smith'` | **Open**. C is also wrong, differently |
 | 8 | `bug_bool_eq_int` | `n.v = 1` also returns `v = true`, and the reverse | **Open**. C has the same bug |
-| 9 | `pre3081_open_bound_excludes_inf` | `n.v > 0` missed a stored `+∞` | Fixed by #3081: `fixed3081_open_bound_includes_inf` |
+| 9 | removed (17ccc5412) | `n.v > 0` missed a stored `+∞` | Fixed by #3081: `fixed3081_open_bound_includes_inf` |
 | 10 | `bug_empty_string_not_indexed` | `n.v = ''` returns `[]`, and `n.v < 'a'` misses `''` | **Open**. C has the same bug |
 | 11 | (proven in `ops_traverse`) | An undirected edge index scan returned each edge once instead of twice | Fixed by #3081 |
 | 12 | (outside the model) | Geo radius near the poles: RediSearch geohash is limited to \|lat\| ≤ 85.05, so points at 89.99 are missed | **Open**. C has the same bug |
 | 13 (W4-index-1) | `bug_range_after_fulltext` | After a full-text index and then a range index on the same `n.s`, every range query on `n.s` targets the full-text field and returns `[]`. C correct | **Open**. Fix: pick the field whose type is `IndexType::Range` |
-| 14 (W7-btree-2) | `pre3285_docBytes3_reads_garbage`, `pre3285_docBytes3_last_oob` | `CowBTree` with `DOC_BYTES = 3/5/6/7` passed the const assert but read garbage docs or panicked | Fixed by #3285: `readWidth_admitted`, `admitted_fromPairs_roundtrip` |
+| 14 (W7-btree-2) | removed (17ccc5412) | `CowBTree` with `DOC_BYTES = 3/5/6/7` passed the const assert but read garbage docs or panicked | Fixed by #3285: `readWidth_admitted`, `admitted_fromPairs_roundtrip` |
 | #3166 | `bug3166_stopwords_not_applied`, `bug3166_violates` (property `StopwordsAgree` / `CreateIndexKeepsStopwords`) | A range index first, then `CREATE FULLTEXT INDEX … OPTIONS {stopwords: ['router']}`: the label reports `['router']`, but its RediSearch spec keeps the default list, because the second call only registers the new field on the existing spec. `queryNodes('L', 'router')` returns 1 row; C returns 0. `createIndex_fresh_stopwords_agree` proves the new-label path agrees | **Open** |
 | #3382 | `bug3382_vector_query_ignores_operational`, `bug3382_partial_answer` (property `VectorQueryRequiresOperational` / `VectorQueryComplete`) | `db.idx.vector.queryNodes` answers while the index is UNDER CONSTRUCTION, with 0 rows and then 3. C refuses with "Invalid arguments for procedure" until OPERATIONAL. `vectorQueryGuarded_requires_operational` is the fix shape | **Open** |
 | #2781 | `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored` (property `RollbackRestoresEdgeIndex`) | A failed query that deletes edge 0 and reuses id 0 for `c→d` leaves the orphan document `(c, d, 0)` after rollback, beside the restored `(a, b, 0)`. The index scan returns both; a full scan and C return only `a→b`. `resyncEdgesFixed_restores` proves the fix: also delete the private key when the endpoints changed | **Open** |
-| W3-conc-3 | `pre3087_dim_mismatch`, `pre3087_noparams` | A vector of the wrong dimension (or a vector field with no options) made RediSearch reject the whole document, so the node dropped out of the label's other indexes | Fixed by #3087 (issue #3075): `setVector_sound` |
+| W3-conc-3 | removed (17ccc5412) | A vector of the wrong dimension (or a vector field with no options) made RediSearch reject the whole document, so the node dropped out of the label's other indexes | Fixed by #3087 (issue #3075): `setVector_sound` |
 
 C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a range index; Rust returns the right result.
 

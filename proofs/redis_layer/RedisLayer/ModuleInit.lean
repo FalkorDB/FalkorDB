@@ -16,10 +16,10 @@ work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphI
 The table was also fed the module arguments (`module_args_as_configuration: true`,
 redismodule-rs `get_*_default_config_value`: the value after the first argument
 *byte-equal* to the name; a bool is `value == "yes"`), and `graph_init` had its own
-upper-casing loop for the atomics (`pre3328_argLoop`). Confirmed live then:
-`CMD_INFO YES` → Rust 0, C 1 (`pre3328_bool_yes_case`); `CMD_INFO garbage` loaded with 0,
-C refuses (`pre3328_bool_garbage_off`); `cache_size 10` ignored (`pre3328_table_name_case`);
-`ASYNC_DELETE yes` ignored (`pre3328_load_missing`). All four now load as in C
+upper-casing loop for the atomics. Confirmed live then (counterexamples removed; in 17ccc5412):
+`CMD_INFO YES` → Rust 0, C 1; `CMD_INFO garbage` loaded with 0,
+C refuses; `cache_size 10` ignored;
+`ASYNC_DELETE yes` ignored. All four now load as in C
 (`LoadArgs.fixed3328_counterexamples`, re-checked live on b080a44c1).
 -/
 namespace RedisLayer.ModuleInit
@@ -36,8 +36,7 @@ inductive Kind | i64 (dflt lo hi : Int) | str (dflt : String) | bool (dflt : Boo
   deriving DecidableEq, Repr
 
 /-- `redis_module!` `configurations:` (`lib.rs:97-116`): the `graph.*` redis.conf configs.
-`VKEY_MAX_ENTITY_COUNT` is `0..i64::MAX` since #3419 (`8621212fc`; was `1..1073741824`,
-`ConfigRewrite.pre3419_table`). -/
+`VKEY_MAX_ENTITY_COUNT` is `0..i64::MAX` since #3419 (`8621212fc`; was `1..1073741824`). -/
 def table : List (String × Kind) :=
   [("CACHE_SIZE", .i64 25 0 1000), ("THREAD_COUNT", .i64 0 0 1024),
    ("INDEX_WORKER_THREADS", .i64 0 0 1024), ("NODE_CREATION_BUFFER", .i64 16384 0 1073741824),
@@ -45,22 +44,6 @@ def table : List (String × Kind) :=
    ("JS_STACK_SIZE", .i64 1048576 0 4294967296),
    ("IMPORT_FOLDER", .str "/var/lib/FalkorDB/import/"), ("TEMP_FOLDER", .str "/tmp"),
    ("CMD_INFO", .bool true), ("DELAY_INDEXING", .bool false)]
-
-/-- Historical: names `graph_init`'s own loop understood (old `:160-221`). -/
-def pre3328_initNames : List String :=
-  ["TIMEOUT", "TIMEOUT_DEFAULT", "TIMEOUT_MAX", "RESULTSET_SIZE", "QUERY_MEM_CAPACITY",
-   "DELTA_MAX_PENDING_CHANGES", "EFFECTS_COMPRESSION", "EFFECTS_THRESHOLD", "OMP_THREAD_COUNT",
-   "MAX_INFO_QUERIES", "MAX_QUEUED_QUERIES"]
-
-def pre3328_loadNames : List String := table.map (·.1) ++ pre3328_initNames
-
-/-- **Registration table vs documented list**: every documented name is settable at load
-except `ASYNC_DELETE`; Rust adds `INDEX_WORKER_THREADS` and `EFFECTS_COMPRESSION`. -/
-theorem pre3328_load_missing : documented.filter (· ∉ pre3328_loadNames) = ["ASYNC_DELETE"] := by decide
-theorem pre3328_load_extra : pre3328_loadNames.filter (· ∉ documented) = ["INDEX_WORKER_THREADS", "EFFECTS_COMPRESSION"] := by
-  decide
-/-- The two sources do not overlap, so no name is parsed twice with different rules. -/
-theorem pre3328_table_init_disjoint : (table.map (·.1)).filter (· ∈ pre3328_initNames) = [] := by decide
 
 /-- Table defaults lie inside their declared bounds. -/
 def defaultOk : Kind → Bool
@@ -71,32 +54,10 @@ theorem table_defaults_in_range : table.all (fun e => defaultOk e.2) = true := b
 
 /-! ## Historical: redismodule-rs `find_config_value` / `get_*_default_config_value` (before #3328) -/
 
-/-- `args.iter().skip_while(|a| a != name).nth(1)`: the argument after the first one equal
-to `name` (anywhere — also in a value position). -/
-def pre3328_findValue (args : List String) (name : String) : Option String :=
-  match args.dropWhile (· ≠ name) with
-  | _ :: v :: _ => some v
-  | _ => none
-
-def pre3328_boolDefault (args : List String) (name : String) (dflt : Bool) : Bool :=
-  match pre3328_findValue args name with
-  | some v => v == "yes"
-  | none => dflt
-
 /-- C (`_Config_ParseYesNo`): case-insensitive yes/no, anything else an error. -/
 def cBool (v : String) : Option Bool :=
   let l := v.toList.map Char.toLower
   if l == "yes".toList then some true else if l == "no".toList then some false else none
-
-theorem pre3328_bool_yes_case : pre3328_boolDefault ["CMD_INFO", "YES"] "CMD_INFO" true = false ∧
-    cBool "YES" = some true := by decide
-theorem pre3328_bool_garbage_off : pre3328_boolDefault ["CMD_INFO", "garbage"] "CMD_INFO" true = false ∧
-    cBool "garbage" = none := by decide
-/-- Names in the table are matched byte-for-byte: a lower-case name is not seen. -/
-theorem pre3328_table_name_case : pre3328_findValue ["cache_size", "10"] "CACHE_SIZE" = none := by decide
-/-- A name occurring as another option's *value* is taken as a key. -/
-theorem pre3328_value_position : pre3328_findValue ["IMPORT_FOLDER", "CACHE_SIZE", "7"] "CACHE_SIZE" = some "7" := by
-  decide
 
 /-! ## Historical: `graph_init`'s argument loop (old `:154-223`, removed by #3328) -/
 
@@ -112,54 +73,6 @@ def target (upper : String) : Tgt :=
   else if upper = "MAX_INFO_QUERIES" then .maxInfo
   else if upper = "MAX_QUEUED_QUERIES" then .maxQueued
   else .none
-
-/-- The loop, with `parse` = `str::parse::<i64>` (abstract). Returns the stores made, or
-`none` for `Status::Err`. Unknown names advance by one. -/
-def pre3328_argLoop (parse : String → Option Int) : List String → Option (List (String × Int))
-  | [] => some []
-  | a :: rest =>
-    match target a.toUpper with
-    | .none => pre3328_argLoop parse rest
-    | t =>
-      match rest with
-      | v :: rest' =>
-        match parse v, t with
-        | some x, .i64 n => (pre3328_argLoop parse rest').map ((n, x) :: ·)
-        | some x, .maxInfo => if 0 ≤ x then (pre3328_argLoop parse rest').map (("MAX_INFO_QUERIES", min x MAX_INFO_QUERIES_CAP) :: ·) else none
-        | some x, .maxQueued => if 0 ≤ x then (pre3328_argLoop parse rest').map (("MAX_QUEUED_QUERIES", x) :: ·) else none
-        | _, _ => none
-      | [] => none
-
-theorem pre3328_target_i64 (u n : String) (h : target u = .i64 n) : n ≠ "MAX_INFO_QUERIES" := by
-  unfold target at h
-  split at h
-  · rename_i hm; cases h; intro e; subst e; revert hm; decide
-  · split at h <;> (try split at h) <;> cases h
-
-/-- `MAX_INFO_QUERIES` is clamped, never rejected for being large. -/
-theorem pre3328_maxInfo_clamped (parse : String → Option Int) (args : List String) (st : List (String × Int))
-    (h : pre3328_argLoop parse args = some st) : ∀ p ∈ st, p.1 = "MAX_INFO_QUERIES" → p.2 ≤ MAX_INFO_QUERIES_CAP := by
-  fun_induction pre3328_argLoop parse args generalizing st <;> simp_all
-  all_goals first
-    | assumption
-    | (rename_i ih
-       intro a b hab hn
-       obtain ⟨l, hl, rfl⟩ := h
-       simp at hab
-       rcases hab with ⟨rfl, rfl⟩ | hab
-       · first
-          | exact Int.min_le_right _ _
-          | (exact absurd hn (pre3328_target_i64 _ _ (by assumption)))
-          | (simp at hn; done)
-       · exact ih _ hl _ _ hab hn)
-
-/-- Historical: the cross-checks after parsing (old `:369-383`); now inside `apply_module_args`. -/
-def pre3328_timeoutsBad (timeout dflt max : Int) : Bool :=
-  (timeout > 0 && (dflt > 0 || max > 0)) || (dflt > 0 && max > 0 && dflt > max)
-
-theorem pre3328_timeouts_ok_inv (t d m : Int) (h : pre3328_timeoutsBad t d m = false) (hd : d > 0) (hm : m > 0) :
-    d ≤ m := by
-  simp [pre3328_timeoutsBad] at h; omega
 
 /-! ## `graph_init` since #3328 -/
 

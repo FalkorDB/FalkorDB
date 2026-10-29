@@ -292,8 +292,7 @@ set_option maxHeartbeats 4000000 in
 /-- Numeric ranges (any combination of open/closed/absent bounds, with at
 least one bound, as the optimizer builds them) are exact for every stored
 number: finite, NaN, and — since #3081 (`ff3d24ba7`) made an absent bound
-inclusive — `±inf` too (before it they were missed:
-`pre3081_open_bound_excludes_inf`). -/
+inclusive — `±inf` too (before it they were missed). -/
 theorem numRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     (mn mx : Option Val) (imn imx : Bool) (hf : fields k = true)
     (hb : mn.isSome ∨ mx.isSome)

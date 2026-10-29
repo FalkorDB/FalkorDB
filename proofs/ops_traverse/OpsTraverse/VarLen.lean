@@ -170,7 +170,7 @@ theorem no_sibling_uniqueness : ([0], 3) ∈ varLen [⟨0, 3, 3⟩] false 3 1 1 
 
 #2390 (d2c42e032) made a non-boolean, non-null verdict a type error, exactly as
 `FilterOp` answers it (`filter.rs:95-101`; proofs/ops_aggregate `StreamOps.filterEval`).
-Before it, `Ok(_) => continue` silently dropped the edge (`pre2390_edgeVerdict`). -/
+Before it, `Ok(_) => continue` silently dropped the edge. -/
 
 /-- An evaluated predicate value (`Value` restricted to what the match distinguishes). -/
 inductive PV where
@@ -199,16 +199,5 @@ def filterRow : Except String PV → EdgeVerdict
 /-- **Parity**: the per-edge filter of a var-length walk answers every value as a `Filter` does. -/
 theorem edgeVerdict_eq_filterRow (r : Except String PV) : edgeVerdict r = filterRow r := by
   rcases r with e | (_ | _ | _ | n) <;> rfl
-
-/-- Historical: before #2390 a non-boolean value skipped the edge. -/
-def pre2390_edgeVerdict : Except String PV → EdgeVerdict
-  | .ok .t => .keep
-  | .ok _ => .skip
-  | .error e => .err e
-
-theorem pre2390_edgeVerdict_differs :
-    pre2390_edgeVerdict (.ok (.other "Integer")) = .skip ∧
-    edgeVerdict (.ok (.other "Integer")) = .err "Type mismatch: expected Boolean but was Integer" := by
-  decide
 
 end OpsTraverse.VarLen

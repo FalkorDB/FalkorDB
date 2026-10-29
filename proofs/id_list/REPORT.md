@@ -75,13 +75,12 @@ Wire (`Wire.lean`)
 1. **FIXED by #2920 (`2ef102ae0`, issue #2919)** — now `from_segments` sets `run.start =
    segments.len()`; Lean `decoded_then_pushed_keeps_order` (`Decoded.lean`) proves every push
    sequence onto any decoded list keeps the ids in order. Historical record follows (the Lean
-   counterexamples are now `pre2920_decoded_then_pushed_reorders` / `_asserts` on
-   `fromSegmentsPre2920`).
+   counterexamples were removed; in 17ccc5412).
    **Pushing onto a decoded `IdList` reorders ids or panics** — `IdList::from_segments`
    (id_list.rs:1183) sets `run.start = last segment`, `desc = None`, fresh tally, regardless of
    what that segment is. `Inv` does not hold there, and `push` is `pub`.
-   - Lean: `pre2920_decoded_then_pushed_reorders` (decoded `[10,9,8]` + pushes `20,22` with a collapse
-     → `[8,9,10,20,22]`), `pre2920_decoded_then_pushed_asserts` (decoded `[7,7]` → assert).
+   - Lean (counterexample removed; in 17ccc5412): decoded `[10,9,8]` + pushes `20,22` with a collapse
+     → `[8,9,10,20,22]`; decoded `[7,7]` → assert.
    - Rust: `push_after_decode_reorders_a_descending_tail` — decoded `[10,9,8]`, then
      `20,22,24,...`:
      `expected [10, 9, 8, 20, 22, 24]  got [8, 9, 10, 20, 22, 24]` (silent reorder, row↔id

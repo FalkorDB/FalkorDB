@@ -28,9 +28,9 @@ What is proved here:
    (a) is what makes a successful pattern comprehension imply an open gate
    (`patCompP_pipe`, through `parse_node_pattern` / `parse_relationship_pattern`).
    **(a) was false for the Rust expression parser before #3041**: a failed
-   slice bound was swallowed (`pre3041_slice_bound_error_swallowed`), so
+   slice bound was swallowed, so
    `[1][(1..2]` was accepted while consuming an unmatched `(`.
-   `pre3041_gate_changes_result` is the resulting counterexample:
+   The resulting counterexample (removed; in 17ccc5412):
    `[(a)-->(b) WHERE [1][(1..2] | b]` was a pattern comprehension before #3104
    and a syntax error after it (CONFIRMED live, see the project header).
    #3041 (`2023af648`) makes a failed bound an error, which removes that
@@ -288,8 +288,7 @@ theorem cn_opt_lbrack_bind {β} {f : Bool → P β} {d : Nat}
 /-- The hypothesis on the expression level: `parse_expr` and `parse_map`
 only succeed by consuming a run that is bracket-balanced and has no `|` or `,`
 outside its brackets — at every depth. True of a correct expression parser;
-false of the Rust one before #3041 (`pre3041_slice_bound_error_swallowed`,
-`pre3041_gate_changes_result`); no counterexample is known on main, and the
+false of the Rust one before #3041; no counterexample is known on main, and the
 fragment model satisfies it on all inputs checked (`bounded_bal`). -/
 structure Oracle.Bal (o : Oracle) : Prop where
   pe : ∀ b d, Cn (o.pe b) d d
@@ -583,7 +582,7 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
 /-! ## 5. History: `Oracle.Bal` failed for the Rust before #3041, a changed parse -/
 
 /-- An expression parser with the pre-#3041 Rust's swallowed slice bound
-(`pre3041_slice_bound_error_swallowed`, cypher.rs:2136-2156 at 8621212fc): `[1][(1..2]` is accepted,
+(cypher.rs:2136-2156 at 8621212fc): `[1][(1..2]` is accepted,
 consuming a `(` it never closes. Abstracted: on a name it reads the name, on
 anything else it reads up to the next `|`. -/
 def peBad : P ET := fun s =>
@@ -602,30 +601,6 @@ def badInput : List CT :=
 def rootOf : R (ET × Bool) → Option (EOp × Bool)
   | .ok (t, b) _ => some (t.root, b)
   | _ => none
-
-/-- History (fixed by #3041): **the gate could change the parse** (CONFIRMED live: release modules before
-and after #3104 on `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] | b]`; before:
-a pattern comprehension, returns `[]`; after: `Invalid input 'WHERE'`). With
-the swallowed slice bound, the `(` the expression consumed hides the `|` from
-`list_has_top_level_pipe`, so the gate shuts on a pattern comprehension the
-old parser accepted. The new answer is C's (a syntax error), so the change is
-harmless, but `listLitP_eq_ungated` needs `Oracle.Bal`, which the Rust
-expression parser did not satisfy until #3041 made a failed slice bound an
-error (`slice_bound_error_reported`, `slice_unclosed_paren_refused`). -/
-theorem pre3041_gate_changes_result :
-    rootOf (listLitPU oBad 10 false (badInput, 0)) = some (.patComp, false) ∧
-    rootOf (listLitP oBad 10 false (badInput, 0)) = some (.list, true) := by decide
-
-theorem pre3041_oBad_not_bal : ¬ oBad.Bal := by
-  intro h
-  obtain ⟨pre, e, st⟩ := h.pe false 0 ([.lbrack, .lparen, .pipe], 0) _ _ rfl
-  simp [peBad, PS.cur, oBad] at e
-  have : pre = [.lbrack, .lparen] := by
-    have := congrArg List.length e; simp at this
-    match pre, e with
-    | [a, b], e => simp at e; obtain ⟨rfl, rfl⟩ := e; rfl
-  subst this
-  have := st [.pipe]; simp [pipeScan] at this
 
 /-! ## 6. The memo: a failed attempt is never repeated, so failures are linear -/
 

@@ -42,7 +42,7 @@ graph/src/parser/cypher.rs	Parser::parse_quantifier_expr	1616	PROVEN	C.ExprC qua
 graph/src/parser/cypher.rs	Parser::parse_reduce_expr	1675	PROVEN	C.ExprC reduceP_sound (GReduce), np_reduceP
 graph/src/parser/cypher.rs	Parser::parse_shortest_path_expr	1753	PROVEN	C.ExprC5 shortestP_sound (GShortest), C.ExprC4 np_shortestP; C.ExprC2 skipP_eof; skipFilter_eof_diverges (bug)
 graph/src/parser/cypher.rs	Parser::parse_primary_expr	1942	PROVEN	C.PrimaryG primaryC_sound (GAtom, all tokens), C.Primary primaryC_np; Model primary/bounded_agree
-graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2136	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left); history pre3041_slice_bound_error_swallowed (#3036 fixed)
+graph/src/parser/cypher.rs	Parser::parse_list_operator_expression	2136	PROVEN	listOp (#3041: a bound that fails to parse is an error), listOp_ok, slice_bound_error_reported, slice_bounds_omitted, listOp_from_err, listOp_to_err, bounded_agree (no slice exception left) (#3036 fixed)
 graph/src/parser/cypher.rs	Parser::parse_property_lookup	2167	PROVEN	postLoop (.dot arm), postfix_tightest; C.ClausesG2 dotChain_sound
 graph/src/parser/cypher.rs	Parser::parse_expr	2184	PROVEN	parseExpr, parseExpr_no_panic
 graph/src/parser/cypher.rs	Parser::parse_expr_inner	2195	PROVEN	step/loop (notFrames, level-5 re-entry after IS NULL), parseExpr_no_panic, binary_pairs_agree, bounded_agree, not_not_kept, not_run_folds, is_null_then_predicate, precedence theorems
@@ -54,7 +54,7 @@ graph/src/parser/cypher.rs	Parser::parse_named_exprs	2727	PROVEN	C.ClausesG name
 graph/src/parser/cypher.rs	Parser::parse_expression_list	2763	PROVEN	Model exprList/exprItems; C.ClausesG2 exprListR_sound/exprItemsR_sound/exprList1_sound, C.PrimaryG argsP_sound/argItemsP_sound (no trailing comma, #3060); call_trailing_comma_refused, C.call_trailing_comma_refused
 graph/src/parser/cypher.rs	Parser::without_pattern_comprehensions	2792	PROVEN	C.ExprC2 withoutPC_spec (flag restored)
 graph/src/parser/cypher.rs	Parser::reject_forbidden_pattern_comprehension	2803	PROVEN	C.ExprC2 rejectForbidden_spec
-graph/src/parser/cypher.rs	Parser::parse_list_literal_or_comprehension	2818	PROVEN	C.ExprC3 listLitP_sound (GBracket; merged #3104 model with gate + memo, any memo answer), C.ExprC4 np_listLitP; C.ListGate listLitP_eq_ungated (= pre-#3104 parse, CONDITIONAL on Oracle.Bal + MemoSound; Oracle.Bal no longer refuted since #3041: history pre3041_gate_changes_result, fragment bounded_bal), memoRun_nodup, failed_attempts_linear; Model listLit_ok
+graph/src/parser/cypher.rs	Parser::parse_list_literal_or_comprehension	2818	PROVEN	C.ExprC3 listLitP_sound (GBracket; merged #3104 model with gate + memo, any memo answer), C.ExprC4 np_listLitP; C.ListGate listLitP_eq_ungated (= pre-#3104 parse, CONDITIONAL on Oracle.Bal + MemoSound; Oracle.Bal no longer refuted since #3041: fragment bounded_bal), memoRun_nodup, failed_attempts_linear; Model listLit_ok
 graph/src/parser/cypher.rs	Parser::list_has_top_level_pipe	2892	PROVEN	C.ExprC2 pipeScan; C.ListGate pipeScan_exact/pipeScan_exact0 (= kind-matched bracket stack on well-bracketed input), pipeScan_mismatch, patCompP_pipe
 graph/src/parser/cypher.rs	Parser::parse_list_comprehension	2915	PROVEN	C.ExprC listCompP_sound (GListComp), np_listCompP
 graph/src/parser/cypher.rs	Parser::parse_pattern_comprehension	2958	PROVEN	C.ExprC3 patCompP_sound (GPatComp/GPcChain), C.ExprC4 np_patCompP
@@ -107,7 +107,7 @@ graph/src/parser/ast.rs	QueryGraph::dfs	899	PROVEN	C.Components dfs_step/dfsRels
 graph/src/parser/ast.rs	SetItem::fmt	952	PROVEN	C.Fmt fmtSetItem_attr
 graph/src/parser/ast.rs	QueryIR::fmt	1097	PROVEN	C.Fmt fmtIR_return
 graph/src/parser/ast.rs	QueryIR::validate	1206	PROVEN	C.IR validate; vClause_simple; match_last_after_call_rejected (#3297)
-graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4; history pre3297_call_skips_rest_validation, pre3297_match_last_after_call_accepted)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1212	PROVEN	C.IR vClause/vNext/vAll/vUnion; vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
 graph/src/parser/ast.rs	validate_set_items	1385	PROVEN	C.IR vSetItems_np
 graph/src/parser/ast.rs	validate_inlined_properties	1404	PROVEN	C.IR vInlined (used in vClause_simple)
 graph/src/parser/ast.rs	QueryIR::return_column_names	1426	PROVEN	C.IR returnCols_last_return, colsL_append_return

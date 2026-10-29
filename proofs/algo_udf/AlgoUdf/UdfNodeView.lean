@@ -20,7 +20,6 @@ the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
 | `rsJsEdge`        | `create_js_edge` :246: `.source`/`.target` via `create_js_node(.., runtime)` (:289-290); `create_js_path` :322 passes the runtime to its nodes (:341) |
 | `type_convert` call | `value_to_js_level` `udf/type_convert.rs:184`: `Value::Node` → `create_js_node(ctx, id, graph, runtime)` |
 | `specJsNode`      | the contract: read the runtime when one is given, as `labels(n)` / `n.prop` do |
-| `preRsJsNode`, `pre3454_*` | historical: the code before #3464, which never read the runtime |
 
 Entry points with no runtime (`getNeighbors` :518, `getNodeById` :576, `iterateNodes` :630,
 `traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged by #3464.
@@ -226,42 +225,5 @@ theorem fixed3454_edge_source :
   rfl
 
 /-! ## Historical: `create_js_node` before #3464 (fixed by #3464) -/
-
-/-- Pre-#3464: the runtime argument did not exist; the committed graph `g` was read. -/
-def preRsJsNode (_rt : Option RT) (g : NodeView) (id : Nat) : Obj :=
-  jsNode id (g.labels id) (g.attrs id)
-
-def preRsJsEdge (rt : Option RT) (g : NodeView) (id src dst : Nat) (ty : String)
-    (attrs : List (String × JV)) : Obj :=
-  jsEdge id src dst ty (preRsJsNode rt g src) (preRsJsNode rt g dst) attrs
-
-/-- Pre-#3464 BUG #3454: the UDF node object had `labels = []` while `labels(n)` was `[P]`;
-`create_js_node` violated `RuntimeFirstNode`. -/
-theorem pre3454_deleted_node_empty :
-    get (preRsJsNode (some rtAfterDelete) committedAfterDelete 0) "labels" = some (.arr []) ∧
-    get (specJsNode (some rtAfterDelete) committedAfterDelete 0) "labels" = some (.arr [.str "P"]) ∧
-    ¬ RuntimeFirstNode preRsJsNode := by
-  refine ⟨jsNode_labels _ _ _, jsNode_labels _ _ _, fun h => ?_⟩
-  have h1 := congrArg (get · "labels") (h rtAfterDelete 0)
-  simp only [preRsJsNode, jsNode_labels] at h1
-  injection h1 with h1
-  injection h1 with h1
-  cases h1
-
-/-- Pre-#3464 BUG #3454: `r.source.labels = []` after `DETACH DELETE`. -/
-theorem pre3454_edge_source_empty :
-    get (preRsJsEdge (some rtAfterDelete) committedAfterDelete 5 0 1 "R" []) "source" =
-      some (.obj (jsNode 0 [] [])) ∧
-    ¬ RuntimeFirstEdgeEnds preRsJsEdge := by
-  refine ⟨jsEdge_source _ _ _ _ _ _ _, fun h => ?_⟩
-  have h1 := h rtAfterDelete 5 0 1 "R" []
-  rw [preRsJsEdge, jsEdge_source] at h1
-  injection h1 with h1
-  injection h1 with h1
-  have h2 := congrArg (get · "labels") h1
-  simp only [preRsJsNode, jsNode_labels] at h2
-  injection h2 with h2
-  injection h2 with h2
-  cases h2
 
 end AlgoUdf.UdfNodeView

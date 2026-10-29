@@ -16,13 +16,12 @@ one per-operator oracle, `optimizer/references.rs`.
 | `refsNew`            | `ir_references_variable` (`references.rs:41-198`) |
 | `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs:204-233`), its explicit stack |
 | `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:287-300), `set_items_reference_variable` (:302-314), `expr_references_variable` (:317-323), `subtree_references_variable` (:327-334) |
-| `refsPre2390`        | `ir_references_variable` at a9377c636 (`reduce_expand_into.rs:22-75`, `_ => false`) |
 | `refsPR`             | `ir_references_variable` of PR #2918 (superseded by #2390's oracle; its walk is not merged) |
 
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
-bound variables are reported), `refsPR_complete`, `pre2390_refs_sound`; fixed counterexamples
-`pre2390_misses_unwind/create/foreach` with `refsNew_sees_*`; still open:
+bound variables are reported), `refsPR_complete`; the fixed counterexamples
+(removed; in 17ccc5412) are replaced by `refsNew_sees_*`; still open:
 `refsNew_misses_sibling_edges` (W2-traverse-1). The tree walks are in References2.lean.
 -/
 import FalkorOptimizer.Basic
@@ -428,21 +427,6 @@ theorem refsNew_misses_sibling_edges :
 
 /-! ## Historical: the oracle at a9377c636 (before #2390) and PR #2918's -/
 
-/-- `ir_references_variable` at a9377c636, arm by arm (reduce_expand_into.rs:27-74). -/
-def refsPre2390 (ir : IR) (v : Var) : Bool :=
-  match ir with
-  | .project es cs => es.any (fun e => mem v e.2) || cs.any (fun c => c.1 == v)
-  | .filter e => mem v e
-  | .sort es => es.any (mem v)
-  | .aggregate _ ks as _ => ks.any (fun e => mem v e.2) || as.any (fun e => mem v e.2)
-  | .pathBuilder ps => ps.any (mem v)
-  | .unwind _ var | .forEach _ var => var == v          -- line 54: the *bound* var, not the list
-  | .delete es | .remove es => es.any (mem v)
-  | .set items => items.any (fun i => mem v i.reads)
-  | .merge _ _ oc om => oc.any (fun i => mem v i.reads) || om.any (fun i => mem v i.reads)
-  | .valueHashJoin l r => mem v l || mem v r
-  | _ => false                                          -- line 73
-
 /-- `ir_references_variable` of PR #2918 (exhaustive). It also counts a traverse whose own
 alias is `v` (a re-bound edge) — harmless, it only keeps a flag on. -/
 def refsPR (ir : IR) (v : Var) : Bool :=
@@ -497,25 +481,7 @@ theorem refsPR_complete (ir : IR) (v : Var) (h : v ∈ reads ir) : refsPR ir v =
     | (rcases h with h | h <;> simp_all)
     | skip
 
-/-- The a9377c636 oracle was sound for everything but the bound var of `Unwind`/`ForEach`. -/
-theorem pre2390_refs_sound (ir : IR) (v : Var) (h : refsPre2390 ir v = true)
-    (hb : ∀ e var, ir = .unwind e var ∨ ir = .forEach e var → False) : v ∈ reads ir := by
-  cases ir <;> simp_all [reads, refsPre2390, mem, List.mem_flatten, List.mem_flatMap, SetItem.reads]
-  all_goals (rcases h with h | h; exact Or.inl h; exact Or.inr (Or.inl h))
-
 /-! ### Counterexamples on a9377c636, **fixed by #2390 (d2c42e032)** (live on 8743953a8 = C) -/
-
-/-- `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w`: returned 2 of 3 rows; now 3. -/
-theorem pre2390_misses_unwind :
-    r ∈ reads (.unwind [r] xV) ∧ refsPre2390 (.unwind [r] xV) r = false := by decide
-
-/-- `MATCH (a)-[r]->(b) CREATE (:C {w: r.w})`: created 2 nodes instead of 3; now 3. -/
-theorem pre2390_misses_create :
-    r ∈ reads (.create [[r]] []) ∧ refsPre2390 (.create [[r]] []) r = false := by decide
-
-/-- `FOREACH (x IN [r.w] | …)`: now 3 nodes, as C. -/
-theorem pre2390_misses_foreach :
-    r ∈ reads (.forEach [r] xV) ∧ refsPre2390 (.forEach [r] xV) r = false := by decide
 
 theorem refsNew_sees_unwind : refsNew (.unwind [r] xV) r = true := by decide
 theorem refsNew_sees_create : refsNew (.create [[r]] []) r = true := by decide

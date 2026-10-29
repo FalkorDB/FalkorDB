@@ -8,7 +8,6 @@ Same list model as `OrderSet.lean` (the `Vec<T>` *is* the list).
 | --- | --- |
 | `emptyS`     | `Default::default` (orderset.rs:27) |
 | `fromVecGo`/`fromVec` | `OrderSet::from_vec` (orderset.rs:42) — since #2905 drops later duplicates in every build, first wins (loop state `acc` = `vec[..i]`) |
-| `pre2905_fromVec` | `OrderSet::from_vec` before #2905 (0f45a8685 orderset.rs:34) — the identity, no deduplication |
 | `iterS`      | `OrderSet::iter` (orderset.rs:77) |
 | `lenS`       | `OrderSet::len` (orderset.rs:82) |
 | `isEmptyS`   | `OrderSet::is_empty` (orderset.rs:87) |
@@ -24,8 +23,6 @@ variable {α : Type}
 
 /-- orderset.rs:27 -/
 def emptyS : List α := []
-/-- orderset.rs:34 at 0f45a8685 (before #2905): `Self { vec }`, no deduplication. -/
-def pre2905_fromVec (l : List α) : List α := l
 /-- orderset.rs:77 -/
 def iterS (l : List α) : List α := l
 /-- orderset.rs:82 -/
@@ -186,12 +183,6 @@ theorem fromVec_drops_duplicates :
     fromVec [1, 2, 1, 3, 2] = [1, 2, 3] ∧ containsS (removeS (fromVec [1, 2, 1, 3, 2]) 1) 1 = false := by
   decide
 
-/-- History (fixed by #2905): the old identity `from_vec` kept a duplicate, so
-`remove` left the element in (Rust then:
-`graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`). -/
-theorem pre2905_fromVec_eq (l : List α) : pre2905_fromVec l = l := rfl
-theorem pre2905_fromVec_dup_survives_remove :
-    containsS (removeS (pre2905_fromVec [1, 1]) 1) 1 = true := by decide
 theorem fromVec_dup_removed : containsS (removeS (fromVec [1, 1]) 1) 1 = false := by decide
 
 theorem iterS_eq (l : List α) : iterS l = l := rfl

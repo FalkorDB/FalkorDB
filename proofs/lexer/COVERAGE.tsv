@@ -3,17 +3,17 @@ graph/src/parser/lexer.rs	fmt	168	PROVEN	FalkorLexerExtra tokDisplay_injective_p
 graph/src/parser/lexer.rs	Lexer::new	279	PROVEN	lexAll (initial read_spaces + first token): lexAll_total_cover, lexer_never_panics
 graph/src/parser/lexer.rs	Lexer::next	287	PROVEN	lexAll step: lexAll_total_cover, lexer_never_panics
 graph/src/parser/lexer.rs	Lexer::pos	295	PROVEN	FalkorLexerExtra posF_boundary, posT_le_posF, next_pos_ge, next_boundary
-graph/src/parser/lexer.rs	Lexer::read_spaces	311	PROVEN	rs/rsSlash/rsLine/rsBlock: rs_boundary, rs_top_boundary (every slice on a char boundary); rs_agrees_spec (= openCypher WHITESPACE/Comment); rs_unterminated_general; rs_*_fixed (pre2908_rs_* bugs fixed by #2908 dfa326583); rs_crlf (\r is whitespace, #2910; pre2910_crlf_bug historical)
+graph/src/parser/lexer.rs	Lexer::read_spaces	311	PROVEN	rs/rsSlash/rsLine/rsBlock: rs_boundary, rs_top_boundary (every slice on a char boundary); rs_agrees_spec (= openCypher WHITESPACE/Comment); rs_unterminated_general; rs_*_fixed (bugs fixed by #2908 dfa326583); rs_crlf (\r is whitespace, #2910)
 graph/src/parser/lexer.rs	Lexer::current	336	PROVEN	FalkorLexerExtra current_spec
 graph/src/parser/lexer.rs	Lexer::current_str	344	PROVEN	FalkorLexerExtra currentStr_ok
 graph/src/parser/lexer.rs	Lexer::get_token	351	PROVEN	getTok/getTokC: getTok_ok (every token slice on a char boundary); btScan_spec, btpScan_spec, identRun_bytes; keyword lookup omitted
 graph/src/parser/lexer.rs	Lexer::lex_string_literal	487	PROVEN	strScan: strScan_spec
-graph/src/parser/lexer.rs	Lexer::lex_numeric	524	PROVEN	FalkorLexerExtra lexNum/numPrefix/intLoop/floatLoop: lexNum_slices_ascii (every byte slice after an ASCII prefix); lexNum_zero_exp (0e5 is a float, #2910; pre2910_zero_exp_bug historical)
-graph/src/parser/lexer.rs	Lexer::str2number_token	700	PROVEN	str2int (integer half): int_literal_correct (every spelling, #2910), min_noncanonical_fixed; pre2910_min_noncanonical_bug (historical, fixed by #2910 dba677942); float half not modelled
+graph/src/parser/lexer.rs	Lexer::lex_numeric	524	PROVEN	FalkorLexerExtra lexNum/numPrefix/intLoop/floatLoop: lexNum_slices_ascii (every byte slice after an ASCII prefix); lexNum_zero_exp (0e5 is a float, #2910)
+graph/src/parser/lexer.rs	Lexer::str2number_token	700	PROVEN	str2int (integer half): int_literal_correct (every spelling, #2910), min_noncanonical_fixed; bug fixed by #2910 dba677942; float half not modelled
 graph/src/parser/lexer.rs	Lexer::err_ctx	750	PROVEN	FalkorLexerExtra errCtx_ok, floorK_le_ceilK
 graph/src/parser/lexer.rs	Lexer::format_error	770	PROVEN	FalkorLexerExtra formatError_prefix
 graph/src/parser/lexer.rs	Lexer::set_pos	777	PROVEN	FalkorLexerExtra cacheOf, setPos_next
-graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees_spec, hexN_rust, hexRun_spec, unesc_plus_rejected (strict hex, #2910); pre2910_unesc_plus_bug (historical, fixed by #2910 dba677942), unesc_upper_kept
+graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees_spec, hexN_rust, hexRun_spec, unesc_plus_rejected (strict hex, #2910); bug fixed by #2910 dba677942; unesc_upper_kept
 graph/src/parser/string_escape.rs	cypher_escape	161	PROVEN	FalkorLexerExtra unesc_escape (cypher_unescape ∘ cypher_escape = id)
 graph/src/parser/cypher.rs	is_param_value_error	155	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	is_too_deep	165	NOT COVERED	parser routine not modelled by the lexer project
@@ -61,7 +61,7 @@ graph/src/parser/cypher.rs	parse_primary_expr	1942	MODELLED	PRIMARY_LEVELS premi
 graph/src/parser/cypher.rs	parse_list_operator_expression	2136	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_property_lookup	2167	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_expr	2184	PROVEN	runCall (parse_expr under nested): nested_depth_bound
-graph/src/parser/cypher.rs	parse_expr_inner	2195	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level10/litExpr: litExpr_min, litExpr_other (2^63 guard, #2910); pre2910_min_postfix_bug (historical, fixed by #2910 dba677942)
+graph/src/parser/cypher.rs	parse_expr_inner	2195	PROVEN	Frame/Op/step/Reach: height_sound, guarded_height_le, chain_rejected; level10/litExpr: litExpr_min, litExpr_other (2^63 guard, #2910); bug fixed by #2910 dba677942
 graph/src/parser/cypher.rs	match_dot_property_separator	2663	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	parse_ident	2682	NOT COVERED	parser routine not modelled by the lexer project
 graph/src/parser/cypher.rs	try_parse_ident	2701	NOT COVERED	parser routine not modelled by the lexer project

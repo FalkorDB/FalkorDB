@@ -11,7 +11,7 @@ number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs:1232,
 "Promotion completeness on decode" below proves it refuses exactly the payloads
 that break the invariant (`decodeCheck_ok_iff`) and accepts every encoded tensor
 (`decodeCheck_accepts_encoded`). The text that follows is the pre-#3033 state;
-its counterexamples are kept as `pre3033_*`.
+its counterexamples were removed (in 17ccc5412).
 
 `Tensor::decode` (tensor.rs:1553) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
@@ -90,29 +90,6 @@ theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow m
   have e1 : dm ≤ m + dp := by omega
   simp only [Option.bind, if_pos e1, if_pos h2, if_pos h3]
 
-/-- **The decode gap (before #3033).** An orphan `me` row — a multi-edge pair the decoder
-accepted with no forward entry — has `m = dp = dm = shadow = 0`, `multi = 1`,
-`me = 1`. That violates `Wf.multi_le` (`1 ≤ 0` is false) and `edge_count`
-panics. This is the exact state the confirmed repro prints. -/
-theorem pre3033_orphan_row_breaks_wf : ¬ Wf 0 0 0 0 1 1 := by
-  intro h
-  have := h.multi_le
-  omega
-
-theorem pre3033_orphan_row_panics : edgeCount 0 0 0 0 1 1 = none := by decide
-
-/-- More generally, any decoded tensor with more `me` rows than its effective
-forward pattern panics — the class of the bug, not just the one witness. -/
-theorem pre3033_more_me_rows_than_pattern_panics
-    (m dp dm shadow multi me : Nat)
-    (hdm : dm ≤ m + dp) (hsh : shadow ≤ m + dp - dm)
-    (hbad : m + dp - dm - shadow < multi) :
-    edgeCount m dp dm shadow multi me = none := by
-  unfold edgeCount cadd csub
-  simp only [Option.bind, if_pos hdm, if_pos hsh]
-  have : ¬ multi ≤ m + dp - dm - shadow := by omega
-  simp only [if_neg this]
-
 /-! ## Forward-layer sizes (#2996, tensor.rs:1562-1573)
 
 `Tensor::decode` merges the on-disk delta-plus / delta-minus layers into a base
@@ -130,9 +107,6 @@ def checkLayers (m dp dm : Dims) : Except String Unit :=
   else if dm ≠ m then .error "Tensor decode: forward delta-minus size"
   else .ok ()
 
-/-- Before #2996: no check. -/
-def pre2996_checkLayers (_m _dp _dm : Dims) : Except String Unit := .ok ()
-
 theorem checkLayers_ok_iff (m dp dm : Dims) : checkLayers m dp dm = .ok () ↔ dp = m ∧ dm = m := by
   unfold checkLayers
   by_cases h1 : dp = m <;> by_cases h2 : dm = m <;> simp [h1, h2]
@@ -142,13 +116,6 @@ inside the base: every stored delta entry is within its own layer's dims. -/
 theorem checkLayers_merge_in_bounds (m dp dm : Dims) (h : checkLayers m dp dm = .ok ())
     (e : Nat × Nat) (he : inDims dp e) : inDims m e := by
   have := ((checkLayers_ok_iff m dp dm).1 h).1; subst this; exact he
-
-/-- History: before #2996 a delta-plus entry outside the base was accepted
-(main's test `decode_rejects_forward_layers_of_different_sizes`: base 4x4,
-delta-plus 8x8). -/
-theorem pre2996_accepts_out_of_bounds_delta :
-    pre2996_checkLayers (4, 4) (8, 8) (4, 4) = .ok () ∧ inDims (8, 8) (5, 5) ∧ ¬ inDims (4, 4) (5, 5) := by
-  refine ⟨rfl, ?_, ?_⟩ <;> simp [inDims]
 
 theorem checkLayers_rejects_main_test : checkLayers (4, 4) (8, 8) (4, 4) ≠ .ok () := by
   rw [Ne, checkLayers_ok_iff]; simp
@@ -268,11 +235,6 @@ def decodeCheck (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
   | .ok rows =>
     if rows.length = markers then .ok rows
     else .error "Tensor decode: multi-edge pairs and pairs with edge ids differ"
-
-/-- Before #3033: no check; the `me` rows are `rowsFrom [] ts`, whatever `m` is. -/
-def pre3033_decodeCheck (_nrows _ncols : Nat) (_m : MatU)
-    (ts : List (Pair × List Nat)) : Except String (List Pair) :=
-  .ok (rowsFrom [] ts)
 
 /-- The invariant: a pair is a forward marker iff it has an `me` row. -/
 def PromotionComplete (m : MatU) (rows : List Pair) : Prop :=
@@ -556,7 +518,7 @@ theorem decodeCheck_accepts_encoded (S : SelectValueEqSpec) (t : TState) (h : t.
 /-! ### main's tests, and the pre-#3033 counterexample -/
 
 /-- `decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge`, absent pair
-(7, 9) — the orphan row of `pre3033_orphan_row_panics`. -/
+(7, 9) — an orphan row. -/
 theorem orphan_row_refused (S : SelectValueEqSpec) :
     ∃ err, decodeCheck S 16 16 [((1, 2), 5)] [((7, 9), [3])] = .error err :=
   ⟨_, rfl⟩
@@ -576,14 +538,5 @@ theorem marker_without_ids_refused (S : SelectValueEqSpec) :
   unfold decodeCheck
   rw [this]
   rfl
-
-/-- History: before #3033 the orphan payload was accepted, with a row that breaks
-promotion completeness (then `pre3033_orphan_row_panics`). -/
-theorem pre3033_orphan_row_accepted :
-    pre3033_decodeCheck 16 16 [((1, 2), 5)] [((7, 9), [3])] = .ok [(7, 9)] ∧
-    ¬ PromotionComplete [((1, 2), 5)] [(7, 9)] := by
-  refine ⟨rfl, fun h => ?_⟩
-  have := (h (7, 9)).2 (List.mem_singleton.2 rfl)
-  revert this; decide
 
 end GBW

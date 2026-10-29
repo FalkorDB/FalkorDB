@@ -171,11 +171,6 @@ theorem denseTable_len (ids : List Nat) (maxId : Nat) (tbl : List (Option Nat))
 no table is built. -/
 theorem sparse_builds_no_table : denseTable [0, 1000000000] 1000000000 = none := by decide
 
-/-- HISTORICAL (before #3586): the table was always `max_id + 1` long. -/
-def preTableLen (maxId : Nat) : Nat := maxId + 1
-
-theorem pre3586_table_unbounded : preTableLen 1000000000 = 1000000001 ∧ (2 : Nat) * 4 < 1000000001 := by decide
-
 /-! ## maxFlow: flow read-back is aligned with edge metadata -/
 
 /-- identity-compaction path: keep edges with positive capacity; `compact` and

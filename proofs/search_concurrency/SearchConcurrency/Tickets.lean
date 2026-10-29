@@ -166,38 +166,6 @@ def operational (s : PState) : Bool := s.slots.cur = 0
 def init (nb : Nat) : PState :=
   { slots := { gen := 1, cur := 0, stale := 0 }, fields := [], docs := List.replicate nb [], workers := [] }
 
-/-- HISTORICAL (BUG 2, fixed by #3086). The live-server trace (`twoidx.py`, 300k nodes = 30 batches; here 3):
-`CREATE INDEX … (n.a)`, one batch of `a`, `CREATE INDEX … (n.b)`; the second
-worker's first batch sees two tickets and bails; the first finishes with its
-`{a}` snapshot. The index is OPERATIONAL and `b` is in no document. -/
-def pre3086_lostSecondIndex : PState :=
-  let s := pre3086_createRange (init 3) "a"
-  let s := batch 3 s 0            -- P1 batch 0 with {a}
-  let s := pre3086_createRange s "b"      -- P2 spawned with {a,b}, pending = 2
-  let s := batch 3 s 1            -- P2: pending 2 > 1 → bail
-  let s := batch 3 s 0            -- P1 batch 1 with {a}
-  batch 3 s 0                     -- P1 batch 2 → exhausted, release
-
-theorem pre3086_second_index_never_populated :
-    operational pre3086_lostSecondIndex = true ∧ complete pre3086_lostSecondIndex = false ∧
-    pre3086_lostSecondIndex.docs = [["a"], ["a"], ["a"]] := by decide
-
-/-- The other interleaving is fine: if the *older* worker reaches its check first,
-it bails and the newer one reindexes everything. So the outcome is a scheduling
-race, and on the live server the loser is the newer worker (it is already parked
-on the indexer lock when the older one releases it). -/
-def pre3086_luckyOrder : PState :=
-  let s := pre3086_createRange (init 3) "a"
-  let s := batch 3 s 0
-  let s := pre3086_createRange s "b"
-  let s := batch 3 s 0            -- P1 sees pending 2 → bails
-  let s := batch 3 s 1
-  let s := batch 3 s 1
-  batch 3 s 1
-
-theorem pre3086_lucky_order_complete :
-    operational pre3086_luckyOrder = true ∧ complete pre3086_luckyOrder = true := by decide
-
 /-- Fix: bump the generation on every schema change (what `recreate_index` already
 does for vector fields), so the older worker fails `is_ticket_current` and the
 newer one owns the index. -/
@@ -577,7 +545,7 @@ theorem main_operational_complete {nb : Nat} {m : MState} (h : Reach nb m)
   simp only [dget, hj, Option.getD_some] at this
   exact List.contains_iff_mem.mpr this
 
-/-- The interleaving that lost `b` before #3086 (`pre3086_lostSecondIndex`), on
+/-- The interleaving that lost `b` before #3086, on
 main: P2 runs first and no longer bails, P1 fails `is_ticket_current`. -/
 def mainLostOrder : PState :=
   let s := acquire (store (init 3) "a")

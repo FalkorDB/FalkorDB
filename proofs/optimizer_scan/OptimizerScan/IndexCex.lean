@@ -39,8 +39,7 @@ example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b
   decide
 
 /-- C2 — FIXED by #3076 (e20300436). Temporal values used to be indexed as NUMERIC timestamps, so
-`n.v > 0` matched `v: date(...)` with the Filter gone (W2-index-5; the old encoding's counterexample
-is `proofs/index_layer` `pre3076_temporal_in_numeric_range`). Temporals are no longer indexed: the
+`n.v > 0` matched `v: date(...)` with the Filter gone (W2-index-5). Temporals are no longer indexed: the
 scan now agrees. -/
 example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = true := by
   decide
@@ -92,7 +91,7 @@ example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
 
 /-- C11 — FIXED by #3072 (1c9994e37). `n.v > 'B' AND n.v < 'B'` merges into
 `Range{min:'B', max:'B', exclusive}`, which `build_string_range_node` used to turn into an exact match
-on 'B' (W2-index-6; `proofs/index_layer` `pre3072_exclusive_equal_bounds`). It is now the empty node:
+on 'B' (W2-index-6). It is now the empty node:
 the scan agrees. -/
 example : agree [0] (.and [.cmp .gt (.prop 0) (.lit (.s 66)), .cmp .lt (.prop 0) (.lit (.s 66))])
     (node [0] [(0, .s 66)]) = true := by decide

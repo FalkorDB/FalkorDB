@@ -10,12 +10,11 @@
 | `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
 | `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:171` |
 | `replyLen`            | `SlowLog::reply` `:181` (5-element rows) |
-| `MinCache`, `SlowestKept`, `add`, `pre3442_add` | #3442 (fixed by #3456): the `min_latency` cache (`:77`, `:114`, `:162-169`); main's update arm `:121-139` falls through to the recompute; `pre3442_add` is b84473a7f's early return |
+| `MinCache`, `SlowestKept`, `add` | #3442 (fixed by #3456): the `min_latency` cache (`:77`, `:114`, `:162-169`); main's update arm `:121-139` falls through to the recompute (b84473a7f returned early there) |
 
 **Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
 used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
-character across byte 2048 panicked (`pre3234_entry_hash_panics`, `pre3234_truncate_panics`,
-kept as historical notes on the old code `pre3234_hashInput`/`pre3234_truncate`). Both now
+character across byte 2048 panicked (counterexamples removed; in 17ccc5412). Both now
 go through `prefix`, which backs up to `floor_char_boundary(2048)`:
 `hashInput_total`/`truncate_total` (never panics, for every byte string),
 `prefix_le`/`prefix_isPrefix`/`prefix_boundary`/`prefix_longest` (the cut is the longest
@@ -183,27 +182,6 @@ theorem hashInput_bad (p t : Bytes) (hp : p.length = 2047) :
 The old code sliced at byte 2048 directly (`query[..min(len, 2048)]` and
 `s[..STR_MAX_LEN]`). Kept as the record of W4-redis-1. -/
 
-def pre3234_hashInput (q : Bytes) : Option Bytes := slice q (min q.length STR_MAX_LEN)
-
-def pre3234_truncate (s : Bytes) : Option Bytes :=
-  if s.length > STR_MAX_LEN then (slice s STR_MAX_LEN).map (· ++ [46, 46, 46]) else some s
-
-theorem pre3234_entry_hash_panics (p t : Bytes) (hp : p.length = 2047) :
-    pre3234_hashInput (p ++ 0xC3 :: 0xA9 :: t) = none := by
-  have hm : min (p ++ 0xC3 :: 0xA9 :: t).length STR_MAX_LEN = 2048 := by
-    simp [STR_MAX_LEN, hp]; omega
-  unfold pre3234_hashInput slice boundary
-  rw [hm, getD_bad p t hp]
-  simp [cont, hp]; omega
-
-theorem pre3234_truncate_panics (p t : Bytes) (hp : p.length = 2047) :
-    pre3234_truncate (p ++ 0xC3 :: 0xA9 :: t) = none := by
-  unfold pre3234_truncate slice boundary
-  rw [if_pos (by simp [STR_MAX_LEN, hp]; omega)]
-  show (if _ then _ else none).map _ = none
-  rw [show STR_MAX_LEN = 2048 from rfl, getD_bad p t hp]
-  simp [cont, hp]; omega
-
 /-! ## Entries -/
 
 def MAX_ENTRIES := 10
@@ -229,20 +207,6 @@ def argmin : List E → Nat
   | e :: es => match es with
     | [] => 0
     | _ => let j := argmin es; if (es.getD j e).latency < e.latency then j + 1 else 0
-
-/-- History (`pre3442_`, main b84473a7f): `SlowLog::add` with the hash of the (possibly
-panicking) slice already computed. The existing-entry branch (`:120-132`) returned before the
-`min_latency` recompute (#3442). -/
-def pre3442_add (s : SL) (h lat : Nat) : SL :=
-  if lat < MIN_LATENCY then s
-  else if s.entries.length ≥ MAX_ENTRIES ∧ lat ≤ s.minLat then s
-  else match s.entries.find? (·.hash = h) with
-    | some _ => { s with entries := s.entries.map fun e =>
-        if e.hash = h ∧ lat > e.latency then { e with latency := lat } else e }
-    | none =>
-      let es := if s.entries.length < MAX_ENTRIES then s.entries ++ [⟨h, lat⟩]
-        else s.entries.set (argmin s.entries) ⟨h, lat⟩
-      ⟨es, minOf es⟩
 
 /-- `SlowLog::add` on origin/main (5e475e6c9, #3456; `slow_log.rs:97-175`): an update that
 does not raise the latency returns unchanged; one that does raises it and falls through to
@@ -374,13 +338,11 @@ theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by sim
 /-! ## Gap closed: #3442 (fixed by #3456) — the update arm left `min_latency` stale
 
 On b84473a7f `SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raised the
-entry's latency and `return`ed before the recompute at `:172-177`; `pre3442_add`'s `some _`
-arm is that branch (it leaves `minLat` alone). Once the cached minimum was below the real
+entry's latency and `return`ed before the recompute at `:172-177`, leaving `minLat` alone. Once the cached minimum was below the real
 one, the pre-check at `:114` admitted a query faster than every retained entry and the
 replace path evicted the real fastest entry. C (`SlowLog_Add`) sends the update path through
 `cleanup`, which recomputes the minimum. #3456 makes the branch fall through to the recompute
-(`:120-139`, `:178`); `add` above is that main code. The refutations are kept as
-`pre3442_*` on `pre3442_add`; `add_minCache` and `fixed3442_trace` prove the fix on main. -/
+(`:120-139`, `:178`); `add` above is that main code. The refutations were removed (in 17ccc5412); `add_minCache` and `fixed3442_trace` prove the fix on main. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
 def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries
@@ -389,10 +351,6 @@ instance (s : SL) : Decidable (MinCache s) := by unfold MinCache; infer_instance
 
 /-- Replay a trace of `(hash, latency_ms)` additions through main's `add`. -/
 def run (s : SL) (tr : List (Nat × Nat)) : SL := tr.foldl (fun s p => add s p.1 p.2) s
-
-/-- Replay through the pre-#3456 `add`. -/
-def pre3442_run (s : SL) (tr : List (Nat × Nat)) : SL :=
-  tr.foldl (fun s p => pre3442_add s p.1 p.2) s
 
 /-- Worst latency the trace logged for hash `h` (only latencies ≥ `MIN_LATENCY` count). -/
 def best (tr : List (Nat × Nat)) (h : Nat) : Nat :=
@@ -412,52 +370,11 @@ instance (tr : List (Nat × Nat)) (s : SL) : Decidable (SlowestKept tr s) := by
 def trace3442 : List (Nat × Nat) :=
   (List.range 10).map (fun i => (i + 1, 20 + 10 * i)) ++ [(1, 200), (11, 25)]
 
-/-- History (b84473a7f): after ten distinct entries the cache is right; the update of `Q1` to
-200 ms leaves it at 20 while the real minimum is 30 (`MinCache` broken by the `some _` arm). -/
-theorem pre3442_update_breaks_min_cache :
-    let s := pre3442_run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
-    MinCache s ∧ ¬ MinCache (pre3442_add s 1 200) ∧ (pre3442_add s 1 200).minLat = 20 ∧
-      minOf (pre3442_add s 1 200).entries = 30 := by
-  decide
-
-/-- History (**#3442**, b84473a7f): `Q11` (25 ms) is admitted and evicts `Q2` (30 ms): the log
-keeps a query faster than one it dropped (`SlowestKept` failed). -/
-theorem pre3442_faster_evicts_slower :
-    let s := pre3442_run SL.new trace3442
-    s.entries.any (·.hash = 11) = true ∧ s.entries.any (·.hash = 2) = false ∧
-      ¬ SlowestKept trace3442 s := by
-  decide
-
 /-- Main: after the same ten entries and the update of `Q1`, the cache is the real minimum (30). -/
 theorem fixed3442_update_keeps_min_cache :
     let s := run SL.new ((List.range 10).map (fun i => (i + 1, 20 + 10 * i)))
     MinCache s ∧ MinCache (add s 1 200) ∧ (add s 1 200).minLat = 30 := by
   decide
-
-/-- `add` on main agrees with the pre-#3456 `add` on the entries (one entry per hash); only
-the cached minimum differs (the fix touches nothing else). -/
-theorem add_entries_pre3442 (s : SL) (h lat : Nat) (hnd : (s.entries.map (·.hash)).Nodup) :
-    (add s h lat).entries = (pre3442_add s h lat).entries := by
-  unfold add pre3442_add; split; · rfl
-  split; · rfl
-  split
-  · rename_i x hx
-    split
-    · rename_i hle
-      have hxm : x ∈ s.entries := List.mem_of_find?_eq_some hx
-      have hxh : x.hash = h := by simpa using List.find?_some hx
-      have hid : s.entries.map (fun e' => if e'.hash = h ∧ lat > e'.latency then { e' with latency := lat } else e') = s.entries := by
-        refine Eq.trans (List.map_congr_left (g := id) ?_) (List.map_id _)
-        intro e he
-        split
-        · rename_i hh
-          have : e = x := nodup_map_inj_E _ hnd e x he hxm (by rw [hh.1, hxh])
-          subst this; omega
-        · rfl
-      show s.entries = _
-      exact hid.symm
-    · rfl
-  · rfl
 
 /-- **The fix**: main's `add` preserves the cache invariant, for every state and input. -/
 theorem add_minCache (s : SL) (h lat : Nat) (hs : MinCache s) : MinCache (add s h lat) := by

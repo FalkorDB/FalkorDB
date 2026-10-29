@@ -9,7 +9,6 @@ import OptimizerScan.IndexPipeline
 | `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs:151-216` |
 | `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:218-310` |
 | `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs:330-380` (bound-endpoint filter), `CondTraverse` + `Filter` |
-| `pre2390_inlineIdx`, `pre2390_needsInlinePost`, `pre2390_applyInline` | HISTORICAL: `get_inline_attr_index` 721, `needs_inline_post_filter` 897, `apply_inline_rewrite` 1038 at a9377c636, removed by #2390 |
 | `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1545`) |
 | `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:56,293,98` |
 -/
@@ -140,54 +139,8 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
 Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
 removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
 `IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
-`pre2390_applyInline_eq_utilize` is the reason that removal loses nothing on literal values: the old
-inline rewrite was already exactly `utilize` of the equivalent filter `n.k = v`. Lines below cite
+That removal loses nothing on literal values: the old inline rewrite (`get_inline_attr_index` 721, `needs_inline_post_filter` 897, `apply_inline_rewrite` 1038 at a9377c636) was already exactly `utilize` of the equivalent filter `n.k = v`. Lines below cite
 a9377c636. -/
-
-/-- `get_inline_attr_index` (`utilize_index.rs:721-747` at a9377c636): labels outer, attrs
-inner; first indexed `(label, attr)` wins. -/
-def pre2390_inlineIdx (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) : Option (Nat × Nat × T) :=
-  ls.findSome? (fun L => (attrs.find? (fun p => isIdx L p.1)).map (fun p => (L, p.1, p.2)))
-
-/-- `needs_inline_post_filter` (`utilize_index.rs:897-903` at a9377c636) on the value side. -/
-def pre2390_needsInlinePost (v : T) : Bool := nonIdxT v
-
-/-- `apply_inline_rewrite` (`utilize_index.rs:1038-1057` at a9377c636). -/
-def pre2390_applyInline (ls : List Nat) (L k : Nat) (v : T) : Plan :=
-  if pre2390_needsInlinePost v then .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v))
-  else .idxScan ls L (.eq k v)
-
-theorem pre2390_inlineIdx_spec (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) (L k : Nat) (v : T)
-    (h : pre2390_inlineIdx isIdx ls attrs = some (L, k, v)) : L ∈ ls ∧ (k, v) ∈ attrs ∧ isIdx L k = true := by
-  unfold pre2390_inlineIdx at h
-  obtain ⟨L', hL', hs⟩ := List.exists_of_findSome?_eq_some h
-  cases hf : attrs.find? (fun p => isIdx L' p.1) with
-  | none => simp [hf] at hs
-  | some p =>
-    simp [hf] at hs; obtain ⟨rfl, rfl, rfl⟩ := hs
-    exact ⟨hL', List.mem_of_find?_eq_some hf, by simpa using List.find?_some hf⟩
-
-/-- **PROVEN**: the inline rewrite on a literal equals what `utilize` builds for
-the equivalent filter `n.k = v`, so `utilize_sound` applies: the rewritten scan
-selects exactly the nodes of `L` with `n.k = v`. -/
-theorem pre2390_applyInline_eq_utilize (idx : Nat → List Nat) (L k : Nat) (c : V) (hc : goodV c = true)
-    (hk : k ∈ idx L) : pre2390_applyInline [L] L k (.lit c) = utilize idx [L] (.atom (.cmp .eq (.prop k) (.lit c))) := by
-  have hl : litFlag c = false := by
-    cases c <;> simp_all [litFlag, goodV]
-  simp [pre2390_applyInline, pre2390_needsInlinePost, hl, utilize, tryPushdown, trySingle, hasT, firstP, findLabel_single, hk,
-    buildOp, isArrayContains, needsPost, nonIdxA, nonIdxT]
-
-theorem pre2390_applyInline_sound (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L k : Nat) (c : V)
-    (hc : goodV c = true) (hk : k ∈ idx L) (n : Node) (hn : Faithful n) :
-    (pre2390_applyInline [L] L k (.lit c)).sel idx opq n = (decide (L ∈ n.labels) && Op.eq.holds (n.prop k) c) := by
-  rw [pre2390_applyInline_eq_utilize idx L k c hc hk, utilize_sound idx L opq _ (by simp [goodF, goodA, hc]) n hn]
-  simp [reference, Plan.sel, hasAll, evalF, evalA, evalT]
-
-/-- A non-literal inline value (parameter, function call, …) keeps the equality
-filter above the index scan (the runtime may fall back to a label scan). -/
-theorem pre2390_applyInline_keeps_filter (ls : List Nat) (L k : Nat) (v : T) (h : nonIdxT v = true) :
-    pre2390_applyInline ls L k v = .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v)) := by
-  simp [pre2390_applyInline, pre2390_needsInlinePost, h]
 
 /-! ## `distance()` scans -/
 
@@ -301,18 +254,5 @@ theorem isIndexable_spec (v : V) :
 /-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
 theorem evalIQ_inList (k : Nat) (r : R) :
     evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
-
-/-- History (`pre2383_`): before #2383 the runtime expanded an `IN` list to an `Or` of
-`Equal`s (node and edge index scans alike). -/
-def pre2383_evalIQ_inList (k : Nat) (r : R) : Q :=
-  .or (((listVals r).filter isPrim).map (.eq k))
-
-/-- **#2383 is behaviour-preserving**: the `InList` the runtime now builds selects the
-same nodes through the index and is refused by `can_utilize_index` on the same terms as
-the pre-#2383 `Or` of `Equal`s, so which queries fall back to a label scan is unchanged. -/
-theorem inList_same_as_pre2383 (k : Nat) (r : R) (F : List Nat) :
-    build F (evalIQ (.inList k r)) = build F (pre2383_evalIQ_inList k r) ∧
-    canUtilize (evalIQ (.inList k r)) = canUtilize (pre2383_evalIQ_inList k r) :=
-  ⟨build_inList_eq_or F k _, canUtilize_inList_eq_or k _⟩
 
 end OptimizerScan.Index

@@ -21,7 +21,7 @@ and reads back the last write; commit then stores exactly what the query read
 The last section models `SET n = m` (`ops/set.rs:125-148`, `:218-262`). Before #3524
 (af45ca776) only the *Map* source cleared the staged attributes; the Node and Relationship
 sources, and every relationship-target `SET r = …`, kept attributes staged earlier in the same
-query (#2776; `pre3524_replace_keeps_staged` is the Lean counterexample). Now every branch
+query (#2776). Now every branch
 calls `clear_{node,relationship}_attrs_for_replace` (`replaceFrom`); `replace_ignores_staged`
 and `fixed3524_replace_clears_staged` are the correctness theorems.
 -/
@@ -207,19 +207,6 @@ staged list `pend` is dropped by the clear, so it is not an argument. -/
 def replaceFrom (stored src : List Entry) : List Entry :=
   let p1 := stored.foldl (fun p e => upsert p e.1 .null) []
   src.foldl (fun p e => upsert p e.1 e.2) p1
-
-/-- History (pre-#3524, ca36bfa15): the Node/Relationship-source branches and every
-relationship target did the same minus the clear. -/
-def pre3524_replaceNoClear (stored pend src : List Entry) : List Entry :=
-  let p1 := stored.foldl (fun p e => upsert p e.1 .null) pend
-  src.foldl (fun p e => upsert p e.1 e.2) p1
-
-/-- `CREATE (n {a:1}), (m {b:2}) SET n = m`: `a` is staged (not yet stored), so the old
-node-source replace kept it (Rust `{a:1,b:2}`, C `{b:2}`). The map branch cleared. -/
-theorem pre3524_replace_keeps_staged :
-    normQ (readQ [] (pre3524_replaceNoClear [] [(0, .inl 1)] [(1, .inl 2)]) 0) = some (.inl 1) ∧
-    normQ (readQ [] (replaceFrom [] [(1, .inl 2)]) 0) = none := by
-  decide
 
 /-- **Fixed by #3524**: the same state on main reads `a` as absent and `b = 2`. -/
 theorem fixed3524_replace_clears_staged :

@@ -29,7 +29,7 @@ graph/src/effects/v3/id_list.rs	IdList::is_empty	1114	PROVEN	Misc.isEmpty: isEmp
 graph/src/effects/v3/id_list.rs	IdList::iter	1126	PROVEN	flat: fromIter_iter, pushAll_ok
 graph/src/effects/v3/id_list.rs	IdList::count	1136	PROVEN	Misc.count: count_spec (panics iff len >= 2^32)
 graph/src/effects/v3/id_list.rs	IdList::to_roaring	1146	PROVEN	Misc.toRoaring: toRoaring_spec (sorted, exactly the ids)
-graph/src/effects/v3/id_list.rs	IdList::from_segments	1183	PROVEN	fromSegments (start = segments.len(), #2920): fromSegments_dinv, push_dinv, pushAll_dinv, decoded_then_pushed_keeps_order, readIds_then_pushed_keeps_order; historical pre2920_decoded_then_pushed_reorders/_asserts
+graph/src/effects/v3/id_list.rs	IdList::from_segments	1183	PROVEN	fromSegments (start = segments.len(), #2920): fromSegments_dinv, push_dinv, pushAll_dinv, decoded_then_pushed_keeps_order, readIds_then_pushed_keeps_order
 graph/src/effects/v3/id_list.rs	IdList::encode	1207	PROVEN	encodeIds: readIds_encodeIds, push_encode_decode
 graph/src/effects/v3/id_list.rs	IdList::decode_sized	1236	PROVEN	= read_ids: readIds_safe, readIds_encodeIds
 graph/src/effects/v3/id_list.rs	IdList::eq	1249	PROVEN	Misc.eqSlice: eqSlice_iff

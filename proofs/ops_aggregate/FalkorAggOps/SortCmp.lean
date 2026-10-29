@@ -14,7 +14,7 @@ The value comparison is the parameter `cv : V → V → Ordering`; on main (#291
 it is `Value::sort_cmp`. Its laws (`Lawful`: reflexive, antisymmetric) are hypotheses
 here and are discharged for `sort_cmp` in `Discharge.lean` (`lawful_main`, from
 proofs/value_order `Main.scMain_total`). Before #2912 `cv` was `compare_value(..).0`,
-for which `Lawful` is false (known #2891; value_order `pre2912_sortCmp_not_antisymmetric`).
+for which `Lawful` is false (known #2891).
 -/
 namespace FalkorAggOps.SortCmp
 

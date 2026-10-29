@@ -15,10 +15,10 @@ graph/src/graph/graphblas/serialization.rs	from_u64	146	MODELLED	payload directo
 graph/src/graph/graphblas/serialization.rs	encode	173	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
 graph/src/graph/graphblas/serialization.rs	encode_with_range	180	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip
 graph/src/graph/graphblas/serialization.rs	decode	195	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; history pre2996_count_wraps (count 2^61 matched an empty buffer)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	216	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	69	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	84	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
-src/redis_type.rs	graph_rdb_load	97	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1; pre3262_cache_size_ignored kept)
+src/redis_type.rs	graph_rdb_load	97	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
 src/redis_type.rs	graph_rdb_save	185	PROVEN	RedisType.rdbSave (= saveKeySlice.getD whole): save_main, save_vkey (slice i, key_count K), save_single
 src/redis_type.rs	save_key_slice	210	PROVEN	RedisType.saveKeySlice: save_main, save_vkey, save_single, metaSave_of_slice (VKEY_STATE/GRAPH_REGISTRY lookups are the modelled maps; rdb_save_graph_key = Persist encoder)
 src/redis_type.rs	save_string_nul	248	PROVEN	Codec.stripNul_nulTerm
@@ -36,7 +36,7 @@ src/redis_type.rs	delete_stale_virtual_keys	625	PROVEN	RedisType.deleteStaleVirt
 src/redis_type.rs	scan_keys_by_type	642	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
 src/redis_type.rs	finalize_pending_graphs	729	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
 src/redis_type.rs	install_graph	764	PROVEN	RedisType.finalizePending (install arm): load_main_first
-src/redis_type.rs	uuid_v4	790	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj); history pre3286_uuid_injective, pre3286_uuid_collision_iff, pre3286_uuid_collision_example
+src/redis_type.rs	uuid_v4	790	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj)
 src/redis_type.rs	uuid_fields	812	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
 src/redis_type.rs	same_fields	839	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
 src/redis_type.rs	graphmeta_rdb_load	936	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load

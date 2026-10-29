@@ -13,7 +13,7 @@ import PendingCommit.ContentCompact
   scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
   (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
   b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
-  pre-#3339 check) and has depth ≤ 4096; history `pre3339_isValid_any_depth`. (Same as C on
+  pre-#3339 check) and has depth ≤ 4096. (Same as C on
   live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
 * `flatten_spec` — `flatten_label_map` (:46) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.
@@ -281,15 +281,6 @@ theorem validate_nest (k : Nat) :
     validateProperty (nest (k + 1)) = if k + 1 ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
   simp only [nest, validateProperty, validateListProperty]
   rw [if_neg (by decide), validateItems_nest k 1 (by decide), Nat.add_comm 1 k]
-
-/-- **Historical (#2722, fixed by #3339 b080a44c1)**: before, any depth was valid, so a
-property could nest past what any recursive walk (drop, hash, RDB save/load) survives. -/
-theorem pre3339_isValid_any_depth (k : Nat) : isValid (nest k) true = true := by
-  have : ∀ k b, isValid (nest k) b = true := by
-    intro k; induction k with
-    | zero => intro b; rfl
-    | succ k ih => intro b; simp [nest, isValid, isValid.isValidList, ih]
-  exact this k true
 
 /-- **`isValid_spec`** (now `validate_spec`): NULL only at top level, lists of primitives, no
 maps — as before #3339 — on concrete shapes. -/

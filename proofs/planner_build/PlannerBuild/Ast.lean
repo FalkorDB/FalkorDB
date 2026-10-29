@@ -17,8 +17,7 @@
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
   label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-  History: before #3297 the arm returned `Ok(())` (`pre3297_callArm`, `pre3297_call_skips_rest`,
-  `pre3297_call_then_match_accepted`); `CALL db.labels() YIELD label MATCH (n)` then reached the
+  History: before #3297 the arm returned `Ok(())`; `CALL db.labels() YIELD label MATCH (n)` then reached the
   optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
 * `with_last_accepted`: a query ending in `WITH` is accepted (`MATCH (n) WITH n` returns
   rows); C rejects it ("Query cannot conclude with WITH"), as openCypher does.
@@ -428,22 +427,6 @@ theorem call_then_create_multi_type_rejected :
   simp [validate, innerValidate, callCheck, next, inlinedOk, relTypesOk, Except.bind]; rfl
 
 /-! ### History: before #3297 (b6567cb97 and earlier) -/
-
-/-- The pre-#3297 procedure-call arm: `callCheck` and then `Ok(())`, never looking at `rest`. -/
-def pre3297_callArm (p : String) (a : Option String) (_rest : List QC) : Except String Unit :=
-  callCheck p a
-
-/-- The pre-#3297 arm ignored whatever followed the CALL (W4-plan-4). -/
-theorem pre3297_call_skips_rest (p : String) (a : Option String) (rest : List QC) :
-    pre3297_callArm p a rest = callCheck p a := rfl
-
-/-- Before #3297, `CALL db.labels() YIELD label MATCH (n)` validated (and then hit a scan at the
-plan root in `utilize_node_by_id`); main rejects it (`call_then_match_rejected`). -/
-theorem pre3297_call_then_match_accepted :
-    pre3297_callArm "db.labels" none [.match_ true] = .ok () ∧
-    validate (.query [.call "db.labels" none, .match_ true]) ≠ .ok () := by
-  refine ⟨by simp [pre3297_callArm, callCheck], ?_⟩
-  rw [call_then_match_rejected]; simp
 
 /-- `MATCH (n) WITH n` validates (C and openCypher reject a final WITH). -/
 theorem with_last_accepted : validate (.query [.match_ true, .with_]) = .ok () := by

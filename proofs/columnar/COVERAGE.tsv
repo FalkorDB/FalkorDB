@@ -15,7 +15,7 @@ graph/src/runtime/batch.rs	get	340	PROVEN	Column Column.get?; get?_isSome (no OO
 graph/src/runtime/batch.rs	len	357	PROVEN	Column Column.len; len_eq_toValues
 graph/src/runtime/batch.rs	is_empty	370	PROVEN	Column.isEmptyC: isEmptyC_iff, isEmptyC_unbound
 graph/src/runtime/batch.rs	gather	377	PROVEN	Column Column.gather_get?, gather_isSome, gatherL_gatherL
-graph/src/runtime/batch.rs	compare_at	399	PROVEN	Column.compareAt (sort_cmp; Floats lane sort_cmp_f64, #2912): compareAt_spec (float lane antisymmetric, NaN included), sortCmpF64_swap; history pre2912_compareAt_nan_not_antisymmetric
+graph/src/runtime/batch.rs	compare_at	399	PROVEN	Column.compareAt (sort_cmp; Floats lane sort_cmp_f64, #2912): compareAt_spec (float lane antisymmetric, NaN included), sortCmpF64_swap
 graph/src/runtime/batch.rs	push_bound	429	PROVEN	CB.pushBound: pushBound_spec
 graph/src/runtime/batch.rs	push_left_of	442	PROVEN	CB.pushLeftOf: pushLeftOf_spec
 graph/src/runtime/batch.rs	for_rights	498	PROVEN	forRights/lastBinder/bindsAt: forRights_spec, lastBinder_right, lastBinder_left
@@ -147,9 +147,9 @@ graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Gather.RowIter.on
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Gather.RowIter.many: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch, withBinding_eq_pre2973 (#2973: clamp form = the pre-#2973 guarded arm, history pre2973_withBinding); miscompiled_differs (#2922)
+graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
 graph/src/runtime/ops/batched_result_emitter.rs	seed	578	MODELLED	Emitter seedRows
-graph/src/runtime/ops/batched_result_emitter.rs	start_batch	605	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len; historical pre2845_emit_origin_lost_old
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	605	PROVEN	Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	623	PROVEN	Emitter drain_spec, drain_conserve
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	652	PROVEN	Emitter batch_rows_active (gather never panics), finishLen_eq
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	677	PROVEN	Emitter packRows_spec, stream_rows_active

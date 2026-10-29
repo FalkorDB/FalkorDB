@@ -236,16 +236,6 @@ theorem dropIndex_none_noattr (dependsOn : String → Bool) (fieldsOfType : List
 example : noSuchIndexMsg "L" ["a", "b"] = "Unable to drop index on :L(a, b): no such index." := by
   decide +kernel
 
-/-- Historical (pre-#3280): the attribute list was always printed, giving `:L()` for
-`db.idx.fulltext.drop('L')` where C prints `:L`. -/
-def pre3280NoSuchIndexMsg (label : String) (attrs : List String) : String :=
-  "Unable to drop index on :" ++ label ++ "(" ++ ", ".intercalate attrs ++ "): no such index."
-
-theorem pre3280_empty_attrs_diverged :
-    pre3280NoSuchIndexMsg "L" [] = "Unable to drop index on :L(): no such index." ∧
-    noSuchIndexMsg "L" [] = "Unable to drop index on :L: no such index." := by
-  decide +kernel
-
 /-- `index_info`: node infos tagged `NODE`, then edge infos tagged `RELATIONSHIP`. -/
 def indexInfo {I} (nodeInfos edgeInfos : List I) : List (String × I) :=
   nodeInfos.map ("NODE", ·) ++ edgeInfos.map ("RELATIONSHIP", ·)

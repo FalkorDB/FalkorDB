@@ -6,7 +6,6 @@ import VersionedMatrix.TensorOps
 | --- | --- |
 | `nrowsT`/`ncolsT` | `nrows` (:810) / `ncols` (:815) |
 | `resizeT`  | `resize` (:823): clamp to `max` (:834-835), early return (:836), grow (:839-874) |
-| `pre3250_resizeT` | `resize` before #3250 (0f45a8685 :809): shrink (:814-828) / grow (:829-867) |
 | `encVal`/`decVal` | value `encode` (:1474) puts in the C forward matrix / C's reading |
 | `sizeHint` | `EdgeIds::size_hint` (:1686) |
 | `baseStream`/`newTIt`/`seekTIt`/`outT` | `Iter::new` (:1714), `Iter::seek` (:1746), remaining output |
@@ -20,12 +19,12 @@ prove the model: no pair state and no `me` row changes, so `resizeT_allInv`,
 `resizeT_hasMultiEdge` hold for every tensor, with no hypothesis.
 
 History: before #3250 the shrink branch resized `m`/`dp`/`dm`/`mt` but not
-`me`. `pre3250_shrink_orphans_me` exhibits a pair satisfying every invariant
+`me`. The counterexample (removed; in 17ccc5412) was a pair satisfying every invariant
 whose shrink left `Inv.single_me` false: the pair read as edgeless while its
 `me` row still held two ids (repro then:
 `graph/tests/lean_versioned_matrix.rs::tensor_shrink_keeps_orphan_me_rows`:
 after shrink `iter_edges` = [(0,0,3),(5,5,1),(5,5,2)], `edge_count` = 2,
-expected 1 / [(0,0,3)]). `pre3250_shrink_safe` proved that branch correct when
+expected 1 / [(0,0,3)]). That branch was correct when
 no multi-edge pair lay outside the new bounds. On main the same witness keeps
 every invariant (`resizeT_allInv`), and main's own unit test
 `tensor.rs::resize_never_shrinks` checks the same shape.
@@ -101,76 +100,7 @@ theorem nrowsT_resizeT (t : TT) (r c : Nat) :
 
 /-! ## History: `resize` before #3250 (W4-matrix-1) -/
 
-/-- `Tensor::resize` at 0f45a8685 (:809): a shrink flushed, then resized
-`m`/`dp`/`dm`/`mt` but not `me`. -/
-def pre3250_resizeT (t : TT) (r c : Nat) : TT :=
-  if r < t.nrows ∨ c < t.ncols then
-    let t := flushT t
-    { t with st := fun p => if inB r c p then t.st p else dropFwd (t.st p), nrows := r, ncols := c }
-  else { t with nrows := r, ncols := c }
-
 theorem effV_dropFwd (s : PairSt) : effV (dropFwd s) = none := rfl
-
-/-- The shrink is correct when no multi-edge pair is dropped. -/
-theorem pre3250_shrink_safe {t : TT} (hi : AllInv t) {r c : Nat}
-    (hno : ∀ p, inB r c p = false → (t.st p).me = []) :
-    AllInv (pre3250_resizeT t r c) ∧ ∀ p, edges ((pre3250_resizeT t r c).st p) =
-      if inB r c p ∨ ¬ (r < t.nrows ∨ c < t.ncols) then edges (t.st p) else [] := by
-  have hf := flushT_correct hi
-  have hme := (flushT_me t).2
-  unfold pre3250_resizeT; split
-  · next hs =>
-    refine ⟨fun p => ?_, fun p => ?_⟩
-    · simp only; split
-      · exact hf.1 p
-      · next hb =>
-        have h0 : ((flushT t).st p).me = [] := by rw [hme]; exact hno p (by simpa using hb)
-        have hp := hf.1 p
-        exact ⟨by simp [dropFwd], by simp [dropFwd], by simp [dropFwd],
-          by intro h; simp [dropFwd, effV] at h, fun _ => by simp [dropFwd, h0],
-          by simp [dropFwd, h0], by simp [dropFwd, effV]⟩
-    · simp only; split
-      · next hb => simp [hb, hf.2 p]
-      · next hb => simp [hb, hs, edges, effV_dropFwd]
-  · next hs => exact ⟨hi, fun p => by simp [hs]⟩
-
-/-- **The bug (history, fixed by #3250).** A valid multi-edge pair outside the new bounds keeps its `me`
-row after the shrink, breaking promotion completeness. -/
-theorem pre3250_shrink_orphans_me :
-    ∃ t : TT, AllInv t ∧ BlkInv t ∧ hasMultiEdge t = true ∧
-      ¬ Inv ((pre3250_resizeT t 4 4).st (5, 5)) ∧ edges ((pre3250_resizeT t 4 4).st (5, 5)) = [] ∧
-      hasMultiEdge (pre3250_resizeT t 4 4) = true := by
-  let s5 : PairSt := ⟨none, some .multi, false, true, [1, 2]⟩
-  let t : TT := ⟨[(5, 5)], fun p => if p = (5, 5) then s5 else emptyP, ⟨1, 0, false, true⟩,
-    ⟨0, 0, false, true⟩, true, true, false, [⟨(0, 0), ME_NARROW_NCOLS, true⟩], 8, 8⟩
-  have hi : AllInv t := by
-    intro p; simp only [t]; split
-    · refine ⟨by simp [s5], by simp [s5], by simp [s5], fun _ => by simp [s5], ?_, by simp [s5], by simp [s5, effV]⟩
-      intro h; simp [s5, effV] at h
-    · refine ⟨by simp [emptyP], by simp [emptyP], by simp [emptyP], ?_, fun _ => rfl, by simp [emptyP], rfl⟩
-      intro h; simp [emptyP, effV] at h
-  have hblk5 : blkOf (5, 5) = (0, 0) := by decide
-  have hb : BlkInv t := by
-    refine ⟨⟨_, _, _, rfl⟩, by simp [names, t], ?_, Or.inl rfl, ?_, ?_⟩
-    · intro e he; simp [t] at he; subst he; rfl
-    · intro p hp; simp only [t] at hp ⊢; split at hp
-      · next h => subst h; simp [names, hblk5]
-      · exact absurd rfl hp
-    · intro p i hi'; simp only [t] at hi' ⊢; split at hi'
-      · simp [s5] at hi'; simp [ME_NARROW_NCOLS]; omega
-      · simp [emptyP] at hi'
-  have hm : ∀ u : TT, u.ps = [(5, 5)] → u.me = t.me → (u.st (5, 5)).me = [1, 2] →
-      hasMultiEdge u = true := by
-    intro u h1 h2 h3
-    simp [hasMultiEdge, blkIds, h1, h2, t, hblk5, h3]
-  refine ⟨t, hi, hb, hm t rfl rfl (by simp [t, s5]), ?_, ?_, ?_⟩
-  · intro h; have := h.single_me (by simp [pre3250_resizeT, t, inB, effV, dropFwd, flushT])
-    simp [pre3250_resizeT, t, inB, dropFwd, flushT, s5] at this
-  · simp [pre3250_resizeT, t, inB, dropFwd, flushT, edges, effV]
-  · apply hm
-    · simp [pre3250_resizeT, t, flushT]
-    · simp [pre3250_resizeT, t, flushT]
-    · simp [pre3250_resizeT, t, inB, dropFwd, flushT, s5]
 
 /-! ## `encode`: the inline value written for C -/
 

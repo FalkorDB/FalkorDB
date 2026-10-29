@@ -1,16 +1,16 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/functions/temporal.rs	get_int_field	50	PROVEN	Fns.getIntField (f64 as i64 via Num structure): getIntField_eq_slot
 graph/src/runtime/functions/temporal.rs	check_range	63	PROVEN	checkRange/inRange (None passes): used by quarterPath/weekPath; quarter_doq_errors, quarter_errors, week_huge_errors, dateFromComponents_total
-graph/src/runtime/functions/temporal.rs	date_from_components	82	PROVEN	dateFromComponents/weekPath/quarterPath/ymdPath: dateFromComponents_total (never panics, every input; #2950 737dfb5da), weekPath_ok, quarterPath_ok, week_huge_errors, quarter_doq_errors, ymd_no_truncation, week_edge_errors, dayOfWeek_seven_is_sunday, dayOfWeek_zero_rejected, weekPath_eq_pre2988 (ISO dayOfWeek, #2988); history pre2950_weekPath/pre2950_quarterPath: pre2950_week_panics, pre2950_week_panics_delta, pre2950_quarter_panics, pre2950_week_edge_panics, weekPath_eq_pre2950, quarterPath_eq_pre2950 (W2-temporal-1,-2 fixed)
+graph/src/runtime/functions/temporal.rs	date_from_components	82	PROVEN	dateFromComponents/weekPath/quarterPath/ymdPath: dateFromComponents_total (never panics, every input; #2950 737dfb5da), weekPath_ok, quarterPath_ok, week_huge_errors, quarter_doq_errors, ymd_no_truncation, week_edge_errors, dayOfWeek_seven_is_sunday, dayOfWeek_zero_rejected (ISO dayOfWeek, #2988); W2-temporal-1,-2 fixed (counterexamples removed; in 17ccc5412)
 graph/src/runtime/functions/temporal.rs	date_from_map	130	PROVEN	Fns.dateFromMap: dateFromMap_eq_slots, dateStruct_eq_map
 graph/src/runtime/functions/temporal.rs	time_from_components	142	PROVEN	Fns.timeFromComponents (as-u32 truncation, from_hms_opt): timeFromComponents_ok, u32-wrap example
 graph/src/runtime/functions/temporal.rs	time_from_map	154	PROVEN	Fns.timeFromMap: timeFromMap_eq_slots, localtimeStruct_eq_map
 graph/src/runtime/functions/temporal.rs	slot_to_int	164	PROVEN	Fns.slotToInt: slotToInt_range, slotToInt_nan, getIntField_eq_slot
 graph/src/runtime/functions/temporal.rs	parse_date_string	173	PROVEN	Parse.parseDate (chrono/parse in Chrono structure): parseDate_ok (soundness), parseDate_negative, parseDate_compact_rejects, parseDate_compact_ok_allDigits, compact_junk_examples, parseDate_week_first (#3125 1ea868116)
-graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (split_at_checked, #2950): weekSlice_total, week_slice_errors, sliceOk_ascii; history pre2950_weekSlice: pre2950_week_slice_panics, weekSlice_eq_pre2950 (W2-temporal-3 fixed)
+graph/src/runtime/functions/temporal.rs	parse_week_date	268	PROVEN	weekSlice (split_at_checked, #2950): weekSlice_total, week_slice_errors, sliceOk_ascii; W2-temporal-3 fixed (counterexample removed; in 17ccc5412)
 graph/src/runtime/functions/temporal.rs	parse_time_string	308	PROVEN	Parse.parseTime: parseTime_ok (result < 86400), parseTime_compact_rejects (#3125 1ea868116)
 graph/src/runtime/functions/temporal.rs	parse_datetime_string	370	PROVEN	Parse.parseDatetime: parseDatetime_ok, parseDatetime_noT
-graph/src/runtime/functions/temporal.rs	parse_duration_string	388	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP; #2987 checked W/D: dateLoop_week_overflow, dateLoop_day_overflow, dateLoop_days_i64, week_string_overflow_errors; history Duration.pre2987_week_string_wraps (W2-temporal-8 fixed)
+graph/src/runtime/functions/temporal.rs	parse_duration_string	388	PROVEN	Parse.parseDuration/dateLoop/timeLoop: parseDuration_weeks, parseDuration_noP; #2987 checked W/D: dateLoop_week_overflow, dateLoop_day_overflow, dateLoop_days_i64, week_string_overflow_errors; W2-temporal-8 fixed (counterexample removed; in 17ccc5412)
 graph/src/runtime/functions/temporal.rs	days_from_civil	463	PROVEN	daysFromCivilT_eq
 graph/src/runtime/functions/temporal.rs	construct_duration_secs	479	PROVEN	constructDuration: construct_decompose, construct_ym_s
 graph/src/runtime/functions/temporal.rs	decompose_duration	520	PROVEN	decomposeDuration: construct_decompose, decompose_monthsDur, neg_days_encoding
@@ -31,7 +31,7 @@ graph/src/runtime/functions/temporal.rs	duration_fn	813	PROVEN	Pure.durationFn =
 graph/src/runtime/functions/temporal.rs	date_transaction_fn	823	PROVEN	Pure.dateTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localtime_transaction_fn	835	PROVEN	Pure.localtimeTransactionFn: transaction_consistent
 graph/src/runtime/functions/temporal.rs	localdatetime_transaction_fn	849	PROVEN	Pure.localdatetimeTransactionFn: transaction_consistent
-graph/src/runtime/value.rs	Point::distance	151	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite, distance_not_nan (NanLaws), distance_eq_pre2983; history pre2983_distance_nan (W2-temporal-4 fixed), Spatial.pre2983_haversine #eval
+graph/src/runtime/value.rs	Point::distance	151	PROVEN	SpatialFns.distance (Flt structure, clamp01 since #2983): distance_self, distance_finite, distance_not_nan (NanLaws); W2-temporal-4 fixed (counterexample removed; in 17ccc5412)
 graph/src/runtime/value.rs	Point::validate	177	NOT COVERED	f32 range checks; live-tested
 graph/src/runtime/value.rs	Value::format_datetime	289	PROVEN	Components.formatDatetime: format_invalid, fields_roundtrip
 graph/src/runtime/value.rs	Value::format_date	307	PROVEN	formatDateDigits: formatDate_not_injective, formatDate_injective_4digit
@@ -41,8 +41,8 @@ graph/src/runtime/value.rs	Value::get_datetime_component	505	PROVEN	Components.g
 graph/src/runtime/value.rs	Value::get_date_component	564	PROVEN	Components.getDateComponent: components_invalid, calendar_ranges
 graph/src/runtime/value.rs	Value::get_time_component	612	PROVEN	Components.getTimeComponent: components_invalid, clock_ranges, time_component_cases
 graph/src/runtime/value.rs	Value::get_duration_component	640	NOT COVERED	chrono; live-tested vs C
-graph/src/runtime/value.rs	add_duration_to_timestamp	728	PROVEN	addDur (via shiftMonths): add_sub_months, sub_eq_add_neg_months, sub_vs_add_neg, neg_days_encoding, timeAddDur_eq_tod; history pre2985_time_not_normalised (Time arm no longer calls it since #2985)
-graph/src/runtime/value.rs	sub_duration_from_timestamp	738	PROVEN	subDur (shiftMonths with -years/-months since #2984): sub_eq_add_neg_months, subDur_eq_shift, add_sub_months, sub_vs_add_neg, subDur_eq_pre2984; history pre2984_subDur/pre2984_sub_vs_add_neg (W2-temporal-5 fixed)
+graph/src/runtime/value.rs	add_duration_to_timestamp	728	PROVEN	addDur (via shiftMonths): add_sub_months, sub_eq_add_neg_months, sub_vs_add_neg, neg_days_encoding, timeAddDur_eq_tod; the Time arm no longer calls it since #2985
+graph/src/runtime/value.rs	sub_duration_from_timestamp	738	PROVEN	subDur (shiftMonths with -years/-months since #2984): sub_eq_add_neg_months, subDur_eq_shift, add_sub_months, sub_vs_add_neg; W2-temporal-5 fixed (counterexample removed; in 17ccc5412)
 graph/src/runtime/value.rs	shift_months	752	PROVEN	Duration.shiftMonths (#2984, shared by add/sub): shiftMonths_total (depends only on 12*years+months), sub_eq_add_neg_months, add_sub_months, sub_vs_add_neg; Int arithmetic (i32 y+years overflow out of range, SmallYear)
 graph/src/runtime/value.rs	days_in_month	785	PROVEN	daysInMonth: dim_link, civil_valid
 graph/src/runtime/value.rs	is_leap	797	PROVEN	isLeap: isLeap_tmod, isLeap_add400

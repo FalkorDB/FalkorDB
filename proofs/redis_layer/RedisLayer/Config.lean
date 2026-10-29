@@ -5,7 +5,7 @@ import RedisLayer.Args
 * `validate` — `validate_config_set` (`config_cmd.rs:114-202`), the integer/boolean
   configs that change behaviour (TIMEOUT family, RESULTSET_SIZE, MAX_QUEUED_QUERIES,
   VKEY_MAX_ENTITY_COUNT, MAX_INFO_QUERIES, JS sizes, CMD_INFO), as of #3021
-  (30b4fb7dc). `validatePre3021` keeps the earlier arms as a historical model.
+  (30b4fb7dc).
 * `dispatch` — the arity / sub-command / name-folding head of `graph_config`
   (`config_cmd.rs:318-353`, #3021).
 * `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:206`), which since #3328 loads the
@@ -77,41 +77,6 @@ def validate (n : Name) (v : List Nat) : Except CfgErr Int :=
   | .cmdInfo =>                                     -- `:138-147`: `eq_ignore_ascii_case` yes / no
     if eqIC v (b "yes") then .ok 1
     else if eqIC v (b "no") then .ok 0
-    else .error .failed
-  | .cacheSize => .error .readOnly
-
-/-- **Historical**: `validate_config_set` before #3021 (da6f808c3). -/
-def validatePre3021 (n : Name) (v : List Nat) : Except CfgErr Int :=
-  match n with
-  | .timeout | .timeoutDefault | .timeoutMax =>
-    match rustParseI64 v with
-    | some x => if x < 0 then .error .failed else .ok x
-    | none => .error .failed
-  | .resultsetSize =>
-    match rustParseI64 v with
-    | some x => .ok (if x < 0 then -1 else x)
-    | none => .error .failed
-  | .maxQueued =>
-    match rustParseI64 v with
-    | some x => if x ≤ 0 then .error .failed else .ok x
-    | none => .error .failed
-  | .vkeyMax =>                                     -- `config_cmd.rs:175-180`: no range check
-    match rustParseI64 v with
-    | some x => .ok x
-    | none => .error .failed
-  | .maxInfo =>
-    match rustParseI64 v with
-    | some x => if x < 0 then .error .failed else .ok (min x 1000)
-    | none => .error .failed
-  | .jsHeap =>
-    match rustParseI64 v with
-    | some x => if x < 0 then .error .failed else .ok x
-    | none => .error .failed
-  | .cmdInfo =>
-    -- `value.to_lowercase()` against yes/1/true, no/0/false
-    let l := v.map lowerA
-    if l = b "yes" ∨ l = b "1" ∨ l = b "true" then .ok 1
-    else if l = b "no" ∨ l = b "0" ∨ l = b "false" then .ok 0
     else .error .failed
   | .cacheSize => .error .readOnly
 
@@ -246,20 +211,7 @@ theorem c_breaks_inv :
 /-! ## Per-field validators: the pre-#3021 divergences (historical) and the fix
 
 Before #3021 these were divergences from C, all confirmed live; #3021 (30b4fb7dc,
-issue #3020) fixed each one. The `pre3021_` theorems are the original
-counterexamples, about `validatePre3021`; the theorems after them are about the
-current `validate`. -/
-
-/-- Historical: `VKEY_MAX_ENTITY_COUNT` accepted a negative value (C: "Failed to set
-config value"); it was then read as `vkey_max as u64` (`redis_type.rs`), ≈ 2^64. -/
-theorem pre3021_vkey_negative_accepted : validatePre3021 .vkeyMax (b "-5") = .ok (-5) := by decide
-
-/-- Historical: `CMD_INFO` accepted `1`, `TRUE`, `true` — C accepts only `yes`/`no`. -/
-theorem pre3021_cmdinfo_extra_spellings :
-    validatePre3021 .cmdInfo (b "1") = .ok 1 ∧ validatePre3021 .cmdInfo (b "TRUE") = .ok 1 := by decide
-
-/-- Historical: `JS_HEAP_SIZE 5` was accepted (C: "JS_HEAP_SIZE must be at least 1MB (1048576)"). -/
-theorem pre3021_jsheap_tiny_accepted : validatePre3021 .jsHeap (b "5") = .ok 5 := by decide
+issue #3020) fixed each one (the original counterexamples were removed; in 17ccc5412). -/
 
 /-- `MAX_INFO_QUERIES` is clamped, not rejected, as in C. -/
 theorem maxinfo_clamped : validate .maxInfo (b "5000") = .ok 1000 := by decide

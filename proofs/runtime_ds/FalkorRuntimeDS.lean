@@ -12,8 +12,7 @@ See `REPORT.md` for the Lean ↔ Rust mapping and findings.
 
 ## Re-target to main 1d15bf713 (#2905)
 * `OrderSet::from_vec` now drops later duplicates (first wins): `fromVecGo`/`fromVec`,
-  `fromVec_nodup`, `containsS_removeS_fromVec`; old identity kept as `pre2905_fromVec`
-  (`pre2905_fromVec_dup_survives_remove`).
+  `fromVec_nodup`, `containsS_removeS_fromVec`.
 * `Cow` gained a debug-only `branched` flag shared by clones: debug model `DCow`/`dWrite`,
   `dbg_write_through_branched_source_panics`, `dbg_write_through_clone_panics`,
   `dbg_agrees_with_release`; new `Cow::clone` row. Release model unchanged

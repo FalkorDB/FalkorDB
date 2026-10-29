@@ -545,9 +545,6 @@ def savedDim (g : G V) : Nat :=
 /-- `self.node_cap = self.node_cap.max(saved); self.resize_node_matrices()`. -/
 def rebuildNodeMs (g : G V) : G V := resizeNodeMs { g with nodeCap := max g.nodeCap (savedDim g) }
 
-/-- Before #3250: `resize_node_matrices` straight to `restore`'s `node_cap`. -/
-def pre3250_rebuildNodeMs (g : G V) : G V := resizeNodeMs g
-
 /-- **A load never shrinks a node matrix** (#3250): the node cap only grows, and
 the adjacency matrix, `node_labels` and every label matrix end at least as large as
 they were decoded. -/
@@ -590,15 +587,6 @@ theorem rebuild_keeps_entries (g : G V) :
         (List.mem_map_of_mem (List.getElem_mem hk)))))
     simp only [rebuildNodeMs, resizeNodeMs, List.getElem_map, Mat.resize, List.mem_filter]
     exact ⟨hp, by simp; omega⟩
-
-/-- **History (#3246): before #3250 a load shrank a node matrix whose saved size
-was past `restore`'s `node_cap`, and dropped every entry beyond it.** -/
-theorem pre3250_rebuild_shrinks (g : G V) (h : g.nodeCap < g.adj.nr) :
-    (pre3250_rebuildNodeMs g).adj.nr < g.adj.nr ∧
-    ∀ p ∈ g.adj.ents, g.nodeCap ≤ p.1 → p ∉ (pre3250_rebuildNodeMs g).adj.ents := by
-  simp only [pre3250_rebuildNodeMs, resizeNodeMs, Mat.resize, List.mem_filter]
-  refine ⟨h, fun p _ hp hm => ?_⟩
-  have := hm.2; simp at this; omega
 
 /-- `trim_attr_stores` (:1000): arena slop only — the logical stores are unchanged. -/
 def trimAttrStores (g : G V) : G V := g

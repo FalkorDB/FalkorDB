@@ -16,8 +16,8 @@ graph/src/effects/reader.rs	Reader::i64	115	PROVEN	i64: i64_w64, i64_noPanic
 graph/src/effects/reader.rs	Reader::f32	119	PROVEN	f32 (bit pattern): f32_w32, f32_noPanic
 graph/src/effects/reader.rs	Reader::string	159	PROVEN	rString: rString_wString, rString_noPanic, rString_consumes
 graph/src/effects/v3/value.rs	EffectEncode::encode	34	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
-graph/src/effects/v3/value.rs	EffectDecode::decode	168	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes; history pre3267_hostile_quadratic
-graph/src/effects/v3/value.rs	read_one	212	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining); history pre3267_readOne
+graph/src/effects/v3/value.rs	EffectDecode::decode	168	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes
+graph/src/effects/v3/value.rs	read_one	212	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining)
 graph/src/effects/v3/blocks.rs	LabelSet::encode	55	PROVEN	wLabelSet: encRec_createNode, readRec_createNode
 graph/src/effects/v3/blocks.rs	LabelSet::decode	77	PROVEN	rLabelSet: readN_u32, readRec_createNode
 graph/src/effects/v3/blocks.rs	AttrIds::encode	101	PROVEN	wAttrIds: encRec_createNode, readRec_createNode
@@ -46,7 +46,7 @@ graph/src/effects/v3/records.rs	Payload::deref	1211	PROVEN	Payload.openPayload r
 graph/src/effects/v3/records.rs	Payload::records	1219	CONDITIONAL	Payload.readAllRecords from the start: records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
 graph/src/effects/v3/records.rs	Records::next	1242	CONDITIONAL	Payload.readAllRecords (stop at end, fuse on error): records_concat || CONDITIONAL on IdCodec roundtrip (IdList encode/read_ids; proven in id_list, not linked)
 graph/src/effects/v3/records.rs	open_payload	1261	PROVEN	Payload.openPayload: openPayload_plain, openPayload_maybeCompress (zstd/crc as CodecOK hypothesis)
-graph/src/effects/v3/records.rs	maybe_compress	1361	PROVEN	Payload.maybeCompress (#3278: u32::try_from guard, frame_prefix): openPayload_maybeCompress (transparent for records of any length), maybeCompress_shrinks, seal_disabled; history pre3278_maybeCompress, pre3278_openPayload_maybeCompress, pre3278_wrapped_frame_unreadable
+graph/src/effects/v3/records.rs	maybe_compress	1361	PROVEN	Payload.maybeCompress (#3278: u32::try_from guard, frame_prefix): openPayload_maybeCompress (transparent for records of any length), maybeCompress_shrinks, seal_disabled
 graph/src/effects/v3/records.rs	frame_prefix	1411	PROVEN	Payload.framePrefix: framePrefix_some, framePrefix_none (a length >= 2^32 is refused, not truncated), framePrefix_length; used by openPayload_maybeCompress
 graph/src/effects/v3/blocks.rs	RelType::encode	29	PROVEN	RecBlocks.bU32 via schemaId: relType_rt, schemaId_roundtrip
 graph/src/effects/v3/blocks.rs	RelType::decode	39	PROVEN	RecBlocks.bU32: relType_rt; used in bodyUpdEdge/bodyCrEdge/bodyDelEdge

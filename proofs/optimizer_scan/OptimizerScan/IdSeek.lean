@@ -379,7 +379,6 @@ example : reference g5 [(.null, .eq)] 1 = false := by decide
 the range `{0}`, nothing deleted, so `NodeByIdSeek` yielded node 0, which does not exist. -/
 def gEmpty : G := { nodeCount := 0, deleted := [] }
 theorem gEmpty_wf : gEmpty.wf := by simp [G.wf, gEmpty, G.bound]
-theorem pre3394_phantom_node0 : pre3394_seek gEmpty [(.int 0, .eq)] 0 = some true := by decide
 example : reference gEmpty [(.int 0, .eq)] 0 = false := by decide
 
 /-- **PROVEN** (#3394): on main the seek on a never-populated graph is empty, matching the

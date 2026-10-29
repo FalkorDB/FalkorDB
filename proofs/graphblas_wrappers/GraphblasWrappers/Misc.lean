@@ -16,7 +16,7 @@ because `GrB_Matrix_resize` on smaller dims drops entries. Since #3250
 `max(target, current)` (:834-835) and re-emits each layer with `grown`, whose
 precondition therefore always holds (`resize_clamp_grownOk`). Before #3250 it
 branched: shrink took a flush + straight `resize` path, grow re-emitted each
-layer (`pre3250_resize_grow_iff_grownOk`). -/
+layer. -/
 
 /-- The `grown` precondition (matrix.rs:721-724). -/
 def grownOk (r0 c0 nrows ncols : Nat) : Bool := decide (nrows ≥ r0 ∧ ncols ≥ c0)
@@ -39,14 +39,6 @@ theorem resize_clamp_grownOk (r0 c0 nrows ncols : Nat) :
 /-- Main: the clamp never asks for a smaller dimension. -/
 theorem resize_clamp_not_shrink (r0 c0 nrows ncols : Nat) :
     ¬ (max nrows r0 < r0 ∨ max ncols c0 < c0) := by omega
-
-/-- History (before #3250, 0f45a8685 tensor.rs:809): the `nrows < m.nrows() ||
-ncols < m.ncols()` guard picked the shrink path. Its complement is exactly
-`grownOk`, so the grow path ran precisely when `grown` would accept. -/
-theorem pre3250_resize_grow_iff_grownOk (r0 c0 nrows ncols : Nat) :
-    (decide (nrows < r0 ∨ ncols < c0) = false) ↔ grownOk r0 c0 nrows ncols = true := by
-  simp only [grownOk, decide_eq_false_iff_not, decide_eq_true_eq]
-  omega
 
 /-! ## `Vector::Iter` (vector.rs): yields every stored index once, ascending
 

@@ -78,7 +78,7 @@ proofs/expr_semantics (`checkedNeg`, `E`/`evalNode` and its frame property).
   `compareColumns_agree`, `evalVariable_agree`, `classifyExact_exact`); (2) expr_semantics' `E` has
   faithful AND/OR/XOR/NOT/CASE/call/IN/list/subscript/projection arms with main's short-circuit and
   error order (`and_false_short_circuits`, `case_hit_lazy`, `list_error_rightmost`, …; the old
-  eager catch-all is kept as `pre20261021_compound_cannot_short_circuit`); (3) columnar runs over
+  eager catch-all was removed; in 17ccc5412); (3) columnar runs over
   `FalkorCore.V F` and `CoreOps` proves the shared forms equal (`allEq_rowCmp`, `allNeq_rowCmp`,
   `cmpResult_rowCmp`, `caseHit_caseMatch`, `notRow_eq`; arithmetic is `valueArith` on both sides).
 * **`Body.Drops`** — DISCHARGED (`newBody_drops`). **Frame property** — expr_semantics

@@ -31,11 +31,11 @@ C truncates these bounds to `int32`, so `[1,2,3][4294967296]` returns `1` in C (
 
 Not on main:
 
-- `list.remove(l, idx, count)` equals the spec for every `i64` index and count, in debug and release (`listRemove_eq_spec`). Before #2952, `list.remove([1,2,3], 1, 9223372036854775807)` panicked in debug (`pre2952_listRemove_end_overflows`).
+- `list.remove(l, idx, count)` equals the spec for every `i64` index and count, in debug and release (`listRemove_eq_spec`). Before #2952, `list.remove([1,2,3], 1, 9223372036854775807)` panicked in debug.
 - `list.insert` normalisation can't overflow (`insertNorm_safe`).
 - Every element of the eager `range(a, b, step)` lies between start and end, so it never overflows (`range_elems_between`, `range_noOverflow`).
 
-The lazy `UNWIND range(a, b, step)` yields exactly the eager list and never overflows, for every `i64` input (`rangeIter_eq_range`), since #2899. Before it, `UNWIND range(10, 0, -9223372036854775808)` panicked in debug (`pre2899_rangeIter_negate_overflows`), a variant of #2894; see also `expr_semantics`.
+The lazy `UNWIND range(a, b, step)` yields exactly the eager list and never overflows, for every `i64` input (`rangeIter_eq_range`), since #2899. Before it, `UNWIND range(10, 0, -9223372036854775808)` panicked in debug, a variant of #2894; see also `expr_semantics`.
 
 **3. Are the quantifiers and `IN` three-valued logic?**
 
@@ -100,14 +100,14 @@ Each bug has a Rust repro test (`graph/tests/lean_functions_str_list.rs`, run lo
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| A (W2-strlist-1) | `pre2912_listSort_cmp_not_antisymmetric` | `list.sort` over a list with NaN panicked and killed the server | Fixed by #2912 (`listSort_float_cmp_antisymmetric`) |
-| B (W2-strlist-2) | `pre2952_listRemove_end_overflows` | `list.remove([1,2,3], 1, i64::MAX)` panicked in debug; release returned `[1]` by accident (`listRemoveRelease_eq_spec`) | Fixed by #2952 (closes #2926; `listRemove_eq_spec`) |
+| A (W2-strlist-1) | removed (17ccc5412) | `list.sort` over a list with NaN panicked and killed the server | Fixed by #2912 (`listSort_float_cmp_antisymmetric`) |
+| B (W2-strlist-2) | removed (17ccc5412) | `list.remove([1,2,3], 1, i64::MAX)` panicked in debug; release returned `[1]` by accident (`listRemoveRelease_eq_spec`) | Fixed by #2952 (closes #2926; `listRemove_eq_spec`) |
 | C (W2-strlist-3) | `regexMatches_unanchored` | `=~` matches substrings: `'abc' =~ 'b'` is `true`; openCypher requires a whole-string match. C rejects `=~` | **Open** |
-| D (W2-strlist-4) | `pre2953_toLower_rejects_valid` | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
+| D (W2-strlist-4) | removed (17ccc5412) | `toLower('A�')` errored with "Invalid UTF8 string"; a Rust `String` is always valid UTF-8, so the check could only misfire. C returns `'a�'` | Fixed by #2953 (`toLower_total`, `case_agrees_C_if_simple`) |
 | E (W2-strlist-5) | `replaceRegex_dollar` | `string.replaceRegEx('abc', 'b', '$0x')` returns `'ac'` because `$` is expanded; C copies the replacement literally (`'a$0xc'`) | **Open**: listed under "decisions needed" (#2929) |
-| F (W2-strlist-6) | `pre2954_comprehension_diverges` | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
+| F (W2-strlist-6) | removed (17ccc5412) | `[x IN null \| x]` returned `[]` (C: `null`); `[x IN 5 \| x]` returned `[5]` (C: type error) | Fixed by #2954 (`b6567cb97`, closes #2928; `comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`) |
 | W4-fn-1 | `labels_lost_after_delete`, `deleteNode_labels_iff` | `MATCH (n:A) SET n:C DELETE n RETURN labels(n)` returns `['A']` instead of `['A','C']`: the DELETE snapshot copies the *committed* labels (`ops/delete.rs:286`, `:466`), not the pending ones | **Open** |
-| — | `pre2899_rangeIter_negate_overflows` | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
+| — | removed (17ccc5412) | `UNWIND range(10, 0, i64::MIN)` panicked in debug ("attempt to negate with overflow"); release was correct | Fixed by #2899 (`e63165cb5`; `rangeIter_eq_range`, `rangeIter_examples`) |
 
 C bugs recorded for comparison:
 

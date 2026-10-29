@@ -90,14 +90,6 @@ def setFrom (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
   let s1 := if replace then clearForReplace ckeys s e else s
   setAll s1 e m
 
-/-- History (pre-#3524, ca36bfa15): only the Node←Map branch cleared the pending attributes;
-every other branch (Node←Node, Node←Rel, all relationship targets) nulled the committed keys
-only. -/
-def pre3524_setFromNoClear (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
-    (m : List (K × Option V)) : Store E K V :=
-  let s1 := if replace then setAll s e ((ckeys e).map (·, none)) else s
-  setAll s1 e m
-
 /-- The committed-key list is complete. -/
 def KeysOk (ckeys : E → List K) (s : Store E K V) : Prop := ∀ e k, (s.cv e k).isSome → k ∈ ckeys e
 
@@ -164,9 +156,6 @@ theorem setFrom_merge_keeps (ckeys : E → List K) (s : Store E K V) (e : E)
 no-clear branch kept a PENDING key the source lacks, e.g. `CREATE (a {x:1}), (b {y:2}) SET a = b`
 (`a.x` survived: Rust `{x:1,y:2}`, C `{y:2}`) and `SET r.w=5 SET r={y:2}` on a relationship. -/
 def demoStore : Store Nat Nat Nat := { cv := fun _ _ => none, pv := fun e k => if e = 0 ∧ k = 0 then some (some 1) else none }
-
-theorem pre3524_noClear_keeps_pending :
-    get (pre3524_setFromNoClear (fun _ => []) demoStore 0 true [(1, some 2)]) 0 0 = some 1 := by decide
 
 /-- **Fixed by #3524**: the same state and source on main. The staged `x` is gone and only the
 source's `y` remains. -/

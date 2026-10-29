@@ -20,11 +20,9 @@ import FalkorValueMath.Nesting
 returns `Result` and rejects a non-numeric, non-null operand (base first) with
 `Type mismatch: expected Integer, Float, or Null but was <type>` — `applyPow` now returns
 `Res`; `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`,
-`pow_null`, `pow_numeric_unchanged`, `pow_fn_in_domain`; history
-`pre2904_applyPow`/`pre2904_pow_nonnumeric_null`. #3007 (closes #2980): the scalar
+`pow_null`, `pow_numeric_unchanged`, `pow_fn_in_domain`; old model `pre2904_applyPow` (MathFns). #3007 (closes #2980): the scalar
 `percentile` step stores the percentile only while nothing is collected —
-`percentile_first_row`, `percentile_keeps`; history `pre3007_percentile`/
-`pre3007_percentile_last_wins`. #2984 adds `shift_months` to value.rs (row points to
+`percentile_first_row`, `percentile_keeps`; old counterexample removed (in 17ccc5412). #2984 adds `shift_months` to value.rs (row points to
 proofs/functions_temporal). COVERAGE.tsv line numbers re-pinned to 8621212fc.
 
 Earlier: re-targeted to main 289c201fe (from fb3d516d0). #2985 (#2933): `Time ± Duration`
@@ -91,7 +89,7 @@ the old decoder succeeds with a value `within` the cap), `decode_encode` /
 nesting error), `within_of_depth` / `not_within_of_depth` (depth ≤ MAX always loads, ≥ MAX+2
 never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX), **`stored_roundtrip`**
 (every accepted property — vectors < 2³² — saves and loads back), `validateProperty_nest`.
-History: `pre3339_isValid_any_depth`, `pre3339_decode_any_depth`, `decode_nest_deep`.
+History: `decode_nest_deep` (before #3339 any depth was decoded and storable; counterexamples removed; in 17ccc5412).
 Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
 `MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
 `GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
@@ -127,8 +125,8 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 - `p.LATITUDE` Rust 1.5, C null (Rust component names are ASCII case-insensitive).
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
 - Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`
-  (historical `pre2907_sign_float_is_float`).
-- Fixed: `^` not type-checked (#2902) — fixed by #2904 (`pre2904_pow_nonnumeric_null`).
+  (counterexample removed; in 17ccc5412).
+- Fixed: `^` not type-checked (#2902) — fixed by #2904 (counterexample removed; in 17ccc5412).
 - Also seen (known):
   `toString(1.0)` '1', `toInteger('1e3')`, leading whitespace (functions_temporal).
 
@@ -167,8 +165,7 @@ f64 ops and the RNG are structures (`Lower`, `FM`, `Rng`). Highlights: `add_spec
   list is strictly increasing in C's type order with exactly the collected members),
   `canon_eq_of`, `union_perm_invariant` (declaration order irrelevant), and the concrete rows
   `union_point_null` (`Null or Point`), `union_tofloat` (`String, Integer, Float, or Null`),
-  `union_nested`, `union_any`. The old model is kept as `pre3280TyString` /
-  `pre3280_declaration_order`.
+  `union_nested`, `union_any`. The old model was removed (in 17ccc5412).
 - **#3066 fixed** UDF names are case-sensitive: `register_udf`/`unregister_udf`
   (mod.rs:1131/:1142) and the `Functions::get` UDF fallback (:1048) key by the exact name.
   `Registry.udf_case_sensitive` and `TypeCheck.regGet_udf_case_sensitive` replace the

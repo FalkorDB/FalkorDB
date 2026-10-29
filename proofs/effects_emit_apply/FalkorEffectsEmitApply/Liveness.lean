@@ -29,7 +29,7 @@ Headline: **`apply_wf`** — from a well-formed replica at a batch boundary, any
 sequence of records that applies, followed by a `validate` that passes, leaves a
 well-formed replica: no dead id carries a label, property or relationship, and
 every relationship's endpoints are live. The pre-#3022 counterexamples
-(`Apply.lean`, `pre3022_*`) are each refused here (`*_refused`).
+(`Apply.lean`, pre-#3022 counterexamples (removed; in 17ccc5412)) are each refused here (`*_refused`).
 -/
 
 namespace FalkorEA.Live
@@ -432,23 +432,6 @@ theorem detach_delete_applies :
     okDangling (applyAll s0 [.deleteEdge [0], .deleteNode [0, 1]]) = some none := by decide
 
 /-! ## #3298: a repeated id in one `CREATE_NODE` (#3247) -/
-
-/-- The `CREATE_NODE` arm before #3298: the id list was folded into a set for the
-id space, with no check that the two agree. Every other arm is unchanged. -/
-def pre3298_applyRec (g : G) : Rec → Except AErr G
-  | .createNode ids lbls => do
-    needDead g.nlive .node ids
-    pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
-  | r => applyRec g r
-
-/-- **History (#3247): a record naming three nodes with ids `[2, 3, 2]` applied**,
-and only two nodes exist afterwards — the set created one node where the record
-named two, and the row the second `2` carried had no node of its own. -/
-theorem pre3298_repeated_id_applies :
-    (match pre3298_applyRec s0 (.createNode [2, 3, 2] []) with
-     | .ok g => g.nlive 2 && g.nlive 3 | .error _ => false) = true ∧
-    ¬ [2, 3, 2].Nodup := by
-  decide
 
 /-- **On main a repeated id is refused**, whatever the graph. -/
 theorem createNode_repeat_refused (g : G) (ids lbls : List Nat) (h : ¬ ids.Nodup) :

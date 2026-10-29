@@ -5,8 +5,8 @@ import FalkorBinder.Resolve
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
 (graph/src/planner/binder.rs:824-971) and `build_import_projections`
 (binder.rs:979-1003); scope tables, `freshVar`, `mint_fresh_iff`,
-`projectName` are this project's (Table.lean, Resolve.lean). Historical
-counterexamples on main before #2845 (da6f808c3) are named `pre2845_…`
+`projectName` are this project's (Table.lean, Resolve.lean). Counterexamples
+on main before #2845 (da6f808c3) were removed (in 17ccc5412)
 (fixed by #2845, eb470521b; closes #2601, #2602).
 
 * Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
@@ -14,7 +14,7 @@ counterexamples on main before #2845 (da6f808c3) are named `pre2845_…`
 * Fresh ids: entry ids are `0..k-1`, the next mint is `k` (`importProj_spec`,
   `entry_ids_below`); body scope disjoint from outer scopes (`body_scope_disjoint`).
 * No slot aliasing for plain bodies at runtime (`body_own_unbound`,
-  `body_import_value`, `new_scan_scans`; `pre2845_old_aliases`).
+  `body_import_value`, `new_scan_scans`).
 * UNION bodies alias binder keys `(scope_id, id)` (`union_branch_label_alias`,
   open, #3027 fixes it: `relabel_3027`, `union_branch_label_3027`).
 * W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
@@ -74,9 +74,6 @@ theorem branchNew_entry (o : Nat) (b : Bool) (imp : List (Name × Var)) (rest : 
 
 /-- An import-less body: the entry projection names nothing. -/
 theorem bodyNew_empty (o : Nat) (rest : List Clause) : bodyNew o [] rest = .with_ [] :: rest := rfl
-
-/-- origin/main emitted no boundary there (the #2601/#2602 root cause). -/
-theorem pre2845_bodyOld_empty (o : Nat) (rest : List Clause) : bodyOld o [] rest = rest := rfl
 
 /-- With at least one import the PR changes nothing. -/
 theorem bodyNew_eq_old (o : Nat) (imp : List (Name × Var)) (rest : List Clause)
@@ -299,13 +296,6 @@ theorem body_import_value {V : Type} (s : Nat) (imp : List (Name × Var)) (hd : 
   obtain ⟨-, -, h3, -, -⟩ := importProj_spec s imp [] hd (by simp)
   rw [h3]; simp only [List.length_nil, Nat.zero_add, List.map_id']
   exact List.nodup_range
-
-/-- origin/main, import-less body: the body's first variable (id 0) reads
-the outer row's slot 0 — the `x` of `MATCH (x:A:B) CALL { MATCH (n:A:B
-{id:1}) … }`. -/
-theorem pre2845_old_aliases : ∃ r : RowF Nat, bodyInputOld [] false r 0 = some 7 ∧
-    bodyInputNew [] r 0 = none :=
-  ⟨fun _ => some 7, rfl, rfl⟩
 
 /-- Runtime choice of a scan endpoint (#2601): an already-bound slot turns a
 full scan into an expand from that slot. -/

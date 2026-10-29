@@ -405,7 +405,7 @@ theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length
 
 #2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
 (`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-pre-#2977 model, kept for `pre2977_hashed_dedup_merges_groups`. -/
+pre-#2977 model (its counterexample was removed; in 17ccc5412). -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -453,14 +453,6 @@ def distinctCountGrouped {K : Type} [DecidableEq K] (hk : K → Nat) (rows : Lis
   dcgGo hk k [] rows
 
 -- Two distinct keys 0 and 2 that hash alike (hk = · % 2), one value each.
-/-- History (fixed by #2977, c652e505e). The second group's `count(DISTINCT v)` was 0 instead of 1 — confirmed by
-`lean_ops_aggregate::bug_grouped_count_distinct_shares_state_on_group_hash_collision`
-with the real FxHash collision `[0,0]` / `[1,-1452335207727870361]`. -/
-theorem pre2977_hashed_dedup_merges_groups :
-    distinctCountGrouped (fun n : Nat => n % 2) [(0, 7), (2, 7)] 2 = 0 ∧
-    distinctCountGrouped (fun n : Nat => n) [(0, 7), (2, 7)] 2 = 1 := by
-  decide
-
 /-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
 (runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
 does after every subquery (apply.rs:283). -/
@@ -504,8 +496,7 @@ theorem distinct_fold_clear_overcounts :
 Re-targeted to 289c201fe. Before #2951 (0912f4500, closes #2945, FINDINGS
 W2-agg-5) the `FuncInvocation` arm of `ExprEval::eval_compound` ran
 `return match finalize { … }` (eval.rs:877 at fb3d516d0), leaving the whole
-stack machine with that one value; that model is kept below as
-`pre2951_evalStack`. On main the arm pushes the finalized value and
+stack machine with that one value; that model was removed (in 17ccc5412). On main the arm pushes the finalized value and
 `continue`s (eval.rs:883-893 at 289c201fe), so any enclosing frame, e.g. the
 list literal `[min(x), max(x)]`, still runs. -/
 
@@ -631,37 +622,6 @@ theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 :=
 
 /-! ### History: before #2951 (eval.rs:877 at fb3d516d0) -/
 
-/-- The Rust stack machine before #2951: on `FuncInvocation` of an aggregate
-with `agg_group_key = None` it executed `return match finalize { … }` —
-leaving the whole function with that value, abandoning every pending `List`
-frame. -/
-def pre2951_evalStack (e : E) : R :=
-  match e with
-  | .list es =>
-    match es.find? (fun e => match e with | .agg _ => true | _ => false) with
-    -- The children are pushed in order and popped last-first, so the LAST
-    -- aggregate child is the first one evaluated and its `return` wins.
-    | some _ =>
-      match (es.reverse.find? (fun e => match e with | .agg _ => true | _ => false)) with
-      | some (.agg a) => .num a
-      | _ => evalRef e
-    | none => evalRef e
-  | e => evalRef e
-
-theorem pre2951_stackEval_return_drops_frame :
-    pre2951_evalStack (.list [.agg 1, .agg 2]) = .num 2 ∧
-    evalRef (.list [.agg 1, .agg 2]) = .lst [.num 1, .num 2] := by
-  constructor
-  · rfl
-  · simp [evalRef]
-
-/-- Before #2951 the other two live repros: `[count(x), 5]` gave 2 and
-`size([count(x)])` was a type error. -/
-theorem pre2951_count_lit_and_size :
-    pre2951_evalStack (.list [.agg 2, .lit 5]) = .num 2 ∧
-    rsize (pre2951_evalStack (.list [.agg 2])) = none := by
-  constructor <;> rfl
-
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 
 /-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs:621) with the
@@ -700,10 +660,6 @@ live server; `lean_ops_aggregate::bug_percentile_with_nan_panics`). -/
 def pcmpEq : Option Nat → Option Nat → Ordering
   | some a, some b => compare a b
   | _, _ => .eq
-
-theorem pre2912_partialCmpEq_not_transitive :
-    pcmpEq (some 1) none = .eq ∧ pcmpEq none (some 3) = .eq ∧ pcmpEq (some 1) (some 3) = .lt := by
-  decide
 
 /-- Main (aggregation.rs:625, :651): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
 b.get_numeric()))` — `partial_cmp`, else NaN (`none`) above every number and equal to itself.

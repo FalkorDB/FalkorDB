@@ -26,7 +26,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 
 **2. Can an inline write fail because a queued write is in progress?**
 
-- **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (`pre3290_multi_write_refused`); C creates the node (`multi_write_ok_in_c`).
+- **Before #3290, yes.** A queued write claimed the write slot while still matching, as a reader. A `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC` arriving then was refused with "another write is in progress" (counterexample removed; in 17ccc5412); C creates the node (`multi_write_ok_in_c`).
 - **On main, no.** The queued write builds on an unclaimed fork and claims the slot only after it holds the GIL. If an inline write committed in between, the claim is stale and the queued write re-runs (`claimFork_stale`, `stale_then_rerun`); the inline write succeeds (`inline_write_ok`). `reader_cannot_claim` proves a reader can no longer take the slot.
 
 **3. Can the server deadlock?**
@@ -34,11 +34,11 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, claim the write slot,
 - **Lock order.** `no_cycle` proves threads that acquire locks in rank order cannot form a wait-for cycle. `all_programs_ordered` checks that every locking path (the writer including escalation, the inline writer, index population, background index drop, the fork preparation, telemetry flush) obeys GIL < graph < indexer < registry. `bad_escalate_rejected` shows the checker catches a wrong order.
 - **RediSearch's locks (gap closed 2026-10-20, #3226).** The ranks now include RediSearch's global `RWLOCK` and per-spec lock, which an index scan holds from opening to dropping. A write that commits with its scan still open re-takes the spec lock as a writer (`bug3226_open_scan_upgrade`, a live abort) and takes the GIL while holding RediSearch's locks (`bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle`). Read scans, population, `RESTORE` and writers whose scan closes before the commit are ordered (`spec_programs_ordered`).
 - **The write queue hand-off.** `drain_no_lost_message` checks exhaustively, for 2 producers, that the `write_loop` flag protocol never strands a queued write; `recheck_needed` shows it would without its `is_empty` re-check.
-- **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (`pre3014_pool_deadlock_reachable`). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
+- **Queue overflow.** Before #3014, more than 1024 queued queries hung the server forever (counterexample removed; in 17ccc5412). On main, `never_stuck_3014` and `main_never_blocks` prove the main thread never waits and some step is always possible, and `flood_drains` that a flood drains.
 
 **4. Is a new index always populated?**
 
-- **Before #3086, not a second one on the same label.** `pre3086_second_index_never_populated` replays the ticket protocol: after `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below).
+- **Before #3086, not a second one on the same label.** After `CREATE INDEX … (n.a)` and then `(n.b)` on a label, the new job saw two pending tickets and bailed, the old job finished with its `{a}` field list, and the index reported OPERATIONAL with `b` in no document (Bug 2 below; counterexample removed; in 17ccc5412).
 - **On main, yes.** `create_index` now bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the interleaving that used to lose `b`.
 - **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
 
@@ -46,12 +46,12 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 
 **5. Can a bad vector remove an entity from its other indexes?**
 
-- **Before #3087, yes.** A vector of the wrong dimension made RediSearch reject the whole document, so the node vanished from every index on its label (`pre3087_dim_mismatch_dropped_range_entry`).
+- **Before #3087, yes.** A vector of the wrong dimension made RediSearch reject the whole document, so the node vanished from every index on its label (counterexample removed; in 17ccc5412).
 - **On main, no.** `docSet_vector_sound` proves a vector is added only with the field's own non-zero dimension, for any value and any options; `doc_always_accepted` and `other_fields_never_dropped` prove the document is accepted and the other fields stay.
 
 **6. Can a KNN query with a huge `k` crash the server?**
 
-- **Before #3088, yes.** `db.idx.vector.queryNodes('L', 'v', 1000000000000000, …)` allocated `k` entries up front and crashed (`pre3088_huge_k_kills_server`).
+- **Before #3088, yes.** `db.idx.vector.queryNodes('L', 'v', 1000000000000000, …)` allocated `k` entries up front and crashed (counterexample removed; in 17ccc5412).
 - **On main, no.** `k` is clamped to the entity count: `alloc_bounded` proves every buffer is at most the live entity count, and `candidates_topk` that the result is still the top `k` (the query from #3085 returns its one row, `huge_k_one_row`).
 
 ## The headline theorems
@@ -88,11 +88,11 @@ All reproduced on live servers, Rust against C (scripts in `repro/`).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 (W3-conc-1) | `pre3014_pool_deadlock_reachable` | Over 1024 queued queries: the main thread, holding the GIL, blocks on the full pool queue while workers wait for the GIL. Permanent hang, `PING` times out; C completes | Fixed by #3014 (issue #3013): `never_stuck_3014`, `acquire_bounded`, `release_exactly_once` |
-| 2 | `pre3086_second_index_never_populated` | A second index on a label was never populated: `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes, and `n.b < 300000` through the index returned 0 rows (C: 300000). `repro/poprace.py` (writes racing population) was attributed to the same mechanism; it has not been re-run on main | Fixed by #3086 (issue #3069): `main_operational_complete`, `main_lost_order_complete` |
-| 3 (W3-conc-3) | `pre3087_dim_mismatch_dropped_range_entry`, `pre3087_noparams_dropped_range_entry` | A wrong-dimension vector removed the node from every index on its label | Fixed by #3087 (issue #3075): `docSet_vector_sound`, `vector_dim_mismatch_keeps_range_entry` |
-| 4 (W3-conc-4) | `pre3088_huge_k_kills_server` | A huge KNN `k` crashed the server | Fixed by #3088 (issue #3085): `alloc_bounded`, `huge_k_one_row` |
-| 5 | `pre3290_multi_write_refused` | An inline (`MULTI`/`EXEC`) write failed with "another write is in progress" while a queued write was matching. C creates it | Fixed by #3290 (issue #3093): `inline_write_ok`, `one_commit_per_version` |
+| 1 (W3-conc-1) | removed (17ccc5412) | Over 1024 queued queries: the main thread, holding the GIL, blocks on the full pool queue while workers wait for the GIL. Permanent hang, `PING` times out; C completes | Fixed by #3014 (issue #3013): `never_stuck_3014`, `acquire_bounded`, `release_exactly_once` |
+| 2 | removed (17ccc5412) | A second index on a label was never populated: `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes, and `n.b < 300000` through the index returned 0 rows (C: 300000). `repro/poprace.py` (writes racing population) was attributed to the same mechanism; it has not been re-run on main | Fixed by #3086 (issue #3069): `main_operational_complete`, `main_lost_order_complete` |
+| 3 (W3-conc-3) | removed (17ccc5412) | A wrong-dimension vector removed the node from every index on its label | Fixed by #3087 (issue #3075): `docSet_vector_sound`, `vector_dim_mismatch_keeps_range_entry` |
+| 4 (W3-conc-4) | removed (17ccc5412) | A huge KNN `k` crashed the server | Fixed by #3088 (issue #3085): `alloc_bounded`, `huge_k_one_row` |
+| 5 | removed (17ccc5412) | An inline (`MULTI`/`EXEC`) write failed with "another write is in progress" while a queued write was matching. C creates it | Fixed by #3290 (issue #3093): `inline_write_ok`, `one_commit_per_version` |
 | #3226 | `bug3226_open_scan_upgrade`, `bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle` (properties `noReacquire`, `LockOrdered`) | A write that commits while its own index scan is still open (`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000`) takes RediSearch's spec lock as a writer while it holds it as a reader. The server aborts with `attempted to upgrade a spec read lock to a write lock`; C returns 10. The same path takes the GIL while it holds RediSearch's global lock, which makes a wait-for cycle with a `RESTORE` on the main thread. Paths that close the scan before the commit stay ordered (`spec_programs_ordered`). The BGSAVE-child half of the issue (a `pending_slots` mutex inherited across the fork) is not modelled | **Open** |
 
 Index option validation also differed from C: missing `dimension`/`similarityFunction` were accepted and `'Euclidean'` refused. That was fixed by #3094 (`rust_refuses_missing`, `rust_eq_c`). Two DDL-only differences remain and are pinned by `#guard`s: `OPTIONS {dimension:0, similarityFunction:'bogus'}` creates an index (C refuses), and fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; `rust_keys_ok_imp_c`).
@@ -106,7 +106,7 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 | `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, #3290's fork-and-claim, delete and fork exclusion |
 | `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the pre-#3014 deadlock and the #3014 model (`never_stuck_3014`) |
 | `Pool.lean` | `threadpool.rs` and #3014's `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
-| `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) and the historical `pre3086_second_index_never_populated` |
+| `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` (#3086) |
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
 | `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the #3088 `k` clamp: `alloc_bounded`, `candidates_topk` |
 | `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs` |

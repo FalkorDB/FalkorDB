@@ -7,8 +7,8 @@
 bare FFI row: `deltaLmxm_spec` (output stored iff `F*M` reaches it with no `F*DM` path, or `F*M` has strictly
 more paths than `F*DM`, or `F*DP` reaches it; no assumption on the layers), `deltaLmxm_correct` (= `F*(M-DM+DP)`
 when `dm ⊆ m`), `deltaLmxm_eff` / `deltaLmxm_tensor` (`dm ⊆ m` discharged from `VM.Inv` / `VMTensor.Inv`, so the
-project now depends on versioned_matrix). Historical: `pre3492_drops_live_path` (the old pattern mask lost an output that
-one deleted and one live base edge both reach), fixed by #3492 (a3a99bdbc); `needs_dm_sub_m` shows the counting
+project now depends on versioned_matrix). Fixed by #3492 (a3a99bdbc): the old pattern mask lost an output that
+one deleted and one live base edge both reach (counterexample removed; in 17ccc5412); `needs_dm_sub_m` shows the counting
 needs the invariant.
 
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
@@ -29,9 +29,9 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
 | `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:371 behind `Arc<Handle>` (`Matrix::clone` :403), `Iter::drop` :1744 then its `Arc<Handle>` field (#3090) |
-| `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop), history `pre3090_*` |
+| `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop) |
 | `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1823, `Iter::next` :1856 |
-| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` (`pre2996_*`: before #2996) |
+| `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` |
 | `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
 | `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1263 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
@@ -42,24 +42,20 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 
 ## Theorems (all proved, no sorry)
 #3492 (`DeltaLmxm.lean`): **`deltaLmxm_correct`**, `deltaLmxm_spec`, `cnt_split`, `deltaLmxm_eff`, `deltaLmxm_tensor`,
-`delta_lmxm_keeps_live_path`, `delta_lmxm_drops_when_all_paths_deleted`, `needs_dm_sub_m` (history `pre3492_drops_live_path`);
+`delta_lmxm_keeps_live_path`, `delta_lmxm_drops_when_all_paths_deleted`, `needs_dm_sub_m`;
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
 `len_cast_lossless`, `blob_copy_in_bounds`; #3090: **`arc_frees_once`** (any n owners,
 any interleaving of clones/drops: freed at most once, and iff the count reaches 0),
 `arc_all_drop_frees_once`, `arc_every_interleaving_frees_once`,
 `iter_frees_iterator_before_matrix`, `detached_iter_frees_only_matrix`, `iterDrop_state`,
-`single_owner_frees_once`, `dup_independent_ownership` (history `pre3090_race_leaks`,
-`pre3090_never_double_free`, `pre3090_sequential_frees_once`);
+`single_owner_frees_once`, `dup_independent_ownership`;
 `drainL_eq_filter`, `drain_seek_eq_spec` (row iterator = in-range entries,
 row-major, once), `drain_no_duplication`, `drain_empty_matrix`;
 `decodeBlob_never_dies`, `decodeU64_never_dies`, `decodeBlob_safe_on_reachable`,
-`decodeBlob_rejects_invalid_object`, `hardened_eq_blob` (#2996 fix; history
-`pre2996_decodeBlob_is_dos`, `pre2996_decodeU64_is_dos`,
-`pre2996_hardened_vs_blob_on_invalid_object`), `assertPanic_deserialize_dos`,
+`decodeBlob_rejects_invalid_object`, `hardened_eq_blob` (#2996 fix), `assertPanic_deserialize_dos`,
 `decodeBool_safe`, `decodeBool_never_dies`; `checkLayers_ok_iff`,
-`checkLayers_merge_in_bounds` (history `pre2996_accepts_out_of_bounds_delta`);
-`encodeM_no_heap_addresses`, `scrub_scalars`, `decodeC_encodeM` (#3097; history
-`pre3097_encode_leaks_heap_address`);
+`checkLayers_merge_in_bounds`;
+`encodeM_no_heap_addresses`, `scrub_scalars`, `decodeC_encodeM` (#3097);
 `edgeCount_no_panic`, `edgeCount_value`; #3033: `countValueEq_spec`,
 `countValueEq_markers`, `mget_eq_some_iff`, `tensorLoop_ok_iff`,
 **`decodeCheck_ok_iff`** (decode accepts iff every tensor entry is an in-bounds
@@ -67,11 +63,8 @@ marker pair and the `me` rows are promotion complete),
 `decodeCheck_refuses_incomplete`, `decodeCheck_ok_complete`,
 `decodeCheck_ok_edgeCount_no_panic`, **`decodeCheck_accepts_encoded`**, main's
 tests `orphan_row_refused`, `single_pair_ids_refused`,
-`marker_without_ids_refused` (history `pre3033_orphan_row_accepted`,
-`pre3033_orphan_row_breaks_wf`, `pre3033_orphan_row_panics`,
-`pre3033_more_me_rows_than_pattern_panics`);
-`grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250;
-history `pre3250_resize_grow_iff_grownOk`), `vecDrain_eq`, `iterExpand_eq_flatMap`,
+`marker_without_ids_refused`;
+`grown_rejects_shrink`, `resize_clamp_grownOk`, `resize_clamp_not_shrink` (#3250), `vecDrain_eq`, `iterExpand_eq_flatMap`,
 `iterExpand_length`, `iterExpand_all_single`; plus GrbInfo helper lemmas.
 #3022 (`Bulk.lean`): `fromSortedIndices_spec`, `VecU.sum_spec`, **`countInRows_spec`**
 (`GrB_mxv` over `PLUS_PAIR` with `DESC_T0`, then a `PLUS` reduce, counts exactly the stored
@@ -81,7 +74,7 @@ entries in the selected rows — the double-counting argument over columns), `co
 ## Confirmed bugs (repros: `graph/tests/lean_graphblas_wrappers.rs`)
 1. **Crafted `GRAPH.RESTORE` kills the server — FIXED by #2996 on main
    1d15bf713** (both wrappers now return `Err`; `decodeBlob_never_dies`; the
-   text below is the pre-#2996 state, `pre2996_*`). `Vector::<bool>::decode_blob`
+   text below is the pre-#2996 state). `Vector::<bool>::decode_blob`
    (then vector.rs:222) `assert_eq!`s `GxB_Vector_deserialize`, which returns
    `GrB_INVALID_OBJECT` on a corrupt blob; reached from `Tensor::decode`
    (tensor.rs:1622) per multi-edge pair. Tests `bug_decode_blob_panics_on_corrupt_blob`,
@@ -92,7 +85,7 @@ entries in the selected rows — the double-counting argument over columns), `co
    return `Err` like `Vector<bool>::decode` does. (C not comparable: different payload format.)
 2. **`Tensor::decode` accepted an `me` row with no forward pair — FIXED by
    #3033 on main 73077bb4a** (`decodeCheck_ok_iff`; text below is the pre-#3033
-   state, `pre3033_*`); `edge_count`
+   state); `edge_count`
    then panics ("multi exceeds the effective pattern … |m|=0 multi=1 |me|=1"),
    and `Tensor::encode` calls `edge_count`, so the restored graph can't be saved.
    `iter_edges` yields a phantom edge (7,9,3). Test
@@ -107,10 +100,9 @@ entries in the selected rows — the double-counting argument over columns), `co
    components first (or copy only scalar fields); free on error.
 4. **Concurrent drop of two `Matrix` clones leaked the GrB_Matrix — FIXED by
    #3090 on main e45be4965** (`arc_frees_once`, `arc_every_interleaving_frees_once`;
-   text below is the pre-#3090 state, `pre3090_*`). `Matrix::drop` (then
+   text below is the pre-#3090 state). `Matrix::drop` (then
    matrix.rs:390 at the time, same in `Iter::drop`): `Arc::get_mut` then Arc decrement was
-   not atomic. `pre3090_race_leaks` witness; `pre3090_never_double_free` shows it
-   was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
+   not atomic (witness removed; in 17ccc5412); it was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
    leaked. The fix is the suggested one: the free moved into `Handle::drop`
    inside the Arc; main's test `concurrently_dropped_clones_free_the_matrix_once`.
 5. **`vector::Iter` has no lifetime** (`fn iter(&self) -> Iter<bool>`): safe

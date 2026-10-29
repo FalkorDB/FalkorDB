@@ -115,14 +115,6 @@ def mSign : V FC → Res
   | .null => .ok .null
   | _ => .panic
 
-/-- Historical: `sign` before #2907 (`f04c3557a`) — a non-zero Float answered
-`Float(f.signum().round())`. Kept for `pre2907_sign_float_is_float`. -/
-def mSignPre2907 : V FC → Res
-  | .int n => .ok (.int (signumI n))
-  | .float f => if fcEq0 f then .ok (.int 0) else .ok (.float (fcSignum f))
-  | .null => .ok .null
-  | _ => .panic
-
 /-- `sqrt` (math.rs:225): an explicit negative check before `f64::sqrt`. -/
 def mSqrt : V FC → Res
   | .int n => if n < 0 then .ok (.float .nan) else .ok (.float (ieeeSqrt (fcOfInt n)))
@@ -236,20 +228,13 @@ theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.i
 
 /-- **The declared return type now holds** (`ret: Integer | Null`, math.rs:209): every
 validated `sign` call returns a value that `Integer | Null` accepts. Before #2907 a
-non-zero Float argument broke this (`pre2907_sign_float_is_float`). -/
+non-zero Float argument broke this). -/
 theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
   rcases numeric_body_cases v h with ⟨i, rfl⟩ | ⟨f, rfl⟩ | rfl
   · exact ⟨_, rfl, .union _ _ .int (by simp) (.tag _ _ rfl)⟩
   · exact ⟨_, rfl, .union _ _ .int (by simp) (.tag _ _ rfl)⟩
   · exact ⟨_, rfl, .union _ _ .null (by simp) (.tag _ _ rfl)⟩
-
-/-- Historical (pre-#2907): `sign` of a non-zero Float was a *Float* (`-1.0`/`1.0`; NaN
-for NaN), while the declared return type is `Integer | Null` and C returns an Integer.
-Fixed by #2907 (`f04c3557a`); see `sign_float_is_int`. -/
-theorem pre2907_sign_float_is_float (f : FC) (h : fcEq0 f = false) :
-    mSignPre2907 (.float f) = .ok (.float (fcSignum f)) := by
-  simp [mSignPre2907, h]
 
 theorem sign_int (n : Int) : mSign (.int n) = .ok (.int (signumI n)) := rfl
 
@@ -380,13 +365,6 @@ def pre2904_applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
   | .int a, .float b => .float (powf (fcOfInt a) b)
   | .float a, .int b => .float (powf a (fcOfInt b))
   | _, _ => .null
-
-/-- History (W2/#2902, fixed by #2904): any non-numeric operand yielded `null`
-rather than a type error. -/
-theorem pre2904_pow_nonnumeric_null (powf : FC → FC → FC) (a b : V FC)
-    (h : a.isNum = false ∨ b.isNum = false) :
-    pre2904_applyPow powf a b = .null := by
-  cases a <;> cases b <;> simp_all [pre2904_applyPow, V.isNum]
 
 /-- Main: a non-numeric, non-null base is a type error naming its type, whatever
 the exponent (even `null`) — as C and `pow()` do. -/

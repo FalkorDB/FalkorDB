@@ -7,7 +7,7 @@ one field entry per index type, so its type word always has exactly one type. C 
 one entry per *attribute* with every type in the bitmask (`IndexField_Init`,
 `_RdbSaveIndexField` in C's `src/serializers/encoder/v20/encode_schema.c`; the loader
 accepts any non-empty subset, `decode_graph_schema.c:127`). Before #3514 the decoder
-(`pre3514_decField`) kept one type: an attribute with a RANGE and a FULLTEXT (or VECTOR) index
+kept one type: an attribute with a RANGE and a FULLTEXT (or VECTOR) index
 lost its RANGE index when a C-written RDB loads (#3484, confirmed live: v4.22.2 → 6.0.3 and C
 master → Rust main). **Main now satisfies the property**: `SerialSchema.decField` is the merged
 `decode_index_field` (`src/serializers/mod.rs:637-725`), and the three theorems below hold on it.
@@ -18,11 +18,9 @@ master → Rust main). **Main now satisfies the property**: `SerialSchema.decFie
 * `decField_empty_refused` — a word with no type is refused, as C's `_RdbLoadIndex` does
   (an unknown bit too: `decField_unknown_bit_refused`).
 * `decField_encField` (in `SerialSchema`) — Rust's own single-type entries still decode as before.
-* History (the pre-#3514 decoder, `pre3514_decField`): `pre3514_range_fulltext_loses_range`,
-  `pre3514_range_vector_loses_range`, `pre3514_phonetic_no_kept` (C's `"no"` came back as a code,
-  which `phonetic_enabled` read as ON; `index_layer` `Meta.pre3514_phonetic_no_was_on`),
-  `pre3514_encPh_off_read_on_by_c` (Rust wrote an empty string for off; C enables phonetic for
-  any other string than `"no"`), with the fix `encPh_c_on_iff`.
+* History (the pre-#3514 decoder and its counterexamples, removed; in 17ccc5412): C's `"no"` came back
+  as a code, which `phonetic_enabled` read as ON; Rust wrote an empty string for off, and C enables
+  phonetic for any other string than `"no"`; the fix is `encPh_c_on_iff`.
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
@@ -58,21 +56,6 @@ def cFields (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) : List Fld :
 
 /-! ## History: the pre-#3514 decoder keeps one type -/
 
-theorem pre3514_range_fulltext_loses_range (attr ph : Bytes) (ha : U.valid attr)
-    (hp : U.valid ph) (w ns : Nat) (vw : VWords) (ts : List W) :
-    pre3514_decField U (encFieldC attr true true false w ns ph vw ++ ts)
-      = some ((attr, ⟨.fulltext, some w, some (ns ≠ 0), some ph, none⟩), ts) := by
-  simp [pre3514_decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, strip_nullTerm U attr ha,
-    strip_nullTerm U ph hp, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
-
-theorem pre3514_range_vector_loses_range (attr ph : Bytes) (ha : U.valid attr)
-    (w ns : Nat) (vw : VWords) (ts : List W) :
-    pre3514_decField U (encFieldC attr true false true w ns ph vw ++ ts)
-      = some ((attr, ⟨.vector, none, none, none,
-          some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc)⟩⟩), ts) := by
-  simp [pre3514_decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, pure', strip_nullTerm U attr ha,
-    RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
-
 /-! ## Main: the merged decoder (`SerialSchema.decField`, FalkorDB#3514) -/
 
 /-- **Fixed on main**: every C entry with at least one type decodes to exactly its types. -/
@@ -97,20 +80,13 @@ theorem decField_unknown_bit_refused (attr ph : Bytes) (w ns : Nat) (ts : List W
     FULLTEXT]
 
 /-- C's phonetic `"no"` (its default on every field it did not enable) decodes to the explicit
-off, never to a code: `pre3514_phonetic_no_kept` is the old behaviour. -/
+off, never to a code. -/
 theorem decField_c_phonetic_no_off (attr : Bytes) (ha : U.valid attr) (w ns : Nat) (ts : List W) :
     decField U (encFieldC attr false true false w ns PHON_OFF ⟨0, 0, 0, 0, 0⟩ ++ ts)
       = some ((attr, [⟨.fulltext, some w, some (ns ≠ 0), some [], none⟩]), ts) := by
   have := decField_encFieldC U attr PHON_OFF ha U.valid_no false true false (by simp) w ns
     ⟨0, 0, 0, 0, 0⟩ ts
   simpa [cFields, phonNorm] using this
-
-/-- **History**: the pre-#3514 decoder kept C's `"no"` as the phonetic code. -/
-theorem pre3514_phonetic_no_kept (attr : Bytes) (ha : U.valid attr) (w ns : Nat) (ts : List W) :
-    pre3514_decField U (encFieldC attr false true false w ns PHON_OFF ⟨0, 0, 0, 0, 0⟩ ++ ts)
-      = some ((attr, ⟨.fulltext, some w, some (ns ≠ 0), some PHON_OFF, none⟩), ts) := by
-  simp [pre3514_decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, strip_nullTerm U attr ha,
-    strip_nullTerm U _ U.valid_no, VECTOR, FULLTEXT, RANGEW, NUMERIC, STR, GEO]
 
 /-! ## The phonetic string we write, as C reads it -/
 
@@ -125,13 +101,5 @@ theorem encPh_c_on_iff (f : Fld) :
   by_cases h : f.phonetic.getD [] = [] <;> by_cases h2 : f.phonetic.getD [] = PHON_OFF <;>
     simp [h, h2]
   all_goals first | (exact absurd (h.symm.trans h2) (by decide)) | skip
-
-/-- **History**: before #3514 an absent or empty phonetic was written as the empty string. -/
-def pre3514_encPh (f : Fld) : Bytes := f.phonetic.getD []
-
-/-- …which C reads as phonetic ON: an RDB we saved turned phonetic matching on for every
-fulltext index when C loaded it. -/
-theorem pre3514_encPh_off_read_on_by_c : cPhoneticOn (pre3514_encPh ⟨.fulltext, none, none, none, none⟩) := by
-  simp [cPhoneticOn, pre3514_encPh, PHON_OFF]
 
 end RedisLayer.Serial

@@ -28,7 +28,7 @@ reported — `list_error_rightmost`, `evalRev_ok`; C reports the same element, c
 subscripts (`getElem`, `getElement_index`), map projections (`projLoop`) and `DISTINCT`. The
 catch-all `compound` (every other arm: `Length`, `Negate`, `Pow`, n-ary operators, binders,
 aggregates, …) now receives its children as **thunks**, so it can be lazy; the eager form it had
-cannot short-circuit (proofs/pr3437_review `pre20261021_compound_cannot_short_circuit`).
+cannot short-circuit (counterexample removed; in 17ccc5412).
 `all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
 `allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
 evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
@@ -57,9 +57,7 @@ advances only while another element is due — re-modelled as `rangeIter` (debug
 nonzero step the caller accepts, it yields exactly the eager range (`rangeList`, and
 `rangeMath` with any fuel ≥ the length) and never overflows; `evalIter_range_is_iter`,
 `rangeIter_sizeHint_exact` (new `size_hint`), `rangeIter_bounds_examples`,
-`rangeIter_max_fixed`. The old model and its counterexamples are kept as
-`pre2899_rangeIterRel`/`pre2899_rangeIterDbg`, `pre2899_rangeIter_wraps`,
-`pre2899_rangeIter_panics`, `pre2899_rangeIter_panics_down`, `pre2899_rangeIter_ok_up`.
+`rangeIter_max_fixed`. The old model and its counterexamples were removed (in 17ccc5412).
 #2950 (temporal.rs) and #3041 (parser) touch nothing modelled here. COVERAGE.tsv
 eval.rs line numbers re-pinned to 737dfb5da.
 
@@ -67,9 +65,7 @@ Earlier: re-targeted to main 8621212fc (from 289c201fe). #2904 (#2902): `^` prop
 operand errors (`?` instead of `flat_map`) and `apply_pow` type-checks its operands
 (`Type mismatch: expected Integer, Float, or Null but was …`) — `applyPow`/`powFold`
 re-modelled, `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`,
-`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model is kept as
-`pre2904_applyPow`/`pre2904_powFold` with `pre2904_pow_drops_error`,
-`pre2904_pow_constant_true`. COVERAGE.tsv line numbers re-pinned to 8621212fc.
+`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model and its counterexamples were removed (in 17ccc5412). COVERAGE.tsv line numbers re-pinned to 8621212fc.
 
 Earlier: re-targeted to main 289c201fe (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
 operand type error now names the operand's type like C (`expected Boolean or Null but
@@ -106,13 +102,12 @@ and with counterexamples, each reproduced against the real engine
 (`graph/tests/lean_expr_semantics.rs`), for
 
 * `^` silently dropping an operand's error — fixed by #2904 (`fd2c76a6c`), now
-  `pow_propagates_error` (historical `pre2904_pow_drops_error`; the optimizer
-  deleting `WHERE x ^ true` as constant-true is `pre2904_pow_constant_true`);
+  `pow_propagates_error` (the optimizer
+  deleting `WHERE x ^ true` as constant-true is covered too; counterexamples removed; in 17ccc5412);
 * the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX` — fixed by
-  #2899 (`e63165cb5`), now `rangeIter_correct` (historical `pre2899_rangeIter_wraps`:
-  panic in debug, wrong rows and non-termination in release);
+  #2899 (`e63165cb5`), now `rangeIter_correct` (panic in debug, wrong rows and non-termination in release; counterexamples removed; in 17ccc5412);
 * `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
-  `sign_float_is_int` (historical `pre2907_sign_float_is_float`);
+  `sign_float_is_int`;
 * mixed Int/Float equality not being transitive (`int_float_eq_not_transitive`).
 
 ## What is modelled, and where it lives in the tree
@@ -142,12 +137,10 @@ and with counterexamples, each reproduced against the real engine
 | `omap`, `ofold`          | Rust's `?` over a row set / over the children |
 | `containsGo`, `contains` | `impl Contains for ThinVec<Value>` (`value.rs:1762`), used by `ExprIR::In` (`eval.rs:774`) |
 | `applyPow`, `powStep`, `powFold` | `apply_pow` (`math.rs:328`); `ExprIR::Pow` in `eval_compound` (`eval.rs:828-834`, `reduce` calling `apply_pow(acc?, value?)`) |
-| `pre2904_applyPow`, `pre2904_powFold` | the same before #2904 (the `flat_map`) |
 | `pow_constant_not_true`  | `is_constant_true` (`graph/src/planner/optimizer/eliminate_true_filters.rs:48`) |
 | `rangeIter` / `rangeIterRel` | `RangeIter::next` (`eval.rs:114-127`), debug / release build |
 | `rangeIterSizeHint`      | `RangeIter::size_hint` (`eval.rs:129-132`) |
 | `rangeLen`, `rangeList`  | `length` in `eval_iter_expr` (`eval.rs:1224-1233`); the eager `range()` list |
-| `pre2899_rangeIterRel` / `pre2899_rangeIterDbg` | `RangeIter::next` before #2899, release / debug |
 | `rangeMath`              | `range()` (`graph/src/runtime/functions/math.rs:251`) |
 | `signRust`               | `sign` (`math.rs:210`) |
 | `toIntegerFloat` / `toIntegerString` | `tointeger` (`graph/src/runtime/functions/conversion.rs:41-88`) |
@@ -378,8 +371,7 @@ def negB : V F → V F
 
 /-- **`<>` is `NOT (=)`** (since #2917 7fdf06a0e; C's `AR_NE`): for every pair of values,
 `<>` is null exactly when `=` is, and otherwise its negation. Before #2917, a map that
-stopped at a disjoint pair (`{a:1}` vs `{a:'x'}`) made both `false` (value_order
-`pre2917_map_neq_both_false`). -/
+stopped at a disjoint pair (`{a:1}` vs `{a:'x'}`) made both `false` (value_order counterexample, removed). -/
 theorem neq_eq_not_eq (a b : V F) : evalCmp .neq a b = negB (evalCmp .eq a b) := by
   unfold evalCmp
   obtain ⟨o, fl⟩ := compareValue a b
@@ -1514,7 +1506,7 @@ def powSpec (pw : F → F → F) (xs : List (Except String (V F))) : Except Stri
   | .ok [] => .error "Pow operator requires at least one argument"
   | .ok (y :: ys) => ys.foldlM (applyPow pw) y
 
-/-- `2 ^ (1/0)` is now the division error (was `2`, see `pre2904_pow_drops_error`). -/
+/-- `2 ^ (1/0)` is now the division error (was `2`). -/
 theorem pow_propagates_error (pw : F → F → F) :
     powFold pw [.ok (.int 2), .error "Division by zero"] = .error "Division by zero" ∧
     powFold pw [.error "Division by zero", .ok (.int 2)] = .error "Division by zero" :=
@@ -1576,86 +1568,10 @@ theorem pow_bool_type_error (pw : F → F → F) (x : V F) (hx : x.numOrNull = t
 
 /-! ### History: the `flat_map` that dropped errors (fixed by #2904) -/
 
-/-- `apply_pow` before #2904: anything non-numeric was `null`, never a type error. -/
-def pre2904_applyPow (pw : F → F → F) : V F → V F → V F
-  | .int a, .int b => .flt (pw (FM.ofInt a) (FM.ofInt b))
-  | .flt a, .flt b => .flt (pw a b)
-  | .int a, .flt b => .flt (pw (FM.ofInt a) b)
-  | .flt a, .int b => .flt (pw a (FM.ofInt b))
-  | _, _ => .null
-
-/-- `ExprIR::Pow` before #2904: `children.flat_map(eval_node).reduce(apply_pow)`.
-`flat_map` over a `Result` yields the `Ok` value and *nothing* for an `Err`. -/
-def pre2904_powFold (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
-  match xs.filterMap Except.toOption with
-  | [] => .error "Pow operator requires at least one argument"
-  | y :: ys => .ok (ys.foldl (pre2904_applyPow pw) y)
-
-def pre2904_powSpec (pw : F → F → F) (xs : List (Except String (V F))) : Except String (V F) :=
-  match xs.mapM id with
-  | .error e => .error e
-  | .ok [] => .error "Pow operator requires at least one argument"
-  | .ok (y :: ys) => .ok (ys.foldl (pre2904_applyPow pw) y)
-
-/-- **BUG (fixed by #2904)**: `2 ^ (1/0)` was `2` — the right operand's error
-vanished and the left operand was returned *unpowered*. -/
-theorem pre2904_pow_drops_error (pw : F → F → F) :
-    pre2904_powFold pw [.ok (.int 2), .error "Division by zero"] = .ok (.int 2) ∧
-    pre2904_powSpec pw [.ok (.int 2), .error "Division by zero"] = .error "Division by zero" :=
-  ⟨rfl, rfl⟩
-
-/-- **BUG, consequence (fixed by #2904)**: the constant evaluator folded `x ^ true`
-to `true`, so `eliminate_true_filters` deleted `WHERE x ^ true`. -/
-theorem pre2904_pow_constant_true (pw : F → F → F) :
-    pre2904_powFold pw [.error "Variable not found", .ok (.bool true)] = .ok (.bool true) := rfl
-
-/-- Before #2904, error dropping was the only difference from `?`-semantics. -/
-theorem pre2904_pow_agrees_without_errors (pw : F → F → F) (vs : List (V F)) :
-    pre2904_powFold pw (vs.map .ok) = pre2904_powSpec pw (vs.map .ok) := by
-  have h2 : ∀ ws : List (V F), (ws.map (Except.ok : V F → Except String (V F))).mapM id = .ok ws := by
-    intro ws
-    induction ws with
-    | nil => rfl
-    | cons v vs ih => simp only [List.map_cons, List.mapM_cons, id]; rw [ih]; rfl
-  have h1 : ∀ ws : List (V F),
-      (ws.map (Except.ok : V F → Except String (V F))).filterMap Except.toOption = ws := by
-    intro ws
-    induction ws with
-    | nil => rfl
-    | cons v vs ih => simp [Except.toOption, ih]
-  unfold pre2904_powFold pre2904_powSpec
-  rw [h1, h2]
-  cases vs <;> rfl
-
 /-! ## `UNWIND range(..)`: the lazy iterator before #2899 (BUG, fixed)
 
 Kept for history: before #2899 (`e63165cb5`) `RangeIter` stored `end`, the step's
 magnitude and a direction flag, and stepped past the last element. -/
-
-/-- `RangeIter::next` before #2899 (eval.rs:108-122 at 8621212fc) in a release build (wrapping `+=`),
-run for at most `fuel` items. `step` is stored as `step.unsigned_abs() as i64`
-and negated for a descending range — `wrap` models both casts. -/
-def pre2899_rangeIterRel (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
-  | 0, _ => []
-  | fuel + 1, cur =>
-    if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then []
-    else cur :: pre2899_rangeIterRel up stepAbs endv fuel
-      (wrap (cur + (if up then wrap stepAbs else wrap (-(wrap stepAbs)))))
-
-/-- The same iterator in a debug build: `+=` and unary `-` are checked and
-panic ("attempt to add/negate with overflow"). -/
-def pre2899_rangeIterDbg (up : Bool) (stepAbs endv : Int) : Nat → Int → Except String (List Int)
-  | 0, _ => .ok []
-  | fuel + 1, cur =>
-    if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then .ok []
-    else
-      let st := wrap stepAbs   -- `step.unsigned_abs() as i64`
-      let d := if up then st else -st
-      if !up && ¬ InI64' (-st) then .error "attempt to negate with overflow"
-      else if ¬ InI64' (cur + d) then .error "attempt to add with overflow"
-      else (pre2899_rangeIterDbg up stepAbs endv fuel (cur + d)).map (cur :: ·)
-where
-  InI64' (x : Int) : Bool := decide (I64MIN ≤ x) && decide (x ≤ I64MAX)
 
 /-- The mathematical sequence, which is what the eager `range()` function
 (math.rs:251, `(start..=end).step_by(step)`) returns. -/
@@ -1664,48 +1580,6 @@ def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
   | fuel + 1, cur =>
     if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then []
     else cur :: rangeMath up stepAbs endv fuel (cur + (if up then stepAbs else -stepAbs))
-
-/-- Before #2899: when the step past `end` is still representable, the lazy iterator was the
-mathematical range (and so agrees with the eager `range()`). -/
-theorem pre2899_rangeIter_ok_up (stepAbs endv : Int) (hs : 0 < stepAbs) (hs' : stepAbs ≤ I64MAX)
-    (hroom : endv + stepAbs ≤ I64MAX) :
-    ∀ (fuel : Nat) (cur : Int), I64MIN ≤ cur →
-      pre2899_rangeIterRel true stepAbs endv fuel cur = rangeMath true stepAbs endv fuel cur
-  | 0, _, _ => rfl
-  | fuel + 1, cur, hc => by
-    simp only [pre2899_rangeIterRel, rangeMath, Bool.true_and, Bool.not_true, Bool.false_and,
-      Bool.or_false, ↓reduceIte]
-    by_cases h : cur > endv
-    · simp [h]
-    · simp only [h, decide_false, Bool.false_eq_true, ↓reduceIte, List.cons.injEq, true_and]
-      have hin : InI64 (cur + stepAbs) := by simp only [InI64, I64MIN, I64MAX] at *; omega
-      have hst : InI64 stepAbs := by simp only [InI64, I64MIN, I64MAX] at *; omega
-      rw [wrap_id hst, wrap_id hin]
-      exact pre2899_rangeIter_ok_up stepAbs endv hs hs' hroom fuel (cur + stepAbs)
-        (by unfold I64MIN at *; omega)
-
-/-- **BUG (release; fixed by #2899)**: `UNWIND range(i64::MAX - 1, i64::MAX)` yields
-`MAX-1, MAX, MIN, MIN+1, …` and never stops (`cur > MAX` is never true);
-exactly the rows `redis-cli GRAPH.QUERY g "UNWIND range(9223372036854775806,
-9223372036854775807) AS x RETURN x LIMIT 5"` returns. The eager `range()` gives
-the two elements. -/
-theorem pre2899_rangeIter_wraps :
-    pre2899_rangeIterRel true 1 I64MAX 5 (I64MAX - 1)
-      = [I64MAX - 1, I64MAX, I64MIN, I64MIN + 1, I64MIN + 2] ∧
-    rangeMath true 1 I64MAX 5 (I64MAX - 1) = [I64MAX - 1, I64MAX] := by
-  decide
-
-/-- **BUG (debug; fixed by #2899)**: the same query panics. -/
-theorem pre2899_rangeIter_panics :
-    pre2899_rangeIterDbg true 1 I64MAX 5 (I64MAX - 1) = .error "attempt to add with overflow" := by
-  rfl
-
-/-- **BUG (debug; fixed by #2899)**: descending to `i64::MIN` panics too, and a step of
-`i64::MIN` panics on the negation before the second item. -/
-theorem pre2899_rangeIter_panics_down :
-    pre2899_rangeIterDbg false 1 I64MIN 5 (I64MIN + 1) = .error "attempt to add with overflow" ∧
-    pre2899_rangeIterDbg false (-I64MIN) (-10) 5 0 = .error "attempt to negate with overflow" :=
-  ⟨rfl, rfl⟩
 
 /-! ## `UNWIND range(..)` after #2899: exactly the eager range, never overflows -/
 
@@ -1881,7 +1755,7 @@ theorem rangeIter_bounds_examples :
   refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
 /-- **#2894 fixed by #2899**: `UNWIND range(i64::MAX - 1, i64::MAX)` now yields the two
-elements the eager `range()` gives (contrast `pre2899_rangeIter_wraps`). -/
+elements the eager `range()` gives (before #2899 it wrapped). -/
 theorem rangeIter_max_fixed :
     rangeIter 1 (rangeLen (I64MAX - 1) I64MAX 1) (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
     rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] :=
@@ -1949,18 +1823,6 @@ theorem sign_float_cases (f : F) :
     (FM.pcmp f (FM.ofInt 0) = some .eq → signRust (.flt f) = .int 0) ∧
     (FM.pcmp f (FM.ofInt 0) = none → signRust (.flt f) = .int 0) := by
   refine ⟨fun h => ?_, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;> simp [signRust, fGt, fLt, h]
-
-/-- Historical: `sign` before #2907 (`f04c3557a`) answered `Float(f.signum().round())`
-for a non-zero float. -/
-def signRustPre2907 (signum : F → F) (isZero : F → Bool) : V F → V F
-  | .int n => .int (if n > 0 then 1 else if n < 0 then -1 else 0)
-  | .flt f => if isZero f then .int 0 else .flt (signum f)
-  | _ => .null
-
-/-- Historical counterexample (pre-#2907): a non-zero float gave a **Float**. Fixed by
-#2907 (`f04c3557a`); see `sign_float_is_int`. -/
-theorem pre2907_sign_float_is_float (signum : F → F) (isZero : F → Bool) (f : F) (h : isZero f = false) :
-    ∃ g, signRustPre2907 signum isZero (.flt f) = .flt g := ⟨signum f, by simp [signRustPre2907, h]⟩
 
 /-- `toInteger` of a finite float, with `m = floor(f)` as a mathematical
 integer: `m as i64` saturates. The *string* path (`toInteger('1e30')`) instead

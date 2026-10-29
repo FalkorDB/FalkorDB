@@ -282,10 +282,6 @@ def rsMatch (d : Doc) : QN → Bool
 
 /-! ## `Document::set` (`mod.rs:717`) for a Range field -/
 
-/-- **Historical** (before #3076, e20300436): `Document::set` stored a temporal's raw timestamp in the
-numeric field (old `mod.rs:797`). Kept for `pre3076_temporal_in_numeric_range`. -/
-def pre3076_setRangeTemporal (ts : Int) : List RsV := [.num (.fin ts)]
-
 /-- What `Document::set` hands RediSearch for one attribute value of a Range
 field, per sub-field (before `rsStore`). `Null/Map/Node/..` are
 `unreachable!()` in Rust; callers never pass them (attributes are never
@@ -341,19 +337,6 @@ def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn 
     | none => some .posInf
   if fields k then some (.numeric k .main lo hi (imn || mn.isNone) (imx || mx.isNone)) else none
 
-/-- **Historical** (before #3081, ff3d24ba7): an open bound kept the caller's
-include flag, which the optimizer always sets to `false` for a missing bound
-(`utilize_index.rs:335`). Kept for `pre3081_open_bound_excludes_inf`. -/
-def pre3081_buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn imx : Bool) :
-    Option QN := do
-  let lo ← match mn with
-    | some v => valueToNumeric v
-    | none => some .negInf
-  let hi ← match mx with
-    | some v => valueToNumeric v
-    | none => some .posInf
-  if fields k then some (.numeric k .main lo hi imn imx) else none
-
 /-- `build_string_range_node` (`mod.rs:1419`). -/
 def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
@@ -364,17 +347,6 @@ def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (im
         if !(imn && imx) then some .empty                                        -- mod.rs:1433-1438 (#3072)
         else some (.tagToken k .main (tagEnc lo))                                -- mod.rs:1443-1452
       else some (.tagLex k (some (tagEnc lo)) (some (tagEnc hi)) imn imx)
-    | lo, hi => some (.tagLex k (lo.map tagEnc) (hi.map tagEnc) imn imx)
-  else none
-
-/-- **Historical** (before #3072, 1c9994e37): equal bounds always became the exact-token node, whatever
-the include flags (old `mod.rs:1434`). Kept for `pre3072_exclusive_equal_bounds`. -/
-def pre3072_buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
-    Option QN :=
-  if fields k then
-    match mn, mx with
-    | some lo, some hi => if lo = hi then some (.tagToken k .main (tagEnc lo))
-                          else some (.tagLex k (some (tagEnc lo)) (some (tagEnc hi)) imn imx)
     | lo, hi => some (.tagLex k (lo.map tagEnc) (hi.map tagEnc) imn imx)
   else none
 

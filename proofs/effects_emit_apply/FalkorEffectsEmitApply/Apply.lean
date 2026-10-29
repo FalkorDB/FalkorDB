@@ -174,37 +174,4 @@ theorem σ0_wf : σ0.WF := by
   · intro i _; exact ⟨rfl, rfl⟩
   · intro e he; simp [σ0] at he; subst he; decide
 
-/-- `hostile_update_node_on_dead_id`: `UPDATE_NODE [3] {x: 666}` is accepted,
-    the dead id now carries a property, and the next `CREATE` that recycles 3
-    returns a node that already has `x: 666`. Rust run:
-    `apply=Ok(())` ... `after "CREATE (:Fresh)"` ... `{x: 666}`. -/
-theorem pre3022_update_dead_breaks_wf :
-    let σ1 := updateNode σ0 [3] [(0, .int 666)]
-    ¬ σ1.live 3 ∧ σ1.props 3 = [(0, .int 666)] ∧
-    (createOne σ1 3 [7]).live 3 ∧ (createOne σ1 3 [7]).props 3 = [(0, .int 666)] := by
-  decide
-
-theorem pre3022_update_dead_not_wf : ¬ (updateNode σ0 [3] [(0, .int 666)]).WF := by
-  intro h
-  have := (h.dead 3 (by decide)).2
-  simp [updateNode, σ0] at this
-
-/-- `hostile_set_labels_on_dead_id`: the recycled node comes back with `:A`. -/
-theorem pre3022_setlabels_dead_not_wf : ¬ (setLabels σ0 [3] [0]).WF := by
-  intro h
-  have := (h.dead 3 (by decide)).1
-  simp [setLabels, σ0] at this
-
-/-- `hostile_delete_node_with_edges`: `DELETE_NODE [1]` passes `okDelete` and
-    leaves edge `0 -> 1` hanging off a dead id; the next create recycles 1 and
-    the new node inherits the edge. -/
-theorem pre3022_delete_endpoint_not_wf :
-    okDelete σ0 [1] ∧ ¬ (deleteNode σ0 [1]).WF ∧
-    (0, 1) ∈ (createOne (deleteNode σ0 [1]) 1 [7]).edges := by
-  refine ⟨?_, ?_, by decide⟩
-  · intro i hi; simp at hi; subst hi; decide
-  · intro h
-    have := (h.ends (0, 1) (by simp [deleteNode, σ0])).2
-    revert this; decide
-
 end FalkorEA

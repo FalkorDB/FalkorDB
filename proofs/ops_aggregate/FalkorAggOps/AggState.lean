@@ -284,7 +284,7 @@ def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S �
 
 /-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
 `(key, value)` sequence get the same group id. (It is not injective — the
-collision bug was `pre2977_hashed_dedup_merges_groups`, fixed by #2977.) -/
+collision bug was fixed by #2977.) -/
 theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
     (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
     hashU64 d rh fin r₁ = fin (rh d r₁) := by

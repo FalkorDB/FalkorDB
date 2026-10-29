@@ -181,10 +181,6 @@ rows 1 and 2 — both come out tagged 0, i.e. attached to the first outer row
 (the PR's "3 x 3 collapses onto the first x"). -/
 def colless : Batch Nat := ⟨3, none, [], some [0, 1, 2]⟩
 
-theorem pre2845_emit_origin_lost_old :
-    (finishBatch (shouldExpandOld colless) colless [1, 2] (some [7, 8])).originRow 0 = 0 ∧
-    colless.originRow 1 = 1 := by decide
-
 /-- Row count: `count` whenever the parent has a column, an origin, or the
 binding installs a lane. -/
 theorem emit_len {V : Type} [Inhabited V] (p : Batch V) (idx : List Nat) (lane : Option (List V))

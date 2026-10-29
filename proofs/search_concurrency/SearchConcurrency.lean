@@ -49,8 +49,7 @@ mutate, commit, rollback, delete, fork):
 * `delete_blocks_writes` — after GRAPH.DELETE no mutate/commit is enabled.
 * `fork_excludes_commit` — fork and delete need the GIL a committing writer holds.
 * #3290: `one_commit_per_version`, `claimFork_stale`, `claimFork_on_committed`,
-  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_claim`; historical
-  `pre3290_multi_write_refused` / `multi_write_ok_in_c` (BUG 5).
+  `inline_write_ok`, `stale_then_rerun`, `reader_cannot_claim`; `multi_write_ok_in_c` (BUG 5).
 `Locks`:
 * `no_cycle` (+ `path_increasing`) — threads that acquire in rank order cannot form
   a wait-for cycle; `all_programs_ordered` — writer (incl. escalate), inline writer,
@@ -60,7 +59,7 @@ mutate, commit, rollback, delete, fork):
   the `write_loop` protocol: no message is stranded; `recheck_needed` — without the
   `is_empty` re-check one is.
 * #3014: `inv3014_step` (count = queued, ≤ MAX_QUEUED_QUERIES), `never_stuck_3014`,
-  `main_never_blocks`, `flood_drains`; historical `pre3014_pool_deadlock_reachable` (BUG 1).
+  `main_never_blocks`, `flood_drains` (BUG 1).
 `Pool` (#3014 `QueueSlot`): `acquire_bounded`, `acquire_full`, `release_exactly_once`,
 `paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
 `Tickets` (re-targeted to 73077bb4a, #3086): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
@@ -70,21 +69,18 @@ whenever the label already has an entry (indexer.rs:357-359): `main_operational_
 batches of every populate job, an OPERATIONAL index has every field in every batch, outside
 the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
 `main_lost_order_complete` (the interleaving that lost `b` now completes);
-`store_window_operational_incomplete` (that window is real, see Gaps); historical
-(1d15bf713) `pre3086_second_index_never_populated`, `pre3086_lucky_order_complete`;
+`store_window_operational_incomplete` (that window is real, see Gaps);
 `fixed_trace_complete` (the proposed fix, now shipped).
 `Search` (re-targeted to 8743953a8: #3087 vector guard; #3076 `e20300436` temporals no
-longer indexed — `docSet_temporal_not_indexed`, `docSet_eq_pre3076_off_temporal`, historical
-`pre3076_temporal_in_numeric`): `docSet_vector_sound` (key property: any
+longer indexed — `docSet_temporal_not_indexed`): `docSet_vector_sound` (key property: any
 value, any field options — a vector add always has the field's own non-zero dimension),
 `docSet_good_vector`, `docSet_bad_vector_skipped`, `docSet_noparams_no_vector`,
 `doc_always_accepted`, `other_fields_never_dropped`, `docSet_nonvector_eq_pre`,
 `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`,
-`good_vector_keeps_range_entry`; historical (fe619ac5f) `pre3087_dim_mismatch_dropped_range_entry`,
-`pre3087_noparams_dropped_range_entry`; `fulltext_only_strings`,
+`good_vector_keeps_range_entry`; `fulltext_only_strings`,
 `range_never_vector_or_text`, `parseDimension_int/neg/missing`, `parseSim_missing/lower`,
 `rust_refuses_missing`, `rust_eq_c` (#3094), `fulltextUnknown_none_iff`, `rust_keys_ok_imp_c`, `metricOf_ok_iff`, `metricOf_toBool`,
-`phonetic_false_no_flag`, `phonetic_true_flag`, historical `pre3088_huge_k_kills_server`,
+`phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
 `Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4188`,
@@ -103,7 +99,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    range(1,3000) AS x CREATE (:N)" 45` (16 graphs, <1024 each): Rust hangs forever
    (thread samples: main in `crossfire…send` from `query_mut`, all 11 workers in
    `upgrade_to_write` waiting for the GIL); C completes 3000/3000 in 13 s.
-   Model: `Locks.pre3014_pool_deadlock_reachable`. Fixed: unbounded queues bounded by
+   Fixed: unbounded queues bounded by
    admission (`QueueSlot`), main thread never waits (`never_stuck_3014`). Proposed fix was: never block the main thread in
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
@@ -115,8 +111,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
    mechanism loses index entries when writes race population (`repro/poprace.py`:
    8/8 rounds mismatched on Rust, 0/5 on C; not re-run at 73077bb4a, and it creates one
-   index per round, so its cause may differ). Historical model:
-   `pre3086_second_index_never_populated`. Now `create_index` calls `bump_id` when the
+   index per round, so its cause may differ). (Counterexample removed; in 17ccc5412.) Now `create_index` calls `bump_id` when the
    entry exists (indexer.rs:357-359), so the older job fails `is_ticket_current` and the
    new one indexes everything: `main_operational_complete`, `main_lost_order_complete`.
 3. **FIXED by #3087 (49f698d22)** — HISTORICAL (fe619ac5f): a vector of the wrong
@@ -124,23 +119,21 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    node from all of its label's indexes (old `mod.rs:723-733` added the blob unchecked;
    C `src/index/index.c:470-476` skips). `CREATE INDEX (n.name)`, vector index dim 2,
    `CREATE (:L {name:'a', v:vecf32([1,2,3])})`, `MATCH (n:L) WHERE n.name='a'`: Rust
-   was `[]`, C `a`. Historical model: `pre3087_dim_mismatch_dropped_range_entry`,
-   `pre3087_noparams_dropped_range_entry`. Now `mod.rs:730-744` adds the vector only if
+   was `[]`, C `a`. (Counterexamples removed; in 17ccc5412.) Now `mod.rs:730-744` adds the vector only if
    `vector_options.is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`:
    `docSet_vector_sound`, `doc_always_accepted`, `other_fields_never_dropped`,
    `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`.
 4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
    killed the server (old `graph.rs:4211,3938` `Vec::with_capacity(k)`). `CALL
    db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
-   (SIGSEGV in the OOM path); C returns the 1 row. Historical model:
-   `pre3088_huge_k_kills_server`. Now `graph.rs:4208,3939` clamp `k` to
+   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed; in 17ccc5412.) Now `graph.rs:4208,3939` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4014,3955` size by results:
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
    replies `another write is in progress, retry the query` and `M` is not created
-   (3/3); C creates it (3/3). `repro/multi_race.py`. Model: `pre3290_multi_write_refused`.
+   (3/3); C creates it (3/3). `repro/multi_race.py`. (Counterexample removed; in 17ccc5412.)
    Now the queued write forks without the slot and claims it under the write lock;
    `inline_write_ok`, `stale_then_rerun`, `one_commit_per_version`.
    Fix: claim the slot after escalation (or block on it under the write lock).
@@ -180,7 +173,7 @@ checks) and `valid_commit_publishes`. `commit_and_replicate` treats a refusal as
 
 ## Re-target to 73077bb4a (#3086, #3033)
 #3086 (issue #3069) bumps the generation in `create_index` whenever the label already has an entry
-(indexer.rs:357-359), fixing BUG 2. `Tickets` renames the old model and trace to `pre3086_*` and adds
+(indexer.rs:357-359), fixing BUG 2. `Tickets` keeps the old `create_index` as `pre3086_createRange` and adds
 `store`/`acquire`/`step`/`Reach`, the invariant `MInv` (`inv_create`, `inv_populate`, `inv_batch`,
 `reach_inv`) and `main_operational_complete`. indexer.rs lines from `drop_index` on moved +16
 (COVERAGE updated). #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
@@ -233,7 +226,6 @@ import SearchConcurrency.Knn
 #print axioms SC.Search.doc_always_accepted
 #print axioms SC.Search.other_fields_never_dropped
 #print axioms SC.Search.vector_dim_mismatch_keeps_range_entry
-#print axioms SC.Tickets.pre3086_second_index_never_populated
 #print axioms SC.Tickets.main_operational_complete
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk

@@ -9,7 +9,7 @@ import OptimizerScan.EdgeInline
 | `extractAttr` | `extract_attribute_from_subtree` 357 |
 | `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 547, `subtree_has_any_property` 569, `list_has_nested_list` 582 |
 | `nonIdxD` | `is_non_indexable_subexpr` 855 |
-| `IQx`, `pre2390_refsVar` | `IndexQuery<QueryExpr<Variable>>`; HISTORICAL `index_query_references_var` (1123 at a9377c636), replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
+| `IQx` | `IndexQuery<QueryExpr<Variable>>`; the old `index_query_references_var` (1123 at a9377c636) was replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
 | `rowsWithScan`, `prune_sound` | `prune_all_node_scan_child` 1055 |
 | `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1142, `add_to_labels_filter` 1084 |
 | `untilStable` | `rewrite_until_stable` 881 |
@@ -239,12 +239,6 @@ inductive IQx
 
 def exRefs (a : Nat) (e : Ex) : Bool := (bfs [e]).any (· == .var a)
 
-def pre2390_refsVar (a : Nat) : IQx → Bool
-  | .eq e | .contains e | .inList e => exRefs a e
-  | .range lo hi => lo.any (exRefs a) || hi.any (exRefs a)
-  | .point p r => exRefs a p || exRefs a r
-  | .and qs | .or qs => qs.attach.any (fun ⟨q, _⟩ => pre2390_refsVar a q)
-
 def IQx.exprs : IQx → List Ex
   | .eq e | .contains e | .inList e => [e]
   | .range lo hi => lo.toList ++ hi.toList
@@ -253,22 +247,6 @@ def IQx.exprs : IQx → List Ex
 
 theorem exRefs_iff (a : Nat) (e : Ex) : exRefs a e = true ↔ D.var a ∈ e.nodes := by
   simp [exRefs, mem_bfs, Ex.nodesL]
-
-/-- **PROVEN** (historical walker): `index_query_references_var q a` iff some expression of `q`
-mentions variable `a` (by id only). -/
-theorem pre2390_refsVar_iff (a : Nat) : ∀ q : IQx, pre2390_refsVar a q = true ↔ ∃ e ∈ q.exprs, D.var a ∈ e.nodes
-  | .eq e | .contains e | .inList e => by simp [pre2390_refsVar, IQx.exprs, exRefs_iff]
-  | .range lo hi => by
-    cases lo <;> cases hi <;> simp [pre2390_refsVar, IQx.exprs, exRefs_iff]
-  | .point p r => by simp [pre2390_refsVar, IQx.exprs, exRefs_iff]
-  | .and qs | .or qs => by
-    simp only [pre2390_refsVar, IQx.exprs, List.any_eq_true, List.mem_flatMap]
-    constructor
-    · rintro ⟨⟨q, hq⟩, -, h⟩
-      obtain ⟨e, he, hv⟩ := (pre2390_refsVar_iff a q).mp h
-      exact ⟨e, ⟨⟨q, hq⟩, List.mem_attach _ _, he⟩, hv⟩
-    · rintro ⟨e, ⟨⟨q, hq⟩, -, he⟩, hv⟩
-      exact ⟨⟨q, hq⟩, List.mem_attach _ _, (pre2390_refsVar_iff a q).mpr ⟨e, he, hv⟩⟩
 
 /-- An edge as the scan sees it, in the direction the pattern binds `from`. -/
 structure Ed where

@@ -92,15 +92,6 @@ theorem countCheck_own (ids : List UInt64) (h : ids.length * 8 < USIZE) :
   unfold countCheck expectedLen encodedByteLen
   simp [h1, h]
 
-/-- Before #2996: `count as usize * 8`, wrapping. -/
-def pre2996_expectedLen (count : Nat) : Nat := count % USIZE * 8 % USIZE
-
-/-- **History (#2996): a count of `2^61` passed the length check on an empty buffer**
-and the loop then read `bytes[0..8]` of it. -/
-theorem pre2996_count_wraps :
-    pre2996_expectedLen (2 ^ 61) = 0 ∧ ¬ (1 * 8 ≤ 0) ∧ countCheck (2 ^ 61) 0 = false := by
-  decide
-
 /-! ## `build_multi_key_payloads`: the entity slices partition the stream
 
 The Rust loop walks entity types in the fixed order [Nodes, DeletedNodes, Edges,

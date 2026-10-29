@@ -25,7 +25,7 @@ presence of vector fields. The end-to-end acceptance theorem over the RediSearch
 contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
 
 HISTORICAL (fe619ac5f, before #3087): `setVectorPre3087` added every `VecF32`
-unchecked; `pre3087_*` below are the counterexamples (W3-conc-3 / #3075, and
+unchecked; pre-#3087 counterexamples (removed; in 17ccc5412) below are the counterexamples (W3-conc-3 / #3075, and
 W5-idx-2's no-options shape), fixed by #3087 (49f698d22).
 -/
 namespace IndexLayer.Meta
@@ -134,20 +134,5 @@ theorem setVector_sub_pre {f : Field} {vec : Option Nat} {nb : Nat}
 
 def vf (vopts : Option VecOpts) : Field :=
   { name := "vector:v", ty := .vector, options := none, vopts, numArr := none, strArr := none }
-
-/-- `{dimension:2}`, `vecf32([1,2,3])`: a 12-byte blob for an 8-byte field. -/
-theorem pre3087_dim_mismatch :
-    setVectorPre3087 (vf (some ⟨2, none⟩)) (some 3) = some 12 ∧
-    setVector (vf (some ⟨2, none⟩)) (some 3) = none := by
-  decide
-
-/-- `{dimension:0}` and no options (W5-idx-2's half-created index): a blob on a field
-with no vector params. -/
-theorem pre3087_noparams :
-    setVectorPre3087 (vf (some ⟨0, none⟩)) (some 3) = some 12 ∧
-    setVectorPre3087 (vf none) (some 3) = some 12 ∧
-    setVector (vf (some ⟨0, none⟩)) (some 3) = none ∧
-    setVector (vf none) (some 3) = none := by
-  decide
 
 end IndexLayer.Meta

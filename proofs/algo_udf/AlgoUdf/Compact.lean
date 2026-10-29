@@ -209,20 +209,6 @@ theorem known_messages :
 
 /-! ## pageRank fast-path choice -/
 
-/-- HISTORICAL (before #3058): `use_unfiltered`: no label, or the label covers all nodes.
-`none` = compact path with that many active nodes. -/
-def prePagerankPath (label : Option Nat) (nodeCount : Nat) : Option Nat :=
-  match label with
-  | none => none
-  | some cnt => if cnt = nodeCount then none else some cnt
-
-/-- Pre-#3058 BUG (`bug_pagerank_unknown_label_errors`, fixed by #3058): an unknown label has
-`label_node_count = 0 ≠ node_count`, so a 0×0 compact matrix reached
-`LAGr_PageRank`, which rejects it (LAGraph doc: n must be > 0). -/
-theorem pre3058_pagerank_unknown_label_compact_empty (nc : Nat) (h : 0 < nc) :
-    prePagerankPath (some 0) nc = some 0 := by
-  simp [prePagerankPath]; omega
-
 /-- What algo.pageRank does after the early exits (:729-780). -/
 inductive PRPath
   | empty                 -- `empty_procedure_batch()`

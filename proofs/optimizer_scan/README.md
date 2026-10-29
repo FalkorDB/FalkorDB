@@ -18,14 +18,14 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 **1. Does an index scan return the same nodes as the filter it replaces?**
 
 - **On the shapes the proof covers, yes.** `utilize_sound` is the headline. It covers a single-label scan whose property values are Null, Int or String, and filters built from `n.k op literal`, `literal op n.k`, `n.k IN [literals]` and unindexable conjuncts, combined by AND or OR. For those, the rewritten plan selects exactly the nodes the original plan does.
-- The building blocks are proven one by one: `sel_eq` (equality), `sel_range` (one- and two-sided ranges), `sel_inList` (`IN`; the list reaches the index whole as `IndexQuery::InList` since #2383, `inList_same_as_pre2383`), `sel_and2` (an index AND is the intersection), `sel_merge` (merging range conditions), and `pushAnd_spec`/`pushOr_spec` (the AND and OR branches of `try_filter_pushdown`).
+- The building blocks are proven one by one: `sel_eq` (equality), `sel_range` (one- and two-sided ranges), `sel_inList` (`IN`; the list reaches the index whole as `IndexQuery::InList` since #2383), `sel_and2` (an index AND is the intersection), `sel_merge` (merging range conditions), and `pushAnd_spec`/`pushOr_spec` (the AND and OR branches of `try_filter_pushdown`).
 - **Outside those shapes, no.** Each hypothesis of `utilize_sound` is there because the `IndexCex.lean` examples break the result without it: a computed constant ≥ 2⁵², a computed left side of `IN`, a list of properties on the right of `IN`, two labels, Bool or Date values. See [Bugs found](#bugs-found).
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**
 
 - **With non-negative integer bounds, yes — on any graph since #3394.** `seek_sound` proves `NodeByIdSeek` equals `Filter(id(n) op v …)` over `AllNodeScan` on every well-formed graph (`node_count` counts the live ids), including one that never held a node (main b84473a7f).
 - `step_some`, `step_none` and `step_nonempty` prove each arm of `evaluate_id_filter` keeps exactly the ids that satisfy it, and the running range never inverts.
-- **On a graph that never held a node, not before #3394.** `MATCH (n) WHERE id(n) = 0 RETURN n` returned a phantom node 0, and writes to it persisted into the next `CREATE` (`pre3394_phantom_node0`). #3394 returns no range when `node_count() == 0` (`empty_graph_seek_none`).
+- **On a graph that never held a node, not before #3394.** `MATCH (n) WHERE id(n) = 0 RETURN n` returned a phantom node 0, and writes to it persisted into the next `CREATE` (counterexample removed; in 17ccc5412). #3394 returns no range when `node_count() == 0` (`empty_graph_seek_none`).
 
 **3. Does reordering the hops keep the rows?**
 
@@ -76,7 +76,7 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 | # | Counterexample | What it means | Status |
 |---|---|---|---|
 | W2-scan-1 | `place` examples over `exHops` in `ScanOrder.lean` (honest seed passes, seed with `best_node` fails) | A filter runs before its variable is bound: the `MATCH (b:A) WITH b LIMIT 1 …` query above returns 0, C 1 | **Open** |
-| W2-scan-2 (#3353) | `seek_sound`, `empty_graph_seek_none`; history `pre3394_phantom_node0`, `pre3394_seek_sound` | On a graph that never held a node, `id(n) = 0` returned a phantom node. `SET` on it leaked into the next `CREATE`, `DELETE` errored | **Fixed by #3394** (9212add39, on main b84473a7f) |
+| W2-scan-2 (#3353) | `seek_sound`, `empty_graph_seek_none` | On a graph that never held a node, `id(n) = 0` returned a phantom node. `SET` on it leaked into the next `CREATE`, `DELETE` errored | **Fixed by #3394** (9212add39, on main b84473a7f) |
 | W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-4 | `IndexCex` C7, C7' | `abs(n.a) IN [1]` is pushed as `n.a IN [1]` and misses `a = -1`; `toString(n.a) IN ['1']` returns `[]` (C: `[1]`) | **Open** |
 | W2-scan-5 | `IndexCex` C8 | `2 IN [n.a, n.b]` becomes array-contains on `n.a`: `[]` (C: `[3]`) | **Open** |

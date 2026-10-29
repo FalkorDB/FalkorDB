@@ -77,9 +77,6 @@ def havFinish (a : F) : F :=
 (86dcd5a11) `a` is clamped to `[0, 1]`. -/
 def distance (p q : Point F32) : F := havFinish L (L.clamp01 (havA L p q))
 
-/-- Pre-#2983 `Point::distance`: no clamp (history, W2-temporal-4). -/
-def pre2983_distance (p q : Point F32) : F := havFinish L (havA L p q)
-
 /-- The distance from a (finite) point to itself is exactly 0. -/
 theorem distance_self (p : Point F32) (h1 : L.finite (L.toRadF64 p.latitude) = true)
     (h2 : L.finite (L.toRadF64 p.longitude) = true) : distance L p p = L.zero := by
@@ -118,16 +115,6 @@ structure NanLaws (L : Flt F F32) where
 
 variable {L} (N : NanLaws L)
 
-/-- **W2-temporal-4 (history, fixed by #2983 86dcd5a11).** Before the clamp, whenever the
-rounded `a` landed above 1 (antipodal points: `a = 1 + 2⁻⁵²`), `distance` was NaN
-(C: 20037518). Repro `bug_distance_antipodal_nan` (35 428 of 6 485 401 antipodal pairs
-on a 0.1° grid); the mechanism is `#eval`'d in `Spatial.lean`. -/
-theorem pre2983_distance_nan (p q : Point F32) (hn : N.nan (havA L p q) = false)
-    (habove : ¬ N.le (havA L p q) L.one) : N.nan (pre2983_distance L p q) = true := by
-  unfold pre2983_distance havFinish
-  obtain ⟨hneg, hnn⟩ := N.one_sub_above _ hn habove
-  exact N.mul_nan_right _ _ (N.mul_nan_right _ _ (N.atan2_nan_right _ _ (N.sqrt_neg _ hnn hneg)))
-
 /-- **W2-temporal-4 fixed.** On main `distance` is finite (so never NaN) for every pair of
 points whose haversine term is not NaN (i.e. finite coordinates), antipodal ones included. -/
 theorem distance_finite (p q : Point F32) (hn : N.nan (havA L p q) = false) :
@@ -141,12 +128,6 @@ theorem distance_finite (p q : Point F32) (hn : N.nan (havA L p q) = false) :
 
 theorem distance_not_nan (p q : Point F32) (hn : N.nan (havA L p q) = false) :
     N.nan (distance L p q) = false := N.nan_of_finite _ (distance_finite N p q hn)
-
-/-- The clamp only changes results that were wrong: whenever the rounded `a` is already in
-`[0, 1]`, main and pre-#2983 agree. -/
-theorem distance_eq_pre2983 (p q : Point F32) (h0 : N.le L.zero (havA L p q))
-    (h1 : N.le (havA L p q) L.one) : distance L p q = pre2983_distance L p q := by
-  unfold distance pre2983_distance; rw [N.clamp_id _ h0 h1]
 
 end Antipodal
 

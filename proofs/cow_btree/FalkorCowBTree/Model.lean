@@ -47,8 +47,7 @@ def enc (k d : Nat) : E := k * W + d
 def keyOf (e : E) : Nat := e / W
 /-- The doc half of an entry (what `RangeIter` yields). -/
 def docOf (e : E) : Nat := e % W
-/-- `(u64::MAX, u64::MAX)` — the old `child_upper` sentinel of `apply_batch` (removed by #2278; only
-    `pre2278_route` still uses it). -/
+/-- `(u64::MAX, u64::MAX)` — the old `child_upper` sentinel of `apply_batch` (removed by #2278). -/
 def TOP : E := enc (W - 1) (W - 1)
 
 /-- The const-generic parameters. `hB : 3 ≤ B` is what `pack_branches` needs; the const assert
@@ -288,16 +287,6 @@ def route : List E → List Node → List E → List (Node × List E)
     let upper := seps.head?.getD 0                            -- line 296
     let sl := rest.takeWhile (fun e => decide (e < upper))    -- lines 297-299
     (ch, sl) :: route seps.tail (c2 :: cs) (rest.drop sl.length)
-
-/-- **Historical** (before #2278, 3597b3a82): the old sweep gave the last child the sentinel upper
-    bound `TOP = (u64::MAX, u64::MAX)` and kept an entry only while `entry < upper`, so `TOP` itself
-    was routed to no child and dropped (FINDINGS W1 #13 / #2893). Kept for `Bugs.lean`. -/
-def pre2278_route : List E → List Node → List E → List (Node × List E)
-  | _, [], _ => []
-  | seps, ch :: cs, rest =>
-    let upper := seps.head?.getD TOP
-    let sl := rest.takeWhile (fun e => decide (e < upper))
-    (ch, sl) :: pre2278_route seps.tail cs (rest.drop sl.length)
 
 /-- `Node::apply_batch` (`node.rs:259`). Returns the fragments that replace this node (height `h`). -/
 def applyBatch (c : Cfg) : Nat → Node → List E → List Node

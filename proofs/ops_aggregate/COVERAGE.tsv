@@ -7,15 +7,15 @@ graph/src/runtime/ops/aggregate.rs	fold	243	PROVEN	rowDriver_eq_batch (fold = ba
 graph/src/runtime/ops/aggregate.rs	new	294	PROVEN	AggSt.new: aggNew_spec, foldlM_setZero
 graph/src/runtime/ops/aggregate.rs	analyze	327	PROVEN	analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec
 graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	396	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	523	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; group id = insertion index (#2977): GroupId.insert_new_id, gid_inj, distinct_by_group_id_exact (history Ops.pre2977_hashed_dedup_merges_groups, fixed by #2977 c652e505e)
+graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	523	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; group id = insertion index (#2977): GroupId.insert_new_id, gid_inj, distinct_by_group_id_exact (fixed by #2977 c652e505e)
 graph/src/runtime/ops/aggregate.rs	extract_key_columns	794	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
 graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	843	PROVEN	extractAggs/aggCol: extractAggs_spec
 graph/src/runtime/ops/aggregate.rs	consume_input_per_row	884	PROVEN	groupAll_spec, keyless_one_row; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact
 graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	928	PROVEN	groupAll_spec, rowDriver_eq_batch; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact
-graph/src/runtime/ops/aggregate.rs	run_agg_expr	998	PROVEN	rowDriver_eq_batch; DISTINCT branch keyed (node, group id) since #2977: GroupId.distinct_by_group_id_exact, fixed2977_collision_example (history Ops.pre2977_hashed_dedup_merges_groups); distinct_fold_clear_overcounts (BUG #2779, apply.rs:283)
+graph/src/runtime/ops/aggregate.rs	run_agg_expr	998	PROVEN	rowDriver_eq_batch; DISTINCT branch keyed (node, group id) since #2977: GroupId.distinct_by_group_id_exact, fixed2977_collision_example; distinct_fold_clear_overcounts (BUG #2779, apply.rs:283)
 graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1099	PROVEN	setZero: setZero_eq, setZero_spec
 graph/src/runtime/ops/aggregate.rs	next	1128	PROVEN	aggNext/finishGroup (GroupMap value is a 3-tuple since #2977; the id is ignored at emit) (unbind before keys since #3522, aggregate.rs:1192-1218): aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err, finishGroup_keys_bound/keysBound_main (KeysBound on main, fixed3522_null_key_bound, keysBound_swap_3522); keyed_empty, keyless_one_row; with binder ids (SlotReuse projLayout, finishCore/finishVals/cell) OutputsOwnAcc/EmitsOnlyScope are still refuted: bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var, bug3369_count_acc_in_merge_slot, bug3368_count_acc_in_merge_slot (BUGs)
-graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1251	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; unbind runs before the keys are written since #3522, so an accumulator id equal to a null key's id no longer drops the key: fixed3522_null_key_bound (history pre3522_null_key_unbound)
+graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1251	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; unbind runs before the keys are written since #3522, so an accumulator id equal to a null key's id no longer drops the key: fixed3522_null_key_bound
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
 graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
 graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey (cv = Value::sort_cmp, #2912): cmpKey_spec, cmpKey_lawful with Lawful discharged: Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (from proofs/value_order Main.scMain_total, copied under VO/)
@@ -44,7 +44,7 @@ graph/src/runtime/functions/aggregation.rs	register	49	NOT COVERED	registration 
 graph/src/runtime/functions/aggregation.rs	collect	55	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	count	77	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	sum	95	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
-graph/src/runtime/functions/aggregation.rs	max	119	PROVEN	maxScalar (NaN comparisons ignored, #2917): maxScalar_eq_batch (= max_batch, NaN included), maxScalar_eq_batch_nan; history pre2917_maxScalar_ne_batch_nan; also scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs always prefers
+graph/src/runtime/functions/aggregation.rs	max	119	PROVEN	maxScalar (NaN comparisons ignored, #2917): maxScalar_eq_batch (= max_batch, NaN included), maxScalar_eq_batch_nan; also scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs always prefers
 graph/src/runtime/functions/aggregation.rs	min	142	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	avg	166	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer
 graph/src/runtime/functions/aggregation.rs	percentile	230	NOT COVERED	scalar body shadowed: every aggregate registers batch_agg, which aggregate.rs:236/:1061 always prefer (same first-row percentile rule as percentile_batch since #3007)
@@ -56,11 +56,11 @@ graph/src/runtime/functions/aggregation.rs	sum_batch	394	PROVEN	sum_hom (f64 acc
 graph/src/runtime/functions/aggregation.rs	max_batch	421	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom, maxScalar_eq_batch, maxScalar_eq_batch_nan
 graph/src/runtime/functions/aggregation.rs	avg_batch	451	PROVEN	avg_count, avg_no_overflow_is_sum, avg_hom
 graph/src/runtime/functions/aggregation.rs	min_batch	498	PROVEN	mmBatch (null and NaN comparisons ignored, #2917): minmax_hom; proofs/value_order min_nan_ignored
-graph/src/runtime/functions/aggregation.rs	percentile_batch	531	PROVEN	pctFold: pct_first_wins, pct_stable, pct_repro_first_row (W2-agg-4 fixed by #3007: first row's percentile, as C); history pre3007_pct_last_wins, pre3007_pct_repro
+graph/src/runtime/functions/aggregation.rs	percentile_batch	531	PROVEN	pctFold: pct_first_wins, pct_stable, pct_repro_first_row (W2-agg-4 fixed by #3007: first row's percentile, as C)
 graph/src/runtime/functions/aggregation.rs	stdev_batch	565	PROVEN	stdev_hom
 graph/src/runtime/functions/aggregation.rs	finalize_avg	599	PROVEN	avg_empty
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	617	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed); history pre2912_partialCmpEq_not_transitive
-graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	643	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed); history pre2912_partialCmpEq_not_transitive
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_disc	617	PROVEN	disc_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 NaN panic fixed)
+graph/src/runtime/functions/aggregation.rs	finalize_percentile_cont	643	PROVEN	cont_index_in_bounds; sort by sort_cmp_f64 (#2912): pctCmp_total (W2-agg-3 fixed)
 graph/src/runtime/functions/aggregation.rs	modf	677	NOT COVERED	f64 libm split; no float reasoning
 graph/src/runtime/functions/aggregation.rs	finalize_stdev	683	MODELLED	finalizeStdev, stdev_empty, #eval [1,2,3,4]
 graph/src/runtime/functions/aggregation.rs	finalize_stdevp	705	NOT COVERED	population variant of finalize_stdev; checked only by agrees_vectorized_vs_per_row_aggregation
@@ -147,10 +147,10 @@ graph/src/runtime/ops/load_csv.rs	ipv4_is_forbidden	48	PROVEN	LoadCsv.v4Forbidde
 graph/src/runtime/ops/load_csv.rs	validate_remote_url	81	PROVEN	LoadCsv.validateRemote (DNS = FFI parameter): validateRemote_spec
 graph/src/runtime/ops/load_csv.rs	new	153	PROVEN	LoadCsv.erNew: erNew_spec
 graph/src/runtime/ops/load_csv.rs	read	167	PROVEN	LoadCsv.erRead/erRun: erRun_le
-graph/src/runtime/ops/load_csv.rs	resolve	195	PROVEN	LoadCsv.pinned: pinned_spec (PROVEN for the address bound only; the URI is ignored, which is sound now that http_config follows no redirects, #3458: LoadCsvRedirect.fixed3443_eachHopValidated; history pre3443_redirect_uses_first_host_ip)
-graph/src/runtime/ops/load_csv.rs	http_config	223	PROVEN	LoadCsv.httpConfig: httpConfig_spec (OnceLock idempotence); LoadCsvRedirect.httpCfgMain = max_redirects 0, https_only true since #3458 (closes #3443): fixed3443_eachHopValidated, noRedirect_single; history httpCfgPre3443, pre3443_redirect_downgrades_to_http
+graph/src/runtime/ops/load_csv.rs	resolve	195	PROVEN	LoadCsv.pinned: pinned_spec (PROVEN for the address bound only; the URI is ignored, which is sound now that http_config follows no redirects, #3458: LoadCsvRedirect.fixed3443_eachHopValidated)
+graph/src/runtime/ops/load_csv.rs	http_config	223	PROVEN	LoadCsv.httpConfig: httpConfig_spec (OnceLock idempotence); LoadCsvRedirect.httpCfgMain = max_redirects 0, https_only true since #3458 (closes #3443): fixed3443_eachHopValidated, noRedirect_single
 graph/src/runtime/ops/load_csv.rs	next	260	PROVEN	LoadCsv.csvNext/headerPlan: csvNext_spec, headerPlan_example
 graph/src/runtime/ops/load_csv.rs	new	328	PROVEN	LoadCsv.LcSt.new: lcNew_spec
-graph/src/runtime/ops/load_csv.rs	open_csv_records	357	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example; LoadCsvRedirect.loadRemote (agent without redirects, a 3xx is an error): fixed3443_eachHopValidated, fixed3443_redirect_is_error, noRedirect_single; #3443 fixed by #3458 (history pre3443_redirect_uses_first_host_ip, pre3443_redirect_downgrades_to_http)
+graph/src/runtime/ops/load_csv.rs	open_csv_records	357	PROVEN	LoadCsv.openSource/headerPlan: openSource_remote, headerPlan_example; LoadCsvRedirect.loadRemote (agent without redirects, a 3xx is an error): fixed3443_eachHopValidated, fixed3443_redirect_is_error, noRedirect_single; #3443 fixed by #3458
 graph/src/runtime/ops/load_csv.rs	next	458	PROVEN	LoadCsv.resolvePath/lcRowArgs: resolvePath_spec, lcRowArgs_spec
 graph/src/runtime/ops/sort.rs	tiebreak	237	PROVEN	SortCmp.tiebreak/tbCols: tiebreak_strict (distinct rows never tie), tiebreak_swap (antisymmetric given antisymmetric compare_at/compare_rows_at = sort_cmp: Discharge.lawful_main)

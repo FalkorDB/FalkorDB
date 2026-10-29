@@ -94,7 +94,7 @@ See [`../FINDINGS.md`](../FINDINGS.md) for the repro of each.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W4-matrix-1 | `pre3250_shrink_orphans_me` | `Tensor::resize`'s shrink never trimmed `me`. Orphan multi-edge rows survived: `iter_edges` yielded phantom ids and `edge_count` was too high (repro `tensor_shrink_keeps_orphan_me_rows`) | **Fixed by #3250 (#3246):** `resize` never shrinks; `resizeT_edges` and `resizeT_allInv` prove no entry is dropped and every invariant holds, with no hypothesis |
+| W4-matrix-1 | removed (17ccc5412) | `Tensor::resize`'s shrink never trimmed `me`. Orphan multi-edge rows survived: `iter_edges` yielded phantom ids and `edge_count` was too high (repro `tensor_shrink_keeps_orphan_me_rows`) | **Fixed by #3250 (#3246):** `resize` never shrinks; `resizeT_edges` and `resizeT_allInv` prove no entry is dropped and every invariant holds, with no hypothesis |
 | #2898 | — (mechanism shown by `clone_of_owned_is_not_isolated`) | `versioned_matrix::Iter` holds its layer's handle with no borrow of the owner, so an in-place write can land under a live iterator (Rust probe `probe_iter_outlives_in_place_mutation`) | **Open, latent:** issue #2898, needs a design choice; no PR |
 | #2903 | `old_write_leaks_into_new_version` | Copy-on-write is one-directional: a write through an older version leaks into the newer one. Safe today because only the in-flight version is ever written (repro `cow_is_one_directional_old_version_write_leaks`) | **Latent, documented (release):** PR #2905 (merged, main 1d15bf713) documents the contract and debug builds assert it; release behaviour, and so this counterexample, is unchanged |
 

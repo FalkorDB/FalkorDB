@@ -63,8 +63,7 @@ theorem bounded_agree :
 
 `C.ListGate`'s premise `Oracle.Bal` says `parse_expr` only succeeds by consuming
 a bracket-balanced run with no top-level `,` (or `|`, which this alphabet lacks).
-Before #3041 it was false (`x[(..2]` consumed an unclosed `(`,
-`pre3041_slice_bound_error_swallowed`). Here it is checked on the fragment. -/
+Before #3041 it was false (`x[(..2]` consumed an unclosed `(`). Here it is checked on the fragment. -/
 
 /-- Depth scan: never below 0, ends at 0, no `,` at depth 0. -/
 def balRun : Nat → List Tok → Bool
@@ -89,7 +88,7 @@ length ≤ 5 over `alpha` and of length ≤ 6 over the slice alphabet
 `x 1 + ( ) [ ] ..`, with no failure.) -/
 theorem bounded_bal : (lists 3).all balOK = true := by decide +kernel
 
-/-- The input of `pre3041_gate_changes_result`, `[1][(1..2]`, no longer parses. -/
+/-- The input `[1][(1..2]` (the pre-#3041 gate counterexample) no longer parses. -/
 theorem slice_unclosed_paren_refused :
     ∃ e, parseExpr 400 [.lbrack, .int 1, .rbrack, .lbrack, .lparen, .int 1, .dotdot, .int 2, .rbrack] = .err e :=
   ⟨_, rfl⟩

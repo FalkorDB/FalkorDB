@@ -36,8 +36,8 @@ Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 | `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59-65, per-row :884/:928, keyless pre-insert :532-535/:893-897 |
 | `dedupBy`, `distinctCountBatches` | ops/distinct.rs:62; apply.rs:283 dedupers clear |
 | `GroupId.insertKey`/`gid`/`dcgIdGo` (history `dcgGo`/`distinctCountGrouped`: key hash, removed by #2977) | DISTINCT key (node, group id), the id = insertion index (`next_group_id` aggregate.rs:709/:970, `entry.2` :728/:976, `value_dedupers` :753, eval.rs:854) |
-| `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); `pre2951_evalStack`: the old `return` at eval.rs:877 |
-| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1156-1227: outputs :1162-1190, accumulators unbound :1192-1200 BEFORE the key aliases/key row :1201-1218 (#3522; `pre3522_*` is the old order), outputs re-bound :1219-1225 |
+| `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); the old model was the `return` at eval.rs:877 (removed; in 17ccc5412) |
+| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1156-1227: outputs :1162-1190, accumulators unbound :1192-1200 BEFORE the key aliases/key row :1201-1218 (#3522; the old order's counterexample was removed; in 17ccc5412), outputs re-bound :1219-1225 |
 | `Bitmap` | batch.rs:89-167 `NullBitmap` (`BitVec 64` words) |
 A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = `List (List α)`.
 
@@ -47,8 +47,7 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
   `collect` = non-null filter, `count(*)` per-row = batch; avg count law; avg without
   overflow = plain sum; avg of empty/all-null = null; stdev empty = 0.
 * scalar `max` = `max_batch` under a compare antisymmetric away from NaN, NaN included
-  (`maxScalar_eq_batch`, `maxScalar_eq_batch_nan`; #2917 made both ignore NaN comparisons;
-  history `pre2917_maxScalar_ne_batch_nan`).
+  (`maxScalar_eq_batch`, `maxScalar_eq_batch_nan`; #2917 made both ignore NaN comparisons).
 * `LIMIT k` = `take k`, `SKIP s` = `drop s`, `SKIP s LIMIT k` = window, LIMIT 0 = [].
 * Top-k heap = first `cap` of the full sort (`topk_eq_take_sort`); full sort is sorted;
   `ORDER BY … SKIP s LIMIT k` window equals the full-sort window.
@@ -63,21 +62,19 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
    aggregate's DISTINCT state per batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v
    LIMIT 1 } RETURN count(DISTINCT v)` C 2, Rust 6. Test `bug_count_distinct_across_call_subquery_overcounts`.
 2. **FIXED by #2977 (c652e505e; closes #2969), `GroupId.distinct_by_group_id_exact`.** Was: aggregate.rs:715/:959: per-group DISTINCT keyed by FxHash of the group key, so colliding groups
-   share one seen-set (`Ops.pre2977_hashed_dedup_merges_groups`). Keys [0,0] and [1,-1452335207727870361]: C c=1,1; Rust c=1,0.
+   share one seen-set (counterexample removed; in 17ccc5412). Keys [0,0] and [1,-1452335207727870361]: C c=1,1; Rust c=1,0.
    (Related to FINDINGS #6 but a different site.) Test `bug_grouped_count_distinct_shares_state_on_group_hash_collision`.
 3. **FIXED by #2912 (b033aecc6).** Was: aggregation.rs:615/:645 sorted with
-   `partial_cmp().unwrap_or(Equal)`, not transitive with NaN (`pre2912_partialCmpEq_not_transitive`),
+   `partial_cmp().unwrap_or(Equal)`, not transitive with NaN (counterexample removed; in 17ccc5412),
    so std sort panicked and the server crashed (C returns nan). Main sorts by `sort_cmp_f64`
    (:625/:651), a total preorder (`pctCmp_total`). Test `bug_percentile_with_nan_panics`.
 4. **FIXED by #3007 (1d3b029e1, closes #2980).** Was: aggregation.rs:539 (and :253) at 289c201fe
-   overwrote the percentile on every row, so the last one won (`pre3007_pct_last_wins`,
-   `pre3007_pct_repro`). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Main stores it only
+   overwrote the percentile on every row, so the last one won (counterexamples removed; in 17ccc5412). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Main stores it only
    while the collected list is empty (aggregation.rs:552-555, :257-260): `pct_first_wins`,
    `pct_stable`, `pct_repro_first_row`. Test `bug_percentile_row_dependent_argument_last_wins`;
    main's flow test `test_row_dependent_percentile_uses_first_row`.
 5. **FIXED by #2951 (0912f4500, closes #2945).** Was: eval.rs:877 an aggregate inside a list literal
-   `return`ed out of the stack machine (`pre2951_stackEval_return_drops_frame`,
-   `pre2951_count_lit_and_size`). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
+   `return`ed out of the stack machine (counterexamples removed; in 17ccc5412). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
    `size([count(x)])` C 1, Rust type error. Main pushes the result and `continue`s (eval.rs:883-893):
    `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`,
    `main_size_singleton_agg`. Test `bug_list_literal_of_aggregates_collapses`.
@@ -85,16 +82,14 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
 **Re-target to 8621212fc (2026-10-20): W2-agg-4 fixed by #3007.** `pctStep` now stores the
 row's percentile only while no value has been collected, as aggregation.rs:552-555 does at
 8621212fc; `pct_first_wins` proves the aggregate's percentile is the first non-null row's (leading
-nulls skipped) and `pct_stable` that no later row changes it. The old overwrite model is kept as
-`pre3007_pctStep`/`pre3007_pctFold`; the counterexample is renamed `pre3007_pct_last_wins`.
+nulls skipped) and `pct_stable` that no later row changes it. The old overwrite model and its counterexample were removed (in 17ccc5412).
 COVERAGE.tsv aggregation.rs lines re-pinned (+3/+6 after :254/:549).
 
 **Re-target to 289c201fe (2026-10-20): W2-agg-5 fixed by #2951.** `evalStack` is now a postfix
 stack machine (`compile`, `run`, `step`) whose aggregate leaf pushes its finalized value, as
 eval.rs:883-893 does at 289c201fe; `evalStack_eq_evalRef` proves it equals the recursive reference
 on every expression, and `evalStack_list_of_aggs` that a list literal of finalized aggregates yields
-one element per item. The old `return` model is kept as `pre2951_evalStack`; the counterexample is
-renamed `pre2951_stackEval_return_drops_frame`.
+one element per item. The old `return` model and its counterexample were removed (in 17ccc5412).
 
 ## Gaps / assumptions
 Sort order inside `SortCmp` is a parameter `cv`; on main it is `Value::sort_cmp`, whose laws are
@@ -120,8 +115,8 @@ and aggregate.rs `hash` rows are PROVEN again. New fn `tiebreak` (sort.rs:237):
 `AggregateOp::next` now unbinds the accumulators (aggregate.rs:1184-1192) before it writes the key
 aliases and the key row (:1193-1209), so a null key sharing an accumulator's slot id stays bound.
 `finishGroup` is that order (`finishEval`, then unbind, then `finishTail`, then the outputs); the old
-order is `preFinishGroup`, and the counterexample is renamed `pre3522_null_key_unbound` (with
-`PreKeysBound`/`preEmitCell`). New: `fixed3522_null_key_bound` (`RETURN null AS x, count(1)`),
+order is `preFinishGroup` (with
+`PreKeysBound`); its counterexample was removed (in 17ccc5412). New: `fixed3522_null_key_bound` (`RETURN null AS x, count(1)`),
 `keysBound_swap_3522` (`WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)`), and the general
 `finishGroup_keys_bound`/`keysBound_main`: for any keys/accumulators/evaluator, with no key name an
 output name and the group evaluating, `KeysBound` holds on main. COVERAGE.tsv line pins refreshed
@@ -163,8 +158,7 @@ Fixed by #2912 (b033aecc6): ORDER BY over floats with NaN crashed the server (fl
 `http_config` (load_csv.rs:223-234) now sets `https_only(true)` and `max_redirects(0)`, and
 `open_csv_records` (:357-) turns a 3xx reply into the error "LOAD CSV does not follow redirects"
 (:388-399), as C does. `LoadCsvRedirect.httpCfgMain` is that config and `loadRemote` that arm;
-the old config/arm are `httpCfgPre3443`/`loadRemotePre3443`, and the refutations are renamed
-`pre3443_redirect_uses_first_host_ip`, `pre3443_redirect_downgrades_to_http`. New:
+the old config/arm and their refutations were removed (in 17ccc5412). New:
 `fixed3443_eachHopValidated` (main's `loadRemote` satisfies `EachHopValidated` for every DNS
 answer and server) and `fixed3443_redirect_is_error`; `noRedirect_single` now holds for either
 `https_only`. #3436/#3462 only shift line pins (load_csv.rs `next` 260/458, `new` 328).

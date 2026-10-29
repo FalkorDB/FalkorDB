@@ -27,12 +27,10 @@ Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then
 FIXED by #3285 (cab3cf192), W7-btree-2: the const asserts (`mod.rs:150-160`, `:172-182`, `:190-200`)
 now gate `DOC_BYTES` with `is_read_width` (`mod.rs:88`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
 widths `read_width` loads. `docBytesAssert_iff`, `admitted_doc_read`, `admitted_fromPairs_roundtrip`:
-every width a tree can be built with reads its docs back. HISTORICAL (before #3285 the assert was
-`1 <= DOC_BYTES <= 8`): with `DOC_BYTES = 3` (5, 6, 7) every doc read was wrong —
-`pre3285_docBytes3_reads_garbage` (the first entry's doc reads 8 bytes into the next key) and
-`pre3285_docBytes3_last_oob` (Rust panicked "range end index 16 out of range for slice of length 11"
-on the second `insert` of a `CowBTree::<256, 256, 3>`); `pre3285_assert_admitted_3` /
-`docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
+every width a tree can be built with reads its docs back. Before #3285 the assert was
+`1 <= DOC_BYTES <= 8`, so `DOC_BYTES = 3` (5, 6, 7) read every doc wrong (Rust panicked "range end index 16
+out of range for slice of length 11" on the second `insert` of a `CowBTree::<256, 256, 3>`; counterexamples
+removed, in 17ccc5412); `docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
 -/
 namespace IndexLayer.Leaf
 
@@ -281,9 +279,6 @@ theorem fromPairsD_roundtrip (D : Nat) (hD : W D) (ps : List P) (hs : Sorted2 ps
     `is_read_width(DOC_BYTES)`. -/
 def docBytesAssert (D : Nat) : Bool := isReadWidth D
 
-/-- HISTORICAL: the assert before #3285, `DOC_BYTES >= 1 && DOC_BYTES <= FIELD`. -/
-def pre3285_docBytesAssert (D : Nat) : Bool := 1 ≤ D && D ≤ 8
-
 theorem docBytesAssert_iff (D : Nat) : docBytesAssert D = true ↔ D = 1 ∨ D = 2 ∨ D = 4 ∨ D = 8 :=
   isReadWidth_iff D
 
@@ -311,30 +306,6 @@ theorem asserted_fromSorted_contents (L B D : Nat) (h : constAssert L B D = true
   exact fromSorted_contents L B (by omega) h.1.1.2 (by omega) ps hs hu
 
 theorem docBytesAssert_rejects_3 : docBytesAssert 3 = false := rfl
-theorem pre3285_assert_admitted_3 : pre3285_docBytesAssert 3 = true := rfl
-
-/-- The two asserts differ on exactly 3, 5, 6 and 7 (on `0..=16`). -/
-theorem docBytesAssert_vs_pre3285 :
-    (List.range 17).filter (fun D => pre3285_docBytesAssert D && !docBytesAssert D) = [3, 5, 6, 7] := by
-  decide
-
 /-! ## HISTORICAL (before #3285): `DOC_BYTES ∉ {1, 2, 4, 8}` passed the const assert but could not be read -/
-
-/-- With `DOC_BYTES = 3` the stride is 11, but `read_width(.., 3)` reads 8 bytes (`mod.rs:104-107`):
-    the first entry's doc comes back as 5 bytes of the next key glued on. Fixed by #3285 (cab3cf192):
-    `docBytesAssert_rejects_3`. -/
-theorem pre3285_docBytes3_reads_garbage :
-    aosBuildD 3 [(1, 5), (2, 6)] = some ([(1, 5), (2, 6)].flatMap (aosEncD 3)) ∧
-    aosDocD 3 ([(1, 5), (2, 6)].flatMap (aosEncD 3)) 0 ≠ 5 := by
-  refine ⟨aosBuildD_some 3 (by omega) _ (by
-    intro p hp; simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
-    rcases hp with rfl | rfl <;> exact ⟨by unfold U64; decide, by unfold U64; decide⟩) (by
-    intro p hp; simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
-    rcases hp with rfl | rfl <;> decide), ?_⟩
-  decide
-
-/-- ...and the last entry's 8-byte read ended past the page: the Rust slice `b[off..off + 8]` panicked. -/
-theorem pre3285_docBytes3_last_oob :
-    ([(1, 5)].flatMap (aosEncD 3)).length < (8 + 3) * 0 + 8 + 8 := by decide
 
 end IndexLayer.Leaf

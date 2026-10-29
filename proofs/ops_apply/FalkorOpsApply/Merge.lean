@@ -38,16 +38,16 @@ Theorems:
   for every batch size: same final graph, same next id, and the emitted rows are
   a permutation of the reference's (the within-batch cache exactly simulates the
   visibility of earlier rows' creations).
-* `pre3067_batch_dependent` (fixed by #3067) — with `ON CREATE SET` touching the merged property the
+* Batch dependence (fixed by #3067; counterexample removed; in 17ccc5412) — with `ON CREATE SET` touching the merged property the
   result depends on `BATCH_SIZE`: rows that straddle a batch boundary see the
   earlier row's creation, rows inside one batch do not. CONFIRMED live.
-* `pre3050_cross_clause_unbound` — before #3050 the cache was keyed by the hash
+* Cross-clause cache (counterexample removed; in 17ccc5412) — before #3050 the cache was keyed by the hash
   only and shared by all MERGE clauses of the query: a second clause whose
   pattern hashes equal bound the FIRST clause's variable id and left its own
   unbound ("Variable b not found"). Fixed on main: the key is `(operator idx,
   hash)` (`Clause.op`); `cross_clause_keyed` proves the second clause creates and
   binds its own node.
-* `pre3055_allBound_first_only` — before #3055 the all-bound shortcut returned one
+* All-bound shortcut (counterexample removed; in 17ccc5412) — before #3055 the all-bound shortcut returned one
   row where the reference returns one per match (visible through a path variable).
   Fixed on main: `allBoundMain` is off for a relationship exposed by a path;
   `allBound_path_keeps_all` proves it emits the reference rows.
@@ -487,16 +487,6 @@ theorem batches_1024 : batches 1024 (by decide) [1, 2] = [[1, 2]] := by
 theorem batches_1 : batches 1 (by decide) [1, 2] = [[1], [2]] := by
   simp [batches]
 
-/-- **Batch-size dependence (history, fixed by #3067 b47d6d6a3; main: `fixed3067_batch_independent`).**  Rows 1 and 2 in one batch: row 2 does not see the
-node row 1 created (and re-keyed to 2), so a second node is created.  In
-separate batches (in the live repro: rows 1 and 1025 of `UNWIND range(1,1025)`)
-row 2 matches it.  The reference creates 1 node; C creates 2 (C evaluates all
-matches before any creation). -/
-theorem pre3067_batch_dependent :
-    (rustMerge clCase false st0 [[1, 2]]).g.length = 2 ∧
-    (rustMerge clCase false st0 [[1], [2]]).g.length = 1 ∧
-    (refMerge clCase ⟨[], 0, []⟩ [1, 2]).g.length = 1 := by decide
-
 /-- **Cross-clause cache (history, fixed by #3050).**  Before #3050 the cache was keyed by
 the hash only, so every MERGE of the query shared it; that is this model with every clause
 carrying the same `op`.  `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})`:
@@ -511,11 +501,6 @@ def clB0 : Clause Unit := { clB with op := 0 }
 def afterA : SState (α := Unit) := rustMerge clA false ⟨[], 0, [], []⟩ [[()]]
 def afterB : SState (α := Unit) := rustMerge clB false { afterA with out := [] } [[()]]
 def afterB0 : SState (α := Unit) := rustMerge clB0 false { afterA with out := [] } [[()]]
-
-theorem pre3050_cross_clause_unbound :
-    afterB0.out = [((), none)] ∧ afterB0.g.length = 1 ∧
-    (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).out = [((), some 0), ((), some 1)] ∧
-    (refMerge clB (refMerge clA ⟨[], 0, []⟩ [()]) [()]).g.length = 2 := by decide
 
 /-- **#3050 fixes it on main.**  The cache key carries the operator idx, so the second
 clause misses, creates its own node (id 1) and binds its own variable: same outputs and
@@ -574,11 +559,6 @@ p=(a)-[:R]->(b)`, modelled as two nodes with the key) but only the first is emit
 reference (and C) emit both. -/
 def clK : Clause Unit := ⟨0, 0, fun _ => 1, none, none⟩
 def gPar : Graph := [⟨0, 1⟩, ⟨1, 1⟩]
-
-theorem pre3055_allBound_first_only :
-    (rustMerge clK (preAllBound true pathRels) ⟨gPar, 2, [], []⟩ [[()]]).out = [((), some 0)] ∧
-    (rustMerge clK false ⟨gPar, 2, [], []⟩ [[()]]).out = [((), some 0), ((), some 1)] ∧
-    (refMerge clK ⟨gPar, 2, []⟩ [()]).out = [((), some 0), ((), some 1)] := by decide
 
 /-- **#3055 fixes it on main**: the flag computed by the new condition is `false` on the
 path shape, so every match is emitted, as the reference does. -/

@@ -19,7 +19,6 @@ it `NaN`, so a NaN inside a list or vector printed `[NaN]` (C `[nan]`). `write_f
 (`resultset_replyverbose.c:239`), without the space after the colons that the nested
 `SIValue_ToString` form has (`value.c:504`); the top-level form now matches. Against C's
 `%f` (`CPf`, a hypothesis about libc): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`, `pointStr_c`.
-History: `pre3043_point_space`, `pre3043_nan_in_list`.
 -/
 namespace RedisLayer.Resp
 open RedisLayer.Compact (R Val Env encPair encReply)
@@ -415,31 +414,6 @@ theorem verbose_point_c (E : Env F) (H : CPf M) (a o : F) (ha : M.nan a = false)
   simp [specVb, pointStr_c M H a o ha ho]
 
 /-! ### History: before #3043 (`289c201fe`) -/
-
-/-- The top-level point before #3043 (`reply.rs:522-525` then): a space after each colon. -/
-def pre3043_pointStr (a o : F) : String :=
-  "point({latitude: " ++ M.f6 a ++ ", longitude: " ++ M.f6 o ++ "})"
-
-/-- The float leaf of `format_value_to_string` before #3043: plain `{:.6}`. -/
-def pre3043_fmtFloat (x : F) : String := M.f6 x
-
-/-- **Divergence before #3043 (confirmed live, `repro_live.py` V1)**: every top-level point
-differed from C's text (two characters longer). -/
-theorem pre3043_point_space (H : CPf M) (a o : F) (ha : M.nan a = false)
-    (ho : M.nan o = false) : pre3043_pointStr M a o ≠ cPointStr H.cf a o := by
-  intro h
-  have := congrArg String.length h
-  have l1 : "point({latitude: ".length = "point({latitude:".length + 1 := by decide
-  have l2 : ", longitude: ".length = ", longitude:".length + 1 := by decide
-  simp only [pre3043_pointStr, cPointStr, H.f6_agree a ha, H.f6_agree o ho,
-    String.length_append, l1, l2] at this
-  omega
-
-/-- **Divergence before #3043 (confirmed live, `repro_live.py` V2)**: Rust's `{:.6}` spells
-NaN `NaN`, so `RETURN [0.0/0.0]` printed `[NaN]`; C `[nan]`. -/
-theorem pre3043_nan_in_list (H : CPf M) (x : F) (hn : M.nan x = true) (hR : M.f6 x = "NaN") :
-    pre3043_fmtFloat M x ≠ H.cf x := by
-  simp [pre3043_fmtFloat, hR, H.nan_text x hn]
 
 /-- And on main the same NaN prints as C does. -/
 theorem fixed3043_nan_in_list (x : F) (hn : M.nan x = true) :

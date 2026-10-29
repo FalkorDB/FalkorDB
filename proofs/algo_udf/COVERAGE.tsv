@@ -26,7 +26,7 @@ graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	57
 graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	636	PROVEN	Compact.compactEdges_sound (both orientations pushed); LagContract.compactBuild (GrB_Matrix_new n×n orientation, :679)
 graph/src/runtime/functions/algo_procedures.rs	register	705	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
 graph/src/runtime/functions/algo_procedures.rs	register_pagerank	720	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	725	PROVEN	Compact.pagerankPath, pagerank_unknown_label_empty, pagerank_unknown_type_empty, pagerank_compact_nonempty (fixed by #3058; historical pre3058_pagerank_unknown_label_compact_empty), unfiltered_rows_exact; LAGr_PageRank AXIOMATISED; LagContract.projectedRun — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
+graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	725	PROVEN	Compact.pagerankPath, pagerank_unknown_label_empty, pagerank_unknown_type_empty, pagerank_compact_nonempty (fixed by #3058), unfiltered_rows_exact; LAGr_PageRank AXIOMATISED; LagContract.projectedRun — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
 graph/src/runtime/functions/algo_procedures.rs	register_wcc	839	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
 graph/src/runtime/functions/algo_procedures.rs	algo_wcc	844	PROVEN	Compact.wcc_compact_component_id_not_member, unfiltered_component_ids_are_members (LagWcc hypothesis); LagContract.projectedRun (LAGRAPH_INVALID_GRAPH outcome) — #3349 open: bug3349_one_node_projection_fails refutes ProjectionTotal
 graph/src/runtime/functions/algo_procedures.rs	register_betweenness	940	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
@@ -42,7 +42,7 @@ graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2067	PROVEN	PathD
 graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2103	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
 graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2122	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
 graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2144	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
-graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2156	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop (W2-traverse-5 fixed by #3113 8a66c01e5; pre3113_cost_default_diverges kept); CostProp.edgeNumericAttr (costProp configured vs absent kept apart) — #3121 open: bug3121_fastpath_missing_cost_zero refutes MissingCostIsOne on the :2308 fast path (enumeration satisfies it: rust_enum_ok)
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2156	PROVEN	Paths.cost_agree, cost_no_prop_hops, cost_default_agrees, dijkstra_cost_no_prop (W2-traverse-5 fixed by #3113 8a66c01e5); CostProp.edgeNumericAttr (costProp configured vs absent kept apart) — #3121 open: bug3121_fastpath_missing_cost_zero refutes MissingCostIsOne on the :2308 fast path (enumeration satisfies it: rust_enum_ok)
 graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2173	PROVEN	Paths.far_outgoing, far_incoming, far_both
 graph/src/runtime/functions/algo_procedures.rs	node_successors	2205	PROVEN	Graph.mem_succs, succs_map_fst_sublist
 graph/src/runtime/functions/algo_procedures.rs	cmp	2240	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
@@ -65,10 +65,10 @@ graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
 graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
 graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear
 graph/src/udf/js_classes.rs	collect_edges	97	PROVEN	Neighbors.outgoing_ok, self_loop_twice
-graph/src/udf/js_classes.rs	create_js_node	134	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed; historical pre3454_deleted_node_empty)
+graph/src/udf/js_classes.rs	create_js_node	134	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED); UdfNodeView.rsJsNode, rs_runtime_first, RT.not_differs, jsNode_eq_helpers (fixed by #3464: runtime-first through node_differs_from_committed)
 graph/src/udf/js_classes.rs	set_node_labels	203	PROVEN	UdfNodeView.setNodeLabels, jsNode_eq_helpers, jsNode_labels (QuickJS array/object set AXIOMATISED)
 graph/src/udf/js_classes.rs	set_node_attrs	220	PROVEN	UdfNodeView.setNodeAttrs, jsNode_eq_helpers (UdfClasses.attrLoop: reserved keys not copied; QuickJS object set AXIOMATISED)
-graph/src/udf/js_classes.rs	create_js_edge	246	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464; historical pre3454_edge_source_empty)
+graph/src/udf/js_classes.rs	create_js_edge	246	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first; endpoints via create_js_node with runtime: UdfNodeView.rs_edge_ok, fixed3454_edge_source (fixed by #3464)
 graph/src/udf/js_classes.rs	create_js_path	322	PROVEN	UdfClasses.jsPath_length
 graph/src/udf/js_classes.rs	js_get_neighbors_entry	382	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
 graph/src/udf/js_classes.rs	js_get_neighbors	401	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
@@ -87,7 +87,7 @@ graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript
 graph/src/udf/js_context.rs	ensure_context_current	187	PROVEN	UdfContext.ensureCurrent_version
 graph/src/udf/js_context.rs	rebuild_context	204	PROVEN	UdfContext.rebuild_keys, rebuild_fail; Repo.keys
 graph/src/udf/js_context.rs	call_udf_bridge	281	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
-graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects, validate_runtime_same_globals (#3079: also calls setup_graph_global; historical pre3079_validate_lacks_graph) (the eval-ed JS register body; global install AXIOMATISED)
+graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects, validate_runtime_same_globals (#3079: also calls setup_graph_global) (the eval-ed JS register body; global install AXIOMATISED)
 graph/src/udf/js_globals.rs	collect_validate_names	98	PROVEN	UdfGlobals.collectNames_ok
 graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG), validate_runtime_same_globals
 graph/src/udf/js_globals.rs	setup_graph_global	163	PROVEN	UdfGlobals.graphGlobal: graph_global_in_both, validate_runtime_same_graph (#3079; property install AXIOMATISED QuickJS)
@@ -99,7 +99,7 @@ graph/src/udf/repository.rs	default	67	PROVEN	UdfRepoOps.rnew_spec
 graph/src/udf/repository.rs	new	74	PROVEN	UdfRepoOps.rnew_spec
 graph/src/udf/repository.rs	version	83	PROVEN	UdfRepoOps.bump_spec
 graph/src/udf/repository.rs	bump_version	89	PROVEN	UdfRepoOps.bump_spec
-graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collides, collision_rejected, dotted_collision_rejected, replace_self_ok, case_sensitive, load_preserves_crossFold, keysUnique_of_crossFold (fixed by #3066; historical pre3066_*); UdfGlobals.empty_lib_name_mismatch
+graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collides, collision_rejected, dotted_collision_rejected, replace_self_ok, case_sensitive, load_preserves_crossFold, keysUnique_of_crossFold (fixed by #3066); UdfGlobals.empty_lib_name_mismatch
 graph/src/udf/repository.rs	delete	156	PROVEN	Repo.delete_preserves, delete_breaks_other
 graph/src/udf/repository.rs	flush	173	PROVEN	UdfRepoOps.flush_spec
 graph/src/udf/repository.rs	list	186	PROVEN	UdfRepoOps.list_shows_raw, list_filter, strip_qual
@@ -108,9 +108,9 @@ graph/src/udf/repository.rs	serialize	227	PROVEN	UdfRepoOps.serialize_roundtrip
 graph/src/udf/repository.rs	deserialize	242	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
 graph/src/udf/type_convert.rs	with_stack	80	AXIOMATISED	stacker::maybe_grow (psm stack-switching FFI): runs f and returns its result on a fresh segment when the stack is low; transparent in the model (one fromF/toF level = one with_stack call)
 graph/src/udf/type_convert.rs	udf_nesting_error	87	PROVEN	Nesting.nestErr, nestErr_eq; MarshalCap.self_array_error, fromJs_nestArr_past, toJs_nestList_past
-graph/src/udf/type_convert.rs	value_to_js	97	PROVEN	Marshal.toJs (= toF at depth 0): toJs_frames, toJs_past_cap, toJs_eq_pre3336, nestList_rt, toJs_nestList_past (#3336); int_roundtrip, float_rt_iff, neg_zero_rt, node_rt, rel_rt, point_rt, datetime_rt, vecf32_rt, map_never_marked, constructor_key_roundtrips; cap_asymmetry_vecf32
-graph/src/udf/type_convert.rs	value_to_js_at	110	PROVEN	Marshal.toF / toStepFn (depth check :117): toStep, Step.run_frames, run_past_cap, run_eq_uncapped, run_mono; toF_nestList_ok, toF_nestList_err; historical pre3336_toF
+graph/src/udf/type_convert.rs	value_to_js	97	PROVEN	Marshal.toJs (= toF at depth 0): toJs_frames, toJs_past_cap, nestList_rt, toJs_nestList_past (#3336); int_roundtrip, float_rt_iff, neg_zero_rt, node_rt, rel_rt, point_rt, datetime_rt, vecf32_rt, map_never_marked, constructor_key_roundtrips; cap_asymmetry_vecf32
+graph/src/udf/type_convert.rs	value_to_js_at	110	PROVEN	Marshal.toF / toStepFn (depth check :117): toStep, Step.run_frames, run_past_cap, run_eq_uncapped, run_mono; toF_nestList_ok, toF_nestList_err
 graph/src/udf/type_convert.rs	value_to_js_level	124	PROVEN	Marshal.toLevel: toLevel_leaf_indep, toLevel_leaf_some, toStep (ext/total/kid_err/mono), toJs_int, toJs_datetime, toJs_vecf32, map_never_marked
-graph/src/udf/type_convert.rs	js_to_value	252	PROVEN	Marshal.fromJs (= fromF at depth 0, any QuickJS heap): fromJs_frames, fromJs_past_cap, fromJs_eq_pre3336, pre3336_finished_eq, self_array_error, fromJs_nestArr_ok, fromJs_nestArr_past, advisory_array_error, fromJs_needs_all_frames (#3336); historical pre3336_self_array_overflows, pre3336_nestArr_overflows; neg_zero_rt, vecf32_rt, num_eq_pre3074_off_negZero, forged_node_marker, forged_edge_marker (BUG), internal_keys_dropped; historical pre3074_*
+graph/src/udf/type_convert.rs	js_to_value	252	PROVEN	Marshal.fromJs (= fromF at depth 0, any QuickJS heap): fromJs_frames, fromJs_past_cap, self_array_error, fromJs_nestArr_ok, fromJs_nestArr_past, advisory_array_error, fromJs_needs_all_frames (#3336), pre3336_nestArr_overflows; neg_zero_rt, vecf32_rt, forged_node_marker, forged_edge_marker (BUG), internal_keys_dropped
 graph/src/udf/type_convert.rs	js_to_value_at	262	PROVEN	Marshal.fromF: fromF_eq_run, fromStep, Step.run_frames, run_past_cap, run_eq_uncapped, run_mono; fromF_nestArr_ok, fromF_nestArr_err; historical pre3336_fromF
 graph/src/udf/type_convert.rs	js_to_value_level	270	PROVEN	Marshal.fromLevel = runShape ∘ classify (array :319, path :359, plain object :443 depth checks): shape_leaf_indep, shape_chk_err, shape_ext, shape_total, shape_kid_err, shape_mono, pathLoop_err, plain_obj_is_map, fromJs_num, fromJs_big, fromJs_kind

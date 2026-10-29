@@ -36,7 +36,7 @@ graph/src/graph/endpoint_index.rs	EndpointIndex::prepare	520	PROVEN	Ix.prepare: 
 graph/src/graph/endpoint_index.rs	EndpointIndex::tier_len	537	PROVEN	Ix.tierLen: tierLen_eq
 graph/src/graph/endpoint_index.rs	EndpointIndex::with_tier	549	PROVEN	Ix.withTier: view_withTier, tierOK_withTier
 graph/src/graph/endpoint_index.rs	EndpointIndex::resize_tier	581	PROVEN	withTier r (growTo r n): view_grow
-graph/src/graph/endpoint_index.rs	EndpointIndex::prepare_tiers	605	PROVEN	Ix.prepareTiers (#2905: clampStarts, starts clamped monotone): view_prepareTiers, restore_agrees (any starts, incl. the Rust test [10,5,0]), clampStarts_mono (no underflow; tier sizes sum to len), clampStarts_ordered (no-op on restore's ordered starts); history pre2905_unordered_underflows
+graph/src/graph/endpoint_index.rs	EndpointIndex::prepare_tiers	605	PROVEN	Ix.prepareTiers (#2905: clampStarts, starts clamped monotone): view_prepareTiers, restore_agrees (any starts, incl. the Rust test [10,5,0]), clampStarts_mono (no underflow; tier sizes sum to len), clampStarts_ordered (no-op on restore's ordered starts)
 graph/src/graph/endpoint_index.rs	EndpointIndex::locate	629	PROVEN	Ix.locate: locate_some, locate_none
 graph/src/graph/endpoint_index.rs	EndpointIndex::set	645	PROVEN	Ix.set: view_set, get_set, u64_max_pair_reads_as_absent (boundary)
 graph/src/graph/endpoint_index.rs	EndpointIndex::clear	695	PROVEN	Ix.clear: view_clear, get_clear

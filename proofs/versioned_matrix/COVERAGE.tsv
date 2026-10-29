@@ -79,7 +79,7 @@ graph/src/graph/graphblas/tensor.rs	Tensor::eff_get	442	PROVEN	effV: addBatch_co
 graph/src/graph/graphblas/tensor.rs	Tensor::get	463	PROVEN	edges: addBatch_correct, removeBatch_correct
 graph/src/graph/graphblas/tensor.rs	Tensor::set_all_from_slices	497	PROVEN	vacant/occupied/writeEntry/addBatch: addBatch_correct, insAll_spec
 graph/src/graph/graphblas/tensor.rs	Tensor::remove_all	629	PROVEN	removeBatch (slow) + removeFast: removeBatch_correct, removeFast_correct
-graph/src/graph/graphblas/tensor.rs	Tensor::resize	823	PROVEN	VMTensorOps.resizeT: resizeT_eq, resizeT_edges, resizeT_allInv, resizeT_blkInv, resizeT_hasMultiEdge, resizeT_dims (#3250 never shrinks, no entry dropped; history pre3250_shrink_orphans_me, pre3250_shrink_safe)
+graph/src/graph/graphblas/tensor.rs	Tensor::resize	823	PROVEN	VMTensorOps.resizeT: resizeT_eq, resizeT_edges, resizeT_allInv, resizeT_blkInv, resizeT_hasMultiEdge, resizeT_dims (#3250 never shrinks, no entry dropped)
 graph/src/graph/graphblas/tensor.rs	Tensor::flush	890	PROVEN	foldP: foldP_correct
 graph/src/graph/graphblas/tensor.rs	Tensor::fold_latched	947	PROVEN	VMTensorOps.foldLatched: foldLatched_correct
 graph/src/graph/graphblas/tensor.rs	Tensor::fold_oversized	965	PROVEN	VMTensorOps.foldOversized: foldOversized_correct, foldOversized_lazy
@@ -109,7 +109,7 @@ graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1433	PROVEN	VMTensorOps.wai
 graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1446	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
 graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1455	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
 graph/src/graph/graphblas/tensor.rs	Tensor::encode	1474	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
-graph/src/graph/graphblas/tensor.rs	Tensor::decode	1553	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033; history pre3033_orphan_row_panics)
+graph/src/graph/graphblas/tensor.rs	Tensor::decode	1553	PROVEN	graphblas_wrappers Decode.checkLayers_merge_in_bounds (#2996); Decode.decodeCheck_ok_iff / decodeCheck_accepts_encoded: promotion completeness (single_me/multi_me) enforced on decode (#3033)
 graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1699	PROVEN	graphblas_wrappers Misc.expand
 graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1706	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
 graph/src/graph/graphblas/tensor.rs	Iter::new	1734	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome

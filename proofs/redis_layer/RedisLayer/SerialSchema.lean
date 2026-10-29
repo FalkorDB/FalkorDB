@@ -7,12 +7,12 @@ Faithful to the token layout; the index/constraint structures keep only what is 
 abstracted as `simCode`), weights are `f64` bit patterns (`one` = `1.0`).
 
 Findings proven here:
-* `pre3252_field_prefix_lost` (history; **fixed by #3252**, cfe6e7945) — an index on an
+* Field-prefix loss (counterexample removed; in 17ccc5412; **fixed by #3252**, cfe6e7945) — an index on an
   attribute whose own name starts with `range:` (range index) or `vector:` (vector index)
   came back on a *different* attribute: the encoder writes the bare attribute name (`:384`)
   but the decoder stripped the RediSearch prefix (cab3cf192 `:642-646`). Confirmed live then.
   Now the name is used verbatim: `field_name_kept`, and `decField_encField` round-trips it.
-* `pre3514_*` (history; **fixed by #3514**, a0ba12950, closes #3484) — see below and
+* Multi-type index loss (counterexamples removed; in 17ccc5412; **fixed by #3514**, a0ba12950, closes #3484) — see below and
   `SerialCLayout`: C writes ONE field entry per attribute with every type in the bitmask, but
   `decode_index_field` kept one type, so an attribute with a RANGE and a FULLTEXT or VECTOR index
   lost its RANGE index on loading a C-written RDB. Main now decodes every set type into its own
@@ -85,26 +85,6 @@ def stripPrefix (p s : Bytes) : Bytes := if p.isPrefixOf s then s.drop p.length 
 def RANGE_ : Bytes := "range:".toUTF8.toList.map (·.toNat)
 def VECTOR_ : Bytes := "vector:".toUTF8.toList.map (·.toNat)
 
-/-- **History**: `decode_index_field` as it was before #3514 (a0ba12950), `:621-696` of the
-commit it cites: since #3252 (cfe6e7945) the attribute is the decoded name verbatim (C does the
-same), but ONE type is kept (fulltext, else vector, else range) and a phonetic `"no"` is kept
-as a code. Used only by the `pre3514_*` theorems in `SerialCLayout`. -/
-def pre3514_decField : Dec (Bytes × Fld) :=
-  Dec.bind rdB fun nb => Dec.bind rdU fun ft => Dec.bind rdD fun w =>
-  Dec.bind rdU fun ns => Dec.bind rdB fun pb =>
-  let name := strip U nb
-  let isVec := ft &&& VECTOR ≠ 0
-  let isFt := ft &&& FULLTEXT ≠ 0
-  let ty := if isFt then Ty.fulltext else if isVec then Ty.vector else Ty.range
-  let attr := name
-  if isVec then
-    Dec.bind rdU fun dim => Dec.bind rdU fun m => Dec.bind rdU fun efc =>
-    Dec.bind rdU fun efr => Dec.bind rdU fun sc =>
-    pure' (attr, ⟨ty, none, none, none, some ⟨dim, some m, some efc, some efr, some (simName sc)⟩⟩)
-  else
-    pure' (attr, ⟨ty, if isFt then some w else none, if isFt then some (ns ≠ 0) else none,
-                  if isFt then some (strip U pb) else none, none⟩)
-
 /-- `RANGE` bits of the type word (`NUMERIC | GEO | STR`). -/
 def RANGEW : Nat := NUMERIC ||| STR ||| GEO
 
@@ -154,14 +134,6 @@ def normField (f : Fld) : Fld :=
 /-- The attribute name the decoder recovers: the encoded one (#3252). -/
 def attrBack (attr : Bytes) (_ty : Ty) : Bytes := attr
 
-/-- The attribute name the decoder recovered before #3252 (cab3cf192 `:642-646`): the
-RediSearch prefix stripped from a range / vector field. -/
-def pre3252_attrBack (attr : Bytes) (ty : Ty) : Bytes :=
-  match ty with
-  | .range => stripPrefix RANGE_ attr
-  | .vector => stripPrefix VECTOR_ attr
-  | .fulltext => attr
-
 theorem phonNorm_encPh (f : Fld) : phonNorm (encPh f) = phonNorm (f.phonetic.getD []) := by
   unfold encPh
   by_cases h : f.phonetic.getD [] = []
@@ -198,17 +170,6 @@ theorem decField_encField (attr : Bytes) (f : Fld) (ha : U.valid attr)
     | some v =>
       simp [decField, encField, Dec.bind, rdB, rdU, rdD, pure', fieldType, attrBack, normField,
         strip_nullTerm U attr ha, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR, FULLTEXT]
-
-/-- **History (W4-redis-2, fixed by #3252)**: an attribute literally named `range:<a>`
-(range index) was reloaded as `<a>`. -/
-theorem pre3252_field_prefix_lost (a : Bytes) :
-    pre3252_attrBack (RANGE_ ++ a) .range = a := by
-  simp [pre3252_attrBack, stripPrefix]
-
-/-- …whereas every other name survived. -/
-theorem pre3252_attrBack_plain (attr : Bytes) (ty : Ty) (h1 : ¬ RANGE_.isPrefixOf attr)
-    (h2 : ¬ VECTOR_.isPrefixOf attr) : pre3252_attrBack attr ty = attr := by
-  cases ty <;> simp [pre3252_attrBack, stripPrefix, h1, h2]
 
 /-- **`field_name_kept`** (#3252): every attribute name survives the reload, `range:x`
 and `vector:x` included — `decField_encField` returns exactly the encoded name. -/

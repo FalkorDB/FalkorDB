@@ -54,27 +54,8 @@ theorem phoneticEnabled_iff_ne_no (o : TextOpts) (p : String) (h : o.phonetic = 
     o.phoneticEnabled = true ↔ p ≠ PHONETIC_OFF := by
   simp [TextOpts.phoneticEnabled, h, h1]
 
-/-- **History (fixed by #3514, `a0ba12950`)**: the rule before was "any non-empty code", so
-C's `"no"` (written on every fulltext field it did not enable) read as ON: every fulltext
-index of a C-written RDB came back phonetic (`'Smyth'` found `'Smith'`). -/
-def pre3514_phoneticEnabled (o : TextOpts) : Bool := o.phonetic.any (· ≠ "")
-
-theorem pre3514_phonetic_no_was_on : pre3514_phoneticEnabled ⟨none, none, some PHONETIC_OFF, none, none⟩ = true := by
-  decide
-
 theorem fixed3514_phonetic_no_is_off : (TextOpts.phoneticEnabled ⟨none, none, some PHONETIC_OFF, none, none⟩) = false := by
   decide
-
-/-- The two rules differ only on `"no"`. -/
-theorem pre3514_rule_differs_only_on_no (o : TextOpts) :
-    pre3514_phoneticEnabled o ≠ o.phoneticEnabled → o.phonetic = some PHONETIC_OFF := by
-  cases h : o.phonetic with
-  | none => simp [pre3514_phoneticEnabled, TextOpts.phoneticEnabled, h]
-  | some p => by_cases hp : p = ""
-              · simp [pre3514_phoneticEnabled, TextOpts.phoneticEnabled, h, hp]
-              · by_cases hn : p = PHONETIC_OFF
-                · simp [hn]
-                · simp [pre3514_phoneticEnabled, TextOpts.phoneticEnabled, h, hp, hn]
 
 /-- `VectorIndexOptions`. -/
 structure VecOpts where

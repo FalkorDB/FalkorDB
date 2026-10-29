@@ -713,16 +713,6 @@ theorem union_any : tyString (.union [.int, .any]) = tyString .any :=
         · decide
         · exact h)
 
-/-- Historical (pre-#3280): Rust spelled a union in declaration order (`Point or Null`).
-Kept as the old model. -/
-def pre3280TyString : Ty → String
-  | .union ts => formatUnionStrings (ts.map leafString)
-  | t => tyString t
-
-theorem pre3280_declaration_order :
-    pre3280TyString (.union [.point, .null]) = "Point or Null" ∧
-    pre3280TyString (.union [.null, .point]) = "Null or Point" := ⟨rfl, rfl⟩
-
 /-! ## path.rs -/
 
 /-- `nodes` (:29) / `relationships` (:52): filter the flat path; `none` = `unreachable!()`. -/

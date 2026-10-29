@@ -33,7 +33,7 @@ graph/src/runtime/vectorized.rs	compare_value_column	229	MODELLED	thin wrapper; 
 graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	compareValues (Neq arm as #2917): vec_cmp_generic (= per-row evalCmp for every op), neq_eq_not_eq
 graph/src/runtime/vectorized.rs	compare_value_column_3vl	280	MODELLED	column loop over compareValues; loop itself not modelled
 graph/src/runtime/eval.rs	classify_join_keys	86	PROVEN	EvalMore.classifyJoinKeys (classify_numeric FloatLane::None): classifyJoinKeys_lossless
-graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter/rangeIterRel (post-#2899 remaining count): rangeIter_correct (= eager range, no overflow, debug+release), rangeIter_bounds_examples, rangeIter_max_fixed; pre-#2899 bug kept as pre2899_rangeIter_wraps/_panics/_panics_down
+graph/src/runtime/eval.rs	RangeIter::next	114	PROVEN	rangeIter/rangeIterRel (post-#2899 remaining count): rangeIter_correct (= eager range, no overflow, debug+release), rangeIter_bounds_examples, rangeIter_max_fixed
 graph/src/runtime/eval.rs	RangeIter::size_hint	129	PROVEN	rangeIterSizeHint: rangeIter_sizeHint_exact (exact: yields remaining items)
 graph/src/runtime/eval.rs	NeighborIter::new	163	CONDITIONAL	BFS.NI.new (matrix rows abstract, G structure laws): new_directed_typed, new_directed_untyped || CONDITIONAL on G laws adj_union/transpose (adjacency = union of relation matrices, matrix_t = transpose; graph/tensor invariants, not linked)
 graph/src/runtime/eval.rs	NeighborIter::new_reversed	203	CONDITIONAL	BFS.NI.newReversed: newReversed_typed (exactly the in-neighbours) || CONDITIONAL on G laws adj_union/transpose (adjacency = union of relation matrices, matrix_t = transpose; graph/tensor invariants, not linked)
@@ -85,11 +85,11 @@ graph/src/runtime/functions/math.rs	random_uuid	143	NOT COVERED	nondeterministic
 graph/src/runtime/functions/math.rs	pow	176	NOT COVERED	wrapper over apply_pow (returns its Result since #2904); not modelled here, proven in proofs/value_math pow_fn_in_domain
 graph/src/runtime/functions/math.rs	rand	186	NOT COVERED	nondeterministic; not modelled
 graph/src/runtime/functions/math.rs	round	196	NOT COVERED	not modelled
-graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_int, sign_float_cases (#2906 fixed by #2907 f04c3557a; pre2907_sign_float_is_float historical)
+graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_int, sign_float_cases (#2906 fixed by #2907 f04c3557a)
 graph/src/runtime/functions/math.rs	sqrt	225	NOT COVERED	not modelled
 graph/src/runtime/functions/math.rs	range	251	MODELLED	rangeMath: used as the spec in rangeIter_correct (argument validation not modelled)
 graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce: coalesce_first_nonnull
-graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	applyPow (#2904: Result, type-checks operands): pow_bool_type_error, pow_agrees_without_errors, pow_binary_eq_spec; history pre2904_applyPow/pre2904_pow_drops_error
+graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	applyPow (#2904: Result, type-checks operands): pow_bool_type_error, pow_agrees_without_errors, pow_binary_eq_spec
 graph/src/runtime/functions/conversion.rs	value_to_integer	44	MODELLED	toIntegerFloat/toIntegerString fragment only (out-of-range floor): toInteger_float_vs_string
-graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	MODELLED	only its effect on ^: the constant evaluator (every variable an error) fed to powFold no longer yields true (pow_constant_not_true, #2904); history pre2904_pow_constant_true; soundness proven in proofs/optimizer_rewrites ConstEval
+graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	48	MODELLED	only its effect on ^: the constant evaluator (every variable an error) fed to powFold no longer yields true (pow_constant_not_true, #2904); soundness proven in proofs/optimizer_rewrites ConstEval
 graph/src/runtime/functions/mod.rs	init_functions	1103	MODELLED	FnRegistry.rustNames (registered name set, extracted as data) — #2724 open: bug2724_prev_missing refutes CoversC; covers_all_but_prev

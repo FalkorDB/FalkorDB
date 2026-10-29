@@ -68,8 +68,7 @@ theorem sortCmpF64_swap [FloatModel F] (x y : F) : sortCmpF64 y x = (sortCmpF64 
 
 /-- The `Values` lane is `sort_cmp`; an int lane is `Int` order; the float lane is
 antisymmetric for every pair of rows, NaN included (before #2912 a NaN pair compared
-`Less` both ways, `unwrap_or(Less)`, and the ORDER BY sort panicked — known #2891, history
-`pre2912_compareAt_nan_not_antisymmetric`). -/
+`Less` both ways, `unwrap_or(Less)`, and the ORDER BY sort panicked — known #2891). -/
 theorem compareAt_spec [FloatModel F] (cv : V F → V F → Ordering) (vs : List (V F)) (is : List Int)
     (fs : List F) (a b : Nat) (ha : a < fs.length) (hb : b < fs.length) :
     ((Column.values vs).compareAt cv a b = match vs[a]?, vs[b]? with
@@ -79,19 +78,6 @@ theorem compareAt_spec [FloatModel F] (cv : V F → V F → Ordering) (vs : List
   refine ⟨rfl, rfl, ?_⟩
   simp only [compareAt, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb]
   exact sortCmpF64_swap _ _
-
-/-- History (e8f8a3017, fixed by #2912 b033aecc6): the float lane was
-`partial_cmp(..).unwrap_or(Less)`, so a NaN pair compared `Less` both ways. -/
-def compareAtFloatsPre2912 [FloatModel F] (fs : List F) (a b : Nat) : Ordering :=
-  match fs[a]?, fs[b]? with
-  | some x, some y => (FloatModel.pcmp x y).getD .lt
-  | _, _ => .lt
-
-theorem pre2912_compareAt_nan_not_antisymmetric [FloatModel F] (fs : List F) (a b : Nat)
-    (ha : a < fs.length) (hb : b < fs.length) (hnan : FloatModel.pcmp fs[a] fs[b] = none) :
-    compareAtFloatsPre2912 fs a b = .lt ∧ compareAtFloatsPre2912 fs b a = .lt := by
-  have hnan' : FloatModel.pcmp fs[b] fs[a] = none := by rw [FloatModel.pcmp_swap, hnan]; rfl
-  simp [compareAtFloatsPre2912, List.getElem?_eq_getElem ha, List.getElem?_eq_getElem hb, hnan, hnan']
 
 end Column
 

@@ -181,15 +181,6 @@ def eqV (a b : V) : Bool := (cmpV a b).1 = .eq
 `ops/sort.rs:80`) and `list.sort`'s; main sorts by `Value::sort_cmp` (SortCmp.lean). -/
 def sortCmp (a b : V) : Ordering := (cmpV a b).1
 
-/-- ORDER BY's `Column::Floats` lane before #2912 (e8f8a3017 `ops/sort.rs:347`):
-`partial_cmp(..).unwrap_or(Less)`. Main uses `sort_cmp_f64` (`SC.scF64`). -/
-def floatLanePre2912 (a b : F) : Ordering := (fpcmp a b).getD .lt
-
-/-- History: the pre-#2912 float lane was the same (broken) comparator as `compare_value`. -/
-theorem pre2912_floatLane_eq_cmpV (a b : F) : floatLanePre2912 a b = sortCmp (.flt a) (.flt b) := by
-  simp only [floatLanePre2912, sortCmp, cmpV, cmpF]
-  cases fpcmp a b <;> rfl
-
 /-- `compare_values`, `CmpOp::Eq` (`vectorized.rs:239`): `none` is Cypher null. -/
 def evalEq (a b : V) : Option Bool :=
   match cmpV a b with
@@ -204,13 +195,6 @@ def evalNeq (a b : V) : Option Bool :=
   | (_, .comparedNull) => none
   | (_, .nan) | (_, .disjoint) => some true
   | (o, .none) => some (o ≠ .eq)
-
-/-- `CmpOp::Neq` before #2917 (e8f8a3017 `vectorized.rs:255`): `ord != Equal` whatever
-the flag. -/
-def evalNeqPre2917 (a b : V) : Option Bool :=
-  match cmpV a b with
-  | (_, .comparedNull) => none
-  | (o, _) => some (o ≠ .eq)
 
 /-! ## Hashing -/
 
@@ -229,10 +213,6 @@ def F32_NAN_BITS : Nat := 0x7fc00000
 
 /-- `f32_hash_bits` (`value.rs:1919`): one value for every NaN, else `to_bits`. -/
 def f32HashBits (f : F) : Nat := if f.nkey.isNone then F32_NAN_BITS else bits32 f
-
-/-- The Float arm before #2917 (e8f8a3017 `value.rs:836`): `to_bits` for every
-non-integral value, so every NaN sign and payload hashed apart. -/
-def floatWordPre2917 (f : F) : UInt64 := if diffZero f then w (asI64 f) else bits64 f
 
 mutual
 /-- The words `Hash for Value` (`value.rs:823`) writes, in order (each `write_*` is one
@@ -255,30 +235,6 @@ def hwordsList : List V → List UInt64
 
 def hwordsMap : List Nat → List V → List UInt64
   | k :: ks, v :: vs => [UInt64.ofNat k, 0xff] ++ hwords v ++ hwordsMap ks vs
-  | _, _ => []
-end
-
-mutual
-/-- `Hash for Value` before #2917 (e8f8a3017 `value.rs:822`): Float NaNs by `to_bits`,
-VecF32/Point components by `to_bits`. Kept for the `pre2917_*` history. -/
-def hwordsPre2917 : V → List UInt64
-  | .null => [0]
-  | .bool b => [1, if b then 1 else 0]
-  | .int i => [2, w i]
-  | .flt f => [2, floatWordPre2917 f]
-  | .str s => [3, UInt64.ofNat s, 0xff]
-  | .list xs => [4, UInt64.ofNat xs.length] ++ hwordsListPre2917 xs
-  | .map ks vs => [5, UInt64.ofNat ks.length] ++ hwordsMapPre2917 ks vs
-  | .node n => [6, UInt64.ofNat n]
-  | .vecf32 xs => [9] ++ xs.map (fun f => UInt64.ofNat (bits32 f))
-  | .point lat lon => [10, UInt64.ofNat (bits32 lat), UInt64.ofNat (bits32 lon)]
-
-def hwordsListPre2917 : List V → List UInt64
-  | [] => []
-  | x :: xs => hwordsPre2917 x ++ hwordsListPre2917 xs
-
-def hwordsMapPre2917 : List Nat → List V → List UInt64
-  | k :: ks, v :: vs => [UInt64.ofNat k, 0xff] ++ hwordsPre2917 v ++ hwordsMapPre2917 ks vs
   | _, _ => []
 end
 
@@ -306,12 +262,6 @@ theorem nan_breaks_antisymmetry :
     sortCmp (.flt (.num 1)) (.flt F.qnan) = .lt ∧
     sortCmp (.flt F.qnan) (.flt F.qnan) = .lt := by decide
 
-/-- ...so the pre-#2912 ORDER BY comparator was not antisymmetric (`cmp b a ≠ (cmp a b).swap`).
-History: fixed by #2912 (b033aecc6), which sorts by `sort_cmp` (`SC.scMain_total`). -/
-theorem pre2912_sortCmp_not_antisymmetric :
-    ¬ ∀ a b : V, sortCmp b a = (sortCmp a b).swap := fun h => by
-  have := h (.flt F.qnan) (.flt (.num 1)); revert this; decide
-
 /-- **Finding 2.** Equality is not transitive across Int/Float near 2^53. -/
 theorem mixed_numeric_not_transitive :
     sortCmp (.int P53) (.flt (.num P53)) = .eq ∧
@@ -332,19 +282,6 @@ theorem map_order_not_transitive_null :
     sortCmp (.map [0, 1] [.null, .int 3]) (.map [0, 1] [.int 1, .int 2]) = .eq ∧
     sortCmp (.map [0, 1] [.int 1, .int 1]) (.map [0, 1] [.int 1, .int 2]) = .lt := by
   decide
-
-/-- No total preorder can agree with `sortCmp`: that is what made
-`slice::sort_by` panic before #2912 (b033aecc6; main: `SC.scMain_total`). -/
-theorem pre2912_sortCmp_not_transitive :
-    ¬ ∀ a b c : V, sortCmp a b = .eq → sortCmp b c = .eq → sortCmp a c = .eq :=
-  fun h => by
-    have := h m1 m2 m3 (by decide) (by decide); revert this; decide
-
-/-- **Finding 4 (history).** Before #2917 (7fdf06a0e) `{a:1} = {a:'x'}` and
-`{a:1} <> {a:'x'}` were both false. -/
-theorem pre2917_map_neq_both_false :
-    evalEq (.map [0] [.int 1]) (.map [0] [.str 7]) = some false ∧
-    evalNeqPre2917 (.map [0] [.int 1]) (.map [0] [.str 7]) = some false := by decide
 
 /-- **Finding 4, fixed by #2917.** `{a:1} <> {a:'x'}` is true, `=` false (C, openCypher). -/
 theorem map_neq_true :
@@ -406,25 +343,6 @@ def minFold (xs : List V) : V :=
     | _, _ =>
         let r := cmpV v best
         if r.1 = .lt ∧ r.2 ≠ .comparedNull ∧ r.2 ≠ .nan then v else best) .null
-
-/-- `min_batch` before #2917 (e8f8a3017 `aggregation.rs:487`): only a null comparison
-was ignored. -/
-def minFoldPre2917 (xs : List V) : V :=
-  xs.foldl (fun best v =>
-    match v, best with
-    | .null, _ => best
-    | _, .null => v
-    | _, _ =>
-        let r := cmpV v best
-        if r.1 = .lt ∧ r.2 ≠ .comparedNull then v else best) .null
-
-/-- **Finding 8 (history).** Before #2917 `min(x)` over `[1.0, NaN, 3.0]` was `3.0`: NaN
-displaced 1.0 (NaN < 1.0) and then 3.0 displaced NaN (3.0 < NaN). -/
-theorem pre2917_min_nan_picks_larger :
-    (match minFoldPre2917 [.flt (.num 1), .flt F.qnan, .flt (.num 3)] with
-      | .flt (.num n) => some n
-      | _ => none) = some 3 ∧
-    sortCmp (.flt (.num 1)) (.flt (.num 3)) = .lt := by decide
 
 /-- The integral Float a value is, if it is one. -/
 def fNum : V → Option Int
@@ -862,18 +780,15 @@ theorem sane_list_swap (xs ys : List V) (hx : ∀ x ∈ xs, sane x) (hy : ∀ y 
 
 #print axioms fx_row_collision
 #print axioms fx_collision_general
-#print axioms pre2912_sortCmp_not_transitive
 #print axioms sane_le_trans
 #print axioms sane_hash_consistent
 #print axioms list_fst_eq_lex
 #print axioms sane_list_le_trans
 #print axioms roundF_exact
 #print axioms sane_list_swap
-#print axioms pre2917_map_neq_both_false
 #print axioms map_neq_true
 #print axioms evalNeq_not_evalEq
 #print axioms hash_not_consistent_with_eq
-#print axioms pre2917_min_nan_picks_larger
 #print axioms min_nan_ignored
 #print axioms minFold_step_int
 

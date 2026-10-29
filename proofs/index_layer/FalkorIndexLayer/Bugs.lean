@@ -33,14 +33,6 @@ theorem bug_bool_eq_int :
     indexHit allF (one (.bool true)) (.equal 0 (.int 1)) = true ∧
     holds (one (.bool true)) (.equal 0 (.int 1)) = false := by bugsimp
 
-/-- [temporal_in_numeric_range] **Historical** — FIXED by #3076 (e20300436). Temporals used to be
-stored as their raw numeric timestamp (old `mod.rs:797`), so `n.v > 0` matched a date: the stored
-number `5` is in the range `(0, +inf)` the index searched, though Cypher compares a date with an int
-as null. (C: correct.) -/
-theorem pre3076_temporal_in_numeric_range :
-    (pre3076_setRangeTemporal 5).any (fun | .num v => inNum (.fin 0) .posInf false false v | _ => false) = true ∧
-    holds (one (.temporal 0 5)) (.range 0 (some (.int 0)) none false false) = false := by bugsimp
-
 /-- Since #3076 the same query is exact: the date is not in the index, and not in the answer. -/
 theorem fixed3076_temporal_in_numeric_range :
     indexHit allF (one (.temporal 0 5)) (.range 0 (some (.int 0)) none false false) = false ∧
@@ -99,33 +91,11 @@ theorem bug_string_range_order_gt :
     holds (one (.str [97, 32, 98])) (.range 0 (some (.str [97, 33])) none false false) = false := by
   bugsimp
 
-/-- [string_exclusive_equal_bounds] **Historical** — FIXED by #3072 (1c9994e37).
-`build_string_range_node` used to turn `lo == hi` into an exact match ignoring the include flags
-(old `mod.rs:1434`): `n.v > 'a' AND n.v < 'a'` returned `'a'`. (C: correct.) -/
-theorem pre3072_exclusive_equal_bounds :
-    pre3072_buildStrRange allF 0 (some [97]) (some [97]) false false = some (.tagToken 0 .main (tagEnc [97])) ∧
-    rsMatch (docOf allF (one (.str [97]))) (.tagToken 0 .main (tagEnc [97])) = true ∧
-    holds (one (.str [97])) (.range 0 (some (.str [97])) (some (.str [97])) false false) = false := by
-  simp (config := { decide := true }) [pre3072_buildStrRange, allF, rsMatch, docOf, one, setRange, rsStore, holds,
-    propOr, cyLt, cyLe, cyEqScalar, tagEnc, escaped, lexLt, isTrue]
-
 /-- Since #3072 the same query selects nothing, as Cypher does. -/
 theorem fixed3072_exclusive_equal_bounds :
     indexHit allF (one (.str [97])) (.range 0 (some (.str [97])) (some (.str [97])) false false) = false ∧
     holds (one (.str [97])) (.range 0 (some (.str [97])) (some (.str [97])) false false) = false := by
   bugsimp
-
-/-- [open_bound_excludes_inf] **Historical** (fixed by #3081, ff3d24ba7): a
-missing bound became `RSRANGE_INF` with the (always `false`) include flag of
-the missing side (old `mod.rs:1388-1406`), so `+inf` failed `v < +inf`:
-`n.v > 0` missed a stored `+inf`. (C: same.) -/
-theorem pre3081_open_bound_excludes_inf :
-    pre3081_buildNumRange allF 0 (some (.int 0)) none false false =
-      some (.numeric 0 .main (.fin 0) .posInf false false) ∧
-    rsMatch (docOf allF (one (.flt .posInf))) (.numeric 0 .main (.fin 0) .posInf false false) = false ∧
-    holds (one (.flt .posInf)) (.range 0 (some (.int 0)) none false false) = true := by
-  simp (config := { decide := true }) [pre3081_buildNumRange, valueToNumeric, allF, rsMatch, docOf,
-    one, setRange, rsStore, holds, propOr, cyLt, cyLe, numOf, inNum, ENum.le, ENum.lt, ENum.eq, isTrue]
 
 /-- Since #3081 the same queries select the stored infinities, as Cypher
 does: `n.v > 0` finds `+inf`, `n.v < 0` finds `-inf`. (The general statement

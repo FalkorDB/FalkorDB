@@ -197,23 +197,6 @@ theorem maxScalar_eq_batch_nan : maxScalar nanCmp 0 (some 5) = mmStep nanCmp .gt
     mmStep nanCmp .gt (some 5) 0 = some 5 ∧ mmStep nanCmp .gt (some 0) 5 = some 0 := by
   decide
 
-/-- History (e8f8a3017): `mmStep`/`maxScalar` ignored only null comparisons. -/
-def mmStepPre2917 {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (v : α) : Option α :=
-  match best with
-  | none => some v
-  | some b => if c.ord v b == want && !c.nullFlag v b then some v else some b
-
-def maxScalarPre2917 {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
-  match b with
-  | none => some a
-  | some b => if c.ord b a == .lt || c.nullFlag b a then some a else some b
-
-/-- **History, fixed by #2917 (7fdf06a0e)**: NaN broke antisymmetry and the scalar `max`
-and `max_batch` disagreed. -/
-theorem pre2917_maxScalar_ne_batch_nan :
-    maxScalarPre2917 nanCmp 0 (some 5) ≠ mmStepPre2917 nanCmp .gt (some 5) 0 := by
-  decide
-
 /-- `avg_batch` (aggregation.rs:451) state `[sum, count, had_overflow]`. -/
 structure AvgS where
   sum : Float
@@ -367,29 +350,10 @@ theorem pct_first_wins (q : Float) (nulls : List (V × Float))
 
 /-! #### History: before #3007 (aggregation.rs:539 / :253 at 289c201fe) -/
 
-/-- Before #3007 every non-null row OVERWROTE the stored percentile. -/
-def pre3007_pctStep (s : Float × List Float) (vp : V × Float) : Float × List Float :=
-  if vp.1.isNull then s else (vp.2, s.2 ++ [vp.1.num])
-
-def pre3007_pctFold (acc : Float × List Float) (xs : List (V × Float)) :=
-  xs.foldl pre3007_pctStep acc
-
-/-- Last-wins: before #3007 the stored percentile was the last non-null row's.
-C keeps the first row's (`agg_precentile.c`). Confirmed then by
-`lean_ops_aggregate::bug_percentile_row_dependent_argument_last_wins`. -/
-theorem pre3007_pct_last_wins (acc : Float × List Float) (xs : List (V × Float)) (v : V)
-    (p : Float) (hv : v.isNull = false) : (pre3007_pctFold acc (xs ++ [(v, p)])).1 = p := by
-  simp [pre3007_pctFold, List.foldl_append, pre3007_pctStep, hv]
-
 /-- The `percentileDisc(x, x/10.0)` repro over x = 1..10: the percentile the
 finalizer sees was row 10's before #3007 and is row 1's on main (C's). -/
 def pctRow (k : Nat) : V × Float := (V.int k, Float.ofNat k / 10.0)
 def pctRepro : List (V × Float) := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map pctRow
-
-theorem pre3007_pct_repro :
-    (pre3007_pctFold (0.0, []) pctRepro).1 = Float.ofNat 10 / 10.0 := by
-  have : pctRepro = [1, 2, 3, 4, 5, 6, 7, 8, 9].map pctRow ++ [(V.int 10, Float.ofNat 10 / 10.0)] := rfl
-  rw [this]; exact pre3007_pct_last_wins _ _ _ _ rfl
 
 theorem pct_repro_first_row :
     (pctFold (0.0, []) pctRepro).1 = Float.ofNat 1 / 10.0 :=

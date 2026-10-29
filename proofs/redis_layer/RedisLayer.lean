@@ -40,7 +40,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
 | `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:886-921` |
-| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021; `validatePre3021` historical) |
+| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021) |
 | `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
 | `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_result::<true>`, `src/reply.rs:145-355`, `:632-679` |
@@ -96,15 +96,13 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
    TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
    created 300000 nodes on Rust; C times out and creates none
-   (`pre3000_write_timeout_divergence`). Now `timeout_rw` (`graph_core.rs:895`) applies it:
+   (counterexample removed; in 17ccc5412). Now `timeout_rw` (`graph_core.rs:895`) applies it:
    `write_timeout_agrees`, `Args.rustTimeout_write_pq`, `rustTimeout_rw_uniform`.
 3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:
    `VKEY_MAX_ENTITY_COUNT -5` accepted (then read as `as u64`), `CMD_INFO 1/TRUE`
    accepted, `JS_HEAP_SIZE 5` accepted (C: ≥ 1 MB), `GET x extra` accepted, non-ASCII
    names case-fold (`tımeout` → TIMEOUT via `to_uppercase`), ASYNC_DELETE reports 0
-   (C 1), error text "Unknown configuration field 'X'". Historical counterexamples:
-   `pre3021_vkey_negative_accepted`, `pre3021_cmdinfo_extra_spellings`,
-   `pre3021_jsheap_tiny_accepted`. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
+   (C 1), error text "Unknown configuration field 'X'". Counterexamples removed; in 17ccc5412. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
    `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `set_pairs_complete`,
    `dotless_i_not_folded`, `asyncDelete_default_matches_C`, `getOne_unknown_text`.
 4. GRAPH.BULK header naming a property twice (`p,q,p`): Rust stored both span entries
@@ -114,12 +112,10 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    (`Content.normResolved_get`, `resolved_duplicate_fixed`). Since #3026 (`fb3d516d0`,
    issue #3024) the parse itself keeps one entry per attribute, the first non-null in
    header order: `Bulk.readRecord_enc`, `keepFirst_nodup`, `keepFirst_find`,
-   `keepFirst_plainRead` (agrees with what #3063 kept); history
-   `Bulk.pre3026_two_entries_for_one_attr`.
+   `keepFirst_plainRead` (agrees with what #3063 kept).
 5. Verbose format: top-level point `point({latitude: 1.000000, …})` (C: no space after
    `:`) and NaN in lists `NaN` (C `nan`) — **FIXED by #3043 (`7cde92c1d`, closes #3042)**:
-   `Resp.pointStr_c`, `verbose_point_c`, `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`; history
-   `pre3043_point_space`, `pre3043_nan_in_list`. Still: a node deleted in the same query keeps
+   `Resp.pointStr_c`, `verbose_point_c`, `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`. Still: a node deleted in the same query keeps
    its labels (C `[]`, intended), and `CREATE (a:A) DELETE a` reports no `Nodes
    created/deleted` stats.
 6. Minor: several error texts differ (WRONGTYPE, empty key, count mismatch; `GRAPH.MEMORY …
@@ -141,7 +137,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
-| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); `pre3514_*` history |
+| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed; in 17ccc5412) history |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop` | `src/telemetry.rs` |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
@@ -179,30 +175,27 @@ Headline theorems:
 New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, ports 18820-3):
 8. **Crash — FIXED by #3234 (`3660a5fc3`)**: `src/slow_log.rs` (`entry_hash`, `truncate`)
    sliced the query at byte 2048; a query > 2048 bytes, slower than 10 ms, with a multi-byte
-   char across byte 2048 panicked and the server exited (`SlowLog.pre3234_entry_hash_panics`,
-   `pre3234_truncate_panics`; repro scratch `slowlog_utf8.py`). Now both cut at
+   char across byte 2048 panicked and the server exited (counterexamples removed; in 17ccc5412; repro scratch `slowlog_utf8.py`). Now both cut at
    `prefix` (`:32`, `floor_char_boundary(2048)`): `SlowLog.hashInput_total`,
    `truncate_total` (no panic for any string), `prefix_le`/`prefix_isPrefix`/
    `prefix_boundary`/`prefix_longest` (longest char-boundary prefix ≤ 2048 bytes).
 9. **FIXED by #3252 (`cfe6e7945`)**: an index on an attribute literally named `range:x` (or
-   `vector:x`) was rebuilt on `x` after RDB reload (cab3cf192 `serializers/mod.rs:642-646`,
-   `SerialSchema.pre3252_field_prefix_lost`): Rust `db.indexes()` → `[x]`, C `[range:x]`.
+   `vector:x`) was rebuilt on `x` after RDB reload (cab3cf192 `serializers/mod.rs:642-646`;
+   counterexample removed; in 17ccc5412): Rust `db.indexes()` → `[x]`, C `[range:x]`.
    Now `decode_index_field` keeps the name verbatim (`field_name_kept`; `decField_encField`
    round-trips every name).
 9b. **FIXED by #3514 (`a0ba12950`, closes #3484)**: a C-written RDB entry carries every index type
    of an attribute in one type word; `decode_index_field` kept one, so RANGE was lost next to a
-   FULLTEXT or VECTOR index (`SerialCLayout.pre3514_range_fulltext_loses_range`,
-   `pre3514_range_vector_loses_range`). Main decodes every set type (`SerialSchema.decField`;
+   FULLTEXT or VECTOR index (counterexamples removed; in 17ccc5412). Main decodes every set type (`SerialSchema.decField`;
    `SerialCLayout.decField_encFieldC`: every C entry decodes to exactly its types;
    `decField_encField`: Rust's own entries unchanged; `decField_empty_refused`,
    `decField_unknown_bit_refused`: no type / unknown bit refused as C does). Same PR, phonetic:
-   C's `"no"` (off) read as a code, so every C-loaded fulltext index turned phonetic ON
-   (`pre3514_phonetic_no_kept`), and we wrote an empty string for off, which C reads as ON
-   (`pre3514_encPh_off_read_on_by_c`). Now `"no"` reads as off and off is written `"no"`
+   C's `"no"` (off) read as a code, so every C-loaded fulltext index turned phonetic ON, and we wrote an empty string for off, which C reads as ON
+   (counterexamples removed; in 17ccc5412). Now `"no"` reads as off and off is written `"no"`
    (`decField_c_phonetic_no_off`, `encPh_c_on_iff`; `index_layer` `Meta.TextOpts.phoneticEnabled`).
 10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
     C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
-    ignores (0), C 1 (FIXED by #3328: `ModuleInit.pre3328_bool_yes_case`, `pre3328_table_name_case`, `pre3328_load_missing`; now `LoadArgs.fixed3328_counterexamples`; cause:
+    ignores (0), C 1 (FIXED by #3328: counterexamples removed; in 17ccc5412; now `LoadArgs.fixed3328_counterexamples`; cause:
     redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
 11. `GRAPH.BULK` success reply says `relations created`, C `edges created`
     (`Commands.bulk_reply_differs`).
@@ -230,21 +223,19 @@ they name the same attribute), `Bulk.PropColumns.readRecord` (`readRecord_enc`: 
 leaves exactly the following bytes). `keepFirst_nodup` (at most one entry per attribute),
 `keepFirst_find` (the kept value is the first non-null in header order),
 `keepFirst_sublist` (header order kept), `keepFirst_plain_of_nodup`/`readRecord_plain` (no
-repeated name → the plain per-column read), `repeated_header_null_first`; history
-`pre3026_two_entries_for_one_attr`.
+repeated name → the plain per-column read), `repeated_header_null_first`.
 
 ## Re-target to 8621212fc (#3043, #3419; previously 289c201fe)
 Of the main commits since 289c201fe only `src/reply.rs` (#3043) and `src/lib.rs` (#3419)
 touch `src/`. #3043: `Resp.wf` = `write_f` (`reply.rs:36`, NaN as `nan`) in the float and
 vector leaves of `fmtS`; `Resp.pointStr` (top-level point) without the space after the
 colons. Against C's `%f` (hypothesis `CPf`): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`,
-`pointStr_c`, `verbose_point_c`, `fixed3043_nan_in_list`; history `pre3043_point_space`,
-`pre3043_nan_in_list`. Glibc prints a NaN with the sign bit set as `-nan`, which `write_f`
+`pointStr_c`, `verbose_point_c`, `fixed3043_nan_in_list`. Glibc prints a NaN with the sign bit set as `-nan`, which `write_f`
 does not reproduce (`CPf.nan_text` is stated for `nan`). #3419: `ModuleInit.table` gives
 `VKEY_MAX_ENTITY_COUNT` the range `0..i64::MAX`; `ConfigRewrite.vkey_rewrite_reloads_config`
 / `vkey_rewrite_reloads_load` — any value `GRAPH.CONFIG SET` or a module-load argument
 accepts is written by `CONFIG REWRITE` as a `graph.VKEY_MAX_ENTITY_COUNT` line that the next
-start accepts and reads back exactly; history `pre3419_rewrite_refused` (#3413).
+start accepts and reads back exactly (#3413).
 **Same class, open:** `rewrite_reload_counterexamples` — `CACHE_SIZE 1001`,
 `THREAD_COUNT 1025`, `NODE_CREATION_BUFFER 1073741825` (load arguments) and
 `JS_HEAP_SIZE 4294967297` (load arguments and `GRAPH.CONFIG SET`) are accepted, but the
@@ -285,19 +276,18 @@ reply and simple-string reply goes through before `RedisModule_ReplyWithError` /
 is sound and the `-…\r\n` frame of `Resp.respT` holds), `legalResp_length`,
 `legalResp_high_bytes` (every byte ≥ 0x80 kept in place: error text is byte-preserving for
 non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toUTF8`;
-history `pre3428_legalResp`, `pre3428_cjk_panics` (`一` → NUL → `CString::new(..).unwrap()`
-panic), `pre3428_latin1_garbled` (`é` → lone 0xE9). `Resp.Call.err s` / `respT (.err s)`
+before #3428 `一` → NUL → `CString::new(..).unwrap()` panic and `é` → lone 0xE9 (counterexamples
+removed; in 17ccc5412). `Resp.Call.err s` / `respT (.err s)`
 take `s` to be that already-scrubbed text.
 
 ## Gap closed 2026-10-22 (re-targeted to 5e475e6c9: #3442 and #3449 now **Fixed**)
 * #3442 `SlowLog` (fixed by #3456, closes #3442): on b84473a7f `add`'s `some _` arm
   (`slow_log.rs:120-132`) kept the stale `minLat` (recompute at `:172-177` on b84473a7f). Main's update arm
-  falls through to the recompute (`slow_log.rs:121-139`, `:162-169`): `SlowLog.add` is that code,
-  `pre3442_add` the old one. History `pre3442_update_breaks_min_cache` (property `MinCache`),
-  `pre3442_faster_evicts_slower` (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms; property
-  `SlowestKept`). On main: `add_minCache` (preserved for every input),
+  falls through to the recompute (`slow_log.rs:121-139`, `:162-169`): `SlowLog.add` is that code.
+  Old model and counterexamples removed; in 17ccc5412 (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms;
+  properties `MinCache`, `SlowestKept`). On main: `add_minCache` (preserved for every input),
   `fixed3442_update_keeps_min_cache`, `fixed3442_trace` (Q2 kept, Q11 rejected), and
-  `add_entries_pre3442` (the fix changes only the cached minimum). `add_repeat_max` now assumes
+  `add_repeat_max` now assumes
   one entry per hash (`add_nodup`).
 * #3447 `RelLookup` (compact-reply part, still **Open**): the reply's type id of a deleted edge
   is a *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
@@ -311,13 +301,11 @@ take `s` to be that already-scrubbed text.
   a pending edge's type. #3462 snapshots when `runtime.inspect || snapshot_required`
   (`delete.rs:99-101`, `snapshot`) and resolves the verbose type through
   `Runtime::get_relationship_type` (deleted -> pending -> graph, `runtime.rs:1902-1914`,
-  `verboseRel`). History `pre3449_record_renders_dead_rel` (`pre3449_snapshot`,
-  `pre3449_verboseRel`). On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
+  `verboseRel`). Old model and counterexample removed; in 17ccc5412. On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
   row renders from its snapshot), `snapshot_inspect`, `fixed3449_record_abort`,
   `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
   still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
 -/
-#print axioms RedisLayer.Serial.pre3514_range_fulltext_loses_range
 #print axioms RedisLayer.Serial.decField_encFieldC
 #print axioms RedisLayer.Serial.decField_encField
 #print axioms RedisLayer.Serial.encPh_c_on_iff

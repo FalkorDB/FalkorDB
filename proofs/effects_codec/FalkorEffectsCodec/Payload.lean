@@ -7,7 +7,7 @@ import FalkorEffectsCodec.RecRT
 **#3278 (`dcbd445d1`, issue #3276).** `maybe_compress` used to write both lengths
 `as u32`; a payload of 4 GiB of records or more was framed with a wrapped
 `plain_len`, which the reader takes as the decompress ceiling, so the replica
-refused it and looped on forced resyncs (`pre3278_wrapped_frame_unreadable`). It
+refused it and looped on forced resyncs. It
 now declines to compress such a payload (`u32::try_from(..).is_err()`) and builds
 the prefix through `frame_prefix`, which refuses a length that does not fit
 (`framePrefix_none`). `openPayload_maybeCompress` therefore holds for every
@@ -89,18 +89,6 @@ def maybeCompress (Z : Codec) (buf : Bytes) (minBytes : Nat) : Bytes × Bool :=
     | none => (buf, false)
     | some pfx => ([buf[0]!, buf[1]! ||| 1] ++ pfx ++ frame, true)
 
-/-- `maybe_compress` before #3278: both lengths written `as u32`. -/
-def pre3278_maybeCompress (Z : Codec) (buf : Bytes) (minBytes : Nat) : Bytes × Bool :=
-  if minBytes = 0 ∨ buf.length < 2 ∨ buf.length - 2 < minBytes then (buf, false) else
-  if (buf[1]!.toNat &&& FLAG_COMPRESSED) ≠ 0 then (buf, false) else
-  match Z.compress (buf.drop 2) with
-  | none => (buf, false)
-  | some frame =>
-    if frame.length + COMPRESSED_PREFIX ≥ buf.length - 2 then (buf, false) else
-    let plainLen := (buf.length - 2) % 2 ^ 32           -- `as u32`
-    let compLen := frame.length % 2 ^ 32
-    ([buf[0]!, buf[1]! ||| 1] ++ w32 plainLen ++ w32 compLen ++ w32 (Z.crc (buf.drop 2)) ++ frame, true)
-
 /-- `new_buffer` (`v3/mod.rs`): `[EFFECTS_VERSION, 0]`. -/
 def newBuffer : Bytes := [3, 0]
 
@@ -167,78 +155,6 @@ theorem openPayload_maybeCompress (Z : Codec) (hZ : CodecOK Z) (body : Bytes) (m
     have hfl : frame.length < 2 ^ 32 := by simp [COMPRESSED_PREFIX] at h2; omega
     rw [framePrefix_some hlen hfl]
     simp only
-    have h0 : (newBuffer ++ body)[0]! = 3 := by simp [newBuffer]
-    have h1' : (newBuffer ++ body)[1]! = 0 := by simp [newBuffer]
-    rw [h0, h1']
-    have e2 : ((0 : UInt8) ||| 1) = 1 := rfl
-    rw [e2]
-    have hfr : take frame.length frame = .ok (frame, []) := by simpa using take_append frame []
-    simp [openPayload, u8_cons, EFFECTS_VERSION, KNOWN_FLAGS, FLAG_COMPRESSED, u32_w32 hlen,
-      u32_w32 hfl, u32_w32 (hZ.crc_lt body), hfr, hZ.roundtrip body frame hc]
-
-/-- **#3278, the bug it fixed.** Before the fix, a payload of 4 GiB of records or
-more that zstd shrank was written with its length wrapped, and *no* behaviour of
-zstd can make it open to its records: the reader asks for `plain_len mod 2^32`
-bytes and refuses anything else. -/
-theorem pre3278_wrapped_frame_unreadable (Z : Codec) (hZ : CodecOK Z) (body : Bytes) (m : Nat)
-    (hbig : 2 ^ 32 ≤ body.length) (hc : (pre3278_maybeCompress Z (newBuffer ++ body) m).2 = true) :
-    openPayload Z (pre3278_maybeCompress Z (newBuffer ++ body) m).1 ≠ .ok (body, []) := by
-  have hl : (newBuffer ++ body).length - 2 = body.length := by simp [newBuffer]
-  unfold pre3278_maybeCompress at hc ⊢
-  by_cases h1 : m = 0 ∨ (newBuffer ++ body).length < 2 ∨ (newBuffer ++ body).length - 2 < m
-  · simp only [h1, ite_true] at hc; cases hc
-  simp only [h1, ite_false] at hc ⊢
-  have hflag : ((newBuffer ++ body)[1]!.toNat &&& FLAG_COMPRESSED) = 0 := by
-    simp [newBuffer, FLAG_COMPRESSED]
-  simp only [hflag, ne_eq, not_true_eq_false, ite_false] at hc ⊢
-  have hd : (newBuffer ++ body).drop 2 = body := by simp [newBuffer]
-  rw [hd] at hc ⊢
-  cases hcz : Z.compress body with
-  | none => simp only [hcz] at hc; cases hc
-  | some frame =>
-    simp only [hcz] at hc ⊢
-    by_cases h2 : frame.length + COMPRESSED_PREFIX ≥ (newBuffer ++ body).length - 2
-    · simp only [h2, ite_true] at hc; cases hc
-    simp only [h2, ite_false]
-    rw [hl]
-    have h0 : (newBuffer ++ body)[0]! = 3 := by simp [newBuffer]
-    have h1' : (newBuffer ++ body)[1]! = 0 := by simp [newBuffer]
-    rw [h0, h1']
-    have e2 : ((0 : UInt8) ||| 1) = 1 := rfl
-    rw [e2]
-    have hp : body.length % 2 ^ 32 < 2 ^ 32 := Nat.mod_lt _ (by decide)
-    have hq : frame.length % 2 ^ 32 < 2 ^ 32 := Nat.mod_lt _ (by decide)
-    intro h
-    have := openPayload_compressed_len Z hp hq (hZ.crc_lt body) frame body [] h
-    have : body.length % 2 ^ 32 < body.length := Nat.lt_of_lt_of_le hp hbig
-    omega
-
-/-- History (before #3278): transparent only for records under 4 GiB, because
-`plain_len` was written `as u32`. -/
-theorem pre3278_openPayload_maybeCompress (Z : Codec) (hZ : CodecOK Z) (body : Bytes) (m : Nat)
-    (hlen : body.length < 2 ^ 32) :
-    openPayload Z (pre3278_maybeCompress Z (newBuffer ++ body) m).1 = .ok (body, []) := by
-  have hl : (newBuffer ++ body).length - 2 = body.length := by simp [newBuffer]
-  unfold pre3278_maybeCompress
-  by_cases h1 : m = 0 ∨ (newBuffer ++ body).length < 2 ∨ (newBuffer ++ body).length - 2 < m
-  · simp only [h1, ite_true]; exact openPayload_plain Z body
-  simp only [h1, ite_false]
-  have hflag : ((newBuffer ++ body)[1]!.toNat &&& FLAG_COMPRESSED) = 0 := by
-    simp [newBuffer, FLAG_COMPRESSED]
-  simp only [hflag, ne_eq, not_true_eq_false, ite_false]
-  have hd : (newBuffer ++ body).drop 2 = body := by simp [newBuffer]
-  rw [hd]
-  cases hc : Z.compress body with
-  | none => exact openPayload_plain Z body
-  | some frame =>
-    simp only
-    by_cases h2 : frame.length + COMPRESSED_PREFIX ≥ (newBuffer ++ body).length - 2
-    · simp only [h2, ite_true]; exact openPayload_plain Z body
-    simp only [h2, ite_false]
-    rw [hl] at h2 ⊢
-    rw [Nat.mod_eq_of_lt hlen]
-    have hfl : frame.length < 2 ^ 32 := by simp [COMPRESSED_PREFIX] at h2; omega
-    rw [Nat.mod_eq_of_lt hfl]
     have h0 : (newBuffer ++ body)[0]! = 3 := by simp [newBuffer]
     have h1' : (newBuffer ++ body)[1]! = 0 := by simp [newBuffer]
     rw [h0, h1']

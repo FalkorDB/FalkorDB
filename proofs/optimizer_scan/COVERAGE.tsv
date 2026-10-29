@@ -1,5 +1,5 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/planner/optimizer/select_scan_node.rs	score_endpoint	98	PROVEN	ScanTree.scoreEndpoint_spec (bound +3, filtered +2, labelled +1, filter_runs_late flag), score_bound_dominant; pre2390_score_bound_not_dominant (historical)
+graph/src/planner/optimizer/select_scan_node.rs	score_endpoint	98	PROVEN	ScanTree.scoreEndpoint_spec (bound +3, filtered +2, labelled +1, filter_runs_late flag), score_bound_dominant
 graph/src/planner/optimizer/select_scan_node.rs	collect_filtered_vars	156	PROVEN	ScanTree.filteredVars: collectLoop_eq (above), spineVars_eq (downward spine), filteredVars_above_sub
 graph/src/planner/optimizer/select_scan_node.rs	collect	160	PROVEN	ScanTree.filterVars (a Filter is modelled as its Variable list; the BFS collect is that list): collectLoop_eq, spineVars_eq
 graph/src/planner/optimizer/select_scan_node.rs	make_scan_subtree	214	PROVEN	ScanTree.makeScanSubtree_planner, filtersOf_makeScanSubtree; ScanOrder.run_append
@@ -56,13 +56,13 @@ graph/src/planner/optimizer/utilize_index.rs	governing_filter	920	PROVEN	Cleanup
 graph/src/planner/optimizer/utilize_index.rs	match_scan_with_filter	942	PROVEN	Cleanup.matchScanWithFilter_spec
 graph/src/planner/optimizer/utilize_index.rs	reorder_subject_labels	954	PROVEN	ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	apply_filter_pushdown	973	PROVEN	Index.utilize = Cleanup.utilizeP false (utilizeP_false); utilize_sound; over_pending: utilizeP_true, overPending_sound, overPending_needs_filter; #3335: remaining conjuncts rebuilt with and_of (model .and rem; same verdict: optimizer_rewrites AndOf.flat_passes)
-graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1017	PROVEN	Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (inline path removed by #2390: pre2390_applyInline_eq_utilize)
+graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1017	PROVEN	Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (inline path removed by #2390)
 graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1051	PROVEN	Cleanup.prune_sound; guard = references.rs index_query_references_variable by (id, scope) (proofs/optimizer_rewrites References.iqRefs_iff)
 graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1080	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
 graph/src/planner/optimizer/utilize_index.rs	utilize_index	1120	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
 graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1138	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
-graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394, history pre3394_phantom_node0); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
+graph/src/planner/optimizer/utilize_node_by_id.rs	utilize_node_by_id	95	PROVEN	IdSeek.collectFilters + seek_sound (with runtime.rs evaluate_id_filter; empty graph since #3394); counterexamples negative/float/null; hazard: parent().unwrap() at line 106 (W4-plan-4 repro rejected by validation since #3297)
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
 graph/src/runtime/runtime.rs	evaluate_id_filter (support, not a target file)	1415	PROVEN	IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none (#3394 fixes #3353 / W2-scan-2; history pre3394_seek_sound)
 graph/src/index/mod.rs	build_query_node (support, not a target file)	1477	MODELLED	Index.build; sel_eq, sel_range, sel_and2 (RediSearch node semantics as definitions)
