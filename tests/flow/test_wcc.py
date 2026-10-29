@@ -385,3 +385,17 @@ class testWCC(FlowTestsBase):
 
             self.env.assertEqual(lbl_node_count, component_size)
 
+
+    def test_wcc_label_filter_reports_node_ids(self):
+        """With nodeLabels, componentId is the id of a node in the component
+        (as without a filter), not an index into the filtered node set"""
+
+        self.graph.query("""CREATE (:A {id:0}), (:B {id:1}), (:A {id:2}), (:A {id:3})""")
+        self.graph.query("MATCH (a {id:2}), (b {id:3}) CREATE (a)-[:R]->(b)")
+        self.graph.query("MATCH (a {id:0}), (b {id:1}) CREATE (a)-[:R]->(b)")
+
+        res = self.graph.query("""CALL algo.WCC({nodeLabels: ['A']})
+                                  YIELD node, componentId
+                                  RETURN id(node), componentId
+                                  ORDER BY id(node)""").result_set
+        self.env.assertEqual(res, [[0, 0], [2, 2], [3, 2]])
