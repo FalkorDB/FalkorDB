@@ -15,6 +15,7 @@
 //! This command preserves a strict read contract for clients that require
 //! non-mutating behavior.
 
+use crate::graph_key::GraphKey;
 use crate::{
     commands::{
         EMPTY_KEY_ERR,
@@ -44,7 +45,7 @@ pub fn graph_ro_query(
 
     // The key the graph lives at, not C's name for it — see `graph_query`. A read-only
     // query never creates one, so it is always the key the command named.
-    let key_name: Arc<str> = Arc::from(key.to_string());
+    let key_name = GraphKey::new(&key);
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {

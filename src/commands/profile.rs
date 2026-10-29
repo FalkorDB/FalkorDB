@@ -3,6 +3,7 @@
 //! Executes a Cypher query and returns the execution plan annotated with
 //! per-operator statistics (records produced, execution time).
 
+use crate::graph_key::GraphKey;
 use crate::{
     commands::query_args::{QueryFlags, parse_query_flags},
     config::CONFIGURATION_CACHE_SIZE,
@@ -26,7 +27,7 @@ pub fn graph_profile(
     let query = up_to_nul(args.next_str()?);
 
     // The key the graph lives at, not C's name for it — see `graph_query`.
-    let key_name: Arc<str> = Arc::from(key_str.to_string());
+    let key_name = GraphKey::new(&key_str);
 
     // Try read-only key access first.
     let read_key = ctx.open_key(&key_str);
@@ -46,14 +47,15 @@ pub fn graph_profile(
 
     // Creating: a new graph lands at C's key, not the addressed one — see `graph_query`.
     let name = c_graph_name(&key_str);
-    let key_name: Arc<str> = Arc::from(name.as_str());
+    let create_key_str = c_graph_key(ctx, &key_str);
+    let key_name = GraphKey::new(&create_key_str);
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &name,
     )));
     let result = profile_mut(ctx, &graph, query, &key_name, timeout);
     // Stored under C's key, not the addressed one — see `c_graph_key`.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    let create_key = ctx.open_key_writable(&create_key_str);
     drop(key);
     create_key.set_value(&GRAPH_TYPE, graph.clone())?;
     register_graph(name, graph);

@@ -44,6 +44,7 @@ mod config;
 mod dispatch;
 mod divergence_guard;
 mod graph_core;
+mod graph_key;
 mod module_init;
 mod query_session;
 mod redis_type;
