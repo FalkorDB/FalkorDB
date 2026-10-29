@@ -423,10 +423,15 @@ class Analysis:
                 for line in text.splitlines():
                     line = line.split("#")[0].strip()
                     if line.startswith("include "):
-                        pattern = line.split(None, 1)[1]
-                        for p in sorted(self.fs.members):
-                            if fnmatch.fnmatch(p, pattern):
-                                conf(p)
+                        # As ldconfig does: each pattern on the line, a
+                        # relative one read from the including file's
+                        # directory (RHEL and Amazon Linux ship
+                        # `include ld.so.conf.d/*.conf`).
+                        for pattern in line.split()[1:]:
+                            pattern = posixpath.join(posixpath.dirname(path), pattern)
+                            for p in sorted(self.fs.members):
+                                if fnmatch.fnmatch(p, pattern):
+                                    conf(p)
                     elif line:
                         dirs.append(line)
 
