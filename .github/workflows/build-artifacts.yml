@@ -101,6 +101,9 @@ jobs:
       # the build may not write any cache. Only a maintainer dispatch (which can
       # only target a ref already in this repo) is treated as trusted.
       trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}
+      # Not on a pull request: an upstream change alone can fail the VEX check
+      # (see _build-artifacts.yml). A maintainer dispatch still runs it.
+      check_vex: ${{ github.event_name != 'pull_request' }}
     # No `secrets: inherit` — the reusable workflow only needs the auto-provided
     # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
     # build that compiles untrusted code is deliberate.
