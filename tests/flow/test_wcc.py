@@ -385,3 +385,14 @@ class testWCC(FlowTestsBase):
 
             self.env.assertEqual(lbl_node_count, component_size)
 
+
+    def test_wcc_one_node_projection(self):
+        """A nodeLabels projection holding exactly one node is answered (#3349)"""
+
+        # the label matches one node; the graph holds others
+        self.graph.query("CREATE (:Node {id: 'a'}), (:Other {id: 'b'}), (:Other {id: 'c'})")
+
+        result = self.graph.query("""CALL algo.WCC({nodeLabels: ['Node']})
+                                     YIELD node, componentId
+                                     RETURN node.id, componentId""").result_set
+        self.env.assertEqual(result, [['a', 0]])
