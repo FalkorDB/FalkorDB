@@ -94,13 +94,14 @@ use super::{
     GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL,
     GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
     GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
-    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
-    GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level,
-    GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_Iterator_attach,
+    GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_getp, GxB_Matrix_Iterator_getpmax,
+    GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek, GxB_Matrix_build_Scalar, GxB_Matrix_fprint,
+    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
+    GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
@@ -1680,8 +1681,25 @@ pub trait IterExtract {
     /// `it` must be a valid attached `GxB_Iterator` positioned on a valid entry.
     unsafe fn extract(it: GxB_Iterator) -> Self::Item;
 
+    /// [`Self::extract`] for an [`EntryIter`], whose iterator reads its position differently.
+    ///
+    /// # Safety
+    /// `it` must be a valid `GxB_Iterator` attached by `GxB_Matrix_Iterator_attach` and
+    /// positioned on a valid entry.
+    unsafe fn extract_entry(it: GxB_Iterator) -> Self::Item;
+
     /// `(row, col)` position of an item, for sorted-merge ordering.
     fn pos(item: &Self::Item) -> (u64, u64);
+}
+
+/// The `(row, col)` an entry iterator is positioned on.
+///
+/// # Safety
+/// `it` must be attached by `GxB_Matrix_Iterator_attach` and positioned on a valid entry.
+unsafe fn entry_index(it: GxB_Iterator) -> (u64, u64) {
+    let (mut row, mut col) = (0, 0);
+    unsafe { GxB_Matrix_Iterator_getIndex(it, &raw mut row, &raw mut col) };
+    (row, col)
 }
 
 /// Extracts `(row, col)` pairs from a boolean matrix.
@@ -1696,6 +1714,10 @@ impl IterExtract for BoolExtract {
             let col = GxB_rowIterator_getColIndex(it);
             (row, col)
         }
+    }
+
+    unsafe fn extract_entry(it: GxB_Iterator) -> Self::Item {
+        unsafe { entry_index(it) }
     }
 
     fn pos(item: &Self::Item) -> (u64, u64) {
@@ -1715,6 +1737,13 @@ impl IterExtract for Uint64Extract {
             let col = GxB_rowIterator_getColIndex(it);
             let val = GxB_Iterator_get_UINT64(it);
             (row, col, val)
+        }
+    }
+
+    unsafe fn extract_entry(it: GxB_Iterator) -> Self::Item {
+        unsafe {
+            let (row, col) = entry_index(it);
+            (row, col, GxB_Iterator_get_UINT64(it))
         }
     }
 
@@ -1879,12 +1908,142 @@ impl<E: IterExtract> Iterator for Iter<E> {
     }
 }
 
+/// An iterator over a matrix's entries from the first one at or after a given `(row, col)`, in
+/// `(row, col)` order, through a last row.
+///
+/// [`Iter`] starts at a row, so a caller wanting the middle of a long row would walk its columns
+/// there one at a time. This one finds its first entry by binary search over the matrix's entry
+/// positions (`GxB_Matrix_Iterator_seek`), so it reads none of the entries before it. It is a
+/// type of its own rather than a mode of [`Iter`], so that the `next` every scan runs per entry
+/// carries no check for it.
+pub struct EntryIter<E: IterExtract = BoolExtract> {
+    m: Arc<Handle>,
+    /// The underlying GraphBLAS iterator, attached as an entry iterator.
+    inner: GxB_Iterator,
+    /// Indicates whether the iterator is depleted.
+    depleted: bool,
+    /// The maximum row index for the iterator.
+    max_row: u64,
+    _extract: PhantomData<E>,
+}
+
+unsafe impl<E: IterExtract> Send for EntryIter<E> {}
+unsafe impl<E: IterExtract> Sync for EntryIter<E> {}
+
+impl<E: IterExtract> Drop for EntryIter<E> {
+    /// Frees the GraphBLAS iterator, before the matrix's [`Handle`] (fields drop after this body).
+    fn drop(&mut self) {
+        unsafe { GxB_Iterator_free(&raw mut self.inner) };
+    }
+}
+
+impl<E: IterExtract> EntryIter<E> {
+    /// An iterator over `m` from its first entry at or after `(row, col)`, through row `max_row`.
+    ///
+    /// Positions map to entries in `(row, col)` order whatever the matrix's format; in a bitmap a
+    /// seek lands on the next present entry.
+    #[must_use]
+    pub fn new<T>(
+        m: &Matrix<T>,
+        (row, col): (u64, u64),
+        max_row: u64,
+    ) -> Self {
+        unsafe {
+            let mut iter = MaybeUninit::uninit();
+            let info = GxB_Iterator_new(iter.as_mut_ptr());
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Iterator_new failed: {info:?}"
+            );
+            let mut it = Self {
+                m: m.m.clone(),
+                inner: iter.assume_init(),
+                depleted: true,
+                max_row,
+                _extract: PhantomData,
+            };
+            let info = GxB_Matrix_Iterator_attach(it.inner, it.m.0, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // The first position whose entry is at or after `(row, col)`.
+            let (mut lo, mut hi) = (0, GxB_Matrix_Iterator_getpmax(it.inner));
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if GxB_Matrix_Iterator_seek(it.inner, mid) != GrB_Info::GrB_SUCCESS {
+                    hi = mid;
+                } else if entry_index(it.inner) < (row, col) {
+                    lo = GxB_Matrix_Iterator_getp(it.inner) + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            it.depleted = GxB_Matrix_Iterator_seek(it.inner, lo) != GrB_Info::GrB_SUCCESS
+                || entry_index(it.inner).0 > max_row;
+            it
+        }
+    }
+}
+
+impl<E: IterExtract> Iterator for EntryIter<E> {
+    type Item = E::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.depleted {
+            return None;
+        }
+        unsafe {
+            let item = E::extract_entry(self.inner);
+            self.depleted = GxB_Matrix_Iterator_next(self.inner) != GrB_Info::GrB_SUCCESS
+                || entry_index(self.inner).0 > self.max_row;
+            Some(item)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
     use super::super::test_init::ensure_init;
-    use super::Matrix;
+    use super::{EntryIter, Matrix, Uint64Extract};
+
+    /// An entry iterator yields exactly the entries at or after its start, through its last row,
+    /// in order: what a row iterator over the whole matrix yields with the earlier entries
+    /// dropped. Every target, present or not, between and past the entries, on sparse and on
+    /// hypersparse storage.
+    #[test]
+    fn an_entry_seek_starts_at_the_first_entry_at_or_after_it() {
+        ensure_init();
+        let coords: BTreeSet<(u64, u64)> = (0..40u64)
+            .flat_map(|i| [(i * 3 % 50, i * 7 % 30), (i * 5 % 50, (i * 11 + 3) % 30)])
+            .collect();
+        let rows: Vec<u64> = coords.iter().map(|&(i, _)| i).collect();
+        let cols: Vec<u64> = coords.iter().map(|&(_, j)| j).collect();
+        let vals: Vec<u64> = (0..coords.len() as u64).collect();
+        for hyper in [false, true] {
+            let mut m = Matrix::<u64>::new(50, 30);
+            m.build(&rows, &cols, &vals);
+            m.wait();
+            let m = if hyper { m.into_hyper() } else { m };
+            m.wait();
+            let all: Vec<(u64, u64, u64)> = m.iter(0, u64::MAX).collect();
+            assert_eq!(all.len(), coords.len());
+            for row in 0..=50 {
+                for col in [0, 1, 7, 29, 30] {
+                    for max_row in [row, row + 3, u64::MAX] {
+                        let want: Vec<(u64, u64, u64)> = all
+                            .iter()
+                            .copied()
+                            .filter(|&(r, c, _)| (r, c) >= (row, col) && r <= max_row)
+                            .collect();
+                        let got: Vec<(u64, u64, u64)> =
+                            EntryIter::<Uint64Extract>::new(&m, (row, col), max_row).collect();
+                        assert_eq!(got, want, "hyper {hyper}, from ({row}, {col}) to {max_row}");
+                    }
+                }
+            }
+        }
+    }
 
     /// `grown` must place every entry at its original coordinate, at the new
     /// dims, for every growth shape — including the degenerate no-growth call

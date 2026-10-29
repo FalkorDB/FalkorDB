@@ -382,17 +382,15 @@ pub fn edges_deleted(
 
 // ---- Index DDL ----
 
-/// CREATE INDEX: build each attribute's column from the live graph, so the index serves reads as
-/// soon as CREATE INDEX returns. Only a Range index has native columns; any other type does
-/// nothing.
+/// CREATE INDEX: create each attribute's column `Building`, its cursor at the start, and leave it to
+/// the background builder ([`online_build`](super::online_build)), which the commit that publishes
+/// the column hands it to. Until its last batch flips it `Ready`, the column serves no reads: the
+/// planner does not use it ([`Graph::is_indexed`]), and `db.indexes()` reports the index under
+/// construction. Only a Range index has native columns; any other type does nothing.
 ///
-/// Each column is created `Building` and filled by one indexer batch with no limit on its size
-/// ([`Graph::indexer_prepare`]), which reaches the end and flips it `Ready`. A batch into an empty
-/// column bulk-builds its tree, so this costs what building the column in one pass does.
-///
-/// Built here on the write thread, with the graph borrowed. It is never built through the
-/// RediSearch populate, which reaches the graph through the `Indexer`'s back-pointer. This index
-/// is part of the graph version, and keeping that reference out is the point.
+/// The column is never built through the RediSearch populate, which reaches the graph through the
+/// `Indexer`'s back-pointer. This index is part of the graph version, and keeping that reference
+/// out is the point.
 pub fn create_index(
     g: &mut Graph,
     index_type: &IndexType,
@@ -402,13 +400,15 @@ pub fn create_index(
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
-            build_in_one_batch(g, entity, label, attr);
+            g.falkordb_index.create_building(entity, label, attr);
         }
     }
 }
 
 /// Create column `(entity, label, attr)` `Building`, replacing any column there, and fill it with
-/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`.
+/// one indexer batch with no limit on its size, which reaches the end and flips it `Ready`. A batch
+/// into an empty column bulk-builds its tree, so this costs what building the column in one pass
+/// does.
 fn build_in_one_batch(
     g: &mut Graph,
     entity: EntityType,
@@ -475,8 +475,10 @@ pub(crate) fn entity_tuples(
 }
 
 /// Index population after an RDB load: build every column that a population snapshot of
-/// `label` covers, as CREATE INDEX does ([`create_index`]). `fields` maps each attribute to its
-/// index fields, and an attribute has a native column when one of its fields is a Range field.
+/// `label` covers, before the loaded graph is published, in one indexer batch each. `fields` maps
+/// each attribute to its index fields, and an attribute has a native column when one of its fields
+/// is a Range field. Unlike CREATE INDEX ([`create_index`]), the column is `Ready` when this
+/// returns: the RDB holds no record of which indexes were still building.
 pub fn populate(
     g: &mut Graph,
     entity: EntityType,
@@ -569,10 +571,16 @@ pub(super) fn scan(
         BuildCursor::Node(from) => {
             scan_nodes(g, label, attr, from, entities, column, &mut tuples).map(BuildCursor::Node)
         }
-        BuildCursor::Edge { src, dst } => {
-            scan_edges(g, label, attr, (src, dst), entities, column, &mut tuples)
-                .map(|(src, dst)| BuildCursor::Edge { src, dst })
-        }
+        BuildCursor::Edge { src, dst, edge } => scan_edges(
+            g,
+            label,
+            attr,
+            (src, dst, edge),
+            entities,
+            column,
+            &mut tuples,
+        )
+        .map(|(src, dst, edge)| BuildCursor::Edge { src, dst, edge }),
     };
     tuples.sort_dedup();
     (tuples, next)
@@ -608,24 +616,23 @@ fn scan_nodes(
     nodes.peek().copied().map(NodeId::from)
 }
 
-/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from pair `from` on,
-/// in `(src, dst)` order, plus the rest of the multi-edge pair the batch stops in, so no pair is
-/// ever split between steps. Edges of `from`'s source with a destination below `from`'s are
-/// skipped: an earlier step indexed them. Returns the pair to resume from, or `None` when no edge
-/// is left.
+/// The edge counterpart of [`scan_nodes`]: up to `budget` `label`-typed edges from `from` on, in
+/// `(src, dst, edge id)` order. Returns the edge to resume from, or `None` when no edge is left.
 ///
-/// Resuming partway through a source's edges re-walks its earlier destinations, as C's populate
-/// does, so a step that resumes inside a source with very many edges pays for the part already
-/// done.
+/// A batch stops after exactly `budget` edges, inside a source's edges or a multi-edge pair if it
+/// gets there, and the next one starts at its cursor by binary search ([`Tensor::iter_from`]), so
+/// resuming inside a long row or a long pair reads nothing of what came before.
+///
+/// [`Tensor::iter_from`]: crate::graph::graphblas::tensor::Tensor::iter_from
 fn scan_edges(
     g: &Graph,
     label: &Arc<String>,
     attr: &Arc<String>,
-    (from_src, from_dst): (NodeId, NodeId),
+    (from_src, from_dst, from_edge): (NodeId, NodeId, RelationshipId),
     budget: usize,
     column: &IndexColumn,
     out: &mut EncodedTuples,
-) -> Option<(NodeId, NodeId)> {
+) -> Option<(NodeId, NodeId, RelationshipId)> {
     let (Some(t), Some(idx)) = (
         g.get_relationship_matrix(label),
         g.get_relationship_attribute_id(attr),
@@ -633,33 +640,29 @@ fn scan_edges(
         return None;
     };
     let idx = idx as u16;
-    let mut index = |eid: u64| {
+    let mut edges = t
+        .iter_from((
+            u64::from(from_src),
+            u64::from(from_dst),
+            u64::from(from_edge),
+        ))
+        .inspect(|_| {
+            #[cfg(test)]
+            EDGES_SCANNED.with(|scanned| scanned.set(scanned.get() + 1));
+        })
+        .peekable();
+    for (_, _, eid) in edges.by_ref().take(budget) {
         if let Some(value) = g.get_relationship_attribute_by_idx(RelationshipId::from(eid), idx) {
             column.push_encoded(&value, eid, out);
         }
-    };
-    let (from_src, from_dst) = (u64::from(from_src), u64::from(from_dst));
-    let mut edges = t.iter(from_src, u64::MAX, false).peekable();
-    while edges
-        .next_if(|&(src, dst, _)| src == from_src && dst < from_dst)
-        .is_some()
-    {}
-    let mut read = 0usize;
-    while read < budget {
-        let Some((src, dst, eid)) = edges.next() else {
-            break;
-        };
-        index(eid);
-        read += 1;
-        if read == budget {
-            while let Some((_, _, eid)) = edges.next_if(|&(s, d, _)| s == src && d == dst) {
-                index(eid);
-            }
-        }
     }
-    edges
-        .peek()
-        .map(|&(src, dst, _)| (NodeId::from(src), NodeId::from(dst)))
+    edges.peek().map(|&(src, dst, eid)| {
+        (
+            NodeId::from(src),
+            NodeId::from(dst),
+            RelationshipId::from(eid),
+        )
+    })
 }
 
 /// One indexer batch: index the next entities of one `Building` column, at most `entities` of
@@ -673,4 +676,12 @@ pub(crate) fn run_indexer_batch(
 ) -> bool {
     g.index_next_batch(entities);
     g.falkordb_index.has_building_columns()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Edges the tensor has yielded to this thread's edge batches: each one a batch read, plus the
+    /// one it peeked at to learn where the next batch resumes. For the test that a batch resuming
+    /// inside a row or a pair reads nothing before its cursor.
+    pub(crate) static EDGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

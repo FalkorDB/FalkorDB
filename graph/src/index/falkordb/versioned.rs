@@ -23,8 +23,14 @@ use super::falkordb_index::{FalkorDbIndex, IndexColumn, IndexKey};
 /// them ([`IndexEntry::indexer_apply`]). The batch that reaches the end flips the index
 /// [`Ready`](Self::Ready). While [`Building`](Self::Building), a read the index would serve is
 /// answered [`NotReady`](super::falkordb_index::NumericAnswer::NotReady) and the read path scans
-/// instead. `CREATE INDEX` takes one batch over every entity, so its index is `Ready` when it
-/// returns.
+/// instead. `CREATE INDEX` leaves its index `Building` for the background builder
+/// ([`online_build`](super::online_build)); an RDB load takes one batch over every entity, so the
+/// index is `Ready` once the graph is loaded.
+///
+/// Batches read entities in a fixed order, and an entity's place in it is what it is compared to the
+/// cursor by ([`BuildCursor::precedes`](super::falkordb_index::BuildCursor::precedes)): a node by
+/// its id; an edge by its source, then its destination, then its edge id, so a batch can stop
+/// between any two edges, those of one multi-edge pair included.
 ///
 /// A `Building` index holds exactly the current tuples of the entities below its cursor, and
 /// nothing at or above it. Live writes keep that true ([`VersionedIndex::writer_record`]). An
@@ -75,6 +81,11 @@ pub(crate) struct IndexEntry<K: VersionedIndex> {
     /// moved past re-applies them at its claim ([`VersionedIndex::writer_rebase`]); published,
     /// they join `written_since_last_indexer_step`.
     pub(crate) written_by_this_version: RoaringTreemap,
+    /// While `Building`: how many entities the build's batches have read ([`IndexerBatch::read`]),
+    /// which sizes the builder's next batch. Only a batch moves it, so it goes where the cursor
+    /// goes: a writer's rebase takes the published copy's, and a batch's catch-up the batch's.
+    /// Entities created or deleted behind the cursor do not change it.
+    pub(crate) read: u64,
 }
 
 /// One indexer batch of index `name`: the work it read, and where the index's next batch resumes
@@ -83,6 +94,14 @@ pub(crate) struct IndexerBatch<K: VersionedIndex> {
     pub(crate) name: K::Name,
     pub(crate) work: K::Batch,
     pub(crate) next: Option<K::Cursor>,
+    /// How many entities the batch read: its budget. A batch that stops short of the end reads
+    /// exactly that many ([`VersionedIndex::indexer_read`]); one that reaches it flips the index
+    /// `Ready`, after which the count is not read.
+    pub(crate) read: u64,
+    /// The most writers' changes the batch's commit catches up on, if it has to: entities
+    /// refreshed or tuples inserted, as [`CatchUp`] chooses. Past it the commit publishes nothing
+    /// ([`Dropped::CatchUpTooLarge`]). `None`: no limit.
+    pub(crate) catch_up_limit: Option<u64>,
 }
 
 /// An indexer batch of any kind, as the indexer's turn keeps it from the version it was applied
@@ -100,6 +119,17 @@ impl PreparedBatch {
     pub(crate) fn id(&self) -> IndexId {
         match &self.0 {
             Prepared::Column(batch) => IndexId::Column(batch.name.0, batch.name.1.clone()),
+        }
+    }
+
+    /// Have the batch's commit publish nothing rather than catch up on more than `limit` of
+    /// writers' changes under the host's locks ([`IndexerBatch::catch_up_limit`]).
+    pub(crate) fn limit_catch_up(
+        &mut self,
+        limit: u64,
+    ) {
+        match &mut self.0 {
+            Prepared::Column(batch) => batch.catch_up_limit = Some(limit),
         }
     }
 }
@@ -169,6 +199,9 @@ pub enum Dropped {
     /// Another batch committed on the same index since. The builder runs one chain of batches per
     /// index, so this is a bug in that exclusion, and it is reported ([`report_batch_race`]).
     AnotherBatch,
+    /// Writers changed more of the index while the batch was read than its commit may catch up
+    /// on ([`PreparedBatch::limit_catch_up`]). The index is unchanged, and still `Building`.
+    CatchUpTooLarge,
 }
 
 /// What a kind of index does on each side of its lifecycle. The state those operations move is
@@ -295,6 +328,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
             indexer_commits: 0,
             written_since_last_indexer_step: Arc::default(),
             written_by_this_version: RoaringTreemap::new(),
+            read: 0,
         }
     }
 
@@ -343,12 +377,13 @@ impl<K: VersionedIndex> IndexEntry<K> {
     }
 
     /// Add an indexer batch's `work`, read from this same version, then move the cursor to `next`,
-    /// or flip the index `Ready` when it is `None`. `false`, changing nothing, if the index is not
-    /// `Building`.
+    /// or flip the index `Ready` when it is `None`, and count the `read` entities. `false`,
+    /// changing nothing, if the index is not `Building`.
     pub(crate) fn indexer_apply(
         &mut self,
         work: &mut K::Batch,
         next: Option<K::Cursor>,
+        read: u64,
     ) -> bool {
         if !self.is_building() {
             return false;
@@ -356,6 +391,7 @@ impl<K: VersionedIndex> IndexEntry<K> {
         self.index.indexer_add(work);
         self.state = next.map_or(BuildState::Ready, |next| BuildState::Building { next });
         self.indexer_commits += 1;
+        self.read = self.read.saturating_add(read);
         // The batch read every entity at this version's values, writers' changes included.
         if !self.written_since_last_indexer_step.is_empty() {
             self.written_since_last_indexer_step = Arc::default();
@@ -401,7 +437,7 @@ impl FalkorDbIndex {
         batch: &mut IndexerBatch<K>,
     ) -> bool {
         K::entry_mut(self, &batch.name)
-            .is_some_and(|entry| entry.indexer_apply(&mut batch.work, batch.next))
+            .is_some_and(|entry| entry.indexer_apply(&mut batch.work, batch.next, batch.read))
     }
 }
 
@@ -440,6 +476,7 @@ impl Graph {
                 &batch.name,
                 &id,
                 IndexColumn::batch_len(&batch.work),
+                batch.catch_up_limit,
             ),
         }
     }
@@ -451,6 +488,7 @@ impl Graph {
         name: &K::Name,
         id: &IndexId,
         batch_len: usize,
+        catch_up_limit: Option<u64>,
     ) -> IndexerCommit {
         let Some(ours) = K::entry(&self.falkordb_index, name) else {
             return IndexerCommit::Dropped(Dropped::Gone);
@@ -461,7 +499,15 @@ impl Graph {
         }
         if published.version != self.version {
             let written = theirs.map_or(0, |theirs| theirs.written_since_last_indexer_step.len());
-            return IndexerCommit::CatchUp(catch_up_by(written, batch_len));
+            let how = catch_up_by(written, batch_len);
+            let work = match how {
+                CatchUp::Refresh => written,
+                CatchUp::Insert => batch_len as u64,
+            };
+            if catch_up_limit.is_some_and(|limit| work > limit) {
+                return IndexerCommit::Dropped(Dropped::CatchUpTooLarge);
+            }
+            return IndexerCommit::CatchUp(how);
         }
         // No writer committed, so only batches can have changed an index since.
         if self
@@ -543,6 +589,7 @@ impl Graph {
         );
         merged.state = ours.state;
         merged.indexer_commits = ours.indexer_commits;
+        merged.read = ours.read;
         merged.written_since_last_indexer_step = Arc::default();
         if let Some(slot) = K::entry_mut(&mut self.falkordb_index, name) {
             *slot = merged;
@@ -676,10 +723,89 @@ impl Graph {
         let entry = K::entry(&self.falkordb_index, &name)?;
         let from = entry.cursor()?;
         let (work, next) = entry.index.indexer_read(self, &name, from, budget);
-        let mut batch = IndexerBatch { name, work, next };
+        let mut batch = IndexerBatch {
+            name,
+            work,
+            next,
+            read: budget as u64,
+            catch_up_limit: None,
+        };
         self.falkordb_index
             .apply_indexer_batch(&mut batch)
             .then_some(batch)
+    }
+
+    /// How many entities the batches of index `id` have read in this version
+    /// ([`IndexEntry::read`]), or `None` if it is not `Building`.
+    pub(crate) fn index_build_read(
+        &self,
+        id: &IndexId,
+    ) -> Option<u64> {
+        match id {
+            IndexId::Column(entity, key) => {
+                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
+                    .filter(|entry| entry.is_building())
+                    .map(|entry| entry.read)
+            }
+        }
+    }
+
+    /// Whether index `id` is `Building` in this version.
+    pub(crate) fn index_building(
+        &self,
+        id: &IndexId,
+    ) -> bool {
+        match id {
+            IndexId::Column(entity, key) => {
+                IndexColumn::entry(&self.falkordb_index, &(*entity, key.clone()))
+                    .is_some_and(IndexEntry::is_building)
+            }
+        }
+    }
+
+    /// Every index this version holds `Building`: what registering a graph with the builder starts.
+    pub(crate) fn building_indexes(&self) -> Vec<IndexId> {
+        self.falkordb_index
+            .column_names()
+            .into_iter()
+            .filter(|name| {
+                IndexColumn::entry(&self.falkordb_index, name).is_some_and(IndexEntry::is_building)
+            })
+            .map(|(entity, key)| IndexId::Column(entity, key))
+            .collect()
+    }
+
+    /// The indexes this version holds `Building` that `older` does not hold as the same index:
+    /// created since, or dropped and created again. What a commit hands the builder, so each build
+    /// starts once, however many commits it spans. Every writer's commit asks, so with no index
+    /// `Building` here it answers without looking any index up by name.
+    pub(crate) fn indexes_to_build_since(
+        &self,
+        older: &Self,
+    ) -> Vec<IndexId> {
+        if !self.falkordb_index.has_building_columns() {
+            return Vec::new();
+        }
+        self.falkordb_index
+            .column_names()
+            .into_iter()
+            .filter(|name| self.building_since::<IndexColumn>(older, name))
+            .map(|(entity, key)| IndexId::Column(entity, key))
+            .collect()
+    }
+
+    /// [`Self::indexes_to_build_since`] for one index: `Building` here, and in `older` absent or
+    /// another generation.
+    fn building_since<K: VersionedIndex>(
+        &self,
+        older: &Self,
+        name: &K::Name,
+    ) -> bool {
+        K::entry(&self.falkordb_index, name).is_some_and(|ours| {
+            ours.is_building()
+                && K::entry(&older.falkordb_index, name)
+                    .is_none_or(|theirs| theirs.generation != ours.generation)
+        })
     }
 }
 

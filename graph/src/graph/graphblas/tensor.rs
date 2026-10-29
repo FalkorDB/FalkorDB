@@ -1316,6 +1316,31 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
+    /// The edges from `(src, dst, edge)` on, in `(src, dst, edge id)` order, as [`Self::iter`]
+    /// yields them forward: the rest of pair `(src, dst)` from `edge`, then every later pair.
+    /// It reads none of the entries before that place: the forward layers and the pair's ids
+    /// each start there by binary search, so resuming inside a long row or a long multi-edge pair
+    /// costs what is read from there, not what came before.
+    #[must_use]
+    pub fn iter_from(
+        &self,
+        (src, dst, edge): (u64, u64, u64),
+    ) -> IterFrom<'_> {
+        self.wait_fwd();
+        IterFrom {
+            t: self,
+            base: versioned_matrix::EntryIter::<Uint64Extract>::from_layers_at(
+                &self.m,
+                &self.dp,
+                &self.dm,
+                (src, dst),
+                u64::MAX,
+            ),
+            pair: None,
+            from: Some((src, dst, edge)),
+        }
+    }
+
     /// How many `(src, dst)` pairs end at one of `dsts`: the selected rows of
     /// the backward adjacency `mt`, counted in one bulk product whose cost
     /// follows `dsts` rather than the tensor (see
@@ -1837,6 +1862,63 @@ impl Iterator for Iter<'_> {
                 return Some((self.src, self.dest, id));
             }
             return Some((self.src, self.dest, inline));
+        }
+    }
+}
+
+/// [`Tensor::iter_from`]'s iterator: [`Iter`]'s forward walk, from an edge. The forward layers and
+/// each multi-edge pair's ids are read by entry iterators, which start where they are asked to,
+/// and a pair's ids are read as they are yielded rather than buffered whole, so a walk that stops
+/// inside a long pair reads none of its rest.
+pub struct IterFrom<'a> {
+    t: &'a Tensor,
+    base: versioned_matrix::EntryIter<Uint64Extract>,
+    /// The current multi-edge pair, and the rest of its edge ids, ascending.
+    pair: Option<(u64, u64, versioned_matrix::EntryIter)>,
+    /// Where the walk starts: in its first pair, edge ids below this one are skipped.
+    from: Option<(u64, u64, u64)>,
+}
+
+impl Iterator for IterFrom<'_> {
+    type Item = (u64, u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((src, dest, ids)) = &mut self.pair {
+            if let Some((_, id)) = ids.next() {
+                return Some((*src, *dest, id));
+            }
+            self.pair = None;
+        }
+        loop {
+            let (src, dest, inline) = self.base.next()?;
+            // The first pair starts at the walk's edge; every later pair at its first.
+            let from_edge = match self.from.take() {
+                Some((fs, fd, edge)) if (fs, fd) == (src, dest) => edge,
+                _ => 0,
+            };
+            if inline == MULTI_EDGE {
+                let (block, key) = compound_key(src, dest);
+                let Some(me) = self.t.me_block(block) else {
+                    debug_assert!(false, "MULTI_EDGE pair ({src}, {dest}) has no `me` block");
+                    continue;
+                };
+                let mut ids = me.iter_at((key, from_edge), key);
+                // A pair with no ids is skipped, as [`Iter`] does. Past `from_edge`, an empty rest
+                // of the pair is expected.
+                let Some((_, id)) = ids.next() else {
+                    debug_assert!(
+                        from_edge > 0,
+                        "MULTI_EDGE pair ({src}, {dest}) has no ids in `me`"
+                    );
+                    continue;
+                };
+                self.pair = Some((src, dest, ids));
+                return Some((src, dest, id));
+            }
+            if inline < from_edge {
+                continue;
+            }
+            return Some((src, dest, inline));
         }
     }
 }
