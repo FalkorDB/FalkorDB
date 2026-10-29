@@ -231,6 +231,15 @@ jobs:
             BUILD_IMAGE=${{ matrix.build_image }}
             CXX=${{ matrix.cxx }}
           cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
+          # Never serve the stage that installs the OS packages from a cache,
+          # as _build-flavour.yml does for the Debian images: a cached RUN is
+          # keyed on its command text, not on what the repositories hold, so
+          # a hit would skip the upgrade and the fixable gate below would fail
+          # on every build until the Dockerfile changed. No cache holds that
+          # stage today (only the artifact target writes one), and this keeps
+          # it that way. No `pull`: the builder stage must stay the one the
+          # step above built.
+          no-cache-filters: server
 
       # Start the image as a user would: the module loads, answers a query, and
       # run.sh has dropped redis-server to the falkordb user (uid 999).
