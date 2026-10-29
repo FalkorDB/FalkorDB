@@ -15,31 +15,34 @@ use crate::divergence_guard;
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 pub fn graph_effect(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
     let effects_buf = args.next_arg()?;
 
     let buf = effects_buf.as_slice();
     if buf.is_empty() {
-        return Ok(RedisValue::SimpleStringStatic("OK"));
+        return Ok(ValkeyValue::SimpleStringStatic("OK"));
     }
 
     // Open existing graph or create a new one. Looked up by the full key bytes
     // and created under the truncated name, which is C's own asymmetry — see
     // `c_graph_key`.
     let key = ctx.open_key_writable(&key_str);
-    let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    let graph = if let Some(g) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         g.clone()
     } else {
         let name = c_graph_name(&key_str);
@@ -61,7 +64,7 @@ pub fn graph_effect(
 
     let mut tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
-        return Err(RedisError::String(
+        return Err(ValkeyError::String(
             "ERR another write is in progress, retry the query".to_string(),
         ));
     };
@@ -87,7 +90,7 @@ pub fn graph_effect(
     match result {
         Ok(()) => {
             ctx.replicate_verbatim();
-            Ok(RedisValue::SimpleStringStatic("OK"))
+            Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
         Err(e) => {
             // Rolled back, so this graph is exactly as it was — but the write
@@ -99,7 +102,7 @@ pub fn graph_effect(
             // `on_failure` decides for itself whether this was replayed; a
             // client-sent payload returns the error below and nothing more.
             divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e, Some(buf));
-            Err(RedisError::String(format!("ERR effect apply failed: {e}")))
+            Err(ValkeyError::String(format!("ERR effect apply failed: {e}")))
         }
     }
 }

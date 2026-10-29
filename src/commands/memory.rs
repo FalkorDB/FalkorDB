@@ -41,12 +41,12 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use graph::threadpool::spawn;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 const MB: usize = 1 << 20;
 
@@ -62,14 +62,14 @@ const MB: usize = 1 << 20;
 /// (``CREATE (:`L\r\n+PWNED`)``), and those bytes then either inject into the next
 /// reply on the connection or come back mangled where Redis sanitises a status. Same
 /// rule, and same reason, as `GRAPH.LIST` (`commands::list::c_reply_name`).
-fn c_schema_name(name: &str) -> RedisValue {
-    RedisValue::StringBuffer(up_to_nul(name).as_bytes().to_vec())
+fn c_schema_name(name: &str) -> ValkeyValue {
+    ValkeyValue::StringBuffer(up_to_nul(name).as_bytes().to_vec())
 }
 
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,
-) -> RedisResult {
+) -> ValkeyResult {
     // L1-read for exactly the sampling pass, through a session: the index sizes come
     // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
     // lock mode that the GIL lock-order assertion reads (#726).
@@ -117,25 +117,25 @@ fn memory_report(
     let mut out = Vec::with_capacity(18);
 
     // 1. total_graph_sz_mb
-    out.push(RedisValue::SimpleString("total_graph_sz_mb".into()));
-    out.push(RedisValue::Integer(total_mb));
+    out.push(ValkeyValue::SimpleString("total_graph_sz_mb".into()));
+    out.push(ValkeyValue::Integer(total_mb));
 
     // 2. label_matrices_sz_mb
-    out.push(RedisValue::SimpleString("label_matrices_sz_mb".into()));
-    out.push(RedisValue::Integer(label_matrices_mb));
+    out.push(ValkeyValue::SimpleString("label_matrices_sz_mb".into()));
+    out.push(ValkeyValue::Integer(label_matrices_mb));
 
     // 3. relation_matrices_sz_mb
-    out.push(RedisValue::SimpleString("relation_matrices_sz_mb".into()));
-    out.push(RedisValue::Integer(relation_matrices_mb));
+    out.push(ValkeyValue::SimpleString("relation_matrices_sz_mb".into()));
+    out.push(ValkeyValue::Integer(relation_matrices_mb));
 
     // 4. amortized_node_block_sz_mb
-    out.push(RedisValue::SimpleString(
+    out.push(ValkeyValue::SimpleString(
         "amortized_node_block_sz_mb".into(),
     ));
-    out.push(RedisValue::Integer(node_block_mb));
+    out.push(ValkeyValue::Integer(node_block_mb));
 
     // 5. amortized_node_attributes_by_label_sz_mb (nested flat map)
-    out.push(RedisValue::SimpleString(
+    out.push(ValkeyValue::SimpleString(
         "amortized_node_attributes_by_label_sz_mb".into(),
     ));
     let mut label_attrs = Vec::new();
@@ -143,45 +143,45 @@ fn memory_report(
         // A query can no longer put a NUL in a label name, but a name decoded from an
         // RDB written before that still has to reply rather than abort.
         label_attrs.push(c_schema_name(name));
-        label_attrs.push(RedisValue::Integer(*mb));
+        label_attrs.push(ValkeyValue::Integer(*mb));
     }
-    out.push(RedisValue::Array(label_attrs));
+    out.push(ValkeyValue::Array(label_attrs));
 
     // 6. amortized_unlabeled_nodes_attributes_sz_mb
-    out.push(RedisValue::SimpleString(
+    out.push(ValkeyValue::SimpleString(
         "amortized_unlabeled_nodes_attributes_sz_mb".into(),
     ));
-    out.push(RedisValue::Integer(unlabeled_node_attr_mb));
+    out.push(ValkeyValue::Integer(unlabeled_node_attr_mb));
 
     // 7. amortized_edge_block_sz_mb
-    out.push(RedisValue::SimpleString(
+    out.push(ValkeyValue::SimpleString(
         "amortized_edge_block_sz_mb".into(),
     ));
-    out.push(RedisValue::Integer(edge_block_mb));
+    out.push(ValkeyValue::Integer(edge_block_mb));
 
     // 8. amortized_edge_attributes_by_type_sz_mb (nested flat map)
-    out.push(RedisValue::SimpleString(
+    out.push(ValkeyValue::SimpleString(
         "amortized_edge_attributes_by_type_sz_mb".into(),
     ));
     let mut type_attrs = Vec::new();
     for (name, mb) in &edge_attr_by_type_mb {
         // Replied as the label names above are.
         type_attrs.push(c_schema_name(name));
-        type_attrs.push(RedisValue::Integer(*mb));
+        type_attrs.push(ValkeyValue::Integer(*mb));
     }
-    out.push(RedisValue::Array(type_attrs));
+    out.push(ValkeyValue::Array(type_attrs));
 
     // 9. indices_sz_mb
-    out.push(RedisValue::SimpleString("indices_sz_mb".into()));
-    out.push(RedisValue::Integer(indices_mb));
+    out.push(ValkeyValue::SimpleString("indices_sz_mb".into()));
+    out.push(ValkeyValue::Integer(indices_mb));
 
-    Ok(RedisValue::Array(out))
+    Ok(ValkeyValue::Array(out))
 }
 
 pub fn graph_memory(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
     // args[0] = "GRAPH.MEMORY"
     let mut args = args.into_iter().skip(1);
@@ -189,13 +189,13 @@ pub fn graph_memory(
 
     // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
     if arg_count != 2 && arg_count != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     // First arg must be "USAGE"
     let subcmd = args.next_arg()?;
     if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
-        return Err(RedisError::Str(
+        return Err(ValkeyError::Str(
             "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
         ));
     }
@@ -206,7 +206,7 @@ pub fn graph_memory(
     let samples: usize = if arg_count == 4 {
         let samples_kw = args.next_arg()?;
         if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
-            return Err(RedisError::Str("ERR expected SAMPLES keyword"));
+            return Err(ValkeyError::Str("ERR expected SAMPLES keyword"));
         }
         // Any non-negative count, as C's `RedisModule_StringToULongLong`; 0 is
         // accepted and, like any count, clamped to 1..=10000 by
@@ -215,7 +215,7 @@ pub fn graph_memory(
         count_str
             .to_string_lossy()
             .parse::<u64>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES must be a non-negative integer"))?
+            .map_err(|_| ValkeyError::Str("ERR SAMPLES must be a non-negative integer"))?
             .try_into()
             .unwrap_or(usize::MAX)
     } else {
@@ -224,8 +224,9 @@ pub fn graph_memory(
 
     let key = ctx.open_key(&key_name);
     let graph = key
-        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-        .ok_or(RedisError::Str("Graph does not exist"))?
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+        .ok_or(ValkeyError::Str("Graph does not exist"))?
         .clone();
 
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
@@ -248,5 +249,5 @@ pub fn graph_memory(
         None,
     );
 
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }

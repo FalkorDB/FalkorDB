@@ -7,9 +7,6 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::{Mutex, RwLock};
-use redis_module::key::KeyFlags;
-use redis_module::logging::log_warning;
-use redis_module::{Context, ContextFlags, RedisString, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -17,6 +14,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use valkey_module::key::KeyFlags;
+use valkey_module::logging::log_warning;
+use valkey_module::{Context, ContextFlags, ValkeyString, ValkeyValue, raw};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
 use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
@@ -273,11 +273,11 @@ fn stream_entries(
     max_len: i64,
 ) {
     // Owned rather than borrowed from a command's auto-memory, and freed by its own
-    // `Drop` — `RedisString` is the same NULL-context, binary-safe string
+    // `Drop` — `ValkeyString` is the same NULL-context, binary-safe string
     // `create_detached_string` builds, minus the frees this function would otherwise
     // have to place on each of its three exits.
     let key_name =
-        RedisString::create_from_slice(ptr::null_mut(), stream_name(graph_name).as_bytes());
+        ValkeyString::create_from_slice(ptr::null_mut(), stream_name(graph_name).as_bytes());
     let key = unsafe {
         let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
         f(ctx, key_name.inner, raw::REDISMODULE_WRITE as c_int)
@@ -338,7 +338,7 @@ pub fn delete_stream(
     graph_name: &str,
 ) {
     let key = stream_name(graph_name);
-    let args = [RedisString::create_from_slice(
+    let args = [ValkeyString::create_from_slice(
         ctx.get_raw(),
         key.as_bytes(),
     )];
@@ -552,47 +552,47 @@ pub fn snapshot_waiting() -> Vec<WaitingQueryInfo> {
     out
 }
 
-/// Build a `RedisValue` for the GRAPH.INFO `RunningQueries` section.
-pub fn running_queries_reply() -> Vec<RedisValue> {
+/// Build a `ValkeyValue` for the GRAPH.INFO `RunningQueries` section.
+pub fn running_queries_reply() -> Vec<ValkeyValue> {
     let now = Instant::now();
     let queries = snapshot_running();
     queries
         .into_iter()
         .map(|q| {
             let duration_ms = now.duration_since(q.start).as_secs_f64() * 1000.0;
-            RedisValue::Array(vec![
-                RedisValue::BulkString("Received at".into()),
-                RedisValue::Integer(q.received_at),
-                RedisValue::BulkString("Graph name".into()),
-                RedisValue::BulkString(q.graph_name.to_string()),
-                RedisValue::BulkString("Query".into()),
-                RedisValue::BulkString(q.query.to_string()),
-                RedisValue::BulkString("Execution duration".into()),
-                RedisValue::Float(duration_ms),
-                RedisValue::BulkString("Replicated command".into()),
-                RedisValue::Integer(i64::from(q.is_replicated)),
+            ValkeyValue::Array(vec![
+                ValkeyValue::BulkString("Received at".into()),
+                ValkeyValue::Integer(q.received_at),
+                ValkeyValue::BulkString("Graph name".into()),
+                ValkeyValue::BulkString(q.graph_name.to_string()),
+                ValkeyValue::BulkString("Query".into()),
+                ValkeyValue::BulkString(q.query.to_string()),
+                ValkeyValue::BulkString("Execution duration".into()),
+                ValkeyValue::Float(duration_ms),
+                ValkeyValue::BulkString("Replicated command".into()),
+                ValkeyValue::Integer(i64::from(q.is_replicated)),
             ])
         })
         .collect()
 }
 
-/// Build a `RedisValue` for the GRAPH.INFO `WaitingQueries` section.
-pub fn waiting_queries_reply() -> Vec<RedisValue> {
+/// Build a `ValkeyValue` for the GRAPH.INFO `WaitingQueries` section.
+pub fn waiting_queries_reply() -> Vec<ValkeyValue> {
     let now = Instant::now();
     let queries = snapshot_waiting();
     queries
         .into_iter()
         .map(|q| {
             let duration_ms = now.duration_since(q.enqueued).as_secs_f64() * 1000.0;
-            RedisValue::Array(vec![
-                RedisValue::BulkString("Received at".into()),
-                RedisValue::Integer(q.received_at),
-                RedisValue::BulkString("Graph name".into()),
-                RedisValue::BulkString(q.graph_name.to_string()),
-                RedisValue::BulkString("Query".into()),
-                RedisValue::BulkString(q.query.to_string()),
-                RedisValue::BulkString("Wait duration".into()),
-                RedisValue::Float(duration_ms),
+            ValkeyValue::Array(vec![
+                ValkeyValue::BulkString("Received at".into()),
+                ValkeyValue::Integer(q.received_at),
+                ValkeyValue::BulkString("Graph name".into()),
+                ValkeyValue::BulkString(q.graph_name.to_string()),
+                ValkeyValue::BulkString("Query".into()),
+                ValkeyValue::BulkString(q.query.to_string()),
+                ValkeyValue::BulkString("Wait duration".into()),
+                ValkeyValue::Float(duration_ms),
             ])
         })
         .collect()
@@ -825,7 +825,7 @@ fn key_holds_graph(
 ) -> bool {
     // NULL context, like every other string this module builds off the command path,
     // so Redis does not tie it to an auto-memory pool that outlives the call.
-    let key_name = RedisString::create_from_slice(ptr::null_mut(), name.as_bytes());
+    let key_name = ValkeyString::create_from_slice(ptr::null_mut(), name.as_bytes());
     // NOTOUCH: reporting on a query must not make the graph look more recently used
     // than the query already made it.
     let key = ctx.open_key_with_flags(&key_name, KeyFlags::NOTOUCH);

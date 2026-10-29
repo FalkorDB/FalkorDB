@@ -65,34 +65,34 @@ use config::{
     CONFIGURATION_THREAD_COUNT, CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
 };
 use module_init::graph_init;
-use redis_module::{configuration::ConfigurationFlags, redis_module};
 use redis_type::{GRAPH_TYPE, GRAPHMETA_TYPE};
+use valkey_module::{configuration::ConfigurationFlags, valkey_module};
 
-redis_module! {
+valkey_module! {
     name: "graph",
     version: env!("FALKORDB_VERSION_INT").parse::<i32>().unwrap(),
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE, GRAPHMETA_TYPE],
     init: graph_init,
     commands: [
-        ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],
-        ["graph.COPY", graph_copy, "write deny-oom deny-script", 1, 2, 1, ""],
-        ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1, ""],
-        ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
-        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
-        ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.MEMORY", graph_memory, "readonly deny-script blocking", 2, 2, 1, ""],
-        ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
-        ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
-        ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],
-        ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1, ""],
-        ["graph.CONSTRAINT", graph_constraint, "write deny-oom deny-script", 2, 2, 1, ""],
-        ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1, ""],
-        ["graph.SLOWLOG", graph_slowlog, "readonly deny-script allow-busy", 1, 1, 1, ""],
-        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 1, 1, 1, ""],
+        ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1],
+        ["graph.COPY", graph_copy, "write deny-oom deny-script", 1, 2, 1],
+        ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1],
+        ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1],
+        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0],
+        ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.MEMORY", graph_memory, "readonly deny-script blocking", 2, 2, 1],
+        ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0],
+        ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0],
+        ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0],
+        ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1],
+        ["graph.CONSTRAINT", graph_constraint, "write deny-oom deny-script", 2, 2, 1],
+        ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1],
+        ["graph.SLOWLOG", graph_slowlog, "readonly deny-script allow-busy", 1, 1, 1],
+        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 1, 1, 1],
     ],
     configurations: [
         i64: [

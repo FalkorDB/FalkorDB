@@ -50,17 +50,18 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
-use redis_module::logging::{log_notice, log_warning};
-use redis_module::raw::{
-    self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
-    save_unsigned,
-};
-use redis_module::{
-    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
-};
 use std::ffi::CString;
 use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
+use valkey_module::logging::{log_notice, log_warning};
+use valkey_module::raw::{
+    self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
+    save_unsigned,
+};
+use valkey_module::{
+    Context, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, ValkeyError,
+    native_types::ValkeyType,
+};
 
 /// The configured `CACHE_SIZE`, for a graph an RDB callback is building.
 ///
@@ -374,7 +375,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
 /// Called by Redis internals with a valid module context.
 pub unsafe extern "C" fn on_persistence(
     ctx: *mut RedisModuleCtx,
-    _eid: redis_module::RedisModuleEvent,
+    _eid: valkey_module::RedisModuleEvent,
     subevent: u64,
     _data: *mut c_void,
 ) {
@@ -888,11 +889,26 @@ const _: () = {
     );
 };
 
+/// Error `valkey-module` returns when a key holds a different module type.
+const WRONG_TYPE_VALKEY: &str = "Existing key has wrong Valkey type";
+/// The wording clients have always seen for that error, kept stable across the
+/// switch from `redis-module` to `valkey-module`.
+const WRONG_TYPE_COMPAT: &str = "Existing key has wrong Redis type";
+
+/// `map_err` adapter for `get_value(&GRAPH_TYPE)`: keeps the client-visible
+/// wrong-type error identical to the one `redis-module` produced.
+pub fn wrong_type_compat(err: ValkeyError) -> ValkeyError {
+    match err {
+        ValkeyError::Str(msg) if msg == WRONG_TYPE_VALKEY => ValkeyError::Str(WRONG_TYPE_COMPAT),
+        other => other,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Type statics
 // ---------------------------------------------------------------------------
 
-pub static GRAPH_TYPE: RedisType = RedisType::new(
+pub static GRAPH_TYPE: ValkeyType = ValkeyType::new(
     "graphdata",
     19,
     RedisModuleTypeMethods {
@@ -990,7 +1006,7 @@ unsafe extern "C" fn graphmeta_aux_load(
     0
 }
 
-pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
+pub static GRAPHMETA_TYPE: ValkeyType = ValkeyType::new(
     "graphmeta",
     19,
     RedisModuleTypeMethods {

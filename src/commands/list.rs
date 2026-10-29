@@ -28,7 +28,7 @@
 //! No arguments are accepted beyond the command name itself; extra arguments
 //! result in a `WrongArity` error.
 
-use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue};
+use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 /// The name `GRAPH.LIST` replies for one key `SCAN` returned.
 ///
@@ -37,32 +37,32 @@ use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue};
 /// how this handler finds graphs, so the same truncation is applied to what the scan
 /// returned. And C replies each name with `RM_ReplyWithStringBuffer`, which is
 /// length-framed. Replying a name as a RESP *status* instead
-/// (`RedisValue::SimpleString`, i.e. `RM_ReplyWithSimpleString`) escapes nothing, so a
+/// (`ValkeyValue::SimpleString`, i.e. `RM_ReplyWithSimpleString`) escapes nothing, so a
 /// key holding CR/LF let a client inject arbitrary RESP into the *next* reply on the
 /// connection. `StringBuffer` is C's reply, and carries the bytes it is handed.
 ///
 /// `SCAN` returns a name as a `SimpleString` when its bytes are valid UTF-8 and as a
 /// `StringBuffer` when they are not; both arms need the same treatment, or the bytes
 /// past a NUL still leak for a non-UTF-8 key.
-fn c_reply_name(name: RedisValue) -> RedisValue {
+fn c_reply_name(name: ValkeyValue) -> ValkeyValue {
     let mut bytes = match name {
-        RedisValue::SimpleString(s) | RedisValue::BulkString(s) => s.into_bytes(),
-        RedisValue::StringBuffer(b) => b,
+        ValkeyValue::SimpleString(s) | ValkeyValue::BulkString(s) => s.into_bytes(),
+        ValkeyValue::StringBuffer(b) => b,
         other => return other,
     };
     if let Some(end) = bytes.iter().position(|b| *b == 0) {
         bytes.truncate(end);
     }
-    RedisValue::StringBuffer(bytes)
+    ValkeyValue::StringBuffer(bytes)
 }
 
 #[allow(clippy::needless_pass_by_value)]
 pub fn graph_list(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() != 1 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let mut a = [
@@ -74,18 +74,18 @@ pub fn graph_list(
     loop {
         let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
         match call_res {
-            RedisValue::Array(mut arr) => {
-                if let RedisValue::Array(arr) = arr.remove(1) {
+            ValkeyValue::Array(mut arr) => {
+                if let ValkeyValue::Array(arr) = arr.remove(1) {
                     res.extend(arr.into_iter().map(c_reply_name));
                 }
-                if let RedisValue::SimpleString(i) = arr.remove(0) {
+                if let ValkeyValue::SimpleString(i) = arr.remove(0) {
                     if i == "0" {
-                        return Ok(RedisValue::Array(res));
+                        return Ok(ValkeyValue::Array(res));
                     }
                     a[0] = ctx.create_string(i);
                 }
             }
-            _ => return Err(RedisError::Str("ERR Failed to list graphs")),
+            _ => return Err(ValkeyError::Str("ERR Failed to list graphs")),
         }
     }
 }

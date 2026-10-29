@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! +-------------------------------+    +----------------------------+
-//! | RedisGILGuard configs         |    | Atomic configs             |
+//! | ValkeyGILGuard configs         |    | Atomic configs             |
 //! | (set at module load)          |    | (changeable at runtime)    |
 //! |-------------------------------|    |----------------------------|
 //! | CACHE_SIZE                    |    | TIMEOUT / TIMEOUT_DEFAULT  |
@@ -24,9 +24,9 @@
 //! ```
 //!
 //! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
-//!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
+//!   `ValkeyGILGuard`, ensuring safe access from the Redis main thread.
 //!   Most are immutable after module load (flagged `IMMUTABLE` in the
-//!   `redis_module!` macro); the ones C also lets change at run-time are
+//!   `valkey_module!` macro); the ones C also lets change at run-time are
 //!   flagged `DEFAULT` and accepted by `GRAPH.CONFIG SET`.
 //!
 //! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
@@ -41,34 +41,34 @@ use crate::commands::config_cmd::{
     ConfigValue, UNKNOWN_FIELD, apply_config_set, check_timeout_constraints, validate_config_set,
 };
 use lazy_static::lazy_static;
-use redis_module::{Context, RedisGILGuard};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use valkey_module::{Context, ValkeyGILGuard};
 
 // ── Redis module-level configurations (set via moduleArgs) ──
 
 lazy_static! {
-    pub static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
-    pub static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
-    pub static ref CONFIGURATION_THREAD_COUNT: RedisGILGuard<i64> = RedisGILGuard::new(0.into());
+    pub static ref CONFIGURATION_IMPORT_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/var/lib/FalkorDB/import/".into());
+    pub static ref CONFIGURATION_CACHE_SIZE: ValkeyGILGuard<i64> = ValkeyGILGuard::new(25.into());
+    pub static ref CONFIGURATION_THREAD_COUNT: ValkeyGILGuard<i64> = ValkeyGILGuard::new(0.into());
     /// Number of RediSearch background worker threads (e.g. TIERED vector-index
     /// HNSW migration jobs). 0 = disabled: tiered inserts stay in the flat
     /// buffer (KNN still correct), no async migration.
-    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
-        RedisGILGuard::new(0.into());
-    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
-        RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
-    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
-        RedisGILGuard::new(100_000.into());
-    pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
-    pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
-        RedisGILGuard::new("/tmp".into());
-    pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(256 * 1024 * 1024_i64);
-    pub static ref CONFIGURATION_JS_STACK_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new(1024 * 1024_i64);
+    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(0.into());
+    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
+    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(100_000.into());
+    pub static ref CONFIGURATION_DELAY_INDEXING: ValkeyGILGuard<bool> = ValkeyGILGuard::new(false);
+    pub static ref CONFIGURATION_TEMP_FOLDER: ValkeyGILGuard<String> =
+        ValkeyGILGuard::new("/tmp".into());
+    pub static ref CONFIGURATION_JS_HEAP_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(256 * 1024 * 1024_i64);
+    pub static ref CONFIGURATION_JS_STACK_SIZE: ValkeyGILGuard<i64> =
+        ValkeyGILGuard::new(1024 * 1024_i64);
 }
 
 // ── Runtime-configurable atomics ──
@@ -127,7 +127,7 @@ pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 /// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
 pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
-pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
+pub fn get_thread_count(ctx: &valkey_module::Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
     if val > 0 {
         val
