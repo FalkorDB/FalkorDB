@@ -323,6 +323,11 @@ impl VersionedIndex for IndexColumn {
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
     /// encoded and sorted ([`graph_writes::scan`]).
+    ///
+    /// A batch with a budget reads at least one entity or reaches the end, so the cursor it
+    /// leaves is past `from`. A debug build checks it here, where every batch is read: a scan
+    /// that resumes behind its cursor would otherwise read the same entities batch after batch,
+    /// and a build loop would never end.
     fn indexer_read(
         &self,
         version: &Graph,
@@ -330,7 +335,12 @@ impl VersionedIndex for IndexColumn {
         from: BuildCursor,
         budget: usize,
     ) -> (EncodedTuples, Option<BuildCursor>) {
-        graph_writes::scan(version, label, attr, from, budget, self)
+        let (tuples, next) = graph_writes::scan(version, label, attr, from, budget, self);
+        debug_assert!(
+            budget == 0 || next.is_none_or(|next| from.precedes(next)),
+            "a batch of {budget} from {from:?} leaves its cursor at {next:?}: no progress"
+        );
+        (tuples, next)
     }
 
     fn indexer_add(
