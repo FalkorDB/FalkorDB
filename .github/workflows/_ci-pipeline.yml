@@ -134,6 +134,106 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  # Valkey dlopen()s modules with RTLD_DEEPBIND, which Redis does not, so a
+  # module that loads fine under redis-server can crash valkey-server on load
+  # (#3493). The crash needs a valkey-server that copy-relocates `environ`:
+  # Ubuntu's package does, while the official valkey/valkey images and Debian's
+  # package do not and would pass even without the fix. Hence Ubuntu's Valkey.
+  valkey-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: ubuntu:26.04
+    needs: [build-engine]
+    if: ${{ !cancelled() && needs.build-engine.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Install Valkey
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
+            libstdc++6 libssl3t64 zlib1g libzstd1
+      - name: Load the engine into Valkey
+        run: tests/valkey_smoke.sh target/release/libfalkordb.so
+  # The flow suites only run under redis-server, which never takes the
+  # Valkey-only load path, so run the smoke test on the coverage build too.
+  # Ubuntu ships no llvm-23 to read these profiles, so they are converted and
+  # uploaded by valkey-coverage-report inside the toolchain image.
+  valkey-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: ubuntu:26.04
+    needs: [build-engine-coverage]
+    if: ${{ !cancelled() && needs.build-engine-coverage.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the coverage engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-binary
+          path: target/debug
+      - run: chmod +x target/debug/libfalkordb.so
+      - name: Install Valkey
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends valkey-server valkey-tools \
+            libstdc++6 libssl3t64 zlib1g libzstd1
+      - name: Load the coverage engine into Valkey
+        run: |
+          mkdir -p cov
+          # valkey-server flushes the profile when the smoke test shuts it down.
+          LLVM_PROFILE_FILE="$PWD/cov/valkey-%p-%m.profraw" \
+            tests/valkey_smoke.sh target/debug/libfalkordb.so
+          ls cov/*.profraw
+      - name: Upload profiles
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: valkey-profraw
+          path: cov/*.profraw
+          if-no-files-found: error
+  valkey-coverage-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: ${{ inputs.build_image }}
+    needs: [valkey-coverage]
+    if: ${{ !cancelled() && needs.valkey-coverage.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the coverage engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-binary
+          path: target/debug
+      - name: Download profiles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: valkey-profraw
+          path: cov
+      - name: Collect coverage (profraw -> lcov)
+        run: |
+          set -euo pipefail
+          llvm-profdata-23 merge --sparse cov/*.profraw -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata \
+            target/debug/libfalkordb.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          flags: valkey-smoke
+          disable_search: true
   # Release flavour. The vehicle is the whole difference between the two events:
   # a pull request tests the binary it just built, the queue tests the image it
   # is about to promote. Same file list, same flavour config — two thin calls
