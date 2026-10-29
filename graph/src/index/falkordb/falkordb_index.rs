@@ -303,15 +303,17 @@ impl VersionedIndex for IndexColumn {
                 .collect(),
         );
         // The written entities in the batch's range, as the published version has them. Those
-        // below `from` are right in this copy already.
-        let mut current = EncodedTuples::default();
-        graph_writes::entity_tuples(published, *entity, key, written, self, &mut current);
-        adds.scalar
-            .extend(current.scalar.into_iter().filter(|&(_, id)| {
+        // below `from` are right in this copy already. Placed before they are read, so a write
+        // outside the range costs a place lookup under the host's locks, not an attribute read.
+        let in_range: RoaringTreemap = written
+            .iter()
+            .filter(|&id| {
                 published.build_place(*entity, id).is_some_and(|at| {
                     !at.precedes(from) && next.is_none_or(|next| at.precedes(next))
                 })
-            }));
+            })
+            .collect();
+        graph_writes::entity_tuples(published, *entity, key, &in_range, self, &mut adds);
         self.add_encoded(&mut adds);
     }
 
