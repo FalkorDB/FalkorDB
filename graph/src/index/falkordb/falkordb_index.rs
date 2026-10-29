@@ -988,8 +988,8 @@ impl FalkorDbIndex {
         })
     }
 
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
+    /// Whether any column is still `Building`. Walks the columns' states without hashing a name,
+    /// so a per-write check that only matters during a build costs next to nothing outside one.
     #[must_use]
     pub(crate) fn has_building_columns(&self) -> bool {
         self.node_columns
