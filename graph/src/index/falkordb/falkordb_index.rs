@@ -15,7 +15,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 
 use crate::entity_type::EntityType;
-use crate::graph::graph::{Graph, NodeId};
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
@@ -411,15 +411,19 @@ impl Recheck {
 pub(crate) enum BuildCursor {
     /// A node column's next node.
     Node(NodeId),
-    /// An edge column's next `(src, dst)` pair, so a source with more edges than one batch reads
-    /// can be resumed partway, as C does. A batch always finishes the multi-edge pair it stops in,
-    /// so every edge of an earlier pair is indexed.
-    Edge { src: NodeId, dst: NodeId },
+    /// An edge column's next edge, by its source, then its destination, then its id: the order
+    /// batches read edges in, a multi-edge pair's edges one by one. A batch can stop anywhere, in
+    /// the middle of a source's edges or of a multi-edge pair, and the next one resumes there.
+    Edge {
+        src: NodeId,
+        dst: NodeId,
+        edge: RelationshipId,
+    },
 }
 
 impl BuildCursor {
     /// Whether this entity's place comes before `next`, a column's cursor: whether a batch has
-    /// indexed it. A node by its id; an edge by its `(src, dst)` pair, the order batches read
+    /// indexed it. A node by its id; an edge by `(src, dst, edge id)`, the order batches read
     /// edges in.
     pub(crate) fn precedes(
         self,
@@ -427,24 +431,27 @@ impl BuildCursor {
     ) -> bool {
         match (self, next) {
             (Self::Node(at), Self::Node(next)) => u64::from(at) < u64::from(next),
-            (
-                Self::Edge { src, dst },
-                Self::Edge {
-                    src: nsrc,
-                    dst: ndst,
-                },
-            ) => (u64::from(src), u64::from(dst)) < (u64::from(nsrc), u64::from(ndst)),
+            (Self::Edge { .. }, Self::Edge { .. }) => self.edge_place() < next.edge_place(),
             _ => unreachable!("a node and an edge are never in one column"),
         }
     }
 
-    /// Where the build of a new `entity` column starts: its first node, or its first pair.
+    /// An edge's place as `(src, dst, edge id)`.
+    fn edge_place(self) -> (u64, u64, u64) {
+        match self {
+            Self::Edge { src, dst, edge } => (u64::from(src), u64::from(dst), u64::from(edge)),
+            Self::Node(_) => unreachable!("a node has no edge place"),
+        }
+    }
+
+    /// Where the build of a new `entity` column starts: its first node, or its first edge.
     pub(crate) fn new(entity: EntityType) -> Self {
         match entity {
             EntityType::Node => Self::Node(NodeId::from(0)),
             EntityType::Relationship => Self::Edge {
                 src: NodeId::from(0),
                 dst: NodeId::from(0),
+                edge: RelationshipId::from(0),
             },
         }
     }
@@ -692,6 +699,30 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Whether column `(entity, label, attr)` exists and is `Ready`: whether this version's index
+    /// serves reads on it. A `Building` column answers [`NumericAnswer::NotReady`] instead.
+    #[must_use]
+    pub fn is_ready(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> bool {
+        self.entry(entity, label, attr)
+            .is_some_and(|entry| !entry.is_building())
+    }
+
+    /// Where column `(entity, label, attr)`'s next indexer batch resumes, or `None` if the column
+    /// is `Ready` or does not exist.
+    pub(crate) fn building_cursor(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<BuildCursor> {
+        self.entry(entity, label, attr)?.cursor()
     }
 
     /// Ready this version to be published: each index's sets of written entities are settled

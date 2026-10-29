@@ -4166,6 +4166,12 @@ impl Graph {
         }
     }
 
+    /// Whether the planner may answer `label.field` from an index of `index_type`.
+    ///
+    /// Under `index-falkordb` a Range lookup is the native column's alone, and the column is part
+    /// of this version: it serves once its build is done. RediSearch's readiness lives in its
+    /// index map, which every version shares, so it says nothing about this version's column, and
+    /// a version without the column must not plan a lookup it cannot answer.
     #[must_use]
     pub fn is_indexed(
         &self,
@@ -4173,6 +4179,10 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self.falkordb_index.is_ready(EntityType::Node, label, field);
+        }
         self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4262,6 +4272,7 @@ impl Graph {
             .is_some_and(|value| recheck.admits(&value))
     }
 
+    /// The relationship counterpart of [`Self::is_indexed`].
     #[must_use]
     pub fn is_edge_indexed(
         &self,
@@ -4269,6 +4280,12 @@ impl Graph {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
+        #[cfg(feature = "index-falkordb")]
+        if *index_type == IndexType::Range {
+            return self
+                .falkordb_index
+                .is_ready(EntityType::Relationship, label, field);
+        }
         self.edge_indexer.is_label_indexed(label, field, index_type)
     }
 
@@ -4456,13 +4473,83 @@ impl Graph {
         let mut infos = self.node_indexer.index_info();
         for info in &mut infos {
             info.entity_type = String::from("NODE");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Node, info);
         }
         let mut edge_infos = self.edge_indexer.index_info();
         for info in &mut edge_infos {
             info.entity_type = String::from("RELATIONSHIP");
+            #[cfg(feature = "index-falkordb")]
+            self.add_native_build(EntityType::Relationship, info);
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    /// Under `index-falkordb`, `info`'s label is under construction while any of its Range
+    /// attributes' native columns is `Building` in this version: each such column counts as
+    /// pending, and the progress shown is theirs, in entities indexed out of the label's.
+    #[cfg(feature = "index-falkordb")]
+    fn add_native_build(
+        &self,
+        entity: EntityType,
+        info: &mut IndexInfo,
+    ) {
+        let mut building = (0, 0, 0);
+        for attr in &info.field_order {
+            let range = info
+                .fields
+                .get(attr)
+                .is_some_and(|fields| fields.iter().any(|f| f.ty == IndexType::Range));
+            if range
+                && let Some((done, total)) = self.native_build_progress(entity, &info.label, attr)
+            {
+                building = (building.0 + 1, building.1 + done, building.2 + total);
+            }
+        }
+        let (columns, done, total) = building;
+        if columns > 0 {
+            info.pending += columns;
+            info.progress = done;
+            info.total = total;
+        }
+    }
+
+    /// How far the build of column `(entity, label, attr)` has come, as `(entities indexed, entities
+    /// of the label or type)`, or `None` if the column is `Ready` or does not exist. Counts the
+    /// entities below the cursor, so it costs what has been indexed: for `db.indexes()`, not for
+    /// a query.
+    #[cfg(feature = "index-falkordb")]
+    fn native_build_progress(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<(u64, u64)> {
+        let cursor = self.falkordb_index.building_cursor(entity, label, attr)?;
+        Some(match cursor {
+            BuildCursor::Node(next) => {
+                let Some(lm) = self.get_label_matrix(label) else {
+                    return Some((0, 0));
+                };
+                let done = match u64::from(next) {
+                    0 => 0,
+                    next => lm.iter(0, next - 1).count() as u64,
+                };
+                (done, lm.nvals())
+            }
+            BuildCursor::Edge { src, dst, edge } => {
+                let Some(t) = self.get_relationship_matrix(label) else {
+                    return Some((0, 0));
+                };
+                let next = (u64::from(src), u64::from(dst), u64::from(edge));
+                let done = t
+                    .iter(0, next.0, false)
+                    .take_while(|&edge| edge < next)
+                    .count() as u64;
+                (done, t.edge_count())
+            }
+        })
     }
 
     // ── Constraint management ─────────────────────────────────────────
@@ -5212,6 +5299,7 @@ fn build_place(
         EntityType::Relationship => endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
             src: NodeId::from(src),
             dst: NodeId::from(dst),
+            edge: RelationshipId(id),
         }),
     }
 }

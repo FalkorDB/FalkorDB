@@ -58,6 +58,11 @@ lazy_static! {
     /// buffer (KNN still correct), no async migration.
     pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
         RedisGILGuard::new(0.into());
+    /// Workers in the native index's background build pool (feature `index-falkordb`), which runs
+    /// the indexer batches of every index `CREATE INDEX` leaves `Building`. Load-time only. Not
+    /// listed by `GRAPH.CONFIG`, whose list mirrors the C engine's.
+    pub static ref CONFIGURATION_INDEX_BUILD_THREAD_COUNT: RedisGILGuard<i64> =
+        RedisGILGuard::new(1.into());
     pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
         RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
@@ -188,6 +193,7 @@ enum LoadArg {
     OmpThreadCount(i64),
     NodeCreationBuffer(i64),
     IndexWorkerThreads(i64),
+    IndexBuildThreadCount(i64),
     ImportFolder(String),
     TempFolder(String),
     /// Not validated at load time (yet); accepted and unused, as before.
@@ -236,6 +242,10 @@ fn validate_load_only(
         "OMP_THREAD_COUNT" => positive.map(LoadArg::OmpThreadCount),
         "NODE_CREATION_BUFFER" => non_negative.map(LoadArg::NodeCreationBuffer),
         "INDEX_WORKER_THREADS" => non_negative.map(LoadArg::IndexWorkerThreads),
+        // This engine's own: the native index's build pool, 1 to 1024 workers as registered.
+        "INDEX_BUILD_THREAD_COUNT" => positive
+            .filter(|&v| v <= 1024)
+            .map(LoadArg::IndexBuildThreadCount),
         "IMPORT_FOLDER" => Some(LoadArg::ImportFolder(value.to_string())),
         "TEMP_FOLDER" => {
             return Some(
@@ -259,6 +269,7 @@ fn apply_load_arg(
         LoadArg::OmpThreadCount(v) => OMP_THREAD_COUNT.store(v, Ordering::Relaxed),
         LoadArg::NodeCreationBuffer(v) => *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx) = v,
         LoadArg::IndexWorkerThreads(v) => *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = v,
+        LoadArg::IndexBuildThreadCount(v) => *CONFIGURATION_INDEX_BUILD_THREAD_COUNT.lock(ctx) = v,
         LoadArg::ImportFolder(v) => *CONFIGURATION_IMPORT_FOLDER.lock(ctx) = v,
         LoadArg::TempFolder(v) => *CONFIGURATION_TEMP_FOLDER.lock(ctx) = v,
         LoadArg::BoltPort => {}

@@ -347,14 +347,8 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         before_build = redisearch_mb()
         create_node_range_index(g, 'NB', 'v')
         create_edge_range_index(g, 'RB', 'w')
-        if native_only:
-            # RediSearch has nothing to build, so the index is ready as soon as CREATE INDEX
-            # returns. Until the build hands back its ticket the index says UNDER CONSTRUCTION
-            # and the planner does not use it.
-            res = g.ro_query("CALL db.indexes() YIELD label, status "
-                             "WHERE label IN ['NB', 'RB'] RETURN label, status ORDER BY label")
-            self.env.assertEqual(res.result_set, [['NB', 'OPERATIONAL'], ['RB', 'OPERATIONAL']])
-        # A RediSearch build runs in the background; it has to finish before the reading shows it.
+        # The build runs in the background, RediSearch's or, under the flag, the native column's;
+        # it has to finish before the reading shows it.
         wait_for_indices_to_sync(g)
         after_build = redisearch_mb()
 
