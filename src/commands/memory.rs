@@ -13,7 +13,7 @@
 //! at the cost of longer computation.
 //!
 //! ## Response structure
-//! A flat array of 9 key-value pairs (18 elements total):
+//! A flat array of 9 key-value pairs (18 elements total), 10 (20) on an `index-falkordb` build:
 //!
 //! ```text
 //! [ "total_graph_sz_mb",                          <int>,
