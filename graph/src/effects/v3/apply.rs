@@ -40,6 +40,10 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+/// Ids expanded per label write when a `CreateNode` record has no attribute
+/// rows to bound its id count.
+const NODE_LABEL_CHUNK: usize = 1 << 16;
+
 impl From<String> for ApplyError {
     fn from(e: String) -> Self {
         Self::Graph(e)
@@ -233,9 +237,6 @@ fn apply_record(
             // with it either.
             g.create_nodes(&nodes)?;
 
-            // The graph's bulk APIs take `&[u64]`, so the ids are materialized
-            // once here rather than per call.
-            let ids: Vec<u64> = ids.iter().collect();
             // Resolved once and used twice. The attribute call needs the same
             // label set to know which label-scoped indexes an indexed property
             // belongs to, and deriving it there instead meant a
@@ -244,18 +245,45 @@ fn apply_record(
             // answered, on the path where a bulk create makes it a million of
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
-            if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, docs, true);
-            }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
-            // `rows.len() != ids.len() * 0` — so gating it lets a record
+            // `rows.len() != count * 0` — so gating it lets a record
             // carrying values under an empty `AttrSet` apply silently and drop
             // them. `UpdateNode` has always checked unconditionally; this is the
             // same record shape reaching the two paths differently.
-            check_attr_shape(g, &ids, &attr_ids, &rows)?;
+            //
+            // Against the count, not a materialized list: an `IdList` is
+            // range-compressed, so a few bytes name billions of ids, and
+            // expanding it here to learn its length is the allocation the
+            // decoder went out of its way to avoid.
+            check_attr_shape(g, ids.len(), &attr_ids, &rows)?;
+
             if !attr_ids.is_empty() {
+                // The graph's bulk APIs take `&[u64]`, so the ids are
+                // materialized once here rather than per call. Bounded by the
+                // payload: the shape check above made `rows.len()` equal
+                // `ids.count() * attr_ids.len()`, and every row was read from
+                // the buffer.
+                let ids: Vec<u64> = ids.iter().collect();
+                if !label_ids.is_empty() {
+                    g.set_node_labels_product(&ids, &label_ids, docs, true);
+                }
                 g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
+            } else if !label_ids.is_empty() {
+                // Nothing in the record bounds the id count, so the labels are
+                // written a chunk at a time: the scratch vector stays a fixed
+                // size however long the range is. A record with neither labels
+                // nor attributes never expands its ids at all.
+                let mut remaining = ids.iter();
+                let mut chunk: Vec<u64> = Vec::with_capacity(NODE_LABEL_CHUNK);
+                loop {
+                    chunk.clear();
+                    chunk.extend(remaining.by_ref().take(NODE_LABEL_CHUNK));
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    g.set_node_labels_product(&chunk, &label_ids, docs, true);
+                }
             }
             Ok(())
         }
@@ -299,7 +327,7 @@ fn apply_record(
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
             // gating the whole call lets an empty `AttrSet` carrying values
             // through unchecked.
-            check_attr_shape(g, &ids, &attr_ids, &rows)?;
+            check_attr_shape(g, ids.len(), &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
                 g.set_relationships_attributes(&map, docs)?;
@@ -323,7 +351,7 @@ fn apply_record(
         } => {
             require_live(g, EntityType::Node, &ids.to_roaring())?;
             let ids: Vec<u64> = ids.iter().collect();
-            check_attr_shape(g, &ids, &attr_ids, &rows)?;
+            check_attr_shape(g, ids.len(), &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
             g.set_nodes_attributes_rows_of_labels(&ids, &label_ids, &attr_ids, &rows, docs)?;
             Ok(())
@@ -719,7 +747,7 @@ fn checked_label_ids(
 /// record's count and shape imply.
 fn check_attr_shape(
     g: &Graph,
-    ids: &[u64],
+    count: usize,
     attr_ids: &[u16],
     rows: &[Value],
 ) -> Result<(), ApplyError> {
@@ -751,9 +779,9 @@ fn check_attr_shape(
         });
     }
     let width = attr_ids.len();
-    if rows.len() != ids.len() * width {
+    if rows.len() != count * width {
         return Err(ApplyError::ShapeMismatch {
-            entities: ids.len(),
+            entities: count,
             width,
             values: rows.len(),
         });
@@ -767,7 +795,7 @@ fn attr_map(
     attr_ids: &[u16],
     rows: &[Value],
 ) -> Result<FxHashMap<u64, Vec<(u16, Value)>>, ApplyError> {
-    check_attr_shape(g, ids, attr_ids, rows)?;
+    check_attr_shape(g, ids.len(), attr_ids, rows)?;
     let width = attr_ids.len();
 
     let mut map = FxHashMap::default();
@@ -856,6 +884,7 @@ mod tests {
     use crate::effects::v3::test_aux::graph;
     use crate::effects::v3::{AttrRef, INDEX_FLD_RANGE, IdList, Record, new_buffer};
     use crate::graph::constraint::{ConstraintStatus, ConstraintType};
+    use crate::graph::graph::NodeId;
     use crate::index::vector_index_options::VectorIndexOptions;
 
     /// The delete-then-recreate cycle a replica legitimately sees.
@@ -870,6 +899,69 @@ mod tests {
         }
         .encode(buf)
         .unwrap();
+    }
+
+    #[test]
+    fn a_compressed_id_range_is_not_expanded_when_nothing_needs_the_ids() {
+        // 24 bytes: a `CreateNode` of `u32::MAX` ids as one ascending range, no
+        // labels, no attributes. Applying it used to collect the whole range into
+        // a `Vec<u64>` (32 GiB) to hand to two writes that both do nothing.
+        let payload: [u8; 24] = [
+            0x03, 0x00, // effects v3, no compression
+            0x03, 0x00, 0x00, 0x00, // CREATE_NODE
+            0xff, 0xff, 0xff, 0xff, // record count = u32::MAX
+            0x00, 0x00, // zero labels
+            0x00, 0x00, // zero attributes
+            0x01, 0x00, 0x00, 0x00, // one IdList segment
+            0x20, 0x00, 0xff, 0xff, 0xff, 0xff, // ascending range: base 0, length u32::MAX
+        ];
+        let mut g = graph();
+        apply_effects(&mut g, &payload).expect("the record is valid and must apply");
+        assert_eq!(g.node_count(), u64::from(u32::MAX));
+    }
+
+    #[test]
+    fn labels_on_a_long_range_are_written_across_chunk_boundaries() {
+        // More ids than one `NODE_LABEL_CHUNK`, so the label write runs in several
+        // calls: the first id, the ids either side of each boundary and the last
+        // one must all carry the label.
+        let n = 2 * NODE_LABEL_CHUNK + 17;
+        let mut ids = IdList::new();
+        for id in 0..n as u64 {
+            ids.push(id);
+        }
+        let mut g = graph();
+        let mut buf = new_buffer();
+        Record::AddLabel {
+            id: 0,
+            name: "L".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateNode {
+            ids,
+            labels: vec![0],
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        apply_effects(&mut g, &buf).expect("create must apply");
+        assert_eq!(g.node_count(), n as u64);
+        for id in [
+            0,
+            NODE_LABEL_CHUNK - 1,
+            NODE_LABEL_CHUNK,
+            2 * NODE_LABEL_CHUNK - 1,
+            2 * NODE_LABEL_CHUNK,
+            n - 1,
+        ] {
+            assert_eq!(
+                g.get_node_label_ids(NodeId::from(id as u64)).count(),
+                1,
+                "node {id} lost its label"
+            );
+        }
     }
 
     #[test]
