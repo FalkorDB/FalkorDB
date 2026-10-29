@@ -1817,8 +1817,17 @@ impl Binder {
                 let mut children = vec![bound_iterable];
                 children.extend(rest_children);
 
-                // Child 1 is the WHERE condition — validate it returns boolean
-                if children.len() > 1 && !Self::expr_may_return_boolean(children[1].root()) {
+                // Child 1 is the WHERE condition — validate it returns boolean.
+                // A logical condition's operands are left to the runtime,
+                // which short-circuits like C's filter tree: `false AND 1`
+                // is `[]` there, and `true AND 1` is still a type error.
+                if children.len() > 1
+                    && !matches!(
+                        children[1].root().data(),
+                        ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+                    )
+                    && !Self::expr_may_return_boolean(children[1].root())
+                {
                     return Err(String::from("Expected boolean predicate"));
                 }
 
@@ -2290,14 +2299,22 @@ impl Binder {
     /// has operands that can return boolean.  Produces a "Type mismatch"
     /// error for non-filter contexts (e.g. RETURN expressions).
     fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        Self::validate_boolean_operands_impl(&expr.root())
+        Self::validate_boolean_operands_impl(&expr.root(), false)
     }
 
-    fn validate_boolean_operands_impl(node: &DynNode<ExprIR<Variable>>) -> Result<(), String> {
-        if matches!(
+    /// `in_filter` is true while walking the predicate of a list
+    /// comprehension or quantifier. C short-circuits in every filter and
+    /// accepts there operands it would reject in a projection, so the static
+    /// operand check is skipped for them (#3293).
+    fn validate_boolean_operands_impl(
+        node: &DynNode<ExprIR<Variable>>,
+        in_filter: bool,
+    ) -> Result<(), String> {
+        let logical = matches!(
             node.data(),
             ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
-        ) {
+        );
+        if logical && !in_filter {
             for child in node.children() {
                 // Runtime short-circuiting never evaluates an operand it does
                 // not need, so an operand whose type is already known to be
@@ -2313,8 +2330,16 @@ impl Binder {
                 }
             }
         }
-        for child in node.children() {
-            Self::validate_boolean_operands_impl(&child)?;
+        let predicate_scope = matches!(
+            node.data(),
+            ExprIR::ListComprehension(_) | ExprIR::Quantifier { .. }
+        );
+        for (i, child) in node.children().enumerate() {
+            // Filter status flows through the logical structure of a
+            // predicate and starts at a comprehension/quantifier predicate
+            // (child 1); any other operand is a value context again.
+            let child_in_filter = (logical && in_filter) || (predicate_scope && i == 1);
+            Self::validate_boolean_operands_impl(&child, child_in_filter)?;
         }
         Ok(())
     }
