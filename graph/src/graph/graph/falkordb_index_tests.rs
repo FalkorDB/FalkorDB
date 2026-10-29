@@ -1988,9 +1988,10 @@ fn model_of(g: &Graph) -> Model {
     model
 }
 
-/// The rules on [`BuildState`], checked on a published version: each column on `attrs` holds
-/// exactly the tuples its state says, from the version's own data. A `Ready` column holds every
-/// live `:Person` node's, a `Building` one those of the nodes below its cursor, and nothing else.
+/// The rules on [`BuildState`], checked on a published version: each column on `attrs` exists and
+/// holds exactly the tuples its state says, from the version's own data. A `Ready` column holds
+/// every live `:Person` node's, a `Building` one those of the nodes below its cursor, and nothing
+/// else.
 fn check_rules(
     g: &Graph,
     label: &Arc<String>,
@@ -2000,7 +2001,7 @@ fn check_rules(
     let model = model_of(g);
     for (i, attr) in attrs.into_iter().enumerate() {
         let Some(state) = g.falkordb_index.column_state(EntityType::Node, label, attr) else {
-            continue;
+            panic!("{what}: no column on {attr}");
         };
         let expected: BTreeSet<(u64, u64)> = model
             .iter()
@@ -2055,12 +2056,12 @@ type OrderedWrite = fn(&mut Graph, &[u64]);
 /// a new build version) and later committing, on two `Building` columns: for pairs of writes the
 /// rules must get right (re-values and deletes in a batch and past its cursor, a create that may
 /// reuse a freed id, a label moved off, the index dropped and created again), with the two
-/// batches on different columns and on the same one. After every commit the published version
-/// keeps the rules on [`BuildState`] ([`check_rules`]): a writer's commit publishes its own data
-/// and a batch's changes none; no commit moves a column's build back, unless its writer created
-/// the column again; and a batch that is published moves its own column on. So do both columns
-/// once built to the end. Counts how the commits went, so an outcome no order reached fails the
-/// test.
+/// batches on different columns and on the same one, either column. After every commit the
+/// published version keeps the rules on [`BuildState`] ([`check_rules`]): a writer's commit
+/// publishes its own data and a batch's changes none; no commit moves a column's build back,
+/// unless its writer created the column again; and a batch that is published moves its own column
+/// on. So do both columns once built to the end. Counts how the commits went, so an outcome no
+/// order reached fails the test.
 #[test]
 fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     const NODES: usize = 12;
@@ -2120,7 +2121,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     let orders = orders(4);
     ALLOW_BATCH_RACE.with(|allow| allow.set(true));
     for (name, first, second) in writes {
-        for batches_on in [[&v, &w], [&v, &v]] {
+        for batches_on in [[&v, &w], [&v, &v], [&w, &w]] {
             for order in &orders {
                 let mut mvcc = MvccGraph::from_graph(template.new_version());
                 let mut forks: [Option<(Arc<AtomicRefCell<Graph>>, Arc<AtomicRefCell<Graph>>)>; 2] =
