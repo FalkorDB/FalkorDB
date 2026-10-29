@@ -81,6 +81,8 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::falkordb_index::{NumericAnswer, Recheck};
 #[cfg(all(test, feature = "index-falkordb"))]
 use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
@@ -4100,48 +4102,82 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing or `Building` column). Wraps
-    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
-    /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
-    /// borrow.
+    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
+    /// three-way answer: rows, `NotReady` (column still building — scan), or `None` (cannot be
+    /// served). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its tree
+    /// snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+    ) -> Option<NumericAnswer<impl Iterator<Item = NodeId> + use<>>> {
         self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
-            .map(|iter| iter.map(NodeId))
+            .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
-    /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
-    /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
-    /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
-    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
+    /// Answer an EDGE numeric query from the index column for `type_name`: an `Equal`, a `Range`,
+    /// an `IN` list, or an `OR` of equalities and `IN` lists on one attribute. Yields
+    /// `(src, dst, edge_id)`, with endpoints recovered from the graph's `edge_id → (src, dst)`
+    /// reverse index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them
+    /// from its 24-byte key). The iterator owns what it reads rather than borrowing `self`, because
+    /// the edge scan op only holds a temporary graph borrow. Three-way answer as for nodes: rows,
+    /// `NotReady` (still building — scan), `None` (not servable).
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
-        let iter = self
-            .falkordb_index
-            .query_numeric(EntityType::Relationship, type_name, query)?;
+    ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
+        let answer =
+            self.falkordb_index
+                .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
         // the same lookup `endpoints_for_edge` does. Laziness matters here — a range scan
-        // under a LIMIT should stop at the limit, not materialize every match first.
-        let endpoints = Arc::clone(&self.edge_endpoints);
-        Some(iter.filter_map(move |eid| {
-            endpoints
-                .get(eid)
-                .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        // under a LIMIT should stop at the limit, not materialize every match first. `map_rows`
+        // only runs on `Rows`, so a not-ready column does not even pay the refcount bump.
+        Some(answer.map_rows(|rows| {
+            let endpoints = Arc::clone(&self.edge_endpoints);
+            rows.filter_map(move |eid| {
+                endpoints
+                    .get(eid)
+                    .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+            })
         }))
+    }
+
+    /// Whether the scan standing in for a column still building keeps node `id`: whether the
+    /// column, once built, answers the query `recheck` came from with it. `attr` is `recheck`'s
+    /// attribute as [`Self::get_node_attribute_id`] resolves it, once per scan rather than once per
+    /// node. Reads the committed value, which is the one the column indexes.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn node_admitted(
+        &self,
+        id: NodeId,
+        attr: u16,
+        recheck: &Recheck,
+    ) -> bool {
+        self.get_node_attribute_by_idx(id, attr)
+            .is_some_and(|value| recheck.admits(&value))
+    }
+
+    /// [`Self::node_admitted`] for relationship `id`, with `attr` resolved by
+    /// [`Self::get_relationship_attribute_id`].
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn relationship_admitted(
+        &self,
+        id: RelationshipId,
+        attr: u16,
+        recheck: &Recheck,
+    ) -> bool {
+        self.get_relationship_attribute_by_idx(id, attr)
+            .is_some_and(|value| recheck.admits(&value))
     }
 
     #[must_use]

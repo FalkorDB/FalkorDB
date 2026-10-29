@@ -23,6 +23,8 @@
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -309,27 +311,61 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 let view = BatchRow::new(b, row);
                 let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                // Check if the index can satisfy this query. If not
-                // (e.g. non-indexable value types), fall back to a
-                // label scan.
-                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
-                    let g = self.runtime.graph();
-                    // Index: a numeric Equal/Range on a column we own is served by the
-                    // CoW B-tree; everything else (string/geo on the same Range index, composite, or a
-                    // missing column) falls through to RediSearch during the dark-launch.
-                    #[cfg(feature = "index-falkordb")]
-                    let it: Box<dyn Iterator<Item = NodeId>> =
-                        if let Some(hit) = g.query_index_numeric_nodes(self.index, &q) {
-                            Box::new(hit)
-                        } else {
-                            Box::new(g.get_indexed_nodes(self.index, q))
+                // Check if the index can satisfy this query. `None` here means "scan instead":
+                // the predicate is not index-shaped (e.g. non-indexable value types), which the
+                // planner keeps a filter for. That is not a capability gap, so it may not error
+                // even under the no-fallback flag.
+                let indexed: Option<Box<dyn Iterator<Item = NodeId>>> =
+                    if Self::can_utilize_index(&q) {
+                        let g = self.runtime.graph();
+                        // Under `index-falkordb` the native index is the ONLY index: a predicate
+                        // it cannot serve is an error, not a quiet detour to RediSearch. Falling
+                        // back would hide every unimplemented kind behind correct-looking
+                        // results, which is exactly what the xfail ledger exists to prevent — a
+                        // gap has to be visible to be closed. The message names the predicate so
+                        // the failure is diagnosable rather than a bare "no rows".
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
+                            .query_index_numeric_nodes(self.index, &q)
+                        {
+                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            // The column exists and will serve this once its build reaches
+                            // every entity. Until then scan the label for what it will answer:
+                            // the planner dropped the predicate it handed this op, so the scan
+                            // must check it itself.
+                            Some(NumericAnswer::NotReady(recheck)) => {
+                                let runtime = self.runtime;
+                                // Resolved once per scan. No node holds a name the graph has
+                                // never seen.
+                                let nodes: Box<dyn Iterator<Item = NodeId>> = match g
+                                    .get_node_attribute_id(recheck.attribute())
+                                {
+                                    Some(attr) => {
+                                        let attr = attr as u16;
+                                        Box::new(g.get_nodes(&self.node_pattern.labels, 0).filter(
+                                            move |&id| {
+                                                runtime.graph().node_admitted(id, attr, &recheck)
+                                            },
+                                        ))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                };
+                                Some(nodes)
+                            }
+                            None => {
+                                return Err(unsupported_by_native_index("node", self.index, &q));
+                            }
                         };
-                    #[cfg(not(feature = "index-falkordb"))]
-                    let it: Box<dyn Iterator<Item = NodeId>> =
-                        Box::new(g.get_indexed_nodes(self.index, q));
-                    it
-                } else {
-                    Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0))
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Option<Box<dyn Iterator<Item = NodeId>>> =
+                            Some(Box::new(g.get_indexed_nodes(self.index, q)));
+                        it
+                    } else {
+                        None
+                    };
+                let base: Box<dyn Iterator<Item = NodeId>> = match indexed {
+                    Some(it) => it,
+                    None => Box::new(self.runtime.graph().get_nodes(&self.node_pattern.labels, 0)),
                 };
                 let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
                     Some(extra) => {

@@ -418,3 +418,112 @@ jobs:
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
       sanitizer_env: address
+
+  # Build the engine with the native index compiled in (`index-falkordb`) and upload it, as
+  # `build-engine` does for the default build. An artifact rather than an RC image: nothing ships
+  # with the flag, so there is no image to gate on, and an artifact needs no `packages: write`.
+  # That is what lets a fork, and a stacked pull request, run the ledger below. amd64 only: the
+  # ledger asks whether the native index serves the index suites, which a second arch would not
+  # change.
+  build-engine-nextgen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: ${{ inputs.build_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      # The same key as `build-engine`: the feature adds no dependencies, and rust-cache keeps only
+      # the dependencies, so the two builds restore the same cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "release"
+      - name: Build with the native index
+        run: cargo build --release --features index-falkordb
+      - name: Upload the native-index binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nextgen-binary
+          path: target/release/libfalkordb.so
+
+  # Reconcile the index flow suites against the xfail ledger.
+  #
+  # Not a pass/fail gate on the suites themselves: with no RediSearch fallback the native index
+  # cannot yet serve every predicate, and those gaps are recorded in
+  # tests/flow/nextgen_index_xfail.txt. The gate is that the run MATCHES the ledger — an
+  # unrecorded failure or a ledgered test that started passing both fail the build. That is what
+  # keeps the ledger describing reality instead of decaying into a list of stale excuses.
+  #
+  # Runs the suites in one job rather than through the flow matrix because the check needs the
+  # combined output of all of them; a per-file matrix would need cross-cell collection to say
+  # anything.
+  #
+  # The artifact vehicle, as `_flow-artifact.yml`: RLTest starts redis itself with the downloaded
+  # module, so there is no service and no registry read, and every event runs it.
+  nextgen-index-ledger:
+    needs: [build-engine-nextgen]
+    if: ${{ !cancelled() && needs.build-engine-nextgen.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ inputs.build_image }}
+    permissions:
+      contents: read
+    env:
+      # Where the artifact is unpacked, so flow.sh loads it (see `_flow-artifact.yml`).
+      TARGET_DIR: target/release
+      # The ledger parser reads per-test result lines, and parallel classes interleave them.
+      PARALLELISM: "--parallelism 1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The suites below are test code from the pull request. Do not leave the token in
+          # .git/config.
+          persist-credentials: false
+      - name: Download the native-index binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nextgen-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run the index flow suites against the native-index build
+        # A failing suite is expected while gaps remain, so this step must not fail the job — the
+        # ledger check below is the gate. But each suite's exit status is recorded: a suite that
+        # dies without running its tests would otherwise let its ledger entries reconcile
+        # silently, and the check cannot tell "did not run" from "passed" on its own.
+        #
+        # `shell: bash` is load-bearing. Without it this container job ran the step as `sh -e`, and
+        # the image's `sh` (dash) has no `PIPESTATUS`: the step died with "Bad substitution" right
+        # after the first suite, the other five never ran, and the reconciliation step was
+        # skipped. `set +e` is then needed because an explicit `bash` runs with `-e -o pipefail`,
+        # and a suite with failing tests would abort the step the same way.
+        shell: bash
+        run: |
+          set +e
+          . /data/venv/bin/activate
+          rc=0
+          for t in tests/flow/test_index_create tests/flow/test_index_scans \
+                   tests/flow/test_index_updates tests/flow/test_index_delete \
+                   tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates; do
+            TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
+            status=${PIPESTATUS[0]}
+            echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log
+            if [ "$status" -gt 1 ]; then rc=1; fi   # >1 = harness died, not just test failures
+          done
+          exit $rc
+      - name: Reconcile against the xfail ledger
+        # Also after the suites step failed: that failure means a suite died, and the ledger
+        # check is what reports which entries it left unreconciled.
+        if: ${{ !cancelled() }}
+        run: |
+          . /data/venv/bin/activate
+          python3 tests/flow/check_xfail_ledger.py \
+            --ledger tests/flow/nextgen_index_xfail.txt \
+            --results /tmp/nextgen_flow.log
+      - name: Upload flow log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nextgen-index-flow-log
+          path: /tmp/nextgen_flow.log
+          retention-days: 7
