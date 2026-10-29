@@ -1,5 +1,6 @@
 import FalkorAggOps.Agg
 import FalkorAggOps.Ops
+import FalkorAggOps.GroupId
 import FalkorAggOps.Bitmap
 import FalkorAggOps.Ctors
 import FalkorAggOps.SortCmp
@@ -26,16 +27,17 @@ Repros: `cargo test -p graph --test lean_ops_aggregate -- --nocapture`
 ## Model (here | there, all under graph/src/runtime/)
 | Lean | Rust |
 |---|---|
-| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:990 / `fold` :238; keyless fast path `consume_input_vectorized` :518-689 |
+| `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:998 / `fold` :243; keyless fast path `consume_input_vectorized` :523-694 |
 | `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
 | `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
 | `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:302 `build_full_sort`, :403 `build_top_k`, :504 `next` (cap = k+s) |
 | `project_flatten`, `unwindOne`/`chunks` | ops/project.rs:54, ops/unwind.rs:90 + batched emitter |
-| `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59, per-row :880/:921, keyless pre-insert :524/:879 |
-| `dedupBy`, `dcgGo`/`distinctCountGrouped`, `distinctCountBatches` | ops/distinct.rs:62; DISTINCT key (node, hash(group key)) aggregate.rs:724/:968; apply.rs:283 dedupers clear |
+| `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :59-65, per-row :884/:928, keyless pre-insert :532-535/:893-897 |
+| `dedupBy`, `distinctCountBatches` | ops/distinct.rs:62; apply.rs:283 dedupers clear |
+| `GroupId.insertKey`/`gid`/`dcgIdGo` (history `dcgGo`/`distinctCountGrouped`: key hash, removed by #2977) | DISTINCT key (node, group id), the id = insertion index (`next_group_id` aggregate.rs:709/:970, `entry.2` :728/:976, `value_dedupers` :753, eval.rs:854) |
 | `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); `pre2951_evalStack`: the old `return` at eval.rs:877 |
-| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1141-1219: outputs :1154-1182, accumulators unbound :1184-1192 BEFORE the key aliases/key row :1193-1209 (#3522; `pre3522_*` is the old order), outputs re-bound :1210-1217 |
+| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1156-1227: outputs :1162-1190, accumulators unbound :1192-1200 BEFORE the key aliases/key row :1201-1218 (#3522; `pre3522_*` is the old order), outputs re-bound :1219-1225 |
 | `Bitmap` | batch.rs:89-167 `NullBitmap` (`BitVec 64` words) |
 A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = `List (List α)`.
 
@@ -60,8 +62,8 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
 1. apply.rs:283 clears runtime-global `value_dedupers` after each CALL{} run, wiping an outer
    aggregate's DISTINCT state per batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v
    LIMIT 1 } RETURN count(DISTINCT v)` C 2, Rust 6. Test `bug_count_distinct_across_call_subquery_overcounts`.
-2. aggregate.rs:715/:959: per-group DISTINCT keyed by FxHash of the group key, so colliding groups
-   share one seen-set. Keys [0,0] and [1,-1452335207727870361]: C c=1,1; Rust c=1,0.
+2. **FIXED by #2977 (c652e505e; closes #2969), `GroupId.distinct_by_group_id_exact`.** Was: aggregate.rs:715/:959: per-group DISTINCT keyed by FxHash of the group key, so colliding groups
+   share one seen-set (`Ops.pre2977_hashed_dedup_merges_groups`). Keys [0,0] and [1,-1452335207727870361]: C c=1,1; Rust c=1,0.
    (Related to FINDINGS #6 but a different site.) Test `bug_grouped_count_distinct_shares_state_on_group_hash_collision`.
 3. **FIXED by #2912 (b033aecc6).** Was: aggregation.rs:615/:645 sorted with
    `partial_cmp().unwrap_or(Equal)`, not transitive with NaN (`pre2912_partialCmpEq_not_transitive`),
@@ -105,7 +107,7 @@ because `batch_agg` is always preferred.
 
 **CONDITIONAL rows discharged (re-target to 4a4f2a72f, 2026-10-12).** `gkHash_consistent`
 (`GroupKey::hash`) took "`Value`'s Hash agrees with the key equality" as `hc`; #2917 (7fdf06a0e)
-made `GroupKey::eq` `sort_cmp == Equal` (aggregate.rs:94) and canonicalised NaN/f32 hashing, and
+made `GroupKey::eq` `sort_cmp == Equal` (aggregate.rs:99) and canonicalised NaN/f32 hashing, and
 `Discharge.hc_main` proves `hc` from value_order `Main.main_hash_consistent`
 (`gk_hash_consistent_main`; `veqMain_equiv`: the key equality is an equivalence).
 `cmpKey_lawful`/`heapCmp_swap`/`heapCmp_refl` took `Lawful cv`; with #2912 (b033aecc6) `cv` is
@@ -145,7 +147,7 @@ them as bound is merge.rs, not modelled here). Controls that agree with live: `a
 |---|---|
 | `Ctors` | `new` of Limit/Skip/Distinct/Project/Unwind/Sort/Commit |
 | `SortCmp`, `SortKey` | `OrderedKey`/`HeapEntry` orders, `compare_row_content`, `classify_sort_key` (sort.rs) |
-| `AggPlan`, `AggState`, `AggNext` | `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `set_agg_expr_zero`, `unbind_agg_accumulators`, `GroupKey` Eq/Hash, `hash_u64`, `args_for`, `new`, the column extractors and `next` (aggregate.rs) |
+| `AggPlan`, `AggState`, `AggNext` | `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `set_agg_expr_zero`, `unbind_agg_accumulators`, `GroupKey` Eq/Hash, `args_for`, `new`, the column extractors and `next` (aggregate.rs) |
 | `StreamOps` | `filter.rs`, `include_pending.rs`, `procedure_call.rs` |
 | `LoadCsv` | `load_csv.rs`: SSRF filter, size cap, pinned resolver, CSV records, path containment |
 Highlights: the heap order is antisymmetric/reflexive and strict on distinct arrival (`heapCmp_swap`,

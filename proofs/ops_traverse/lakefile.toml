@@ -3,3 +3,13 @@ defaultTargets = ["OpsTraverse"]
 
 [[lean_lib]]
 name = "OpsTraverse"
+
+# `delta_lmxm_into` is the per-layer `Matrix::delta_lmxm` (graphblas_wrappers), stated
+# over a versioned matrix's layers and the iterators' order (versioned_matrix).
+[[require]]
+name = "falkor-graphblas-wrappers"
+path = "../graphblas_wrappers"
+
+[[require]]
+name = "falkor-versioned-matrix"
+path = "../versioned_matrix"

@@ -4,14 +4,14 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 
 | here | there |
 | --- | --- |
-| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs:68) |
-| `emptyIter`            | `empty_edge_iter` (cond_traverse.rs:210) |
-| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs:238) |
-| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs:353) |
-| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs:1030) |
-| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1053) |
-| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1065) |
-| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1086) |
+| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs:75) |
+| `emptyIter`            | `empty_edge_iter` (cond_traverse.rs:328) |
+| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs:365) |
+| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs:480; multi-type branch :506-535, #3492) |
+| `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs:1321) |
+| `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs:1344) |
+| `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs:1356) |
+| `ctPack`               | one child batch of `CondTraverseOp::next` (cond_traverse.rs:1377) |
 | `eiNew`, `eiTrim`      | `ExpandIntoOp::new` (expand_into.rs:72), `next` (:251) |
 | `EmitCfg` constructors | `NodeByLabelScanOp::new` (node_by_label_scan.rs:56), `NodeByIdSeekOp::new` (node_by_id_seek.rs:32), `NodeByLabelAndIdScanOp::new` (node_by_label_and_id_scan.rs:34), `PathBuilderOp::new` (path_builder.rs:44), `AllShortestPathsOp::new` (all_shortest_paths.rs:59) |
 
@@ -29,15 +29,28 @@ structure Mat where
 inductive TM where
   | bool (m : Mat)
   | u64 (fwd : Mat)   -- a tensor; only its forward layer is read
+  | union (fwds : List Mat)   -- several types kept apart (#3492); forward layers
 
-/-- cond_traverse.rs:68-73 -/
+/-- cond_traverse.rs:75-83: the union's column count is the first tensor's (every
+relationship tensor is sized to the node capacity), 0 for an (unreachable) empty list. -/
 def ncolsT : TM → Nat
   | .bool m => m.ncols
   | .u64 f => f.ncols
+  | .union fs => (fs.head?.map Mat.ncols).getD 0
 
 theorem ncolsT_spec (m : Mat) : ncolsT (.bool m) = m.ncols ∧ ncolsT (.u64 m) = m.ncols := ⟨rfl, rfl⟩
 
-/-- cond_traverse.rs:210-212: an iterator over a fresh 0×0 matrix. -/
+theorem ncolsT_union (m : Mat) (rest : List Mat) : ncolsT (.union (m :: rest)) = m.ncols := rfl
+theorem ncolsT_union_nil : ncolsT (.union []) = 0 := rfl
+
+/-- When the tensors share a column count (node capacity), the union's `ncols` is every member's. -/
+theorem ncolsT_union_all (fs : List Mat) (c : Nat) (hne : fs ≠ []) (h : ∀ f ∈ fs, f.ncols = c) :
+    ncolsT (.union fs) = c := by
+  cases fs with
+  | nil => exact absurd rfl hne
+  | cons a t => simp [ncolsT, h a (by simp)]
+
+/-- cond_traverse.rs:328-330: an iterator over a fresh 0×0 matrix. -/
 def emptyMat : Mat := ⟨0, 0, []⟩
 def iterOf (m : Mat) (lo hi : Nat) : List (Nat × Nat) := m.entries.filter fun p => lo ≤ p.1 ∧ p.1 ≤ hi
 def emptyIter : List (Nat × Nat) := iterOf emptyMat 0 (2 ^ 64 - 1)
@@ -50,7 +63,7 @@ theorem emptyIter_nil : emptyIter = [] := rfl
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
 longer needs to inspect them. Historical model: `pre2390_eligible`. -/
 
-/-! ## `CondTraverseOp::new` (cond_traverse.rs:238) -/
+/-! ## `CondTraverseOp::new` (cond_traverse.rs:365) -/
 
 structure RelPat where
   fromAlias : Nat
@@ -80,7 +93,7 @@ def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : Lis
       | some c => if !c.emitRel && c.bidir then (true, some c.fromAlias) else (false, none)
       | none => (false, none)
     else (false, none)
-  -- cond_traverse.rs:304-308 (#2390: the inline-attr emptiness test is gone)
+  -- cond_traverse.rs:431-436 (#2390: the inline-attr emptiness test is gone)
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
   { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
@@ -130,7 +143,7 @@ theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (
   · by_cases h : rp.toAlias = rp.fromAlias <;> simp [h]
 
 /-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
-sibling-free hops whose fused chain is all directed (cond_traverse.rs:304-308). -/
+sibling-free hops whose fused chain is all directed (cond_traverse.rs:431-436). -/
 theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
     (ch : Option ChildCT) :
     (ctNew rp er sib cb ch).eligible = true ↔
@@ -164,7 +177,7 @@ theorem pre2390_widened :
     pre2390_eligible false false false [] [] true false true = false ∧
     (ctNew ⟨0, none, 1, 2, false⟩ false [] [] none).eligible = true := by decide
 
-/-! ## `build_state` (cond_traverse.rs:353) -/
+/-! ## `build_state` (cond_traverse.rs:480) -/
 
 structure CtState where
   fwdSrc : List Nat
@@ -173,7 +186,12 @@ structure CtState where
   revDst : List Nat
   edgeTypes : List Nat
   noMatch : Bool
+  /-- the single-type `rev_iter` exists (never for a multi-type pattern: `!multi_type`, :550) -/
   hasRev : Bool
+  /-- `rp.types.len() > 1`: the per-type `UnionIter` carries the pattern (`CtState::union`) -/
+  multi : Bool
+  /-- `union.rev` exists: a bidirectional multi-type pattern -/
+  unionRev : Bool
 
 /-- `resolve` = `g.resolve_label_ids` (`None` when a label is unknown); `typeId` =
 `get_type_id`; `fwdIter`/`revIter` = whether `build_unrestricted_iter` found the matrix. -/
@@ -189,10 +207,12 @@ def buildState (resolve : List String → Option (List Nat)) (typeId : String �
   let noMatch := fsi.isNone || fdi.isNone || rsi.isNone || rdi.isNone || !fwdOk || (bidir && !revOk)
   { fwdSrc := fsi.getD [], fwdDst := fdi.getD [], revSrc := rsi.getD [], revDst := rdi.getD [],
     edgeTypes := if types.isEmpty then List.range ntensors else types.filterMap typeId,
-    noMatch, hasRev := bidir }
+    noMatch, hasRev := bidir && !(decide (types.length > 1)),
+    multi := decide (types.length > 1), unionRev := bidir && decide (types.length > 1) }
 
 /-- An unknown label or relationship type sets `no_match` (no rows, but the child is still
-drained); the source/destination label sets swap under transposition; no type means every
+drained; `fwdOk`/`revOk` are whether the iterator builders found their matrices, see
+`UnionGlue.fwdOkOf`); the source/destination label sets swap under transposition; no type means every
 relationship tensor. -/
 theorem buildState_spec (resolve : List String → Option (List Nat)) (typeId : String → Option Nat)
     (n : Nat) (fromL toL types : List String) (bidir tr fwdOk revOk : Bool) :
@@ -207,9 +227,23 @@ theorem buildState_spec (resolve : List String → Option (List Nat)) (typeId : 
   · cases tr <;> simp [buildState, h]
   · cases tr <;> simp [buildState, h]
 
+/-- **Multi-type state (#3492).** Several types stream through the union iterators: the plain
+reverse iterator is never built (`hasRev = false`), the union carries the reverse half exactly for
+a bidirectional pattern; a single-type or untyped pattern keeps the previous state. -/
+theorem buildState_multi (resolve : List String → Option (List Nat)) (typeId : String → Option Nat)
+    (n : Nat) (fromL toL types : List String) (bidir tr fwdOk revOk : Bool) :
+    let s := buildState resolve typeId n fromL toL types bidir tr fwdOk revOk
+    (types.length > 1 → s.multi = true ∧ s.hasRev = false ∧ s.unionRev = bidir) ∧
+    (types.length ≤ 1 → s.multi = false ∧ s.hasRev = bidir ∧ s.unionRev = false) := by
+  refine ⟨fun h => ?_, fun h => ?_⟩
+  · have : decide (types.length > 1) = true := decide_eq_true h
+    simp [buildState, this]
+  · have : decide (types.length > 1) = false := decide_eq_false (by omega)
+    simp [buildState, this]
+
 /-! ## `trim_to_cap`, `out_alias_id`, `null_pad` -/
 
-/-- cond_traverse.rs:1030-1050: keep the first `cap - produced` active rows. -/
+/-- cond_traverse.rs:1321-1341: keep the first `cap - produced` active rows. -/
 def trimToCap {R : Type} (cap : Option Nat) (produced : Nat) (rows : List R) : List R × Nat :=
   match cap with
   | none => (rows, produced)
@@ -231,7 +265,7 @@ theorem trimToCap_spec {R : Type} (cap : Nat) (p : Nat) (rows : List R) :
     have : rows.take (cap - p) = rows := List.take_of_length_le (by omega)
     simp [this]
 
-/-- cond_traverse.rs:1053-1062 -/
+/-- cond_traverse.rs:1344-1353 -/
 def outAlias (chainLastTo : Option Nat) (transposed : Bool) (fromA toA : Nat) : Nat :=
   match chainLastTo with
   | some t => t
@@ -241,7 +275,7 @@ theorem outAlias_spec (c : Option Nat) (tr : Bool) (f t : Nat) :
     (∀ x, c = some x → outAlias c tr f t = x) ∧ outAlias none true f t = f ∧ outAlias none false f t = t := by
   refine ⟨fun x hx => by simp [outAlias, hx], rfl, rfl⟩
 
-/-- cond_traverse.rs:1065-1082: gather the unmatched rows, bind the edge and the out alias to
+/-- cond_traverse.rs:1356-1373: gather the unmatched rows, bind the edge and the out alias to
 `Null` (`none`). -/
 def nullPad {V : Type} (rows : List (Nat → Option V)) (unmatched : List Nat) (relA outA : Nat)
     (nul : V) : List (Nat → Option V) :=
@@ -273,7 +307,7 @@ theorem nullPad_spec {V : Type} (rows : List (Nat → Option V)) (un : List Nat)
       simp only [List.getElem_cons_succ]
       exact hg k (by simpa using hk) (by simpa using hk')
 
-/-! ## `CondTraverseOp::next` (cond_traverse.rs:1086) -/
+/-! ## `CondTraverseOp::next` (cond_traverse.rs:1377) -/
 
 /-- Output batches for one child batch: the batched F·A path's batches when it handles the
 batch, else the emitter's packed batches followed (for OPTIONAL) by one null-padded batch of the

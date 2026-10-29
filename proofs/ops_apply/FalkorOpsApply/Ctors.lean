@@ -3,9 +3,9 @@ Constructors and small helpers of the apply-family operators.
 
 | here | there |
 | --- | --- |
-| `mergeChildIdx`, `MergeSt.new` | `MergeOp::new` (merge.rs:68) |
-| `onceGet`                      | `OnceCell::get_or_init` in `MergeOp::resolve_pattern` (merge.rs:98), `resolve_on_create_set_items` (:103), `resolve_on_match_set_items` (:108) |
-| `mergeHashInput`, `mergeHash`  | `MergeOp::compute_merge_pattern_hash` (merge.rs:180) |
+| `mergeChildIdx`, `MergeSt.new` | `MergeOp::new` (merge.rs:71) |
+| `onceGet`                      | `OnceCell::get_or_init` in `MergeOp::resolve_pattern` (merge.rs:102), `resolve_on_create_set_items` (:107), `resolve_on_match_set_items` (:112) |
+| `mergeHashInput`, `mergeHash`  | `MergeOp::compute_merge_pattern_hash` (merge.rs:184) |
 | `semiRight`                    | `SemiApplyOp::new` (semi_apply.rs:45) |
 | `orBranches`                   | `OrApplyMultiplexerOp::new` (or_apply_multiplexer.rs:46) |
 | `forEachBody`                  | `ForEachOp::new` (foreach.rs:57) |
@@ -17,9 +17,9 @@ release wraps and `child` panics) — also `none`.
 -/
 namespace Ctors
 
-/-! ## `MergeOp::new` (merge.rs:68) -/
+/-! ## `MergeOp::new` (merge.rs:71) -/
 
-/-- merge.rs:76-80 -/
+/-- merge.rs:79-83 -/
 def mergeChildIdx {I : Type} (children : List I) : Option I :=
   if children.length = 1 then children[0]? else children[1]?
 
@@ -59,7 +59,7 @@ theorem mergeNew_spec {C I P S A : Type} (c : C) (children : List I) (p : P) (oc
     obtain ⟨m, hm, rfl⟩ := h
     exact ⟨fun h' => absurd h' h1, fun _ => hm, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## `OnceCell::get_or_init` memo (merge.rs:98, :103, :108) -/
+/-! ## `OnceCell::get_or_init` memo (merge.rs:102, :107, :112) -/
 
 def onceGet {A : Type} (init : Unit → A) : Option A → A × Option A
   | some a => (a, some a)
@@ -80,7 +80,7 @@ theorem onceGet_from_new {A : Type} (init : Unit → A) (n : Nat) :
   | zero => rfl
   | succ n ih => simp only [Nat.repeat, ih]; split <;> rfl
 
-/-! ## `compute_merge_pattern_hash` (merge.rs:180) -/
+/-! ## `compute_merge_pattern_hash` (merge.rs:184) -/
 
 /-- What gets fed to the `FxHasher`, in order. -/
 inductive Tok (V L T : Type) where
@@ -100,7 +100,7 @@ structure PRel (T E : Type) where
   dst : Nat
   attrs : E
 
-/-- First null-valued key of a map, if any (merge.rs:200-206 / :229-235). -/
+/-- First null-valued key of a map, if any (merge.rs:204-210 / :233-239). -/
 def firstNull {V : Type} : List (String × Option V) → Option String
   | [] => none
   | (k, none) :: _ => some k

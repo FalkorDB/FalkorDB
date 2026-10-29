@@ -3,9 +3,9 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # Staged writes (`graph/src/index/falkordb/pending_writes.rs`) and `FalkorDbIndex::apply`
-# (`falkordb_index.rs:364-400`) — #3307's "apply once per unit of work"
+# (`falkordb_index.rs:516-549`) — #3307's "apply once per unit of work"
 
-Proven (`apply_eq_sequential`, `applyColumn_eq_sequential`): collapsing a column's staged log with
+Proven (`writerRecord_eq_sequential`): collapsing a column's staged log with
 `last_write_wins` and applying one `remove_batch` + one `insert_batch` gives **the same tree as
 applying every staged change one by one** (`insert` / `remove`, in staging order), for any log
 (adds and removes of one tuple interleaved arbitrarily). `extend_log` shows `extend` keeps each
@@ -139,6 +139,9 @@ theorem lastOp_cons (a : IndexWrite) (l : List IndexWrite) (e : Nat) :
   · rw [List.filter_cons_of_neg (by simp [h])]
     cases (List.filter (fun w => decide (w.tup = e)) l).getLast? <;> simp [h]
 
+theorem lastOp_singleton (w : IndexWrite) : lastOp [w] w.tup = some w.add := by
+  simp [lastOp]
+
 theorem lastOp_none (l : List IndexWrite) (e : Nat) (h : ∀ x ∈ l, x.tup ≠ e) : lastOp l e = none := by
   unfold lastOp
   rw [List.filter_eq_nil_iff.2 (by intro x hx; simpa using h x hx)]
@@ -264,60 +267,140 @@ theorem mem_seqTree (log : List IndexWrite) : ∀ (t : List Nat), Sorted t → �
       · rw [if_pos hw] at key ⊢; exact key
       · rw [if_neg hw] at key ⊢; exact key
 
-/-- The column step of `apply_writes` (`falkordb_index.rs:396-398`): collapse, remove, add. -/
-def applyColumn (c : IndexColumn) (log : List IndexWrite) (removes adds : List Nat) :
-    IndexColumn × List Nat × List Nat :=
-  let (_, removes, adds) := lastWriteWins log removes adds
-  let (c, removes) := c.removeEncoded removes
-  let (c, adds) := c.addEncoded adds
+/-- The `log.retain(..)` of `writer_record` (`falkordb_index.rs:184-189`), `Building` only: keep every
+    removal, and an addition only for an entity `place` puts below the cursor (`precedes next`);
+    `place = None` (an edge this unit deleted) drops it (`is_some_and`). A `Ready` column keeps the
+    whole log. `retain` is stable, so the order of the survivors is kept. -/
+def stateLog (state : BuildState) (place : Nat → Option BuildCursor) (log : List IndexWrite) :
+    List IndexWrite :=
+  match state with
+  | .building next => log.filter (fun w => !w.add || (place w.id).any (fun pl => pl.precedes next))
+  | .ready => log
+
+theorem stateLog_ready (place : Nat → Option BuildCursor) (log : List IndexWrite) :
+    stateLog .ready place log = log := rfl
+
+/-- `IndexColumn::writer_record` (`falkordb_index.rs:177-193`): drop what the state excludes, collapse
+    to each tuple's last change (`last_write_wins`), **remove** what ended removed then **add** what
+    ended added, one batched tree op each. Returns the column and the two (sorted) buffers. -/
+def IndexColumn.writerRecord (c : IndexColumn) (state : BuildState) (log : List IndexWrite)
+    (place : Nat → Option BuildCursor) (removes adds : EncodedTuples) :
+    IndexColumn × EncodedTuples × EncodedTuples :=
+  let log := stateLog state place log
+  let (_, rm, ad) := lastWriteWins log removes.scalar adds.scalar
+  let (c, removes) := c.removeEncoded ⟨rm⟩
+  let (c, adds) := c.addEncoded ⟨ad⟩
   (c, removes, adds)
 
-/-- **#3307's claim, per column**: the collapsed batch leaves exactly the tree that applying the
-    staged changes one by one would. -/
-theorem applyColumn_eq_sequential (ix : NumericIndex) (hs : Sorted ix.tree) (log : List IndexWrite)
-    (rm ad : List Nat) :
-    (applyColumn (.numeric ix) log rm ad).1.ix.tree = seqTree ix.tree log := by
+/-- `IndexEntry::writer_record` (`versioned.rs:148-156`): the column's `writer_record` at its state; the
+    state itself is unchanged. -/
+def IndexEntry.writerRecord (en : IndexEntry) (log : List IndexWrite) (place : Nat → Option BuildCursor)
+    (sc : EncodedTuples × EncodedTuples) : IndexEntry × (EncodedTuples × EncodedTuples) :=
+  let r := en.index.writerRecord en.state log place sc.1 sc.2
+  (⟨r.1, en.state⟩, (r.2.1, r.2.2))
+
+/-- **A column records a unit's changes as the staged changes that its state admits, applied one by one**
+    (#3307 collapsed to one batch each, #2351 for the `Building` filter). -/
+theorem writerRecord_eq_sequential (ix : NumericIndex) (hs : Sorted ix.tree) (st : BuildState)
+    (log : List IndexWrite) (place : Nat → Option BuildCursor) (rm ad : EncodedTuples) :
+    (IndexColumn.writerRecord (.numeric ix) st log place rm ad).1.ix.tree = seqTree ix.tree (stateLog st place log) := by
   apply sorted_ext
-  · simp only [applyColumn, IndexColumn.removeEncoded, IndexColumn.addEncoded, IndexColumn.ix,
-      NumericIndex.addEncoded, NumericIndex.removeEncoded]
-    exact sorted_insertBatch _ _ (sorted_removeBatch _ _ hs)
+  · simp only [IndexColumn.writerRecord, IndexColumn.removeEncoded, IndexColumn.addEncoded, IndexColumn.ix,
+      NumericIndex.removeEncoded]
+    exact addEncoded_sorted _ (sorted_removeBatch _ _ (by simpa [EncodedTuples.sortDedup] using hs)) _
   · exact seqTree_sorted _ _ hs
   · intro e
     rw [mem_seqTree _ _ hs]
-    have lw := lastWriteWins_spec log rm ad e
-    simp only [applyColumn, IndexColumn.removeEncoded, IndexColumn.addEncoded, IndexColumn.ix,
-      NumericIndex.addEncoded, NumericIndex.removeEncoded, mem_insertBatch, mem_removeBatch,
-      (sortDedup_spec _).2]
+    have lw := lastWriteWins_spec (stateLog st place log) rm.scalar ad.scalar e
+    simp only [IndexColumn.writerRecord, IndexColumn.removeEncoded, IndexColumn.addEncoded, IndexColumn.ix,
+      addEncoded_spec, removeEncoded_spec]
     rw [lw.1, lw.2]
-    cases lastOp log e with
+    cases lastOp (stateLog st place log) e with
     | none => simp
     | some b => cases b <;> simp
 
+/-- A `Ready` column takes the whole log (#3307's claim). -/
+theorem writerRecord_ready (ix : NumericIndex) (hs : Sorted ix.tree) (log : List IndexWrite)
+    (place : Nat → Option BuildCursor) (rm ad : EncodedTuples) :
+    (IndexColumn.writerRecord (.numeric ix) .ready log place rm ad).1.ix.tree = seqTree ix.tree log :=
+  writerRecord_eq_sequential ix hs .ready log place rm ad
+
+/-- **`Building` filter**: every removal stays (`retain` keeps every non-addition) ... -/
+theorem stateLog_removes (next : BuildCursor) (place : Nat → Option BuildCursor) (log : List IndexWrite)
+    (w : IndexWrite) (hw : w ∈ log) (hr : w.add = false) : w ∈ stateLog (.building next) place log := by
+  simp [stateLog, List.mem_filter, hw, hr]
+
+/-- ... and an addition stays iff its entity is placed below the cursor. -/
+theorem stateLog_adds (next : BuildCursor) (place : Nat → Option BuildCursor) (log : List IndexWrite)
+    (w : IndexWrite) (hw : w ∈ log) (ha : w.add = true) :
+    w ∈ stateLog (.building next) place log ↔ ∃ pl, place w.id = some pl ∧ pl.precedes next = true := by
+  simp only [stateLog, List.mem_filter, hw, ha, true_and, Bool.not_true, Bool.false_or]
+  cases place w.id <;> simp
+
+/-- The filter only ever drops additions. -/
+theorem stateLog_sublist (st : BuildState) (place : Nat → Option BuildCursor) (log : List IndexWrite) :
+    (stateLog st place log).Sublist log := by
+  cases st <;> simp [stateLog, List.filter_sublist]
+
+/-- **A dropped addition does not cancel an earlier removal** (`versioned.rs:27-34`, `:96-98`): within
+    one unit, tuple `t` is removed and then added back for an entity at or above the cursor (as a
+    reused edge id's new edge can be); the filter drops the addition *before* the collapse, so the
+    removal still applies and the column ends without `t`. -/
+theorem building_reuse_removed (ix : NumericIndex) (hs : Sorted ix.tree) (next : BuildCursor)
+    (key id : Nat) (place : Nat → Option BuildCursor) (hp : ∀ i, place i = none)
+    (rm ad : EncodedTuples) (hin : enc key id ∈ ix.tree) :
+    enc key id ∉ (IndexColumn.writerRecord (.numeric ix) (.building next)
+      [⟨key, id, false⟩, ⟨key, id, true⟩] place rm ad).1.ix.tree := by
+  have hlog : stateLog (.building next) place [⟨key, id, false⟩, ⟨key, id, true⟩] = [⟨key, id, false⟩] := by
+    simp [stateLog, hp, List.filter_cons]
+  rw [writerRecord_eq_sequential ix hs, mem_seqTree _ _ hs, hlog]
+  have hl : lastOp [(⟨key, id, false⟩ : IndexWrite)] (enc key id) = some false := lastOp_singleton _
+  rw [hl]
+  simp
+
+/-- Without the filter order (collapse first) the same log would have *kept* `t`: the last change is
+    the addition. This is why the filter runs first. -/
+theorem collapse_first_would_keep (key id : Nat) :
+    lastOp [⟨key, id, false⟩, ⟨key, id, true⟩] (enc key id) = some true := by
+  have hl : lastOp [(⟨key, id, true⟩ : IndexWrite)] (enc key id) = some true := lastOp_singleton _
+  rw [lastOp_cons, hl]
+
+/-- The same unit on a `Ready` column ends with `t` present. -/
+theorem ready_reuse_kept (ix : NumericIndex) (hs : Sorted ix.tree) (key id : Nat) (place : Nat → Option BuildCursor)
+    (rm ad : EncodedTuples) :
+    enc key id ∈ (IndexColumn.writerRecord (.numeric ix) .ready
+      [⟨key, id, false⟩, ⟨key, id, true⟩] place rm ad).1.ix.tree := by
+  rw [writerRecord_ready ix hs, mem_seqTree _ _ hs, collapse_first_would_keep]
+
 /-! ## `FalkorDbIndex::apply_writes` / `apply` -/
 
-/-- One iteration of `apply_writes`' loop (`falkordb_index.rs:392-399`). -/
-def applyStep (e : EntityType) (st : FalkorDbIndex × List Nat × List Nat) (kl : IndexKey × List IndexWrite) :
-    FalkorDbIndex × List Nat × List Nat :=
+/-- One iteration of `apply_writes`' loop (`falkordb_index.rs:543-548`): the column's entry records the
+    log at its state; a column dropped since staging is skipped. `sc` is the unit's one pair of buffers. -/
+def applyStep (place : EntityType → Nat → Option BuildCursor) (e : EntityType)
+    (st : FalkorDbIndex × (EncodedTuples × EncodedTuples)) (kl : IndexKey × List IndexWrite) :
+    FalkorDbIndex × (EncodedTuples × EncodedTuples) :=
   match hmGet (st.1.columns e) kl.1 with
   | none => st                                                    -- column dropped: skipped
   | some entry =>
-    let r := applyColumn entry.column kl.2 st.2.1 st.2.2
-    (st.1.setColumns e (hmInsert (st.1.columns e) kl.1 ⟨r.1⟩), r.2.1, r.2.2)
+    let r := entry.writerRecord kl.2 (place e) st.2
+    (st.1.setColumns e (hmInsert (st.1.columns e) kl.1 r.1), r.2)
 
-/-- `apply_writes` (`falkordb_index.rs:384-400`): one pair of buffers for the whole unit of work. -/
-def FalkorDbIndex.applyWrites (x : FalkorDbIndex) (e : EntityType) (writes : ColumnWrites) : FalkorDbIndex :=
-  (writes.foldl (applyStep e) (x, [], [])).1
+/-- `apply_writes` (`falkordb_index.rs:535-549`): one pair of buffers for the whole unit of work. -/
+def FalkorDbIndex.applyWrites (x : FalkorDbIndex) (place : EntityType → Nat → Option BuildCursor)
+    (e : EntityType) (writes : ColumnWrites) : FalkorDbIndex :=
+  (writes.foldl (applyStep place e) (x, (EncodedTuples.empty, EncodedTuples.empty))).1
 
-/-- `apply` (`falkordb_index.rs:364-376`): nodes then relationships; leaves `writes` empty. -/
-def FalkorDbIndex.apply (x : FalkorDbIndex) (w : PendingIndexWrites) : FalkorDbIndex × PendingIndexWrites :=
+/-- `apply` (`falkordb_index.rs:516-530`): nodes then relationships; leaves `writes` empty. -/
+def FalkorDbIndex.apply (x : FalkorDbIndex) (w : PendingIndexWrites)
+    (place : EntityType → Nat → Option BuildCursor) : FalkorDbIndex × PendingIndexWrites :=
   if w.isEmpty then (x, w)
   else
     let d1 := w.drain .node
-    let x := x.applyWrites .node d1.1
+    let x := x.applyWrites place .node d1.1
     let d2 := d1.2.drain .relationship
-    (x.applyWrites .relationship d2.1, d2.2)
+    (x.applyWrites place .relationship d2.1, d2.2)
 
-theorem apply_empties (x : FalkorDbIndex) (w : PendingIndexWrites) : (x.apply w).2.isEmpty = true := by
+theorem apply_empties (x : FalkorDbIndex) (w : PendingIndexWrites) (place) : (x.apply w place).2.isEmpty = true := by
   unfold FalkorDbIndex.apply
   split
   · assumption
@@ -326,22 +409,29 @@ theorem apply_empties (x : FalkorDbIndex) (w : PendingIndexWrites) : (x.apply w)
 def ColsSorted (x : FalkorDbIndex) (e : EntityType) : Prop :=
   ∀ l a ix, x.numeric e l a = some ix → Sorted ix.tree
 
-theorem numeric_setColumns_insert (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (c : IndexColumn) (l a : String) :
-    (x.setColumns e (hmInsert (x.columns e) k ⟨c⟩)).numeric e l a =
-      if k = (l, a) then some c.ix else x.numeric e l a := by
-  simp only [FalkorDbIndex.numeric, columns_setColumns, if_true, hmGet_insert]
+theorem entry_setColumns_insert (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (en : IndexEntry) (l a : String) :
+    (x.setColumns e (hmInsert (x.columns e) k en)).entry e l a =
+      if k = (l, a) then some en else x.entry e l a := by
+  simp only [FalkorDbIndex.entry, columns_setColumns, if_true, hmGet_insert]
+
+theorem numeric_setColumns_insert (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (en : IndexEntry) (l a : String) :
+    (x.setColumns e (hmInsert (x.columns e) k en)).numeric e l a =
+      if k = (l, a) then some en.index.ix else x.numeric e l a := by
+  simp only [FalkorDbIndex.numeric, entry_setColumns_insert]
   split <;> rfl
 
-theorem applyFold_numeric (e : EntityType) (writes : ColumnWrites) :
-    ∀ (x : FalkorDbIndex) (r a : List Nat), (writes.map (·.1)).Nodup → ColsSorted x e → ∀ (l at' : String),
-    ((writes.foldl (applyStep e) (x, r, a)).1).numeric e l at' =
+theorem applyFold_numeric (place : EntityType → Nat → Option BuildCursor) (e : EntityType) (writes : ColumnWrites) :
+    ∀ (x : FalkorDbIndex) (sc : EncodedTuples × EncodedTuples), (writes.map (·.1)).Nodup → ColsSorted x e →
+    ∀ (l at' : String),
+    ((writes.foldl (applyStep place e) (x, sc)).1).numeric e l at' =
       match hmGet writes (l, at') with
       | none => x.numeric e l at'
-      | some log => (x.numeric e l at').map (fun ix => ⟨seqTree ix.tree log⟩) := by
+      | some log => (x.entry e l at').map
+          (fun en => (⟨seqTree en.index.ix.tree (stateLog en.state (place e) log)⟩ : NumericIndex)) := by
   induction writes with
-  | nil => intro x r a _ _ l at'; simp [hmGet]
+  | nil => intro x sc _ _ l at'; simp [hmGet, FalkorDbIndex.numeric]
   | cons kl ws ih =>
-    intro x r a hnd hs l at'
+    intro x sc hnd hs l at'
     obtain ⟨k, log⟩ := kl
     simp only [List.map_cons, List.nodup_cons] at hnd
     have notin : hmGet ws k = none := by
@@ -354,42 +444,79 @@ theorem applyFold_numeric (e : EntityType) (writes : ColumnWrites) :
     cases hc : hmGet (x.columns e) k with
     | none =>
       simp only
-      rw [ih x r a hnd.2 hs l at']
+      rw [ih x sc hnd.2 hs l at']
       by_cases hk : k = (l, at')
       · subst hk
-        have hn : x.numeric e l at' = none := by simp [FalkorDbIndex.numeric, hc]
-        simp [notin, hn]
+        have hn : x.numeric e l at' = none := by simp [FalkorDbIndex.numeric, FalkorDbIndex.entry, hc]
+        have hn' : x.entry e l at' = none := by simp [FalkorDbIndex.entry, hc]
+        simp [notin, hn, hn']
       · simp [hk]
     | some entry =>
-      obtain ⟨⟨ix⟩⟩ := entry
-      have hix : x.numeric e k.1 k.2 = some ix := by simp [FalkorDbIndex.numeric, hc, IndexColumn.ix]
+      obtain ⟨⟨ix⟩, st⟩ := entry
+      have hentry : x.entry e k.1 k.2 = some ⟨.numeric ix, st⟩ := by simpa [FalkorDbIndex.entry] using hc
+      have hix : x.numeric e k.1 k.2 = some ix := by simp [FalkorDbIndex.numeric, hentry, IndexColumn.ix]
       have hsix : Sorted ix.tree := hs _ _ ix hix
-      have eqcol : (applyColumn (.numeric ix) log r a).1.ix = ⟨seqTree ix.tree log⟩ := by
-        have := applyColumn_eq_sequential ix hsix log r a
-        cases hcol : (applyColumn (.numeric ix) log r a).1 with
-        | numeric ix' => rw [hcol] at this; simp [IndexColumn.ix] at this ⊢; cases ix'; simp_all
-      have hs' : ColsSorted (x.setColumns e (hmInsert (x.columns e) k ⟨(applyColumn (.numeric ix) log r a).1⟩)) e := by
+      have eqcol : (IndexEntry.writerRecord ⟨.numeric ix, st⟩ log (place e) sc).1.index.ix =
+          ⟨seqTree ix.tree (stateLog st (place e) log)⟩ := by
+        have := writerRecord_eq_sequential ix hsix st log (place e) sc.1 sc.2
+        cases hcol : (IndexColumn.writerRecord (.numeric ix) st log (place e) sc.1 sc.2).1 with
+        | numeric ix' =>
+          rw [hcol] at this
+          simp only [IndexEntry.writerRecord, hcol, IndexColumn.ix] at this ⊢
+          cases ix'; simp_all
+      have hs' : ColsSorted (x.setColumns e (hmInsert (x.columns e) k
+          (IndexEntry.writerRecord ⟨.numeric ix, st⟩ log (place e) sc).1)) e := by
         intro l' a' ix' h
         rw [numeric_setColumns_insert] at h
         split at h
         · simp at h; rw [← h, eqcol]; exact seqTree_sorted _ _ hsix
         · exact hs _ _ _ h
       simp only
-      rw [ih _ _ _ hnd.2 hs' l at', numeric_setColumns_insert]
+      rw [ih _ _ hnd.2 hs' l at', numeric_setColumns_insert]
       by_cases hk : k = (l, at')
       · subst hk
-        simp [notin, eqcol, hix]
-      · simp [hk]
+        first
+          | simpa [notin, hix, hentry, IndexColumn.ix] using eqcol
+          | (simp [notin, hix, hentry]; exact eqcol)
+          | (simp [notin, hix, hentry, IndexColumn.ix]; simp only [IndexColumn.ix] at eqcol; exact eqcol)
+      · simp [hk, entry_setColumns_insert]
 
-/-- **`apply_writes`, per column**: a staged column's tree becomes `seqTree` of its log (the
-    changes applied one by one, in staging order); unstaged and dropped columns are untouched. -/
-theorem applyWrites_numeric (x : FalkorDbIndex) (e : EntityType) (writes : ColumnWrites)
-    (hnd : (writes.map (·.1)).Nodup) (hs : ColsSorted x e) (l a : String) :
-    (x.applyWrites e writes).numeric e l a =
+/-- **`apply_writes`, per column**: a staged column's tree becomes `seqTree` of its log filtered by its
+    build state (the changes applied one by one, in staging order); unstaged and dropped columns are
+    untouched. -/
+theorem applyWrites_numeric (x : FalkorDbIndex) (place : EntityType → Nat → Option BuildCursor) (e : EntityType)
+    (writes : ColumnWrites) (hnd : (writes.map (·.1)).Nodup) (hs : ColsSorted x e) (l a : String) :
+    (x.applyWrites place e writes).numeric e l a =
       match hmGet writes (l, a) with
       | none => x.numeric e l a
-      | some log => (x.numeric e l a).map (fun ix => ⟨seqTree ix.tree log⟩) :=
-  applyFold_numeric e writes x [] [] hnd hs l a
+      | some log => (x.entry e l a).map
+          (fun en => (⟨seqTree en.index.ix.tree (stateLog en.state (place e) log)⟩ : NumericIndex)) :=
+  applyFold_numeric place e writes x _ hnd hs l a
+
+/-- **Writes never change a build state**: only `indexer_apply` moves the cursor or flips `Ready`. -/
+theorem applyFold_state (place : EntityType → Nat → Option BuildCursor) (e : EntityType) (writes : ColumnWrites) :
+    ∀ (x : FalkorDbIndex) (sc : EncodedTuples × EncodedTuples) (l a : String),
+    (((writes.foldl (applyStep place e) (x, sc)).1).entry e l a).map (·.state) = (x.entry e l a).map (·.state) := by
+  induction writes with
+  | nil => intro x sc l a; rfl
+  | cons kl ws ih =>
+    intro x sc l a
+    simp only [List.foldl_cons, applyStep]
+    cases hc : hmGet (x.columns e) kl.1 with
+    | none => exact ih x sc l a
+    | some entry =>
+      simp only
+      rw [ih, entry_setColumns_insert]
+      by_cases hk : kl.1 = (l, a)
+      · have hx : x.entry e l a = some entry := by
+          simp only [FalkorDbIndex.entry]; rw [← hk]; exact hc
+        simp [hk, hx, IndexEntry.writerRecord]
+      · simp [hk]
+
+theorem applyWrites_state (x : FalkorDbIndex) (place : EntityType → Nat → Option BuildCursor) (e : EntityType)
+    (writes : ColumnWrites) (l a : String) :
+    ((x.applyWrites place e writes).entry e l a).map (·.state) = (x.entry e l a).map (·.state) :=
+  applyFold_state place e writes x _ l a
 
 /-! ## `extend` keeps staging order per column -/
 
@@ -455,9 +582,9 @@ theorem add_remove_spec (c : IndexChanges) (ix : FalkorDbIndex) (l a : String) (
 
 /-- The scenario of the doc comment (`pending_writes.rs:100-105`): `SET n.v = 5` then `DELETE n`
     stages `add (5, n)` then `remove (5, n)`; the collapsed batch leaves the node unindexed. -/
-theorem set_then_delete :
-    (applyColumn (.numeric ⟨[]⟩) [⟨5, 7, true⟩, ⟨5, 7, false⟩] [] []).1.ix.tree = [] := by
-  rw [applyColumn_eq_sequential _ List.Pairwise.nil]
-  simp [seqTree, tInsert, tRemove, sins, IndexWrite.tup]
+theorem set_then_delete (place : Nat → Option BuildCursor) (rm ad : EncodedTuples) :
+    (IndexColumn.writerRecord (.numeric ⟨[]⟩) .ready [⟨5, 7, true⟩, ⟨5, 7, false⟩] place rm ad).1.ix.tree = [] := by
+  rw [writerRecord_eq_sequential _ List.Pairwise.nil]
+  simp [stateLog_ready, seqTree, tInsert, tRemove, sins, IndexWrite.tup]
 
 end NI

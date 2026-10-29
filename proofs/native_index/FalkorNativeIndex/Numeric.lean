@@ -4,9 +4,9 @@ set_option linter.unusedSimpArgs false
 /-!
 # `NumericIndex` (`graph/src/index/falkordb/numeric.rs`)
 
-The index is its tree (`tree: Tree`, `numeric.rs:39-41`), here the tree's content list (`Tree.lean`).
+The index is its tree (`tree: Tree`, `numeric.rs:139-141`), here the tree's content list (`Tree.lean`).
 Each function is modelled line by line. Theorems:
-* `range_keys` — the inclusive key bounds `range` computes (`numeric.rs:192-226`) select exactly the
+* `range_keys` — the inclusive key bounds `range` computes (`numeric.rs:269-316`) select exactly the
   keys satisfying the value bounds, including the exclusive `k ± 1` steps and their `checked_*`
   guards (no stored key is `0` or `u64::MAX`, `encodeF64_bounds`).
 * `range_agrees`, `point_agrees` — **index scan ≡ label scan + filter**: a column built from
@@ -18,73 +18,95 @@ Each function is modelled line by line. Theorems:
 
 namespace NI
 
+/-- `EncodedTuples { scalar }` (`numeric.rs:92-94`): the encoded `(key, doc)` tuples a column's
+    changes move in. A tuple `(key, doc)` is its tree entry `enc key doc` (`Tree.lean`). -/
+structure EncodedTuples where
+  scalar : List Nat
+deriving Repr, DecidableEq
+
+namespace EncodedTuples
+/-- `Default` -/
+def empty : EncodedTuples := ⟨[]⟩
+/-- `scalars` (`numeric.rs:101-103`). -/
+def scalars (s : List Nat) : EncodedTuples := ⟨s⟩
+/-- `is_empty` (`numeric.rs:107-109`). -/
+def isEmpty (t : EncodedTuples) : Bool := t.scalar.isEmpty
+/-- `len` (`numeric.rs:113-115`). -/
+def len (t : EncodedTuples) : Nat := t.scalar.length
+/-- `clear` (`numeric.rs:118-120`). -/
+def clear (_t : EncodedTuples) : EncodedTuples := ⟨[]⟩
+/-- `sort_dedup` (`numeric.rs:124-127`): `sort_unstable()` then `dedup()`. -/
+def sortDedup (t : EncodedTuples) : EncodedTuples := ⟨NI.sortDedup t.scalar⟩
+end EncodedTuples
+
 /-- `NumericIndex { tree }`. -/
 structure NumericIndex where
   tree : List Nat
 deriving Repr
 
-/-- `NumericIndex::new` / `Default` (`numeric.rs:46-48`). -/
+/-- `NumericIndex::new` / `Default` (`numeric.rs:146-148`). -/
 def NumericIndex.new : NumericIndex := ⟨[]⟩
 
-/-- The `(key, id)` entries of `(value, id)` pairs: the `filter_map` of `numeric.rs:58`, `:136`. -/
+/-- The `(key, id)` entries of `(value, id)` pairs: the `filter_map` of `numeric.rs:216-219`, `:439`. -/
 def encodePairs (entries : List (Value × Nat)) : List Nat :=
   entries.filterMap (fun (v, id) => (encodeNumeric v).map (fun k => enc k id))
 
-/-- `from_entries` (`numeric.rs:55-65`): encode, `sort_unstable`, `dedup`, `from_sorted`. -/
+/-- `from_entries` (`numeric.rs:434-447`, `#[cfg(test)]` since #2351; still the specification of what a built column holds): encode, `sort_unstable`, `dedup`, `from_sorted`. -/
 def NumericIndex.fromEntries (entries : List (Value × Nat)) : NumericIndex :=
   ⟨tFromSorted (sortDedup (encodePairs entries))⟩
 
-/-- `add` (`numeric.rs:69-80`). -/
+/-- `add` (`numeric.rs:152-163`). -/
 def NumericIndex.add (ix : NumericIndex) (v : Value) (id : Nat) : NumericIndex :=
   match encodeNumeric v with
   | some k => ⟨tInsert ix.tree (enc k id)⟩
   | none => ix
 
-/-- `remove` (`numeric.rs:83-91`). -/
+/-- `remove` (`numeric.rs:166-174`). -/
 def NumericIndex.remove (ix : NumericIndex) (v : Value) (id : Nat) : NumericIndex :=
   match encodeNumeric v with
   | some k => ⟨tRemove ix.tree (enc k id)⟩
   | none => ix
 
-/-- `encode_pairs_into` (`numeric.rs:129-137`): `out` is cleared, then filled. Returns the new `out`. -/
+/-- `encode_pairs_into` (`numeric.rs:212-220`): `out` is cleared, then filled. Returns the new `out`. -/
 def encodePairsInto (entries : List (Value × Nat)) (_out : List Nat) : List Nat :=
   encodePairs entries
 
-/-- `add_batch` (`numeric.rs:100-108`); returns the index and the scratch buffer. -/
+/-- `add_batch` (`numeric.rs:183-191`); returns the index and the scratch buffer. -/
 def NumericIndex.addBatch (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) :
     NumericIndex × List Nat :=
   let scratch := sortDedup (encodePairsInto entries scratch)   -- `sort_unstable` (dups harmless: union)
   (⟨tInsertBatch ix.tree scratch⟩, scratch)
 
-/-- `remove_batch` (`numeric.rs:114-122`). -/
+/-- `remove_batch` (`numeric.rs:197-205`). -/
 def NumericIndex.removeBatch (ix : NumericIndex) (entries : List (Value × Nat)) (scratch : List Nat) :
     NumericIndex × List Nat :=
   let scratch := sortDedup (encodePairsInto entries scratch)
   (⟨tRemoveBatch ix.tree scratch⟩, scratch)
 
-/-- `add_encoded` (`numeric.rs:142-148`): `pairs.sort_unstable()` then `insert_batch`. -/
-def NumericIndex.addEncoded (ix : NumericIndex) (pairs : List Nat) : NumericIndex × List Nat :=
-  let pairs := sortDedup pairs
-  (⟨tInsertBatch ix.tree pairs⟩, pairs)
+/-- `add_encoded` (`numeric.rs:226-236`): `tuples.sort_dedup()`, then into an empty tree
+    `Tree::from_sorted` (a bulk build), else `insert_batch`. Returns the index and the (sorted) tuples. -/
+def NumericIndex.addEncoded (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex × EncodedTuples :=
+  let tuples := tuples.sortDedup
+  (if tIsEmpty ix.tree then ⟨tFromSorted tuples.scalar⟩ else ⟨tInsertBatch ix.tree tuples.scalar⟩, tuples)
 
-/-- `remove_encoded` (`numeric.rs:151-157`). -/
-def NumericIndex.removeEncoded (ix : NumericIndex) (pairs : List Nat) : NumericIndex × List Nat :=
-  let pairs := sortDedup pairs
-  (⟨tRemoveBatch ix.tree pairs⟩, pairs)
+/-- `remove_encoded` (`numeric.rs:239-246`). -/
+def NumericIndex.removeEncoded (ix : NumericIndex) (tuples : EncodedTuples) : NumericIndex × EncodedTuples :=
+  let tuples := tuples.sortDedup
+  (⟨tRemoveBatch ix.tree tuples.scalar⟩, tuples)
 
-/-- `is_empty` (`numeric.rs:161-163`). -/
+/-- `is_empty` (`numeric.rs:249-251`). -/
 def NumericIndex.isEmpty (ix : NumericIndex) : Bool := tIsEmpty ix.tree
 
-/-- `empty` (`numeric.rs:252-254`): `range(1, 0)`. -/
+/-- `empty` (`numeric.rs:424-426`): `range(1, 0)`. -/
 def NumericIndex.empty (ix : NumericIndex) : List Nat := tRange ix.tree 1 0
 
-/-- `point` (`numeric.rs:167-175`). -/
+/-- `point` (`numeric.rs:255-263`). -/
 def NumericIndex.point (ix : NumericIndex) (v : Value) : List Nat :=
   match encodeNumeric v with
   | some k => tRange ix.tree k k
   | none => ix.empty
 
-/-- `range` (`numeric.rs:181-228`), branch for branch (`none` = an early `return self.empty()`). -/
+/-- `range` (`numeric.rs:269-316`), branch for branch (`none` = an early `return self.empty()`). -/
 def rangeBounds (min max : Option Value) (incMin incMax : Bool) : Option (Nat × Nat) := do
   let lo ← match min with
     | none => some 0
@@ -117,7 +139,7 @@ inductive IndexQuery where
     not encode (`numeric.rs` `in_list`, `union`). -/
 def encodeAll (vs : List Value) : Option (List Nat) := vs.mapM encodeNumeric
 
-/-- `union_of` (`numeric.rs:381-395`): `keys.sort_unstable(); keys.dedup()`, then one point cursor per
+/-- `union_of` (`numeric.rs:408-421`): `keys.sort_unstable(); keys.dedup()`, then one point cursor per
     distinct key, chained lazily. As a set of ids this is the concatenation of the point scans. The
     chain is deliberately *not* id-ordered (`DocIter` doc); the model is a list whose order is not
     claimed, every theorem below is about membership. The tree snapshot is pinned by `tree.clone()`,
@@ -126,18 +148,18 @@ def encodeAll (vs : List Value) : Option (List Nat) := vs.mapM encodeNumeric
 def NumericIndex.unionOf (ix : NumericIndex) (keys : List Nat) : List Nat :=
   (sortDedup keys).flatMap (fun k => tRange ix.tree k k)
 
-/-- `in_list` (`numeric.rs:329-340`): an empty list is declined, as is a list with any member that
+/-- `in_list` (`numeric.rs:356-368`): an empty list is declined, as is a list with any member that
     does not encode. -/
 def NumericIndex.inList (ix : NumericIndex) (items : List Value) : Option (List Nat) :=
   if items.isEmpty then none else (encodeAll items).map ix.unionOf
 
-/-- The `match child` of `union` (`numeric.rs:359-365`): an `Equal`, or a **non-empty** `IN` list. -/
+/-- The `match child` of `union` (`numeric.rs:386-392`): an `Equal`, or a **non-empty** `IN` list. -/
 def unionMember : IndexQuery → Option (String × List Value)
   | .equal k v => some (k, [v])
   | .inList k (some items) => if items.isEmpty then none else some (k, items)
   | _ => none
 
-/-- The loop of `union` (`numeric.rs:355-372`). `attr` is the `get_or_insert` cell: the first member
+/-- The loop of `union` (`numeric.rs:382-399`). `attr` is the `get_or_insert` cell: the first member
     fixes it and every later member must name the same attribute. -/
 def unionGo (attr : Option String) (keys : List Nat) : List IndexQuery → Option (List Nat)
   | [] => some keys
@@ -150,11 +172,11 @@ def unionGo (attr : Option String) (keys : List Nat) : List IndexQuery → Optio
         | none => none
         | some ks => unionGo (some k) (keys ++ ks) cs
 
-/-- `union` (`numeric.rs:350-375`): `(!keys.is_empty()).then(|| self.union_of(keys))`. -/
+/-- `union` (`numeric.rs:376-400`): `(!keys.is_empty()).then(|| self.union_of(keys))`. -/
 def NumericIndex.union (ix : NumericIndex) (children : List IndexQuery) : Option (List Nat) :=
   (unionGo none [] children).bind (fun keys => if keys.isEmpty then none else some (ix.unionOf keys))
 
-/-- `query` (`numeric.rs:296-313`). -/
+/-- `query` (`numeric.rs:323-343`). -/
 def NumericIndex.query (ix : NumericIndex) : IndexQuery → Option (List Nat)
   | .equal _ v => some (ix.point v)
   | .range _ min max a b => some (ix.range min max a b)
@@ -698,13 +720,38 @@ theorem removeBatch_spec (ix : NumericIndex) (entries : List (Value × Nat)) (sc
     e ∈ (ix.removeBatch entries scratch).1.tree ↔ e ∈ ix.tree ∧ e ∉ encodePairs entries := by
   simp [NumericIndex.removeBatch, encodePairsInto, mem_removeBatch, (sortDedup_spec _).2]
 
-theorem addEncoded_spec (ix : NumericIndex) (pairs : List Nat) (e : Nat) :
-    e ∈ (ix.addEncoded pairs).1.tree ↔ e ∈ ix.tree ∨ e ∈ pairs := by
-  simp [NumericIndex.addEncoded, mem_insertBatch, (sortDedup_spec _).2]
+theorem addEncoded_spec (ix : NumericIndex) (tuples : EncodedTuples) (e : Nat) :
+    e ∈ (ix.addEncoded tuples).1.tree ↔ e ∈ ix.tree ∨ e ∈ tuples.scalar := by
+  unfold NumericIndex.addEncoded
+  by_cases h : tIsEmpty ix.tree = true
+  · have : ix.tree = [] := by simpa [tIsEmpty] using h
+    simp only [h, if_true, tFromSorted, EncodedTuples.sortDedup]
+    simp [this, (sortDedup_spec _).2]
+  · simp only [h, if_false, EncodedTuples.sortDedup]
+    simp [mem_insertBatch, (sortDedup_spec _).2]
 
-theorem removeEncoded_spec (ix : NumericIndex) (pairs : List Nat) (e : Nat) :
-    e ∈ (ix.removeEncoded pairs).1.tree ↔ e ∈ ix.tree ∧ e ∉ pairs := by
-  simp [NumericIndex.removeEncoded, mem_removeBatch, (sortDedup_spec _).2]
+/-- Both branches (a bulk build into an empty tree, a merge into a non-empty one) keep the tree
+    sorted. -/
+theorem addEncoded_sorted (ix : NumericIndex) (hs : Sorted ix.tree) (tuples : EncodedTuples) :
+    Sorted (ix.addEncoded tuples).1.tree := by
+  unfold NumericIndex.addEncoded
+  by_cases h : tIsEmpty ix.tree = true
+  · simp only [h, if_true, tFromSorted]; exact (sortDedup_spec _).1
+  · simp only [h, if_false]; exact sorted_insertBatch _ _ hs
+
+/-- The tuples a call hands back are its sorted, deduplicated input. -/
+theorem addEncoded_tuples (ix : NumericIndex) (tuples : EncodedTuples) :
+    (ix.addEncoded tuples).2 = tuples.sortDedup := rfl
+
+theorem removeEncoded_spec (ix : NumericIndex) (tuples : EncodedTuples) (e : Nat) :
+    e ∈ (ix.removeEncoded tuples).1.tree ↔ e ∈ ix.tree ∧ e ∉ tuples.scalar := by
+  simp [NumericIndex.removeEncoded, mem_removeBatch, EncodedTuples.sortDedup, (sortDedup_spec _).2]
+
+/-- `EncodedTuples`' accessors (`numeric.rs:101-127`). -/
+theorem encodedTuples_spec (s : List Nat) (t : EncodedTuples) :
+    (EncodedTuples.scalars s).scalar = s ∧ (t.isEmpty = true ↔ t.scalar = []) ∧ t.len = t.scalar.length ∧
+    t.clear.scalar = [] ∧ Sorted t.sortDedup.scalar ∧ ∀ e, e ∈ t.sortDedup.scalar ↔ e ∈ t.scalar :=
+  ⟨rfl, by simp [EncodedTuples.isEmpty], rfl, rfl, (sortDedup_spec _).1, (sortDedup_spec _).2⟩
 
 theorem fromEntries_spec (entries : List (Value × Nat)) (e : Nat) :
     e ∈ (NumericIndex.fromEntries entries).tree ↔ e ∈ encodePairs entries := by
@@ -724,7 +771,7 @@ theorem new_spec : NumericIndex.new.tree = [] := rfl
 theorem encodePairsInto_clears (entries : List (Value × Nat)) (out : List Nat) :
     encodePairsInto entries out = encodePairs entries := rfl
 
-/-- Temporal values never reach the tree (`numeric.rs:349-377`). -/
+/-- Temporal values never reach the tree (`numeric.rs:152-163`, `encode.rs:29-41`). -/
 theorem temporal_not_added (ix : NumericIndex) (i : Int) (id : Nat) :
     (ix.add (.date i) id).tree = ix.tree := by
   simp [NumericIndex.add, encodeNumeric]

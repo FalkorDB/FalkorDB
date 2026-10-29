@@ -12,8 +12,8 @@ row the Aggregate emits, and the slot reads in CondTraverse.
 | `Val`, `Slots`, `get`, `ins` | a batch row: `Batch::value_at` (`runtime/batch.rs:1263-1272`) reads a column by `Variable.id` alone, never by `scope_id` |
 | `declare`, `declareAll` | `Binder::fresh_var` (`planner/binder.rs:2255-2269`: the id is the current scope's env length) via `define_name_in_scope` (`:2155-2175`) and `project_name` (`:2177-2185`); a projection opens a fresh scope (`push_scope`, `:1156`) so its ids restart at 0; `bind_graph` declares nodes before relationships (`:1351`, `:1367`) |
 | `aggRow` | `AggregateOp::next` (`runtime/ops/aggregate.rs:1150-1213`): agg outputs (`:1177`), then the *pre-projection* slot of every bare-variable key (`:1187-1196`), then the projected keys (`:1197`) |
-| `inputRow` | the endpoint reads of `CondTraverseOp::expand_row` (`runtime/ops/cond_traverse.rs:764-777`), and the same destination read on the batched path (`:648-652`, skip on mismatch) |
-| `hopOut` | `expandRow` in collapse mode (anonymous edge) on that `RowIn`, then `set_column(to_alias.id, …)` (`cond_traverse.rs:724`) |
+| `inputRow` | the endpoint reads of `CondTraverseOp::expand_row` (`runtime/ops/cond_traverse.rs:915-928`), and the same destination read on the batched path (`:799-803`, skip on mismatch) |
+| `hopOut` | `expandRow` in collapse mode (anonymous edge) on that `RowIn`, then `set_column(to_alias.id, …)` (`cond_traverse.rs:875`) |
 
 ## The bug
 
@@ -22,7 +22,7 @@ The binder numbers each scope from 0, and a batch slot is keyed by id only.
 *pre-projection* id ("so downstream operators can find them"), an id of the
 previous scope. A variable that the next MATCH declares fresh can get that same
 id; CondTraverse then reads the stale node as an already-bound destination and
-keeps only edges that end there (`cond_traverse.rs:648-652`, `:771-777`).
+keeps only edges that end there (`cond_traverse.rs:799-803`, `:922-928`).
 
 `MATCH (a)-[:E]->(b)-[:E]->(c) WITH c, count(*) AS k MATCH (c)-[:E]->(d)`:
 scope 0 is `[a, b, c, _anon, _anon]`, so the old `c` is slot 2; scope 1 is
@@ -115,7 +115,7 @@ def nodeOf : Option Val → Option Nat
   | some (.node n) => some n
   | _ => none
 
-/-- The endpoint reads of `expand_row` (`cond_traverse.rs:764-777`): a slot
+/-- The endpoint reads of `expand_row` (`cond_traverse.rs:915-928`): a slot
 bound to a node is a bound endpoint; a slot bound to anything else drops the
 row (`return Ok(())`); an unbound slot is free. -/
 def inputRow (r : Slots) (fromId toId : Nat) : Option RowIn :=
@@ -126,7 +126,7 @@ def inputRow (r : Slots) (fromId toId : Nat) : Option RowIn :=
 
 /-- One anonymous directed hop from `fromId` to `toId`: the collapsed
 expansion (`expandRow … false false`), each result written at `toId`
-(`cond_traverse.rs:724`). -/
+(`cond_traverse.rs:875`). -/
 def hopOut (g : Graph) (fromId toId : Nat) (r : Slots) : List Slots :=
   match inputRow r fromId toId with
   | none => []

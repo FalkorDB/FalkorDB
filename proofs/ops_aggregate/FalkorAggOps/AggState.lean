@@ -1,7 +1,7 @@
 import FalkorAggOps.AggPlan
 /-
 Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`hash_u64`, `args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history (removed by #2977).
 Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
 `Row::insert` = `upd`, `Row::unbind` = `clr`.
 -/
@@ -275,7 +275,8 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       rw [hc st x y h.1]
       exact ih _ ys h.2
 
-/-! ## `hash_u64` (aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row`) -/
+/-! ## `hash_u64` (history: aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
+removed by #2977, c652e505e: the group id is the insertion index, see `GroupId.lean`) -/
 
 /-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
 def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=
@@ -283,7 +284,7 @@ def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S �
 
 /-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
 `(key, value)` sequence get the same group id. (It is not injective — the
-collision bug is `hashed_dedup_merges_groups`.) -/
+collision bug was `pre2977_hashed_dedup_merges_groups`, fixed by #2977.) -/
 theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
     (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
     hashU64 d rh fin r₁ = fin (rh d r₁) := by

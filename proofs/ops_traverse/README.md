@@ -113,6 +113,8 @@ Every bug was reproduced against a live server and compared with C before it was
 |---|---|
 | `Basic.lean` | The graph model: edges, the pair-level matrix pattern `pairs`, `edgesBetween`, `step` |
 | `CondTraverse.lean` | Single hop (emit and collapse, directed and undirected), ExpandInto, two hops, `MxmSpec` and the batched multiply path; the collapse counterexamples |
+| `UnionStream.lean` | `UnionIter` (#3492): the k-way merge of per-type pair streams, `drain_spec`, `union_stream`, the layer-merge order (`layerStream_spec`) |
+| `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
 | `CTGlue.lean` | CondTraverse/ExpandInto constructors, `build_state`, `trim_to_cap`, null padding, `next`; scan and PathBuilder constructors |
 | `BidirDedup.lean` | The bidirectional dedup block and its three counterexamples |
 | `VarLen.lean` | The variable-length DFS, `varLen_iff`, the absorbed edge filter |
@@ -137,13 +139,12 @@ Line numbers are pinned to main 5e475e6c9. No traversal operator changed since f
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 51 |
-| AXIOMATISED | 3 |
+| PROVEN | 62 |
 | NOT COVERED | 23 |
 
-Every operator file under `runtime/ops/` in scope is fully PROVEN, apart from the three FFI rows. The rest:
+Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
 
-- **AXIOMATISED (3, `cond_traverse.rs`):** `delta_lmxm_into` is the GraphBLAS multiply, which enters as `MxmSpec`; `build_unrestricted_iter` and `build_transposed_iter` are the matrix iterators, modelled as the pair list `pairs` (seek is a filter of it).
+- **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
 - **NOT COVERED, `algo_procedures.rs` (18):** the `algo.SPpaths`/`algo.SSpaths` procedures (Dijkstra over `f64` weights, config parsing, path enumeration, registration). They are only differential-tested against C.
 - **NOT COVERED, `eval.rs` (5):** `shortestPath()` is a bidirectional BFS in the expression evaluator. It is differential-tested against C; its stopping rule is argued in comments, not formalised.
 

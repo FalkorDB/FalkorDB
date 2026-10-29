@@ -3,3 +3,8 @@ defaultTargets = ["GraphblasWrappers"]
 
 [[lean_lib]]
 name = "GraphblasWrappers"
+
+# `Matrix::delta_lmxm` is stated against the versioned-matrix layer invariant.
+[[require]]
+name = "falkor-versioned-matrix"
+path = "../versioned_matrix"

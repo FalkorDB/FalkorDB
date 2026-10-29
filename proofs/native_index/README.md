@@ -1,6 +1,6 @@
 # native_index: the native numeric index answers like a label scan plus a filter
 
-This project proves that the native numeric index (#2350, with writes batched by #3307) returns exactly the rows a full label scan plus a `WHERE` filter would return, and that every graph write keeps the index in step with the data. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it serves range and equality predicates on indexed numeric properties instead of RediSearch:
+This project proves that the native numeric index (#2350, with writes batched by #3307 and a build state with indexer batches since #2351) returns exactly the rows a full label scan plus a `WHERE` filter would return, and that every graph write keeps the index in step with the data. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it serves range and equality predicates on indexed numeric properties instead of RediSearch:
 
 ```cypher
 CREATE INDEX FOR (p:Person) ON (p.age)
@@ -47,7 +47,15 @@ Order is deliberately unspecified (the chain is not merged into id order), so ev
 
 **4. Does batching writes per unit of work (#3307) change the result?**
 
-No. #3307 stages index changes during a query and applies them once at commit: `last_write_wins` collapses each tuple's history, then one `remove_batch` and one `insert_batch` run per column. `lastWriteWins_spec` proves the collapse keeps exactly each tuple's last staged change, and `applyColumn_eq_sequential` proves the batched apply leaves the same tree as applying every staged change one by one, in order, for any interleaving of adds and removes.
+No. #3307 stages index changes during a query and applies them once at commit: `last_write_wins` collapses each tuple's history, then one `remove_batch` and one `insert_batch` run per column. `lastWriteWins_spec` proves the collapse keeps exactly each tuple's last staged change, and `writerRecord_eq_sequential` proves the batched apply leaves the same tree as applying every staged change one by one, in order, for any interleaving of adds and removes.
+
+**4b. Is a column that is still being built ever read, and do writes during the build get lost? (#2351)**
+
+A column is created `Building` (`create_building`) and filled by indexer batches; the batch that reaches the end flips it `Ready`. While `Building`, `query_numeric` declines every query routed to it (`queryNumeric_building`), so RediSearch answers; a `Ready` column answers as before (`queryNumeric_ready`). Two things keep the part of the column below the cursor current while the rest is still unread:
+
+- **Writes.** `writerRecord_eq_sequential` states what a unit of work does to a column at any state: its staged changes, filtered by `stateLog`, applied one by one. `stateLog_removes` / `stateLog_adds` say the filter keeps every removal and an addition only for an entity `place`d below the cursor (a node by its id, an edge by its `(src, dst)` pair, `None` for an edge deleted in the unit). The filter runs *before* the collapse: `building_reuse_removed` shows a removed-then-re-added tuple for an entity at or above the cursor (a reused edge id) is still removed, where collapsing first would have kept it (`collapse_first_would_keep`). Writes never move the cursor (`applyWrites_state`).
+- **Batches.** `scanNodes_below_cursor` and `scanEdges_below_cursor` prove the entities a batch read are exactly those that `precede` the cursor it returns (with the matrices iterated in ascending order, a GraphBLAS fact), so "indexed" and "below the cursor" are the same set; a batch never stops inside a multi-edge `(src, dst)` pair (`edgeLoop_spec`). `prepareBatch_building` / `prepareBatch_idle` say a batch adds its tuples and moves the cursor (or flips `Ready`), and changes nothing on a column that is gone or not `Building`.
+- **CREATE INDEX** is one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `createIndex_nodeScan_agrees` carries `nodeScan_native_agrees` over to the new batch path.
 
 **5. Do `SET`, `DELETE` and label changes keep the index in step?**
 
@@ -76,7 +84,10 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `nodeScan_native_inList_agrees` | Node `IN` scan on the native route = label scan + `IN` filter | `Ddl.lean` |
 | `nodeScan_native_agrees` | Node index scan on the native route = label scan + filter | `Ddl.lean` |
 | `lastWriteWins_spec` | The collapse keeps exactly each tuple's last staged change | `Pending.lean` |
-| `applyColumn_eq_sequential` | #3307's batched apply = applying each staged change one by one | `Pending.lean` |
+| `writerRecord_eq_sequential` | #3307's batched apply = applying each staged change one by one (filtered by the column's build state since #2351) | `Pending.lean` |
+| `queryNumeric_building` | a `Building` column is never read from | `Index.lean` |
+| `scanNodes_below_cursor`, `scanEdges_below_cursor` | a batch reads exactly the entities that precede its returned cursor | `Build.lean` |
+| `buildInOneBatch_entry` | CREATE INDEX leaves a `Ready` column holding `from_entries` of the live pairs | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
 | `snapshot_isolated`, `runUnit_spec` | Readers keep their version's index; a commit publishes its staged changes once | `Ddl.lean` |
 
@@ -117,23 +128,24 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Tree.lean` | The `CowBTree` contract as its contents (`tInsert`, `tRemoveBatch`, `tRange`, …) |
 | `Contract.lean` | The contract discharged: on every reachable tree each `CowBTree` operation (the `cow_btree` model) equals its `Tree.lean` model (`contract_*`) |
 | `Numeric.lean` | `NumericIndex`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, `IndexQuery` (with `inList` and `or`), `inList`, `union`, `unionOf`, `unionNext`, per-write contents specs |
-| `Index.lean` | `HashMap` as an association list, `IndexColumn`, `ColumnEntry.ready`, `FalkorDbIndex` |
-| `Pending.lean` | Staged writes (`IndexWrite`, `IndexChanges`, `PendingIndexWrites`), `lastWriteWins`, `applyColumn_eq_sequential` |
+| `Index.lean` | `HashMap` as an association list, `IndexColumn`, `BuildCursor`, `BuildState`, `IndexEntry`, `FalkorDbIndex`, `queryNumeric_building` |
+| `Pending.lean` | Staged writes (`IndexWrite`, `IndexChanges`, `PendingIndexWrites`), `lastWriteWins`, `stateLog`, `writerRecord`, `writerRecord_eq_sequential`, `applyWrites_numeric` |
 | `Writes.lean` | The staging functions of `graph_writes.rs` (`nodeAttrsSet`, `nodesDeleted`, `labelsAdded`, …), `lastOp_ops`, the per-path `*_hit` theorems |
-| `Ddl.lean` | `createIndex`, `populate`, `buildColumn`, the scan routing `scanRoute`, `nodeScan_native_agrees`, `snapshot_isolated`, `runUnit_spec` |
+| `Build.lean` | Indexer batches: `scan`/`scanNodes`/`scanEdges`/`edgeLoop`, `prepareBatch`, `scanNodes_below_cursor`, `scanEdges_below_cursor` |
+| `Ddl.lean` | `createIndex`, `populate`, `buildInOneBatch`, the scan routing `scanRoute`, `nodeScan_native_agrees`, `snapshot_isolated`, `runUnit_spec` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entry encoding `enc` and the sorted-list lemmas, and [`../core`](../core) for `roundNat`/`bitlen` (IEEE round-to-nearest-even).
 
 ## Coverage
 
-`COVERAGE.tsv` has 88 function rows (plus one comment row):
+`COVERAGE.tsv` has 116 function rows (plus one comment row):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 88 |
+| PROVEN | 116 |
 
-- The 13 rows that read or write the tree (`from_entries`, `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
+- The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
 - Three PROVEN rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under a caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
 
 ## What the model does not cover

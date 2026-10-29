@@ -228,7 +228,7 @@ inductive Udf | load (replace : Bool) (lib code : String) | delete (lib : String
   | list (filter : Option String) (withCode : Bool)
   deriving DecidableEq, Repr
 
-def udfLoadArgs : List String → Except String Udf
+def udfLoadParse : List String → Except String Udf
   | [] => .error "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command"
   | [first] => if up first = "REPLACE" then .error "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command"
                else .error "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command"
@@ -241,6 +241,20 @@ def udfLoadArgs : List String → Except String Udf
     else match rest with
       | [] => .ok (.load false first a)
       | x :: _ => .error ("Unknown option given: '" ++ x ++ "'")
+
+/-- udf.rs:117-122 (#3263, e860645bb): after the option parse, an empty library name and then an
+empty script are refused (before it, `LOAD "" code` registered functions named `.f` that no
+query can call: W5-udf-4). -/
+def udfLoadCheck : Udf → Except String Udf
+  | .load r lib code =>
+    if lib = "" then .error "empty lib name"
+    else if code = "" then .error "empty script"
+    else .ok (.load r lib code)
+  | u => .ok u
+
+/-- `udf_load`'s argument handling (udf.rs:68-122). -/
+def udfLoadArgs (args : List String) : Except String Udf :=
+  (udfLoadParse args).bind udfLoadCheck
 
 def udfListArgs : List String → Option String → Bool → Except String Udf
   | [], f, w => .ok (.list f w)
@@ -270,6 +284,40 @@ theorem udf_load_plain : udfCmd ["GRAPH.UDF", "load", "lib", "code"] = .ok (.loa
 theorem udf_load_replace : udfCmd ["GRAPH.UDF", "LOAD", "replace", "lib", "code"] = .ok (.load true "lib" "code") := by decide
 theorem udf_list_two_filters : udfCmd ["GRAPH.UDF", "LIST", "a", "b"] = .error "Unknown option given: 'b'" := by decide
 theorem udf_list_withcode_anywhere : udfCmd ["GRAPH.UDF", "LIST", "WITHCODE", "a"] = .ok (.list (some "a") true) := by decide
+
+/-- **Fixed by #3263**: an accepted LOAD names a non-empty library and has a non-empty script. -/
+theorem udfLoad_nonempty (args : List String) (r : Bool) (l c : String)
+    (h : udfLoadArgs args = .ok (.load r l c)) : l ≠ "" ∧ c ≠ "" := by
+  unfold udfLoadArgs at h
+  cases hp : udfLoadParse args with
+  | error e => simp [hp, Except.bind] at h
+  | ok u =>
+    simp only [hp, Except.bind] at h
+    cases u with
+    | load r' l' c' =>
+      simp only [udfLoadCheck] at h
+      by_cases h1 : l' = ""
+      · simp [h1] at h
+      · by_cases h2 : c' = ""
+        · simp [h1, h2] at h
+        · simp only [h1, h2, if_false, Except.ok.injEq, Udf.load.injEq] at h
+          obtain ⟨_, rfl, rfl⟩ := h
+          exact ⟨h1, h2⟩
+    | delete _ => simp [udfLoadCheck] at h
+    | flush => simp [udfLoadCheck] at h
+    | list _ _ => simp [udfLoadCheck] at h
+
+/-- History (pre-#3263, W5-udf-4): the parse alone accepted an empty name. -/
+theorem pre3263_empty_name_accepted :
+    udfLoadParse ["", "code"] = .ok (.load false "" "code") := by decide
+
+theorem fixed3263_empty_lib_name :
+    udfCmd ["GRAPH.UDF", "LOAD", "", "code"] = .error "empty lib name" ∧
+    udfCmd ["GRAPH.UDF", "LOAD", "REPLACE", "", "code"] = .error "empty lib name" := by decide
+
+theorem fixed3263_empty_script :
+    udfCmd ["GRAPH.UDF", "LOAD", "lib", ""] = .error "empty script" ∧
+    udfCmd ["GRAPH.UDF", "LOAD", "REPLACE", "lib", ""] = .error "empty script" := by decide
 
 theorem udf_delete_one : udfCmd ["GRAPH.UDF", "delete", "lib"] = .ok (.delete "lib") := by decide
 theorem udf_delete_extra : (udfCmd ["GRAPH.UDF", "DELETE", "a", "b"]).toOption = none := by decide

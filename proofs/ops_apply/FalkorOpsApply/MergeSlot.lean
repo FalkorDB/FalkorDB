@@ -10,17 +10,17 @@ outcome. Two details of `MergeOp` at fb3d516d0 were outside the model:
   "value-present-but-unbound" (batch.rs:631-640 `push_row`, :763-778 `finish`) is rebuilt by
   `to_owned_row` (batch.rs:1431-1442) as stored-but-unbound (`insert_by_id` then
   `unbind_by_id`, row.rs:113-123, :222-227);
-* `compute_merge_pattern_hash` asks `vars.get_by_id(node.alias.id)` (merge.rs:189), which reads
+* `compute_merge_pattern_hash` asks `vars.get_by_id(node.alias.id)` (merge.rs:193), which reads
   the stored value whatever the bound bit says (row.rs:128-133). A present value — any value,
   not only a node — replaces the label and property tokens (`Ctors.nodeToks_bound`). On a
-  no-match row `do_create_fallback` (merge.rs:113-178) looks that hash up in the query-wide
+  no-match row `do_create_fallback` (merge.rs:117-182) looks that hash up in the query-wide
   `merge_pattern_cache` and, on a hit, re-inserts the cached `(var id, value)` pairs
-  (merge.rs:122-127) — the ids of whichever MERGE created the entry.
+  (merge.rs:126-131) — the ids of whichever MERGE created the entry.
 
 The match sub-plan itself is not affected: the binder knows the variable is new, so it plans
 a label scan that writes the slot and never reads it (live: `OPTIONAL MATCH (c:C {id: …})`
 returns null in the same position, #3368). `MergeOp::next`'s all-bound shortcut
-(merge.rs:369-388) uses `is_bound_by_id` and is only reached when matches exist.
+(merge.rs:378-393) uses `is_bound_by_id` and is only reached when matches exist.
 
 Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
 `FalkorAggOps.AggPlan.bug3368_count_acc_in_merge_slot` / `bug3369_count_acc_in_merge_slot`
@@ -33,10 +33,10 @@ it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), no
 | `MV`, `Row`, `Row.get`, `Row.isBound`, `Row.insert`, `Row.unbind` | `Value`, `Row` (row.rs:65), `get_by_id` (:128), `is_bound_by_id` (:199), `insert_by_id` (:113), `unbind_by_id` (:222) |
 | `Cell`, `Row.ofCells` | a columnar batch row (`Column::Unbound` / bound / `value_only`) and `BatchRow::to_owned_row` (batch.rs:1431) |
 | `MClause`, `nodeOf`, `attrsOf` | a one-node pattern `MERGE (v:L {id: r.id})` |
-| `rustKey` | `compute_merge_pattern_hash` (merge.rs:180-246) = `Ctors.mergeHashInput` with `get := Row.get` (FxHash taken as injective on token streams; collisions are FINDINGS 6) |
+| `rustKey` | `compute_merge_pattern_hash` (merge.rs:184-252) = `Ctors.mergeHashInput` with `get := Row.get` (FxHash taken as injective on token streams; collisions are FINDINGS 6) |
 | `fixKey` | the same with `get` returning a value only for a slot bound to a node |
-| `matchK` | the match sub-plan (`run_batch(merge_child_idx)`, merge.rs:313-343): label scan + property filter |
-| `mergeRowK` | one input row of `MergeOp::next` (merge.rs:347-434) with `do_create_fallback` (merge.rs:113-178) |
+| `matchK` | the match sub-plan (`run_batch(merge_child_idx)`, merge.rs:260-297, `match_all`): label scan + property filter |
+| `mergeRowK` | one input row of `MergeOp::next` (merge.rs:350-437) with `do_create_fallback` (merge.rs:117-182) |
 
 Properties a fix should prove: `KeyFromBoundNodeOnly` (MERGE takes a pattern variable as given
 only when the row binds it to a node) and `MergeBindsOwnNode` (after MERGE the variable is bound
@@ -154,7 +154,7 @@ def nodeOf (cl : MClause) : PNode Nat Unit := ⟨cl.var, [cl.label], ()⟩
 
 abbrev Key := Except String (List (Tok MV Nat Unit))
 
-/-- `compute_merge_pattern_hash` on main: `get_by_id`, bound or not (merge.rs:189). -/
+/-- `compute_merge_pattern_hash` on main: `get_by_id`, bound or not (merge.rs:193). -/
 def rustKey (cl : MClause) (r : Row) : Key :=
   mergeHashInput (T := Unit) r.get (attrsOf cl r) [nodeOf cl] []
 
@@ -210,8 +210,8 @@ structure St where
 def matchK (g : Graph) (cl : MClause) (r : Row) : List GNode :=
   g.filter (fun n => n.label == cl.label && n.attr == cl.attr r)
 
-/-- One input row of `MergeOp::next` without SET (merge.rs:347-434): matches ⇒ one output per
-match with the variable bound; none ⇒ `do_create_fallback` (merge.rs:113-178). -/
+/-- One input row of `MergeOp::next` without SET (merge.rs:350-437): matches ⇒ one output per
+match with the variable bound; none ⇒ `do_create_fallback` (merge.rs:117-182). -/
 def mergeRowK (key : MClause → Row → Key) (cl : MClause) (st : St) (r : Row) :
     Except String (St × List Row) :=
   match matchK st.g cl r with

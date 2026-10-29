@@ -401,7 +401,11 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
-/-! ## DISTINCT state keyed by a hash (distinct.rs:79, aggregate.rs:715/:959) -/
+/-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:715/:959 at ca36bfa15)
+
+#2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
+(`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
+pre-#2977 model, kept for `pre2977_hashed_dedup_merges_groups`. -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -434,9 +438,9 @@ theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
-/-- Per-group DISTINCT: the dedup table is keyed by `(distinct node,
-hash(group key row))`, not by the group key (aggregate.rs:715, :959). Two
-groups whose key rows collide share one `seen` set. -/
+/-- Per-group DISTINCT, pre-#2977: the dedup table was keyed by `(distinct node,
+hash(group key row))`, not by the group key (aggregate.rs:715, :959 at ca36bfa15). Two
+groups whose key rows collide shared one `seen` set. -/
 def dcgGo {K : Type} [DecidableEq K] (hk : K → Nat) (k : K) :
     List (Nat × Nat) → List (K × Nat) → Nat
   | _, [] => 0
@@ -449,10 +453,10 @@ def distinctCountGrouped {K : Type} [DecidableEq K] (hk : K → Nat) (rows : Lis
   dcgGo hk k [] rows
 
 -- Two distinct keys 0 and 2 that hash alike (hk = · % 2), one value each.
-/-- The second group's `count(DISTINCT v)` is 0 instead of 1 — confirmed by
+/-- History (fixed by #2977, c652e505e). The second group's `count(DISTINCT v)` was 0 instead of 1 — confirmed by
 `lean_ops_aggregate::bug_grouped_count_distinct_shares_state_on_group_hash_collision`
 with the real FxHash collision `[0,0]` / `[1,-1452335207727870361]`. -/
-theorem hashed_dedup_merges_groups :
+theorem pre2977_hashed_dedup_merges_groups :
     distinctCountGrouped (fun n : Nat => n % 2) [(0, 7), (2, 7)] 2 = 0 ∧
     distinctCountGrouped (fun n : Nat => n) [(0, 7), (2, 7)] 2 = 1 := by
   decide

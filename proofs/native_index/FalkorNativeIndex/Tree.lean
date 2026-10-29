@@ -85,7 +85,7 @@ theorem sortDedup_spec (l : List Nat) : Sorted (sortDedup l) ∧ ∀ e, e ∈ so
 theorem sortDedup_unique (l s : List Nat) (hs : Sorted s) (hm : ∀ e, e ∈ s ↔ e ∈ l) : s = sortDedup l :=
   sorted_ext hs (sortDedup_spec l).1 (fun e => by rw [hm, (sortDedup_spec l).2])
 
-/-- `lo > hi` scans nothing (`NumericIndex::empty`, `numeric.rs:252-254`). -/
+/-- `lo > hi` scans nothing (`NumericIndex::empty`, `numeric.rs:424-426`). -/
 theorem tRange_empty (t : List Nat) : tRange t 1 0 = [] := by
   simp only [tRange]
   rw [List.filter_eq_nil_iff.2 (fun a _ => by simp; omega)]

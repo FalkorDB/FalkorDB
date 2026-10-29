@@ -7,7 +7,8 @@ SET and REMOVE (graph/src/runtime/ops/set.rs, remove.rs).
 | `opNext`                      | `SetOp::next` (set.rs:59), `RemoveOp::next` (remove.rs:48) |
 | `perRow`                      | `Runtime::set_batch` (set.rs:76), `Runtime::remove_batch` (remove.rs:62) |
 | `resolveItems`                | `Runtime::resolve_set_items` (set.rs:96) |
-| `setProp`, `setFromMap`, `setFromEntity`, `setItem`, `setInner` | `Runtime::set_inner` (set.rs:124) |
+| `clearForReplace`                 | `clear_node_attrs_for_replace` (set.rs:125), `clear_relationship_attrs_for_replace` (set.rs:138), `Pending::clear_{node,relationship}_attributes` (pending.rs:591, :599) |
+| `setProp`, `setFrom`, `setAttrItem` | `Runtime::set_inner` (set.rs:151) |
 | `removeItem`, `removeInner`   | `Runtime::remove` (remove.rs:74) |
 
 Attribute store of one entity kind: committed `cv e k` and this query's pending writes
@@ -40,7 +41,7 @@ theorem get_put (s : Store E K V) (e : E) (k : K) (v : Option V) (e' : E) (k' : 
     get (put s e k v) e' k' = if e' = e ∧ k' = k then v else get s e' k' := by
   unfold get put; by_cases h : e' = e ∧ k' = k <;> simp [h]
 
-/-- set.rs:152-165 / :259-273: skip when the stored value already equals the new one. -/
+/-- set.rs:203-217 / :279-296: skip when the stored value already equals the new one. -/
 def setProp (s : Store E K V) (e : E) (k : K) (v : Option V) : Store E K V :=
   if get s e k = v ∧ v.isSome then s else put s e k v
 
@@ -75,16 +76,24 @@ theorem setAll_get (s : Store E K V) (e : E) (kvs : List (K × Option V)) (e' : 
       · simp [hk, Ne.symm hk]
     · simp [he, setProp_get]
 
-/-- `SET e = map` / `SET e += map` on a NODE (set.rs:176-200): with `=` first clear the
-pending attributes and null every committed key, then write the map's entries. -/
-def setFromMapNode (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
+/-- `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace` (set.rs:125-148):
+drop the entity's pending attributes (`clearP`), then stage a null for every committed key. -/
+def clearForReplace (ckeys : E → List K) (s : Store E K V) (e : E) : Store E K V :=
+  setAll (clearP s e) e ((ckeys e).map (·, none))
+
+/-- `SET e = src` (`replace`) / `SET e += src` for ANY target (node or relationship) and ANY
+source (map, node, relationship; `m` is the source's attributes, read before the clear):
+with `=` first `clearForReplace`, then write the entries. Since #3524 (af45ca776) every
+branch of `set_inner` clears (set.rs:220, :242, :256, :300, :325, :345; Node←Node/Rel←Rel skip `tid = id`, :237, :340). -/
+def setFrom (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
     (m : List (K × Option V)) : Store E K V :=
-  let s1 := if replace then setAll (clearP s e) e ((ckeys e).map (·, none)) else s
+  let s1 := if replace then clearForReplace ckeys s e else s
   setAll s1 e m
 
-/-- The same for a RELATIONSHIP (set.rs:279-310) and for a node/relationship SOURCE
-(set.rs:202-249, :311-376): `=` nulls the committed keys but does NOT clear pending ones. -/
-def setFromNoClear (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
+/-- History (pre-#3524, ca36bfa15): only the Node←Map branch cleared the pending attributes;
+every other branch (Node←Node, Node←Rel, all relationship targets) nulled the committed keys
+only. -/
+def pre3524_setFromNoClear (ckeys : E → List K) (s : Store E K V) (e : E) (replace : Bool)
     (m : List (K × Option V)) : Store E K V :=
   let s1 := if replace then setAll s e ((ckeys e).map (·, none)) else s
   setAll s1 e m
@@ -104,12 +113,13 @@ theorem foldl_last (m : List (K × Option V)) (k : K) (init : Option V) :
     | some p => simp
     | none => by_cases hk : kv.1 = k <;> simp [hk]
 
-/-- **`SET n = {map}`** on a node: afterwards `n.k` is the map's value for `k` (last entry
-wins) and absent for every key the map does not mention — committed or pending. -/
-theorem setFromMapNode_replace (ckeys : E → List K) (s : Store E K V) (e : E)
+/-- **`SET e = src`** (any target, any source, since #3524): afterwards `e.k` is the
+source's value for `k` (last entry wins) and absent for every key the source does not
+mention — committed or pending. -/
+theorem setFrom_replace (ckeys : E → List K) (s : Store E K V) (e : E)
     (m : List (K × Option V)) (hk : KeysOk ckeys s) (k : K) :
-    get (setFromMapNode ckeys s e true m) e k = ((m.reverse.find? (·.1 = k)).map (·.2)).getD none := by
-  unfold setFromMapNode
+    get (setFrom ckeys s e true m) e k = ((m.reverse.find? (·.1 = k)).map (·.2)).getD none := by
+  unfold setFrom clearForReplace
   simp only [ite_true]
   rw [setAll_get, if_pos rfl, foldl_last, setAll_get, if_pos rfl, foldl_last]
   congr 1
@@ -134,19 +144,42 @@ theorem setFromMapNode_replace (ckeys : E → List K) (s : Store E K V) (e : E)
       rw [Option.map_eq_none_iff] at hf
       rw [hf] at hs; cases hs
 
-/-- Counterexample: with `=`, the no-clear branch keeps a PENDING key the source lacks
-(e.g. `CREATE (a {x:1}), (b {y:2}) SET a = b`: `a.x` survives). -/
+/-- `SET e += src` leaves every key the source does not mention as it was. -/
+theorem setFrom_merge_keeps (ckeys : E → List K) (s : Store E K V) (e : E)
+    (m : List (K × Option V)) (k : K) (hk : ∀ p ∈ m, p.1 ≠ k) :
+    get (setFrom ckeys s e false m) e k = get s e k := by
+  unfold setFrom
+  simp only [Bool.false_eq_true, ite_false]
+  rw [setAll_get, if_pos rfl]
+  have : ∀ (init : Option V) (l : List (K × Option V)), (∀ p ∈ l, p.1 ≠ k) →
+      l.foldl (fun acc kv => if kv.1 = k then kv.2 else acc) init = init := by
+    intro init l; induction l generalizing init with
+    | nil => intro _; rfl
+    | cons p l ih =>
+      intro h; simp only [List.foldl_cons, if_neg (h p (by simp))]
+      exact ih _ (fun q hq => h q (by simp [hq]))
+  exact this _ m hk
+
+/-- **History (pre-#3524, fixed by #3524 af45ca776; FINDINGS "#2776, wider").** With `=`, the
+no-clear branch kept a PENDING key the source lacks, e.g. `CREATE (a {x:1}), (b {y:2}) SET a = b`
+(`a.x` survived: Rust `{x:1,y:2}`, C `{y:2}`) and `SET r.w=5 SET r={y:2}` on a relationship. -/
 def demoStore : Store Nat Nat Nat := { cv := fun _ _ => none, pv := fun e k => if e = 0 ∧ k = 0 then some (some 1) else none }
 
-theorem noClear_keeps_pending :
-    get (setFromNoClear (fun _ => []) demoStore 0 true [(1, some 2)]) 0 0 = some 1 := by decide
+theorem pre3524_noClear_keeps_pending :
+    get (pre3524_setFromNoClear (fun _ => []) demoStore 0 true [(1, some 2)]) 0 0 = some 1 := by decide
 
-/-! ## `set_inner` per item (set.rs:124-405) -/
+/-- **Fixed by #3524**: the same state and source on main. The staged `x` is gone and only the
+source's `y` remains. -/
+theorem fixed3524_clears_pending :
+    get (setFrom (fun _ => []) demoStore 0 true [(1, some 2)]) 0 0 = none ∧
+    get (setFrom (fun _ => []) demoStore 0 true [(1, some 2)]) 0 1 = some 2 := by decide
+
+/-! ## `set_inner` per item (set.rs:151-410) -/
 
 inductive Ent (E : Type) where
   | node (e : E)
   | rel (e : E)
-  | other     -- any other value, `Null` included: skipped (set.rs:381)
+  | other     -- any other value, `Null` included: skipped (set.rs:365)
 
 inductive Src (E K V : Type) where
   | map (m : List (K × Option V))
@@ -155,7 +188,7 @@ inductive Src (E K V : Type) where
   | other
 
 /-- `SET target(.prop)? = value` for one row. `gone` = the deleted-entity check
-(set.rs:142-148), only consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
+(set.rs:196-201 node, :274-278 relationship), only consulted when `skip_delete_checks` is false. `attrsN`/`attrsR` =
 `get_node_attrs` / `get_relationship_attrs` of a source entity. -/
 def setAttrItem (ckeys : E → List K) (gone : Ent E → Bool) (skipDel : Bool)
     (attrsN attrsR : E → List (K × Option V))
@@ -169,18 +202,18 @@ def setAttrItem (ckeys : E → List K) (gone : Ent E → Bool) (skipDel : Bool)
     match prop with
     | some k => .ok (setProp sN e k scalar, sR)
     | none => match val with
-      | .map m => .ok (setFromMapNode ckeys sN e replace m, sR)
-      | .node tid => if tid = e then .ok (sN, sR) else .ok (setFromNoClear ckeys sN e replace (attrsN tid), sR)
-      | .rel r => .ok (setFromNoClear ckeys sN e replace (attrsR r), sR)
+      | .map m => .ok (setFrom ckeys sN e replace m, sR)
+      | .node tid => if tid = e then .ok (sN, sR) else .ok (setFrom ckeys sN e replace (attrsN tid), sR)
+      | .rel r => .ok (setFrom ckeys sN e replace (attrsR r), sR)
       | .other => .error err
   | t@(.rel e) =>
     if !skipDel && gone t then .ok (sN, sR) else
     match prop with
     | some k => .ok (sN, setProp sR e k scalar)
     | none => match val with
-      | .map m => .ok (sN, setFromNoClear ckeys sR e replace m)
-      | .node n => .ok (sN, setFromNoClear ckeys sR e replace (attrsN n))
-      | .rel r => if r = e then .ok (sN, sR) else .ok (sN, setFromNoClear ckeys sR e replace (attrsR r))
+      | .map m => .ok (sN, setFrom ckeys sR e replace m)
+      | .node n => .ok (sN, setFrom ckeys sR e replace (attrsN n))
+      | .rel r => if r = e then .ok (sN, sR) else .ok (sN, setFrom ckeys sR e replace (attrsR r))
       | .other => .error err
 
 /-- Deleted targets are skipped; a non-entity target is a no-op; a property write lands. -/
@@ -192,7 +225,34 @@ theorem setAttrItem_spec (ckeys : E → List K) (gone : Ent E → Bool) (aN aR :
     (gone (.node e) = true → setAttrItem ckeys gone false aN aR sN sR (.node e) (some k) val rep v = .ok (sN, sR)) := by
   refine ⟨rfl, rfl, rfl, fun h => by simp [setAttrItem, h]⟩
 
-/-- `SET n:L` (set.rs:384-402): labels for a live node, null skipped, anything else errors. -/
+/-- **#3524 fixes #2776 for every shape** (Node←Map, Node←Node, Node←Rel, Rel←Map, Rel←Node,
+Rel←Rel): with `=` the target ends with exactly the source's attributes, whatever was staged or
+committed before. -/
+theorem setAttrItem_replace_shapes (ckeys : E → List K) (gone : Ent E → Bool)
+    (aN aR : E → List (K × Option V)) (sN sR : Store E K V) (e : E) (m : List (K × Option V))
+    (tid r : E) (hk : KeysOk ckeys sN) (hk' : KeysOk ckeys sR) (k : K) :
+    let rd : List (K × Option V) → Option V := fun l => ((l.reverse.find? (·.1 = k)).map (·.2)).getD none
+    (∃ s, setAttrItem ckeys gone true aN aR sN sR (.node e) none (.map m) true none = .ok (s, sR) ∧
+        get s e k = rd m) ∧
+    (tid ≠ e → ∃ s, setAttrItem ckeys gone true aN aR sN sR (.node e) none (.node tid) true none = .ok (s, sR) ∧
+        get s e k = rd (aN tid)) ∧
+    (∃ s, setAttrItem ckeys gone true aN aR sN sR (.node e) none (.rel r) true none = .ok (s, sR) ∧
+        get s e k = rd (aR r)) ∧
+    (∃ s, setAttrItem ckeys gone true aN aR sN sR (.rel e) none (.map m) true none = .ok (sN, s) ∧
+        get s e k = rd m) ∧
+    (∃ s, setAttrItem ckeys gone true aN aR sN sR (.rel e) none (.node tid) true none = .ok (sN, s) ∧
+        get s e k = rd (aN tid)) ∧
+    (r ≠ e → ∃ s, setAttrItem ckeys gone true aN aR sN sR (.rel e) none (.rel r) true none = .ok (sN, s) ∧
+        get s e k = rd (aR r)) := by
+  intro rd
+  refine ⟨⟨_, by simp [setAttrItem], setFrom_replace ckeys sN e m hk k⟩,
+    fun h => ⟨_, by simp [setAttrItem, h], setFrom_replace ckeys sN e _ hk k⟩,
+    ⟨_, by simp [setAttrItem], setFrom_replace ckeys sN e _ hk k⟩,
+    ⟨_, by simp [setAttrItem], setFrom_replace ckeys sR e m hk' k⟩,
+    ⟨_, by simp [setAttrItem], setFrom_replace ckeys sR e _ hk' k⟩,
+    fun h => ⟨_, by simp [setAttrItem, h], setFrom_replace ckeys sR e _ hk' k⟩⟩
+
+/-- `SET n:L` (set.rs:370-396): labels for a live node, null skipped, anything else errors. -/
 def setLabelItem {L : Type} (gone : E → Bool) (skipDel : Bool) (labels : E → List L)
     (v : Option (Ent E)) (isNull : Bool) (ls : List L) : Except String (E → List L) :=
   match v with

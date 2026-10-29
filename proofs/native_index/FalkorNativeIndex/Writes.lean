@@ -32,8 +32,11 @@ structure G where
   idx : FalkorDbIndex
   /-- label matrix column: the nodes carrying label `l` (`get_label_matrix(label).iter`) -/
   labelNodes : String → Option (List Nat)
-  /-- relationship tensor of a type: its edge ids (`get_relationship_matrix(type).iter`) -/
-  typeEdges : String → Option (List Nat)
+  /-- relationship tensor of a type: its `(src, dst, edge_id)` triples in iteration order
+      (`get_relationship_matrix(type).iter(from_src, MAX, false)`: by `(src, dst)`) -/
+  typeEdges : String → Option (List (Nat × Nat × Nat))
+  /-- the graph's `edge_id → (src, dst)` reverse index (`Graph::edge_endpoints`) -/
+  endpoints : Nat → Option (Nat × Nat)
 
 namespace G
 def labelName (g : G) (l : Nat) : String := g.labels.getD l ""
@@ -460,7 +463,7 @@ theorem nodeAttrsSet_hit (g : G) (hn : g.attrNames.Nodup) (attrs : List (Nat × 
     lastOp (colLog (L, A) (nodeAttrsSet g attrs).changes) (enc kk id0) =
       outcome (g.nodeAttr id0 aid) (some nv) kk := by
   have hcols : g.idx.hasColumns .node = true := by
-    unfold FalkorDbIndex.hasColumn at hcol; unfold FalkorDbIndex.hasColumns
+    unfold FalkorDbIndex.hasColumn FalkorDbIndex.entry at hcol; unfold FalkorDbIndex.hasColumns
     cases h : g.idx.columns .node with
     | nil => simp [h, hmGet] at hcol
     | cons _ _ => simp
@@ -975,7 +978,7 @@ theorem relAllAttrs_unique (g : G) (hn : g.attrNames.Nodup) (id : Nat) (A : Stri
 
 theorem hasColumns_of_hasColumn (x : FalkorDbIndex) (e : EntityType) (L A : String)
     (h : x.hasColumn e L A = true) : x.hasColumns e = true := by
-  unfold FalkorDbIndex.hasColumn at h; unfold FalkorDbIndex.hasColumns
+  unfold FalkorDbIndex.hasColumn FalkorDbIndex.entry at h; unfold FalkorDbIndex.hasColumns
   cases hc : x.columns e with
   | nil => simp [hc, hmGet] at h
   | cons _ _ => simp

@@ -72,9 +72,11 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `pre3033_orphan_row_panics`, `pre3033_more_me_rows_than_pattern_panics` | History: before #3033, a decoded tensor with an orphan `me` row made `edge_count` panic | `Decode.lean` |
 | `arc_frees_once`, `arc_every_interleaving_frees_once` | Since #3090 the matrix is freed exactly once, under any number of owners and any schedule of drops | `Own.lean` |
 | `pre3090_race_leaks` | History: before #3090, two concurrent drops could leak the matrix | `Own.lean` |
+| `deltaLmxm_correct`, `deltaLmxm_eff`, `deltaLmxm_spec` | `delta_lmxm` computes `F*(M - DM + DP)` on the pattern; an output a deleted and a live base edge both reach is kept (#3492; history `pre3492_drops_live_path`) | `DeltaLmxm.lean` |
 | `drain_seek_eq_spec`, `drain_no_duplication` | A row-range scan yields exactly the in-range entries, in order, once | `RowIter.lean` |
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
-| `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `Bulk.lean` |
+| `countInRows_spec`, `countInRows_pos` | `count_in_rows` counts the stored entries in the selected rows | `DeltaLmxm.lean` | `Matrix::delta_lmxm` (#3492): the path-count model, `F*(M-DM+DP)`, the `dm ⊆ m` discharge from versioned_matrix |
+| `Bulk.lean` |
 | `fromSortedIndices_spec` | `from_sorted_indices` builds exactly the indicator vector of its input | `Bulk.lean` |
 | `grown_rejects_shrink`, `resize_clamp_grownOk`, `iterExpand_eq_flatMap` | `grown` refuses a shrink, and `Tensor::resize`'s clamped dims (#3250) always pass that check; the tensor iterator expands each pair to its edge ids | `Misc.lean` |
 
@@ -137,8 +139,8 @@ The lakefile has no path dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 66 |
-| AXIOMATISED | 1146 |
+| PROVEN | 67 |
+| AXIOMATISED | 1145 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:
 

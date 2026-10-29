@@ -290,6 +290,6 @@ src/commands/query_args.rs	up_to_nul	82	PROVEN	QueryArgs.upToNul: nul_truncated_
 src/commands/slowlog.rs	graph_slowlog	16	PROVEN	Commands.slowlogCmd: slowlog_reset_ci
 src/commands/udf.rs	graph_udf	47	PROVEN	Commands.udfCmd: udf_unknown
 src/commands/udf.rs	udf_load	68	PROVEN	Commands.udfLoadArgs: udf_load_plain, udf_load_replace
-src/commands/udf.rs	udf_delete	134	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra
-src/commands/udf.rs	udf_flush	163	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
-src/commands/udf.rs	udf_list	182	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere
+src/commands/udf.rs	udf_delete	141	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra
+src/commands/udf.rs	udf_flush	170	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
+src/commands/udf.rs	udf_list	189	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere

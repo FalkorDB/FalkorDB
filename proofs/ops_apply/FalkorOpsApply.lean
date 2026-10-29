@@ -37,9 +37,12 @@ asserts C's answer and FAILS today).
 | `ForEach.chunks`, `execList`, `runChunks` | `ForEachOp::execute_list` (`foreach.rs:86`) |
 | `ForEach.inner`, `go`, `next`             | `ForEachOp::next` (`foreach.rs:124`) |
 | `ForEach.drainP`                          | `ops::drain_pending` (`ops/mod.rs:127`) |
-| `Merge.createFallback`, `Cache`           | `MergeOp::do_create_fallback` (`merge.rs:113`), `Runtime::merge_pattern_cache` (`runtime.rs:201`) |
-| `Merge.phaseA`, `rustBatch`, `rustMerge`  | `MergeOp::next` (`merge.rs:279`) |
-| `Merge.phaseB`                            | `MergeOp::drain_pending` (`merge.rs:252`) |
+| `Merge.createFallback`, `Cache`           | `MergeOp::do_create_fallback` (`merge.rs:117`), `Runtime::merge_pattern_cache` (`runtime.rs:201`) |
+| `MergeEager.matchAll`                     | `MergeOp::match_all` (`merge.rs:260`, #3067) |
+| `MergeEager.rowMain`, `mainMerge`         | `MergeOp::next` (`merge.rs:329`) |
+| `Merge.phaseA`, `rustBatch`, `rustMerge`  | `MergeOp::next` before #3067 (history, per-batch match) |
+| `Merge.phaseB`                            | `MergeOp::drain_pending` (`merge.rs:302`) |
+| `SetRemove.clearForReplace`, `setFrom`    | `clear_node_attrs_for_replace` (`set.rs:125`), `clear_relationship_attrs_for_replace` (`set.rs:138`), `set_inner` (`set.rs:151`) |
 | `Merge.refMerge`                          | openCypher MERGE, per row |
 
 ## Proven (headline)
@@ -66,17 +69,19 @@ asserts C's answer and FAILS today).
    Fix: add `IR::ValueHashJoin` to both blacklists (or make the join key include origin).
 2. **`merge_pattern_cache` shared by all MERGE clauses** — FIXED by #3050 (closes
    #3038, main 5e475e6c9): the cache is keyed by `(operator idx, pattern hash)`
-   (`merge.rs:122,172`; `runtime.rs:201`). `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})
+   (`merge.rs:126,176`; `runtime.rs:201`). `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1})
    RETURN a.v, b.v` used to give `Variable b not found`. Lean: `Merge.pre3050_cross_clause_unbound`
    (old model = every clause the same `op`), `Merge.cross_clause_keyed` (main).
-3. **MERGE result depends on BATCH_SIZE** (`merge.rs:313-343`): the match runs once
-   per batch and sees earlier batches' creations only.  `UNWIND range(1,N) AS x WITH x
+3. **MERGE result depends on BATCH_SIZE** — FIXED by #3067 (closes #3039, b47d6d6a3):
+   `match_all` (`merge.rs:260-297`) matches every row before any creation. Was (`merge.rs:313-343` at ca36bfa15): the match ran once
+   per batch and saw earlier batches' creations only. Lean: `Merge.pre3067_batch_dependent`,
+   `MergeEager.fixed3067_batch_independent`, `mainMerge_batch_independent`, `mainMerge_noSet_eq_ref`.  `UNWIND range(1,N) AS x WITH x
    WHERE x = 1 OR x = N MERGE (n:L {v: CASE x WHEN 1 THEN 1 ELSE 2 END}) ON CREATE SET n.v = 2`:
-   N=2 → 2 nodes, N=1025 → 1 node (C: 2 and 2).  Test `bug_merge_result_depends_on_batch_boundary`.
-   Fix: match all rows before any creation (C's eager phases), or re-match per row.
+   N=2 → 2 nodes, N=1025 → 1 node (C: 2 and 2) before the fix.  Test `bug_merge_result_depends_on_batch_boundary` (now passes?
+   not re-run here).
 4. **All-bound shortcut drops matches visible through a path** — FIXED by #3055
    (closes #3040, main 5e475e6c9): the shortcut applies only when every relationship is
-   bound or anonymous and not exposed by a path variable (`merge.rs:369-388`).
+   bound or anonymous and not exposed by a path variable (`merge.rs:378-393`).
    `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)` over two parallel edges was
    Rust 1, C 2. Lean: `Merge.pre3055_allBound_first_only`, `Merge.allBound_path_keeps_all`,
    `Merge.allBoundMain_imp_pre`, `Merge.path_shortcut_off`.
@@ -127,17 +132,18 @@ Highlights: template positions sort attribute ids strictly, last duplicate key w
 (`createNode_spec`), relationships take each row's endpoints and refuse deleted ones
 (`createRel_spec`); DELETE leaves every bound node/relationship gone (`deleteBatch_vars`,
 `delNodesBulk_spec`, `delRelsBulk_spec`); `SET n = {map}` on a node makes exactly the map's keys
-present (`setFromMapNode_replace`); the odometer only visits valid combinations
+present (`setFrom_replace`, any source since #3524); the odometer only visits valid combinations
 (`orbit_valid`) and the product has `∏ lens` rows (`allTuples_length`).
 
 ### CONFIRMED (wave 5)
-* **`SET e = …` keeps attributes written earlier in the same query** (set.rs:202-249 Node←Node/Rel,
-  :279-376 every relationship branch: only COMMITTED keys are nulled, pending ones survive; only the
-  Node←Map branch calls `clear_node_attributes`). `CREATE (a {x:1}), (b {y:2}) SET a = b RETURN
+* **`SET e = …` keeps attributes written earlier in the same query — FIXED by #3524 (af45ca776; #2776)**: every
+  branch now calls `clear_{node,relationship}_attrs_for_replace` (set.rs:125/:138; sites :220 :242 :256 :300 :325 :345).
+  Was (set.rs:202-249 Node←Node/Rel, :279-376 every relationship branch at ca36bfa15): only COMMITTED keys were nulled, pending ones survived; only the
+  Node←Map branch called `clear_node_attributes`. `CREATE (a {x:1}), (b {y:2}) SET a = b RETURN
   properties(a)`: Rust `{x: 1, y: 2}`, C `{y: 2}`. `MATCH ()-[r:R]->() SET r.w = 5 SET r = {y:2}
-  RETURN properties(r)`: Rust `{w: 5, y: 2}`, C `{y: 2}`. Lean `noClear_keeps_pending`.
+  RETURN properties(r)`: Rust `{w: 5, y: 2}`, C `{y: 2}`. Lean `SetRemove.pre3524_noClear_keeps_pending` (history), `fixed3524_clears_pending`, `setAttrItem_replace_shapes` (all six shapes).
   Tests `bug_set_replace_node_from_node_keeps_pending_attrs`, `bug_set_replace_rel_from_map_keeps_pending_attrs`.
-  Fix: clear the target's pending attributes in every `replace` branch.
+  (Before the fix Rust gave the outputs above; main now matches C on these shapes — not re-run here.)
 Also seen: W2-rewrites-3 (hash join keys Int/Float near 2^53, `keyAsI64_spec`).
 
 ## Gap closed 2026-10-20 — per-row write visibility through Apply (`RowWrites`)
@@ -157,9 +163,9 @@ Properties stated (each refuted on main, each live-reproduced Rust vs C):
 ## Gap closed 2026-10-20 — MERGE reads a value-only slot as its node (`MergeSlot`)
 `Merge.lean` keyed MERGE by the property alone, so the input row never mattered.
 `MergeSlot` adds the row (values + bound bits, `to_owned_row`) and the real hash input
-(`Ctors.mergeHashInput` with `get_by_id`, merge.rs:189): a value-only leftover at the
+(`Ctors.mergeHashInput` with `get_by_id`, merge.rs:193): a value-only leftover at the
 variable's id (ops_aggregate `bug3368/3369_count_acc_in_merge_slot`) becomes the hash, and
-equal leftovers in two MERGEs share a cache entry (merge.rs:122-127).
+equal leftovers in two MERGEs share a cache entry (merge.rs:126-131).
 Properties: `KeyFromBoundNodeOnly`, `MergeBindsOwnNode` (fix target: `fixKey_from_bound_node`,
 `fixed_binds_own_node`). Refuted, live-reproduced Rust vs C:
 * #3368 `pre3050_bug3368_merge_takes_leftover_as_node` (`c` = `[B] b1`), `pre3050_bug3368_fires_iff_leftovers_equal` (filed repro fixed by #3050);
@@ -179,3 +185,4 @@ import FalkorOpsApply.Correlated
 import FalkorOpsApply.Union
 import FalkorOpsApply.ForEach
 import FalkorOpsApply.Merge
+import FalkorOpsApply.MergeEager

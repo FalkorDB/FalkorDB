@@ -76,7 +76,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
 | #2769 | `deg_panics_on_pending_deleted` | `CREATE (a)-[r:R]->(b) DELETE r SET b.d = indegree(b)` asks the committed graph for the endpoints of an edge that was never committed, and panics, killing the server. C returns `0` | **Open** (#2769) |
-| #2776 | `replace_keeps_staged` | `SET x = m` / `SET r = {…}` keeps attributes staged earlier in the query instead of replacing them | **Open** (#2776) |
+| #2776 | `pre3524_replace_keeps_staged`, `fixed3524_replace_clears_staged`, `replace_reads_src` | `SET x = m` / `SET r = {…}` kept attributes staged earlier in the query instead of replacing them | Fixed by #3524 (af45ca776) |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a GRAPH.BULK header with that many columns or a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | Bulk side fixed by #3063 (`normResolved_fits`); the malformed-RDB side remains, not reproduced |
 | #3063 | `pre3063_resolved_duplicate` | A GRAPH.BULK header naming a property twice stored two entries for one id | Fixed by #3063 (`resolved_duplicate_fixed`: the first column wins, as in C) |
 | #3448 | `bug3448_remove_of_staged_label` (property `RemLCommitted`), `bug3448_cancelled_node_keeps_remL` (property `RemLLive`) | `remove_node_labels` stages the removal of a label the node only had staged (a created node, an earlier `SET`), and `delete_pending_node` keeps the node's `remove_labels`. `CREATE (n:Foo) REMOVE n:Foo DELETE n` then ships `RemoveLabels` before the node's `CreateNode` and the replica forces a full resync (effects_emit_apply). The inflated `Labels removed` stat is the same in C | **Open** (#3448) |
@@ -101,7 +101,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `Store.lean`, `StoreFold.lean`, `StoreApi.lean` | `DataBlock` radix directory and every `AttributeStore` method: `runOps_spec`, `insertAttrs_spec`, `importResolved_spec` |
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
 | `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
-| `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_keeps_staged` |
+| `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `rust_reads_dead_entity`, `deferred_preserves_Good` |
 | `EvictPR2964.lean` | **Models open PR #2964, not main**: `evict_preserves_Good` |
 | `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |

@@ -4,9 +4,9 @@ import OpsTraverse.Basic
 
 | here | there |
 | --- | --- |
-| `dedupRows`    | the `bidir_dedup` loop of `CondTraverseOp::expand_row` (`cond_traverse.rs:914-935`): key `(src_key, out.to)`, `swap_remove` on a repeat |
-| `dedupBatches` | `seen.clear()` on every new child batch (`cond_traverse.rs:1176-1178`) |
-| key source     | `dedup_source_alias` = the *child* CT's `from` alias (`cond_traverse.rs:270-280`) |
+| `dedupRows`    | the `bidir_dedup` loop of `CondTraverseOp::expand_row` (`cond_traverse.rs:1087-1110`): key `(src_key, out.to)`, `swap_remove` on a repeat |
+| `dedupBatches` | `seen.clear()` on every new child batch (`cond_traverse.rs:1467-1469`) |
+| key source     | `dedup_source_alias` = the *child* CT's `from` alias (`cond_traverse.rs:397-407`) |
 
 A result row is `(outer, key source, destination)`; `outer` stands for every
 other column of the row (an `UNWIND` variable, an earlier MATCH's node, or the

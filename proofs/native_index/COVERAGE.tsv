@@ -2,52 +2,50 @@ file	function	line	bucket	lean_name_or_reason
 # Test code (#[cfg(test)] decode_f64 and the tests modules, graph/graph/falkordb_index_tests.rs) is TEST by the scanner; not listed.
 graph/src/index/falkordb/encode.rs	encode_numeric	29	PROVEN	encodeNumeric: filter_iff_key, encodeNumeric_some, nan_unindexed, temporal_unindexed, negZero_agrees; counterexamples bool_divergence, i64min_hole (live-confirmed, shared with C)
 graph/src/index/falkordb/encode.rs	encode_f64	50	PROVEN	encodeF64 (bit-level f64): encodeF64_cmp, encodeF64_inj, encodeF64_negZero, encodeF64_bounds, encodeF64_inf_extremes
-graph/src/index/falkordb/numeric.rs	NumericIndex::new	107	PROVEN	NumericIndex.new: new_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::from_entries	116	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); fromEntries_spec, fromEntries_sorted, range_agrees
-graph/src/index/falkordb/numeric.rs	NumericIndex::add	130	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); add_spec, temporal_not_added
-graph/src/index/falkordb/numeric.rs	NumericIndex::remove	144	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); remove_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::add_batch	161	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); addBatch_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::remove_batch	175	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); removeBatch_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::encode_pairs_into	190	PROVEN	encodePairsInto: encodePairsInto_clears, mem_encodePairs
-graph/src/index/falkordb/numeric.rs	NumericIndex::add_encoded	203	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); addEncoded_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::remove_encoded	212	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); removeEncoded_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::is_empty	222	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); isEmpty_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::point	228	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); point_agrees
-graph/src/index/falkordb/numeric.rs	NumericIndex::range	242	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); rangeBounds/range_keys (bounds exact, unconditional), range_agrees
-graph/src/index/falkordb/numeric.rs	NumericIndex::query	296	PROVEN	NumericIndex.query: query_spec (Equal, Range, InList -> in_list, Or -> union)
+graph/src/index/falkordb/numeric.rs	NumericIndex::new	146	PROVEN	NumericIndex.new: new_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::from_entries	434	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); fromEntries_spec, fromEntries_sorted (#[cfg(test)] since #2351, but still the specification of what a built column holds: buildInOneBatch_entry)
+graph/src/index/falkordb/numeric.rs	NumericIndex::add	152	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); add_spec, temporal_not_added
+graph/src/index/falkordb/numeric.rs	NumericIndex::remove	166	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); remove_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::add_batch	183	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); addBatch_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::remove_batch	197	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); removeBatch_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::encode_pairs_into	212	PROVEN	encodePairsInto: encodePairsInto_clears, mem_encodePairs
+graph/src/index/falkordb/numeric.rs	NumericIndex::add_encoded	226	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); addEncoded_spec, addEncoded_sorted, addEncoded_tuples (an empty tree is bulk-built: Tree::from_sorted of the sorted unique tuples, else insert_batch)
+graph/src/index/falkordb/numeric.rs	NumericIndex::remove_encoded	239	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); removeEncoded_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::is_empty	249	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); isEmpty_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::point	255	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); point_agrees
+graph/src/index/falkordb/numeric.rs	NumericIndex::range	269	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); rangeBounds/range_keys (bounds exact, unconditional), range_agrees
+graph/src/index/falkordb/numeric.rs	NumericIndex::query	323	PROVEN	NumericIndex.query: query_spec (Equal, Range, InList -> in_list, Or -> union)
 graph/src/index/falkordb/numeric.rs	DocIter::next	50	PROVEN	dispatch only (One -> RangeIter::next, cow_btree range_spec; Many -> UnionIter::next, unionNext_spec): query_spec
 graph/src/index/falkordb/numeric.rs	UnionIter::next	79	PROVEN	unionNext/UState: unionNext_spec (each next yields the head of the remaining output and leaves its tail; None only when nothing remains), unionIter_initial
-graph/src/index/falkordb/numeric.rs	NumericIndex::in_list	329	PROVEN	NumericIndex.inList: inList_isSome_iff (declined unless non-empty and every member encodes), inList_agrees, nodeScan_native_inList_agrees
-graph/src/index/falkordb/numeric.rs	NumericIndex::union	349	PROVEN	NumericIndex.union/unionGo/unionMember: union_agrees, union_nil, union_attr_mismatch, union_range_declines, unionGo_spec
-graph/src/index/falkordb/numeric.rs	NumericIndex::union_of	381	PROVEN	NumericIndex.unionOf: unionOf_mem, unionIter_initial (sorted deduped keys; tree snapshot pinned = immutable tree value; order unspecified, membership only)
-graph/src/index/falkordb/numeric.rs	NumericIndex::empty	397	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); empty_spec, tRange_empty
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add	45	PROVEN	IndexColumn.add: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove	56	PROVEN	IndexColumn.remove: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_batch	67	PROVEN	IndexColumn.addBatch: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove_batch	78	PROVEN	IndexColumn.removeBatch: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::encode_value	91	PROVEN	IndexColumn.encodeValue: indexColumn_delegates, encodeValue_spec
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_encoded	101	PROVEN	IndexColumn.addEncoded: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove_encoded	111	PROVEN	IndexColumn.removeEncoded: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	IndexColumn::is_empty	122	PROVEN	IndexColumn.isEmpty: indexColumn_delegates (glue)
-graph/src/index/falkordb/falkordb_index.rs	ColumnEntry::ready	138	PROVEN	ColumnEntry.ready: ready_spec
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::new	164	PROVEN	FalkorDbIndex.new: new_empty
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::is_empty	170	PROVEN	FalkorDbIndex.isEmpty: isEmpty_spec', new_empty
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_columns	177	PROVEN	hasColumns: hasColumns_spec, hasColumns_of_hasColumn
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::len	186	PROVEN	len: len_spec
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::columns	192	PROVEN	columns: columns_setColumns, node_edge_independent
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::columns_mut	202	PROVEN	columnsMut/setColumns: columnsMut_spec, columns_setColumns
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_numeric	216	PROVEN	createNumeric: numeric_createNumeric
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::build_numeric	234	PROVEN	buildNumeric: numeric_buildNumeric, node_edge_independent
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_column	248	PROVEN	dropColumn: numeric_dropColumn
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_unpopulated	261	PROVEN	createUnpopulated: createUnpopulated_creates, createUnpopulated_nonrange
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_index	277	PROVEN	dropIndex: dropIndex_removes, dropIndex_nonrange
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric	295	PROVEN	numeric: hasColumn_spec, numeric_buildNumeric, numeric_dropColumn
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric_mut	311	PROVEN	numericMut/setNumeric: numericMut_spec, setNumeric_numeric
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_column	331	PROVEN	hasColumn: hasColumn_spec
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::encode_value	344	PROVEN	encodeValue: encodeValue_spec
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply	364	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); FalkorDbIndex.apply: apply_empties, applyWrites_numeric (#3307: = sequential)
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply_writes	384	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); applyWrites/applyStep: applyWrites_numeric, applyColumn_eq_sequential
-graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::query_numeric	409	PROVEN	queryNumeric/queryKey: queryNumeric_spec (routing: numeric Equal/Range, InList, same-attribute Or on an existing column; others None), nodeScan_native_agrees, nodeScan_native_inList_agrees
+graph/src/index/falkordb/numeric.rs	NumericIndex::in_list	356	PROVEN	NumericIndex.inList: inList_isSome_iff (declined unless non-empty and every member encodes), inList_agrees, nodeScan_native_inList_agrees
+graph/src/index/falkordb/numeric.rs	NumericIndex::union	376	PROVEN	NumericIndex.union/unionGo/unionMember: union_agrees, union_nil, union_attr_mismatch, union_range_declines, unionGo_spec
+graph/src/index/falkordb/numeric.rs	NumericIndex::union_of	408	PROVEN	NumericIndex.unionOf: unionOf_mem, unionIter_initial (sorted deduped keys; tree snapshot pinned = immutable tree value; order unspecified, membership only)
+graph/src/index/falkordb/numeric.rs	NumericIndex::empty	424	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); empty_spec, tRange_empty
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add	48	PROVEN	IndexColumn.add: indexColumn_delegates (glue)
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove	59	PROVEN	IndexColumn.remove: indexColumn_delegates (glue)
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_batch	70	PROVEN	IndexColumn.addBatch: indexColumn_delegates (glue)
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove_batch	81	PROVEN	IndexColumn.removeBatch: indexColumn_delegates (glue)
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::encode_value	94	PROVEN	IndexColumn.encodeValue: indexColumn_delegates, encodeValue_spec
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::add_encoded	118	PROVEN	IndexColumn.addEncoded: indexColumn_delegates (glue), addEncoded_spec
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::remove_encoded	128	PROVEN	IndexColumn.removeEncoded: indexColumn_delegates (glue), removeEncoded_spec
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::is_empty	139	PROVEN	IndexColumn.isEmpty: indexColumn_delegates (glue)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::new	281	PROVEN	FalkorDbIndex.new: new_empty
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::is_empty	287	PROVEN	FalkorDbIndex.isEmpty: isEmpty_spec', new_empty
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_columns	294	PROVEN	hasColumns: hasColumns_spec, hasColumns_of_hasColumn
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::len	303	PROVEN	len: len_spec
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::columns	309	PROVEN	columns: columns_setColumns, node_edge_independent
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::columns_mut	319	PROVEN	columnsMut/setColumns: columnsMut_spec, columns_setColumns
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_numeric	343	PROVEN	createNumeric (Ready, RDB-load path): numeric_createNumeric, entry_createNumeric
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_column	395	PROVEN	dropColumn: numeric_dropColumn
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_unpopulated	408	PROVEN	createUnpopulated: createUnpopulated_creates, createUnpopulated_nonrange
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_index	424	PROVEN	dropIndex: dropIndex_removes, dropIndex_nonrange
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric	442	PROVEN	numeric: hasColumn_spec, numeric_createBuilding, numeric_dropColumn
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::numeric_mut	458	PROVEN	numericMut/setNumeric (keeps the build state): numericMut_spec, setNumeric_numeric, setNumeric_state
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::has_column	478	PROVEN	hasColumn: hasColumn_spec
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::encode_value	491	PROVEN	encodeValue: encodeValue_spec
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply	516	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); FalkorDbIndex.apply (with `place`): apply_empties, applyWrites_numeric (= sequential per column, filtered by the column's build state), applyWrites_state
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::apply_writes	535	PROVEN	CowBTree content contract (Tree.lean) discharged since #3283: every reachable tree is TreeWF (cow_btree Reachable_wf_asserted; removeBatchTree_wf, insertBatch_wf, fromSorted_wf) and each op is its t* model (Contract.lean: contract_fromSorted/insert/remove/insertBatch/removeBatch/range); applyWrites/applyStep: applyWrites_numeric, applyWrites_state, writerRecord_eq_sequential
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::query_numeric	560	PROVEN	queryNumeric/queryKey: queryNumeric_spec (routing: numeric Equal/Range, InList, same-attribute Or on an existing column that is not Building; others, and every Building column, None so RediSearch answers), nodeScan_native_agrees, nodeScan_native_inList_agrees
 graph/src/index/falkordb/pending_writes.rs	IndexChanges::new	41	PROVEN	IndexChanges.new: new_isEmpty
 graph/src/index/falkordb/pending_writes.rs	IndexChanges::is_empty	50	PROVEN	IndexChanges.isEmpty: new_isEmpty
 graph/src/index/falkordb/pending_writes.rs	IndexChanges::remove	56	PROVEN	IndexChanges.remove: add_remove_spec, push_spec
@@ -58,33 +56,63 @@ graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::drain	121	PROVEN	
 graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::clear	132	PROVEN	PendingIndexWrites.clear: clear_isEmpty
 graph/src/index/falkordb/pending_writes.rs	PendingIndexWrites::extend	138	PROVEN	PendingIndexWrites.extend/pushWrite: extend_log, extend_isSome, hmGet_pushWrite
 graph/src/index/falkordb/pending_writes.rs	last_write_wins	158	PROVEN	lastWriteWins (stable mergeSort): sortLog_filter, lwwGo_spec, lastWriteWins_spec, set_then_delete
-graph/src/index/falkordb/graph_writes.rs	index_only_writes	46	PROVEN	indexOnlyWrites: indexOnlyWrites_spec
-graph/src/index/falkordb/graph_writes.rs	node_attrs_set	62	PROVEN	nodeAttrsSet: nodeAttrsSet_changes, nodeAttrsSet_miss; nodeAttrsSet_hit (update removes old/adds new) assumes caller-unique attr ids per node (Pending::set_node_attributes only debug_assert!s it)
-graph/src/index/falkordb/graph_writes.rs	node_rows_set	98	PROVEN	nodeRowsSet/chunksExact: nodeRowsSet_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	new_node_attrs	133	PROVEN	newNodeAttrs: newNodeAttrs_changes; newNodeAttrs_hit (caller-unique attr ids)
-graph/src/index/falkordb/graph_writes.rs	bulk_node_attrs	161	PROVEN	bulkNodeAttrs: bulkNodeAttrs_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	labels_added	189	PROVEN	labelsAdded: labelsAdded_changes, labelsAdded_hit
-graph/src/index/falkordb/graph_writes.rs	labels_product_added	206	PROVEN	labelsProductAdded: labelsProductAdded_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	labels_removed	226	PROVEN	labelsRemoved: labelsRemoved_changes, labelsRemoved_hit
-graph/src/index/falkordb/graph_writes.rs	nodes_deleted	243	PROVEN	nodesDeleted: nodesDeleted_changes, nodesDeleted_hit, nodesDeleted_noadd
-graph/src/index/falkordb/graph_writes.rs	edge_attrs_set	273	PROVEN	edgeAttrsSet: edgeAttrsSet_spec, edgeAttrsSetWith_changes
-graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_of_type	282	PROVEN	edgeAttrsSetOfType: edgeAttrsSet_spec, edgeAttrsSetWith_changes
-graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_with	291	PROVEN	edgeAttrsSetWith/edgeTypeOf: edgeAttrsSetWith_changes; edgeAttrsSetWith_hit (caller-unique attr ids)
-graph/src/index/falkordb/graph_writes.rs	new_edge_attrs	324	PROVEN	newEdgeAttrs: newEdgeAttrs_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	bulk_edge_attrs	350	PROVEN	bulkEdgeAttrs: bulkEdgeAttrs_changes, lastOp_ops
-graph/src/index/falkordb/graph_writes.rs	edges_deleted	372	PROVEN	edgesDeleted: edgesDeleted_changes, edgesDeleted_hit, edgesDeleted_noadd
-graph/src/index/falkordb/graph_writes.rs	create_index	404	PROVEN	createIndex: createIndex_builds, createIndex_nonrange
-graph/src/index/falkordb/graph_writes.rs	populate	421	PROVEN	populate: populate_builds, populate_skips
-graph/src/index/falkordb/graph_writes.rs	add_node_under_label	438	PROVEN	addNodeUnderLabel: addNodeUnderLabel_eq
-graph/src/index/falkordb/graph_writes.rs	remove_node_under_label	451	PROVEN	removeNodeUnderLabel: removeNodeUnderLabel_eq
-graph/src/index/falkordb/graph_writes.rs	build_column	468	PROVEN	buildColumn/collectEntries: buildColumn_numeric
-graph/src/index/falkordb/graph_writes.rs	node_label_ids_into	488	PROVEN	nodeLabelIdsInto: nodeLabelIdsInto_spec
-graph/src/index/falkordb/graph_writes.rs	edge_type	503	PROVEN	edgeType: edgeType_spec
-graph/src/index/falkordb/graph_writes.rs	collect_node_entries	512	PROVEN	collectNodeEntries: collectNodeEntries_spec
-graph/src/index/falkordb/graph_writes.rs	collect_edge_entries	531	PROVEN	collectEdgeEntries: collectEdgeEntries_spec
-graph/src/graph/graph.rs	apply_index_writes	3784	PROVEN	applyIndexWrites: applyIndexWrites_spec, runUnit_spec
-graph/src/graph/graph.rs	commit_index_docs	3801	PROVEN	commitIndexDocs (native part; RediSearch commit_index/commit_edge_index are FFI): commitIndexDocs_native, applyIndexWrites_spec
-graph/src/graph/graph.rs	query_index_numeric_nodes	4089	PROVEN	queryIndexNumericNodes: queryIndexNumericNodes_spec, nodeScan_native_agrees
-graph/src/graph/graph.rs	query_index_numeric_edges	4106	PROVEN	queryIndexNumericEdges: queryIndexNumericEdges_spec, queryIndexNumericEdges_none
+graph/src/index/falkordb/graph_writes.rs	index_only_writes	49	PROVEN	indexOnlyWrites: indexOnlyWrites_spec
+graph/src/index/falkordb/graph_writes.rs	node_attrs_set	65	PROVEN	nodeAttrsSet: nodeAttrsSet_changes, nodeAttrsSet_miss; nodeAttrsSet_hit (update removes old/adds new) assumes caller-unique attr ids per node (Pending::set_node_attributes only debug_assert!s it)
+graph/src/index/falkordb/graph_writes.rs	node_rows_set	101	PROVEN	nodeRowsSet/chunksExact: nodeRowsSet_changes, lastOp_ops
+graph/src/index/falkordb/graph_writes.rs	new_node_attrs	136	PROVEN	newNodeAttrs: newNodeAttrs_changes; newNodeAttrs_hit (caller-unique attr ids)
+graph/src/index/falkordb/graph_writes.rs	bulk_node_attrs	164	PROVEN	bulkNodeAttrs: bulkNodeAttrs_changes, lastOp_ops
+graph/src/index/falkordb/graph_writes.rs	labels_added	192	PROVEN	labelsAdded: labelsAdded_changes, labelsAdded_hit
+graph/src/index/falkordb/graph_writes.rs	labels_product_added	209	PROVEN	labelsProductAdded: labelsProductAdded_changes, lastOp_ops
+graph/src/index/falkordb/graph_writes.rs	labels_removed	229	PROVEN	labelsRemoved: labelsRemoved_changes, labelsRemoved_hit
+graph/src/index/falkordb/graph_writes.rs	nodes_deleted	246	PROVEN	nodesDeleted: nodesDeleted_changes, nodesDeleted_hit, nodesDeleted_noadd
+graph/src/index/falkordb/graph_writes.rs	edge_attrs_set	276	PROVEN	edgeAttrsSet: edgeAttrsSet_spec, edgeAttrsSetWith_changes
+graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_of_type	285	PROVEN	edgeAttrsSetOfType: edgeAttrsSet_spec, edgeAttrsSetWith_changes
+graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_with	294	PROVEN	edgeAttrsSetWith/edgeTypeOf: edgeAttrsSetWith_changes; edgeAttrsSetWith_hit (caller-unique attr ids)
+graph/src/index/falkordb/graph_writes.rs	new_edge_attrs	327	PROVEN	newEdgeAttrs: newEdgeAttrs_changes, lastOp_ops
+graph/src/index/falkordb/graph_writes.rs	bulk_edge_attrs	353	PROVEN	bulkEdgeAttrs: bulkEdgeAttrs_changes, lastOp_ops
+graph/src/index/falkordb/graph_writes.rs	edges_deleted	375	PROVEN	edgesDeleted: edgesDeleted_changes, edgesDeleted_hit, edgesDeleted_noadd
+graph/src/index/falkordb/graph_writes.rs	create_index	411	PROVEN	createIndex (each column via build_in_one_batch): createIndex_builds, createIndex_ready, createIndex_nonrange
+graph/src/index/falkordb/graph_writes.rs	populate	449	PROVEN	populate: populate_builds (= buildInOneBatch), populate_skips
+graph/src/index/falkordb/graph_writes.rs	add_node_under_label	466	PROVEN	addNodeUnderLabel: addNodeUnderLabel_eq
+graph/src/index/falkordb/graph_writes.rs	remove_node_under_label	479	PROVEN	removeNodeUnderLabel: removeNodeUnderLabel_eq
+graph/src/index/falkordb/graph_writes.rs	node_label_ids_into	497	PROVEN	nodeLabelIdsInto: nodeLabelIdsInto_spec
+graph/src/index/falkordb/graph_writes.rs	edge_type	512	PROVEN	edgeType: edgeType_spec
+graph/src/graph/graph.rs	apply_index_writes	3790	PROVEN	applyIndexWrites (with `G.place`: a node by id, an edge by its endpoints, None once deleted): applyIndexWrites_spec, runUnit_spec, kind_place
+graph/src/graph/graph.rs	commit_index_docs	3821	PROVEN	commitIndexDocs (native part; RediSearch commit_index/commit_edge_index are FFI): commitIndexDocs_native, applyIndexWrites_spec
+graph/src/graph/graph.rs	query_index_numeric_nodes	4109	PROVEN	queryIndexNumericNodes: queryIndexNumericNodes_spec, nodeScan_native_agrees (a Building column is declined: queryNumeric_spec)
+graph/src/graph/graph.rs	query_index_numeric_edges	4126	PROVEN	queryIndexNumericEdges: queryIndexNumericEdges_spec, queryIndexNumericEdges_none (a Building column is declined)
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	300	PROVEN	scanRoute (native hit first, else RediSearch FFI): scanRoute_spec, nodeScan_native_agrees (CowBTree contract for the contents); InList route since #2383: nodeScan_native_inList_agrees
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	316	PROVEN	scanRoute: scanRoute_spec, queryIndexNumericEdges_spec (endpoints from the reverse index); InList route since #2383: queryNumeric_spec (inList)
+graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	101	PROVEN	EncodedTuples.scalars: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	107	PROVEN	EncodedTuples.isEmpty: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::len	113	PROVEN	EncodedTuples.len: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::clear	118	PROVEN	EncodedTuples.clear: encodedTuples_spec
+graph/src/index/falkordb/numeric.rs	EncodedTuples::sort_dedup	124	PROVEN	EncodedTuples.sortDedup (sort_unstable + dedup): encodedTuples_spec, sortDedup_spec (sorted, unique, same members)
+graph/src/index/falkordb/falkordb_index.rs	IndexColumn::push_encoded	106	PROVEN	IndexColumn.pushEncoded: pushAttr_scalar, tupleOf_numeric (appends enc key id iff the column indexes the value)
+graph/src/index/falkordb/falkordb_index.rs	BuildCursor::precedes	231	PROVEN	BuildCursor.precedes: precedes_spec (node by id, edge by (src, dst) tuple <); the unreachable! on a kind mix never fires: kind_new, kind_place, scan_kind
+graph/src/index/falkordb/falkordb_index.rs	BuildCursor::new	249	PROVEN	BuildCursor.new: new_cursor, kind_new
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::entry	330	PROVEN	FalkorDbIndex.entry: entry_spec (hmGet of the entity map)
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::create_building	362	PROVEN	createBuilding: entry_createBuilding (Building at BuildCursor.new), numeric_createBuilding, node_edge_independent
+graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::insert_column	380	PROVEN	insertColumn: entry_insertColumn
+graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::entry	157	PROVEN	IndexColumn impl of the trait fn: FalkorDbIndex.entry (entry_spec)
+graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::entry_mut	164	PROVEN	IndexColumn impl: FalkorDbIndex.setEntry (the slot written back): entry_setEntry
+graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::writer_record	177	PROVEN	IndexColumn.writerRecord/stateLog: writerRecord_eq_sequential, writerRecord_ready, stateLog_removes, stateLog_adds, stateLog_sublist, building_reuse_removed (+ collapse_first_would_keep, ready_reuse_kept)
+graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_read	197	PROVEN	IndexColumn.indexerRead = scan: indexerRead_spec, scan_sorted, scan_kind; scanNodes_below_cursor, scanEdges_below_cursor, scan_all
+graph/src/index/falkordb/falkordb_index.rs	VersionedIndex::indexer_add	207	PROVEN	IndexColumn.indexerAdd = addEncoded: indexerAdd_spec
+graph/src/index/falkordb/versioned.rs	VersionedIndex::entry	82	PROVEN	trait signature; the IndexColumn impl is modelled as FalkorDbIndex.entry (entry_spec)
+graph/src/index/falkordb/versioned.rs	VersionedIndex::entry_mut	88	PROVEN	trait signature; the IndexColumn impl is FalkorDbIndex.setEntry (entry_setEntry)
+graph/src/index/falkordb/versioned.rs	VersionedIndex::writer_record	99	PROVEN	trait signature (its contract is stateLog_removes/stateLog_adds/building_reuse_removed); the IndexColumn impl: writerRecord_eq_sequential
+graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_read	110	PROVEN	trait signature; the IndexColumn impl: scan (scanNodes_below_cursor, scanEdges_below_cursor)
+graph/src/index/falkordb/versioned.rs	VersionedIndex::indexer_add	119	PROVEN	trait signature; the IndexColumn impl: addEncoded_spec
+graph/src/index/falkordb/versioned.rs	IndexEntry::new	126	PROVEN	IndexEntry.new: isBuilding_spec, cursor_spec (glue)
+graph/src/index/falkordb/versioned.rs	IndexEntry::is_building	134	PROVEN	IndexEntry.isBuilding: isBuilding_spec
+graph/src/index/falkordb/versioned.rs	IndexEntry::cursor	139	PROVEN	IndexEntry.cursor: cursor_spec
+graph/src/index/falkordb/versioned.rs	IndexEntry::writer_record	148	PROVEN	IndexEntry.writerRecord (column at its own state, state kept): writerRecord_eq_sequential, applyWrites_state
+graph/src/index/falkordb/versioned.rs	IndexEntry::indexer_apply	161	PROVEN	IndexEntry.indexerApply: indexerApply_idle (not Building: unchanged, false), indexerApply_building (adds the batch, cursor to next or Ready)
+graph/src/index/falkordb/versioned.rs	FalkorDbIndex::apply_indexer_batch	178	PROVEN	FalkorDbIndex.applyIndexerBatch: applyIndexerBatch_missing, indexerApply_idle/_building, entry_setEntry
+graph/src/index/falkordb/versioned.rs	Graph::indexer_prepare	191	PROVEN	G.indexerPrepare: prepareBatch_building, prepareBatch_idle
+graph/src/index/falkordb/versioned.rs	Graph::prepare_batch	205	PROVEN	G.prepareBatch: prepareBatch_building (reads from the cursor, applies to the same version), prepareBatch_idle (gone / Ready: nothing changes, false)
+graph/src/index/falkordb/graph_writes.rs	build_in_one_batch	427	PROVEN	buildInOneBatch: buildInOneBatch_entry (the column exists, is Ready, its index = from_entries of the live pairs; others untouched), scan_all
+graph/src/index/falkordb/graph_writes.rs	scan	528	PROVEN	scan: scan_sorted (sorted, unique), scan_kind (cursor kind kept), scan_all
+graph/src/index/falkordb/graph_writes.rs	scan_nodes	553	PROVEN	scanNodes: scanNodes_tuples, scanNodes_missing, scanNodes_below_cursor (read nodes = those that precede the returned cursor), scanNodes_all
+graph/src/index/falkordb/graph_writes.rs	scan_edges	589	PROVEN	scanEdges/edgeLoop: edgeLoop_spec (prefix read, a multi-edge pair never split), scanEdges_below_cursor, scanEdges_missing, scanEdges_all, edgeLoop_all

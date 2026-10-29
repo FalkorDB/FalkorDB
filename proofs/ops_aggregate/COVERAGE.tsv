@@ -1,23 +1,21 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/ops/aggregate.rs	eq	94	PROVEN	gkEq (veq = sort_cmp == Equal since #2917): gkEq_iff, Discharge.gkEq_spec (= GroupKey::eq on main), Discharge.veqMain_equiv (an equivalence on main)
-graph/src/runtime/ops/aggregate.rs	hash	110	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent)
-graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	176	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
-graph/src/runtime/ops/aggregate.rs	args_for	217	PROVEN	argsFor: argsFor_spec
-graph/src/runtime/ops/aggregate.rs	fold	238	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
-graph/src/runtime/ops/aggregate.rs	new	289	PROVEN	AggSt.new: aggNew_spec, foldlM_setZero
-graph/src/runtime/ops/aggregate.rs	analyze	322	PROVEN	analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec
-graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	391	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	518	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; DISTINCT: hashed_dedup_merges_groups (BUG)
-graph/src/runtime/ops/aggregate.rs	extract_key_columns	790	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
-graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	839	PROVEN	extractAggs/aggCol: extractAggs_spec
-graph/src/runtime/ops/aggregate.rs	consume_input_per_row	880	PROVEN	groupAll_spec, keyless_one_row
-graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	921	PROVEN	groupAll_spec, rowDriver_eq_batch
-graph/src/runtime/ops/aggregate.rs	run_agg_expr	990	PROVEN	rowDriver_eq_batch; DISTINCT branch: hashed_dedup_merges_groups, distinct_fold_clear_overcounts (BUGs)
-graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1091	PROVEN	setZero: setZero_eq, setZero_spec
-graph/src/runtime/ops/aggregate.rs	next	1120	PROVEN	aggNext/finishGroup (unbind before keys since #3522, aggregate.rs:1184-1209): aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err, finishGroup_keys_bound/keysBound_main (KeysBound on main, fixed3522_null_key_bound, keysBound_swap_3522); keyed_empty, keyless_one_row; with binder ids (SlotReuse projLayout, finishCore/finishVals/cell) OutputsOwnAcc/EmitsOnlyScope are still refuted: bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var, bug3369_count_acc_in_merge_slot, bug3368_count_acc_in_merge_slot (BUGs)
-graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1243	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; unbind runs before the keys are written since #3522, so an accumulator id equal to a null key's id no longer drops the key: fixed3522_null_key_bound (history pre3522_null_key_unbound)
-graph/src/runtime/ops/aggregate.rs	hash_u64	1267	PROVEN	hashU64: hashU64_spec (trait decl; collision: hashed_dedup_merges_groups)
-graph/src/runtime/ops/aggregate.rs	hash_u64	1271	PROVEN	hashU64: hashU64_spec (collision bug: hashed_dedup_merges_groups)
+graph/src/runtime/ops/aggregate.rs	eq	99	PROVEN	gkEq (veq = sort_cmp == Equal since #2917): gkEq_iff, Discharge.gkEq_spec (= GroupKey::eq on main), Discharge.veqMain_equiv (an equivalence on main)
+graph/src/runtime/ops/aggregate.rs	hash	115	PROVEN	gkHash: gkHash_consistent with hc discharged on main: Discharge.hc_main, Discharge.gk_hash_consistent_main (from proofs/value_order Main.main_hash_consistent)
+graph/src/runtime/ops/aggregate.rs	subtree_has_aggregate	181	PROVEN	hasAgg: hasAgg_spec, hasAgg_iff
+graph/src/runtime/ops/aggregate.rs	args_for	222	PROVEN	argsFor: argsFor_spec
+graph/src/runtime/ops/aggregate.rs	fold	243	PROVEN	rowDriver_eq_batch (fold = batch_fn on a 1-slice)
+graph/src/runtime/ops/aggregate.rs	new	294	PROVEN	AggSt.new: aggNew_spec, foldlM_setZero
+graph/src/runtime/ops/aggregate.rs	analyze	327	PROVEN	analyze/analyzeKey: analyze_spec, analyze_lengths, analyzeKey_spec
+graph/src/runtime/ops/aggregate.rs	analyze_agg_tree	396	PROVEN	analyzeAgg/aggBody: analyzeAgg_shape, aggBody_fields, singleArg_computed, multiArg_computed, distinctInput_computed, countStar_no_input, multi_extra, constsOf_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_vectorized	523	PROVEN	batchDriver_eq_join, vectorized_eq_rowwise, *_hom; group id = insertion index (#2977): GroupId.insert_new_id, gid_inj, distinct_by_group_id_exact (history Ops.pre2977_hashed_dedup_merges_groups, fixed by #2977 c652e505e)
+graph/src/runtime/ops/aggregate.rs	extract_key_columns	794	PROVEN	extractKeys/keyCol: extractKeys_spec, extractKeys_err
+graph/src/runtime/ops/aggregate.rs	extract_agg_input_columns	843	PROVEN	extractAggs/aggCol: extractAggs_spec
+graph/src/runtime/ops/aggregate.rs	consume_input_per_row	884	PROVEN	groupAll_spec, keyless_one_row; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact
+graph/src/runtime/ops/aggregate.rs	consume_batch_per_row	928	PROVEN	groupAll_spec, rowDriver_eq_batch; group id from the map entry (#2977): GroupId.gid_inj, distinct_by_group_id_exact
+graph/src/runtime/ops/aggregate.rs	run_agg_expr	998	PROVEN	rowDriver_eq_batch; DISTINCT branch keyed (node, group id) since #2977: GroupId.distinct_by_group_id_exact, fixed2977_collision_example (history Ops.pre2977_hashed_dedup_merges_groups); distinct_fold_clear_overcounts (BUG #2779, apply.rs:283)
+graph/src/runtime/ops/aggregate.rs	set_agg_expr_zero	1099	PROVEN	setZero: setZero_eq, setZero_spec
+graph/src/runtime/ops/aggregate.rs	next	1128	PROVEN	aggNext/finishGroup (GroupMap value is a 3-tuple since #2977; the id is ignored at emit) (unbind before keys since #3522, aggregate.rs:1192-1218): aggNext_error_first, aggNext_ok, drain_all, finishGroup_outputs, finishGroup_err, finishGroup_keys_bound/keysBound_main (KeysBound on main, fixed3522_null_key_bound, keysBound_swap_3522); keyed_empty, keyless_one_row; with binder ids (SlotReuse projLayout, finishCore/finishVals/cell) OutputsOwnAcc/EmitsOnlyScope are still refuted: bug3375_output_overwrites_next_acc, bug3375_avg_panics, bug3333_alias_binds_next_var, bug3369_count_acc_in_merge_slot, bug3368_count_acc_in_merge_slot (BUGs)
+graph/src/runtime/ops/aggregate.rs	unbind_agg_accumulators	1251	PROVEN	unbindAcc: unbindAcc_eq, unbind_after_zero, unbind_other, one_child_not_unbound; unbind runs before the keys are written since #3522, so an accumulator id equal to a null key's id no longer drops the key: fixed3522_null_key_bound (history pre3522_null_key_unbound)
 graph/src/runtime/ops/distinct.rs	new	42	PROVEN	DistinctSt.new: distinct_new_spec
 graph/src/runtime/ops/distinct.rs	next	62	PROVEN	dedup_injective (correct iff hash injective); dedup_collision_drops (known #2780)
 graph/src/runtime/ops/sort.rs	cmp_key	76	PROVEN	SortCmp.cmpKey (cv = Value::sort_cmp, #2912): cmpKey_spec, cmpKey_lawful with Lawful discharged: Discharge.cmpKey_lawful_main, Discharge.cmpKey_trans_main (from proofs/value_order Main.scMain_total, copied under VO/)

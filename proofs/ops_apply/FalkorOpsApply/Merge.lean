@@ -1,6 +1,13 @@
 /-
 # MERGE — `graph/src/runtime/ops/merge.rs`
 
+**History model.** `rustBatch`/`rustMerge`/`phaseA` below are `MergeOp::next` as of ca36bfa15:
+the match sub-plan ran once per input batch. #3067 (b47d6d6a3, closes #3039) made it match
+every row first; the current model is `MergeEager.lean` (`mainMerge`, `mainMerge_noSet_eq_ref`,
+`fixed3067_batch_independent`). `phaseB` is still `drain_pending`, `createFallback` still
+`do_create_fallback`, and the definitions/lemmas here (`Clause`, `J`, `G`, `refMerge`) are
+shared. Line cites in this header are to ca36bfa15.
+
 Reference semantics (openCypher): for each input row, in order, if the pattern
 matchesK in the *current* graph (including everything earlier rows of the same
 clause created), bind every match (and apply `ON MATCH SET`), otherwise create
@@ -31,7 +38,7 @@ Theorems:
   for every batch size: same final graph, same next id, and the emitted rows are
   a permutation of the reference's (the within-batch cache exactly simulates the
   visibility of earlier rows' creations).
-* `batch_dependent` — with `ON CREATE SET` touching the merged property the
+* `pre3067_batch_dependent` (fixed by #3067) — with `ON CREATE SET` touching the merged property the
   result depends on `BATCH_SIZE`: rows that straddle a batch boundary see the
   earlier row's creation, rows inside one batch do not. CONFIRMED live.
 * `pre3050_cross_clause_unbound` — before #3050 the cache was keyed by the hash
@@ -101,7 +108,7 @@ def refMerge (cl : Clause α) (st : RState (α := α)) (rows : List α) : RState
 /-- `merge_pattern_cache`: hash ↦ cached `(var id, entity id)` bindings. -/
 abbrev Cache := List ((Nat × Nat) × (Nat × Nat))
 
-/-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs:122,172`). -/
+/-- Since #3050 the key is `(operator idx, pattern hash)` (`merge.rs:124,174`). -/
 def lookup (c : Cache) (h : Nat × Nat) : Option (Nat × Nat) := (c.find? (fun e => e.1 == h)).map Prod.snd
 
 structure SState where
@@ -111,11 +118,11 @@ structure SState where
   out : List (α × Option Nat)
 
 /-- Binding of the clause's own variable after inserting the cached pairs by
-*their* variable ids (`vars.insert_by_id(*id, …)`, `merge.rs:125-127`). -/
+*their* variable ids (`vars.insert_by_id(*id, …)`, `merge.rs:128-130`). -/
 def bindCached (cl : Clause α) (cv : Nat × Nat) : Option Nat :=
   if cv.1 == cl.var then some cv.2 else none
 
-/-- `do_create_fallback` (`merge.rs:113-178`). -/
+/-- `do_create_fallback` (`merge.rs:117-182`). -/
 def createFallback (cl : Clause α) (st : SState (α := α)) (r : α) :
     SState (α := α) × (α × Option Nat) :=
   match lookup st.cache (cl.op, cl.key r) with
@@ -127,7 +134,7 @@ def createFallback (cl : Clause α) (st : SState (α := α)) (r : α) :
        cache := ((cl.op, cl.key r), (cl.var, st.next)) :: st.cache, out := st.out },
      (r, some st.next))
 
-/-- Phase A of one batch (`merge.rs:347-434`): row by row against the batch-start
+/-- Phase A of one batch (pre-#3067 `merge.rs:347-434`): row by row against the batch-start
 match groups. Returns the state (with `out` extended) and the queue of remaining
 matchesK. -/
 def phaseA (cl : Clause α) (allBound : Bool) :
@@ -141,7 +148,7 @@ def phaseA (cl : Clause α) (allBound : Bool) :
     let (st'', q) := phaseA cl allBound st' rest
     (st'', if allBound || ms.isEmpty then q else (r, ms) :: q)
 
-/-- Phase B (`drain_pending`, `merge.rs:252-273`): the queued matchesK, row by row. -/
+/-- Phase B (`drain_pending`, `merge.rs:302-322`; since #3067 called per row, see `MergeEager.rowMain`): the queued matchesK, row by row. -/
 def phaseB (cl : Clause α) : SState (α := α) → List (α × List Node) → SState (α := α)
   | st, [] => st
   | st, (r, ms) :: rest =>
@@ -149,7 +156,7 @@ def phaseB (cl : Clause α) : SState (α := α) → List (α × List Node) → S
                         out := st.out ++ ms.map (fun m => (r, some m.id)) } rest
 
 /-- One input batch: match groups computed ONCE against the batch-start graph
-(`merge.rs:313-343`), then phase A, then phase B. -/
+(pre-#3067 `merge.rs:313-343`), then phase A, then phase B. -/
 def rustBatch (cl : Clause α) (allBound : Bool) (st : SState (α := α)) (rows : List α) :
     SState (α := α) :=
   let groups := rows.map (fun r => (r, matchesK st.g (cl.key r)))
@@ -480,12 +487,12 @@ theorem batches_1024 : batches 1024 (by decide) [1, 2] = [[1, 2]] := by
 theorem batches_1 : batches 1 (by decide) [1, 2] = [[1], [2]] := by
   simp [batches]
 
-/-- **Batch-size dependence.**  Rows 1 and 2 in one batch: row 2 does not see the
+/-- **Batch-size dependence (history, fixed by #3067 b47d6d6a3; main: `fixed3067_batch_independent`).**  Rows 1 and 2 in one batch: row 2 does not see the
 node row 1 created (and re-keyed to 2), so a second node is created.  In
 separate batches (in the live repro: rows 1 and 1025 of `UNWIND range(1,1025)`)
 row 2 matches it.  The reference creates 1 node; C creates 2 (C evaluates all
 matches before any creation). -/
-theorem batch_dependent :
+theorem pre3067_batch_dependent :
     (rustMerge clCase false st0 [[1, 2]]).g.length = 2 ∧
     (rustMerge clCase false st0 [[1], [2]]).g.length = 1 ∧
     (refMerge clCase ⟨[], 0, []⟩ [1, 2]).g.length = 1 := by decide

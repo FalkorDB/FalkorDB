@@ -1,14 +1,24 @@
 /-
 # GraphBLAS FFI wrappers (`graph/src/graph/graphblas/{matrix,vector,mod}.rs`, `tensor.rs` decode/iter)
 
+**Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) rewrites `Matrix::delta_lmxm`
+(matrix.rs:1520) and adds `GrB_GT_UINT64` / `GrB_VALUEEQ_BOOL` / `GrB_Matrix_select_BOOL` imports (+3 lines before :1520,
++55 after, so every `matrix.rs` pin moved). It is now modelled (`DeltaLmxm.lean`) and PROVEN, no longer a
+bare FFI row: `deltaLmxm_spec` (output stored iff `F*M` reaches it with no `F*DM` path, or `F*M` has strictly
+more paths than `F*DM`, or `F*DP` reaches it; no assumption on the layers), `deltaLmxm_correct` (= `F*(M-DM+DP)`
+when `dm ⊆ m`), `deltaLmxm_eff` / `deltaLmxm_tensor` (`dm ⊆ m` discharged from `VM.Inv` / `VMTensor.Inv`, so the
+project now depends on versioned_matrix). Historical: `pre3492_drops_live_path` (the old pattern mask lost an output that
+one deleted and one live base edge both reach), fixed by #3492 (a3a99bdbc); `needs_dm_sub_m` shows the counting
+needs the invariant.
+
 Lean 4 model of the Rust-side logic around the GraphBLAS C API. The C calls are
 axiomatised (their contracts cited from `GraphBLAS.h` / the GraphBLAS source);
 the wrapper logic is proved. Bucket per Rust fn: `COVERAGE.tsv`.
 Re-targeted to main fb3d516d0 (#3090 e45be4965, #3026; earlier 73077bb4a: #3033, #3086;
 1d15bf713: #2996, #3097, #3250). #3090 replaces `Matrix::drop`'s `Arc::get_mut`
-free with `Arc<Handle>` + `Handle::drop` (matrix.rs:368; bug 4 fixed; every later
+free with `Arc<Handle>` + `Handle::drop` (matrix.rs:371; bug 4 fixed; every later
 matrix.rs line +24..+31, see `COVERAGE.tsv`). #3026 touches only `bulk_insert.rs` (not here).
-#3033 adds `Matrix::<u64>::count_value_eq` (matrix.rs:1232; every later matrix.rs
+#3033 adds `Matrix::<u64>::count_value_eq` (then matrix.rs:1232; every later matrix.rs
 line +24, earlier ones +1 for the import) and makes `Tensor::decode` enforce
 promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here).
 
@@ -18,18 +28,21 @@ promotion completeness (bug 2 fixed). #3086 touches only `indexer.rs` (not here)
 | --- | --- |
 | `GrbInfo.Info`, `Disposition` | `mod.rs:GrB_Info`; `assert_eq!` / `debug_assert_eq!` / `if info != SUCCESS {Err}` |
 | `Index.matrixNewOk`, `GB_NMAX`, `ME_DIM` | `GB_Matrix_new.c:28` bound; `tensor.rs:144-169` constants |
-| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:368 behind `Arc<Handle>` (`Matrix::clone` :400), `Iter::drop` :1689 then its `Arc<Handle>` field (#3090) |
+| `Own.arcStep`/`liveRun`/`Inv` | `Handle::drop` matrix.rs:371 behind `Arc<Handle>` (`Matrix::clone` :403), `Iter::drop` :1744 then its `Arc<Handle>` field (#3090) |
 | `Own.step`/`run`/`validTraces` | pre-#3090 `Matrix::drop`/`Iter::drop` (`Arc::get_mut` then Arc drop), history `pre3090_*` |
-| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1737, `Iter::next` :1770 |
+| `RowIter.drainL`/`drainSeek` | `Iter::seek` matrix.rs:1823, `Iter::next` :1856 |
 | `Codes.decodeBlob`/`decodeU64`/`decodeBoolHardened` | `vector.rs:211` `decode_blob`, `:256` `Vector<u64>::decode`, `:350` `Vector<bool>::decode` (`pre2996_*`: before #2996) |
 | `Decode.edgeCount`, `Wf`, `checkLayers` | `Tensor::edge_count` tensor.rs:1231; `Tensor::decode` :1553; layer-size check :1562-1573 (#2996) |
-| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1232 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
+| `Decode.countValueEq`, `SelectValueEqSpec` | `Matrix::<u64>::count_value_eq` matrix.rs:1263 (`GrB_Matrix_select_UINT64`, `GrB_VALUEEQ_UINT64`, `nvals`) |
 | `Decode.tensorLoop`/`decodeCheck`, `PromotionComplete`, `encFwd`/`encTs` | `Tensor::decode` marker count :1617, per-entry check :1632-1636, final count check :1665-1670 (#3033) |
-| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:716, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
-| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:511, header pointers nulled :528-544 (#3097) |
-| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:789 (#3022) |
+| `Misc.grownOk`, `iterExpand`, `vecDrain` | `Matrix::grown` matrix.rs:735, `Tensor::resize` tensor.rs:823, `tensor::Iter::next` :1783, `vector::Iter::next` |
+| `Glue.encodeM`/`scrub` | `Encode<19> for Matrix` matrix.rs:524, header pointers nulled :541-553 (#3097) |
+| `DeltaLmxm.deltaLmxm`, `cnt`, `mxmCount`, `deltaLmxm_spec`/`_correct`/`_eff` | `Matrix::delta_lmxm` matrix.rs:1520-1655 (#3492: `F*dm` counted, `F*m` counted at the masked positions, `GT` then select, `restored` added back; the dp accumulation unmasked) |
+| `Bulk.fromSortedIndices`, `VecU.sum`/`ptr`, `countInRows` | `Vector::<bool>::from_sorted_indices` vector.rs:149, `Vector::<u64>::sum` :494 / `ptr` :488, `Matrix::count_in_rows` matrix.rs:808 (#3022) |
 
 ## Theorems (all proved, no sorry)
+#3492 (`DeltaLmxm.lean`): **`deltaLmxm_correct`**, `deltaLmxm_spec`, `cnt_split`, `deltaLmxm_eff`, `deltaLmxm_tensor`,
+`delta_lmxm_keeps_live_path`, `delta_lmxm_drops_when_all_paths_deleted`, `needs_dm_sub_m` (history `pre3492_drops_live_path`);
 `me_dim_is_max`, `me_dim_constructs`, `create_safe_iff`, `create_2pow61_crashes`,
 `len_cast_lossless`, `blob_copy_in_bounds`; #3090: **`arc_frees_once`** (any n owners,
 any interleaving of clones/drops: freed at most once, and iff the count reaches 0),
@@ -85,7 +98,7 @@ entries in the selected rows — the double-counting argument over columns), `co
    `iter_edges` yields a phantom edge (7,9,3). Test
    `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`. Fix: in
    decode, require the pair's forward value to be a multi-edge marker.
-3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs:453):
+3. **`Matrix::decode` leaks 5 heap blocks per matrix** (matrix.rs:467):
    `copy_nonoverlapping` overwrites the p/h/b/i/x vectors `GxB_Container_new`
    allocated. Every RDB load / RESTORE / full sync. 8 blocks per call on the `?`
    error paths (container + decoded components). Tests
@@ -95,7 +108,7 @@ entries in the selected rows — the double-counting argument over columns), `co
 4. **Concurrent drop of two `Matrix` clones leaked the GrB_Matrix — FIXED by
    #3090 on main e45be4965** (`arc_frees_once`, `arc_every_interleaving_frees_once`;
    text below is the pre-#3090 state, `pre3090_*`). `Matrix::drop` (then
-   matrix.rs:390, same in `Iter::drop`): `Arc::get_mut` then Arc decrement was
+   matrix.rs:390 at the time, same in `Iter::drop`): `Arc::get_mut` then Arc decrement was
    not atomic. `pre3090_race_leaks` witness; `pre3090_never_double_free` shows it
    was only a leak. Test `bug_matrix_concurrent_drop_leaks`: 19 of 200,000 pairs
    leaked. The fix is the suggested one: the free moved into `Handle::drop`
@@ -134,3 +147,4 @@ import GraphblasWrappers.Misc
 import GraphblasWrappers.Glue
 import GraphblasWrappers.Serial
 import GraphblasWrappers.Bulk
+import GraphblasWrappers.DeltaLmxm

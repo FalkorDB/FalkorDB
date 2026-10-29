@@ -11,7 +11,7 @@ Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKe
 | `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs:1082) |
 | `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs:1230) |
 | `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs:90, :101) |
-| `hashU64`                    | `HashU64::hash_u64` (aggregate.rs:1254 decl, :1258 impl for `Row`) |
+| `hashU64` (history)          | `HashU64::hash_u64` (removed by #2977; was aggregate.rs:1254/:1258) |
 | `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs:208) |
 | `AggSt.new`                  | `AggregateOp::new` (aggregate.rs:280) |
 

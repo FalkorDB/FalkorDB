@@ -18,11 +18,12 @@ Theorems: the pending list stays sorted/unique under any sequence of writes
 and reads back the last write; commit then stores exactly what the query read
 (read-your-writes survives commit), for existing and for new entities.
 
-The last section models `SET n = m` (`ops/set.rs:185-224`), whose *Node* and
-*Relationship* sources — and every relationship-target `SET r = …` form — skip
-`clear_node_attributes`, so attributes staged earlier in the same query
-survive a replace (known as #2776; `replace_keeps_staged` is the Lean
-counterexample).
+The last section models `SET n = m` (`ops/set.rs:125-148`, `:218-262`). Before #3524
+(af45ca776) only the *Map* source cleared the staged attributes; the Node and Relationship
+sources, and every relationship-target `SET r = …`, kept attributes staged earlier in the same
+query (#2776; `pre3524_replace_keeps_staged` is the Lean counterexample). Now every branch
+calls `clear_{node,relationship}_attrs_for_replace` (`replaceFrom`); `replace_ignores_staged`
+and `fixed3524_replace_clears_staged` are the correctness theorems.
 -/
 import PendingCommit.Span
 
@@ -196,25 +197,86 @@ theorem read_your_writes_new (ws : List Entry) (k : Nat) :
 non-null staged pairs (attribute_store.rs:1370). -/
 theorem commitNew_count (pend : List Entry) : (commitNew pend).length = refSet pend := rfl
 
-/-! ## `SET n = m`: replace without clearing staged attributes (known #2776) -/
+/-! ## `SET n = m`: replace clears the staged attributes (#2776, fixed by #3524) -/
 
-/-- `ops/set.rs:185-199` (`Value::Map` source): clear the staged attributes,
-stage `null` for every *committed* key, then stage the map's entries. -/
-def replaceFromMap (stored pend src : List Entry) : List Entry :=
-  let p0 : List Entry := []
-  let p1 := stored.foldl (fun p e => upsert p e.1 .null) p0
+/-- `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace`
+(ops/set.rs:125-148) then the source's entries (set.rs:218-262 for a node target, :298-352 for
+a relationship target; any source kind): clear the staged attributes (`clear_*_attributes`,
+pending.rs:591/:599), stage `null` for every *committed* key, then stage the entries. The
+staged list `pend` is dropped by the clear, so it is not an argument. -/
+def replaceFrom (stored src : List Entry) : List Entry :=
+  let p1 := stored.foldl (fun p e => upsert p e.1 .null) []
   src.foldl (fun p e => upsert p e.1 e.2) p1
 
-/-- `ops/set.rs:200-218` (`Value::Node` source): the same, minus the clear. -/
-def replaceFromNode (stored pend src : List Entry) : List Entry :=
+/-- History (pre-#3524, ca36bfa15): the Node/Relationship-source branches and every
+relationship target did the same minus the clear. -/
+def pre3524_replaceNoClear (stored pend src : List Entry) : List Entry :=
   let p1 := stored.foldl (fun p e => upsert p e.1 .null) pend
   src.foldl (fun p e => upsert p e.1 e.2) p1
 
-/-- `CREATE (n {a:1}), (m {b:2}) SET n = m`: `a` is staged (not yet stored), so
-the node-source replace keeps it. C returns `{b: 2}`. -/
-theorem replace_keeps_staged :
-    normQ (readQ [] (replaceFromNode [] [(0, .inl 1)] [(1, .inl 2)]) 0) = some (.inl 1) ∧
-    normQ (readQ [] (replaceFromMap [] [(0, .inl 1)] [(1, .inl 2)]) 0) = none := by
+/-- `CREATE (n {a:1}), (m {b:2}) SET n = m`: `a` is staged (not yet stored), so the old
+node-source replace kept it (Rust `{a:1,b:2}`, C `{b:2}`). The map branch cleared. -/
+theorem pre3524_replace_keeps_staged :
+    normQ (readQ [] (pre3524_replaceNoClear [] [(0, .inl 1)] [(1, .inl 2)]) 0) = some (.inl 1) ∧
+    normQ (readQ [] (replaceFrom [] [(1, .inl 2)]) 0) = none := by
   decide
+
+/-- **Fixed by #3524**: the same state on main reads `a` as absent and `b = 2`. -/
+theorem fixed3524_replace_clears_staged :
+    normQ (readQ [] (replaceFrom [] [(1, .inl 2)]) 0) = none ∧
+    normQ (readQ [] (replaceFrom [] [(1, .inl 2)]) 1) = some (.inl 2) := by
+  decide
+
+theorem foldl_null_stored (stored : List Entry) (k : Nat) :
+    ∀ init : Option Val,
+      (stored.map (fun e => ((e.1, Val.null) : Entry))).foldl
+        (fun r w => if w.1 = k then some w.2 else r) init =
+      if (get stored k).isSome then some Val.null else init := by
+  induction stored with
+  | nil => intro init; simp [get]
+  | cons e es ih =>
+    intro init
+    simp only [List.map_cons, List.foldl_cons]
+    rw [ih]
+    by_cases hk : e.1 = k
+    · subst hk; simp [get]
+    · have hk' : ¬ (k = e.1) := fun h => hk h.symm
+      simp [get, hk, hk']
+
+theorem foldl_step_or (src : List Entry) (k : Nat) :
+    ∀ init : Option Val,
+      src.foldl (fun r w => if w.1 = k then some w.2 else r) init =
+        (src.foldl (fun r w => if w.1 = k then some w.2 else r) none).or init := by
+  induction src with
+  | nil => intro init; simp
+  | cons w ws ih =>
+    intro init
+    simp only [List.foldl_cons]
+    rw [ih (if w.1 = k then some w.2 else init), ih (if w.1 = k then some w.2 else none)]
+    by_cases hk : w.1 = k
+    · simp only [hk, ite_true]
+      cases ws.foldl (fun r w => if w.1 = k then some w.2 else r) none <;> simp
+    · simp only [hk, ite_false]
+      cases ws.foldl (fun r w => if w.1 = k then some w.2 else r) none <;> simp
+
+/-- **`SET e = src` replaces, for every source kind (#3524)**: what a later clause reads
+is the source's last write to `k`, or null/absent if the source does not mention it,
+whatever was staged before (`pend` does not even occur). -/
+theorem replace_reads_src (stored src : List Entry) (k : Nat) :
+    normQ (readQ stored (replaceFrom stored src) k) = normQ (lastWrite src k) := by
+  have hr : replaceFrom stored src =
+      stageAll (stored.map (fun e => ((e.1, Val.null) : Entry)) ++ src) := by
+    simp [replaceFrom, stageAll, List.foldl_append, List.foldl_map]
+  have hg := (stage_sorted_lastWrite (stored.map (fun e => ((e.1, Val.null) : Entry)) ++ src)).2 k
+  rw [← hr] at hg
+  unfold lastWrite at hg ⊢
+  rw [List.foldl_append, foldl_null_stored, foldl_step_or] at hg
+  unfold readQ
+  rw [hg]
+  cases hF : src.foldl (fun r w => if w.1 = k then some w.2 else r) none with
+  | some v => simp
+  | none =>
+    cases hs : (get stored k).isSome <;> simp [hs, normQ]
+    · cases h : get stored k <;> simp_all
 
 end PendingCommit
