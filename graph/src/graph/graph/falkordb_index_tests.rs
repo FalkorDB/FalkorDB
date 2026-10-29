@@ -1819,6 +1819,125 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
     );
 }
 
+/// A writer's unit of work that deletes an edge on one side of a batch's new cursor and reuses its
+/// id for an edge on the other side, committed before the batch or after it. The batch reads
+/// a->b, and its cursor moves to a->c. Either a->b is deleted and its id reused by d->a, ahead of
+/// the cursor, or c->d, ahead of it, is deleted and its id reused by a->a, behind it. Committed
+/// first, the batch is rebased onto by the writer's claim; committed after, it catches up on the
+/// writer. Either way each written edge is placed by its endpoints in the version that holds it,
+/// so the column holds exactly the edges below the cursor: nothing, or a->b and a->a. Built to the
+/// end, it is a one-pass build of the final data.
+#[test]
+fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
+    // (which edge is deleted, its id's new endpoints, the column after both commits)
+    for (deleted, (src, dst), held) in [(0, (3, 0), vec![]), (2, (0, 0), vec![0, 2])] {
+        for writer_first in [false, true] {
+            ensure_graphblas();
+            let mut g = Graph::new(64, 64, 10, 1, "t");
+            let ty = Arc::new("R".to_string());
+            let attr = Arc::new("w".to_string());
+            let aid = g.get_or_create_rel_attr_id(&attr);
+            let nodes = reserve_nodes(&mut g, 4);
+            g.create_nodes(&nodes.iter().copied().collect())
+                .expect("freshly reserved ids are creatable");
+            let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
+            // In batch order: a->b, a->c, c->d; w = 1..=3.
+            let eids: Vec<u64> = g
+                .relationship_id_space()
+                .reserve(3, &RoaringTreemap::new())
+                .expect("reserved");
+            g.create_relationships_bulk(&ty, &[a, a, c], &[b, c, d], &eids)
+                .expect("freshly reserved ids are creatable");
+            let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
+                pairs
+                    .iter()
+                    .map(|&(eid, w)| (eid, vec![(aid, Value::Int(w))]))
+                    .collect()
+            };
+            let initial: Vec<(u64, i64)> = eids.iter().copied().zip(1..).collect();
+            applied!(g, |w| g
+                .import_relationship_attrs(&with_w(&initial), &mut w));
+            g.falkordb_index
+                .create_building(EntityType::Relationship, &ty, &attr);
+            let mvcc = &mut MvccGraph::from_graph(g);
+            let id = IndexId::Column(EntityType::Relationship, (ty.clone(), attr.clone()));
+            let write = |g: &mut Graph| {
+                let mut w = IndexDocs::default();
+                let mut del = RoaringTreemap::new();
+                del.insert(eids[deleted]);
+                g.delete_relationships(&del, &mut w).unwrap();
+                g.create_relationships_bulk(&ty, &[nodes[src]], &[nodes[dst]], &[eids[deleted]])
+                    .expect("a freed id is creatable");
+                g.import_relationship_attrs(&with_w(&[(eids[deleted], 9)]), &mut w);
+                g.apply_index_writes(&mut w);
+            };
+            let what = format!("edge {deleted} reused, writer first: {writer_first}");
+            let held_ids = |mvcc: &MvccGraph| {
+                contents(
+                    &mvcc.read().borrow(),
+                    EntityType::Relationship,
+                    &ty,
+                    &attr,
+                    &[],
+                )
+                .1
+            };
+
+            let (prepared, batch) = prepare(mvcc, &id, 1);
+            if writer_first {
+                commit_write(mvcc, write);
+                assert_eq!(held_ids(mvcc), Vec::<u64>::new(), "{what}: no batch yet");
+                let committed = mvcc.commit_indexer_batch(&prepared, &batch);
+                assert!(
+                    matches!(committed, Some(IndexerCommit::CatchUp(_))),
+                    "{what}: {committed:?}"
+                );
+            } else {
+                let fork = mvcc.fork();
+                write(&mut fork.borrow_mut());
+                assert_eq!(
+                    mvcc.commit_indexer_batch(&prepared, &batch),
+                    Some(IndexerCommit::Same),
+                    "{what}"
+                );
+                assert_eq!(held_ids(mvcc), vec![eids[0]], "{what}: the batch's a->b");
+                assert_eq!(mvcc.claim(&fork), Ok(()), "{what}");
+                mvcc.commit(fork).expect("the write commits");
+            }
+            let expected: Vec<u64> = held.iter().map(|&i| eids[i]).collect();
+            assert_eq!(held_ids(mvcc), expected, "{what}: both committed");
+            assert_eq!(
+                cursor(&mvcc.read().borrow(), EntityType::Relationship, &ty, &attr),
+                cursor(&prepared.borrow(), EntityType::Relationship, &ty, &attr),
+                "{what}: the batch's progress"
+            );
+
+            let mut batches = 0;
+            loop {
+                let version =
+                    Arc::new(AtomicRefCell::new(mvcc.read().borrow().new_build_version()));
+                let Some(batch) = version.borrow_mut().indexer_prepare(&id, 1) else {
+                    break;
+                };
+                assert_eq!(
+                    mvcc.commit_indexer_batch(&version, &batch),
+                    Some(IndexerCommit::Same)
+                );
+                batches += 1;
+                assert!(batches < 100, "the build never finishes");
+            }
+            let published = mvcc.read();
+            let g = published.borrow();
+            let values = [1, 2, 3, 9];
+            assert_eq!(
+                contents(&g, EntityType::Relationship, &ty, &attr, &values),
+                one_pass(&g, EntityType::Relationship, &ty, &attr, &values),
+                "{what}: built to the end"
+            );
+        }
+    }
+}
+
 /// Two indexer batches read from one version on the same column: the first publishes, the second
 /// finds the first in its way and publishes nothing. One chain of batches per column rules this
 /// out, so it is reported; here the report is allowed, to check what is published.
