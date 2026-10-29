@@ -1,4 +1,5 @@
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{MAX_STALE_RETRIES, SLOW_STALE_RUN};
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
@@ -19,6 +20,7 @@ use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
+use std::time::Instant;
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
@@ -947,8 +949,23 @@ pub fn graph_bulk_insert(
             // when this block ends — before the client is unblocked below.
             // A loop only to run the insert again if an inline writer commits while
             // phase 1 builds (see the escalation below); every other path breaks.
+            //
+            // The retry is bounded, like `execute_query_write`'s: after a few stale
+            // builds, or one that took long, the insert runs as a writer from the
+            // start — the GIL and write lock held for the whole build, as in C — so
+            // a steady stream of inline writes cannot starve it.
+            let mut stale_runs = 0;
+            let mut as_writer = false;
             let result: Result<(), String> = 'phase: loop {
-                let session = QuerySession::begin_with(&graph, facts);
+                let attempt_start = Instant::now();
+                let session = if as_writer {
+                    match QuerySession::begin_writer_checked(&graph, facts) {
+                        Ok(session) => session,
+                        Err(e) => break 'phase Err(e.to_string()),
+                    }
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
                 // Phase 1: build the new version as a reader, GIL-free, into a private
                 // fork. The MVCC write slot is claimed only when phase 2 escalates, so
                 // an inline writer is never refused because this insert is building.
@@ -985,6 +1002,9 @@ pub fn graph_bulk_insert(
                     // An inline writer committed while phase 1 built: nothing was
                     // published, so build again on top of its version.
                     if session.is_stale() {
+                        stale_runs += 1;
+                        as_writer = stale_runs >= MAX_STALE_RETRIES
+                            || attempt_start.elapsed() >= SLOW_STALE_RUN;
                         continue 'phase;
                     }
                     break 'phase Err(e.to_string());

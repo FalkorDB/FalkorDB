@@ -64,7 +64,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::allocator::{
@@ -757,7 +757,8 @@ pub fn execute_query_write(
     let mut stale_runs = 0;
     let mut session = session;
     loop {
-        match try_query_write(
+        let attempt_start = Instant::now();
+        let r = try_query_write(
             session,
             ctx,
             key_name,
@@ -767,10 +768,12 @@ pub fn execute_query_write(
             per_query_timeout,
             profile,
             started,
-        ) {
+        );
+        let wasted = attempt_start.elapsed();
+        match r {
             Err(WriteAttempt::Stale) => {
                 stale_runs += 1;
-                session = if stale_runs >= MAX_STALE_RETRIES {
+                session = if stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN {
                     QuerySession::begin_writer_checked(&graph, facts).map_err(|e| e.to_string())?
                 } else {
                     QuerySession::begin_with(&graph, facts)
@@ -784,7 +787,14 @@ pub fn execute_query_write(
 
 /// Stale runs a write that began as a reader may lose before it runs as a writer
 /// for the whole query.
-const MAX_STALE_RETRIES: u32 = 3;
+pub(crate) const MAX_STALE_RETRIES: u32 = 3;
+
+/// A stale run that took this long is not retried as a reader at all. Rerunning it
+/// as a reader risks losing the same race again for as long as it took here,
+/// while waiting for the write lock costs about one more run. Cheap matches keep
+/// retrying (up to [`MAX_STALE_RETRIES`]), since a retry there is cheaper than
+/// queueing for the lock.
+pub(crate) const SLOW_STALE_RUN: Duration = Duration::from_millis(10);
 
 /// Why one run of [`try_query_write`] did not succeed.
 enum WriteAttempt {
