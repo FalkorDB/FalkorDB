@@ -676,6 +676,16 @@ impl FalkorDbIndex {
             .contains_key(&(label.clone(), attr.clone()))
     }
 
+    /// Whether any column is still `Building`. Walks the columns' states without hashing a name,
+    /// so the per-write checks that only matter during a build cost next to nothing outside one.
+    #[must_use]
+    pub(crate) fn has_building_columns(&self) -> bool {
+        self.node_columns
+            .values()
+            .chain(self.edge_columns.values())
+            .any(IndexEntry::is_building)
+    }
+
     /// Ready this version to be published: each index's sets of written entities are settled
     /// ([`IndexEntry::publish`]).
     pub(crate) fn publish(&mut self) {
@@ -893,16 +903,6 @@ impl FalkorDbIndex {
                 .iter()
                 .find_map(|(key, entry)| Some((entity, key.clone(), entry.cursor()?)))
         })
-    }
-
-    /// Whether any column is still `Building`.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn has_building_columns(&self) -> bool {
-        self.node_columns
-            .values()
-            .chain(self.edge_columns.values())
-            .any(IndexEntry::is_building)
     }
 
     /// The build state of column `(entity, label, attr)`, if it exists.

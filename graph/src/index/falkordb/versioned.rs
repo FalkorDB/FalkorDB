@@ -572,15 +572,18 @@ impl Graph {
     }
 
     /// Whether [`Self::rebase_onto_indexer_batches`] has anything to do: whether an indexer batch
-    /// moved on, in `published`, an index still `Building` here.
+    /// moved on, in `published`, an index still `Building` here. Every write's claim asks, so with
+    /// no index `Building` here it answers without looking any index up by name.
     pub(crate) fn overtaken_by_indexer_batches(
         &self,
         published: &Self,
     ) -> bool {
-        self.falkordb_index
-            .column_names()
-            .iter()
-            .any(|name| self.overtaken::<IndexColumn>(published, name))
+        self.falkordb_index.has_building_columns()
+            && self
+                .falkordb_index
+                .column_names()
+                .iter()
+                .any(|name| self.overtaken::<IndexColumn>(published, name))
     }
 
     /// Whether an indexer batch moved on, in `published`, index `name`, still `Building` here: the
