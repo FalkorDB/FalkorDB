@@ -32,9 +32,6 @@ use crate::runtime::{
 };
 use std::sync::Arc;
 
-/// Slot order: [latitude, longitude]
-const POINT_SLOTS: &[&str] = &["latitude", "longitude"];
-
 /// Build a point from the `latitude` / `longitude` entries of its map, with
 /// C's checks and messages: exactly two keys, both present, both numeric, both
 /// in range. `None` is a key the map lacks; `Some(Null)` is one set to `null`.
@@ -57,25 +54,21 @@ fn point_from_map_entries(
     };
     // C lets a NaN through (it fails neither side of the range test); a point is
     // kept a real coordinate here. An infinity fails the range test, as in C.
-    if latitude.is_nan() {
-        return Err(String::from("latitude must be a finite number, got NaN"));
-    }
-    if longitude.is_nan() {
-        return Err(String::from("longitude must be a finite number, got NaN"));
-    }
-    // Range-checked before narrowing to `f32`, as C does, so a value just past a
-    // bound is not rounded onto it.
-    if !(-90.0..=90.0).contains(&latitude) {
-        return Err(String::from(
-            "latitude should be within the -90 to 90 range",
-        ));
-    }
-    if !(-180.0..=180.0).contains(&longitude) {
-        return Err(String::from(
+    // Ranges are checked before narrowing to `f32`, as C does, so a value just
+    // past a bound is not rounded onto it.
+    match (latitude, longitude) {
+        (lat, _) if lat.is_nan() => Err(String::from("latitude must be a finite number, got NaN")),
+        (_, lon) if lon.is_nan() => Err(String::from("longitude must be a finite number, got NaN")),
+        (-90.0..=90.0, -180.0..=180.0) => {
+            Ok(Value::Point(Point::new(latitude as f32, longitude as f32)))
+        }
+        (-90.0..=90.0, _) => Err(String::from(
             "longitude should be within the -180 to 180 range",
-        ));
+        )),
+        _ => Err(String::from(
+            "latitude should be within the -90 to 90 range",
+        )),
     }
-    Ok(Value::Point(Point::new(latitude as f32, longitude as f32)))
 }
 
 const fn numeric(value: &Value) -> Option<f64> {
@@ -84,13 +77,6 @@ const fn numeric(value: &Value) -> Option<f64> {
         Value::Int(i) => Some(*i as f64),
         _ => None,
     }
-}
-
-/// `point({latitude: …, longitude: …})` with a literal map carrying both keys
-/// and nothing else (`set_required_struct_fn`), so it has exactly two entries.
-pub fn point_struct_pure(args: &[Value]) -> Result<Value, String> {
-    debug_assert_eq!(args.len(), 2);
-    point_from_map_entries(2, Some(&args[0]), Some(&args[1]))
 }
 
 pub fn register(funcs: &mut Functions) {
@@ -204,6 +190,4 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
-
-    funcs.set_required_struct_fn("point", point_struct_pure, POINT_SLOTS);
 }
