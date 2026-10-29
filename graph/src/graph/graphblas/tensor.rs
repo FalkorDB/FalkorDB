@@ -980,6 +980,25 @@ impl Tensor {
         }
     }
 
+    /// The effective forward structure as the committed base itself, when no
+    /// delta is pending — so a read-only whole-matrix consumer can use it in
+    /// place of [`Self::extract`]'s copy. The values are edge ids; a
+    /// structural consumer ignores them. `None` while either delta holds
+    /// entries.
+    #[must_use]
+    pub fn clean_fwd(&self) -> Option<&Matrix<u64>> {
+        self.wait_fwd();
+        (self.dp.nvals() == 0 && self.dm.nvals() == 0).then_some(&*self.m)
+    }
+
+    /// The effective backward structure (the transpose of [`Self::clean_fwd`])
+    /// as its committed base, when no delta is pending on it.
+    #[must_use]
+    pub fn clean_bwd(&self) -> Option<&Matrix<bool>> {
+        self.mt.wait();
+        (self.mt.dp().nvals() == 0 && self.mt.dm().nvals() == 0).then(|| self.mt.m())
+    }
+
     /// Materialize the effective forward structure as a `bool` matrix:
     /// `(m ∖ dm) ∪ dp`, values discarded. Shadowed pairs (`dp ∩ m`) collapse
     /// in the bool union; `dm ⊆ m` is disjoint from `dp`, so order is safe.

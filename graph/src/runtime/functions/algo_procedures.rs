@@ -74,6 +74,7 @@ use crate::{
         attribute_store::AttributeStore,
         graph::{EdgeDirection, Graph, NodeId, RelationshipId},
         graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
+        graphblas::tensor::Tensor,
     },
     runtime::{
         batch::{Batch, Column, classify_stored_column},
@@ -1055,6 +1056,112 @@ fn register_betweenness(funcs: &mut Functions) {
 
 // ── algo.BFS ────────────────────────────────────────────────────────────
 
+/// Direction-optimizing BFS levels over lent matrices: pushes the frontier
+/// through `a` while it is small and pulls it through `at` (`a`'s transpose)
+/// while it holds a large share of the unexplored edges (Beamer et al.). The
+/// semiring is structural, so `a` and `at` may differ in element type — which
+/// is why LAGraph, which insists they match, cannot be handed the tensor's
+/// UINT64 forward and BOOL backward bases directly. Returns the INT64 level
+/// vector (bitmap), the source at level 0.
+unsafe fn bfs_levels_push_pull(
+    a: crate::graph::graphblas::GrB_Matrix,
+    at: crate::graph::graphblas::GrB_Matrix,
+    n: u64,
+    nvals: u64,
+    src: u64,
+    max_level: i64,
+) -> Result<crate::graph::graphblas::GrB_Vector, String> {
+    use crate::graph::graphblas::{
+        GrB_ALL, GrB_BOOL, GrB_DESC_RSC, GrB_DESC_S, GrB_INT64, GrB_Vector,
+        GrB_Vector_assign_INT64, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals,
+        GrB_Vector_setElement_BOOL, GrB_Vector_setElement_INT64, GrB_mxv, GrB_vxm,
+        GxB_ANY_PAIR_BOOL, GxB_BITMAP, GxB_Option_Field, GxB_SPARSE, GxB_Vector_Option_set_INT32,
+    };
+    let check = |info: crate::graph::graphblas::GrB_Info, what: &str| -> Result<(), String> {
+        if info == crate::graph::graphblas::GrB_Info::GrB_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("BFS {what} failed: {info:?}"))
+        }
+    };
+    let mut v: GrB_Vector = null_mut();
+    let mut q: GrB_Vector = null_mut();
+    let fail = |mut v: GrB_Vector, mut q: GrB_Vector, e: String| {
+        if !v.is_null() {
+            GrB_Vector_free(&raw mut v);
+        }
+        if !q.is_null() {
+            GrB_Vector_free(&raw mut q);
+        }
+        Err(e)
+    };
+    // INT64 levels and an i64 level counter, as LAGraph uses: an i32 `k`
+    // could wrap on a path of 2^31 levels and stop honouring `max_level`.
+    if let Err(e) = check(GrB_Vector_new(&raw mut v, GrB_INT64, n), "level alloc") {
+        return fail(v, q, e);
+    }
+    if let Err(e) = check(GrB_Vector_new(&raw mut q, GrB_BOOL, n), "frontier alloc") {
+        return fail(v, q, e);
+    }
+    let sparsity = GxB_Option_Field::GxB_SPARSITY_CONTROL as i32;
+    GxB_Vector_Option_set_INT32(v, sparsity, GxB_BITMAP as i32);
+    // An out-of-range source fails here, as it fails LAGraph
+    // (GrB_INVALID_INDEX), rather than yielding an empty traversal.
+    if let Err(e) = check(GrB_Vector_setElement_INT64(v, 0, src), "source")
+        .and_then(|()| check(GrB_Vector_setElement_BOOL(q, true, src), "source"))
+    {
+        return fail(v, q, e);
+    }
+
+    let avg_degree = nvals as f64 / n.max(1) as f64;
+    let mut edges_unexplored = nvals as f64;
+    // Switch to pull once the frontier's edges exceed 1/alpha of the
+    // unexplored ones, back to push once it shrinks below n/beta nodes.
+    // alpha = 14, beta = 24 are Beamer's; sweeping alpha from 0.05 to 1e5 on
+    // Orkut put the optimum at 14-50 for both a 4-hop and a full traversal.
+    let (alpha, beta) = (14.0, 24.0);
+    let mut nq: u64 = 1;
+    let mut last_nq: u64 = 0;
+    let mut push = true;
+    let mut k: i64 = 1;
+    loop {
+        if max_level >= 0 && k > max_level {
+            break;
+        }
+        let frontier_edges = nq as f64 * avg_degree;
+        if push {
+            if nq > last_nq && frontier_edges > edges_unexplored / alpha {
+                push = false;
+            }
+        } else if nq < last_nq && (nq as f64) < n as f64 / beta {
+            push = true;
+        }
+        let info = if push {
+            GxB_Vector_Option_set_INT32(q, sparsity, GxB_SPARSE as i32);
+            GrB_vxm(q, v, null_mut(), GxB_ANY_PAIR_BOOL, q, a, GrB_DESC_RSC)
+        } else {
+            GxB_Vector_Option_set_INT32(q, sparsity, GxB_BITMAP as i32);
+            GrB_mxv(q, v, null_mut(), GxB_ANY_PAIR_BOOL, at, q, GrB_DESC_RSC)
+        };
+        if let Err(e) = check(info, "step") {
+            return fail(v, q, e);
+        }
+        last_nq = nq;
+        GrB_Vector_nvals(&raw mut nq, q);
+        if nq == 0 {
+            break;
+        }
+        edges_unexplored -= nq as f64 * avg_degree;
+        let info = GrB_Vector_assign_INT64(v, q, null_mut(), k, GrB_ALL, n, GrB_DESC_S);
+        if let Err(e) = check(info, "level assign") {
+            return fail(v, q, e);
+        }
+        k += 1;
+    }
+    GrB_Vector_free(&raw mut q);
+    Ok(v)
+}
+
 fn register_bfs(funcs: &mut Functions) {
     cypher_fn!(funcs, "algo.BFS",
         args: [Type::Any, Type::Any, Type::Any],
@@ -1086,7 +1193,38 @@ fn register_bfs(funcs: &mut Functions) {
             }
 
             let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
-            let adj = g.build_adjacency_matrix(&rel_types);
+
+            // A single type whose tensor has no pending delta is BFS-ready as
+            // stored: lend its forward base as A instead of copying the whole
+            // matrix on every call (BFS is structural, so the edge-id values
+            // are never read). Otherwise materialize the effective structure.
+            let clean = match rel_types.as_slice() {
+                [t] => g.get_relationship_matrix(t).and_then(Tensor::clean_fwd),
+                _ => None,
+            };
+            let clean_bwd = match rel_types.as_slice() {
+                [t] if clean.is_some() => {
+                    g.get_relationship_matrix(t).and_then(Tensor::clean_bwd)
+                }
+                _ => None,
+            };
+            let owned_adj;
+            let (a_raw, nvals, n) = if let Some(m) = clean {
+                (m.inner(), m.nvals(), m.nrows())
+            } else {
+                owned_adj = g.build_adjacency_matrix(&rel_types);
+                (owned_adj.inner(), owned_adj.nvals(), owned_adj.nrows())
+            };
+
+            // Whether the visited set will be a fair share of the graph: then
+            // LAGraph keeps it as a bitmap (O(1) level writes and mask probes)
+            // rather than a sparse vector re-sorted on every level, at the cost
+            // of one O(n) allocation. Estimated as avg_degree^max_level
+            // reaching n/64; an unbounded BFS is assumed to.
+            let many_expected = max_depth < 0 || {
+                let avg_degree = nvals as f64 / n.max(1) as f64;
+                avg_degree.powi(max_depth.min(64) as i32) >= n as f64 / 64.0
+            };
 
             // Parent tracking is only needed to reconstruct edges; skip it
             // (like the C implementation passes pPI = NULL) when the edges
@@ -1097,37 +1235,50 @@ fn register_bfs(funcs: &mut Functions) {
                 use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free, lagraphx_bindings};
 
                 // Run directly on full adjacency; no compaction needed for BFS.
-                // `adj` is freshly built and uniquely owned, so lend its handle
-                // to LAGraph instead of duplicating it; the borrowed delete
-                // detaches `G->A` so only the `Matrix` wrapper frees it.
+                // A is lent (owned by the graph or by `owned_adj`); the
+                // borrowed delete detaches `G->A` so LAGraph never frees it.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph(
-                    adj.inner(),
-                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
-                    true,
-                )?;
-
-                let mut msg = new_msg();
-
                 let mut level: GrB_Vector = null_mut();
                 let mut parent: GrB_Vector = null_mut();
-
-                // Use the extended BFS with max_level
                 let max_level = if max_depth < 0 { -1i64 } else { max_depth };
-                let info = lagraphx_bindings::LAGr_BreadthFirstSearch_Extended(
-                    &raw mut level,
-                    if want_edges { &raw mut parent } else { null_mut() },
-                    lag_g,
-                    compact_source,
-                    max_level,
-                    -1, // no specific destination
-                    false, // many_expected
-                    msg.as_mut_ptr(),
-                );
+                // With a clean transpose at hand a large traversal can pull.
+                // The parent vector (for edges) and a small traversal, whose
+                // visited set LAGraph keeps sparse, stay with LAGraph.
+                let mut lag_g: LAGraph_Graph = null_mut();
+                if let Some(at) = clean_bwd.filter(|_| many_expected && !want_edges) {
+                    level = bfs_levels_push_pull(
+                        a_raw,
+                        at.inner(),
+                        n,
+                        nvals,
+                        compact_source,
+                        max_level,
+                    )?;
+                } else {
+                    lag_g = create_lagraph_graph(
+                        a_raw,
+                        LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                        true,
+                    )?;
 
-                if info != 0 {
-                    delete_lagraph_graph_borrowed(&mut lag_g);
-                    return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
+                    let mut msg = new_msg();
+
+                    // Use the extended BFS with max_level
+                    let info = lagraphx_bindings::LAGr_BreadthFirstSearch_Extended(
+                        &raw mut level,
+                        if want_edges { &raw mut parent } else { null_mut() },
+                        lag_g,
+                        compact_source,
+                        max_level,
+                        -1, // no specific destination
+                        many_expected,
+                        msg.as_mut_ptr(),
+                    );
+
+                    if info != 0 {
+                        delete_lagraph_graph_borrowed(&mut lag_g);
+                        return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
+                    }
                 }
 
                 let has_deleted = g.deleted_nodes_count() != 0;
@@ -1187,7 +1338,9 @@ fn register_bfs(funcs: &mut Functions) {
                 if !parent.is_null() {
                     GrB_Vector_free(&raw mut parent);
                 }
-                delete_lagraph_graph_borrowed(&mut lag_g);
+                if !lag_g.is_null() {
+                    delete_lagraph_graph_borrowed(&mut lag_g);
+                }
 
                 // If no nodes were reached, return empty list (no result row)
                 if nodes.is_empty() {
