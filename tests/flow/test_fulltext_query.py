@@ -5,7 +5,7 @@ GRAPH_ID = "query"
 
 class testFulltextIndexQuery():
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(enableDebugCommand=True)
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -370,3 +370,61 @@ class testFulltextIndexQuery():
         )
         self.env.assertEqual(len(result.result_set), 5)
         self.env.assertEqual([row[0] for row in result.result_set], [0, 1, 2, 3, 4])
+
+    # A full-text index created with a language must stem the stored
+    # documents with that language, not English (#3546). Each case stores one
+    # inflected form and queries another, which only matches when the document
+    # and the query were stemmed by the same language. Covers the index created
+    # before the data (commit path) and after it (population path), with and
+    # without a range index on the same label/type created first (the language
+    # must then rebuild the already-existing RediSearch index), and again after
+    # a dump/reload (synchronous population on RDB load).
+    def test06_fulltext_document_language(self):
+        cases = [
+            ("russian", "машины", "машина"),
+            ("italian", "mela", "mele"),
+        ]
+        checks = []
+        for language, stored, queried in cases:
+            for index_first in (True, False):
+                for range_first in (False, True):
+                    name = f"lang_{language}_{index_first}_{range_first}"
+                    graph = self.db.select_graph(name)
+                    indexes = []
+                    if range_first:
+                        indexes += [
+                            "CREATE INDEX FOR (n:N) ON (n.r)",
+                            "CREATE INDEX FOR ()-[e:E]-() ON (e.r)",
+                        ]
+                    indexes += [
+                        f"CREATE FULLTEXT INDEX FOR (n:N) ON (n.v) OPTIONS {{language: '{language}'}}",
+                        f"CREATE FULLTEXT INDEX FOR ()-[e:E]-() ON (e.v) OPTIONS {{language: '{language}'}}",
+                    ]
+                    data = "CREATE (:N {v: $s, r: 1})-[:E {v: $s, r: 1}]->(:M)"
+
+                    if index_first:
+                        for q in indexes:
+                            graph.query(q)
+                        wait_for_indices_to_sync(graph)
+                        graph.query(data, params={"s": stored})
+                    else:
+                        graph.query(data, params={"s": stored})
+                        for q in indexes:
+                            graph.query(q)
+                        wait_for_indices_to_sync(graph)
+                    checks.append((name, stored, queried))
+
+        def check(phase):
+            for name, stored, queried in checks:
+                graph = self.db.select_graph(name)
+                msg = f"{name} {phase}"
+                result = graph.query("CALL db.idx.fulltext.queryNodes('N', $q) YIELD node RETURN node.v", params={"q": queried})
+                self.env.assertEqual([r[0] for r in result.result_set], [stored], message=msg + " nodes")
+                result = graph.query("CALL db.idx.fulltext.queryRelationships('E', $q) YIELD relationship RETURN relationship.v", params={"q": queried})
+                self.env.assertEqual([r[0] for r in result.result_set], [stored], message=msg + " edges")
+
+        check("live")
+        self.env.dumpAndReload()
+        for name, _, _ in checks:
+            wait_for_indices_to_sync(self.db.select_graph(name))
+        check("reloaded")
