@@ -1900,3 +1900,21 @@ class test_udf_javascript():
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
+
+    def test_traverse_self_loop_reports_start_node(self):
+        """
+        graph.traverse([a]) reports a when a is its own neighbour (self-loop).
+        """
+
+        script = """
+        falkor.register('t', function(n, d) {
+            return graph.traverse([n], {direction: d})[0].map(function(x) { return x.id; });
+        });
+        """
+        self.db.udf_load("lib_tsl", script)
+        self.graph.query("CREATE (a {id:0})-[:R]->(a), (a)-[:R]->(:B {id:1})")
+
+        for d in ['outgoing', 'incoming', 'both']:
+            res = self.graph.query(f"MATCH (a {{id:0}}) RETURN lib_tsl.t(a, '{d}')").result_set
+            expected = [0] if d == 'incoming' else [0, 1]
+            self.env.assertEqual(sorted(res[0][0]), expected)
