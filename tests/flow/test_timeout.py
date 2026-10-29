@@ -114,15 +114,13 @@ class testQueryTimeout():
         query = "UNWIND range(0,3000000) AS x RETURN toString(x)"
 
         res = None
-        try:
-            # The query is expected to succeed
-            res = self.graph.query(query + " LIMIT 1000", timeout=3000)
-        except:
-            self.env.assertTrue(False)
+        # The query is expected to succeed
+        res = self.graph.query(query + " LIMIT 1000", timeout=3000)
 
         try:
             # The query is expected to timeout
-            res = self.graph.query(query, timeout=int(res.run_time_ms))
+            # make sure timeout is at least 1
+            res = self.graph.query(query, timeout=int(res.run_time_ms + 1))
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
