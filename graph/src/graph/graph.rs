@@ -81,9 +81,11 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+#[cfg(all(test, feature = "index-falkordb"))]
+use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
-    falkordb_index::FalkorDbIndex,
+    falkordb_index::{BuildCursor, FalkorDbIndex},
     graph_writes::{self, index_only_writes},
 };
 use crate::index::index_docs::IndexDocs;
@@ -445,8 +447,8 @@ pub struct Graph {
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically.
     ///
-    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes, and
-    /// `FalkorDbIndex::apply` updates it.
+    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes and to read
+    /// build batches, and `FalkorDbIndex::apply` updates it.
     #[cfg(feature = "index-falkordb")]
     pub(crate) falkordb_index: FalkorDbIndex,
 }
@@ -741,7 +743,11 @@ fn populate_index_batch(
                 } else {
                     do_recurse = true;
                 }
-                // guard dropped here
+                // Hand the lock to a waiter, if any. The next batch re-takes it at once,
+                // and parking_lot (0.13+) lets a plain unlock's next locker barge ahead of
+                // a parked CREATE/DROP INDEX or index commit, which then waits out the
+                // whole population (#3548).
+                MutexGuard::unlock_fair(guard);
             }
 
             if do_recurse {
@@ -974,9 +980,23 @@ impl Graph {
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
-        // Resize all node-dimension matrices to match the restored graph capacity.
-        // Decoded matrices may have dimensions from the original graph's node_cap,
-        // which can differ from the restored node_cap.
+        // Decoded matrices keep the saving server's node_cap, which `grow_cap`
+        // leaves up to 25% past the highest node id, while `restore` sets
+        // node_cap from that id. Take the larger, so the resize below only
+        // grows: a load never shrinks a matrix, and `Tensor::resize` never has
+        // to drop entries (#3246).
+        let saved = std::iter::once(self.adjacancy_matrix.nrows())
+            .chain(std::iter::once(self.adjacancy_matrix.ncols()))
+            .chain(std::iter::once(self.node_labels_matrix.nrows()))
+            .chain(self.labels_matices.iter().map(VersionedMatrix::nrows))
+            .chain(
+                self.relationship_matrices
+                    .iter()
+                    .flat_map(|t| [t.nrows(), t.ncols()]),
+            )
+            .max()
+            .unwrap_or(0);
+        self.node_cap = self.node_cap.max(saved);
         self.resize_node_matrices();
         let rc = self.relationship_cap;
         self.relationship_type_matrix
@@ -1261,13 +1281,25 @@ impl Graph {
             return pos;
         }
 
-        self.relationship_types
-            .push(Arc::new(relationship_type.to_string()));
-        self.relationship_matrices.insert(
-            self.relationship_types.len() - 1,
-            Tensor::new(self.node_cap, self.node_cap),
-        );
-        TypeId(self.relationship_types.len() - 1)
+        self.register_relationship_type(Arc::new(relationship_type.to_string()))
+    }
+
+    /// Append a new relationship type: its name, its tensor, and the extra
+    /// column in `relationship_type_matrix` (relationships x types). Every
+    /// registration goes through here so none can skip the resize: a type
+    /// registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used to
+    /// leave the matrix a column short, and every later edge delete built a
+    /// removal mask the matrix refused, keeping the deleted edge's type (#3244).
+    fn register_relationship_type(
+        &mut self,
+        relationship_type: Arc<String>,
+    ) -> TypeId {
+        self.relationship_types.push(relationship_type);
+        let id = self.relationship_types.len() - 1;
+        self.relationship_matrices
+            .insert(id, Tensor::new(self.node_cap, self.node_cap));
+        self.resize();
+        TypeId(id)
     }
 
     pub fn get_plan(
@@ -1367,17 +1399,7 @@ impl Graph {
         relationship_type: &Arc<String>,
     ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
-            self.relationship_types.push(relationship_type.clone());
-
-            self.relationship_matrices.insert(
-                self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap),
-            );
-            // As for labels above: `relationship_type_matrix` is relationships
-            // x types, so registering a type changes one of its dimensions.
-            // `create_relationships_bulk` reconciles too, but that is the write
-            // catching up rather than the change accounting for itself.
-            self.resize();
+            self.register_relationship_type(relationship_type.clone());
         }
 
         self.relationship_types
@@ -3770,7 +3792,21 @@ impl Graph {
         docs: &mut IndexDocs,
     ) {
         #[cfg(feature = "index-falkordb")]
-        self.falkordb_index.apply(&mut docs.native);
+        {
+            // A `Building` column asks where a written entity sits in build order: a node by its
+            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            let endpoints = &self.edge_endpoints;
+            self.falkordb_index
+                .apply(&mut docs.native, |entity, id| match entity {
+                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
+                    EntityType::Relationship => {
+                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
+                            src: NodeId::from(src),
+                            dst: NodeId::from(dst),
+                        })
+                    }
+                });
+        }
         #[cfg(not(feature = "index-falkordb"))]
         let _ = docs;
     }
@@ -4065,7 +4101,7 @@ impl Graph {
     }
 
     /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing column). Wraps
+    /// (non-numeric / composite / missing or `Building` column). Wraps
     /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
     /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
     /// borrow.
@@ -4085,7 +4121,7 @@ impl Graph {
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
     /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing column.
+    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
@@ -5023,6 +5059,19 @@ impl Graph {
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
     }
+
+    /// [`Self::indexer_prepare`] of the first `Building` column. For tests of one column.
+    #[cfg(all(test, feature = "index-falkordb"))]
+    pub(crate) fn index_next_batch(
+        &mut self,
+        entities: usize,
+    ) -> bool {
+        self.falkordb_index
+            .next_building()
+            .is_some_and(|(entity, key, _)| {
+                self.indexer_prepare(&IndexId::Column(entity, key), entities)
+            })
+    }
 }
 
 #[cfg(test)]
@@ -5817,3 +5866,76 @@ mod grow_cap_tests {
 
 #[cfg(all(test, feature = "index-falkordb"))]
 mod falkordb_index_tests;
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// A load must not shrink the matrices it decodes (#3246).
+    ///
+    /// They keep the size the saving server gave them, its `node_cap`, which
+    /// `grow_cap` leaves up to 25% past the highest node id. `restore` used to
+    /// reset `node_cap` to that id rounded up to one chunk, so
+    /// `rebuild_derived_matrices` shrank every node matrix on load, and a
+    /// tensor shrink is where `me` kept the ids of pairs it cut off.
+    #[test]
+    fn restore_never_shrinks_the_saved_matrices() {
+        ensure_init();
+        // Two nodes, saved by a server whose node_cap had grown to 40,960:
+        // restore rounds two nodes up to one 16,384 chunk.
+        const SAVED: u64 = 40_960;
+        let mut tensor = Tensor::new(SAVED, SAVED);
+        tensor.set_all_from_slices(&[0, 0], &[1, 1], &[0, 1]);
+        tensor.flush();
+        let mut g = Graph::restore(
+            "restore_never_shrinks",
+            1,
+            2,
+            2,
+            RoaringTreemap::new(),
+            RoaringTreemap::new(),
+            VersionedMatrix::<bool>::new(SAVED, SAVED),
+            VersionedMatrix::<bool>::new(SAVED, 1),
+            VersionedMatrix::<bool>::new(0, 0),
+            vec![VersionedMatrix::<bool>::new(SAVED, SAVED)],
+            vec![tensor],
+            vec![Arc::new("L".to_string())],
+            vec![Arc::new("R".to_string())],
+            AttrNameMap::default(),
+            AttributeStore::new(),
+            AttributeStore::new(),
+        );
+        g.rebuild_derived_matrices();
+
+        assert!(
+            g.node_cap >= SAVED,
+            "node_cap {} below the saved size",
+            g.node_cap
+        );
+        let t = &g.relationship_matrices[0];
+        assert_eq!(
+            (t.nrows(), t.ncols()),
+            (SAVED, SAVED),
+            "the load shrank the tensor"
+        );
+        assert_eq!(
+            g.adjacancy_matrix.nrows(),
+            SAVED,
+            "the load shrank the adjacency matrix"
+        );
+        assert_eq!(
+            g.labels_matices[0].nrows(),
+            SAVED,
+            "the load shrank a label matrix"
+        );
+        assert_eq!(
+            g.node_labels_matrix.nrows(),
+            SAVED,
+            "the load shrank node_labels"
+        );
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(edges, vec![(0, 1, 0), (0, 1, 1)]);
+    }
+}
