@@ -120,10 +120,20 @@ impl<'a> ApplyOp<'a> {
             _ => (None, right_child_idx),
         };
 
+        // A sub-plan that writes is not a pure function of its argument row:
+        // CALL {} runs once per outer row, so row N must see what rows
+        // 0..N-1 wrote (and deleted). One batched instance would run every
+        // row's reads before any row's writes (#2738).
         let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
             matches!(
                 ir,
-                IR::Aggregate { .. }
+                IR::Create(_)
+                    | IR::Set(_)
+                    | IR::Remove(_)
+                    | IR::Delete { .. }
+                    | IR::ForEach { .. }
+                    | IR::Commit
+                    | IR::Aggregate { .. }
                     | IR::CartesianProduct
                     | IR::Optional(_)
                     | IR::Apply

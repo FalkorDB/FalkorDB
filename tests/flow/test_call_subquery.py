@@ -3097,3 +3097,85 @@ updating clause.")
                                          RETURN count(DISTINCT x) AS c }
                                   RETURN min(c), max(c), count(DISTINCT i)""")
         self.env.assertEqual(res.result_set, [[2, 2, 3000]])
+
+        # the shape from the report: 5000 rows, three distinct values
+        self.get_res_and_assertEquals(
+            """UNWIND range(1, 5000) AS x
+               CALL { WITH x RETURN x % 3 AS y LIMIT 1 }
+               RETURN count(DISTINCT y)""",
+            [[3]])
+
+    def test_58_writing_subquery_runs_row_by_row(self):
+        # A sub-plan that writes is not a pure function of its row: row N
+        # must see what rows 0..N-1 wrote. It used to run once, batched, with
+        # every row's reads before any row's writes (#2738).
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id: 1, c: 0})")
+        self.get_res_and_assertEquals(
+            """UNWIND [1, 2, 3] AS i
+               CALL { MATCH (n:A {id: 1}) SET n.c = n.c + 1 RETURN n.c AS c }
+               RETURN collect(c)""",
+            [[[1, 2, 3]]])
+        self.get_res_and_assertEquals(
+            """UNWIND [1, 2, 3] AS i
+               MATCH (n:A {id: 1})
+               CALL { WITH n SET n.c = n.c + 1 RETURN n.c AS c }
+               RETURN collect(c)""",
+            [[[4, 5, 6]]])
+
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.get_res_and_assertEquals(
+            """UNWIND [1, 2, 3] AS i
+               CALL { CREATE (:B) WITH 1 AS q MATCH (b:B) RETURN b }
+               RETURN count(*)""",
+            [[6]])
+
+        # a self-loop written by one row is matched by the next
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:N {id: 1})")
+        self.get_res_and_assertEquals(
+            """UNWIND [1, 2, 3] AS i
+               CALL { MATCH (n:N) CREATE (n)-[:R]->(n) WITH n
+                      MATCH (n)-[r:R]->() RETURN count(r) AS c }
+               RETURN collect(c)""",
+            [[[1, 2, 3]]])
+
+    def test_59_delete_after_create_across_batches(self):
+        # DELETE applied each batch as it arrived, so a CREATE in a later
+        # batch saw the earlier batch's delete and failed with "endpoint was
+        # not found" (#2729). Deletes are now applied once the input is
+        # drained, as in C. Both shapes: plain, and inside CALL {}.
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id: 1})")
+        self.get_res_and_assertEquals(
+            """UNWIND range(1, 3000) AS i
+               MATCH (n:A {id: 1})
+               CREATE (n)-[:R]->(n)
+               DELETE n
+               RETURN count(*)""",
+            [[3000]])
+
+        # The report's graph (#2729).
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("""UNWIND [0,1,2,3,6,19,22,26,27,30,43,51,53,55,64,69,
+                                    82,87,91,96,101,104,126] AS i
+                            CREATE (:A {id: i})""")
+        self.graph.query("""MATCH (n0:A {id: 69}), (n1:A {id: 26})
+                            CREATE (n0)-[:rt5]->(n1)""")
+        self.graph.query("""UNWIND [[6,87],[43,6],[30,6],[64,6],[91,6],[51,6],
+                                    [126,6],[6,126],[126,126],[19,51],[19,51],
+                                    [87,51],[104,51],[55,51],[53,91],[0,64],
+                                    [101,64],[19,30],[3,30],[22,30],[96,30],
+                                    [27,30],[2,30],[82,43]] AS e
+                            MATCH (a:A {id: e[0]}), (b:A {id: e[1]})
+                            CREATE (a)-[:P]->(b)""")
+        self.get_res_and_assertEquals(
+            """CALL {
+                 MATCH p0 = ()-[*0..3]->({id: 87})
+                 OPTIONAL MATCH (n0)-[r0:rt5]->(n1)
+                 CREATE (n0)-[:rt8]->(n0)
+                 DETACH DELETE n0
+                 RETURN n0
+               }
+               RETURN count(*)""",
+            [[25]])
