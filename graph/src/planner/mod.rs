@@ -42,6 +42,7 @@ use std::{
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::optimizer::references::ir_references_variable;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -2856,11 +2857,39 @@ impl Planner {
         // `visited` untouched, which is correct: every variable the clause
         // mentions is already bound.
         let mut plans = Vec::with_capacity(q.len());
+        let mut prev_is_match = false;
         for ir in q {
             if self.is_redundant_optional_match(&ir) {
                 continue;
             }
-            plans.push(self.plan(ir));
+            // A MATCH right after another MATCH that shares no variable with
+            // anything bound so far is a Cartesian Product with it. Stitching
+            // would instead hang the earlier clause under this clause's scan,
+            // which drops it when the scan is later re-selected. Wrapping the
+            // plan in a one-branch Cartesian Product makes the stitcher add
+            // the earlier clause as a second branch, the plan the two clauses
+            // had when the parser still folded them into one pattern.
+            let bound = self.visited.clone();
+            let disjoint_match = prev_is_match
+                && matches!(
+                    &ir,
+                    QueryIR::Match { pattern, optional: false, .. }
+                        if !pattern
+                            .variables()
+                            .any(|v| bound.contains(&(v.id, v.scope_id)))
+                );
+            prev_is_match = matches!(
+                &ir,
+                QueryIR::Match {
+                    optional: false,
+                    ..
+                }
+            );
+            let mut plan = self.plan(ir);
+            if disjoint_match {
+                Self::join_as_cartesian_branch(&mut plan, &bound);
+            }
+            plans.push(plan);
         }
         // Stitch plans together in reverse: start from the last clause's plan
         // (the root), then insert each preceding plan at the deepest input slot.
@@ -2991,6 +3020,47 @@ impl Planner {
         Self::ensure_apply_has_input(&mut res);
 
         res
+    }
+
+    /// Make `plan`, a `MATCH` clause that binds none of `bound`, the one branch
+    /// of a Cartesian Product, below the filters that sit on top of it (its
+    /// `WHERE`, which may read the variables of the clause stitched in as the
+    /// other branch). Left as it is when an operator below those filters reads
+    /// one of `bound`: that one needs the earlier clause's rows as its input.
+    fn join_as_cartesian_branch(
+        plan: &mut DynTree<IR>,
+        bound: &HashSet<(u32, u32)>,
+    ) {
+        let mut idx = plan.root().idx();
+        while matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
+            bound
+                .iter()
+                .any(|&(id, scope)| ir_references_variable(plan.node(i).data(), id, scope))
+        });
+        if !reads_bound {
+            plan.node_mut(idx).push_parent(IR::CartesianProduct);
+        }
+    }
+
+    /// Does this `MATCH` plan join several components, i.e. is its operator
+    /// below any filters a Cartesian Product?
+    fn joins_components(plan: &DynTree<IR>) -> bool {
+        let mut idx = plan.root().idx();
+        while matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        matches!(plan.node(idx).data(), IR::CartesianProduct)
     }
 
     /// Returns true if a plan `n` being stitched into a CartesianProduct
@@ -3195,12 +3265,21 @@ impl Planner {
                     let all_visited = pattern
                         .variables()
                         .all(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    let any_visited = pattern
+                        .variables()
+                        .any(|v| self.visited.contains(&(v.id, v.scope_id)));
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
                     // set_argument_batch (Argument leaves are runtime-only
                     // leaf nodes that don't pull from children).
-                    if all_visited {
+                    //
+                    // The same holds when the clause has several components and
+                    // reads a variable an earlier clause bound: stitching would
+                    // otherwise make the earlier clause one more Cartesian
+                    // Product branch, and the components would rebind that
+                    // variable on their own instead of reading it.
+                    if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
                         Self::add_argument_to_leaves(&mut inner, None);
                         tree!(IR::Apply, inner)
