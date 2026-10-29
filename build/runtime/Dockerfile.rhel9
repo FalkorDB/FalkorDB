@@ -198,14 +198,35 @@ RUN microdnf update -y && \
 # groups in TLS 1.3, only ECDHE. On a host in FIPS mode OpenSSL's FIPS
 # provider checks every client's Diffie-Hellman key the slow way
 # (CVE-2024-41996), so a client could make each handshake expensive. redis has
-# no setting for TLS 1.3 groups, so this edits the system crypto policy's
-# OpenSSL file, which every TLS connection here reads. (crypto-policies' own
-# ECDHE-ONLY module would also drop RSA authentication in TLS 1.2, which the
-# RSA certificates gen-certs.sh makes need.)
-RUN p=/etc/crypto-policies/back-ends/opensslcnf.config && \
-    sed -e 's/:ffdhe[0-9]*//g' -e 's/:kEDH//g' -e 's/:kDHEPSK//g' "$(readlink -f "$p")" > "$p.new" && \
-    mv -f "$p.new" "$p" && \
-    if grep -E 'ffdhe|kEDH|kDHEPSK' "$p"; then echo "FAIL: finite-field DH is still enabled"; exit 1; fi && \
+# no setting for TLS 1.3 groups, so this changes the system crypto policy,
+# which every TLS connection here reads.
+#
+# The NO-FFDHE subpolicy drops the ffdhe groups and DHE-PSK, and
+# /etc/crypto-policies/config records DEFAULT:NO-FFDHE, so a later
+# update-crypto-policies keeps them off. A subpolicy cannot drop the TLS 1.2
+# DHE-RSA suites: crypto-policies turns removing DHE-RSA into -aRSA, which
+# would also refuse the RSA certificates gen-certs.sh makes (ECDHE-ONLY does
+# the same). So kEDH is taken out of the generated OpenSSL file, and the build
+# fails if any finite-field DH is left there. update-crypto-policies needs
+# Python: it is installed for this step only, and every package it brought in
+# is removed again.
+RUN printf '%s\n' \
+      '# No finite-field Diffie-Hellman in TLS (see build/runtime/Dockerfile.rhel9).' \
+      'group = -FFDHE-*' \
+      'key_exchange = -DHE -DHE-PSK' \
+      > /etc/crypto-policies/policies/modules/NO-FFDHE.pmod && \
+    rpm -qa --qf '%{NAME}\n' | sort > /tmp/rpms-before && \
+    microdnf install -y --setopt=install_weak_deps=0 crypto-policies-scripts && \
+    update-crypto-policies --no-reload --set DEFAULT:NO-FFDHE && \
+    rpm -qa --qf '%{NAME}\n' | sort | comm -13 /tmp/rpms-before - | xargs microdnf remove -y && \
+    microdnf clean all && \
+    if [ -n "$(rpm -qa --qf '%{NAME}\n' | sort | comm -3 /tmp/rpms-before -)" ]; then \
+        echo "FAIL: the packages update-crypto-policies needed are not all removed"; exit 1; fi && \
+    rm -f /tmp/rpms-before && \
+    p=/etc/crypto-policies/back-ends/opensslcnf.config && \
+    test -f "$p" && test ! -L "$p" && \
+    sed -i -e 's/:kEDH//g' "$p" && \
+    if grep -E 'ffdhe|kEDH|:kDHEPSK' "$p"; then echo "FAIL: finite-field DH is still enabled"; exit 1; fi && \
     openssl ciphers -v > /dev/null
 
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
