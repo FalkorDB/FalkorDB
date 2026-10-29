@@ -15,7 +15,7 @@ use crate::index::falkordb::versioned::{
     VersionedIndex,
 };
 use crate::index::index_docs::IndexDocs;
-use crate::index::{IndexQuery, IndexType};
+use crate::index::{IndexInfo, IndexQuery, IndexType};
 use crate::locks::WriteEscalation;
 use crate::planner::IR;
 use crate::runtime::functions::init_functions;
@@ -4034,4 +4034,48 @@ fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities
         delete_node_with_edges(&mut g, id);
     }
     assert_eq!(progress(&g), Some((2, 2)), "at most the label's");
+}
+
+/// A label whose Range attributes build together shows one build in `db.indexes()`, out of the
+/// label's nodes, as C does: as far as the column that has read the least, each `Building` column
+/// pending. Of six nodes, `v`'s column reads four before `w`'s is created: 0 of 6, two pending.
+/// One more batch on each: `v` is `Ready` and `w` has read four, so 4 of 6, one pending.
+#[test]
+fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
+    let v = Arc::new("v".to_string());
+    let w = Arc::new("w".to_string());
+    let (mut g, label, ids) = people_with(&v, &(0..6).collect::<Vec<_>>());
+    for &id in &ids {
+        set_attr(&mut g, id, &w, Value::Int(id as i64));
+    }
+    let column =
+        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let info = |g: &Graph| {
+        let range = |attr: &Arc<String>| {
+            let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
+            (attr.clone(), vec![Arc::new(field)])
+        };
+        let mut info = IndexInfo {
+            label: label.clone(),
+            pending: 0,
+            progress: 0,
+            total: 0,
+            fields: HashMap::from([range(&v), range(&w)]),
+            field_order: vec![v.clone(), w.clone()],
+            language: None,
+            stopwords: None,
+            entity_type: String::from("NODE"),
+        };
+        g.add_native_build(EntityType::Node, &mut info);
+        (info.pending, info.progress, info.total)
+    };
+    create_index_on(&mut g, &label, &v);
+    assert!(g.indexer_prepare(&column(&v), 4).is_some());
+    create_index_on(&mut g, &label, &w);
+    assert_eq!(info(&g), (2, 0, 6), "v read 4, w nothing");
+    assert!(g.indexer_prepare(&column(&v), 4).is_some());
+    assert!(g.indexer_prepare(&column(&w), 4).is_some());
+    assert_eq!(info(&g), (1, 4, 6), "v Ready, w read 4");
+    assert!(g.indexer_prepare(&column(&w), 4).is_some());
+    assert_eq!(info(&g), (0, 0, 0), "both Ready: nothing added");
 }
