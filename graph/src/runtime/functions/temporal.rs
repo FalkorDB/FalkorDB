@@ -25,12 +25,11 @@
 //!  Value::Date(ts)      -- seconds at midnight UTC of that date
 //!  Value::Time(ts)      -- seconds since epoch for 1970-01-01 + time
 //!  Value::Datetime(ts)  -- full UTC timestamp in seconds
-//!  Value::Duration(ts)  -- encoded as epoch + year/month offset + day/time
+//!  Value::Duration(p)   -- signed months, days and seconds packed in an i64
 //! ```
 //!
-//! Duration encoding uses `construct_duration_secs` to anchor the
-//! year/month components to a concrete date, then adds days and
-//! sub-day offsets.  `decompose_duration` reverses this for display.
+//! A duration keeps its months, days and seconds as independent signed
+//! components (openCypher / Neo4j semantics); see `pack_duration`.
 //!
 //! ## Date parsing modes
 //!
@@ -474,9 +473,158 @@ const fn days_from_civil(
     era as i64 * 146_097 + doe as i64 - 719_468
 }
 
-/// Construct a duration i64 (seconds from epoch) from components.
-/// The encoding stores the target datetime = epoch + years/months + days + time.
-pub fn construct_duration_secs(
+// A duration is three independent signed components, as in openCypher / Neo4j:
+// months (years * 12 + months), days (weeks * 7 + days) and seconds
+// (hours, minutes and seconds). No component ever borrows from or carries into
+// another, so `-1 day` stays `-1 day` and `P1M-3D` stays `P1M-3D`.
+//
+// `Dur` holds them in one 8-byte word so `Value` does not grow. Bit 0 tells the
+// two forms apart:
+//   * 1: inline. Months (13 bits), days (18) and seconds (32) packed, two's
+//     complement. This is every duration of a realistic size.
+//   * 0: the word is a pointer from `Arc::into_raw` to the three components as
+//     `i64`s, for a duration with a component too large to pack.
+// The form is canonical (inline exactly when the components fit), but every
+// consumer reads the components through `Dur::components` and never looks at
+// the form, so the two behave identically.
+
+const DUR_SEC_BITS: u32 = 32;
+const DUR_DAY_BITS: u32 = 18;
+const DUR_MONTH_BITS: u32 = 13;
+const DUR_MAX_SECONDS: i64 = (1 << (DUR_SEC_BITS - 1)) - 1;
+const DUR_MAX_DAYS: i64 = (1 << (DUR_DAY_BITS - 1)) - 1;
+const DUR_MAX_MONTHS: i64 = (1 << (DUR_MONTH_BITS - 1)) - 1;
+/// The most months a duration can hold (an `i32`, as before).
+const DUR_LIMIT_MONTHS: i64 = i32::MAX as i64;
+
+pub struct Dur(u64);
+
+// SAFETY: a `Dur` is either plain bits or an owned `Arc<[i64; 3]>`.
+unsafe impl Send for Dur {}
+unsafe impl Sync for Dur {}
+
+impl Dur {
+    /// Build a duration, refusing components whose length in seconds does not
+    /// fit an `i64` (or whose months do not fit an `i32`).
+    pub fn new(
+        months: i64,
+        days: i64,
+        seconds: i64,
+    ) -> Result<Self, String> {
+        let err =
+            || format!("Duration out of range: months={months}, days={days}, seconds={seconds}");
+        if months.unsigned_abs() > DUR_LIMIT_MONTHS as u64 {
+            return Err(err());
+        }
+        // The components must also be addable to a timestamp.
+        days.checked_mul(86400)
+            .and_then(|d| d.checked_add(seconds))
+            .and_then(|t| t.checked_abs())
+            .ok_or_else(err)?;
+        if months.unsigned_abs() <= DUR_MAX_MONTHS as u64
+            && days.unsigned_abs() <= DUR_MAX_DAYS as u64
+            && seconds.unsigned_abs() <= DUR_MAX_SECONDS as u64
+        {
+            let bits = ((months as u64) << (DUR_DAY_BITS + DUR_SEC_BITS + 1))
+                | ((days as u64 & ((1 << DUR_DAY_BITS) - 1)) << (DUR_SEC_BITS + 1))
+                | ((seconds as u64 & ((1 << DUR_SEC_BITS) - 1)) << 1)
+                | 1;
+            Ok(Self(bits))
+        } else {
+            let ptr = Arc::into_raw(Arc::new([months, days, seconds]));
+            Ok(Self(ptr as usize as u64))
+        }
+    }
+
+    /// The signed (months, days, seconds). The one way to read a duration.
+    #[inline]
+    pub fn components(&self) -> (i64, i64, i64) {
+        if self.0 & 1 == 1 {
+            Self::unpack_inline(self.0)
+        } else {
+            // SAFETY: bit 0 clear means a live `Arc<[i64; 3]>` pointer.
+            let a = unsafe { &*(self.0 as usize as *const [i64; 3]) };
+            (a[0], a[1], a[2])
+        }
+    }
+
+    #[inline]
+    const fn unpack_inline(bits: u64) -> (i64, i64, i64) {
+        let b = bits as i64;
+        let months = b >> (DUR_DAY_BITS + DUR_SEC_BITS + 1);
+        let days = (b << DUR_MONTH_BITS) >> (64 - DUR_DAY_BITS);
+        let seconds = (b << (DUR_MONTH_BITS + DUR_DAY_BITS)) >> (64 - DUR_SEC_BITS);
+        (months, days, seconds)
+    }
+
+    /// The word, when the duration is stored inline (for the attribute store).
+    #[inline]
+    pub const fn inline_bits(&self) -> Option<u64> {
+        if self.0 & 1 == 1 { Some(self.0) } else { None }
+    }
+
+    /// Rebuild a duration from `inline_bits`.
+    #[inline]
+    pub const fn from_inline_bits(bits: u64) -> Self {
+        debug_assert!(bits & 1 == 1);
+        Self(bits)
+    }
+}
+
+impl Clone for Dur {
+    #[inline]
+    fn clone(&self) -> Self {
+        if self.0 & 1 == 0 {
+            // SAFETY: a live pointer from `Arc::into_raw`.
+            unsafe { Arc::increment_strong_count(self.0 as usize as *const [i64; 3]) };
+        }
+        Self(self.0)
+    }
+}
+
+impl Drop for Dur {
+    #[inline]
+    fn drop(&mut self) {
+        if self.0 & 1 == 0 {
+            // SAFETY: a live pointer from `Arc::into_raw`, released once.
+            unsafe { drop(Arc::from_raw(self.0 as usize as *const [i64; 3])) };
+        }
+    }
+}
+
+impl PartialEq for Dur {
+    #[inline]
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.components() == other.components()
+    }
+}
+impl Eq for Dur {}
+
+impl std::hash::Hash for Dur {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        self.components().hash(state);
+    }
+}
+
+impl std::fmt::Debug for Dur {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        let (m, d, s) = self.components();
+        write!(f, "Dur({m}m {d}d {s}s)")
+    }
+}
+
+/// Build a duration from the user-facing components, normalising them the way
+/// Neo4j does: years into months, weeks into days, hours/minutes into seconds.
+pub fn construct_duration(
     years: i64,
     months: i64,
     weeks: i64,
@@ -484,49 +632,73 @@ pub fn construct_duration_secs(
     hours: i64,
     minutes: i64,
     seconds: i64,
-) -> Result<i64, String> {
-    let total_month_offset = years
+) -> Result<Dur, String> {
+    let overflow = || {
+        format!(
+            "Duration overflow: years={years}, months={months}, weeks={weeks}, days={days}, hours={hours}, minutes={minutes}, seconds={seconds}"
+        )
+    };
+    let total_months = years
         .checked_mul(12)
         .and_then(|y| y.checked_add(months))
-        .ok_or_else(|| format!("Duration overflow: years={years}, months={months}"))?;
-    let total_month_offset_i32: i32 = total_month_offset
-        .try_into()
-        .map_err(|_| format!("Duration out of range: years={years}, months={months}"))?;
-    let base_year = 1970i32
-        .checked_add(total_month_offset_i32.div_euclid(12))
-        .ok_or_else(|| format!("Duration out of range: years={years}, months={months}"))?;
-    let base_month = (total_month_offset_i32.rem_euclid(12) + 1) as u32;
-
-    let anchor_ts = days_from_civil(base_year, base_month, 1) * 86400;
-
-    let extra = weeks
+        .ok_or_else(overflow)?;
+    let total_days = weeks
         .checked_mul(7)
         .and_then(|w| w.checked_add(days))
-        .and_then(|wd| wd.checked_mul(86400))
-        .and_then(|s| hours.checked_mul(3600).and_then(|h| s.checked_add(h)))
-        .and_then(|s| minutes.checked_mul(60).and_then(|m| s.checked_add(m)))
+        .ok_or_else(overflow)?;
+    let total_seconds = hours
+        .checked_mul(3600)
+        .and_then(|h| minutes.checked_mul(60).and_then(|m| h.checked_add(m)))
         .and_then(|s| s.checked_add(seconds))
-        .ok_or_else(|| {
-            format!(
-                "Duration overflow: weeks={weeks}, days={days}, hours={hours}, minutes={minutes}, seconds={seconds}"
-            )
-        })?;
-    anchor_ts
-        .checked_add(extra)
-        .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .ok_or_else(overflow)?;
+    Dur::new(total_months, total_days, total_seconds)
 }
 
-/// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).
-pub const fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
-    let days = dur_secs.div_euclid(86400);
-    let time_of_day = dur_secs.rem_euclid(86400);
+/// Convert a duration stored with the legacy encoding (seconds from the Unix
+/// epoch of `epoch + years/months + days + time`, as written by the C engine
+/// and by earlier Rust versions) into components. The legacy decomposition is
+/// replayed exactly, so a stored value reads back as it did.
+pub fn duration_from_legacy(legacy: i64) -> Result<Dur, String> {
+    let days = legacy.div_euclid(86400);
+    let time_of_day = legacy.rem_euclid(86400);
     let (y, m, d) = crate::runtime::value::civil_from_days(days);
+    let months = i64::from(y - 1970) * 12 + i64::from(m) - 1;
+    let remaining = (i64::from(d) - 1) * 86400 + time_of_day;
+    Dur::new(months, remaining / 86400, remaining % 86400)
+}
 
-    let year_diff = y - 1970;
-    let month_diff = m as i32 - 1;
-    let remaining_secs = (d as i64 - 1) * 86400 + time_of_day;
+/// Encode a duration in the legacy epoch-offset form (what the compact
+/// result-set protocol carries, and what C writes). Components that cannot be
+/// expressed non-negatively borrow exactly as the C engine does.
+pub fn duration_to_legacy(dur: &Dur) -> i64 {
+    let (months, days, seconds) = dur.components();
+    let base_year = 1970i32.saturating_add(months.div_euclid(12) as i32);
+    let base_month = (months.rem_euclid(12) + 1) as u32;
+    days_from_civil(base_year, base_month, 1)
+        .wrapping_mul(86400)
+        .wrapping_add(days.wrapping_mul(86400))
+        .wrapping_add(seconds)
+}
 
-    Ok((year_diff, month_diff, remaining_secs))
+/// How a duration goes on the wire (RDB and effects).
+pub enum DurationWire {
+    /// The C engine's epoch-offset `time_t`, under `T_DURATION`.
+    Legacy(i64),
+    /// Signed (months, days, seconds), under `T_DURATION_V2`.
+    V2(i64, i64, i64),
+}
+
+/// A duration the legacy encoding holds losslessly is written in it, byte for
+/// byte what the C engine writes; any other (negative components, a day count
+/// past the month length, ...) is written as its components.
+pub fn duration_wire(dur: &Dur) -> DurationWire {
+    let legacy = duration_to_legacy(dur);
+    if duration_from_legacy(legacy).as_ref() == Ok(dur) {
+        DurationWire::Legacy(legacy)
+    } else {
+        let (m, d, s) = dur.components();
+        DurationWire::V2(m, d, s)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -615,12 +787,12 @@ pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
                     _ => {}
                 }
             }
-            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
             Ok(Value::Duration(ts))
         }
         Some(Value::String(s)) => {
             let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
-            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
             Ok(Value::Duration(ts))
         }
         Some(Value::Null) => Ok(Value::Null),
@@ -677,7 +849,7 @@ pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
     let hours = slot_to_int(&args[4]).unwrap_or(0);
     let minutes = slot_to_int(&args[5]).unwrap_or(0);
     let seconds = slot_to_int(&args[6]).unwrap_or(0);
-    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+    let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
     Ok(Value::Duration(ts))
 }
 
@@ -1064,5 +1236,232 @@ mod compact_parser_rejects_junk_tests {
     fn the_colon_time_form_is_untouched() {
         let t = parse_time_string("21:40:32").unwrap();
         assert_eq!((t.hour(), t.minute(), t.second()), (21, 40, 32));
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::{
+        Dur, DurationWire, construct_duration, duration_from_legacy, duration_to_legacy,
+        duration_wire,
+    };
+    use crate::runtime::value::Value;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    fn dur(
+        months: i64,
+        days: i64,
+        secs: i64,
+    ) -> Dur {
+        Dur::new(months, days, secs).unwrap()
+    }
+
+    fn v(
+        months: i64,
+        days: i64,
+        secs: i64,
+    ) -> Value {
+        Value::Duration(dur(months, days, secs))
+    }
+
+    fn is_inline(d: &Dur) -> bool {
+        d.inline_bits().is_some()
+    }
+
+    fn hash_of(d: &Value) -> u64 {
+        let mut h = DefaultHasher::new();
+        d.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn value_stays_sixteen_bytes() {
+        assert_eq!(std::mem::size_of::<Value>(), 16);
+        assert_eq!(std::mem::size_of::<Dur>(), 8);
+    }
+
+    #[test]
+    fn components_round_trip_in_both_forms() {
+        for m in [-4095, -13, -1, 0, 1, 13, 4095, 4096, -20_000, 2_000_000_000] {
+            for d in [
+                -131_071,
+                -3,
+                0,
+                3,
+                131_071,
+                131_072,
+                200_000,
+                -4_000_000_000_000,
+            ] {
+                for s in [
+                    -2_147_483_647,
+                    -86_401,
+                    0,
+                    86_401,
+                    2_147_483_647,
+                    2_147_483_648,
+                    9_000_000_000_000_000,
+                    -9_000_000_000_000_000,
+                ] {
+                    let x = dur(m, d, s);
+                    assert_eq!(x.components(), (m, d, s));
+                    assert_eq!(x.clone().components(), (m, d, s));
+                    let fits = m.abs() <= 4095 && d.abs() <= 131_071 && s.abs() <= 2_147_483_647;
+                    assert_eq!(is_inline(&x), fits, "{m} {d} {s}");
+                }
+            }
+        }
+        assert!(Dur::new(0, 0, i64::MAX).is_ok());
+        assert!(Dur::new(0, i64::MAX, 0).is_err());
+        assert!(Dur::new(i64::MAX, 0, 0).is_err());
+    }
+
+    #[test]
+    fn constructor_never_borrows_between_units() {
+        let p = construct_duration(0, 0, 0, -1, 0, 0, 0).unwrap();
+        assert_eq!(p.components(), (0, -1, 0));
+        let p = construct_duration(1, -14, 1, 0, 1, -90, 0).unwrap();
+        assert_eq!(p.components(), (-2, 7, -1800));
+    }
+
+    #[test]
+    fn large_components_keep_the_full_range() {
+        let h = construct_duration(0, 0, 0, 0, 600_000, 0, 0).unwrap();
+        assert_eq!(h.components(), (0, 0, 2_160_000_000));
+        assert!(!is_inline(&h));
+        assert_eq!(Value::format_duration(&h), "PT600000H");
+        let s = construct_duration(0, 0, 0, 0, 0, 0, 9_000_000_000_000_000).unwrap();
+        assert_eq!(Value::format_duration(&s), "PT2500000000000H");
+        let d = construct_duration(0, 0, 0, 200_000, 0, 0, 0).unwrap();
+        assert_eq!(Value::format_duration(&d), "P200000D");
+        let m = construct_duration(0, 10_000, 0, 0, 0, 0, 0).unwrap();
+        assert_eq!(Value::format_duration(&m), "P833Y4M");
+    }
+
+    #[test]
+    fn printing_uses_each_components_own_sign() {
+        for (m, d, s, want) in [
+            (0, -1, 0, "P-1D"),
+            (1, -3, 0, "P1M-3D"),
+            (0, 0, -3600, "PT-1H"),
+            (0, 0, -5400, "PT-1H-30M"),
+            (-13, 0, 0, "P-1Y-1M"),
+            (149, -14, 57_600, "P12Y5M-14DT16H"),
+            (0, 0, 90_000, "PT25H"),
+            (0, 0, 0, "PT0S"),
+            (
+                -10_000,
+                -200_000,
+                -2_160_000_000,
+                "P-833Y-4M-200000DT-600000H",
+            ),
+        ] {
+            assert_eq!(Value::format_duration(&dur(m, d, s)), want);
+        }
+    }
+
+    #[test]
+    fn issue_2745_rows() {
+        let Ok(Value::Duration(sum)) = v(0, 2, 0) + v(0, -3, 0) else {
+            panic!()
+        };
+        assert_eq!(Value::format_duration(&sum), "P-1D");
+        let date = Value::Date(1_583_020_800);
+        let Ok(Value::Date(d)) = date + Value::Duration(sum) else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-02-29");
+    }
+
+    #[test]
+    fn arithmetic_crosses_between_forms() {
+        // big - big that fits is the packed value, equal and hashing alike
+        let big_a = v(0, 0, 3_000_000_000);
+        let big_b = v(0, 0, 3_000_000_000 - 90);
+        let Ok(diff) = big_a.clone() - big_b else {
+            panic!()
+        };
+        let packed = v(0, 0, 90);
+        assert!(matches!(&diff, Value::Duration(d) if is_inline(d)));
+        assert_eq!(diff, packed);
+        assert_eq!(hash_of(&diff), hash_of(&packed));
+        // packed + packed that overflows the inline range becomes big
+        let Ok(sum) = v(0, 0, 2_000_000_000) + v(0, 0, 2_000_000_000) else {
+            panic!()
+        };
+        assert!(matches!(&sum, Value::Duration(d) if !is_inline(d)));
+        assert_eq!(sum, v(0, 0, 4_000_000_000));
+        assert_eq!(hash_of(&sum), hash_of(&v(0, 0, 4_000_000_000)));
+        // mixed big and negative
+        let Ok(Value::Duration(m)) =
+            v(-20_000, 300_000, -5_000_000_000) + v(20_000, -300_000, 5_000_000_001)
+        else {
+            panic!()
+        };
+        assert_eq!(m.components(), (0, 0, 1));
+        // overflow is an error
+        assert!((v(0, 0, i64::MAX) + v(0, 0, 1)).is_err());
+    }
+
+    #[test]
+    fn add_and_sub_a_negative_duration_are_calendar_correct() {
+        let date = Value::Date(1_583_020_800); // 2020-03-01
+        let Ok(Value::Date(d)) = date.clone() + v(-1, 0, 0) else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-02-01");
+        let Ok(Value::Date(d)) = date.clone() - v(-1, 0, 0) else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-04-01");
+        let Ok(Value::Datetime(t)) = Value::Datetime(1_583_056_800) + v(0, -1, -39_600) else {
+            panic!()
+        };
+        assert_eq!(Value::format_datetime(t), "2020-02-28T23:00:00");
+        // a big-form duration shifts dates the same way
+        let Ok(Value::Date(d)) = date + v(0, 200_000, 0) else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2567-09-30");
+    }
+
+    #[test]
+    fn duration_difference_keeps_components() {
+        let Ok(Value::Duration(p)) = v(1, 0, 0) - v(0, 3, 0) else {
+            panic!()
+        };
+        assert_eq!(Value::format_duration(&p), "P1M-3D");
+    }
+
+    #[test]
+    fn legacy_encoding_converts_losslessly_where_canonical() {
+        for p in [
+            dur(0, 0, 0),
+            dur(13, 2, 3_661),
+            dur(0, 1, 0),
+            dur(1, 0, 86_399),
+        ] {
+            let legacy = duration_to_legacy(&p);
+            assert_eq!(duration_from_legacy(legacy), Ok(p.clone()));
+            assert!(matches!(duration_wire(&p), DurationWire::Legacy(l) if l == legacy));
+        }
+        assert_eq!(duration_from_legacy(86_400), Ok(dur(0, 1, 0)));
+        for p in [
+            dur(0, -1, 0),
+            dur(0, 40, 0),
+            dur(0, 0, 90_000),
+            dur(0, 0, 3_000_000_000),
+        ] {
+            assert!(matches!(duration_wire(&p), DurationWire::V2(..)), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn ordering_follows_length() {
+        let lt = |a: Value, b: Value| a.sort_cmp(&b).is_lt();
+        assert!(lt(v(0, -1, 0), v(0, 1, 0)));
+        assert!(lt(v(0, 1, 0), v(0, 0, 90_000)));
+        assert!(lt(v(0, 40, 0), v(2, 0, 0)));
+        assert!(lt(v(0, 0, 2_000_000_000), v(0, 0, 3_000_000_000)));
     }
 }

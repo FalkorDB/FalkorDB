@@ -541,7 +541,7 @@ mod tests {
             Value::Date(18_262),
             Value::Datetime(1_577_836_800),
             Value::Time(3_600),
-            Value::Duration(86_400),
+            Value::Duration(crate::runtime::functions::temporal::Dur::new(0, 1, 0).unwrap()),
         ];
         let int_id = 99;
 

@@ -45,7 +45,7 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{construct_duration_secs, decompose_duration},
+            temporal::{Dur, DurationWire, duration_from_legacy, duration_wire},
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -243,8 +243,8 @@ pub enum Value {
     Date(i64),
     /// Time as seconds from epoch (base date 1970-01-01)
     Time(i64),
-    /// Duration as seconds from epoch (offset encoding)
-    Duration(i64),
+    /// Duration: signed months, days and seconds (see `temporal::Dur`)
+    Duration(Dur),
 }
 
 // Manual impl so clone stays inlineable in hot evaluation loops: every arm
@@ -268,7 +268,7 @@ impl Clone for Value {
             Self::Datetime(t) => Self::Datetime(*t),
             Self::Date(t) => Self::Date(*t),
             Self::Time(t) => Self::Time(*t),
-            Self::Duration(t) => Self::Duration(*t),
+            Self::Duration(t) => Self::Duration(t.clone()),
         }
     }
 }
@@ -326,17 +326,16 @@ impl Value {
     }
 
     #[must_use]
-    pub fn format_duration(duration_secs: i64) -> String {
+    pub fn format_duration(dur: &Dur) -> String {
         use std::fmt::Write;
-        let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
-            return format!("PT{duration_secs}S");
-        };
-        let days = remaining / 86400;
-        remaining %= 86400;
-        let hours = remaining / 3600;
-        remaining %= 3600;
-        let minutes = remaining / 60;
-        let seconds = remaining % 60;
+        // Each component is printed with its own sign, as Neo4j does:
+        // `P1M-3D`, `PT-1H-30M`.
+        let (total_months, days, secs) = dur.components();
+        let years = total_months / 12;
+        let months = total_months % 12;
+        let hours = secs / 3600;
+        let minutes = secs % 3600 / 60;
+        let seconds = secs % 60;
 
         let mut s = String::from("P");
         if years != 0 {
@@ -348,7 +347,7 @@ impl Value {
         if days != 0 {
             let _ = write!(s, "{days}D");
         }
-        if hours != 0 || minutes != 0 || seconds != 0 {
+        if secs != 0 {
             s.push('T');
             if hours != 0 {
                 let _ = write!(s, "{hours}H");
@@ -478,7 +477,7 @@ impl Value {
             Self::Datetime(ts) => Self::get_datetime_component(*ts, attr),
             Self::Date(ts) => Self::get_date_component(*ts, attr),
             Self::Time(ts) => Self::get_time_component(*ts, attr),
-            Self::Duration(dur) => Self::get_duration_component(*dur, attr),
+            Self::Duration(dur) => Self::get_duration_component(dur, attr),
             Self::Null => Ok(Self::Null),
             v => Err(format!(
                 "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
@@ -633,115 +632,97 @@ impl Value {
         Ok(Self::Int(val))
     }
 
-    /// Extract a component from a duration value (stored as seconds from
-    /// epoch).  Mirrors the C `Duration_getComponent` in `duration.c` which
-    /// calls `duration_from_time_t_utc` to decompose the raw value back into
-    /// calendar / clock fields.
+    /// Extract a component from a duration value. Each component is the one
+    /// `format_duration` prints (years and months split the months component,
+    /// hours/minutes/seconds split the seconds component), with its own sign.
     fn get_duration_component(
-        duration_secs: i64,
+        dur: &Dur,
         component: &str,
     ) -> Result<Self, String> {
-        use chrono::{Datelike, TimeZone, Utc};
-
-        // Fast-reject unknown components before doing any chrono work.
+        let (total_months, days, secs) = dur.components();
         let c = component;
-        if !(c.eq_ignore_ascii_case("years")
-            || c.eq_ignore_ascii_case("months")
-            || c.eq_ignore_ascii_case("weeks")
-            || c.eq_ignore_ascii_case("days")
-            || c.eq_ignore_ascii_case("hours")
-            || c.eq_ignore_ascii_case("minutes")
-            || c.eq_ignore_ascii_case("seconds"))
-        {
-            return Err(format!("unknown duration component {component}"));
-        }
-
-        // weeks is always 0 in the C decomposition — skip chrono entirely.
-        if c.eq_ignore_ascii_case("weeks") {
-            return Ok(Self::Float(0.0));
-        }
-
-        let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(duration_secs, 0) else {
-            return Ok(Self::Null);
-        };
-
-        // Decompose into years/months from epoch (1970-01-01) – mirrors the C
-        // logic in duration_from_time_t_utc.
-        let epoch_year: i32 = 1970;
-        let epoch_month: u32 = 1; // January
-
-        let mut year_diff = dt.year() - epoch_year;
-        let mut month_diff = dt.month() as i32 - epoch_month as i32;
-
-        // month_diff is always >= 0 (dt.month() is 1..=12, epoch_month is 1),
-        // but we keep this branch for parity with the C duration_from_time_t_utc.
-        if month_diff < 0 {
-            year_diff -= 1;
-            month_diff += 12;
-        }
-
-        // For years/months we already have the answer — skip the rest.
-        if c.eq_ignore_ascii_case("years") {
-            return Ok(Self::Float(f64::from(year_diff)));
-        }
-        if c.eq_ignore_ascii_case("months") {
-            return Ok(Self::Float(f64::from(month_diff)));
-        }
-
-        // Reconstruct an anchor date that has the same year/month offset from
-        // epoch but day=1, midnight – so the remainder gives us days + time.
-        let anchor = Utc
-            .with_ymd_and_hms(
-                epoch_year + year_diff,
-                (epoch_month as i32 + month_diff) as u32,
-                1,
-                0,
-                0,
-                0,
-            )
-            .single()
-            .ok_or_else(|| {
-                format!(
-                    "Invalid anchor date for duration decomposition (duration_secs={duration_secs})"
-                )
-            })?;
-
-        let remaining_secs = duration_secs - anchor.timestamp();
-
-        let val: f64 = if c.eq_ignore_ascii_case("days") {
-            (remaining_secs / 86400) as f64
+        let val = if c.eq_ignore_ascii_case("years") {
+            total_months / 12
+        } else if c.eq_ignore_ascii_case("months") {
+            total_months % 12
+        } else if c.eq_ignore_ascii_case("weeks") {
+            // Weeks are folded into days on construction.
+            0
+        } else if c.eq_ignore_ascii_case("days") {
+            days
         } else if c.eq_ignore_ascii_case("hours") {
-            ((remaining_secs % 86400) / 3600) as f64
+            secs / 3600
         } else if c.eq_ignore_ascii_case("minutes") {
-            ((remaining_secs % 3600) / 60) as f64
+            secs % 3600 / 60
+        } else if c.eq_ignore_ascii_case("seconds") {
+            secs % 60
         } else {
-            // "seconds"
-            (remaining_secs % 60) as f64
+            return Err(format!("unknown duration component {component}"));
         };
-
-        Ok(Self::Float(val))
+        Ok(Self::Float(val as f64))
     }
 }
 
-/// Add a duration (encoded as seconds-from-epoch offset) to a timestamp.
-/// Decomposes the duration into years, months, remaining seconds, applies them.
+/// Add a duration to a timestamp: months first (calendar-aware), then days
+/// and seconds as plain offsets.
 fn add_duration_to_timestamp(
     ts: i64,
-    dur_secs: i64,
+    dur: &Dur,
 ) -> Result<i64, String> {
-    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, years, months);
-    Ok(days * 86400 + time_of_day + remaining_secs)
+    let (months, dur_days, secs) = dur.components();
+    let out_of_range = || "Duration out of range".to_string();
+    let (days, time_of_day) = shift_months(ts, months)?;
+    days.checked_add(dur_days)
+        .and_then(|d| d.checked_mul(86400))
+        .and_then(|t| t.checked_add(time_of_day))
+        .and_then(|t| t.checked_add(secs))
+        .ok_or_else(out_of_range)
 }
 
-/// Subtract a duration from a timestamp.
+/// Subtract a duration from a timestamp; `d - dur == d + (-dur)`.
 fn sub_duration_from_timestamp(
     ts: i64,
-    dur_secs: i64,
+    dur: &Dur,
 ) -> Result<i64, String> {
-    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let (days, time_of_day) = shift_months(ts, -years, -months);
-    Ok(days * 86400 + time_of_day - remaining_secs)
+    add_duration_to_timestamp(ts, &negate_duration(dur)?)
+}
+
+/// Order two durations by their approximate total length (a month counts as
+/// 30.436875 days), breaking ties on the exact components so that the order
+/// agrees with equality.
+fn duration_cmp(
+    a: &Dur,
+    b: &Dur,
+) -> Ordering {
+    let approx = |d: &Dur| {
+        let (months, days, secs) = d.components();
+        i128::from(months) * 2_629_746 + i128::from(days) * 86400 + i128::from(secs)
+    };
+    approx(a)
+        .cmp(&approx(b))
+        .then(a.components().cmp(&b.components()))
+}
+
+/// Negate every component of a duration.
+fn negate_duration(dur: &Dur) -> Result<Dur, String> {
+    let (months, days, secs) = dur.components();
+    Dur::new(-months, -days, -secs)
+}
+
+/// Add (or, with `sign == -1`, subtract) two durations component by component.
+fn combine_durations(
+    a: &Dur,
+    b: &Dur,
+    sign: i64,
+) -> Result<Dur, String> {
+    let (ma, da, sa) = a.components();
+    let (mb, db, sb) = b.components();
+    let overflow = || "Duration overflow".to_string();
+    Dur::new(
+        ma.checked_add(sign * mb).ok_or_else(overflow)?,
+        da.checked_add(sign * db).ok_or_else(overflow)?,
+        sa.checked_add(sign * sb).ok_or_else(overflow)?,
+    )
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -751,14 +732,19 @@ fn sub_duration_from_timestamp(
 /// `d - dur == d + (-dur)`.
 fn shift_months(
     ts: i64,
-    years: i32,
-    months: i32,
-) -> (i64, i64) {
+    total_months: i64,
+) -> Result<(i64, i64), String> {
+    // Years far outside the calendar are an error, not a wrapped date.
+    let years = i32::try_from(total_months.div_euclid(12))
+        .ok()
+        .filter(|y| y.abs() < 1_000_000)
+        .ok_or_else(|| "Duration out of range".to_string())?;
+    let months = total_months.rem_euclid(12) as i32;
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y + years;
+    let new_year = y.saturating_add(years);
     let new_month_raw = m as i32 + months;
     let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
@@ -776,10 +762,10 @@ fn shift_months(
         (adj_year, adj_month, d)
     };
 
-    (
+    Ok((
         days_from_civil(final_year, final_month, final_day),
         time_of_day,
-    )
+    ))
 }
 
 const fn days_in_month(
@@ -1040,29 +1026,24 @@ impl Value {
             (Self::Map(_), _) | (_, Self::Map(_)) => {
                 Err("Cannot merge a map with a non-map value".to_string())
             }
-            // Duration + Duration: decompose both, add components
+            // Duration + Duration: add the components independently
             (Self::Duration(a), Self::Duration(b)) => {
-                let (ya, ma, sa) = decompose_duration(a)?;
-                let (yb, mb, sb) = decompose_duration(b)?;
-                let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
-                let years = total_months / 12;
-                let months = total_months % 12;
-                let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa + sb)?;
-                Ok(Self::Duration(ts))
+                Ok(Self::Duration(combine_durations(&a, &b, 1)?))
             }
             // Date/Datetime/Time + Duration and Duration + Date/Datetime/Time
             (Self::Date(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Date(d)) => {
-                Ok(Self::Date(add_duration_to_timestamp(d, dur)?))
+                Ok(Self::Date(add_duration_to_timestamp(d, &dur)?))
             }
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
-                Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
+                Ok(Self::Datetime(add_duration_to_timestamp(d, &dur)?))
             }
-            // A time has no date: keep only the time of day. Every duration
-            // encoding is whole days (years/months/days) plus a clock offset,
-            // so the time of day of `t + dur` is the openCypher result.
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
-                Self::Time((t.rem_euclid(86400) + dur.rem_euclid(86400)).rem_euclid(86400)),
-            ),
+            // A time has no date: months and days drop out and only the
+            // seconds component moves the time of day.
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
+                Ok(Self::Time(
+                    (t.rem_euclid(86400) + dur.components().2.rem_euclid(86400)).rem_euclid(86400),
+                ))
+            }
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1087,23 +1068,17 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                let (ya, ma, sa) = decompose_duration(a)?;
-                let (yb, mb, sb) = decompose_duration(b)?;
-                let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
-                let years = total_months / 12;
-                let months = total_months % 12;
-                let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa - sb)?;
-                Ok(Self::Duration(ts))
+                Ok(Self::Duration(combine_durations(&a, &b, -1)?))
             }
             // Date/Datetime/Time - Duration
             (Self::Date(d), Self::Duration(dur)) => {
-                Ok(Self::Date(sub_duration_from_timestamp(d, dur)?))
+                Ok(Self::Date(sub_duration_from_timestamp(d, &dur)?))
             }
             (Self::Datetime(d), Self::Duration(dur)) => {
-                Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
+                Ok(Self::Datetime(sub_duration_from_timestamp(d, &dur)?))
             }
             (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
-                (t.rem_euclid(86400) - dur.rem_euclid(86400)).rem_euclid(86400),
+                (t.rem_euclid(86400) - dur.components().2.rem_euclid(86400)).rem_euclid(86400),
             )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
@@ -1290,8 +1265,8 @@ impl CompareValue for Value {
             (Self::Int(a), Self::Int(b))
             | (Self::Datetime(a), Self::Datetime(b))
             | (Self::Date(a), Self::Date(b))
-            | (Self::Time(a), Self::Time(b))
-            | (Self::Duration(a), Self::Duration(b)) => (a.cmp(b), DisjointOrNull::None),
+            | (Self::Time(a), Self::Time(b)) => (a.cmp(b), DisjointOrNull::None),
+            (Self::Duration(a), Self::Duration(b)) => (duration_cmp(a, b), DisjointOrNull::None),
             // the inputs have different type - compare them if they
             // are both numerics of differing types
             (Self::Int(i), Self::Float(f)) => compare_floats(*i as f64, *f),
@@ -1567,8 +1542,8 @@ impl Value {
             (Self::Int(a), Self::Int(b))
             | (Self::Datetime(a), Self::Datetime(b))
             | (Self::Date(a), Self::Date(b))
-            | (Self::Time(a), Self::Time(b))
-            | (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
+            | (Self::Time(a), Self::Time(b)) => a.cmp(b),
+            (Self::Duration(a), Self::Duration(b)) => duration_cmp(a, b),
             (Self::Float(a), Self::Float(b)) => sort_cmp_f64(*a, *b),
             (Self::Int(i), Self::Float(f)) => sort_cmp_int_float(*i, *f),
             (Self::Float(f), Self::Int(i)) => sort_cmp_int_float(*i, *f).reverse(),
@@ -1799,7 +1774,7 @@ impl DisplayJson for Value {
                 write_json_string(f, &formatted)
             }
             Self::Duration(dur) => {
-                let formatted = Self::format_duration(*dur);
+                let formatted = Self::format_duration(dur);
                 write_json_string(f, &formatted)
             }
         }
@@ -2140,10 +2115,18 @@ impl Encode<19> for Value {
                 w.write_unsigned(si_type::T_TIME);
                 w.write_signed(*ts);
             }
-            Self::Duration(ts) => {
-                w.write_unsigned(si_type::T_DURATION);
-                w.write_signed(*ts);
-            }
+            Self::Duration(dur) => match duration_wire(dur) {
+                DurationWire::Legacy(t) => {
+                    w.write_unsigned(si_type::T_DURATION);
+                    w.write_signed(t);
+                }
+                DurationWire::V2(months, days, seconds) => {
+                    w.write_unsigned(si_type::T_DURATION_V2);
+                    w.write_signed(months);
+                    w.write_signed(days);
+                    w.write_signed(seconds);
+                }
+            },
             // Map, Node, Relationship, Path are not stored as properties
             Self::Null => {
                 w.write_unsigned(si_type::T_NULL);
@@ -2236,7 +2219,13 @@ fn decode_value(
         si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
         si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
         si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
-        si_type::T_DURATION => Ok(Value::Duration(r.read_signed()?)),
+        si_type::T_DURATION => Ok(Value::Duration(duration_from_legacy(r.read_signed()?)?)),
+        si_type::T_DURATION_V2 => {
+            let months = r.read_signed()?;
+            let days = r.read_signed()?;
+            let seconds = r.read_signed()?;
+            Ok(Value::Duration(Dur::new(months, days, seconds)?))
+        }
         _ => Err(format!("unknown SIType tag: {tag}")),
     }
 }
@@ -2477,7 +2466,7 @@ mod is_never_equal_tests {
             Value::Datetime(0),
             Value::Date(0),
             Value::Time(0),
-            Value::Duration(0),
+            Value::Duration(crate::runtime::functions::temporal::Dur::new(0, 0, 0).unwrap()),
             list(vec![]),
             list(vec![Value::Int(1), Value::Int(2)]),
             list(vec![Value::Int(1), Value::Null]),
@@ -2852,6 +2841,51 @@ mod nesting_tests {
             .unwrap()
             .join()
             .unwrap()
+    }
+
+    /// Durations with negative or non-canonical components must survive the
+    /// RDB round trip exactly (issue 2745); canonical ones keep the C wire tag.
+    #[test]
+    fn rdb_duration_round_trips_every_component() {
+        use crate::runtime::functions::temporal::construct_duration;
+        for (y, mo, w, d, h, mi, se) in [
+            (0, 0, 0, -1, 0, 0, 0),
+            (0, 1, 0, -3, 0, 0, 0),
+            (0, 0, 0, 0, -1, -30, 0),
+            (-1, -1, 0, 40, 25, 0, -7),
+            (1, 1, 0, 1, 1, 1, 1),
+            (0, 0, 0, 0, 0, 0, 0),
+            (0, 0, 0, 200_000, 600_000, 0, -5),
+            (-20_000, 0, 0, 0, 0, 0, 9_000_000_000_000_000),
+        ] {
+            let v = Value::Duration(construct_duration(y, mo, w, d, h, mi, se).unwrap());
+            let _ = &v;
+            let mut t = Tape::default();
+            v.encode(&mut t);
+            assert_eq!(Value::decode(&mut t).unwrap(), v);
+        }
+        // Canonical (non-negative, within the month) stays on the C tag.
+        let mut t = Tape::default();
+        Value::Duration(construct_duration(1, 1, 0, 1, 1, 1, 1).unwrap()).encode(&mut t);
+        assert_eq!(t.read_unsigned(), Ok(si_type::T_DURATION));
+        // Negative components need the packed tag.
+        let mut t = Tape::default();
+        Value::Duration(construct_duration(0, 0, 0, -1, 0, 0, 0).unwrap()).encode(&mut t);
+        assert_eq!(t.read_unsigned(), Ok(si_type::T_DURATION_V2));
+    }
+
+    /// A duration written by an earlier build (legacy epoch-offset encoding)
+    /// loads as the same calendar components it printed before.
+    #[test]
+    fn rdb_decode_reads_legacy_duration() {
+        // P1Y1M1DT1H1M1S as the C engine / old Rust stored it.
+        let legacy = 31_536_000 + 31 * 86_400 + 86_400 + 3661;
+        let mut t = Tape::default();
+        t.write_unsigned(si_type::T_DURATION);
+        t.write_signed(legacy);
+        let v = Value::decode(&mut t).unwrap();
+        let Value::Duration(p) = v else { panic!() };
+        assert_eq!(Value::format_duration(&p), "P1Y1M1DT1H1M1S");
     }
 
     #[test]

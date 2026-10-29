@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use thin_vec::ThinVec;
 
+use crate::runtime::functions::temporal::{Dur, DurationWire, duration_from_legacy, duration_wire};
 use crate::runtime::value::{Point, Value};
 
 use crate::graph::graphblas::serialization::si_type;
@@ -112,10 +113,18 @@ impl EffectEncode<3> for Value {
                 buf.u32(si_type::T_TIME as u32);
                 buf.i64(*ts);
             }
-            Value::Duration(d) => {
-                buf.u32(si_type::T_DURATION as u32);
-                buf.i64(*d);
-            }
+            Value::Duration(d) => match duration_wire(d) {
+                DurationWire::Legacy(t) => {
+                    buf.u32(si_type::T_DURATION as u32);
+                    buf.i64(t);
+                }
+                DurationWire::V2(months, days, seconds) => {
+                    buf.u32(si_type::T_DURATION_V2 as u32);
+                    buf.i64(months);
+                    buf.i64(days);
+                    buf.i64(seconds);
+                }
+            },
             // Nodes, edges and paths are never property values, so they cannot reach
             // an effect. Encoding one as NULL would corrupt the stream silently.
             other => panic!("value cannot appear in an effect: {other:?}"),
@@ -275,7 +284,15 @@ fn read_one(
         si_type::T_DATETIME => Value::Datetime(r.i64()?),
         si_type::T_DATE => Value::Date(r.i64()?),
         si_type::T_TIME => Value::Time(r.i64()?),
-        si_type::T_DURATION => Value::Duration(r.i64()?),
+        si_type::T_DURATION => Value::Duration(
+            duration_from_legacy(r.i64()?).map_err(|_| DecodeError::BadValueType(t as u32))?,
+        ),
+        si_type::T_DURATION_V2 => {
+            let (months, days, seconds) = (r.i64()?, r.i64()?, r.i64()?);
+            Value::Duration(
+                Dur::new(months, days, seconds).map_err(|_| DecodeError::BadValueType(t as u32))?,
+            )
+        }
         // Back to `u32` for the error: the tag is four bytes on the wire and
         // `other` was widened from exactly those, so this cannot truncate.
         other => return Err(DecodeError::BadValueType(other as u32)),
@@ -357,7 +374,14 @@ mod tests {
             Value::Datetime(1_700_000_000),
             Value::Date(19_000),
             Value::Time(3_600),
-            Value::Duration(90),
+            Value::Duration(Dur::new(0, 0, 90).unwrap()),
+            // components too large to pack inline
+            Value::Duration(Dur::new(0, 0, 9_000_000_000_000_000).unwrap()),
+            Value::Duration(Dur::new(-20_000, 300_000, -5_000_000_000).unwrap()),
+            // Negative, mixed-sign and non-canonical components (issue 2745)
+            Value::Duration(Dur::new(0, -1, 0).unwrap()),
+            Value::Duration(Dur::new(1, -3, 0).unwrap()),
+            Value::Duration(Dur::new(-13, 40, -5400).unwrap()),
         ];
         for case in cases {
             let mut buf = Vec::new();
