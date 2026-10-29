@@ -387,6 +387,11 @@ def profile(module, port, out, seconds, reuse, open_ui, name):
     # necessarily first. They run once, below, before the row is profiled.
     queries = _select((name,))
     query = next(q for q in queries if q.name == name)
+    if query.drains:
+        raise click.ClickException(
+            f"{name!r} deletes from a finite pool: profiling repeats it until the pool is empty, "
+            "then samples a query that deletes nothing. Use `measure` for it."
+        )
     prerequisites = [q for q in queries if q.name != name]
     out_path = Path(out) if out else RESULTS / f"profile_{query.name.replace(' ', '_')}.json.gz"
 

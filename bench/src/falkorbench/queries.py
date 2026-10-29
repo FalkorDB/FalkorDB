@@ -259,9 +259,10 @@ QUERIES = [
     Q("SET property",        True,  "MATCH (p:Person {id: 500}) SET p.age = 30 RETURN p.age", cg=True),
     Q("REMOVE",              True,  "MATCH (p:Person {id: 3}) SET p.tmp = 1 REMOVE p.tmp", cg=True),
     Q("create node",         True,  "CREATE (:Tmp {x: 1})", cg=True),
-    Q("delete node",         True,  "MATCH (t:Tmp) WITH t LIMIT 1 DELETE t", cg=True),
+    Q("delete node",         True,  "MATCH (t:Tmp) WITH t LIMIT 1 DELETE t", cg=True, drains=True),
     Q("create edge",         True,  "MATCH (a:Person {id: 0}), (b:Person {id: 1}) CREATE (a)-[:TKNOWS]->(b)"),
-    Q("delete edge",         True,  "MATCH (:Person {id: 0})-[r:TKNOWS]->() WITH r LIMIT 1 DELETE r"),
+    Q("delete edge",         True,  "MATCH (:Person {id: 0})-[r:TKNOWS]->() WITH r LIMIT 1 DELETE r",
+      drains=True),
 
     # ---- mixed clauses -----------------------------------------------------
     Q("aggregates",          False, "MATCH (p:Person) RETURN min(p.id), max(p.id), avg(p.score), sum(p.age), count(*)", cg=True),
@@ -665,11 +666,11 @@ QUERIES = [
     # nodes the create added.
     Q("create indexed node",   True, "CREATE (:WTmp {v: 1})"),
     Q("delete indexed node",   True, "MATCH (t:WTmp) WITH t LIMIT 1 DELETE t",
-      needs=("create indexed node",)),
+      needs=("create indexed node",), drains=True),
     # Mass delete — the `remove_batch` path, 100 nodes per rep. The label scan
     # yields ids in order, so each rep deletes the lowest 100 left: adjacent keys.
     # Explicit reps because this drains its pool (see the setup).
-    Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50),
+    Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50, drains=True),
     # A label added or removed moves a node in or out of that label's columns.
     # Each rep toggles the label, so every rep commits one direction; setting and
     # removing it in one query would cancel before the commit.
@@ -701,11 +702,11 @@ QUERIES = [
     Q("write 10",            True,  "UNWIND range(1, 10) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 100",           True,  "UNWIND range(1, 100) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 500),
     Q("create 100",          True,  "UNWIND range(1, 100) AS i CREATE (:Tmp {x: i})", 500),
-    Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500),
+    Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500, drains=True),
     Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
     Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
     Q("create 10k",          True,  "UNWIND range(1, 10000) AS i CREATE (:Tmp {x: i})", 50),
-    Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
+    Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50, drains=True),
     Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
     Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
 
