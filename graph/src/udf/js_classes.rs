@@ -126,14 +126,19 @@ fn collect_edges(
 }
 
 /// Create a JS Node object with id, labels, attributes properties and getNeighbors() method.
+///
+/// Labels and attributes are read through the runtime when one is given, so a
+/// node created, updated or deleted earlier in the same query looks the same
+/// to the UDF as it does to `labels(n)` / `n.prop`; otherwise from the
+/// committed graph.
 pub fn create_js_node<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
     graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
 
-    let g = graph.borrow();
     let nid = NodeId::from(node_id);
 
     // Hidden type markers
@@ -146,37 +151,22 @@ pub fn create_js_node<'js>(
     obj.set("id", node_id)
         .map_err(|e| format!("JS set error: {e}"))?;
 
-    // .labels - array of label strings
-    let labels_arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
-    for (i, label_name) in g.get_node_labels(nid).enumerate() {
-        labels_arr
-            .set(i, label_name.as_str())
-            .map_err(|e| format!("JS set error: {e}"))?;
+    // .labels and .attributes: through the runtime only when it can change
+    // the answer, otherwise straight from the committed graph.
+    if let Some(rt) = runtime.filter(|rt| rt.node_differs_from_committed(nid)) {
+        set_node_labels(ctx, &obj, rt.get_node_labels(nid).into_iter())?;
+        set_node_attrs(
+            ctx,
+            &obj,
+            rt.get_node_attrs(nid).into_iter(),
+            graph,
+            runtime,
+        )?;
+    } else {
+        let g = graph.borrow();
+        set_node_labels(ctx, &obj, g.get_node_labels(nid))?;
+        set_node_attrs(ctx, &obj, g.get_node_all_attrs(nid), graph, None)?;
     }
-    obj.set("labels", labels_arr)
-        .map_err(|e| format!("JS set error: {e}"))?;
-
-    // .attributes - object with all node properties
-    let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-    for (attr_name, value) in g.get_node_all_attrs(nid) {
-        let js_val = type_convert::value_to_js(ctx, &value, graph, None)?;
-        // Also expose the property directly on the node (node.name), unless it
-        // would shadow a reserved field.
-        let name = attr_name.as_str();
-        if !matches!(name, "id" | "labels" | "attributes" | "getNeighbors")
-            && !name.starts_with("__falkor")
-        {
-            obj.set(name, js_val.clone())
-                .map_err(|e| format!("JS set error: {e}"))?;
-        }
-        attrs_obj
-            .set(name, js_val)
-            .map_err(|e| format!("JS set error: {e}"))?;
-    }
-    obj.set("attributes", attrs_obj)
-        .map_err(|e| format!("JS set error: {e}"))?;
-
-    drop(g);
 
     // .getNeighbors(config?) method. A single shared JS function reads the
     // node id from `this.__falkor_node_id`; it is eval'd ONCE per context —
@@ -207,6 +197,49 @@ pub fn create_js_node<'js>(
         .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
 
     Ok(obj.into_value())
+}
+
+/// Set a JS node's `.labels` array.
+fn set_node_labels<'js>(
+    ctx: &Ctx<'js>,
+    obj: &Object<'js>,
+    labels: impl Iterator<Item = Arc<String>>,
+) -> Result<(), String> {
+    let labels_arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
+    for (i, label_name) in labels.enumerate() {
+        labels_arr
+            .set(i, label_name.as_str())
+            .map_err(|e| format!("JS set error: {e}"))?;
+    }
+    obj.set("labels", labels_arr)
+        .map_err(|e| format!("JS set error: {e}"))
+}
+
+/// Set a JS node's `.attributes` object, and each property directly on the
+/// node (node.name) unless it would shadow a reserved field.
+fn set_node_attrs<'js>(
+    ctx: &Ctx<'js>,
+    obj: &Object<'js>,
+    attrs: impl Iterator<Item = (Arc<String>, Value)>,
+    graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
+) -> Result<(), String> {
+    let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
+    for (attr_name, value) in attrs {
+        let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
+        let name = attr_name.as_str();
+        if !matches!(name, "id" | "labels" | "attributes" | "getNeighbors")
+            && !name.starts_with("__falkor")
+        {
+            obj.set(name, js_val.clone())
+                .map_err(|e| format!("JS set error: {e}"))?;
+        }
+        attrs_obj
+            .set(name, js_val)
+            .map_err(|e| format!("JS set error: {e}"))?;
+    }
+    obj.set("attributes", attrs_obj)
+        .map_err(|e| format!("JS set error: {e}"))
 }
 
 /// Create a JS Edge object with id, type, source, target, attributes.
@@ -254,8 +287,8 @@ pub fn create_js_edge<'js>(
         .map_err(|e| format!("JS set error: {e}"))?;
 
     // .source and .target - node objects
-    let source_node = create_js_node(ctx, src_id, graph)?;
-    let target_node = create_js_node(ctx, dst_id, graph)?;
+    let source_node = create_js_node(ctx, src_id, graph, runtime)?;
+    let target_node = create_js_node(ctx, dst_id, graph, runtime)?;
     obj.set("source", source_node)
         .map_err(|e| format!("JS set error: {e}"))?;
     obj.set("target", target_node)
@@ -305,7 +338,7 @@ pub fn create_js_path<'js>(
     for val in path_values {
         match val {
             Value::Node(nid) => {
-                let js_node = create_js_node(ctx, (*nid).into(), graph)?;
+                let js_node = create_js_node(ctx, (*nid).into(), graph, runtime)?;
                 nodes_arr
                     .set(node_idx, js_node)
                     .map_err(|e| format!("JS set error: {e}"))?;
@@ -482,7 +515,7 @@ fn js_get_neighbors<'js>(
             } else {
                 let neighbor_id = if *src_id == node_id { *dst_id } else { *src_id };
                 if seen_neighbors.insert(neighbor_id) {
-                    let js_node = create_js_node(ctx, neighbor_id, graph)?;
+                    let js_node = create_js_node(ctx, neighbor_id, graph, None)?;
                     results
                         .set(result_idx, js_node)
                         .map_err(|e| format!("JS set error: {e}"))?;
@@ -540,7 +573,7 @@ fn js_get_node_by_id_impl<'js>(
             g.node_count() > 0 && id <= g.max_node_id() && !g.is_node_deleted(NodeId::from(id))
         };
         if exists {
-            create_js_node(ctx, id, graph)
+            create_js_node(ctx, id, graph, None)
         } else {
             Ok(JsValue::new_null(ctx.clone()))
         }
@@ -594,7 +627,7 @@ fn js_iterate_nodes_impl<'js>(
 
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
         for (i, id) in ids.iter().enumerate() {
-            let js_node = create_js_node(ctx, *id, graph)?;
+            let js_node = create_js_node(ctx, *id, graph, None)?;
             arr.set(i, js_node)
                 .map_err(|e| format!("JS set error: {e}"))?;
         }
@@ -827,7 +860,7 @@ fn js_traverse_impl<'js>(
 
                 if return_type == "nodes" {
                     for &nid in &next_frontier {
-                        let js_node = create_js_node(ctx, nid, graph)?;
+                        let js_node = create_js_node(ctx, nid, graph, None)?;
                         inner_results
                             .set(result_idx, js_node)
                             .map_err(|e| format!("JS set error: {e}"))?;

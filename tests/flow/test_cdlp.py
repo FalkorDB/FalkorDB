@@ -515,3 +515,16 @@ class testCDLP(FlowTestsBase):
                                   RETURN id(node), communityId
                                   ORDER BY id(node)""").result_set
         self.env.assertEqual(res, [[0, 0], [2, 2], [3, 3]])
+
+    def test_unknown_label_or_relationship_type(self):
+        """An unknown nodeLabels / relationshipTypes entry is an error (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+        for config, msg in [("{nodeLabels: ['Nope']}", "labelPropagation configuration, unknown label Nope"),
+                            ("{nodeLabels: ['A', 'Nope']}", "labelPropagation configuration, unknown label Nope"),
+                            ("{relationshipTypes: ['Nope']}", "labelPropagation configuration, unknown relationship-type Nope")]:
+            try:
+                self.graph.query(f"CALL algo.labelPropagation({config}) YIELD node RETURN node")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), msg)

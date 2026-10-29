@@ -287,7 +287,7 @@ class testCentrality(FlowTestsBase):
         `AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second` (+ `lg_hll_count`
         apply / `lg_hll_delta` ewise) kernels. The tiny graphs in the tests above
         instead produce the A-bitmap `...eca` dot4 variant. Keeping both shapes
-        under test means `gen_prejit.sh` (which runs this suite with
+        under test means `native-deps prejit` (which runs this suite with
         `--features prejit_harvest`) re-harvests the full HLL PreJIT kernel set
         that ships in `build/graphblas/PreJIT/`; without this larger shape the
         benchmark-relevant `...ec6` kernel would never be exercised and would
@@ -320,3 +320,16 @@ class testCentrality(FlowTestsBase):
         # the final node has no outgoing edges -> score is exactly 0
         self.env.assertEqual(scores[N - 1], 0.0)
 
+
+    def test_unknown_label_or_relationship_type(self):
+        """An unknown nodeLabels / relationshipTypes entry is an error (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+        for config, msg in [("{nodeLabels: ['Nope']}", "harmonic centrality configuration contains non-existent label:Nope"),
+                            ("{nodeLabels: ['A', 'Nope']}", "harmonic centrality configuration contains non-existent label:Nope"),
+                            ("{relationshipTypes: ['Nope']}", "harmonic centrality configuration contains non-existent type:Nope")]:
+            try:
+                self.graph.query(f"CALL algo.HarmonicCentrality({config}) YIELD node RETURN node")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), msg)

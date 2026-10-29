@@ -81,6 +81,14 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+#[cfg(all(test, feature = "index-falkordb"))]
+use crate::index::falkordb::versioned::IndexId;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::{
+    falkordb_index::{BuildCursor, FalkorDbIndex},
+    graph_writes::{self, index_only_writes},
+};
+use crate::index::index_docs::IndexDocs;
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -90,7 +98,8 @@ use crate::{
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::Tensor,
+            tensor::{GrB_INDEX_MAX, Tensor},
+            vector::Vector,
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
@@ -282,8 +291,59 @@ pub enum NodeOpError {
     /// [`crate::graph::id_space`] — because half of it needs a batch and half of
     /// it needs only the recycle bin, and splitting them across two types is how
     /// the two halves drift apart.
-    #[error(transparent)]
-    IdSpace(#[from] IdSpaceError),
+    ///
+    /// `kind` lives here rather than in [`IdSpaceError`] because the id space
+    /// deliberately does not know which entity it counts — it is the same type
+    /// twice — while every method on this graph does.
+    ///
+    /// Worded for the person who sees it. Every variant of [`IdSpaceError`] is
+    /// an engine fault — none of them is something a query can ask for — so the
+    /// message leads with that and with the one fact that person needs, which is
+    /// that nothing was written. The arithmetic follows for whoever reads the
+    /// report.
+    #[error(
+        "internal error in the {kind} id space: {source}. No part of this write was applied. \
+         This is a bug in FalkorDB rather than a problem with the query — please report it"
+    )]
+    IdSpace {
+        kind: &'static str,
+        source: IdSpaceError,
+    },
+
+    /// A relationship the open batch created, and did not delete again, ends at
+    /// a node that is not live — freed, or never allocated.
+    ///
+    /// Checked once at the end of the batch by [`Graph::validate`], not per
+    /// record: a batch may legitimately name an endpoint it freed earlier, as
+    /// long as the relationship is gone again by the end (the effects buffer's
+    /// cancelled create/delete pair does exactly this). One left standing hangs
+    /// off a recycled id, and the next node to reclaim that id inherits it.
+    #[error(
+        "internal error: relationship {id} was left attached to a node that is not live. \
+         No part of this write was applied. This is a bug in FalkorDB rather than a problem \
+         with the query — please report it"
+    )]
+    DanglingRelationship { id: u64 },
+}
+
+impl NodeOpError {
+    /// The id-space refusal, as one about nodes.
+    #[must_use]
+    pub const fn node(source: IdSpaceError) -> Self {
+        Self::IdSpace {
+            kind: "node",
+            source,
+        }
+    }
+
+    /// The same, about relationships.
+    #[must_use]
+    pub const fn relationship(source: IdSpaceError) -> Self {
+        Self::IdSpace {
+            kind: "relationship",
+            source,
+        }
+    }
 }
 
 impl From<String> for NodeOpError {
@@ -312,14 +372,14 @@ pub struct Graph {
     node_cap: u64,
     /// Maximum relationship capacity (for matrix sizing)
     relationship_cap: u64,
-    /// Current count of active nodes
-    node_count: u64,
-    /// Current count of active relationships
-    relationship_count: u64,
-    /// Bitmap of deleted node IDs (for ID reuse)
-    deleted_nodes: RoaringTreemap,
-    /// Bitmap of deleted relationship IDs
-    deleted_relationships: RoaringTreemap,
+    /// The node id space: which ids are live, which are free, and what the
+    /// batch in flight has created. Every id this graph hands out or takes
+    /// back goes through it, and nothing else may move the two numbers the
+    /// boundary is made of.
+    node_ids: IdSpace,
+    /// The relationship id space. Same type, same rules — two counted ranges
+    /// with a free set is all either of them is.
+    relationship_ids: IdSpace,
     /// Empty matrix for operations
     zero_matrix: VersionedMatrix<bool>,
     /// Combined adjacency matrix (all relationship types)
@@ -383,6 +443,14 @@ pub struct Graph {
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
+    /// FalkorDB numeric indexes, folded into the graph version: `new_version`
+    /// forks them copy-on-write and the committed-version swap publishes graph +
+    /// index atomically.
+    ///
+    /// `pub(crate)` for `index::falkordb`: `graph_writes` reads it to stage changes and to read
+    /// build batches, and `FalkorDbIndex::apply` updates it.
+    #[cfg(feature = "index-falkordb")]
+    pub(crate) falkordb_index: FalkorDbIndex,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -675,7 +743,11 @@ fn populate_index_batch(
                 } else {
                     do_recurse = true;
                 }
-                // guard dropped here
+                // Hand the lock to a waiter, if any. The next batch re-takes it at once,
+                // and parking_lot (0.13+) lets a plain unlock's next locker barge ahead of
+                // a parked CREATE/DROP INDEX or index commit, which then waits out the
+                // whole population (#3548).
+                MutexGuard::unlock_fair(guard);
             }
 
             if do_recurse {
@@ -726,13 +798,23 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// bounds that slop while keeping resizes rare: each resize triggers
 /// GraphBLAS format conversions costing O(entries), so smaller growth
 /// steps measurably slow bulk inserts.
+///
+/// Never past `GrB_INDEX_MAX`, the largest dimension GraphBLAS accepts. The
+/// step is checked rather than wrapped: near the top of `u64` the unchecked
+/// `cap + cap / 4` wrapped, and because `cap` stays a multiple of the chunk it
+/// never reached `needed` again — an infinite loop in release. Ids that large
+/// are refused before they get here (`IdSpace::create`), so the clamp
+/// is what keeps a caller that forgets from hanging instead of failing. #2892.
 fn grow_cap(
     mut cap: u64,
     needed: u64,
 ) -> u64 {
     let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
-    while needed > cap {
-        cap = (cap + (cap / 4).max(chunk)).next_multiple_of(chunk);
+    while needed > cap && cap < GrB_INDEX_MAX {
+        cap = cap
+            .checked_add((cap / 4).max(chunk))
+            .and_then(|c| c.checked_next_multiple_of(chunk))
+            .map_or(GrB_INDEX_MAX, |c| c.min(GrB_INDEX_MAX));
     }
     cap
 }
@@ -750,10 +832,8 @@ impl Graph {
             name: name.to_string(),
             node_cap: n,
             relationship_cap: e,
-            node_count: 0,
-            relationship_count: 0,
-            deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: RoaringTreemap::new(),
+            node_ids: IdSpace::new(),
+            relationship_ids: IdSpace::new(),
             zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
             node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
@@ -775,6 +855,8 @@ impl Graph {
             constraints: Vec::new(),
             version,
             schema_version: 0,
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: FalkorDbIndex::new(),
         }
     }
 
@@ -850,17 +932,17 @@ impl Graph {
         }
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
-        let node_cap = node_count + deleted_nodes.len();
-        let relationship_cap = relationship_count + deleted_relationships.len();
+        let node_ids = IdSpace::restored(node_count, deleted_nodes);
+        let relationship_ids = IdSpace::restored(relationship_count, deleted_relationships);
+        let node_cap = node_ids.bound();
+        let relationship_cap = relationship_ids.bound();
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
         Self {
             name: name.to_string(),
             node_cap: node_cap.next_multiple_of(chunk).max(64),
             relationship_cap: relationship_cap.next_multiple_of(chunk).max(64),
-            node_count,
-            relationship_count,
-            deleted_nodes,
-            deleted_relationships,
+            node_ids,
+            relationship_ids,
             zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix,
             node_labels_matrix,
@@ -886,6 +968,10 @@ impl Graph {
             constraints: Vec::new(),
             version: 0,
             schema_version,
+            // Empty on restore: the RDB does not carry the index, so the
+            // populate path rebuilds it.
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: FalkorDbIndex::new(),
         }
     }
 
@@ -894,9 +980,23 @@ impl Graph {
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
-        // Resize all node-dimension matrices to match the restored graph capacity.
-        // Decoded matrices may have dimensions from the original graph's node_cap,
-        // which can differ from the restored node_cap.
+        // Decoded matrices keep the saving server's node_cap, which `grow_cap`
+        // leaves up to 25% past the highest node id, while `restore` sets
+        // node_cap from that id. Take the larger, so the resize below only
+        // grows: a load never shrinks a matrix, and `Tensor::resize` never has
+        // to drop entries (#3246).
+        let saved = std::iter::once(self.adjacancy_matrix.nrows())
+            .chain(std::iter::once(self.adjacancy_matrix.ncols()))
+            .chain(std::iter::once(self.node_labels_matrix.nrows()))
+            .chain(self.labels_matices.iter().map(VersionedMatrix::nrows))
+            .chain(
+                self.relationship_matrices
+                    .iter()
+                    .flat_map(|t| [t.nrows(), t.ncols()]),
+            )
+            .max()
+            .unwrap_or(0);
+        self.node_cap = self.node_cap.max(saved);
         self.resize_node_matrices();
         let rc = self.relationship_cap;
         self.relationship_type_matrix
@@ -939,10 +1039,12 @@ impl Graph {
             name: self.name.clone(),
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
-            node_count: self.node_count,
-            relationship_count: self.relationship_count,
-            deleted_nodes: self.deleted_nodes.clone(),
-            deleted_relationships: self.deleted_relationships.clone(),
+            // Cloned with a fresh batch: a version is where a batch begins, so
+            // the previous one's `created` set never reaches a published
+            // version — nor the memory it holds, which `GRAPH.MEMORY` does not
+            // count and no reader would ever look at.
+            node_ids: self.node_ids.new_version(),
+            relationship_ids: self.relationship_ids.new_version(),
             zero_matrix: self.zero_matrix.dup(),
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
@@ -966,6 +1068,8 @@ impl Graph {
             constraints: self.constraints.clone(),
             version: self.version + 1,
             schema_version: self.schema_version,
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: self.falkordb_index.clone(),
         }
     }
 
@@ -976,7 +1080,7 @@ impl Graph {
 
     #[must_use]
     pub const fn node_count(&self) -> u64 {
-        self.node_count
+        self.node_ids.live()
     }
 
     /// Returns the number of nodes with the given label.
@@ -993,7 +1097,7 @@ impl Graph {
 
     #[must_use]
     pub const fn relationship_count(&self) -> u64 {
-        self.relationship_count
+        self.relationship_ids.live()
     }
 
     /// Number of nodes with the given label (by label index).
@@ -1177,13 +1281,25 @@ impl Graph {
             return pos;
         }
 
-        self.relationship_types
-            .push(Arc::new(relationship_type.to_string()));
-        self.relationship_matrices.insert(
-            self.relationship_types.len() - 1,
-            Tensor::new(self.node_cap, self.node_cap),
-        );
-        TypeId(self.relationship_types.len() - 1)
+        self.register_relationship_type(Arc::new(relationship_type.to_string()))
+    }
+
+    /// Append a new relationship type: its name, its tensor, and the extra
+    /// column in `relationship_type_matrix` (relationships x types). Every
+    /// registration goes through here so none can skip the resize: a type
+    /// registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used to
+    /// leave the matrix a column short, and every later edge delete built a
+    /// removal mask the matrix refused, keeping the deleted edge's type (#3244).
+    fn register_relationship_type(
+        &mut self,
+        relationship_type: Arc<String>,
+    ) -> TypeId {
+        self.relationship_types.push(relationship_type);
+        let id = self.relationship_types.len() - 1;
+        self.relationship_matrices
+            .insert(id, Tensor::new(self.node_cap, self.node_cap));
+        self.resize();
+        TypeId(id)
     }
 
     pub fn get_plan(
@@ -1283,17 +1399,7 @@ impl Graph {
         relationship_type: &Arc<String>,
     ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
-            self.relationship_types.push(relationship_type.clone());
-
-            self.relationship_matrices.insert(
-                self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap),
-            );
-            // As for labels above: `relationship_type_matrix` is relationships
-            // x types, so registering a type changes one of its dimensions.
-            // `create_relationships_bulk` reconciles too, but that is the write
-            // catching up rather than the change accounting for itself.
-            self.resize();
+            self.register_relationship_type(relationship_type.clone());
         }
 
         self.relationship_types
@@ -1352,40 +1458,168 @@ impl Graph {
         self.attrs_name.get_index_of(attr)
     }
 
-    /// Hand a reserved id back, unused.
+    /// Hand a reserved node id back, unused.
     ///
-    /// The id goes to the recycle bin so the id space stays dense: it was
-    /// allocated, and if it simply vanished the next boundary would count an id
-    /// nothing holds. Nothing else has to be undone, because a reservation is
-    /// not state this graph keeps — see [`Self::reserve_nodes`].
-    pub fn return_node_id(
+    /// Nothing else has to be undone, because a reservation is not state this
+    /// graph keeps — see [`IdSpace::reserve`], which is also where the rule
+    /// that keeps the id from being re-issued inside the same commit lives.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError`], wrapped, if returning the id left the id space
+    /// contradicting itself.
+    pub(crate) fn cancel_node_id(
         &mut self,
         id: NodeId,
-    ) {
-        self.deleted_nodes.insert(id.into());
+    ) -> Result<(), NodeOpError> {
+        self.node_ids.cancel(id.into()).map_err(NodeOpError::node)?;
+        Ok(())
     }
 
-    pub fn return_relationship_id(
+    /// The same for relationships.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cancel_node_id`].
+    pub(crate) fn cancel_relationship_id(
         &mut self,
         id: RelationshipId,
-    ) {
-        self.deleted_relationships.insert(id.into());
+    ) -> Result<(), NodeOpError> {
+        self.relationship_ids
+            .cancel(id.into())
+            .map_err(NodeOpError::relationship)?;
+        Ok(())
     }
 
-    /// Open an id space against this graph's node boundary.
+    /// Begin a batch in both id spaces, at the boundary as it stands now.
     ///
-    /// The one place the boundary is turned into a batch, so a caller does not
-    /// have to know which of `node_count`, `max_node_id` or the recycle bin it
-    /// is derived from — and so a caller in another crate can have one at all.
+    /// A batch is the span an [`IdSpace`] judges as one: a whole effects buffer,
+    /// or one commit segment of a write query. Records inside one arrive grouped
+    /// by shape rather than ordered by id, so the space is legitimately
+    /// fragmented partway through and only has to be whole at the end — which is
+    /// what [`IdSpace::verify`] asks, through [`Self::node_id_space`].
+    ///
+    /// Both spaces together because every caller opens both: a query that
+    /// creates nodes may cascade into edges, and a buffer carries records of
+    /// either kind.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError`], wrapped, if either space already contradicts itself —
+    /// opening a batch over a corrupt one would re-anchor the boundary on the
+    /// bad value and hide it.
+    /// Private: a batch is only ever opened as part of closing one, so the only
+    /// production caller is [`Self::roll_id_batches`]. A version that has just
+    /// been forked opens its own through [`IdSpace::new_version`].
+    fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
+        self.node_ids.open_batch().map_err(NodeOpError::node)?;
+        self.relationship_ids
+            .open_batch()
+            .map_err(NodeOpError::relationship)?;
+        Ok(())
+    }
+
+    /// Close the open batch and begin the next one where it left the boundary.
+    ///
+    /// A batch is not a scope: the write path's batch ends and the next begins
+    /// at one instant, partway through one `next()` of a pull-based operator,
+    /// so there is no frame for a guard to wrap. One call rather than two so
+    /// the open cannot be kept while the check is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`] if the closing batch left an impossible id
+    /// space, or the next one would open over a space that contradicts itself.
+    pub(crate) fn roll_id_batches(&mut self) -> Result<(), NodeOpError> {
+        self.verify_id_batches()?;
+        self.open_id_batches()
+    }
+
+    /// Check everything this graph must be true about itself before a version
+    /// of it is published.
+    ///
+    /// Deliberately opaque: callers are told *that* a version is checked, not
+    /// what is checked, so an invariant added later needs no call-site change.
+    /// Today that is the id batches, and that every relationship the batch
+    /// created still ends at two live nodes; [`MvccGraph::commit`] is the
+    /// place a version becomes visible, and the effects apply path and
+    /// `GRAPH.BULK` ask it before that.
+    ///
+    /// # Errors
+    ///
+    /// The first refusal, naming the entity kind it is about.
+    pub fn validate(&self) -> Result<(), NodeOpError> {
+        self.verify_id_batches()?;
+        self.verify_created_relationships()
+    }
+
+    /// Check that every relationship this batch created, and did not delete
+    /// again, ends at two live nodes.
+    ///
+    /// Only the batch's own relationships: one that predates it was checked by
+    /// the batch that created it, and deleting a node with relationships is
+    /// refused before the node goes (implicitly by Cypher's `DELETE`, and by
+    /// the effects apply path's `NodeHasRelationships`). O(1) per created
+    /// relationship — an endpoint-index lookup and two liveness probes.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::DanglingRelationship`] naming the lowest such id.
+    fn verify_created_relationships(&self) -> Result<(), NodeOpError> {
+        let rels = &self.relationship_ids;
+        let nodes = &self.node_ids;
+        // Between batches the node space is dense, so live is "below the
+        // boundary and not free".
+        let bound = nodes.bound();
+        let free = nodes.recycled();
+        // The probes are most of the cost, and the ordinary bulk create has
+        // nothing free on either side: skip them there.
+        let check_free = !free.is_empty();
+        let live = |n: u64| n < bound && !(check_free && free.contains(n));
+        let skip_freed = !rels.recycled().is_empty();
+        // `taken` is untrimmed and also holds what the batch released again
+        // (a cancelled reservation, a create then delete) — those are free.
+        for id in rels.taken() {
+            if skip_freed && rels.is_free(id) {
+                continue;
+            }
+            if !self
+                .endpoints_for_edge(id)
+                .is_some_and(|(src, dst)| live(src) && live(dst))
+            {
+                return Err(NodeOpError::DanglingRelationship { id });
+            }
+        }
+        Ok(())
+    }
+
+    /// Check that both batches left possible id spaces behind.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`], naming which of the two disagreed.
+    fn verify_id_batches(&self) -> Result<(), NodeOpError> {
+        self.node_ids.verify().map_err(NodeOpError::node)?;
+        self.relationship_ids
+            .verify()
+            .map_err(NodeOpError::relationship)?;
+        Ok(())
+    }
+
+    /// The node id space, to ask it something this graph has no opinion about.
+    ///
+    /// Read-only. Every way of *moving* an id is a method on this graph, so a
+    /// caller holding this cannot take one: it can check the batch
+    /// ([`IdSpace::verify`]) and read the boundary, and that is the whole of it.
     #[must_use]
-    pub fn open_node_id_space(&self) -> IdSpace {
-        IdSpace::at(self.node_id_bound())
+    pub const fn node_id_space(&self) -> &IdSpace {
+        &self.node_ids
     }
 
     /// The same for relationships.
     #[must_use]
-    pub fn open_relationship_id_space(&self) -> IdSpace {
-        IdSpace::at(self.relationship_id_bound())
+    pub const fn relationship_id_space(&self) -> &IdSpace {
+        &self.relationship_ids
     }
 
     /// Where the node id space ends: ids below were handed out, ids at or above
@@ -1393,13 +1627,13 @@ impl Graph {
     /// — which is exactly when an [`IdSpace`] is opened against it.
     #[must_use]
     pub fn node_id_bound(&self) -> u64 {
-        self.node_count + self.deleted_nodes.len()
+        self.node_ids.bound()
     }
 
     /// The same for relationships.
     #[must_use]
     pub fn relationship_id_bound(&self) -> u64 {
-        self.relationship_count + self.deleted_relationships.len()
+        self.relationship_ids.bound()
     }
 
     /// Create every node in `nodes` as part of a batch, or refuse and change
@@ -1418,66 +1652,42 @@ impl Graph {
     /// its own is what stops a caller handing over a boundary that disagrees with
     /// the batch it is handing over with it.
     ///
-    /// A caller with no batch wants [`Self::mark_nodes_live`], which is a
-    /// different question rather than this one with a piece missing: its ids came
-    /// from [`Self::reserve_nodes`], so there is nothing a check could tell it
-    /// that the allocator did not already guarantee.
+    /// There is no unchecked way in. Every caller has a batch — the graph's own,
+    /// opened when the version was forked and rolled by [`Self::roll_id_batches`]
+    /// — so the check and the state move together and a caller cannot forget one.
     ///
     /// # Errors
     ///
     /// [`IdSpaceError::AlreadyLive`], wrapped, for the lowest id it cannot
-    /// create — one already handed out and not freed. Refusing is the point:
-    /// [`Self::mark_nodes_live`] moves the counters unconditionally, so an
-    /// already-live id used to double-count silently and shift every later fresh
-    /// id. A caller cannot forget the check when the operation itself is the
-    /// check.
+    /// create — one already handed out and not freed. Refusing is the point: the
+    /// live count moves unconditionally, so an already-live id used to
+    /// double-count silently and shift every later fresh id.
     ///
     /// [`NodeOpError::IdSpace`] if the ids do not fit the batch — see
     /// [`crate::graph::id_space`].
     pub fn create_nodes(
         &mut self,
         nodes: &RoaringTreemap,
-        id_space: &mut IdSpace,
     ) -> Result<(), NodeOpError> {
-        // One call, checked and recorded together. The bin is this graph's half
-        // of "is it live" and it is handed over; the boundary is the batch's, and
-        // the batch keeps it. An id reaches the graph through this function or
-        // not at all, so nothing that creates a node can be added later and
-        // forget to account for it.
-        id_space.record_created(nodes, &self.deleted_nodes)?;
-        self.mark_nodes_live(nodes);
+        // One call, checked and moved together. The bin and the live count are
+        // this graph's half of the boundary and they are handed over; the
+        // boundary as it stood is the batch's, and the batch keeps it. An id
+        // reaches the graph through this function or not at all, so nothing that
+        // creates a node can be added later and forget to account for it.
+        self.node_ids.create(nodes).map_err(NodeOpError::node)?;
+        self.grow_for_nodes(nodes);
         Ok(())
     }
 
-    /// Move `nodes` from reserved to live, and size the matrices to hold them.
+    /// Size the matrices to hold `nodes`.
     ///
-    /// Also the write path's entry point, where it is deliberately unchecked.
-    /// What the two create paths have in common is this and only this — they
-    /// differ in what they check *before* it, not in what they do. Factoring the
-    /// check instead meant a boundary parameter with `0` standing for "do not
-    /// check", which is a value pretending to be a mode: it made the unchecked
-    /// path return a `Result` that could not be anything but `Ok`, and left the
-    /// reader to work out why.
-    ///
-    /// Putting the ids through [`Self::create_nodes`] instead does not work, and
-    /// it is worth saying why because it looks like it should. [`IdSpace`]'s
-    /// invariant is that every id from the entry boundary upward was created by
-    /// the batch, and a *cancelled reservation* is an id handed out and never
-    /// created — so `CREATE (a)-[:R]->(b) DELETE b` breaks it by construction.
-    /// Both placements were measured: with the space opened at commit the check
-    /// refuses a's id 0 as `AlreadyLive`, and with it opened before the
-    /// reservation `verify` refuses the result as
-    /// `Miscounted { graph_bound: 2, expected: 1 }` — either way a legitimate
-    /// query. The hole is real and `IdSpace` is right to reject it; the two
-    /// paths ask genuinely different questions. Making one path of them means
-    /// giving `IdSpace` the reservations too, which is #2839.
-    pub fn mark_nodes_live(
+    /// The ledger half of the same transition is [`IdSpace::create`] and the two
+    /// are always a pair, so this is private and [`Self::create_nodes`] is the
+    /// only way in.
+    fn grow_for_nodes(
         &mut self,
         nodes: &RoaringTreemap,
     ) {
-        self.node_count += nodes.len();
-        self.deleted_nodes -= nodes;
-
         // Ensure capacity covers the highest node ID (effects replay may
         // insert IDs above the current count when applied one-by-one).
         if let Some(max_id) = nodes.max() {
@@ -1493,18 +1703,12 @@ impl Graph {
 
     #[must_use]
     pub fn max_node_id(&self) -> u64 {
-        if self.node_count == 0 {
-            return 0;
-        }
-        self.node_count + self.deleted_nodes.len() - 1
+        self.node_ids.max_id()
     }
 
     #[must_use]
     pub fn max_relationship_id(&self) -> u64 {
-        if self.relationship_count == 0 {
-            return 0;
-        }
-        self.relationship_count + self.deleted_relationships.len() - 1
+        self.relationship_ids.max_id()
     }
 
     /// Set node attributes from a record's row-major layout.
@@ -1545,8 +1749,14 @@ impl Graph {
         label_ids: &[u64],
         attr_ids: &[u16],
         rows: &[Value],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_docs = &mut docs.node_adds;
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native.extend(graph_writes::node_rows_set(
+            self, ids, label_ids, attr_ids, rows,
+        ));
         let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
 
         if self.node_indexer.has_indices() {
@@ -1573,8 +1783,13 @@ impl Graph {
     pub fn set_nodes_attributes(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_docs = &mut docs.node_adds;
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::node_attrs_set(self, attrs));
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
@@ -1606,9 +1821,14 @@ impl Graph {
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         new_labels: &FxHashMap<u64, Vec<u64>>,
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_docs = &mut docs.node_adds;
         let nset = self.node_attrs.import_attrs(attrs);
+
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::new_node_attrs(self, attrs, new_labels));
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1649,8 +1869,13 @@ impl Graph {
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
         label_ids: &[LabelId],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_docs = &mut docs.node_adds;
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::bulk_node_attrs(self, data, label_ids));
+
         if self.node_indexer.has_indices() {
             for (id, attrs) in data.iter() {
                 for label_id in label_ids {
@@ -1726,8 +1951,13 @@ impl Graph {
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
         type_id: TypeId,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_edge_docs = &mut docs.edge_adds;
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::bulk_edge_attrs(self, data, type_id));
+
         self.track_edge_index_updates_of_type(
             type_id,
             data.iter().map(|(id, attrs)| (id, attrs)),
@@ -1747,9 +1977,15 @@ impl Graph {
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> usize {
+        let index_add_edge_docs = &mut docs.edge_adds;
         let nset = self.relationship_attrs.import_attrs(attrs);
+
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::new_edge_attrs(self, attrs));
+
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         nset
     }
@@ -1828,9 +2064,14 @@ impl Graph {
         &mut self,
         ids: &[u64],
         label_ids: &[u64],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
         all_new: bool,
     ) {
+        let index_add_docs = &mut docs.node_adds;
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::labels_product_added(self, ids, label_ids));
+
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
         // of `node_labels` and `node_indexer` end first.
@@ -1902,10 +2143,15 @@ impl Graph {
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
         all_new: bool,
     ) {
+        let index_add_docs = &mut docs.node_adds;
         self.resize();
+
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::labels_added(self, label_rows, label_cols));
 
         // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
@@ -1943,9 +2189,14 @@ impl Graph {
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
-        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) {
+        let remove_docs = &mut docs.node_removes;
         self.resize();
+
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::labels_removed(self, label_rows, label_cols));
 
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
@@ -1971,16 +2222,21 @@ impl Graph {
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
-        id_space: &IdSpace,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedNodeLabel>, NodeOpError> {
-        // Both halves of "is this node live", and both belong to the id space:
-        // the bin's half needs only the bin, so it is asked whether or not there
-        // is a batch, and the boundary's half needs one.
-        IdSpace::refuse_recycled(deleted_nodes, &self.deleted_nodes)?;
-        id_space.refuse_undeletable(deleted_nodes)?;
-        self.deleted_nodes |= deleted_nodes;
-        self.node_count -= deleted_nodes.len();
+        let remove_docs = &mut docs.node_removes;
+        // Judged and freed together: every id asked for is refused or none is,
+        // and the ones that survive that leave the live count and enter the bin
+        // in one step. Nodes resolve exactly, so the two sets are one.
+        self.node_ids
+            .release(deleted_nodes, deleted_nodes)
+            .map_err(NodeOpError::node)?;
+
+        // After the release, so a refused delete leaves the index untouched too, and before
+        // the teardown below, while the labels and attributes are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::nodes_deleted(self, deleted_nodes));
 
         // Every removal below is a per-entity tombstone, and every lookup below
         // is a row seek. Nothing here touches an entry that does not belong to a
@@ -2065,6 +2321,65 @@ impl Graph {
                 let dest_node = NodeId(dest);
                 (src_node, dest_node, RelationshipId(id))
             })
+    }
+
+    /// The lowest of `nodes` that still has a relationship, in either direction.
+    ///
+    /// Two questions, each answered in bulk with a cost that follows `nodes`
+    /// rather than the graph: whether any of them has one at all, and — only
+    /// when one does, which is a refusal — which is the lowest.
+    ///
+    /// * Outgoing: the graph-wide adjacency matrix, which is exact for this (a
+    ///   pair leaves it when its last edge of any type goes), so one matrix
+    ///   answers for every type.
+    /// * Incoming: that matrix is stored by row, and a column question asked of
+    ///   it visits every row. Each type's backward adjacency holds the same
+    ///   pairs by destination, so the incoming side asks those instead —
+    ///   one bulk product per type, each following `nodes`.
+    ///
+    /// Both are `Aᵀ·x` over the indicator `x` of `nodes`, which GraphBLAS
+    /// computes by pushing just the selected rows.
+    #[must_use]
+    pub fn first_node_with_relationships(
+        &self,
+        nodes: &RoaringTreemap,
+    ) -> Option<u64> {
+        let adj = &self.adjacancy_matrix;
+        if nodes.is_empty() || adj.nvals() == 0 {
+            return None;
+        }
+        // An id past the matrices has neither a row nor a column.
+        let n = adj.nrows();
+        let ids: Vec<u64> = nodes.iter().take_while(|&id| id < n).collect();
+        if ids.is_empty() {
+            return None;
+        }
+        let x = Vector::<bool>::from_sorted_indices(n, &ids);
+        let touched = adj.count_in_rows(&x) > 0
+            || self
+                .relationship_matrices
+                .iter()
+                .any(|t| t.count_pairs_into(&x) > 0);
+        if !touched {
+            return None;
+        }
+
+        // Some node in the set has a relationship, and the buffer will be
+        // refused: find the lowest, re-seeking one iterator per matrix.
+        let mut out = adj.iter(0, 0);
+        let mut inc: Vec<_> = self
+            .relationship_matrices
+            .iter()
+            .map(|t| t.iter(0, 0, true))
+            .collect();
+        ids.into_iter().find(|&id| {
+            out.seek(id, id);
+            out.next().is_some()
+                || inc.iter_mut().any(|it| {
+                    it.seek(id, id);
+                    it.next().is_some()
+                })
+        })
     }
 
     /// Returns an iterator over all relationship tensors (one per type).
@@ -2184,14 +2499,14 @@ impl Graph {
             // already answers the question, and maintaining a parallel
             // GraphBLAS diagonal made every write pay structural upkeep
             // proportional to the graph rather than to the write.
-            if self.node_count == 0 {
+            if self.node_ids.live() == 0 {
                 return Box::new(std::iter::empty());
             }
             let max_id = self.max_node_id();
-            if self.deleted_nodes.is_empty() {
+            if self.node_ids.recycled().is_empty() {
                 return Box::new((min_row..=max_id).map(NodeId));
             }
-            let deleted = self.deleted_nodes.clone();
+            let deleted = self.node_ids.recycled().clone();
             return Box::new(
                 (min_row..=max_id)
                     .filter_map(move |id| (!deleted.contains(id)).then_some(NodeId(id))),
@@ -2304,19 +2619,41 @@ impl Graph {
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
-        id_space: &mut IdSpace,
     ) -> Result<(), NodeOpError> {
-        let ids: RoaringTreemap = rel_ids.iter().copied().collect();
-        id_space.record_created(&ids, &self.deleted_relationships)?;
-        let count = srcs.len() as u64;
-        self.relationship_count += count;
-
-        for &id in rel_ids {
-            if self.deleted_relationships.is_empty() {
-                break;
-            }
-            self.deleted_relationships.remove(id);
+        // The three slices are read positionally below — `set_all_from_slices`,
+        // the endpoint index and the type matrix each walk all of `rel_ids`,
+        // zipped against `srcs` and `dsts`. The id space is told about the ids
+        // as a *set*. Nothing reconciles those two readings, so a caller that
+        // breaks either one makes them describe different graphs: `[0, 0]`
+        // counts one relationship and builds two tensor edges under the one id,
+        // and a short `srcs` silently truncates the zips while the id space has
+        // already counted every id.
+        //
+        // Refused rather than reconciled, because every shape that gets here is
+        // malformed and there is no reading of it to prefer. It matters most on
+        // `effects/v3/apply.rs`, where the ids arrive off the wire in a decoded
+        // `IdList` — the one caller whose input this process did not produce.
+        if srcs.len() != rel_ids.len() || dsts.len() != rel_ids.len() {
+            return Err(NodeOpError::Graph(format!(
+                "bulk relationship create got {} ids, {} sources and {} destinations; \
+                 the three must describe the same edges",
+                rel_ids.len(),
+                srcs.len(),
+                dsts.len()
+            )));
         }
+        let ids: RoaringTreemap = rel_ids.iter().copied().collect();
+        if ids.len() != rel_ids.len() as u64 {
+            return Err(NodeOpError::Graph(format!(
+                "bulk relationship create got {} ids of which only {} are distinct; \
+                 an id names one edge",
+                rel_ids.len(),
+                ids.len()
+            )));
+        }
+        self.relationship_ids
+            .create(&ids)
+            .map_err(NodeOpError::relationship)?;
 
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id + 1;
@@ -2445,8 +2782,13 @@ impl Graph {
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_edge_docs = &mut docs.edge_adds;
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::edge_attrs_set(self, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2467,8 +2809,13 @@ impl Graph {
         &mut self,
         type_id: TypeId,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
-        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        docs: &mut IndexDocs,
     ) -> Result<(usize, usize), String> {
+        let index_add_edge_docs = &mut docs.edge_adds;
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::edge_attrs_set_of_type(self, type_id, attrs));
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
@@ -2479,27 +2826,27 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> bool {
-        self.deleted_nodes.contains(id.0)
+        self.node_ids.is_free(id.0)
     }
 
     #[must_use]
     pub fn deleted_nodes_count(&self) -> u64 {
-        self.deleted_nodes.len()
+        self.node_ids.recycled_count()
     }
 
     #[must_use]
     pub const fn deleted_nodes(&self) -> &RoaringTreemap {
-        &self.deleted_nodes
+        self.node_ids.recycled()
     }
 
     #[must_use]
     pub fn deleted_relationships_count(&self) -> u64 {
-        self.deleted_relationships.len()
+        self.relationship_ids.recycled_count()
     }
 
     #[must_use]
     pub const fn deleted_relationships(&self) -> &RoaringTreemap {
-        &self.deleted_relationships
+        self.relationship_ids.recycled()
     }
 
     #[must_use]
@@ -2522,22 +2869,18 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> bool {
-        self.deleted_relationships.contains(id.0)
+        self.relationship_ids.is_free(id.0)
     }
 
     pub fn delete_relationships(
         &mut self,
         rels: &RoaringTreemap,
-        index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-        id_space: &IdSpace,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedEdge>, NodeOpError> {
+        let index_remove_edge_docs = &mut docs.edge_removes;
         if rels.is_empty() {
             return Ok(Vec::new());
         }
-        // Both halves of "is this relationship live", exactly as the node side
-        // asks them: the bin needs no batch, the boundary needs one.
-        IdSpace::refuse_recycled(rels, &self.deleted_relationships)?;
-        id_space.refuse_undeletable(rels)?;
         let num_types = self.relationship_matrices.len();
 
         // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
@@ -2566,8 +2909,19 @@ impl Graph {
         }
 
         // --- Phase 2: mutate state for the actually-resolved edges only ---
-        self.deleted_relationships |= &resolved;
-        self.relationship_count -= resolved.len();
+        // Refused over everything asked for, freed over what resolved. Phase 1
+        // does not mutate, so a refusal here still leaves the graph untouched —
+        // it has only cost the resolution walk.
+        self.relationship_ids
+            .release(rels, &resolved)
+            .map_err(NodeOpError::relationship)?;
+
+        // After the release, so a refused delete leaves the index untouched too, and before
+        // the teardown below, while the attributes and types are still readable.
+        #[cfg(feature = "index-falkordb")]
+        docs.native
+            .extend(graph_writes::edges_deleted(self, &resolved));
+
         self.relationship_attrs.remove_all(&resolved);
 
         let mut endpoints: Vec<DeletedEdge> = Vec::with_capacity(resolved.len() as usize);
@@ -2657,8 +3011,9 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         explicit_rels: &RoaringTreemap,
-        index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+        docs: &mut IndexDocs,
     ) -> Result<Vec<DeletedEdge>, String> {
+        let index_remove_edge_docs = &mut docs.edge_removes;
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
         }
@@ -2725,7 +3080,6 @@ impl Graph {
             type_mask.build(&tm_rows, &tm_cols);
 
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
-            self.deleted_relationships |= &del_keys;
             let type_name = &self.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
@@ -2746,6 +3100,10 @@ impl Graph {
                         .insert(edge_id, (src, dst));
                 }
             }
+            // Before the type matrix and attributes are torn down below.
+            #[cfg(feature = "index-falkordb")]
+            docs.native
+                .extend(graph_writes::edges_deleted(self, del_keys.iter()));
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
 
@@ -2775,7 +3133,27 @@ impl Graph {
             }
         }
 
-        self.relationship_count -= all_implicit.len() as u64;
+        // Discovered from this graph's own tensors rather than named by a
+        // caller, so the refusals cannot fire here — which is why they are asked
+        // anyway. An implicit edge that is already free, or that sits above the
+        // entry boundary without this batch having created it, is this graph
+        // disagreeing with itself.
+        //
+        // Asked after the tensors, attributes and reverse index have already
+        // been mutated, which looks like it would leave a half-deleted graph
+        // behind. It cannot: `self` is the private MVCC version, the only
+        // caller propagates this error out through `Pending::commit`, and a
+        // write query that returns an error never reaches `commit` — the fork
+        // is dropped with the damage inside it. Unwinding by hand would mean
+        // resolving every implicit edge in a read-only pass first, which buys
+        // nothing over the rollback that already exists.
+        // The ids as one set, so the count and the free set cannot be written
+        // from two different sets — they were, and agreed only because an edge
+        // has exactly one type.
+        let freed: RoaringTreemap = all_implicit.iter().map(|e| u64::from(e.id)).collect();
+        self.relationship_ids
+            .release(&freed, &freed)
+            .map_err(|e| e.to_string())?;
 
         // Clear adjacency for every pair that lost its last edge, in one bulk
         // `build` rather than a `setElement` per pair — matching what
@@ -3086,8 +3464,8 @@ impl Graph {
     }
 
     fn resize(&mut self) {
-        if self.node_count > self.node_cap {
-            self.node_cap = grow_cap(self.node_cap, self.node_count);
+        if self.node_ids.live() > self.node_cap {
+            self.node_cap = grow_cap(self.node_cap, self.node_ids.live());
             self.resize_node_matrices();
         }
 
@@ -3096,8 +3474,8 @@ impl Graph {
                 .resize(self.node_cap, self.labels_matices.len() as u64);
         }
 
-        if self.relationship_count > self.relationship_cap {
-            self.relationship_cap = grow_cap(self.relationship_cap, self.relationship_count);
+        if self.relationship_ids.live() > self.relationship_cap {
+            self.relationship_cap = grow_cap(self.relationship_cap, self.relationship_ids.live());
             self.resize_relationship_matrices();
         }
 
@@ -3244,11 +3622,20 @@ impl Graph {
                 populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
             }
         }
+        #[cfg(feature = "index-falkordb")]
+        graph_writes::create_index(self, index_type, *entity_type, label, attrs);
         Ok(())
     }
 
     /// Create an index and populate it synchronously (for RDB load).
     /// Unlike `create_index`, this doesn't spawn async tasks.
+    ///
+    /// **The caller must reach `populate_indexes_sync` before publishing this version.** This
+    /// leaves the native column created but *empty*, and an empty column is indistinguishable
+    /// from one that legitimately matches nothing — a query reaching it would return no rows
+    /// rather than falling back. The only caller, `rebuild_indexes` in the RDB decoder, pairs
+    /// the two before the graph is published, so no reader can observe the gap; a new caller
+    /// that skips the populate would silently serve empty results.
     pub fn create_index_sync(
         &mut self,
         index_type: &IndexType,
@@ -3284,6 +3671,10 @@ impl Graph {
                 }
             }
         }
+        // The native columns start empty too; `populate_indexes_sync` builds them.
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_index
+            .create_unpopulated(index_type, *entity_type, label, attrs);
         Ok(())
     }
 
@@ -3330,6 +3721,8 @@ impl Graph {
             }
             self.node_indexer
                 .release_population_ticket(&snapshot.ticket);
+            #[cfg(feature = "index-falkordb")]
+            graph_writes::populate(self, EntityType::Node, &label, &attrs);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -3371,6 +3764,8 @@ impl Graph {
             }
             self.edge_indexer
                 .release_population_ticket(&snapshot.ticket);
+            #[cfg(feature = "index-falkordb")]
+            graph_writes::populate(self, EntityType::Relationship, &type_name, &attrs);
         }
     }
 
@@ -3387,6 +3782,53 @@ impl Graph {
             self.node_indexer.write_lock(),
             self.edge_indexer.write_lock(),
         )
+    }
+
+    /// Apply a unit of work's staged native-index changes (`docs.native`) to this version's index.
+    /// A no-op without the `index-falkordb` feature, which has no native index. `self` must be the
+    /// private version the changes were staged against.
+    pub fn apply_index_writes(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        #[cfg(feature = "index-falkordb")]
+        {
+            // A `Building` column asks where a written entity sits in build order: a node by its
+            // id, an edge by its endpoints, which an edge this unit deleted no longer has.
+            let endpoints = &self.edge_endpoints;
+            self.falkordb_index
+                .apply(&mut docs.native, |entity, id| match entity {
+                    EntityType::Node => Some(BuildCursor::Node(NodeId::from(id))),
+                    EntityType::Relationship => {
+                        endpoints.get(id).map(|(src, dst)| BuildCursor::Edge {
+                            src: NodeId::from(src),
+                            dst: NodeId::from(dst),
+                        })
+                    }
+                });
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        let _ = docs;
+    }
+
+    /// Commit a unit of work's index changes into this version: the native index's staged changes,
+    /// then RediSearch's node and edge documents. For an owner that publishes both at one point:
+    /// the replica at the end of an effects buffer, `GRAPH.BULK` once every token has succeeded.
+    /// A Cypher query applies the native part at the end of each `Commit`
+    /// ([`Self::apply_index_writes`]) and publishes RediSearch's later.
+    ///
+    /// A kind with no documents is skipped before its indexer lock is taken.
+    pub fn commit_index_docs(
+        &mut self,
+        docs: &mut IndexDocs,
+    ) {
+        self.apply_index_writes(docs);
+        if !docs.node_adds.is_empty() || !docs.node_removes.is_empty() {
+            self.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+        }
+        if !docs.edge_adds.is_empty() || !docs.edge_removes.is_empty() {
+            self.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
+        }
     }
 
     /// Write node index documents to RediSearch, taking the node indexer lock.
@@ -3512,6 +3954,16 @@ impl Graph {
             return;
         }
 
+        // Measurement gate, not a shipping mode: see `index_only_writes`. The native index
+        // was already maintained by the write hooks, so only the redundant RediSearch feed is
+        // dropped.
+        #[cfg(feature = "index-falkordb")]
+        if matches!(kind, IndexKind::Node) && index_only_writes() {
+            index_add_docs.clear();
+            remove_docs.clear();
+            return;
+        }
+
         let (indexer, names, attr_store) = match kind {
             IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
@@ -3600,6 +4052,13 @@ impl Graph {
 
         match reindex {
             Some((dropped, remaining)) if dropped > 0 => {
+                // Drop the native columns only now, after the indexer confirmed the drop.
+                // Doing it earlier meant the `no such index` arm below could leave RediSearch
+                // holding the index while the native columns were already gone — DROP INDEX
+                // reports failure but half the state is destroyed.
+                #[cfg(feature = "index-falkordb")]
+                self.falkordb_index
+                    .drop_index(index_type, *entity_type, label, &effective_attrs);
                 if remaining > 0 {
                     indexer.recreate_index(label)?;
                     populate_index(kind, label.clone(), indexer.clone());
@@ -3616,8 +4075,14 @@ impl Graph {
                     .map(|a| a.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
+                // `db.idx.fulltext.drop('L')` names no attribute: `:L`, as C.
+                let attrs = if attr_list.is_empty() {
+                    String::new()
+                } else {
+                    format!("({attr_list})")
+                };
                 Err(format!(
-                    "Unable to drop index on :{label}({attr_list}): no such index."
+                    "Unable to drop index on :{label}{attrs}: no such index."
                 ))
             }
         }
@@ -3639,6 +4104,50 @@ impl Graph {
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = NodeId> + use<> {
         self.node_indexer.query(label, query).map(NodeId)
+    }
+
+    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
+    /// (non-numeric / composite / missing or `Building` column). Wraps
+    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId`. `use<>` keeps the returned
+    /// iterator free of the `&self` borrow — it owns its tree snapshot, so it outlives this
+    /// borrow.
+    #[cfg(feature = "index-falkordb")]
+    pub fn query_index_numeric_nodes(
+        &self,
+        label: &Arc<String>,
+        query: &IndexQuery<Value>,
+    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+        self.falkordb_index
+            .query_numeric(EntityType::Node, label, query)
+            .map(|iter| iter.map(NodeId))
+    }
+
+    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
+    /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
+    /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
+    /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
+    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
+    /// RediSearch) for non-numeric/composite predicates or a missing or `Building` column.
+    #[cfg(feature = "index-falkordb")]
+    pub fn query_index_numeric_edges(
+        &self,
+        type_name: &Arc<String>,
+        query: &IndexQuery<Value>,
+    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
+        let iter = self
+            .falkordb_index
+            .query_numeric(EntityType::Relationship, type_name, query)?;
+        // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
+        // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
+        // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
+        // the same lookup `endpoints_for_edge` does. Laziness matters here — a range scan
+        // under a LIMIT should stop at the limit, not materialize every match first.
+        let endpoints = Arc::clone(&self.edge_endpoints);
+        Some(iter.filter_map(move |eid| {
+            endpoints
+                .get(eid)
+                .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        }))
     }
 
     #[must_use]
@@ -3736,20 +4245,25 @@ impl Graph {
         }
         let metric = self.node_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // `k` is user input. The index cannot hold more documents than there are
+        // nodes, and a `k` far beyond that makes the KNN query return nothing.
+        let k = k.min(self.node_count().max(1) as usize);
         let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
 
         // Resolve the attribute name to its numeric slot once, rather than
         // re-hashing the attribute string for every KNN result. If the
         // attribute is unknown there are no vectors to score.
-        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect the candidate ids first, then fetch their vectors in one
         // fused batch pass. This amortizes the per-shard read lock and gives
         // the attribute cache sequential access instead of one isolated
         // lookup per KNN result.
         let node_ids: Vec<NodeId> = raw_iter.map(|(id, _score)| NodeId(id)).collect();
+        // Sized by the results, not by `k`: `k` is user input and may be far
+        // larger than the index (an allocation of `k` entries aborts the server).
+        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(node_ids.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(node_ids.len());
         self.get_node_attributes_by_idx(&node_ids, attr_idx, &Value::Null, &mut vecs);
         for (node_id, entity) in node_ids.into_iter().zip(vecs) {
@@ -3791,14 +4305,15 @@ impl Graph {
         }
         let metric = self.edge_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // Clamp the user-supplied `k` to the index's capacity (see `vector_query_nodes`).
+        let k = k.min(self.relationship_count().max(1) as usize);
         let raw_iter = self
             .edge_indexer
             .vector_query_edges(label, field, vector, k)?;
 
         // Resolve the attribute slot once instead of per KNN result.
-        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect candidate triples first, then fetch their vectors in one
         // fused batch pass (see `vector_query_nodes`).
@@ -3806,6 +4321,8 @@ impl Graph {
             .map(|(src, dst, eid, _score)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
             .collect();
         let edge_ids: Vec<RelationshipId> = triples.iter().map(|&(_, _, eid)| eid).collect();
+        // Sized by the results, not by the user-supplied `k` (see `vector_query_nodes`).
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(triples.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(edge_ids.len());
         self.get_relationship_attributes_by_idx(&edge_ids, attr_idx, &Value::Null, &mut vecs);
         for ((src, dst, edge_id), entity) in triples.into_iter().zip(vecs) {
@@ -4307,7 +4824,7 @@ impl Graph {
         // `structural_memory_usage` excludes exactly those, so the two halves
         // cover the store without overlap.
         let node_block_storage_sz: usize =
-            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.structural_memory_usage() + self.node_ids.recycled().serialized_size();
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
@@ -4315,7 +4832,7 @@ impl Graph {
         // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
         let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
             + self.relationship_attrs.structural_memory_usage()
-            + self.deleted_relationships.serialized_size()
+            + self.relationship_ids.recycled().serialized_size()
             + self.edge_endpoints.memory_usage();
 
         // --- node attributes by label (sampling) ---
@@ -4369,7 +4886,7 @@ impl Graph {
         }
 
         // --- unlabeled node attributes ---
-        let total_nodes = self.node_count;
+        let total_nodes = self.node_ids.live();
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
             // Sample unlabeled nodes, skipping labeled ones. Live ids are the
@@ -4381,7 +4898,7 @@ impl Graph {
                 if sampled_count >= samples {
                     break;
                 }
-                if self.deleted_nodes.contains(node_id) || seen[node_id as usize] {
+                if self.node_ids.is_free(node_id) || seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
@@ -4457,26 +4974,29 @@ impl Graph {
             EncodeState::Nodes => {
                 self.node_attrs.encode_with_range(
                     w,
-                    &self.deleted_nodes,
+                    self.node_ids.recycled(),
                     self.max_node_id(),
                     p.count,
                     p.offset,
                 );
             }
             EncodeState::DeletedNodes => {
-                self.deleted_nodes.encode_with_range(w, p.count, p.offset);
+                self.node_ids
+                    .recycled()
+                    .encode_with_range(w, p.count, p.offset);
             }
             EncodeState::Edges => {
                 self.relationship_attrs.encode_with_range(
                     w,
-                    &self.deleted_relationships,
+                    self.relationship_ids.recycled(),
                     self.max_relationship_id(),
                     p.count,
                     p.offset,
                 );
             }
             EncodeState::DeletedEdges => {
-                self.deleted_relationships
+                self.relationship_ids
+                    .recycled()
                     .encode_with_range(w, p.count, p.offset);
             }
             EncodeState::LabelsMatrices => {
@@ -4544,6 +5064,19 @@ impl Graph {
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
         self.attrs_name.iter().cloned().collect()
+    }
+
+    /// [`Self::indexer_prepare`] of the first `Building` column. For tests of one column.
+    #[cfg(all(test, feature = "index-falkordb"))]
+    pub(crate) fn index_next_batch(
+        &mut self,
+        entities: usize,
+    ) -> bool {
+        self.falkordb_index
+            .next_building()
+            .is_some_and(|(entity, key, _)| {
+                self.indexer_prepare(&IndexId::Column(entity, key), entities)
+            })
     }
 }
 
@@ -4712,17 +5245,15 @@ mod reservation_tests {
         /// What this batch gave back. With `created` it is exactly what the
         /// allocator must not reissue — `Pending`'s two sets.
         cancelled: RoaringTreemap,
-        /// Where the id space stood when the batch opened: the one thing
-        /// `Pending` keeps.
-        entry: u64,
     }
 
     impl Query {
-        fn new(g: &Graph) -> Self {
+        /// Opening a query opens the graph's batch, exactly as `Commit` does.
+        fn new(g: &mut Graph) -> Self {
+            g.open_id_batches().expect("a consistent space");
             Self {
                 created: RoaringTreemap::new(),
                 cancelled: RoaringTreemap::new(),
-                entry: g.node_id_bound(),
             }
         }
 
@@ -4732,8 +5263,12 @@ mod reservation_tests {
             n: usize,
         ) -> Vec<u64> {
             let before = &self.created | &self.cancelled;
-            let ids = IdSpace::at(self.entry)
-                .reserve(n, g.deleted_nodes(), &[&self.created, &self.cancelled])
+            // Only the ids the space does not already know about, mirroring
+            // `Pending::issued_nodes`. The cancelled ones it recorded itself;
+            // handing them back would count one id twice and skip a free slot.
+            let ids = g
+                .node_id_space()
+                .reserve(n, &self.created)
                 .expect("reserved");
             for &id in &ids {
                 assert!(
@@ -4755,15 +5290,22 @@ mod reservation_tests {
         ) {
             assert!(self.created.remove(id), "cancelling an id never reserved");
             self.cancelled.insert(id);
-            g.return_node_id(NodeId(id));
+            g.cancel_node_id(NodeId(id)).expect("a consistent space");
         }
 
         fn commit(
             self,
             g: &mut Graph,
         ) {
-            g.create_nodes(&self.created, &mut IdSpace::at(self.entry))
+            g.create_nodes(&self.created)
                 .expect("the allocator's own ids must be creatable");
+            // The write path's own shapes must now satisfy what a replica is
+            // held to, cancelled reservations included. This is what recording
+            // a cancellation into the ledger bought, and the precondition for
+            // calling `verify` on the write path for real (#2839 step 4).
+            g.node_id_space()
+                .verify()
+                .expect("a committed query leaves a possible id space");
         }
     }
 
@@ -4772,11 +5314,11 @@ mod reservation_tests {
         ids: &[u64],
     ) {
         let bm: RoaringTreemap = ids.iter().copied().collect();
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         // A batch that created nothing: every id here predates it, which is
         // what makes them deletable.
-        let space = g.open_node_id_space();
-        g.delete_nodes(&bm, &mut docs, &space).expect("deleted");
+        g.open_id_batches().expect("a consistent space");
+        g.delete_nodes(&bm, &mut docs).expect("deleted");
     }
 
     /// Between queries the id space is dense: `handed_out` ids have been
@@ -4788,7 +5330,7 @@ mod reservation_tests {
     /// `deleted_nodes.len()`, so a bin holding an id at or above the boundary —
     /// an id nothing ever handed out — is caught rather than cancelling out.
     /// This is the same pairing [`IdSpace::verify`] makes, and what it would
-    /// refuse as `Miscounted` if a replica were told this.
+    /// refuse as `IdSpaceError::Inconsistent` if a replica were told this.
     fn assert_dense(
         g: &Graph,
         handed_out: u64,
@@ -4803,10 +5345,10 @@ mod reservation_tests {
             .count() as u64;
         assert_eq!(
             handed_out - free,
-            g.node_count,
+            g.node_ids.live(),
             "{free} of the {handed_out} issued ids are free, so {} should be live, not {}",
             handed_out - free,
-            g.node_count
+            g.node_ids.live()
         );
     }
 
@@ -4817,7 +5359,7 @@ mod reservation_tests {
     #[test]
     fn successive_batches_do_not_overlap() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
 
         let mut all = Vec::new();
         for _ in 0..5 {
@@ -4833,12 +5375,12 @@ mod reservation_tests {
     #[test]
     fn reclaims_from_the_bin_before_allocating_fresh() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         q.reserve(&mut g, 10);
         q.commit(&mut g);
         delete(&mut g, &[2, 5, 7]);
 
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
         assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
         assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
@@ -4852,13 +5394,13 @@ mod reservation_tests {
     #[test]
     fn one_batch_spanning_the_bin_and_fresh_ids() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         q.reserve(&mut g, 10);
         q.commit(&mut g);
         delete(&mut g, &[3]);
 
         // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         assert_eq!(
             q.reserve(&mut g, 3),
             vec![3, 10, 11],
@@ -4874,19 +5416,19 @@ mod reservation_tests {
     #[test]
     fn a_cancelled_reservation_returns_to_the_bin() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         let ids = q.reserve(&mut g, 2);
         assert_eq!(ids, vec![0, 1]);
         q.cancel(&mut g, 1);
         q.commit(&mut g);
 
         assert!(g.is_node_deleted(NodeId(1)), "b's id is free, not lost");
-        assert_eq!(g.node_count, 1);
+        assert_eq!(g.node_ids.live(), 1);
         assert_dense(&g, 2);
 
         // A *later* query does hand it back out — by then it is a different
         // effects buffer, where recreating a recycled id is ordinary.
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         assert_eq!(q.reserve(&mut g, 1), vec![1]);
         q.commit(&mut g);
         assert_dense(&g, 2);
@@ -4897,7 +5439,7 @@ mod reservation_tests {
     #[test]
     fn reserving_after_a_cancellation_in_the_same_query() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         q.reserve(&mut g, 3);
         q.cancel(&mut g, 1);
 
@@ -4920,32 +5462,68 @@ mod reservation_tests {
     #[test]
     fn relationship_ids_reclaim_then_allocate_fresh() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         q.reserve(&mut g, 4);
         q.commit(&mut g);
 
         let type_name = Arc::new("R".to_owned());
-        let mut space = g.open_relationship_id_space();
-        let ids = space
-            .reserve(3, g.deleted_relationships(), &[])
+        let ids = g
+            .relationship_id_space()
+            .reserve(3, &RoaringTreemap::new())
             .expect("reserved");
         assert_eq!(ids, vec![0, 1, 2]);
-        g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
+        g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids)
             .expect("the allocator's own ids must be creatable");
 
-        let mut docs = FxHashMap::default();
+        let mut docs = IndexDocs::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
-        let del_space = g.open_relationship_id_space();
-        g.delete_relationships(&doomed, &mut docs, &del_space)
-            .expect("deleted");
+        g.open_id_batches().expect("a consistent space");
+        g.delete_relationships(&doomed, &mut docs).expect("deleted");
 
         // One in the bin, two live, so three ids handed out.
-        // A fresh query, so nothing is outstanding: the first batch committed.
-        let space = g.open_relationship_id_space();
-        let ids = space
-            .reserve(2, g.deleted_relationships(), &[])
+        // A fresh batch, so nothing is outstanding: the first one committed.
+        g.open_id_batches().expect("a consistent space");
+        let ids = g
+            .relationship_id_space()
+            .reserve(2, &RoaringTreemap::new())
             .expect("reserved");
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
+    }
+
+    /// The three slices and the id set have to describe the same edges.
+    ///
+    /// Both shapes are refused before anything is mutated, which is the whole
+    /// point: the id space is told about a *set* while the tensor, the endpoint
+    /// index and the type matrix each walk the raw slice, and nothing downstream
+    /// reconciles the two readings. `[0, 0]` used to count one relationship and
+    /// build two tensor edges under the one id.
+    ///
+    /// It matters because `effects/v3/apply.rs` is a caller whose `rel_ids` come
+    /// off the wire, decoded from an `IdList` this process did not build.
+    #[test]
+    fn bulk_relationship_create_refuses_slices_that_disagree() {
+        let mut g = graph();
+        g.open_id_batches().expect("a consistent space");
+        let type_name = Arc::new("R".to_owned());
+
+        let duplicated = g
+            .create_relationships_bulk(&type_name, &[0, 0], &[1, 1], &[0, 0])
+            .expect_err("an id names one edge");
+        assert!(
+            duplicated.to_string().contains("only 1 are distinct"),
+            "{duplicated}"
+        );
+
+        let ragged = g
+            .create_relationships_bulk(&type_name, &[0], &[1, 2], &[0, 1])
+            .expect_err("two ids cannot share one source");
+        assert!(ragged.to_string().contains("1 sources"), "{ragged}");
+
+        // Refused before anything moved, so the space is still untouched and an
+        // honest create of the same ids still works.
+        g.create_relationships_bulk(&type_name, &[0, 1], &[1, 2], &[0, 1])
+            .expect("the well-formed call is unaffected");
+        assert_eq!(g.relationship_count(), 2);
     }
 
     /// A second batch must not re-hand-out the first batch's reclaimed ids.
@@ -4954,12 +5532,12 @@ mod reservation_tests {
     #[test]
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         q.reserve(&mut g, 8);
         q.commit(&mut g);
         delete(&mut g, &[0, 1, 2, 3, 4, 5]);
 
-        let mut q = Query::new(&g);
+        let mut q = Query::new(&mut g);
         assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
         assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
         assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);
@@ -4985,24 +5563,26 @@ mod adjacency_cascade_tests {
     ) -> Graph {
         ensure_init();
         let mut g = Graph::new(16, 16, 1, 0, name);
-        let mut space = g.open_node_id_space();
-        let ids: RoaringTreemap = space
-            .reserve(node_count, g.deleted_nodes(), &[])
+        g.open_id_batches().expect("a consistent space");
+        let ids: RoaringTreemap = g
+            .node_id_space()
+            .reserve(node_count, &RoaringTreemap::new())
             .unwrap()
             .into_iter()
             .collect();
-        g.create_nodes(&ids, &mut space).unwrap();
-        let mut rel_space = g.open_relationship_id_space();
+        g.create_nodes(&ids).unwrap();
         for &(src, dst, type_name) in edges {
-            let rel_id = rel_space
-                .reserve(1, g.deleted_relationships(), &[])
+            // One at a time, creating as it goes: the batch excludes what it has
+            // already created without being told, so `issued` stays empty here.
+            let rel_id = g
+                .relationship_id_space()
+                .reserve(1, &RoaringTreemap::new())
                 .unwrap()[0];
             g.create_relationships_bulk(
                 &Arc::new(type_name.to_string()),
                 &[src],
                 &[dst],
                 &[rel_id],
-                &mut rel_space,
             )
             .unwrap();
         }
@@ -5017,10 +5597,10 @@ mod adjacency_cascade_tests {
         nodes: &[u64],
     ) {
         let deleted: RoaringTreemap = nodes.iter().copied().collect();
-        let mut node_docs = FxHashMap::default();
-        let mut edge_docs = FxHashMap::default();
-        let space = g.open_node_id_space();
-        g.delete_nodes(&deleted, &mut node_docs, &space).unwrap();
+        let mut node_docs = IndexDocs::default();
+        let mut edge_docs = IndexDocs::default();
+        g.open_id_batches().expect("a consistent space");
+        g.delete_nodes(&deleted, &mut node_docs).unwrap();
         g.delete_implicit_edges(&deleted, &RoaringTreemap::new(), &mut edge_docs)
             .unwrap();
     }
@@ -5106,16 +5686,12 @@ mod adjacency_cascade_tests {
     #[test]
     fn pair_stays_adjacent_while_another_type_remains() {
         let mut g = build("adj_cascade_multi_type", 3, &[(0, 1, "R"), (0, 1, "S")]);
-        let mut edge_docs = FxHashMap::default();
+        let mut edge_docs = IndexDocs::default();
 
         // Drop just the R edge (id 0) explicitly; S (id 1) stays.
-        let del_space = g.open_relationship_id_space();
-        g.delete_relationships(
-            &RoaringTreemap::from_iter([0u64]),
-            &mut edge_docs,
-            &del_space,
-        )
-        .unwrap();
+        g.open_id_batches().expect("a consistent space");
+        g.delete_relationships(&RoaringTreemap::from_iter([0u64]), &mut edge_docs)
+            .unwrap();
         assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
 
         // Now delete node 2, which is unrelated: the 0->1 pair is untouched.
@@ -5125,5 +5701,247 @@ mod adjacency_cascade_tests {
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
         assert!(adjacency_entries(&g).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod relationship_liveness_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// Nodes 0..8, all created in one batch, then a fresh batch opened.
+    fn graph() -> Graph {
+        ensure_init();
+        let mut g = Graph::new(64, 64, 0, 0, "liveness");
+        g.open_id_batches().expect("a consistent space");
+        g.create_nodes(&(0..8).collect()).expect("created");
+        g.open_id_batches().expect("a consistent space");
+        g
+    }
+
+    fn edges(
+        g: &mut Graph,
+        ty: &str,
+        pairs: &[(u64, u64)],
+    ) {
+        let ids = g
+            .relationship_id_space()
+            .reserve(pairs.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        let (src, dst): (Vec<u64>, Vec<u64>) = pairs.iter().copied().unzip();
+        g.create_relationships_bulk(&Arc::new(ty.to_owned()), &src, &dst, &ids)
+            .expect("created");
+    }
+
+    fn first(
+        g: &Graph,
+        nodes: &[u64],
+    ) -> Option<u64> {
+        g.first_node_with_relationships(&nodes.iter().copied().collect())
+    }
+
+    /// 3 -> 0 (R), 4 -> 4 (S), 2 -> 6 (S); 1, 5 and 7 are isolated.
+    fn shaped() -> Graph {
+        let mut g = graph();
+        edges(&mut g, "R", &[(3, 0)]);
+        edges(&mut g, "S", &[(4, 4), (2, 6)]);
+        g
+    }
+
+    #[test]
+    fn no_node_with_relationships() {
+        let g = shaped();
+        assert_eq!(first(&g, &[1, 5, 7]), None);
+        assert_eq!(first(&g, &[]), None);
+        // Past the matrix: no row, no column.
+        assert_eq!(first(&g, &[1, 1 << 40]), None);
+        assert_eq!(first(&graph(), &[0, 1, 2]), None, "no edges at all");
+    }
+
+    #[test]
+    fn outgoing_only() {
+        let g = shaped();
+        assert_eq!(first(&g, &[3, 5]), Some(3));
+        assert_eq!(first(&g, &[1, 2, 7]), Some(2));
+    }
+
+    #[test]
+    fn incoming_only() {
+        let g = shaped();
+        assert_eq!(first(&g, &[0, 5]), Some(0));
+        assert_eq!(first(&g, &[1, 6, 7]), Some(6));
+    }
+
+    #[test]
+    fn self_loop() {
+        let g = shaped();
+        assert_eq!(first(&g, &[4, 5]), Some(4));
+    }
+
+    #[test]
+    fn lowest_across_types_and_directions() {
+        let g = shaped();
+        // 0 has an R edge in, 3 one out: the incoming one is lower.
+        assert_eq!(first(&g, &[0, 3]), Some(0));
+        // 3 has R out, 6 has S in: the outgoing one is lower.
+        assert_eq!(first(&g, &[3, 6]), Some(3));
+        // Every kind at once.
+        assert_eq!(first(&g, &[7, 6, 5, 4, 3, 2]), Some(2));
+        assert_eq!(first(&g, &[0, 1, 2, 3, 4, 5, 6, 7]), Some(0));
+    }
+
+    /// The adjacency matrix is exact: a pair whose last edge went is gone, so
+    /// the node is free to delete again — and a pair with an edge of another
+    /// type left is not.
+    #[test]
+    fn deleting_the_last_edge_clears_the_node() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(1, 2)]);
+        edges(&mut g, "S", &[(1, 2)]);
+        let mut docs = IndexDocs::default();
+        g.delete_relationships(&std::iter::once(0).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(first(&g, &[1]), Some(1), "the S edge is still there");
+        assert_eq!(first(&g, &[2]), Some(2));
+        g.delete_relationships(&std::iter::once(1).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(first(&g, &[1, 2]), None);
+    }
+
+    /// `validate` holds every write path to it: an edge this batch created
+    /// onto a node that is gone is refused, one deleted again is not.
+    #[test]
+    fn validate_refuses_an_edge_onto_a_node_that_is_not_live() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(0, 1), (2, 3)]);
+        g.validate().expect("both endpoints live");
+
+        let mut docs = IndexDocs::default();
+        // Freed without the edge: what `NodeHasRelationships` stops the
+        // effects path from doing, and Cypher never does.
+        g.delete_nodes(&std::iter::once(3).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(
+            g.validate(),
+            Err(NodeOpError::DanglingRelationship { id: 1 })
+        );
+
+        let mut edocs = IndexDocs::default();
+        g.delete_relationships(&std::iter::once(1).collect(), &mut edocs)
+            .expect("deleted");
+        g.validate().expect("the edge went with it");
+    }
+
+    /// A relationship from before the batch is the batch that created it's
+    /// business; only this batch's own are walked.
+    #[test]
+    fn validate_checks_only_this_batch() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(0, 1)]);
+        g.open_id_batches().expect("a consistent space");
+        assert!(g.relationship_id_space().taken().is_empty());
+        g.validate().expect("nothing created in this batch");
+    }
+}
+
+#[cfg(test)]
+mod grow_cap_tests {
+    use super::*;
+
+    /// #2892. Near the top of `u64` the unchecked step wrapped, and since the
+    /// capacity stays a multiple of the chunk it never reached `needed` — the
+    /// loop spun forever in release. It now stops at the largest dimension
+    /// GraphBLAS accepts.
+    #[test]
+    fn growth_stops_at_the_largest_graphblas_dimension() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, u64::MAX - 1), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(chunk, GrB_INDEX_MAX), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(GrB_INDEX_MAX - 1, GrB_INDEX_MAX), GrB_INDEX_MAX);
+    }
+
+    #[test]
+    fn ordinary_growth_is_unchanged() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, chunk), chunk);
+        assert_eq!(grow_cap(chunk, chunk + 1), 2 * chunk);
+        let cap = 100 * chunk;
+        assert_eq!(grow_cap(cap, cap + 1), cap + cap / 4);
+    }
+}
+
+#[cfg(all(test, feature = "index-falkordb"))]
+mod falkordb_index_tests;
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// A load must not shrink the matrices it decodes (#3246).
+    ///
+    /// They keep the size the saving server gave them, its `node_cap`, which
+    /// `grow_cap` leaves up to 25% past the highest node id. `restore` used to
+    /// reset `node_cap` to that id rounded up to one chunk, so
+    /// `rebuild_derived_matrices` shrank every node matrix on load, and a
+    /// tensor shrink is where `me` kept the ids of pairs it cut off.
+    #[test]
+    fn restore_never_shrinks_the_saved_matrices() {
+        ensure_init();
+        // Two nodes, saved by a server whose node_cap had grown to 40,960:
+        // restore rounds two nodes up to one 16,384 chunk.
+        const SAVED: u64 = 40_960;
+        let mut tensor = Tensor::new(SAVED, SAVED);
+        tensor.set_all_from_slices(&[0, 0], &[1, 1], &[0, 1]);
+        tensor.flush();
+        let mut g = Graph::restore(
+            "restore_never_shrinks",
+            1,
+            2,
+            2,
+            RoaringTreemap::new(),
+            RoaringTreemap::new(),
+            VersionedMatrix::<bool>::new(SAVED, SAVED),
+            VersionedMatrix::<bool>::new(SAVED, 1),
+            VersionedMatrix::<bool>::new(0, 0),
+            vec![VersionedMatrix::<bool>::new(SAVED, SAVED)],
+            vec![tensor],
+            vec![Arc::new("L".to_string())],
+            vec![Arc::new("R".to_string())],
+            AttrNameMap::default(),
+            AttributeStore::new(),
+            AttributeStore::new(),
+        );
+        g.rebuild_derived_matrices();
+
+        assert!(
+            g.node_cap >= SAVED,
+            "node_cap {} below the saved size",
+            g.node_cap
+        );
+        let t = &g.relationship_matrices[0];
+        assert_eq!(
+            (t.nrows(), t.ncols()),
+            (SAVED, SAVED),
+            "the load shrank the tensor"
+        );
+        assert_eq!(
+            g.adjacancy_matrix.nrows(),
+            SAVED,
+            "the load shrank the adjacency matrix"
+        );
+        assert_eq!(
+            g.labels_matices[0].nrows(),
+            SAVED,
+            "the load shrank a label matrix"
+        );
+        assert_eq!(
+            g.node_labels_matrix.nrows(),
+            SAVED,
+            "the load shrank node_labels"
+        );
+        let mut edges: Vec<_> = t.iter_edges().collect();
+        edges.sort_unstable();
+        assert_eq!(edges, vec![(0, 1, 0), (0, 1, 1)]);
     }
 }

@@ -13,6 +13,7 @@ use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
+use graph::index::text_index_options::PHONETIC_OFF;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
 use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
@@ -399,7 +400,12 @@ fn encode_schema_index_block(
         // The field is the code, so this is no longer a conversion. It used to
         // map a `bool` to "dm:en", which meant a C-written `dm:fr` came back
         // out of a Rust round trip as `dm:en`.
-        let phonetic = opts.and_then(|o| o.phonetic.clone()).unwrap_or_default();
+        // Off is written as C writes it, "no": C enables phonetic matching for any
+        // other string, so an empty one turned it on when C loaded our RDB.
+        let phonetic = opts
+            .and_then(|o| o.phonetic.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| PHONETIC_OFF.to_owned());
         w.write_buffer(&null_terminated(&phonetic));
 
         if field_type & index_field_type::INDEX_FLD_VECTOR != 0
@@ -551,11 +557,14 @@ fn decode_schema_entry(
         let mut fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
         let mut field_order: Vec<Arc<String>> = Vec::new();
         for _ in 0..field_count {
-            let (attr_name, field) = decode_index_field(r)?;
+            let (attr_name, decoded) = decode_index_field(r)?;
             if !fields.contains_key(&attr_name) {
                 field_order.push(attr_name.clone());
             }
-            fields.entry(attr_name).or_default().push(Arc::new(field));
+            fields
+                .entry(attr_name)
+                .or_default()
+                .extend(decoded.into_iter().map(Arc::new));
         }
 
         Some(IndexInfo {
@@ -618,32 +627,45 @@ fn decode_schema_entry(
     Ok((schema_name, index, constraints))
 }
 
-fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String> {
+/// Decode one persisted index field into the fields it stands for.
+///
+/// The type word is a bitmask. Ours writes one entry per type, but C writes one
+/// entry per *attribute* with every type it carries (`IndexField_Init` in C's
+/// `index_field.c`): an attribute with a range and a fulltext index is a single
+/// `FULLTEXT | NUMERIC | GEO | STR` entry. So every set type becomes a field;
+/// keeping only one dropped the other index on a C-written RDB (#3484).
+fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), String> {
+    use index_field_type::{
+        INDEX_FLD_FULLTEXT, INDEX_FLD_GEO, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
+    };
+    const RANGE: u64 = INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR;
+
     let name_buf = r.read_buffer()?;
     let name = strip_null_terminator(&name_buf);
     let field_type = r.read_unsigned()?;
     let weight = r.read_double()?;
     let nostem = r.read_unsigned()? != 0;
     let phonetic_buf = r.read_buffer()?;
-    let phonetic = strip_null_terminator(&phonetic_buf);
+    let mut phonetic = strip_null_terminator(&phonetic_buf);
+    // C's "off" (and ours, see the encoder) comes back as our explicit off.
+    if phonetic == PHONETIC_OFF {
+        phonetic.clear();
+    }
 
-    let is_vector = field_type & index_field_type::INDEX_FLD_VECTOR != 0;
-    let is_fulltext = field_type & index_field_type::INDEX_FLD_FULLTEXT != 0;
+    // C refuses the same words (`_RdbLoadIndex`): no type, or a bit it does not know.
+    if field_type == 0 || field_type & !(RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR) != 0 {
+        return Err(format!(
+            "invalid index field type {field_type:#x} for attribute {name}"
+        ));
+    }
 
-    let ty = if is_fulltext {
-        IndexType::Fulltext
-    } else if is_vector {
-        IndexType::Vector
-    } else {
-        IndexType::Range
-    };
+    let is_vector = field_type & INDEX_FLD_VECTOR != 0;
+    let is_fulltext = field_type & INDEX_FLD_FULLTEXT != 0;
+    let is_range = field_type & RANGE != 0;
 
-    // Strip the type prefix from the field name to get the raw attribute name.
-    let attr_name = match ty {
-        IndexType::Range => name.strip_prefix("range:").unwrap_or(&name).to_string(),
-        IndexType::Vector => name.strip_prefix("vector:").unwrap_or(&name).to_string(),
-        IndexType::Fulltext => name.clone(),
-    };
+    // `name` is the bare attribute name `encode_schema_index_block` writes, as C
+    // does, never a prefixed RediSearch field name, so it is used verbatim: an
+    // attribute may itself be called `range:x`.
 
     let vector_options = if is_vector {
         let dimension = r.read_unsigned()?;
@@ -681,21 +703,24 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         None
     };
 
-    let field = if let Some(vopts) = vector_options {
-        Field::new_with_vector_options(
-            CString::new(name.as_str()).map_err(|e| e.to_string())?,
-            ty,
+    let cname = CString::new(name.as_str()).map_err(|e| e.to_string())?;
+    // The order `CALL db.indexes()` lists them in on both engines.
+    let mut fields = Vec::with_capacity(3);
+    if is_range {
+        fields.push(Field::new(cname.clone(), IndexType::Range, None));
+    }
+    if is_fulltext {
+        fields.push(Field::new(cname.clone(), IndexType::Fulltext, text_options));
+    }
+    if let Some(vopts) = vector_options {
+        fields.push(Field::new_with_vector_options(
+            cname,
+            IndexType::Vector,
             vopts,
-        )
-    } else {
-        Field::new(
-            CString::new(name.as_str()).map_err(|e| e.to_string())?,
-            ty,
-            text_options,
-        )
-    };
+        ));
+    }
 
-    Ok((Arc::new(attr_name), field))
+    Ok((Arc::new(name), fields))
 }
 
 impl Schema {
@@ -715,5 +740,102 @@ impl Schema {
             indexes,
             constraints,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serializers::buffered_io::{BufferedReader, VecWriter};
+    use index_field_type::{
+        INDEX_FLD_FULLTEXT, INDEX_FLD_GEO, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
+    };
+
+    const RANGE: u64 = INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR;
+
+    /// One field entry as C's `_RdbSaveIndexField` writes it.
+    fn write_c_field(
+        w: &mut VecWriter,
+        name: &str,
+        ty: u64,
+    ) {
+        w.write_buffer(&null_terminated(name));
+        w.write_unsigned(ty);
+        w.write_double(2.0); // weight
+        w.write_unsigned(1); // nostem
+        w.write_buffer(&null_terminated("dm:en"));
+        if ty & INDEX_FLD_VECTOR != 0 {
+            for v in [4, 16, 200, 10, 2] {
+                w.write_unsigned(v); // dimension, M, efConstruction, efRuntime, cosine
+            }
+        }
+    }
+
+    fn decode(ty: u64) -> Result<Vec<Field>, String> {
+        let mut w = VecWriter::new();
+        write_c_field(&mut w, "g", ty);
+        let bytes = w.into_vec();
+        let mut r = BufferedReader::from_slice(&bytes);
+        decode_index_field(&mut r).map(|(name, fields)| {
+            assert_eq!(name.as_str(), "g");
+            fields
+        })
+    }
+
+    fn types(fields: &[Field]) -> Vec<IndexType> {
+        fields.iter().map(|f| f.ty).collect()
+    }
+
+    /// #3484: a C entry for an attribute with a range and a fulltext index.
+    #[test]
+    fn c_range_and_fulltext_entry_keeps_both() {
+        let fields = decode(RANGE | INDEX_FLD_FULLTEXT).unwrap();
+        assert_eq!(types(&fields), [IndexType::Range, IndexType::Fulltext]);
+        let text = fields[1].options().expect("fulltext options");
+        assert_eq!(text.weight, Some(2.0));
+        assert_eq!(text.nostem, Some(true));
+        assert!(fields[0].options().is_none());
+    }
+
+    #[test]
+    fn c_range_and_vector_entry_keeps_both() {
+        let fields = decode(RANGE | INDEX_FLD_VECTOR).unwrap();
+        assert_eq!(types(&fields), [IndexType::Range, IndexType::Vector]);
+        assert_eq!(fields[1].vector_options().map(|v| v.dimension), Some(4));
+    }
+
+    #[test]
+    fn single_type_entries_are_unchanged() {
+        assert_eq!(types(&decode(RANGE).unwrap()), [IndexType::Range]);
+        assert_eq!(
+            types(&decode(INDEX_FLD_FULLTEXT).unwrap()),
+            [IndexType::Fulltext]
+        );
+        assert_eq!(
+            types(&decode(INDEX_FLD_VECTOR).unwrap()),
+            [IndexType::Vector]
+        );
+    }
+
+    /// C's default phonetic is the string "no", meaning off; it must not read as a code.
+    #[test]
+    fn c_phonetic_no_is_off() {
+        let mut w = VecWriter::new();
+        w.write_buffer(&null_terminated("g"));
+        w.write_unsigned(INDEX_FLD_FULLTEXT);
+        w.write_double(1.0);
+        w.write_unsigned(0);
+        w.write_buffer(&null_terminated(PHONETIC_OFF));
+        let bytes = w.into_vec();
+        let (_, fields) = decode_index_field(&mut BufferedReader::from_slice(&bytes)).unwrap();
+        let text = fields[0].options().expect("fulltext options");
+        assert!(!text.phonetic_enabled());
+        assert_eq!(text.phonetic.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn unknown_or_empty_type_is_refused() {
+        assert!(decode(0).is_err());
+        assert!(decode(0x20).is_err());
     }
 }
