@@ -226,10 +226,12 @@ class testGraphPersistency():
         graph = self.db.select_graph("negative_durations")
         exprs = ["duration({days: -1})", "duration({months: 1, days: -3})",
                  "duration({hours: -1, minutes: -30})", "duration({days: 40})",
-                 "duration({hours: 25})", "duration({years: 1, days: 1})"]
+                 "duration({hours: 25})", "duration({years: 1, days: 1})",
+                 "duration({hours: 600000})", "duration({months: -10000, days: 200000, seconds: -2000000000})"]
         graph.query("CREATE (:D {" + ", ".join(f"p{i}: {e}" for i, e in enumerate(exprs)) + "})")
         q = "MATCH (n:D) RETURN " + ", ".join(f"toString(n.p{i})" for i in range(len(exprs)))
-        expected = [["P-1D", "P1M-3D", "PT-1H-30M", "P40D", "PT25H", "P1Y1D"]]
+        expected = [["P-1D", "P1M-3D", "PT-1H-30M", "P40D", "PT25H", "P1Y1D",
+                     "PT600000H", "P-833Y-4M200000DT-555555H-33M-20S"]]
         self.env.assertEqual(graph.query(q).result_set, expected)
         self.env.dumpAndReload()
         self.env.assertEqual(graph.query(q).result_set, expected)

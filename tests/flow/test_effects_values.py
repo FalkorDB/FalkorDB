@@ -275,9 +275,12 @@ class testEffects_02_ValueTypes(_EffectsBase):
         self.query_and_sync("""CREATE (:Dur {a: duration({days: -1}),
                                              b: duration({months: 1, days: -3}),
                                              c: duration({hours: -1, minutes: -30}),
-                                             d: duration({years: 1, days: 1})})""")
+                                             d: duration({years: 1, days: 1}),
+                                             e: duration({hours: 600000}),
+                                             f: duration({months: -10000, days: 200000, seconds: -2000000000})})""")
         self.assert_effect_emitted()
         self.assert_agree(
-            "MATCH (n:Dur) RETURN toString(n.a), toString(n.b), toString(n.c), toString(n.d)",
-            [['P-1D', 'P1M-3D', 'PT-1H-30M', 'P1Y1D']])
+            "MATCH (n:Dur) RETURN toString(n.a), toString(n.b), toString(n.c), toString(n.d), toString(n.e), toString(n.f)",
+            [['P-1D', 'P1M-3D', 'PT-1H-30M', 'P1Y1D', 'PT600000H',
+              'P-833Y-4M200000DT-555555H-33M-20S']])
         self.assert_graph_eq()

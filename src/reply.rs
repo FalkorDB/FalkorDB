@@ -62,7 +62,7 @@ fn format_value_to_string(
         Value::Datetime(ts) => out.push_str(&Value::format_datetime(*ts)),
         Value::Date(ts) => out.push_str(&Value::format_date(*ts)),
         Value::Time(ts) => out.push_str(&Value::format_time(*ts)),
-        Value::Duration(d) => out.push_str(&Value::format_duration(*d)),
+        Value::Duration(d) => out.push_str(&Value::format_duration(d)),
         Value::List(values) | Value::Path(values) => {
             out.push('[');
             for (i, item) in values.iter().enumerate() {
@@ -185,7 +185,7 @@ pub fn reply_compact_value(
         }
         Value::Duration(dur) => {
             raw::reply_with_long_long(ctx.ctx, 16);
-            raw::reply_with_long_long(ctx.ctx, duration_to_legacy(*dur) as _);
+            raw::reply_with_long_long(ctx.ctx, duration_to_legacy(dur) as _);
         }
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);
@@ -403,7 +403,7 @@ pub fn reply_verbose_value(
             );
         }
         Value::Duration(dur) => {
-            let formatted = Value::format_duration(*dur);
+            let formatted = Value::format_duration(dur);
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 formatted.as_ptr().cast::<c_char>(),

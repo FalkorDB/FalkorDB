@@ -623,12 +623,46 @@ class testTemporalDuration(FlowTestsBase):
         self.env.assertEqual(res[5], datetime(2020, 2, 28, 23, 0, 0, tzinfo=timezone.utc))
         self.env.assertEqual(res[6], time(23, 0, 0))
 
+    def test_duration_large_components(self):
+        # Components too big for the compact in-memory form keep the full range
+        # and behave exactly like small ones.
+        cases = [
+            ("duration({hours: 600000})",             "PT600000H"),
+            ("duration({seconds: 9000000000000000})", "PT2500000000000H"),
+            ("duration({days: 200000})",              "P200000D"),
+            ("duration({months: 10000})",             "P833Y4M"),
+            ("duration({months: -10000, days: -200000, hours: -600000})", "P-833Y-4M-200000DT-600000H"),
+            ("duration({hours: 600000}) - duration({hours: 599999})", "PT1H"),
+            ("duration({days: 200000}) + duration({days: -199999})", "P1D"),
+            ("duration({days: 1}) + duration({hours: 600000, minutes: 5})", "P1DT600000H5M"),
+        ]
+        for expr, expected in cases:
+            actual = self.graph.query(f"RETURN toString({expr})").result_set[0][0]
+            self.env.assertEqual(actual, expected, depth=1)
+
+        # the same duration built two ways is equal
+        res = self.graph.query("""RETURN duration({hours: 600000}) - duration({hours: 599999}) = duration({hours: 1}),
+                                         duration({days: 200000}) + duration({days: -199999}) = duration({days: 1}),
+                                         duration({hours: 600000}) > duration({hours: 1})""").result_set
+        self.env.assertEqual(res[0], [True, True, True])
+        res = self.graph.query("""UNWIND [duration({hours: 600000}) - duration({hours: 599999}), duration({hours: 1}), duration({days: 200000}), duration({days: 199999}) + duration({days: 1})] AS x
+                                  RETURN count(DISTINCT x)""").result_set
+        self.env.assertEqual(res[0][0], 2)
+
+        # dates shift by a big duration
+        res = self.graph.query("RETURN date('2020-03-01') + duration({days: 200000}), date('2020-03-01') - duration({days: 200000})").result_set[0]
+        self.env.assertEqual(res[0], date(2567, 9, 30))
+        self.env.assertEqual(res[1], date(1472, 8, 1))
+
     def test_duration_out_of_range_component_errors(self):
-        try:
-            self.graph.query("RETURN duration({days: 100000000})")
-            self.env.assertFalse(True)
-        except Exception as e:
-            self.env.assertContains("out of range", str(e))
+        for q in ["RETURN duration({days: 9223372036854775807})",
+                  "RETURN duration({months: 9223372036854775807})",
+                  "RETURN duration({seconds: 9223372036854775807}) + duration({seconds: 1})"]:
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except Exception as e:
+                self.env.assertTrue("overflow" in str(e).lower() or "out of range" in str(e).lower())
 
     def test_duration_add(self):
         #-----------------------------------------------------------------------

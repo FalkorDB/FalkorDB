@@ -45,7 +45,7 @@ use crate::{
     runtime::{
         functions::{
             Type,
-            temporal::{duration_from_legacy, duration_wire, pack_duration, unpack_duration},
+            temporal::{Dur, DurationWire, duration_from_legacy, duration_wire},
         },
         ordermap::OrderMap,
         runtime::Runtime,
@@ -243,9 +243,8 @@ pub enum Value {
     Date(i64),
     /// Time as seconds from epoch (base date 1970-01-01)
     Time(i64),
-    /// Duration: signed months, days and seconds packed into one i64 (see
-    /// `temporal::pack_duration`)
-    Duration(i64),
+    /// Duration: signed months, days and seconds (see `temporal::Dur`)
+    Duration(Dur),
 }
 
 // Manual impl so clone stays inlineable in hot evaluation loops: every arm
@@ -269,7 +268,7 @@ impl Clone for Value {
             Self::Datetime(t) => Self::Datetime(*t),
             Self::Date(t) => Self::Date(*t),
             Self::Time(t) => Self::Time(*t),
-            Self::Duration(t) => Self::Duration(*t),
+            Self::Duration(t) => Self::Duration(t.clone()),
         }
     }
 }
@@ -327,11 +326,11 @@ impl Value {
     }
 
     #[must_use]
-    pub fn format_duration(packed: i64) -> String {
+    pub fn format_duration(dur: &Dur) -> String {
         use std::fmt::Write;
         // Each component is printed with its own sign, as Neo4j does:
         // `P1M-3D`, `PT-1H-30M`.
-        let (total_months, days, secs) = unpack_duration(packed);
+        let (total_months, days, secs) = dur.components();
         let years = total_months / 12;
         let months = total_months % 12;
         let hours = secs / 3600;
@@ -478,7 +477,7 @@ impl Value {
             Self::Datetime(ts) => Self::get_datetime_component(*ts, attr),
             Self::Date(ts) => Self::get_date_component(*ts, attr),
             Self::Time(ts) => Self::get_time_component(*ts, attr),
-            Self::Duration(dur) => Self::get_duration_component(*dur, attr),
+            Self::Duration(dur) => Self::get_duration_component(dur, attr),
             Self::Null => Ok(Self::Null),
             v => Err(format!(
                 "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
@@ -637,10 +636,10 @@ impl Value {
     /// `format_duration` prints (years and months split the months component,
     /// hours/minutes/seconds split the seconds component), with its own sign.
     fn get_duration_component(
-        packed: i64,
+        dur: &Dur,
         component: &str,
     ) -> Result<Self, String> {
-        let (total_months, days, secs) = unpack_duration(packed);
+        let (total_months, days, secs) = dur.components();
         let c = component;
         let val = if c.eq_ignore_ascii_case("years") {
             total_months / 12
@@ -668,50 +667,62 @@ impl Value {
 /// and seconds as plain offsets.
 fn add_duration_to_timestamp(
     ts: i64,
-    dur: i64,
+    dur: &Dur,
 ) -> Result<i64, String> {
-    let (months, dur_days, secs) = unpack_duration(dur);
-    let (days, time_of_day) = shift_months(ts, months);
-    Ok((days + dur_days) * 86400 + time_of_day + secs)
+    let (months, dur_days, secs) = dur.components();
+    let out_of_range = || "Duration out of range".to_string();
+    let (days, time_of_day) = shift_months(ts, months)?;
+    days.checked_add(dur_days)
+        .and_then(|d| d.checked_mul(86400))
+        .and_then(|t| t.checked_add(time_of_day))
+        .and_then(|t| t.checked_add(secs))
+        .ok_or_else(out_of_range)
 }
 
 /// Subtract a duration from a timestamp; `d - dur == d + (-dur)`.
 fn sub_duration_from_timestamp(
     ts: i64,
-    dur: i64,
+    dur: &Dur,
 ) -> Result<i64, String> {
-    add_duration_to_timestamp(ts, negate_duration(dur)?)
+    add_duration_to_timestamp(ts, &negate_duration(dur)?)
 }
 
 /// Order two durations by their approximate total length (a month counts as
 /// 30.436875 days), breaking ties on the exact components so that the order
 /// agrees with equality.
 fn duration_cmp(
-    a: i64,
-    b: i64,
+    a: &Dur,
+    b: &Dur,
 ) -> Ordering {
-    let approx = |p: i64| {
-        let (months, days, secs) = unpack_duration(p);
-        months * 2_629_746 + days * 86400 + secs
+    let approx = |d: &Dur| {
+        let (months, days, secs) = d.components();
+        i128::from(months) * 2_629_746 + i128::from(days) * 86400 + i128::from(secs)
     };
-    approx(a).cmp(&approx(b)).then(a.cmp(&b))
+    approx(a)
+        .cmp(&approx(b))
+        .then(a.components().cmp(&b.components()))
 }
 
 /// Negate every component of a duration.
-fn negate_duration(dur: i64) -> Result<i64, String> {
-    let (months, days, secs) = unpack_duration(dur);
-    pack_duration(-months, -days, -secs)
+fn negate_duration(dur: &Dur) -> Result<Dur, String> {
+    let (months, days, secs) = dur.components();
+    Dur::new(-months, -days, -secs)
 }
 
 /// Add (or, with `sign == -1`, subtract) two durations component by component.
 fn combine_durations(
-    a: i64,
-    b: i64,
+    a: &Dur,
+    b: &Dur,
     sign: i64,
-) -> Result<i64, String> {
-    let (ma, da, sa) = unpack_duration(a);
-    let (mb, db, sb) = unpack_duration(b);
-    pack_duration(ma + sign * mb, da + sign * db, sa + sign * sb)
+) -> Result<Dur, String> {
+    let (ma, da, sa) = a.components();
+    let (mb, db, sb) = b.components();
+    let overflow = || "Duration overflow".to_string();
+    Dur::new(
+        ma.checked_add(sign * mb).ok_or_else(overflow)?,
+        da.checked_add(sign * db).ok_or_else(overflow)?,
+        sa.checked_add(sign * sb).ok_or_else(overflow)?,
+    )
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -722,14 +733,18 @@ fn combine_durations(
 fn shift_months(
     ts: i64,
     total_months: i64,
-) -> (i64, i64) {
-    let years = total_months.div_euclid(12) as i32;
+) -> Result<(i64, i64), String> {
+    // Years far outside the calendar are an error, not a wrapped date.
+    let years = i32::try_from(total_months.div_euclid(12))
+        .ok()
+        .filter(|y| y.abs() < 1_000_000)
+        .ok_or_else(|| "Duration out of range".to_string())?;
     let months = total_months.rem_euclid(12) as i32;
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y + years;
+    let new_year = y.saturating_add(years);
     let new_month_raw = m as i32 + months;
     let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
@@ -747,10 +762,10 @@ fn shift_months(
         (adj_year, adj_month, d)
     };
 
-    (
+    Ok((
         days_from_civil(final_year, final_month, final_day),
         time_of_day,
-    )
+    ))
 }
 
 const fn days_in_month(
@@ -1013,20 +1028,22 @@ impl Value {
             }
             // Duration + Duration: add the components independently
             (Self::Duration(a), Self::Duration(b)) => {
-                Ok(Self::Duration(combine_durations(a, b, 1)?))
+                Ok(Self::Duration(combine_durations(&a, &b, 1)?))
             }
             // Date/Datetime/Time + Duration and Duration + Date/Datetime/Time
             (Self::Date(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Date(d)) => {
-                Ok(Self::Date(add_duration_to_timestamp(d, dur)?))
+                Ok(Self::Date(add_duration_to_timestamp(d, &dur)?))
             }
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
-                Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
+                Ok(Self::Datetime(add_duration_to_timestamp(d, &dur)?))
             }
             // A time has no date: months and days drop out and only the
             // seconds component moves the time of day.
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
-                Self::Time((t.rem_euclid(86400) + unpack_duration(dur).2).rem_euclid(86400)),
-            ),
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
+                Ok(Self::Time(
+                    (t.rem_euclid(86400) + dur.components().2.rem_euclid(86400)).rem_euclid(86400),
+                ))
+            }
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1051,17 +1068,17 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                Ok(Self::Duration(combine_durations(a, b, -1)?))
+                Ok(Self::Duration(combine_durations(&a, &b, -1)?))
             }
             // Date/Datetime/Time - Duration
             (Self::Date(d), Self::Duration(dur)) => {
-                Ok(Self::Date(sub_duration_from_timestamp(d, dur)?))
+                Ok(Self::Date(sub_duration_from_timestamp(d, &dur)?))
             }
             (Self::Datetime(d), Self::Duration(dur)) => {
-                Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
+                Ok(Self::Datetime(sub_duration_from_timestamp(d, &dur)?))
             }
             (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
-                (t.rem_euclid(86400) - unpack_duration(dur).2).rem_euclid(86400),
+                (t.rem_euclid(86400) - dur.components().2.rem_euclid(86400)).rem_euclid(86400),
             )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
@@ -1249,7 +1266,7 @@ impl CompareValue for Value {
             | (Self::Datetime(a), Self::Datetime(b))
             | (Self::Date(a), Self::Date(b))
             | (Self::Time(a), Self::Time(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::Duration(a), Self::Duration(b)) => (duration_cmp(*a, *b), DisjointOrNull::None),
+            (Self::Duration(a), Self::Duration(b)) => (duration_cmp(a, b), DisjointOrNull::None),
             // the inputs have different type - compare them if they
             // are both numerics of differing types
             (Self::Int(i), Self::Float(f)) => compare_floats(*i as f64, *f),
@@ -1526,7 +1543,7 @@ impl Value {
             | (Self::Datetime(a), Self::Datetime(b))
             | (Self::Date(a), Self::Date(b))
             | (Self::Time(a), Self::Time(b)) => a.cmp(b),
-            (Self::Duration(a), Self::Duration(b)) => duration_cmp(*a, *b),
+            (Self::Duration(a), Self::Duration(b)) => duration_cmp(a, b),
             (Self::Float(a), Self::Float(b)) => sort_cmp_f64(*a, *b),
             (Self::Int(i), Self::Float(f)) => sort_cmp_int_float(*i, *f),
             (Self::Float(f), Self::Int(i)) => sort_cmp_int_float(*i, *f).reverse(),
@@ -1757,7 +1774,7 @@ impl DisplayJson for Value {
                 write_json_string(f, &formatted)
             }
             Self::Duration(dur) => {
-                let formatted = Self::format_duration(*dur);
+                let formatted = Self::format_duration(dur);
                 write_json_string(f, &formatted)
             }
         }
@@ -2098,15 +2115,18 @@ impl Encode<19> for Value {
                 w.write_unsigned(si_type::T_TIME);
                 w.write_signed(*ts);
             }
-            Self::Duration(ts) => {
-                let (v2, wire) = duration_wire(*ts);
-                w.write_unsigned(if v2 {
-                    si_type::T_DURATION_V2
-                } else {
-                    si_type::T_DURATION
-                });
-                w.write_signed(wire);
-            }
+            Self::Duration(dur) => match duration_wire(dur) {
+                DurationWire::Legacy(t) => {
+                    w.write_unsigned(si_type::T_DURATION);
+                    w.write_signed(t);
+                }
+                DurationWire::V2(months, days, seconds) => {
+                    w.write_unsigned(si_type::T_DURATION_V2);
+                    w.write_signed(months);
+                    w.write_signed(days);
+                    w.write_signed(seconds);
+                }
+            },
             // Map, Node, Relationship, Path are not stored as properties
             Self::Null => {
                 w.write_unsigned(si_type::T_NULL);
@@ -2200,7 +2220,12 @@ fn decode_value(
         si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
         si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
         si_type::T_DURATION => Ok(Value::Duration(duration_from_legacy(r.read_signed()?)?)),
-        si_type::T_DURATION_V2 => Ok(Value::Duration(r.read_signed()?)),
+        si_type::T_DURATION_V2 => {
+            let months = r.read_signed()?;
+            let days = r.read_signed()?;
+            let seconds = r.read_signed()?;
+            Ok(Value::Duration(Dur::new(months, days, seconds)?))
+        }
         _ => Err(format!("unknown SIType tag: {tag}")),
     }
 }
@@ -2441,7 +2466,7 @@ mod is_never_equal_tests {
             Value::Datetime(0),
             Value::Date(0),
             Value::Time(0),
-            Value::Duration(0),
+            Value::Duration(crate::runtime::functions::temporal::Dur::new(0, 0, 0).unwrap()),
             list(vec![]),
             list(vec![Value::Int(1), Value::Int(2)]),
             list(vec![Value::Int(1), Value::Null]),
@@ -2830,8 +2855,11 @@ mod nesting_tests {
             (-1, -1, 0, 40, 25, 0, -7),
             (1, 1, 0, 1, 1, 1, 1),
             (0, 0, 0, 0, 0, 0, 0),
+            (0, 0, 0, 200_000, 600_000, 0, -5),
+            (-20_000, 0, 0, 0, 0, 0, 9_000_000_000_000_000),
         ] {
             let v = Value::Duration(construct_duration(y, mo, w, d, h, mi, se).unwrap());
+            let _ = &v;
             let mut t = Tape::default();
             v.encode(&mut t);
             assert_eq!(Value::decode(&mut t).unwrap(), v);
@@ -2857,7 +2885,7 @@ mod nesting_tests {
         t.write_signed(legacy);
         let v = Value::decode(&mut t).unwrap();
         let Value::Duration(p) = v else { panic!() };
-        assert_eq!(Value::format_duration(p), "P1Y1M1DT1H1M1S");
+        assert_eq!(Value::format_duration(&p), "P1Y1M1DT1H1M1S");
     }
 
     #[test]

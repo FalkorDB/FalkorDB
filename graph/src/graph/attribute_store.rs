@@ -112,6 +112,7 @@
 //! (`Resident ⇄ Cold` is cache state over identical bytes, and must be mutable
 //! from outside the versioned tree) — not for versioned state.
 
+use crate::runtime::functions::temporal::Dur;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -449,7 +450,9 @@ impl Block {
             Value::Datetime(t) => (Tag::Datetime, t.to_le_bytes()),
             Value::Date(t) => (Tag::Date, t.to_le_bytes()),
             Value::Time(t) => (Tag::Time, t.to_le_bytes()),
-            Value::Duration(t) => (Tag::Duration, t.to_le_bytes()),
+            Value::Duration(d) if d.inline_bits().is_some() => {
+                (Tag::Duration, d.inline_bits().unwrap_or(0).to_le_bytes())
+            }
             other => {
                 let idx = if let Some(i) = self.heap_free.pop() {
                     self.heap[i as usize] = other;
@@ -499,7 +502,9 @@ impl Block {
             Tag::Datetime => Value::Datetime(i64::from_le_bytes(attr.payload)),
             Tag::Date => Value::Date(i64::from_le_bytes(attr.payload)),
             Tag::Time => Value::Time(i64::from_le_bytes(attr.payload)),
-            Tag::Duration => Value::Duration(i64::from_le_bytes(attr.payload)),
+            Tag::Duration => {
+                Value::Duration(Dur::from_inline_bits(u64::from_le_bytes(attr.payload)))
+            }
             Tag::Heap => self.heap[attr.heap_index()].clone(),
         }
     }
@@ -1635,7 +1640,7 @@ mod tests {
             Value::Datetime(-62_135_596_800),
             Value::Date(19_723),
             Value::Time(-1),
-            Value::Duration(i64::MAX),
+            Value::Duration(Dur::new(0, 0, i64::MAX / 2).unwrap()),
             Value::String(Arc::new("hello".to_string())),
             Value::List(Arc::new(
                 [Value::Int(1), Value::String(Arc::new("x".to_string()))]

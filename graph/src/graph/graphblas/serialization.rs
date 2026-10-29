@@ -114,8 +114,8 @@ pub mod si_type {
     /// time` (the C engine's `time_t`). Read-only here: it cannot hold negative
     /// components, so new data is written as `T_DURATION_V2`.
     pub const T_DURATION: u64 = 1 << 10;
-    /// Duration as signed months, days and seconds packed into an `i64`
-    /// (`temporal::pack_duration`). A tag the C engine does not define.
+    /// Duration as three signed `i64`s: months, days, seconds
+    /// (`temporal::Dur`). A tag the C engine does not define.
     pub const T_DURATION_V2: u64 = 1 << 24;
     pub const T_STRING: u64 = 1 << 11;
     pub const T_BOOL: u64 = 1 << 12;
