@@ -1418,6 +1418,92 @@ def test_aggregation():
     assert_result_set_equal_no_order(res, [[1, 7.0, 6.0], [2, 7.0, 6.0]])
 
 
+def test_aggregate_binds_only_the_new_scope():
+    # The binder numbers each scope from zero and a row is keyed by slot id
+    # alone, so what an Aggregate emits (or evaluates against) must hold only
+    # the ids of the scope it opens. Slots from the scope before it used to
+    # leak into the new one.
+
+    # An aggregation's output overwrote a later aggregation's accumulator once
+    # the grouping keys outnumbered the variables bound before the projection:
+    # the sum came back as the count and avg panicked the server (#3375).
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), sum(x), min(x), max(x)"
+    )
+    assert res.result_set == [["a", "b", 3, 6, 1, 3]]
+    res = query("UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), avg(x)")
+    assert res.result_set == [["a", "b", 3, 2.0]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x) + 0, sum(x) + 0"
+    )
+    assert res.result_set == [["a", "b", 3, 6]]
+
+    # A grouping key must not be read as the old-scope variable sharing its
+    # slot id: `p` below is unbound at the aggregation, not the key `p.name`
+    # (#3571).
+    query("CREATE (:Person {name: 'Tom'})-[:loves]->(:Person {name: 'Judy'})", write=True)
+    res = query("MATCH (p) RETURN p.name, p.name + COUNT(p)", compare_results=False)
+    assert_result_set_equal_no_order(res, [["Tom", None], ["Judy", None]])
+
+    # A MATCH after a WITH that aggregates must not see the old scope's slots
+    # as bound: `b` shared the slot id of the old `m`, so the traversal was
+    # taken as an expand-into of a bound pair and found nothing (#3333, #3372).
+    query(
+        "CREATE (:V {id: 1})-[:R]->(:V {id: 2})-[:R]->(:V {id: 3})-[:R]->(:V {id: 4})",
+        write=True,
+    )
+    res = query(
+        "MATCH (a:V {id: 1})-[:R]->(x:V)-[:R]->(m:V) WITH m, count(*) AS c1 "
+        "MATCH (m)-[r:R]->(b:V {id: 4}) RETURN m.id AS mid, c1, b.id AS bid"
+    )
+    assert res.result_set == [[3, 1, 4]]
+
+
+def test_pipelined_match_after_aggregating_with():
+    # #3372: a path split by an aggregating WITH, joined on the middle node.
+    query(
+        "CREATE (v1:W {id: 1}), (v2:W {id: 2}), (v3:W {id: 3}), (v4:W {id: 4}), "
+        "(v5:W {id: 5}), (v6:W {id: 6}), (v7:W {id: 7}), "
+        "(v1)-[:E]->(v2), (v2)-[:E]->(v3), (v1)-[:E]->(v6), (v6)-[:E]->(v3), "
+        "(v3)-[:E]->(v4), (v4)-[:E]->(v5), (v3)-[:E]->(v7), (v7)-[:E]->(v5)",
+        write=True,
+    )
+    res = query(
+        "MATCH (a:W)-[:E]->(b:W)-[:E]->(c:W) WITH c, count(*) AS in2 "
+        "MATCH (c)-[:E]->(d:W)-[:E]->(e:W) WITH c, in2, count(*) AS out2 "
+        "RETURN sum(in2 * out2) AS s"
+    )
+    full = query(
+        "MATCH (a:W)-[:E]->(b:W)-[:E]->(c:W)-[:E]->(d:W)-[:E]->(e:W) RETURN count(*)"
+    )
+    assert res.result_set == full.result_set == [[4]]
+
+
+def test_merge_after_two_aggregations():
+    # #3368 / #3369: slots of an earlier aggregation's scope must not leak into
+    # a later MERGE or UNWIND.
+    res = query(
+        "UNWIND [{id:'a1'}] AS r0 MERGE (a:A {id: r0.id}) WITH count(*) AS c0 "
+        "UNWIND [{id:'b1'}] AS r1 MERGE (b:B {id: r1.id}) WITH b, r1 "
+        "WITH count(*) AS c1 UNWIND [{id:'c1'}] AS r2 MERGE (c:C {id: r2.id}) "
+        "RETURN labels(c), c.id",
+        write=True,
+    )
+    assert res.result_set == [[["C"], "c1"]]
+    res = query("MATCH (n) RETURN labels(n), n.id", compare_results=False)
+    assert_result_set_equal_no_order(res, [[["A"], "a1"], [["B"], "b1"], [["C"], "c1"]])
+
+    common.g.delete()
+    res = query(
+        "UNWIND [{id:'a1'}] AS r0 MERGE (a:A {id: r0.id}) WITH count(*) AS c0 "
+        "UNWIND [{id:'b1'}] AS r1 MERGE (b:B {id: r1.id}) WITH c0, count(*) AS c1 "
+        "UNWIND [{id:'c1'}] AS r2 MERGE (c:C {id: r2.id}) "
+        "WITH c0, c1, collect(c.id) AS ids UNWIND ids AS id RETURN id",
+        write=True,
+    )
+    assert res.result_set == [["c1"]]
+
+
 @given(st.lists(st.integers(-10, 10)))
 def test_avg_integers(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
