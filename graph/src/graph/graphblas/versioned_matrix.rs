@@ -844,15 +844,15 @@ impl VersionedMatrix<bool> {
     }
 
     /// [`Self::iter`] from the first entry at or after `at`, through row `max_row`, reading none
-    /// of the entries before it ([`Iter::from_layers_at`]).
+    /// of the entries before it ([`EntryIter::from_layers_at`]).
     #[must_use]
     pub fn iter_at(
         &self,
         at: (u64, u64),
         max_row: u64,
-    ) -> Iter {
+    ) -> EntryIter {
         self.wait();
-        Iter::<BoolExtract>::from_layers_at(&self.m, &self.dp, &self.dm, at, max_row)
+        EntryIter::<BoolExtract>::from_layers_at(&self.m, &self.dp, &self.dm, at, max_row)
     }
 
     pub fn resize(
@@ -1361,8 +1361,10 @@ impl<V> Decode<19> for VersionedMatrix<V> {
     }
 }
 
-pub struct Iter<E: IterExtract = BoolExtract> {
-    mit: matrix::Iter<E>,
+/// The effective content of the three layers, merged. Each layer is read by an `L` (`m`, `dp`) or
+/// a `D` (`dm`): row iterators ([`matrix::Iter`]) here, entry iterators in an [`EntryIter`].
+pub struct Iter<E: IterExtract = BoolExtract, L = matrix::Iter<E>, D = matrix::Iter<BoolExtract>> {
+    mit: L,
     /// Lookahead on `mit` (buffered while waiting for the merge to pick it).
     m_next: Option<E::Item>,
     /// Delta-plus iterator. Lazily left `None` when `dp` is empty (the common
@@ -1370,18 +1372,22 @@ pub struct Iter<E: IterExtract = BoolExtract> {
     /// freeing a `GxB_Iterator` that would never yield anything. `dp` is a
     /// stable read snapshot for the life of this iterator, so once `None` it
     /// stays `None` across `seek` calls.
-    dpit: Option<matrix::Iter<E>>,
+    dpit: Option<L>,
     /// Lookahead on `dpit`.
     dp_next: Option<E::Item>,
     /// Delta-minus iterator, `None` when `dm` is empty (same rationale as
     /// `dpit`).
-    dmit: Option<matrix::Iter<BoolExtract>>,
+    dmit: Option<D>,
     /// Lookahead on `dmit`.
     dm_next: Option<(u64, u64)>,
 }
 
-unsafe impl<E: IterExtract> Send for Iter<E> {}
-unsafe impl<E: IterExtract> Sync for Iter<E> {}
+unsafe impl<E: IterExtract, L: Send, D: Send> Send for Iter<E, L, D> {}
+unsafe impl<E: IterExtract, L: Sync, D: Sync> Sync for Iter<E, L, D> {}
+
+/// An [`Iter`] whose layers are read by entry iterators ([`matrix::EntryIter`]): it starts at an
+/// entry rather than a row ([`Self::from_layers_at`]), and is not re-seeked.
+pub type EntryIter<E = BoolExtract> = Iter<E, matrix::EntryIter<E>, matrix::EntryIter<BoolExtract>>;
 
 impl<E: IterExtract> Iter<E> {
     /// Streams the effective content `(m ∖ dm) ∪ dp` as a sorted merge of the
@@ -1461,30 +1467,6 @@ impl<E: IterExtract> Iter<E> {
         }
     }
 
-    /// [`Self::from_layers`] from the first effective entry at or after
-    /// `(row, col)`, through row `max_row`: each layer starts there by
-    /// binary search ([`matrix::Iter::from_entry`]), so none of the entries
-    /// before it is read. Callers must have waited `dp`/`dm`.
-    pub(crate) fn from_layers_at<V>(
-        m: &Matrix<V>,
-        dp: &Matrix<V>,
-        dm: &Matrix<bool>,
-        at: (u64, u64),
-        max_row: u64,
-    ) -> Self {
-        let mut dmit =
-            (dm.nvals() != 0).then(|| matrix::Iter::<BoolExtract>::from_entry(dm, at, max_row));
-        let dm_next = dmit.as_mut().and_then(Iterator::next);
-        Self {
-            mit: matrix::Iter::from_entry(m, at, max_row),
-            m_next: None,
-            dpit: (dp.nvals() != 0).then(|| matrix::Iter::from_entry(dp, at, max_row)),
-            dp_next: None,
-            dmit,
-            dm_next,
-        }
-    }
-
     /// Re-seek the inner GraphBLAS iterators to a new row range without
     /// re-allocating them. Hot-loop callers (e.g. `CondTraverseOp` and
     /// `ExpandInto` looking up edges by `(src, dst)`) use this to amortize
@@ -1507,11 +1489,42 @@ impl<E: IterExtract> Iter<E> {
     }
 }
 
-/// Three-way sorted merge over the layer iterators. GraphBLAS row iterators
-/// yield entries in ascending `(row, col)` order, so the output is sorted by
-/// `(row, col)` too. `m` entries masked by `dm` are dropped; when `dp` holds
+impl<E: IterExtract> EntryIter<E> {
+    /// [`Iter::from_layers`] from the first effective entry at or after
+    /// `(row, col)`, through row `max_row`: each layer starts there by
+    /// binary search ([`matrix::EntryIter::new`]), so none of the entries
+    /// before it is read. Callers must have waited `dp`/`dm`.
+    pub(crate) fn from_layers_at<V>(
+        m: &Matrix<V>,
+        dp: &Matrix<V>,
+        dm: &Matrix<bool>,
+        at: (u64, u64),
+        max_row: u64,
+    ) -> Self {
+        let mut dmit =
+            (dm.nvals() != 0).then(|| matrix::EntryIter::<BoolExtract>::new(dm, at, max_row));
+        let dm_next = dmit.as_mut().and_then(Iterator::next);
+        Self {
+            mit: matrix::EntryIter::new(m, at, max_row),
+            m_next: None,
+            dpit: (dp.nvals() != 0).then(|| matrix::EntryIter::new(dp, at, max_row)),
+            dp_next: None,
+            dmit,
+            dm_next,
+        }
+    }
+}
+
+/// Three-way sorted merge over the layer iterators. Row and entry iterators
+/// both yield entries in ascending `(row, col)` order, so the output is sorted
+/// by `(row, col)` too. `m` entries masked by `dm` are dropped; when `dp` holds
 /// the same pair as `m` (shadow), the live `dp` item wins.
-impl<E: IterExtract> Iterator for Iter<E> {
+impl<E, L, D> Iterator for Iter<E, L, D>
+where
+    E: IterExtract,
+    L: Iterator<Item = E::Item>,
+    D: Iterator<Item = (u64, u64)>,
+{
     type Item = E::Item;
 
     fn next(&mut self) -> Option<E::Item> {
