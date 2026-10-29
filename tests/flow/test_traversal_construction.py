@@ -571,3 +571,37 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A variable-length hop anchored on an indexed endpoint must start the plan
+    # even when the same MATCH has a second, fixed-length pattern on the other
+    # endpoint (#2558). Otherwise the planner starts from the unrelated label
+    # scan and expands the var-length hop from every row it finds.
+    def test_var_len_anchor_with_second_pattern(self):
+        g = self.db.select_graph("VarLenAnchorSecondPattern")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 199) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i % 5}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+
+        single = "MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)"
+        for q in ["""MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend),
+                           (friend)-[:LIVES]->(city:City) RETURN count(*)""",
+                  """MATCH (friend)-[:LIVES]->(city:City),
+                           (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)""",
+                  """MATCH (person:Person)-[:KNOWS*2..2]-(friend), (friend)-[:LIVES]->(city:City)
+                     WHERE person.id = 5 RETURN count(*)"""]:
+            plan = str(g.explain(q))
+            self.env.assertContains("Node By Index Scan | (person:Person)", plan)
+            self.env.assertNotContains("Node By Label Scan | (city:City)", plan)
+            # every friend lives in exactly one city, so the counts agree
+            self.env.assertEqual(g.query(q).result_set, g.query(single).result_set, message=q)
+
+        # A fixed-length hop that is itself anchored keeps leading.
+        anchored = """MATCH (friend:Person {id: 9})-[:LIVES]->(city:City),
+                            (person:Person)-[:KNOWS*2..2]-(friend) RETURN count(*)"""
+        self.env.assertContains("Node By Index Scan | (friend:Person)", str(g.explain(anchored)))
+        g.delete()
