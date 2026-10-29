@@ -2338,19 +2338,19 @@ impl Binder {
             // that used to reach the runtime.
             ExprIR::Case { .. } => true,
 
-            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
+            // Non-boolean: literals, unary arithmetic, slice, list comprehension
             ExprIR::List
             | ExprIR::Map
             | ExprIR::MapProjection
             | ExprIR::Negate
             | ExprIR::Length
-            | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
             | ExprIR::PatternComprehension(_)
             | ExprIR::NestedPlan(_) => false,
 
-            // Boolean literals, comparisons, predicates, and runtime-typed nodes
+            // Boolean literals, comparisons, predicates, and runtime-typed
+            // nodes (a subscript returns whatever the element is)
             ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
@@ -2371,6 +2371,7 @@ impl Binder {
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
+            | ExprIR::GetElement
             | ExprIR::ShortestPath(_)
             | ExprIR::Pattern(_) => true,
 
