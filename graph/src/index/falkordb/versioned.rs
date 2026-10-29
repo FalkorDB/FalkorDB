@@ -714,11 +714,15 @@ impl Graph {
 
     /// The indexes this version holds `Building` that `older` does not hold as the same index:
     /// created since, or dropped and created again. What a commit hands the builder, so each build
-    /// starts once, however many commits it spans.
+    /// starts once, however many commits it spans. Every writer's commit asks, so with no index
+    /// `Building` here it answers without looking any index up by name.
     pub(crate) fn indexes_to_build_since(
         &self,
         older: &Self,
     ) -> Vec<IndexId> {
+        if !self.falkordb_index.has_building_columns() {
+            return Vec::new();
+        }
         self.falkordb_index
             .column_names()
             .into_iter()
