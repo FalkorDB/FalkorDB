@@ -1829,6 +1829,11 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
                 })
                 .collect::<Result<OrderMap<_, _>, _>>()?,
         ))),
+        // A parameter value is negated once at most, as C has it: `--1`,
+        // which the expression parser now accepts (#2309), is still refused.
+        ExprIR::Negate if matches!(expr.child(0).data(), ExprIR::Negate) => {
+            Err(String::from("Invalid parameter expression."))
+        }
         ExprIR::Negate => {
             let v = evaluate_param(&expr.child(0))?;
             match v {
