@@ -5242,9 +5242,10 @@ mod reservation_tests {
     }
 
     impl Query {
-        /// Opening a query opens the graph's batch, exactly as `Commit` does.
+        /// Opening a query forks a version, exactly as a write query does
+        /// (`MvccGraph::fork`); a version begins with a fresh batch.
         fn new(g: &mut Graph) -> Self {
-            g.open_id_batches().expect("a consistent space");
+            *g = g.new_version();
             Self {
                 created: RoaringTreemap::new(),
                 cancelled: RoaringTreemap::new(),
@@ -5475,8 +5476,9 @@ mod reservation_tests {
         g.delete_relationships(&doomed, &mut docs).expect("deleted");
 
         // One in the bin, two live, so three ids handed out.
-        // A fresh batch, so nothing is outstanding: the first one committed.
-        g.open_id_batches().expect("a consistent space");
+        // The next query, so nothing is outstanding and the freed id may be
+        // reused: the first one committed.
+        let mut g = g.new_version();
         let ids = g
             .relationship_id_space()
             .reserve(2, &RoaringTreemap::new())
@@ -5523,6 +5525,30 @@ mod reservation_tests {
     /// A second batch must not re-hand-out the first batch's reclaimed ids.
     /// This is the case the graph's own counter used to carry, and the one that
     /// breaks loudest if `outstanding` is ever passed as a constant.
+    #[test]
+    fn an_id_freed_earlier_in_a_query_is_not_reused_by_it() {
+        let mut g = graph();
+        let mut q = Query::new(&mut g);
+        q.reserve(&mut g, 3);
+        q.commit(&mut g);
+
+        // One query: a segment deletes 1, the next creates. The freed 1 still
+        // names the deleted node for the rest of the query (#2876).
+        let q = Query::new(&mut g);
+        q.commit(&mut g);
+        delete(&mut g, &[1]);
+        g.open_id_batches().expect("a consistent space");
+        let ids = g
+            .node_id_space()
+            .reserve(1, &RoaringTreemap::new())
+            .expect("reserved");
+        assert_eq!(ids, vec![3], "fresh, not the 1 this query freed");
+
+        // The next query may take it.
+        let mut q = Query::new(&mut g);
+        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+    }
+
     #[test]
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
