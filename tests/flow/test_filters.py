@@ -262,3 +262,83 @@ class testFilters():
             "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
         self.env.assertEqual(columnar.result_set, per_row.result_set)
         self.env.assertEqual(columnar.result_set, [['else']] * 5)
+
+    def test10_filter_after_with_keeps_its_own_variables(self):
+        # Variable ids restart after a WITH, so a variable of the new scope
+        # can share its id with one hidden below the WITH. That one must not
+        # count as bound: the filter on `m` was pushed below the traverse
+        # that binds `m` and dropped every row (#2557).
+        g = self.db.select_graph("filter_after_with")
+        g.query("""CREATE (p:Person {id:1}), (f:Person {id:2}), (p)-[:KNOWS]->(f),
+                          (m1:Post {id:10}), (m2:Post {id:11}),
+                          (m1)-[:HAS_CREATOR]->(f), (m2)-[:HAS_CREATOR]->(f)""")
+
+        for pred, expected in [("m.id < 999", 2), ("m.id = 10", 1),
+                               ("999 > m.id", 2), ("m.id <> 5", 2)]:
+            res = g.query(f"""MATCH (root:Person {{id:1}})-[:KNOWS]-(friend:Person)
+                              WITH collect(friend) AS friends
+                              UNWIND friends AS f
+                              MATCH (f)<-[:HAS_CREATOR]-(m:Post)
+                              WHERE {pred}
+                              RETURN count(m)""")
+            self.env.assertEqual(res.result_set, [[expected]], depth=1)
+
+        # The same collision through an Apply: the WHERE of an OPTIONAL MATCH
+        # after an aggregating WITH must stay above the traverse binding `r`.
+        g.query("CREATE (:Rule {status:'revoked'})-[:SCOPED_TO]->(:Person {id:3})")
+        res = g.query("""MATCH (p:Person {id:3})
+                         OPTIONAL MATCH (r0:Rule)-[:SCOPED_TO]->(p)
+                         WITH p, count(r0) AS n
+                         OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p)
+                         WHERE r.status = 'revoked'
+                         RETURN n, r.status""")
+        self.env.assertEqual(res.result_set, [[1, 'revoked']])
+
+    def test11_optional_match_degrees_across_with(self):
+        # Outer-join aggregations chained through WITH reuse variable ids
+        # (u, v, du, ... restart after every WITH), so a filter of a later
+        # OPTIONAL MATCH was pushed below the traverse binding its variable and
+        # the sums came out as -12 instead of 25 (#3371). Expected values are
+        # what C returns: central_sum - 3 * triangles = simple 4-node paths.
+        cases = [
+            ([(1, 2)], [[1, 2, 0, 0, 0]], 0, 0, 0),
+            ([(1, 2), (2, 3), (3, 4)],
+             [[1, 2, 0, 1, 0], [2, 3, 1, 1, 1], [3, 4, 1, 0, 0]], 1, 0, 1),
+            ([(1, 2), (1, 3), (2, 3)],
+             [[1, 2, 1, 1, 1], [1, 3, 1, 1, 1], [2, 3, 1, 1, 1]], 3, 1, 0),
+            ([(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4), (1, 5), (2, 6)],
+             [[1, 2, 3, 3, 9], [1, 3, 3, 2, 6], [1, 4, 3, 2, 6],
+              [1, 5, 3, 0, 0], [2, 3, 3, 2, 6], [2, 4, 3, 2, 6],
+              [2, 6, 3, 0, 0], [3, 4, 2, 2, 4]], 37, 4, 25),
+        ]
+        degrees = """MATCH (u:MT04)-[:E04]-(v:MT04) WHERE u.id<v.id
+                     OPTIONAL MATCH (u)-[ru:E04]-(nu:MT04) WHERE nu<>v
+                     WITH u,v,count(ru) AS du
+                     OPTIONAL MATCH (v)-[rv:E04]-(nv:MT04) WHERE nv<>u
+                     WITH u,v,du,count(rv) AS dv """
+        for i, (edges, per_edge, central, triangles, paths) in enumerate(cases):
+            g = self.db.select_graph(f"degrees_across_with_{i}")
+            nodes = sorted({n for e in edges for n in e})
+            pattern = [f"(v{n}:MT04 {{id: {n}}})" for n in nodes]
+            pattern += [f"(v{a})-[:E04]->(v{b})" for a, b in edges]
+            g.query("CREATE " + ", ".join(pattern))
+
+            res = g.query(degrees + "RETURN u.id,v.id,du,dv,du*dv ORDER BY u.id,v.id")
+            self.env.assertEqual(res.result_set, per_edge, depth=1)
+
+            res = g.query(degrees + """WITH sum(du*dv) AS central_sum
+                OPTIONAL MATCH p=(a:MT04)-[:E04]-(b:MT04)-[:E04]-(c:MT04)-[:E04]-(a)
+                WHERE a.id<b.id AND b.id<c.id
+                WITH central_sum, count(p) AS triangles
+                RETURN central_sum, triangles, central_sum-3*triangles""")
+            self.env.assertEqual(res.result_set, [[central, triangles, paths]], depth=1)
+
+    def test12_filter_after_unwind_stays_above_the_unwind(self):
+        # `x` (bound by the UNWIND) shared an id with a variable inside the
+        # CALL {} body below it, so `WHERE x = 2` was pushed below the UNWIND
+        # and rejected every row. C returns 2.
+        g = self.db.select_graph("filter_above_unwind")
+        g.query("CREATE (:A), (:A)")
+        res = g.query("""CALL { CREATE () } UNWIND [1, 2] AS x
+                         MATCH (n:A) WHERE x = 2 RETURN count(*)""")
+        self.env.assertEqual(res.result_set, [[2]])
