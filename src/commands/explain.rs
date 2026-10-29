@@ -23,13 +23,13 @@ use crate::query_session::QuerySession;
 use crate::{
     commands::{EMPTY_KEY_ERR, query_args::parse_query_flags},
     graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use graph::{graph::graph::Plan, threadpool::spawn};
 use orx_tree::{Dfs, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
 use std::{os::raw::c_char, sync::Arc};
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw};
 
 /// Acquire the graph read lock, build the plan, reply the linearized tree. Runs on a
 /// worker thread, or synchronously for MULTI/REPLICATED.
@@ -37,7 +37,7 @@ fn explain(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-) -> RedisResult {
+) -> ValkeyResult {
     // L1-read for exactly the plan build, through a session: the optimizer consults
     // the index to pick scans, and a session is what publishes the lock mode that the
     // GIL lock-order assertion reads (#726).
@@ -45,7 +45,7 @@ fn explain(
         let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
     }
-    .map_err(RedisError::String)?;
+    .map_err(ValkeyError::String)?;
     let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
@@ -54,13 +54,13 @@ fn explain(
         let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
-    RedisResult::Ok(RedisValue::NoReply)
+    ValkeyResult::Ok(ValkeyValue::NoReply)
 }
 
 pub fn graph_explain(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     // Flags are validated as C does; EXPLAIN itself reads none of them.
     parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
@@ -69,7 +69,10 @@ pub fn graph_explain(
     let query = up_to_nul(args.next_str()?);
 
     let key = ctx.open_key(&key);
-    let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? else {
+    let Some(graph) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    else {
         return EMPTY_KEY_ERR;
     };
     let graph = graph.clone();
@@ -98,5 +101,5 @@ pub fn graph_explain(
         None,
     );
 
-    RedisResult::Ok(RedisValue::NoReply)
+    ValkeyResult::Ok(ValkeyValue::NoReply)
 }

@@ -1,6 +1,6 @@
 //! Redis command handler module index.
 //!
-//! Re-exports all command entrypoints registered by `redis_module!` and
+//! Re-exports all command entrypoints registered by `valkey_module!` and
 //! provides shared command-level constants.
 //!
 //! ## Why this module exists
@@ -8,7 +8,7 @@
 //! to evolve independently in its own file.
 //!
 //! ```text
-//! redis_module! command table
+//! valkey_module! command table
 //!          |
 //!          v
 //!      commands::graph_* re-exports
@@ -17,7 +17,7 @@
 //!   commands/<command>.rs implementation
 //! ```
 
-use redis_module::{RedisError, RedisResult};
+use valkey_module::{ValkeyError, ValkeyResult};
 
 pub mod bulk_insert;
 pub mod config_cmd;
@@ -58,5 +58,5 @@ pub use ro_query::graph_ro_query;
 pub use slowlog::graph_slowlog;
 pub use udf::graph_udf;
 
-pub const EMPTY_KEY_ERR: RedisResult =
-    Err(RedisError::Str("ERR Invalid graph operation on empty key"));
+pub const EMPTY_KEY_ERR: ValkeyResult =
+    Err(ValkeyError::Str("ERR Invalid graph operation on empty key"));

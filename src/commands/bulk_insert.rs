@@ -3,7 +3,7 @@ use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
-    redis_type::GRAPH_TYPE,
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
     telemetry,
 };
 use graph::{
@@ -14,11 +14,11 @@ use graph::{
     threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
+use valkey_module::{Context, ContextFlags, NextArg, ValkeyResult, ValkeyString, ValkeyValue, raw};
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
 const BI_NULL: u8 = 0;
@@ -282,7 +282,7 @@ fn parse_header(
 /// it explicitly.
 fn discard_created_graph(
     ctx: &Context,
-    key_str: &RedisString,
+    key_str: &ValkeyString,
 ) {
     // The graph was created under C's name, so that — not the addressed key — is
     // what has to be taken back out of the keyspace.
@@ -321,7 +321,7 @@ impl HeldArgs {
     /// Because these are the client's own strings, whatever is propagated from them
     /// carries the client's exact bytes: nothing is re-serialized, so a count written as
     /// `010` replays as `010` rather than normalized to `10`.
-    fn hold(args: &[RedisString]) -> Self {
+    fn hold(args: &[ValkeyString]) -> Self {
         // SAFETY: called on the main thread inside the command, so the GIL is held and
         // every argument string is still alive.
         let argv = args
@@ -696,10 +696,10 @@ fn max_records(
 
 pub fn graph_bulk_insert(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() < 3 {
-        return Err(redis_module::RedisError::WrongArity);
+        return Err(valkey_module::ValkeyError::WrongArity);
     }
 
     // Contexts that cannot block run inline, with RM_Yield so Redis still handles PING
@@ -738,16 +738,17 @@ pub fn graph_bulk_insert(
     let existing = {
         let key = ctx.open_key_writable(&key_str);
         let found = key
-            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+            .map_err(wrong_type_compat)?
             .cloned();
         if begin {
             if found.is_some() {
-                return Err(redis_module::RedisError::String(format!(
+                return Err(valkey_module::ValkeyError::String(format!(
                     "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
                 )));
             }
         } else if found.is_none() {
-            return Err(redis_module::RedisError::Str(
+            return Err(valkey_module::ValkeyError::Str(
                 "ERR Invalid graph operation on empty key",
             ));
         }
@@ -756,21 +757,21 @@ pub fn graph_bulk_insert(
 
     // Parse counts
     let node_count = parse_count(node_count_str)
-        .ok_or(redis_module::RedisError::Str("Error parsing node count."))?;
-    let edge_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        .ok_or(valkey_module::ValkeyError::Str("Error parsing node count."))?;
+    let edge_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
         "Error parsing relation count.",
     ))?;
-    let node_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+    let node_token_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
         "Error parsing node token count.",
     ))?;
-    let rel_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+    let rel_token_count = parse_count(args.next_str()?).ok_or(valkey_module::ValkeyError::Str(
         "Error parsing relation token count.",
     ))?;
 
     // Collect remaining binary token args
-    let token_strings: Vec<RedisString> = args.collect();
+    let token_strings: Vec<ValkeyString> = args.collect();
     if token_strings.len() != node_token_count + rel_token_count {
-        return Err(redis_module::RedisError::Str(
+        return Err(valkey_module::ValkeyError::Str(
             "Bulk insert format error, token count mismatch.",
         ));
     }
@@ -791,7 +792,7 @@ pub fn graph_bulk_insert(
     // A malformed header reports exactly what it reports when the insert itself trips over
     // it below — only sooner, before any graph state exists to roll back.
     let header_err =
-        |e: String| redis_module::RedisError::String(format!("ERR bulk insert failed: {e}"));
+        |e: String| valkey_module::ValkeyError::String(format!("ERR bulk insert failed: {e}"));
     let (node_tokens, rel_tokens) = token_strings.split_at(node_token_count);
 
     let mut node_ceiling = 0usize;
@@ -799,7 +800,7 @@ pub fn graph_bulk_insert(
         node_ceiling += max_records(token.as_slice(), "Label name", 0).map_err(header_err)?;
     }
     if node_count > node_ceiling {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(valkey_module::ValkeyError::String(format!(
             "Bulk insert format error, declared node count {node_count} exceeds the \
              {node_ceiling} node records the payload describes."
         )));
@@ -811,7 +812,7 @@ pub fn graph_bulk_insert(
             .map_err(header_err)?;
     }
     if edge_count > edge_ceiling {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(valkey_module::ValkeyError::String(format!(
             "Bulk insert format error, declared relation count {edge_count} exceeds the \
              {edge_ceiling} edge records the payload describes."
         )));
@@ -841,11 +842,11 @@ pub fn graph_bulk_insert(
     if inline {
         let tokens: Vec<&[u8]> = token_strings
             .iter()
-            .map(redis_module::RedisString::as_slice)
+            .map(valkey_module::ValkeyString::as_slice)
             .collect();
         let mut tg = graph.write();
         let Some(g_arc) = tg.graph.write() else {
-            return Err(redis_module::RedisError::String(
+            return Err(valkey_module::ValkeyError::String(
                 "ERR another write is in progress, retry the query".to_string(),
             ));
         };
@@ -890,7 +891,7 @@ pub fn graph_bulk_insert(
             Ok(()) => {
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
-                Ok(RedisValue::SimpleString(reply))
+                Ok(ValkeyValue::SimpleString(reply))
             }
             Err(e) => {
                 tg.graph.rollback();
@@ -898,7 +899,7 @@ pub fn graph_bulk_insert(
                 if begin {
                     discard_created_graph(ctx, &key_str);
                 }
-                Err(redis_module::RedisError::String(format!(
+                Err(valkey_module::ValkeyError::String(format!(
                     "ERR bulk insert failed: {e}"
                 )))
             }
@@ -1066,7 +1067,8 @@ pub fn graph_bulk_insert(
                         // holding an interior NUL aborted the process here (#2490) —
                         // the one constructor that cannot carry the bytes this path
                         // deliberately captured. ptr+len carries them.
-                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
+                        let key_name =
+                            ValkeyString::create_from_slice(ts_ctx, key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);
@@ -1078,5 +1080,5 @@ pub fn graph_bulk_insert(
         },
         None,
     );
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }

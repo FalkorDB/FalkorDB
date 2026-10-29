@@ -41,15 +41,15 @@
 use graph::identifier_limits::validate_identifier_len;
 use graph::runtime::functions::{GraphFn, flush_udfs, register_udf, unregister_udf};
 use graph::udf::get_udf_repo;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 pub fn graph_udf(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     if args.len() < 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let mut args_iter = args.into_iter().skip(1);
     let subcommand = args_iter.next_str()?;
@@ -59,7 +59,7 @@ pub fn graph_udf(
         "DELETE" => udf_delete(ctx, args_iter),
         "FLUSH" => udf_flush(ctx, args_iter),
         "LIST" => udf_list(ctx, args_iter),
-        _ => Err(RedisError::String(format!(
+        _ => Err(ValkeyError::String(format!(
             "Unknown UDF subcommand: {subcommand}"
         ))),
     }
@@ -67,41 +67,41 @@ pub fn graph_udf(
 
 fn udf_load(
     ctx: &Context,
-    mut args: impl Iterator<Item = RedisString>,
-) -> RedisResult {
+    mut args: impl Iterator<Item = ValkeyString>,
+) -> ValkeyResult {
     // Parse: GRAPH.UDF LOAD [REPLACE] <lib_name> <script>
-    let first = args.next().ok_or(RedisError::Str(
+    let first = args.next().ok_or(ValkeyError::Str(
         "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command",
     ))?;
     let first_str = first
         .try_as_str()
-        .map_err(|_| RedisError::Str("ERR invalid argument"))?;
+        .map_err(|_| ValkeyError::Str("ERR invalid argument"))?;
 
     let (replace, lib_name, script) = if first_str.eq_ignore_ascii_case("REPLACE") {
-        let name = args.next().ok_or(RedisError::Str(
+        let name = args.next().ok_or(ValkeyError::Str(
             "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command",
         ))?;
-        let code = args.next().ok_or(RedisError::Str(
+        let code = args.next().ok_or(ValkeyError::Str(
             "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command",
         ))?;
         (
             true,
             name.try_as_str()
-                .map_err(|_| RedisError::Str("ERR invalid argument"))?
+                .map_err(|_| ValkeyError::Str("ERR invalid argument"))?
                 .to_string(),
             code.try_as_str()
-                .map_err(|_| RedisError::Str("ERR invalid argument"))?
+                .map_err(|_| ValkeyError::Str("ERR invalid argument"))?
                 .to_string(),
         )
     } else {
-        let code = args.next().ok_or(RedisError::Str(
+        let code = args.next().ok_or(ValkeyError::Str(
             "ERR wrong number of arguments for 'GRAPH.UDF LOAD' command",
         ))?;
         (
             false,
             first_str.to_string(),
             code.try_as_str()
-                .map_err(|_| RedisError::Str("ERR invalid argument"))?
+                .map_err(|_| ValkeyError::Str("ERR invalid argument"))?
                 .to_string(),
         )
     };
@@ -109,17 +109,24 @@ fn udf_load(
     // Check for any trailing invalid options
     if let Some(extra) = args.next() {
         let extra_str = extra.try_as_str().unwrap_or("");
-        return Err(RedisError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Unknown option given: '{extra_str}'"
         )));
     }
 
-    validate_identifier_len(&lib_name, "Library name").map_err(RedisError::String)?;
+    // An empty name would register functions as `.f`, which no query can call.
+    if lib_name.is_empty() {
+        return Err(ValkeyError::Str("empty lib name"));
+    }
+    if script.is_empty() {
+        return Err(ValkeyError::Str("empty script"));
+    }
+    validate_identifier_len(&lib_name, "Library name").map_err(ValkeyError::String)?;
 
     let repo = get_udf_repo();
     let function_names = repo
         .load(&lib_name, &script, replace)
-        .map_err(RedisError::String)?;
+        .map_err(ValkeyError::String)?;
 
     // Register each function in the dynamic function registry
     for qname in &function_names {
@@ -128,45 +135,45 @@ fn udf_load(
     }
 
     ctx.replicate_verbatim();
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
 fn udf_delete(
     ctx: &Context,
-    mut args: impl Iterator<Item = RedisString>,
-) -> RedisResult {
-    let lib_name = args.next().ok_or(RedisError::Str(
+    mut args: impl Iterator<Item = ValkeyString>,
+) -> ValkeyResult {
+    let lib_name = args.next().ok_or(ValkeyError::Str(
         "ERR wrong number of arguments for 'GRAPH.UDF DELETE' command",
     ))?;
     let lib_name = lib_name
         .try_as_str()
-        .map_err(|_| RedisError::Str("ERR invalid argument"))?;
+        .map_err(|_| ValkeyError::Str("ERR invalid argument"))?;
 
     // Check for extra args
     if args.next().is_some() {
-        return Err(RedisError::Str(
+        return Err(ValkeyError::Str(
             "ERR wrong number of arguments for 'GRAPH.UDF DELETE' command",
         ));
     }
 
     let repo = get_udf_repo();
-    let removed_names = repo.delete(lib_name).map_err(RedisError::String)?;
+    let removed_names = repo.delete(lib_name).map_err(ValkeyError::String)?;
 
     for name in &removed_names {
         unregister_udf(name);
     }
 
     ctx.replicate_verbatim();
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
 fn udf_flush(
     ctx: &Context,
-    mut args: impl Iterator<Item = RedisString>,
-) -> RedisResult {
+    mut args: impl Iterator<Item = ValkeyString>,
+) -> ValkeyResult {
     // Check for extra args
     if args.next().is_some() {
-        return Err(RedisError::Str(
+        return Err(ValkeyError::Str(
             "ERR wrong number of arguments for 'GRAPH.UDF FLUSH' command",
         ));
     }
@@ -176,13 +183,13 @@ fn udf_flush(
     flush_udfs();
 
     ctx.replicate_verbatim();
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
 fn udf_list(
     _ctx: &Context,
-    args: impl Iterator<Item = RedisString>,
-) -> RedisResult {
+    args: impl Iterator<Item = ValkeyString>,
+) -> ValkeyResult {
     let mut filter: Option<String> = None;
     let mut with_code = false;
 
@@ -191,12 +198,12 @@ fn udf_list(
     for arg in args {
         let s = arg
             .try_as_str()
-            .map_err(|_| RedisError::Str("ERR invalid argument"))?;
+            .map_err(|_| ValkeyError::Str("ERR invalid argument"))?;
         if s.to_uppercase().as_str() == "WITHCODE" {
             with_code = true;
         } else {
             if filter.is_some() {
-                return Err(RedisError::String(format!("Unknown option given: '{s}'")));
+                return Err(ValkeyError::String(format!("Unknown option given: '{s}'")));
             }
             filter = Some(s.to_string());
         }
@@ -208,22 +215,22 @@ fn udf_list(
     let mut result = Vec::new();
     for lib in libs {
         let mut entry = vec![
-            RedisValue::BulkString("library_name".into()),
-            RedisValue::BulkString(lib.name),
-            RedisValue::BulkString("functions".into()),
-            RedisValue::Array(
+            ValkeyValue::BulkString("library_name".into()),
+            ValkeyValue::BulkString(lib.name),
+            ValkeyValue::BulkString("functions".into()),
+            ValkeyValue::Array(
                 lib.function_names
                     .into_iter()
-                    .map(RedisValue::BulkString)
+                    .map(ValkeyValue::BulkString)
                     .collect(),
             ),
         ];
         if let Some(code) = lib.code {
-            entry.push(RedisValue::BulkString("library_code".into()));
-            entry.push(RedisValue::BulkString(code));
+            entry.push(ValkeyValue::BulkString("library_code".into()));
+            entry.push(ValkeyValue::BulkString(code));
         }
-        result.push(RedisValue::Array(entry));
+        result.push(ValkeyValue::Array(entry));
     }
 
-    Ok(RedisValue::Array(result))
+    Ok(ValkeyValue::Array(result))
 }

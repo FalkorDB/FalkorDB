@@ -42,12 +42,12 @@ use graph::{
     threadpool::{self, init_thread_pool},
     udf,
 };
-use redis_module::{
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
+use valkey_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
     RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -136,9 +136,65 @@ unsafe extern "C" fn on_fork_child() {
     }
 }
 
+/// Point this module's view of `environ` at a snapshot of the live environment.
+///
+/// Valkey `dlopen`s modules with `RTLD_DEEPBIND`, so the module and its
+/// dependencies (notably libomp) bind `environ` to libc's own definition
+/// before the global scope. When the server executable copy-relocates
+/// `environ` (Ubuntu's valkey-server package does), libc's startup code and
+/// `setenv` only ever update that copy, leaving libc's original NULL. libomp
+/// iterates `environ` directly during its first initialization and segfaults
+/// on the NULL.
+///
+/// When both views are already the same object (Redis, or a valkey-server
+/// without the copy relocation) this is a no-op. `RTLD_DEEPBIND` is
+/// glibc-only, and macOS dylibs must not reference `environ` directly, so the
+/// helper is a no-op off Linux.
+#[cfg(not(target_os = "linux"))]
+unsafe fn sync_deepbind_environ() {}
+
+#[cfg(target_os = "linux")]
+unsafe fn sync_deepbind_environ() {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+    unsafe {
+        // `dlopen(NULL)` searches the global scope starting at the executable,
+        // which yields the copy-relocated `environ` that libc keeps updated.
+        let main = libc::dlopen(std::ptr::null(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if main.is_null() {
+            return;
+        }
+        let live = libc::dlsym(main, c"environ".as_ptr()).cast::<*mut *mut libc::c_char>();
+        libc::dlclose(main);
+        let ours = &raw mut environ;
+        if live.is_null() || live == ours {
+            return;
+        }
+        // Install an owned, leaked snapshot rather than aliasing `*live`: the
+        // live array is typically the one glibc's `setenv` allocated, so a
+        // later `setenv` (e.g. libomp registering itself) may `realloc` it and
+        // leave `*ours` dangling. glibc never frees the strings themselves, so
+        // copying the pointer array is enough to keep the snapshot valid.
+        let src = *live;
+        let mut len = 0;
+        while !src.is_null() && !(*src.add(len)).is_null() {
+            len += 1;
+        }
+        let mut snapshot: Vec<*mut libc::c_char> = Vec::with_capacity(len + 1);
+        if len > 0 {
+            snapshot.extend_from_slice(std::slice::from_raw_parts(src, len));
+        }
+        snapshot.push(std::ptr::null_mut());
+        // SAFETY: `ours` points to libc's `char **environ`; this runs on the
+        // main thread during module load, before any thread reads it.
+        *ours = Box::leak(snapshot.into_boxed_slice()).as_mut_ptr();
+    }
+}
+
 pub fn graph_init(
     ctx: &Context,
-    args: &[redis_module::RedisString],
+    args: &[valkey_module::ValkeyString],
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
@@ -160,7 +216,7 @@ pub fn graph_init(
     // does. A bad argument refuses the load, as in C.
     let args: Vec<String> = args
         .iter()
-        .map(redis_module::RedisString::to_string_lossy)
+        .map(valkey_module::ValkeyString::to_string_lossy)
         .collect();
     if let Err(err) = apply_module_args(ctx, &args) {
         ctx.log_warning(&err);
@@ -204,6 +260,9 @@ pub fn graph_init(
         if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
             ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
         }
+        // Must run after the `KMP_*` `set_var` calls above and before
+        // GraphBLAS starts libomp, which reads `environ` once at init.
+        sync_deepbind_environ();
         if let Err(err) = init(
             RedisModule_Alloc,
             RedisModule_Calloc,
@@ -385,7 +444,7 @@ pub fn graph_init(
 
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
-        let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+        let res = valkey_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
             ctx.ctx,
             4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
             Some(on_keyspace_event),
@@ -418,7 +477,7 @@ pub fn graph_init(
 }
 
 /// The module's INFO callback. Adds nothing to a normal `INFO`, matching C's
-/// `InfoFunc` (debug.c). For a crash report it keeps redis-module's default
+/// `InfoFunc` (debug.c). For a crash report it keeps valkey-module's default
 /// trace info and, like C, lists every query that was executing.
 extern "C" fn info_func(
     ctx: *mut raw::RedisModuleInfoCtx,
@@ -598,7 +657,7 @@ unsafe extern "C" fn on_keyspace_event(
     ctx: *mut RedisModuleCtx,
     _type: c_int,
     event: *const std::os::raw::c_char,
-    key: *mut redis_module::raw::RedisModuleString,
+    key: *mut valkey_module::raw::RedisModuleString,
 ) -> c_int {
     let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
         .to_str()
@@ -606,11 +665,11 @@ unsafe extern "C" fn on_keyspace_event(
 
     let mut key_len: usize = 0;
     let key_ptr =
-        unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
+        unsafe { valkey_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
     // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
     // producer of a registry name converts the same lossy way — `register_graph` off
-    // `RedisString::to_string`, the virtual-key builder and `graph_rdb_save` off
+    // `ValkeyString::to_string`, the virtual-key builder and `graph_rdb_save` off
     // `String::from_utf8_lossy`. Bailing out here left a renamed non-UTF-8 graph
     // (`test_binary_key_name_scan_skip` keeps one under `\xc3\x28...`) with a stale
     // registry entry under the key it no longer occupies.

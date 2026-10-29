@@ -39,7 +39,6 @@ use std::fmt::Write as _;
 
 use crate::graph::graph::Graph;
 use announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
-use atomic_refcell::AtomicRefCell;
 use error::ApplyError;
 
 use crate::runtime::pending::Pending;
@@ -52,7 +51,7 @@ use crate::runtime::pending::Pending;
 /// it also ended up deciding what finishing meant.
 ///
 /// So the format says *that* the bytes are sent and what they are; the host
-/// says what sending means. One impl, over `redis_module::Context`, in the
+/// says what sending means. One impl, over `valkey_module::Context`, in the
 /// crate that owns it.
 ///
 /// The seam is a payload and the key it belongs to — deliberately not a command
@@ -166,7 +165,7 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
     /// read differently.
     fn build<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         buf: &mut W,
     ) -> Result<u64, String>;
 
@@ -178,7 +177,7 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
     /// has not registered, which would mean the DDL did not run.
     fn build_index<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
         buf: &mut W,
@@ -484,7 +483,7 @@ impl EffectsBuffer {
     pub fn build(
         &mut self,
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
     ) -> Result<u64, String> {
         <EffectsPayload as EffectsFormat<WIRE_VERSION>>::build(pending, graph, self)
     }
@@ -497,7 +496,7 @@ impl EffectsBuffer {
     pub fn build_index(
         &mut self,
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
     ) -> Result<(), String> {

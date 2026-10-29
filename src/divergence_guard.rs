@@ -17,13 +17,13 @@
 //! on `master`), including its three failure modes, because a replica has to
 //! behave the same way whichever engine is running it.
 
-// `log_warning` is the most severe level Redis offers a module: `RedisLogLevel`
+// `log_warning` is the most severe level Redis offers a module: `ValkeyLogLevel`
 // is Debug | Notice | Verbose | Warning, and the binding maps `log::Level::Error`
 // onto Warning. Redis prints it with `#`, which is what an operator greps for.
 use graph::effects::EffectsPayload;
-use redis_module::logging::log_warning;
-use redis_module::{Context, ContextFlags};
 use std::time::Duration;
+use valkey_module::logging::log_warning;
+use valkey_module::{Context, ContextFlags};
 
 /// Whether a failure of this command means divergence rather than a bad
 /// request.

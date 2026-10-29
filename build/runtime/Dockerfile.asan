@@ -49,7 +49,15 @@ RUN set -eu; \
 # directly. The dep-layer caching cargo-chef provides isn't worth the extra
 # plumbing for the one-off ASAN image.
 FROM $BUILD_IMAGE AS builder
-RUN rustup install nightly && rustup default nightly
+# The module's own nightly, pinned so the image is reproducible. It is
+# independent of RediSearch's `.rust-nightly`: the redisearch recipe below
+# builds redisearch_rs with that pin, and this one only has to meet the
+# module's dependencies' MSRV (parking_lot 0.13 needs rustc 1.95). Linking
+# archives from two nightlies is the pairing the fuzz job already uses
+# (stable-built RediSearch into a nightly module); each archive's std carries
+# its own crate hashes, so the symbols do not collide.
+ARG MODULE_NIGHTLY=nightly-2026-10-20
+RUN rustup install "$MODULE_NIGHTLY" && rustup default "$MODULE_NIGHTLY"
 # OpenSSL dev: RediSearch 8.6's CMake find_package(OpenSSL) + link-time
 # libssl/libcrypto. (Also added to build/Dockerfile, but the cached base image
 # predates that, so install here too.)
@@ -85,13 +93,8 @@ COPY . .
 # pass them via `env`.
 ARG TARGETARCH
 RUN set -eux; \
-    # Build the module with the SAME pinned nightly that the RediSearch recipe used for
-    # redisearch_rs (RediSearch's .rust-nightly), not the floating `nightly`
-    # alias defaulted above — so the -Zsanitizer toolchain matches across both
-    # archives. The pin is read from the RediSearch checkout, which `COPY . .`
-    # re-copies identically from the submodule. The native-deps redisearch
-    # recipe already installed this toolchain (with rust-src) during the SAN build.
-    rustup default "$(cat deps/RediSearch/.rust-nightly)"; \
+    # Back on the module nightly: the redisearch recipe ran under its own pin.
+    rustup default "$MODULE_NIGHTLY"; \
     case "$TARGETARCH" in \
       amd64) RT=x86_64-unknown-linux-gnu ;; \
       arm64) RT=aarch64-unknown-linux-gnu ;; \
