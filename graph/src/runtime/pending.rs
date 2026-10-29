@@ -472,12 +472,11 @@ impl IndexDocs {
     /// excluded (mirrors C, which updates index docs inside the graph write lock).
     pub fn commit(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
     ) {
         // This is the query's own private version, which nothing else can borrow, so
         // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
         // for the published version, where the order has to be the other way round.
-        let mut g = g.borrow_mut();
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -523,9 +522,8 @@ impl Pending {
     /// which labels, types and attributes this query added.
     pub fn set_schema_baseline(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        graph: &Graph,
     ) {
-        let graph = g.borrow();
         self.schema_label_count = graph.get_labels().len();
         self.schema_rel_type_count = graph.get_types().len();
         self.schema_node_attr_count = graph.get_node_attribute_names().len();
@@ -596,6 +594,14 @@ impl Pending {
     ) {
         self.new_nodes_attrs.remove(&id.into());
         self.existing_nodes_attrs.remove(&id.into());
+    }
+
+    pub fn clear_relationship_attributes(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        self.new_relationships_attrs.remove(&id.into());
+        self.existing_relationships_attrs.remove(&id.into());
     }
 
     #[must_use]
@@ -1227,18 +1233,16 @@ impl Pending {
 
     pub fn commit(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            g.borrow_mut()
-                .create_nodes(&self.created_nodes)
+            g.create_nodes(&self.created_nodes)
                 .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
             stats.borrow_mut().relationships_created += self.created_rel_types.len();
-            let mut g = g.borrow_mut();
             for (type_name, rel_ids) in &self.created_rels_by_type {
                 let mut srcs = Vec::with_capacity(rel_ids.len());
                 let mut dsts = Vec::with_capacity(rel_ids.len());
@@ -1261,17 +1265,14 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
+            g.set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
-            g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_docs);
+            g.remove_nodes_labels(&rows, &cols, &mut self.index_docs);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
-            let mut g = g.borrow_mut();
             if !self.new_nodes_attrs.is_empty() {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
@@ -1291,7 +1292,6 @@ impl Pending {
 
         if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
         {
-            let mut g = g.borrow_mut();
             if !self.new_relationships_attrs.is_empty() {
                 let nset = g
                     .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
@@ -1310,7 +1310,6 @@ impl Pending {
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
-                .borrow_mut()
                 .delete_nodes(&self.deleted_nodes, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
         }
@@ -1323,11 +1322,8 @@ impl Pending {
         // cleaned up, and before delete_relationships so explicit edges are
         // still tracked separately.
         if !self.deleted_nodes.is_empty() {
-            let implicit_edges = g.borrow_mut().delete_implicit_edges(
-                &self.deleted_nodes,
-                &explicit_rels,
-                &mut self.index_docs,
-            )?;
+            let implicit_edges =
+                g.delete_implicit_edges(&self.deleted_nodes, &explicit_rels, &mut self.index_docs)?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
@@ -1349,7 +1345,6 @@ impl Pending {
         }
         if !explicit_rels.is_empty() {
             let endpoints = g
-                .borrow_mut()
                 .delete_relationships(&explicit_rels, &mut self.index_docs)
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
@@ -1363,7 +1358,7 @@ impl Pending {
         // where each write call used to leave it, so nothing that runs after the writes sees the
         // index in a different state than before. SETs run before DELETEs above, so one batch can
         // hold an entry's add and then its remove; `apply` keeps only the last.
-        g.borrow_mut().apply_index_writes(&mut self.index_docs);
+        g.apply_index_writes(&mut self.index_docs);
 
         // Enforce constraints before accumulating index operations.
         // The constraint checks read the attribute store, which already has
@@ -1384,9 +1379,8 @@ impl Pending {
     /// Enforce graph constraints on all entities affected by this transaction.
     fn enforce_constraints(
         &self,
-        g: &AtomicRefCell<Graph>,
+        g: &Graph,
     ) -> Result<(), String> {
-        let g = g.borrow();
         let constraints = g.constraints();
         if constraints.is_empty() {
             return Ok(());
@@ -1436,10 +1430,10 @@ impl Pending {
 
             match constraint.entity_type {
                 EntityType::Node => {
-                    self.check_node_constraint(&g, constraint, &affected_node_ids)?;
+                    self.check_node_constraint(g, constraint, &affected_node_ids)?;
                 }
                 EntityType::Relationship => {
-                    self.check_edge_constraint(&g, constraint, &affected_edge_ids)?;
+                    self.check_edge_constraint(g, constraint, &affected_edge_ids)?;
                 }
             }
         }
@@ -1635,7 +1629,7 @@ impl Pending {
     pub fn resync_published_indexes(
         &mut self,
         committed: &AtomicRefCell<Graph>,
-        private: &AtomicRefCell<Graph>,
+        private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
         if nodes.is_empty() && edges.is_empty() {
@@ -1659,7 +1653,7 @@ impl Pending {
                     }
                 }
             }
-            let p = private.borrow();
+            let p = private;
             for (slot, ids) in &edges {
                 for id in ids {
                     if g.endpoints_for_edge(id).is_some() {
@@ -1689,7 +1683,7 @@ impl Pending {
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
     ) {
         let mut deferred = self.take_deferred_indexes();
         // Fold the batch into the published log *before* writing it, because `commit`
@@ -1730,7 +1724,7 @@ impl Pending {
     /// opening a batch over it would re-anchor on the bad value and hide it.
     pub fn end_segment(
         &mut self,
-        g: &AtomicRefCell<Graph>,
+        g: &mut Graph,
     ) -> Result<(), NodeOpError> {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background
@@ -1796,7 +1790,7 @@ impl Pending {
         // already corrupted, and failing is the cheaper outcome: the query holds
         // a private MVCC version, so the damage is discarded rather than
         // published and then replicated.
-        g.borrow_mut().roll_id_batches()
+        g.roll_id_batches()
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.
@@ -1844,7 +1838,7 @@ mod label_effect_tests {
             names.iter().map(|n| graph.get_label_id_mut(n)).collect()
         };
         let mut pending = Pending::new();
-        pending.set_schema_baseline(&g);
+        pending.set_schema_baseline(&g.borrow());
         (g, labels, pending)
     }
 
@@ -1859,7 +1853,7 @@ mod label_effect_tests {
         g: &AtomicRefCell<Graph>,
     ) -> Vec<Record> {
         let mut out = Vec::new();
-        for_each_record(pending, g, |r| out.push(r));
+        for_each_record(pending, &g.borrow(), |r| out.push(r));
         out
     }
 
