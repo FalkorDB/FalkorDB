@@ -870,11 +870,9 @@ impl Pending {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
                 entries.retain(|(rid, _, _)| *rid != rel_id);
-                // And drop the group once it is empty. A type whose every edge
-                // was cascaded away was never registered on the graph — nothing
-                // of that type reached `create_relationships_bulk` — so leaving
-                // the key behind hands the effects emitter a type name it
-                // cannot resolve.
+                // And drop the group once it is empty, so commit creates no
+                // edges for it. The type itself is still registered at commit,
+                // from `cancelled_relationships`.
                 if entries.is_empty() {
                     self.created_rels_by_type.remove(&type_name);
                 }
@@ -1254,6 +1252,16 @@ impl Pending {
                 }
                 g.create_relationships_bulk(type_name, &srcs, &dsts, &ids)
                     .map_err(|e| e.to_string())?;
+            }
+        }
+        // A type whose every edge a cascade cancelled never reached the loop
+        // above, yet it was named by this segment: the snapshot a reply reads
+        // states it by id, and so does the cancelled pair the effects carry to
+        // the replica. Register it, as C does when the edge is created.
+        if !self.cancelled_relationships.is_empty() {
+            let mut g = g.borrow_mut();
+            for r in &self.cancelled_relationships {
+                g.get_type_id_mut(&r.type_name);
             }
         }
         if !self.set_labels.is_empty() {
