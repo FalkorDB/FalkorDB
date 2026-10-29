@@ -34,7 +34,8 @@ TEST_ID = re.compile(r"([A-Za-z0-9_]+):([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)")
 # as `file:Class [__init__]`, and a Redis that did not exit cleanly under the class's name. Neither
 # names a test, so neither can be ledgered, and neither may be read as "nothing failed". Anchored
 # on the `test_` file and `test` class prefixes, so a `key:value` line a test prints is not one.
-CLASS_ENTRY = re.compile(r"(test_[A-Za-z0-9_]+):(test[A-Za-z0-9_]+)( \[__init__\])?")
+# RLTest takes any class whose name starts with `test` in any case, so the class prefix does too.
+CLASS_ENTRY = re.compile(r"(test_[A-Za-z0-9_]+):((?i:test)[A-Za-z0-9_]+)( \[__init__\])?")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -148,19 +149,20 @@ def split_suites(text: str) -> list[tuple[str, int, str]]:
 def suite_problem(status: int, output: str) -> str | None:
     """Say why one suite's output cannot be reconciled, or return None if it can.
 
-    A suite that exits 1 has failing tests, and the ledger can only account for failures it can
-    read. So a nonzero exit needs RLTest's closing summary (proof that the runner finished) and at
-    least one failure the parser recognises. An import error exits 1 with neither.
+    Every suite needs RLTest's closing summary, proof that the runner finished: a suite that stops
+    early, whatever its exit status, leaves its later tests unrun and unreported. A suite that
+    exits 1 has failing tests, and the ledger can only account for failures it can read, so it
+    also needs at least one failure the parser recognises. An import error exits 1 with neither.
     """
     if status > 1:
         return f"exit {status}: the harness died rather than reporting test failures"
     failed, seen, class_failures = parse_results(output)
     if not seen and not class_failures:
         return "reported no test results"
+    if "Total Tests Run:" not in output:
+        return f"exited {status} before RLTest printed its summary"
     if status == 0:
         return None
-    if "Total Tests Run:" not in output:
-        return "exited 1 before RLTest printed its summary"
     if not failed and not class_failures:
         return "exited 1 but reported no failure this check can read"
     return None
