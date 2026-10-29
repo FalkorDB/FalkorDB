@@ -3651,9 +3651,8 @@ impl Graph {
                     .create_index(index_type, label, attrs, len, options)?;
                 // Same bookkeeping as `create_index`: surface the
                 // indexed attr names in `db.propertyKeys()` even if no
-                // entity has yet written to them. Critical for
-                // RDB-load and EFFECT_CREATE_INDEX (replica) paths,
-                // which go through this sync variant.
+                // entity has yet written to them. Critical for the
+                // RDB-load path, which goes through this sync variant.
                 for attr in attrs {
                     self.add_node_attribute_name(attr);
                 }

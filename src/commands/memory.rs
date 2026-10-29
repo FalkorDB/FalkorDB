@@ -71,8 +71,7 @@ fn memory_report(
     samples: usize,
 ) -> RedisResult {
     // L1-read for exactly the sampling pass, through a session: the index sizes come
-    // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
-    // lock mode that the GIL lock-order assertion reads (#726).
+    // from RediSearch FFI (`RediSearch_MemUsage`, which takes no lock and needs no GIL).
     let report = {
         let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().borrow().memory_usage_report(samples))
