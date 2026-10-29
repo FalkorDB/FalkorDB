@@ -485,6 +485,14 @@ pub fn hold_gil() -> impl Drop {
     Gil::acquire()
 }
 
+/// Whether the calling thread holds the GIL, by the same two tests [`Gil::acquire`]
+/// uses: the main thread holds it for the whole command callback, and any other
+/// thread holds it inside a [`Gil`] guard. The graph crate's witness
+/// (`graph::locks::set_global_lock_witness`).
+pub fn holds_gil() -> bool {
+    graph::thread_id::is_main_thread() || GIL_CTX.get().is_some()
+}
+
 /// RAII guard for the host's global lock: Redis's module GIL.
 ///
 /// `need_release` records whether *this* guard is the one that took the GIL — a
