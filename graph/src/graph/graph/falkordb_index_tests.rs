@@ -1088,8 +1088,9 @@ fn any_batch_size_builds_the_one_pass_column() {
 /// While a column is building, a read of it scans, and the scan keeps what the built column will
 /// answer: at every cursor a build passes through, for nodes and for edges, for each shape a
 /// column serves. The planner drops the predicate it hands an index scan, so nothing else checks
-/// the scan's rows; a scan that kept them all would return every entity of the label. `= null`
-/// holds for nothing, and is answered with no rows rather than declined.
+/// the scan's rows; a scan that kept them all would return every entity of the label. `= null`,
+/// and a range with a null bound, hold for nothing, and are answered with no rows rather than
+/// declined.
 #[test]
 fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     let (mut g, label, v, ty, w) = scan_fixture();
@@ -1111,6 +1112,13 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         key: key.clone(),
         value,
     };
+    let bounds = |key: &Arc<String>, min: Value, max: Value| IndexQuery::Range {
+        key: key.clone(),
+        min: Some(min),
+        max: Some(max),
+        include_min: true,
+        include_max: true,
+    };
     // Node `v` is `10 * id` over ids 0..10 with node 4 deleted; edge `w` is 0..8.
     let node_queries = [
         eq(&v, 30),
@@ -1122,6 +1130,8 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         range(&v, Some(20), Some(60), false),
         range(&v, Some(50), None, true),
         range(&v, None, Some(30), false),
+        bounds(&v, Value::Null, int(60)),
+        bounds(&v, int(20), Value::Null),
         in_list(&v, &[int(10), int(70), int(70), int(1000)]),
         IndexQuery::Or(vec![
             eq(&v, 0),
@@ -1133,6 +1143,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         eq(&w, 3),
         equal(&w, Value::Null),
         range(&w, Some(2), Some(5), true),
+        bounds(&w, Value::Null, int(5)),
         in_list(&w, &[int(0), int(7)]),
         IndexQuery::Or(vec![eq(&w, 1), eq(&w, 7)]),
         IndexQuery::Or(vec![eq(&w, 1), equal(&w, Value::Null)]),

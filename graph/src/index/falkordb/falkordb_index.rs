@@ -641,9 +641,12 @@ impl FalkorDbIndex {
             {
                 key
             }
+            // Likewise a range with a null bound: the column's key set for it is empty.
             IndexQuery::Range { key, min, max, .. }
-                if min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
-                    && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()) =>
+                if [min, max]
+                    .into_iter()
+                    .flatten()
+                    .all(|v| matches!(v, Value::Null) || encode_numeric(v).is_some()) =>
             {
                 key
             }
@@ -1034,6 +1037,30 @@ mod tests {
             include_max: true,
         };
         assert!(idx.query_numeric(Node, &label, &rg).is_some());
+
+        // A null bound holds for nothing, so it is answered with no rows rather than declined.
+        let null_min = IndexQuery::Range {
+            key: key.clone(),
+            min: Some(Value::Null),
+            max: None,
+            include_min: false,
+            include_max: true,
+        };
+        assert_eq!(
+            rows(idx.query_numeric(Node, &label, &null_min)),
+            Vec::<u64>::new()
+        );
+        let null_max = IndexQuery::Range {
+            key: key.clone(),
+            min: Some(Value::Int(10)),
+            max: Some(Value::Null),
+            include_min: true,
+            include_max: false,
+        };
+        assert_eq!(
+            rows(idx.query_numeric(Node, &label, &null_max)),
+            Vec::<u64>::new()
+        );
 
         // A string on the same Range index must fall through (RediSearch owns the TAG entries).
         let str_eq = IndexQuery::Equal {
