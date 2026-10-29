@@ -193,11 +193,14 @@ pub fn graph_memory(
     }
 
     // First arg must be "USAGE"
+    // Error texts are C's, byte for byte (`Graph_Memory` in cmd_memory.c).
     let subcmd = args.next_arg()?;
-    if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
-        return Err(RedisError::Str(
-            "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
-        ));
+    let subcmd = subcmd.to_string_lossy();
+    if !subcmd.eq_ignore_ascii_case("USAGE") {
+        return Err(RedisError::String(format!(
+            "ERR unknown subcommand '{}'. expecting GRAPH.MEMORY USAGE <key>",
+            up_to_nul(&subcmd)
+        )));
     }
 
     let key_name = args.next_arg()?;
@@ -205,8 +208,12 @@ pub fn graph_memory(
     // Parse optional SAMPLES <count>
     let samples: usize = if arg_count == 4 {
         let samples_kw = args.next_arg()?;
-        if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
-            return Err(RedisError::Str("ERR expected SAMPLES keyword"));
+        let samples_kw = samples_kw.to_string_lossy();
+        if !samples_kw.eq_ignore_ascii_case("SAMPLES") {
+            return Err(RedisError::String(format!(
+                "ERR unknown subcommand '{}'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>",
+                up_to_nul(&samples_kw)
+            )));
         }
         // Any non-negative count, as C's `RedisModule_StringToULongLong`; 0 is
         // accepted and, like any count, clamped to 1..=10000 by
@@ -215,7 +222,7 @@ pub fn graph_memory(
         count_str
             .to_string_lossy()
             .parse::<u64>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES must be a non-negative integer"))?
+            .map_err(|_| RedisError::Str("SAMPLES must be a non-negative integer"))?
             .try_into()
             .unwrap_or(usize::MAX)
     } else {
