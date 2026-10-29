@@ -126,7 +126,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let max_hops = rp.max_hops.unwrap_or(u32::MAX);
         let min_hops = rp.min_hops.unwrap_or(1);
         let bidirectional = rp.bidirectional;
-        let g = runtime.g.borrow();
+        let g = runtime.graph();
 
         // BFS phase: find shortest distance and collect predecessors
         // predecessor map: node -> list of (prev_node, edge_id, edge_src, edge_dst)
