@@ -423,3 +423,62 @@ class testOptionalFlow(FlowTestsBase):
                    RETURN count(1)"""
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, [[2]])
+
+    # An OPTIONAL MATCH (or any correlated sub-plan) of several hops that starts
+    # at a node bound by the outer scope must traverse outward from that node,
+    # even when the far endpoint carries a label: starting from the label walks
+    # every relationship into it (#3332).
+    def test29_correlated_multi_hop_starts_from_bound_node(self):
+        g = self.db.select_graph("optional_match_bound_start")
+        create_node_range_index(g, 'P', 'id', sync=True)
+        g.query("UNWIND range(0, 199) AS i CREATE (:P {id: i})")
+        g.query("UNWIND range(0, 19) AS i CREATE (:O {id: i})")
+        g.query("""MATCH (p:P), (o:O) WHERE o.id = p.id % 20
+                   CREATE (p)-[:M]->(o)""")
+        g.query("""MATCH (p:P), (f:P) WHERE f.id = (p.id + 1) % 200
+                   CREATE (p)-[:F]->(f)""")
+
+        def traverses(plan):
+            return [l.strip() for l in plan.split('\n') if 'Traverse' in l]
+
+        # (query, expected result); every plan must start at the bound `p`.
+        bound = [
+            # the issue's query
+            ("MATCH (p:P {id: 7}) OPTIONAL MATCH (p)-[:F]->()-[:M]->(o:O) RETURN count(o)", [[1]]),
+            # the same inside CALL { WITH p ... }
+            ("""MATCH (p:P {id: 7})
+                CALL { WITH p OPTIONAL MATCH (p)-[:F]->()-[:M]->(o:O) RETURN count(o) AS c }
+                RETURN c""", [[1]]),
+            # three hops
+            ("MATCH (p:P {id: 7}) OPTIONAL MATCH (p)-[:F]->()-[:F]->()-[:M]->(o:O) RETURN count(o)", [[1]]),
+            # the far node does not carry the label: the label still filters
+            ("MATCH (p:P {id: 7}) OPTIONAL MATCH (p)-[:F]->()-[:F]->(o:O) RETURN count(o)", [[0]]),
+            # pattern predicate and pattern comprehension
+            ("MATCH (p:P {id: 7}) WHERE (p)-[:F]->()-[:M]->(:O) RETURN count(p)", [[1]]),
+            ("MATCH (p:P {id: 7}) RETURN size([(p)-[:F]->()-[:M]->(o:O) | o])", [[1]]),
+            # shapes that already started from `p` must keep doing so
+            ("MATCH (p:P {id: 7}) OPTIONAL MATCH (p)-[:F]->()-[:M]->(o) RETURN count(o)", [[1]]),
+            ("MATCH (p:P {id: 7}) MATCH (p)-[:F]->()-[:M]->(o:O) RETURN count(o)", [[1]]),
+            ("MATCH (p:P {id: 7})-[:F]->(:P)-[:M]->(o:O) RETURN count(o)", [[1]]),
+            ("MATCH (p:P {id: 7}) OPTIONAL MATCH (p)-[:M]->(o:O) RETURN count(o)", [[1]]),
+        ]
+        for q, expected in bound:
+            self.env.assertEqual(g.query(q).result_set, expected)
+            plan = str(g.explain(q))
+            ts = traverses(plan)
+            # The first traversal to run is the deepest one in the plan.
+            self.env.assertTrue(ts[-1].startswith("Optional Conditional Traverse | (p)->")
+                                or ts[-1].startswith("Conditional Traverse | (p)->"), depth=1,
+                                message=f"{q}\n{plan}")
+            # Nothing walks backwards into `o`, and `O` is never scanned.
+            self.env.assertFalse(any('<-' in t for t in ts), depth=1, message=f"{q}\n{plan}")
+            self.env.assertNotIn("Label Scan | (o:O)", plan)
+
+        # Nothing in the pattern is bound by the outer scope: the optional
+        # branch is still free to start from the labelled endpoint.
+        q = "MATCH (x:P {id: 7}) OPTIONAL MATCH (a)-[:F]->()-[:M]->(o:O) RETURN count(o)"
+        self.env.assertEqual(g.query(q).result_set, [[200]])
+        plan = str(g.explain(q))
+        self.env.assertIn("Node By Label Scan | (o:O)", plan)
+
+        g.delete()
