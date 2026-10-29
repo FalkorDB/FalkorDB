@@ -12,6 +12,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use roaring::RoaringTreemap;
+
 use crate::entity_type::EntityType;
 use crate::graph::graph::{Graph, NodeId};
 use crate::index::{IndexQuery, IndexType};
@@ -152,6 +154,35 @@ impl IndexColumn {
             Self::Numeric(idx) => idx.point_key(key),
         }
     }
+
+    /// Refresh `written` in column `name`: their tuples as `from` has them come out, and as `to`
+    /// has them go in, while `state` is `Building` only for an entity `to` places below the cursor.
+    /// Removing a tuple the column does not hold changes nothing, and an entity whose value did not
+    /// change takes its tuple out and puts it back. What a writer's rebase and an indexer batch's
+    /// catch-up both do ([`VersionedIndex::writer_rebase`], [`VersionedIndex::indexer_catch_up`]).
+    fn refresh(
+        &mut self,
+        state: BuildState<BuildCursor>,
+        (entity, key): &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        from: &Graph,
+        to: &Graph,
+    ) {
+        if written.is_empty() {
+            return;
+        }
+        let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
+        graph_writes::entity_tuples(from, *entity, key, written, self, &mut removes);
+        graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
+        if let BuildState::Building { next } = state {
+            adds.scalar.retain(|&(_, id)| {
+                to.build_place(*entity, id)
+                    .is_some_and(|at| at.precedes(next))
+            });
+        }
+        self.remove_encoded(&mut removes);
+        self.add_encoded(&mut adds);
+    }
 }
 
 /// A lookup a column has agreed to answer: which of its entities may hold one value.
@@ -218,8 +249,10 @@ impl VersionedIndex for IndexColumn {
         mut log: Vec<IndexWrite>,
         place: impl Fn(u64) -> Option<BuildCursor>,
         (removes, adds): &mut (EncodedTuples, EncodedTuples),
+        written: &mut RoaringTreemap,
     ) {
         if let BuildState::Building { next } = state {
+            written.extend(log.iter().map(|w| w.id));
             // A batch reads an entity at or above the cursor when it reaches it, so its
             // additions go. They go before the collapse, so one cannot cancel an earlier
             // removal of the same tuple.
@@ -228,6 +261,28 @@ impl VersionedIndex for IndexColumn {
         last_write_wins(&mut log, &mut removes.scalar, &mut adds.scalar);
         self.remove_encoded(removes);
         self.add_encoded(adds);
+    }
+
+    fn writer_rebase(
+        &mut self,
+        state: BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        published: &Graph,
+        fork: &Graph,
+    ) {
+        self.refresh(state, name, written, published, fork);
+    }
+
+    fn indexer_catch_up(
+        &mut self,
+        state: BuildState<BuildCursor>,
+        name: &(EntityType, IndexKey),
+        written: &RoaringTreemap,
+        batch_version: &Graph,
+        published: &Graph,
+    ) {
+        self.refresh(state, name, written, batch_version, published);
     }
 
     /// The column's next `budget` nodes or edges from `from`, at their values in `version`,
@@ -585,6 +640,27 @@ impl FalkorDbIndex {
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
+    }
+
+    /// Ready this version to be published: each index's sets of written entities are settled
+    /// ([`IndexEntry::publish`]).
+    pub(crate) fn publish(&mut self) {
+        self.node_columns
+            .values_mut()
+            .chain(self.edge_columns.values_mut())
+            .for_each(IndexEntry::publish);
+    }
+
+    /// Every column, by kind and key.
+    pub(crate) fn column_names(&self) -> Vec<(EntityType, IndexKey)> {
+        [EntityType::Node, EntityType::Relationship]
+            .into_iter()
+            .flat_map(|entity| {
+                self.columns(entity)
+                    .keys()
+                    .map(move |key| (entity, key.clone()))
+            })
+            .collect()
     }
 
     /// Whether every index but `except` is the same index, with the same indexer batches committed
