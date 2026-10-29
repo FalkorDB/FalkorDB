@@ -52,7 +52,33 @@ pub fn set_global_lock_witness(witness: fn() -> bool) {
 /// installed a witness to ask.
 #[must_use]
 pub fn holds_global_lock() -> bool {
+    #[cfg(all(test, debug_assertions))]
+    if NOT_HELD_ON_THIS_THREAD.get() {
+        return false;
+    }
     GLOBAL_LOCK_WITNESS.get().is_none_or(|holds| holds())
+}
+
+#[cfg(all(test, debug_assertions))]
+thread_local! {
+    /// Set by [`without_global_lock`]: this thread answers "not held", whatever the witness says.
+    static NOT_HELD_ON_THIS_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` as a thread that does not hold the host's global lock, so a test can show that the
+/// write slot's claims and commits refuse such a caller. Per thread, so tests running alongside
+/// are not affected. Debug builds only, like the `debug_assert!`s it lets a test reach.
+#[cfg(all(test, debug_assertions))]
+pub(crate) fn without_global_lock<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NOT_HELD_ON_THIS_THREAD.set(false);
+        }
+    }
+    NOT_HELD_ON_THIS_THREAD.set(true);
+    let _restore = Restore;
+    f()
 }
 
 /// The one thing a query plan can ask its host to do: become a writer.

@@ -15,6 +15,8 @@ use crate::index::falkordb::versioned::{
 };
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
+#[cfg(debug_assertions)]
+use crate::locks::without_global_lock;
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
 use atomic_refcell::AtomicRefCell;
@@ -1728,6 +1730,19 @@ fn an_indexer_batch_commit_leaves_a_borrowed_published_version_alone() {
         Some(IndexerCommit::Swap)
     );
     assert_eq!(cursor(&reader, EntityType::Node, &label, &v), before);
+}
+
+/// An indexer batch's commit claims the write slot, so it asserts that the caller holds the host's
+/// global lock, as a writer's claim does. Debug builds only: `debug_assert!` compiles out of a
+/// release test run.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "the write slot is claimed without the global lock")]
+fn an_indexer_batch_commit_without_the_global_lock_is_refused() {
+    let (mvcc, label, attr, _) = mvcc_building(&[10, 20]);
+    let id = IndexId::Column(EntityType::Node, (label, attr));
+    let (prepared, batch) = prepare(&mvcc, &id, 1);
+    let _ = without_global_lock(|| mvcc.commit_indexer_batch(&prepared, &batch));
 }
 
 /// An indexer batch whose column a writer dropped, or dropped and created again, since its

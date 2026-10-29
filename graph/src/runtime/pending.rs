@@ -2163,7 +2163,8 @@ mod resync_tests {
             .or_default()
             .insert(0);
         pending.commit_deferred_indexes(&mut private.borrow_mut());
-        // Without documents to rewrite the repair returns before it borrows anything.
+        // Without documents to rewrite, the repair would return before borrowing anything,
+        // and this test would prove nothing.
         assert!(!pending.published.is_empty());
 
         // The observable is a panic: a `borrow_mut` of `published` here meets

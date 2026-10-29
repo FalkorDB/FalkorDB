@@ -453,6 +453,8 @@ thread_local! {
 mod tests {
     use super::{Claim, MvccGraph};
     use crate::graph::graphblas::test_init::ensure_init;
+    #[cfg(debug_assertions)]
+    use crate::locks::without_global_lock;
     use roaring::RoaringTreemap;
 
     /// A refused version must leave the write slot free.
@@ -535,5 +537,37 @@ mod tests {
         );
         assert_eq!(mvcc.read().borrow().version, version + 1);
         assert_eq!(mvcc.read().borrow().get_labels().len(), 1);
+    }
+
+    // The write slot's claims and commits assert that the caller holds the host's global lock.
+    // Debug builds only: `debug_assert!` compiles out of a release test run.
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the write slot is claimed without the global lock")]
+    fn a_write_without_the_global_lock_is_refused() {
+        ensure_init();
+        let mvcc = MvccGraph::new(64, 64, 0, "t");
+        let _ = without_global_lock(|| mvcc.write());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the write slot is claimed without the global lock")]
+    fn a_claim_without_the_global_lock_is_refused() {
+        ensure_init();
+        let mvcc = MvccGraph::new(64, 64, 0, "t");
+        let fork = mvcc.fork();
+        let _ = without_global_lock(|| mvcc.claim(&fork));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "commit without the global lock")]
+    fn a_commit_without_the_global_lock_is_refused() {
+        ensure_init();
+        let mvcc = MvccGraph::new(64, 64, 0, "t");
+        let version = mvcc.write().expect("the slot starts free");
+        let _ = without_global_lock(|| mvcc.commit(version));
     }
 }
