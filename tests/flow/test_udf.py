@@ -1080,6 +1080,30 @@ class testUDF():
         except ResponseError as e:
             self.env.assertContains("unknown option given", str(e).lower())
 
+    def test_load_empty_lib_name_or_script(self):
+        """
+        GRAPH.UDF LOAD rejects an empty library name and an empty script,
+        with or without REPLACE, and registers nothing.
+        """
+
+        script = "falkor.register('f', function() { return 1; });"
+        cases = [
+            (["", script], "empty lib name"),
+            (["REPLACE", "", script], "empty lib name"),
+            (["", ""], "empty lib name"),
+            (["lib", ""], "empty script"),
+            (["REPLACE", "lib", ""], "empty script"),
+            (["x" * 513, ""], "empty script"),
+        ]
+        for args, msg in cases:
+            try:
+                self.db.execute_command("GRAPH.UDF", "LOAD", *args)
+                self.env.assertTrue(False, message=f"LOAD {args} should fail")
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        self._assert_any_udfs_missing()
+
     def test_load_udf_lib(self):
         """
         Test successful loading of a UDF library:
@@ -1792,6 +1816,115 @@ class test_udf_javascript():
 
         v2 = self.graph.query("RETURN lib_args.f(1, 2, 3)").result_set[0][0]
         self.env.assertEqual(v2, [1, 2])
+
+    def test_graph_global_at_load(self):
+        """
+        A library may reference the `graph` global at top level: LOAD
+        validates it in a context that defines `graph`, as the runtime does.
+        """
+
+        self.db.udf_load("gg", "var G = graph; falkor.register('f', function() { return typeof G.traverse; });")
+        self.env.assertEqual(self.graph.query("RETURN gg.f()").result_set, [['function']])
+
+    def test_roundtrip_fidelity(self):
+        """
+        Values that C passes through an identity UDF unchanged: -0.0 stays a
+        float, a map with a `constructor` key stays a map, and a vecf32
+        holding inf survives.
+        """
+
+        script = """
+        function id(x) { return x; }
+        function nz() { return -0; }
+        falkor.register('id', id);
+        falkor.register('nz', nz);
+        """
+        self.db.udf_load("rt", script)
+
+        res = self.graph.query("RETURN rt.id(-0.0), 1 / rt.id(-0.0), 1 / rt.nz()").result_set
+        self.env.assertEqual(res, [[-0.0, float('-inf'), float('-inf')]])
+
+        for m in ["{constructor: {name: 'Date'}}", "{constructor: {name: 'RegExp'}}"]:
+            res = self.graph.query(f"RETURN rt.id({m}) = {m}").result_set
+            self.env.assertEqual(res, [[True]])
+
+        res = self.graph.query("RETURN rt.id(vecf32([1e39, 1.5])) = vecf32([1e39, 1.5])").result_set
+        self.env.assertEqual(res, [[True]])
+
+        # real Date and RegExp objects still convert
+        res = self.graph.query("""RETURN rt.id(localdatetime('2020-01-02T03:04:05'))
+                                         = localdatetime('2020-01-02T03:04:05'),
+                                         rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
+        self.env.assertEqual(res, [[True, True]])
+
+    def test_qualified_name_collisions(self):
+        """
+        As in C, two libraries may not claim the same qualified name (compared
+        ignoring case), and calls are case-sensitive.
+        """
+
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 1; });")
+        self.db.udf_load("a", "falkor.register('b.c', function() { return 1; });")
+
+        # `coll.f` collides with `Coll.f`
+        try:
+            self.db.udf_load("coll", "falkor.register('f', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("'coll.f' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[1]])
+
+        # library `a.b` registering `c` collides with `a`'s `b.c`
+        try:
+            self.db.udf_load("a.b", "falkor.register('c', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("function 'a.b.c' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN a.b.c()").result_set, [[1]])
+
+        # replacing a library with its own names is fine
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 3; });", replace=True)
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[3]])
+
+        # function names are case-sensitive
+        self.db.udf_load("cased", """falkor.register('f', function() { return 1; });
+                                     falkor.register('F', function() { return 2; });""")
+        res = self.graph.query("RETURN cased.f(), cased.F()").result_set
+        self.env.assertEqual(res, [[1, 2]])
+        try:
+            self.graph.query("RETURN CASED.f()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Unknown function", str(e))
+
+    def test_deeply_nested_result_is_an_error(self):
+        """
+        A UDF result nested past the conversion's depth limit is a query
+        error, not a stack overflow, and the server keeps answering.
+        """
+
+        script = """
+        function deep(n) { let a = null; for (let i = 0; i < n; i++) a = [a]; return a; }
+        function deepObj(n) { let o = null; for (let i = 0; i < n; i++) o = {k: o}; return o; }
+        function cyclic() { const a = []; a.push(a); return a; }
+        falkor.register('deep', deep);
+        falkor.register('deepObj', deepObj);
+        falkor.register('cyclic', cyclic);
+        """
+        self.db.udf_load("nest", script)
+
+        for q in ["RETURN nest.deep(300000)", "RETURN nest.deepObj(300000)",
+                  "RETURN nest.deep(1025)", "RETURN nest.cyclic()"]:
+            try:
+                self.graph.query(q)
+                assert False, f"expected an error for {q}"
+            except ResponseError as e:
+                self.env.assertContains("nesting exceeds the maximum depth", str(e))
+            self.env.assertTrue(self.db.connection.ping())
+
+        # At the limit, and in ordinary use, nested results still convert.
+        res = self.graph.query("RETURN size(nest.deep(1024)), nest.deep(2)").result_set
+        self.env.assertEqual(res, [[1, [[None]]]])
 
     def test_returning_undefined(self):
         """
