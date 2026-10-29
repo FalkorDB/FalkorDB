@@ -4515,10 +4515,13 @@ impl Graph {
         }
     }
 
-    /// How far the build of column `(entity, label, attr)` has come, as `(entities indexed, entities
-    /// of the label or type)`, or `None` if the column is `Ready` or does not exist. Counts the
-    /// entities below the cursor, so it costs what has been indexed: for `db.indexes()`, not for
-    /// a query.
+    /// How far the build of column `(entity, label, attr)` has come, as `(entities read, entities
+    /// of the label or type)`, or `None` if the column is `Ready` or does not exist. The entities
+    /// read are those its batches have read ([`IndexEntry::read`]), at most the label's or type's:
+    /// an entity created or deleted behind the cursor after a batch passed it does not move the
+    /// count. Nothing here grows with the graph.
+    ///
+    /// [`IndexEntry::read`]: crate::index::falkordb::versioned::IndexEntry::read
     #[cfg(feature = "index-falkordb")]
     fn native_build_progress(
         &self,
@@ -4526,30 +4529,14 @@ impl Graph {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<(u64, u64)> {
-        let cursor = self.falkordb_index.building_cursor(entity, label, attr)?;
-        Some(match cursor {
-            BuildCursor::Node(next) => {
-                let Some(lm) = self.get_label_matrix(label) else {
-                    return Some((0, 0));
-                };
-                let done = match u64::from(next) {
-                    0 => 0,
-                    next => lm.iter(0, next - 1).count() as u64,
-                };
-                (done, lm.nvals())
-            }
-            BuildCursor::Edge { src, dst, edge } => {
-                let Some(t) = self.get_relationship_matrix(label) else {
-                    return Some((0, 0));
-                };
-                let next = (u64::from(src), u64::from(dst), u64::from(edge));
-                let done = t
-                    .iter(0, next.0, false)
-                    .take_while(|&edge| edge < next)
-                    .count() as u64;
-                (done, t.edge_count())
-            }
-        })
+        let read = self.falkordb_index.building_read(entity, label, attr)?;
+        let total = match entity {
+            EntityType::Node => self.get_label_matrix(label).map_or(0, |lm| lm.nvals()),
+            EntityType::Relationship => self
+                .get_relationship_matrix(label)
+                .map_or(0, |t| t.edge_count()),
+        };
+        Some((read.min(total), total))
     }
 
     // ── Constraint management ─────────────────────────────────────────

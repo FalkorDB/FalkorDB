@@ -736,15 +736,16 @@ impl FalkorDbIndex {
             .is_some_and(|entry| !entry.is_building())
     }
 
-    /// Where column `(entity, label, attr)`'s next indexer batch resumes, or `None` if the column
-    /// is `Ready` or does not exist.
-    pub(crate) fn building_cursor(
+    /// How many entities column `(entity, label, attr)`'s batches have read ([`IndexEntry::read`]),
+    /// or `None` if the column is `Ready` or does not exist.
+    pub(crate) fn building_read(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<BuildCursor> {
-        self.entry(entity, label, attr)?.cursor()
+    ) -> Option<u64> {
+        let entry = self.entry(entity, label, attr)?;
+        entry.is_building().then_some(entry.read)
     }
 
     /// Ready this version to be published: each index's sets of written entities are settled

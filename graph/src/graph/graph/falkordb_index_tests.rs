@@ -3801,11 +3801,11 @@ fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
     }
 }
 
-/// `db.indexes()` reports a `Building` column's progress as the entities below its cursor, out of
-/// the label's or type's: one batch at a time, nodes (with a deleted node in the ids) then edges
+/// `db.indexes()` reports a `Building` column's progress as the entities its batches have read, out
+/// of the label's or type's: one batch at a time, nodes (with a deleted node in the ids) then edges
 /// (whose first batch stops inside a multi-edge pair), until both are `Ready`.
 #[test]
-fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
+fn a_building_columns_progress_counts_what_its_batches_have_read() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let progress = |g: &Graph| {
         (
@@ -3833,4 +3833,26 @@ fn a_building_columns_progress_counts_the_entities_below_its_cursor() {
             (None, None),
         ]
     );
+}
+
+/// A column's progress is what its batches have read, so nodes deleted behind its cursor do not
+/// take it back, and it never passes the label's nodes. A batch reads four of six nodes; with two
+/// of those deleted the progress is 4 of 4, and with two more gone, one read and one not, 2 of 2.
+/// Counting the nodes below the cursor would give 2 of 4, then 1 of 2.
+#[test]
+fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities() {
+    let attr = Arc::new("v".to_string());
+    let (mut g, label, ids) = people_with(&attr, &(0..6).collect::<Vec<_>>());
+    create_index_on(&mut g, &label, &attr);
+    assert!(graph_writes::run_indexer_batch(&mut g, 4));
+    let progress = |g: &Graph| g.native_build_progress(EntityType::Node, &label, &attr);
+    assert_eq!(progress(&g), Some((4, 6)));
+    for &id in &ids[1..3] {
+        delete_node_with_edges(&mut g, id);
+    }
+    assert_eq!(progress(&g), Some((4, 4)), "two read nodes deleted");
+    for &id in &ids[3..5] {
+        delete_node_with_edges(&mut g, id);
+    }
+    assert_eq!(progress(&g), Some((2, 2)), "at most the label's");
 }
