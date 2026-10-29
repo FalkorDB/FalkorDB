@@ -15,6 +15,7 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
 use super::references::ir_references_variable;
+use crate::runtime::ops::COLLAPSED_SIBLING;
 
 pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
@@ -56,24 +57,19 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
                 }
                 _ => {}
             }
-            forget_sibling_edge(plan, edge_id, edge_scope_id);
+            flag_collapsed_sibling(plan, edge_id, edge_scope_id);
         }
     }
 }
 
 /// A collapsed edge stands for every parallel edge of its (src, dst) pair, so
-/// relationship uniqueness can no longer be checked against it: the one
-/// representative it binds is arbitrary, and a sibling traverse rejecting that
-/// edge would make the result depend on which parallel edge was picked
-/// (`(a)-[r]->(x)<-[s]-(c)` over `a⇉x`). Drop it from every sibling list, so a
-/// collapsed edge takes no part in uniqueness, as in C: the row count is then
-/// the number of endpoint pairs, whichever edges they carry.
-///
-/// The collapsed edge keeps its *own* id: a non-empty list is what keeps its
-/// traverse off the batched path, which binds no relationship column, and the
-/// representative must stay bound for readers `ir_references_variable` does not
-/// see (e.g. `UNWIND e`, `CREATE (...{p: e.p})`).
-fn forget_sibling_edge(
+/// relationship uniqueness cannot be checked against the one representative it
+/// binds when that pair holds parallel edges: rejecting the representative
+/// would make the result depend on which parallel edge was picked
+/// (`(a)-[r]->(x)<-[s]-(c)` over `a⇉x`). Flag it in every sibling list, so the
+/// runtime ignores a collision with it only when a parallel edge exists, and
+/// keeps checking it when the pair holds a single edge.
+fn flag_collapsed_sibling(
     plan: &mut DynTree<IR>,
     edge_id: u32,
     edge_scope_id: u32,
@@ -93,7 +89,9 @@ fn forget_sibling_edge(
             && relationship.alias.scope_id == edge_scope_id
             && relationship.alias.id != edge_id
         {
-            sibling_edges.retain(|&id| id != edge_id);
+            for id in sibling_edges.iter_mut().filter(|id| **id == edge_id) {
+                *id |= COLLAPSED_SIBLING;
+            }
         }
     }
 }
