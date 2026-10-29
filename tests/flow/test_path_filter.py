@@ -462,3 +462,21 @@ class testPathFilter(FlowTestsBase):
         # the server is still usable after all of the above
         query = "MATCH (n) RETURN count(n)"
         self.env.assertEqual(self.graph.query(query).result_set, [[2]])
+
+    def test19_negated_pattern_predicate_drops_null_rows(self):
+        # NOT null is null, so a row where the negated predicate is null is
+        # filtered out, also when the predicate mixes a pattern with a scalar
+        # https://github.com/FalkorDB/FalkorDB/issues/3241
+        self.graph.query("CREATE (:N {v: 0}), (:N), (:N {v: 5}), (:N)-[:R]->(:M)")
+
+        cases = [
+            ("NOT (a.v > 1 OR (a)-->())", 1),
+            ("NOT (a.v > 1 AND (a)-->())", 3),
+            ("NOT (NOT (a.v > 1 OR (a)-->()))", 2),
+            ("NOT (a.v = 0 OR NOT (a)-->())", 0),
+            ("NOT ((a)-->() OR NOT (a.v < 3 AND (a)<--()))", 0),
+        ]
+        for predicate, expected in cases:
+            query = f"MATCH (a:N) WHERE {predicate} RETURN count(a)"
+            self.env.assertEqual(self.graph.query(query).result_set,
+                                 [[expected]], message=predicate)
