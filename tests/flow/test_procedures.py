@@ -501,3 +501,26 @@ class testProcedures(FlowTestsBase):
         result = g.query("CALL db.labels() YIELD label MATCH (n) RETURN label, labels(n)")
         self.env.assertEqual(result.result_set, [['N', ['N']]])
         g.delete()
+
+    def test14_function_union_type_order(self):
+        # union members are listed in C's fixed type order, not in the order
+        # a signature declares them
+        q = """CALL dbms.functions() YIELD name, return_type, arguments
+               WHERE name IN ['point', 'distance', 'tofloat', 'vecf32']
+               RETURN name, return_type, arguments ORDER BY name"""
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res, [
+            ["distance", "Float or Null", ["Null or Point", "Null or Point"]],
+            ["point", "Null or Point", ["Map or Null"]],
+            ["tofloat", "Float or Null", ["String, Integer, Float, or Null"]],
+            ["vecf32", "Null or Vectorf32", ["List or Null"]],
+        ])
+
+    def test15_fulltext_drop_missing_index_message(self):
+        # no attribute is named, so none is printed: ':L', not ':L()' (as C)
+        try:
+            self.graph.query("CALL db.idx.fulltext.drop('NoSuchLabel')")
+            self.env.assertFalse(True)
+        except redis.ResponseError as e:
+            self.env.assertEqual(str(e),
+                "Unable to drop index on :NoSuchLabel: no such index.")
