@@ -30,7 +30,7 @@ use crate::parser::ast::{
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
     Variable,
 };
-use crate::runtime::functions::{FnArguments, FnType, Type};
+use crate::runtime::functions::{FnArguments, FnType, Type, apply_pow};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
@@ -2299,8 +2299,17 @@ impl Binder {
             ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
         ) {
             for child in node.children() {
+                // Runtime short-circuiting never evaluates an operand it does
+                // not need, so an operand whose type is already known to be
+                // neither Boolean nor Null is rejected here, as C does when it
+                // evaluates every operand (#3293).
+                if let Some(name) = Self::non_boolean_operand_type(&child) {
+                    return Err(format!(
+                        "Type mismatch: expected Boolean or Null but was {name}"
+                    ));
+                }
                 if !Self::expr_may_return_boolean(child) {
-                    return Err(String::from("Type mismatch: expected Boolean"));
+                    return Err(String::from("Type mismatch: expected Boolean or Null"));
                 }
             }
         }
@@ -2308,6 +2317,61 @@ impl Binder {
             Self::validate_boolean_operands_impl(&child)?;
         }
         Ok(())
+    }
+
+    /// The name of the static type of an operand that is known at bind time
+    /// to be neither Boolean nor Null, or `None` when it may still be one of
+    /// them (or its type is only known at runtime).
+    fn non_boolean_operand_type(node: &DynNode<ExprIR<Variable>>) -> Option<&'static str> {
+        match node.data() {
+            ExprIR::List
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::GetElements => Some("List"),
+            ExprIR::Map | ExprIR::MapProjection => Some("Map"),
+            ExprIR::Length => Some("Integer"),
+            ExprIR::Constant(v) if !matches!(v, Value::Bool(_) | Value::Null) => Some(v.name()),
+            // Arithmetic over constants has a known result type; with any
+            // runtime operand the result may be Null, so it stays unchecked.
+            ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo => Self::constant_arithmetic(node)
+                .filter(|v| !matches!(v, Value::Bool(_) | Value::Null))
+                .map(|v| v.name()),
+            _ => None,
+        }
+    }
+
+    /// Evaluates an arithmetic subtree made only of constants. Returns `None`
+    /// for anything else, and when evaluation fails (left to the runtime).
+    fn constant_arithmetic(node: &DynNode<ExprIR<Variable>>) -> Option<Value> {
+        let mut values = Vec::with_capacity(node.num_children());
+        for child in node.children() {
+            values.push(match child.data() {
+                ExprIR::Constant(v) => v.clone(),
+                ExprIR::Add
+                | ExprIR::Sub
+                | ExprIR::Mul
+                | ExprIR::Div
+                | ExprIR::Pow
+                | ExprIR::Modulo => Self::constant_arithmetic(&child)?,
+                _ => return None,
+            });
+        }
+        let mut it = values.into_iter();
+        let first = it.next()?;
+        match node.data() {
+            ExprIR::Add => it.try_fold(first, |a, b| a + b).ok(),
+            ExprIR::Sub => it.try_fold(first, |a, b| a - b).ok(),
+            ExprIR::Mul => it.try_fold(first, |a, b| a * b).ok(),
+            ExprIR::Div => it.try_fold(first, |a, b| a / b).ok(),
+            ExprIR::Modulo => it.try_fold(first, |a, b| a % b).ok(),
+            ExprIR::Pow => it.try_fold(first, apply_pow).ok(),
+            _ => None,
+        }
     }
 
     /// Recursively determines whether an expression tree node can return a
