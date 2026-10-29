@@ -209,6 +209,34 @@ mod tests {
         assert_eq!(adds, vec![(1, 7)]);
     }
 
+    /// Long runs of changes to the same tuples, interleaved with each other and with tuples changed
+    /// once: each tuple must end at its last change, which only a sort that keeps the order of
+    /// equal elements guarantees. Short logs are sorted by insertion either way, so this one is
+    /// long.
+    #[test]
+    fn the_last_change_wins_in_a_long_log() {
+        let (mut removes, mut adds) = (Vec::new(), Vec::new());
+        let mut log = Vec::new();
+        for round in 0..40 {
+            for tuple in 0..10 {
+                log.push(w(tuple, 7, (round + tuple) % 2 == 0));
+            }
+            log.push(w(100 + round, 8, true));
+        }
+        last_write_wins(&mut log, &mut removes, &mut adds);
+        // Round 39 is the last: tuple t ends added when 39 + t is even.
+        let ends = |added: bool| -> Vec<(u64, u64)> {
+            (0..10)
+                .filter(|t| ((39 + t) % 2 == 0) == added)
+                .map(|t| (t, 7))
+                .collect()
+        };
+        assert_eq!(removes, ends(false));
+        let mut want = ends(true);
+        want.extend((0..40).map(|round| (100 + round, 8)));
+        assert_eq!(adds, want);
+    }
+
     #[test]
     fn untouched_tuples_pass_through_sorted() {
         let (mut removes, mut adds) = (vec![(9, 9)], vec![(9, 9)]);
