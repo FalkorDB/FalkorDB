@@ -1160,7 +1160,9 @@ impl Div for Value {
                 if b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Int(a.wrapping_div(b)))
+                    a.checked_div(b)
+                        .map(Self::Int)
+                        .ok_or_else(|| String::from("ArgumentError: integer overflow in division"))
                 }
             }
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a / b)),
