@@ -332,6 +332,20 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RF {w: i}]->()")
         after_writes = redisearch_mb()
 
+        # The indexes the writes filled, and those a build fills below: each must still be one the
+        # planner uses and that answers.
+        written = [("MATCH (n:NF) WHERE n.v = 7 RETURN n.v", "Node By Index Scan"),
+                   ("MATCH ()-[r:RF]->() WHERE r.w = 7 RETURN r.w", "Edge By Index Scan")]
+        built = [("MATCH (n:NB) WHERE n.v = 7 RETURN n.v", "Node By Index Scan"),
+                 ("MATCH ()-[r:RB]->() WHERE r.w = 7 RETURN r.w", "Edge By Index Scan")]
+
+        def answers(queries):
+            for q, scan in queries:
+                self.env.assertContains(scan, str(g.explain(q)))
+                self.env.assertEqual(g.query(q).result_set, [[7]])
+
+        answers(written)
+
         # The flag's defining behaviour: a predicate the native index cannot serve is an error,
         # not a RediSearch answer. A string equality is one such predicate today.
         try:
@@ -373,11 +387,9 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
             self.env.assertGreater(after_build, before_build)
             self.env.assertGreater(after_reload, 0)
 
-        # Both builds still leave an index the planner uses and that answers.
-        for q, scan in [("MATCH (n:NB) WHERE n.v = 7 RETURN n.v", "Node By Index Scan"),
-                        ("MATCH ()-[r:RB]->() WHERE r.w = 7 RETURN r.w", "Edge By Index Scan")]:
-            self.env.assertContains(scan, str(g.explain(q)))
-            self.env.assertEqual(g.query(q).result_set, [[7]])
+        # Both builds, and the reload of what the writes filled, still leave an index the planner
+        # uses and that answers.
+        answers(written + built)
 
         # Filtering is per field, not per index: a label with both kinds keeps its Fulltext half,
         # whether its document came from a write (NFT) or a build (NFB), and after a reload.
@@ -393,4 +405,19 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
             for label, v in [('NFT', 1), ('NFB', 2)]:
                 q = f"CALL db.idx.fulltext.queryNodes('{label}', 'needle') YIELD node RETURN node.v"
                 self.env.assertEqual(g.query(q).result_set, [[v]])
+
+        # Removing the Fulltext value: with its Range field served natively, the entity's document
+        # is left with no fields, and replacing the old document with that empty one is what takes
+        # the old text out of RediSearch. Skipping empty documents would leave `needle` findable.
+        create_edge_fulltext_index(g, 'EFT', 't', sync=True)
+        create_edge_range_index(g, 'EFT', 'w', sync=True)
+        g.query("CREATE ()-[:EFT {t: 'needle', w: 1}]->()")
+        node_q = "CALL db.idx.fulltext.queryNodes('NFT', 'needle') YIELD node RETURN node.v"
+        edge_q = ("CALL db.idx.fulltext.queryRelationships('EFT', 'needle') YIELD relationship "
+                  "RETURN relationship.w")
+        self.env.assertEqual(g.query(edge_q).result_set, [[1]])
+        g.query("MATCH (n:NFT) SET n.t = null")
+        g.query("MATCH ()-[r:EFT]->() SET r.t = null")
+        self.env.assertEqual(g.query(node_q).result_set, [])
+        self.env.assertEqual(g.query(edge_q).result_set, [])
         g.delete()
