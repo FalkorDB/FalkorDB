@@ -1317,6 +1317,8 @@ impl ValueTypeOf for Value {
         arg_type: &Type,
     ) -> Option<(Type, Type)> {
         match (self, arg_type) {
+            // Every element matches `Any`; don't walk a long list to find out.
+            (Self::List(_), Type::List(ty)) if matches!(**ty, Type::Any) => None,
             (Self::List(vs), Type::List(ty)) => {
                 for v in vs.iter() {
                     if let Some(res) = v.value_of_type(ty) {

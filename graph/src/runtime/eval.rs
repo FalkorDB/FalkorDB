@@ -62,6 +62,7 @@ use crate::{
         row::{Row, RowView},
         runtime::Runtime,
         value::{CompareValue, Contains, DisjointOrNull, Value, ValueTypeOf},
+        vector_expr::{ExprColumn, VectorEval},
     },
 };
 
@@ -264,6 +265,168 @@ impl NeighborIter {
 /// directly, paying no validation at all.
 pub type ExprNode<'t> = DynNode<'t, ExprIR<Variable>>;
 
+/// Elements a list comprehension / quantifier body is evaluated over at a
+/// time. Bounds the scratch columns of the columnar path (a few KB each, so
+/// they stay in cache) whatever the list length.
+const LIST_LOOP_CHUNK: usize = 1024;
+
+/// Smallest chunk the columnar path is tried on. Below it, building a batch
+/// costs more than the per-element tree walks it saves.
+const LIST_LOOP_VECTOR_MIN: usize = 16;
+
+/// The body of one list comprehension (`[x IN l WHERE p | e]`) or quantifier
+/// (`any(x IN l WHERE p)`) evaluation, run over the list a chunk at a time by
+/// [`ExprEval::list_loop_chunk`].
+///
+/// A chunk is evaluated *columnarly* when the body allows it: the loop
+/// variable becomes a batch column holding the chunk, every outer variable
+/// the body reads becomes a broadcast column, and [`VectorEval`] evaluates the
+/// predicate (then the projection, over the rows that passed) once per chunk.
+/// `n.prop` over a chunk of nodes is then one bulk attribute fetch, and a
+/// comparison one typed pass, instead of a full tree walk, a row write and a
+/// `Value` round trip per element. Everything else runs per element through
+/// an owned [`Row`], as before.
+struct ListLoop<'v, 't> {
+    var: &'v Variable,
+    /// `None` for the always-true `WHERE` the parser supplies when absent.
+    predicate: Option<ExprNode<'t>>,
+    /// `None` for the identity projection (`[x IN l WHERE p]`) — and for a
+    /// quantifier, which has none.
+    projection: Option<ExprNode<'t>>,
+    /// The per-element row, snapshotted from the environment on first use.
+    row: Option<Row>,
+    /// `None`: not yet decided. `Some(None)`: the body must run per element.
+    /// `Some(Some(outer))`: columnar, with these outer bindings broadcast.
+    plan: Option<Option<Vec<(u32, Value)>>>,
+}
+
+/// What a [`ListLoop`] does with each element's result.
+enum LoopSink<'s> {
+    /// List comprehension: elements whose predicate is `true`, projected.
+    Collect(&'s mut ThinVec<Value>),
+    /// Quantifier: how many predicates were `[true, false, null]`.
+    Count(&'s mut [usize; 3]),
+    /// `size()` of a list comprehension: how many elements it would hold.
+    Tally(&'s mut usize),
+}
+
+/// True for `size(<list comprehension>)`, which
+/// [`ExprEval::eval_list_comprehension`] answers by counting.
+pub(crate) fn counts_comprehension(node: &ExprNode<'_>) -> bool {
+    // Cheapest test first: this runs for every function call evaluated.
+    node.num_children() == 1
+        && matches!(node.child(0).data(), ExprIR::ListComprehension(_))
+        && matches!(node.data(), ExprIR::FuncInvocation(func) if func.name == "size")
+}
+
+impl<'v, 't> ListLoop<'v, 't> {
+    fn new(
+        var: &'v Variable,
+        predicate: Option<ExprNode<'t>>,
+        projection: Option<ExprNode<'t>>,
+    ) -> Self {
+        let predicate =
+            predicate.filter(|p| !matches!(p.data(), ExprIR::Constant(Value::Bool(true))));
+        let projection =
+            projection.filter(|p| !matches!(p.data(), ExprIR::Variable(v) if v.id == var.id));
+        Self {
+            var,
+            predicate,
+            projection,
+            row: None,
+            plan: None,
+        }
+    }
+
+    /// The outer bindings to broadcast when the body can be evaluated
+    /// columnarly, or `None` when it must run per element. Decided once per
+    /// evaluation, on the first chunk large enough to ask.
+    fn vector_plan<R: RowView + ?Sized>(
+        &mut self,
+        env: &R,
+    ) -> Option<&[(u32, Value)]> {
+        if self.plan.is_none() {
+            let mut reads = Vec::new();
+            let ok = self
+                .predicate
+                .iter()
+                .chain(self.projection.iter())
+                .all(|body| collect_body_vars(body, &mut reads));
+            let plan = ok
+                .then(|| {
+                    reads.sort_unstable();
+                    reads.dedup();
+                    reads
+                        .into_iter()
+                        .filter(|&id| id != self.var.id)
+                        // An unresolvable variable is an error the per-element
+                        // path reports; leave it to that path.
+                        .map(|id| env.value_at(id).map(|v| (id, v)))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .flatten();
+            self.plan = Some(plan);
+        }
+        self.plan.as_ref().and_then(|p| p.as_deref())
+    }
+}
+
+/// Collects the variables `node` reads into `reads`. Returns `false` for a
+/// body the columnar path must not take: one that reads the whole row (a
+/// nested plan), aggregates, or writes — the last so that a write keeps
+/// happening in per-element order — or binds variables of its own (a nested
+/// comprehension, quantifier or `reduce`), so that the only variable a
+/// columnar body binds is the loop variable, which every batch row holds.
+fn collect_body_vars(
+    node: &ExprNode<'_>,
+    reads: &mut Vec<u32>,
+) -> bool {
+    match node.data() {
+        ExprIR::Variable(v) => reads.push(v.id),
+        ExprIR::ListComprehension(_)
+        | ExprIR::Quantifier { .. }
+        | ExprIR::Reduce(_)
+        | ExprIR::NestedPlan(_)
+        | ExprIR::Pattern(_)
+        | ExprIR::PatternComprehension(_)
+        | ExprIR::Distinct => return false,
+        ExprIR::FuncInvocation(func)
+            if func.write || matches!(func.fn_type, FnType::Aggregation { .. }) =>
+        {
+            return false;
+        }
+        _ => {}
+    }
+    node.children()
+        .all(|child| collect_body_vars(&child, reads))
+}
+
+/// The batch column holding `chunk` as the loop variable's binding.
+fn loop_var_column(chunk: &[Value]) -> Column {
+    let mut ids = Vec::with_capacity(chunk.len());
+    for value in chunk {
+        match value {
+            Value::Node(id) => ids.push(*id),
+            _ => return Column::Values(chunk.to_vec()),
+        }
+    }
+    Column::NodeIds(ids)
+}
+
+/// `value` repeated `len` times: an outer binding as a batch column.
+fn broadcast_column(
+    value: &Value,
+    len: usize,
+) -> Column {
+    match value {
+        Value::Node(id) => Column::NodeIds(vec![*id; len]),
+        Value::Relationship(id) => Column::RelIds(vec![*id; len]),
+        Value::Int(i) => Column::Ints(vec![*i; len]),
+        Value::Float(f) => Column::Floats(vec![*f; len]),
+        other => Column::Values(vec![other.clone(); len]),
+    }
+}
+
 /// Shared expression evaluator used by both the runtime and the optimizer.
 pub struct ExprEval<'a> {
     /// Full runtime context. `None` when evaluating constant expressions at
@@ -410,6 +573,10 @@ impl<'a> ExprEval<'a> {
                 let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
                 let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
                 return lhs + rhs;
+            }
+            // `size([x IN l WHERE p])` counts; it never builds the list.
+            ExprIR::FuncInvocation(_) if counts_comprehension(node) => {
+                return self.eval_list_comprehension(&node.child(0), env, agg_group_key, true);
             }
             // CASE short-circuits, so it cannot go through the eager
             // post-order stack machine below.
@@ -1003,84 +1170,10 @@ impl<'a> ExprEval<'a> {
                     quantifier_type: quantifier,
                     var,
                 } => {
-                    let list = self.eval_node(&node.child(0), env, agg_group_key)?;
-                    match list {
-                        Value::List(values) => {
-                            let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                            let mut row = e.to_owned_row();
-                            let mut t = 0;
-                            let mut f = 0;
-                            let mut n = 0;
-                            for value in values.iter().cloned() {
-                                row.insert(var, value);
-
-                                match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
-                                    Value::Bool(true) => t += 1,
-                                    Value::Bool(false) => f += 1,
-                                    Value::Null => n += 1,
-                                    value => {
-                                        return Err(format!(
-                                            "Type mismatch: expected Boolean but was {}",
-                                            value.name()
-                                        ));
-                                    }
-                                }
-                            }
-
-                            res.push(eval_quantifier(quantifier, t, f, n));
-                        }
-                        Value::Null => res.push(Value::Null),
-                        value => {
-                            return Err(format!(
-                                "Type mismatch: expected List but was {}",
-                                value.name()
-                            ));
-                        }
-                    }
+                    res.push(self.eval_quantifier(&node, quantifier, var, env, agg_group_key)?);
                 }
-                ExprIR::ListComprehension(var) => {
-                    let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                    let mut row = e.to_owned_row();
-                    let mut acc = thin_vec![];
-                    // A list literal or `range(..)` always yields a list, so
-                    // stream it without materialising (`eval_iter_expr`). Any
-                    // other source is checked here: `eval_iter_expr`'s UNWIND
-                    // fallback would turn null into no rows and a scalar into
-                    // one, where a comprehension gives null / a type error.
-                    let source = node.child(0);
-                    let streams = matches!(source.data(), ExprIR::List)
-                        || matches!(source.data(), ExprIR::FuncInvocation(func) if func.name == "range");
-                    let items = if streams {
-                        self.eval_iter_expr(&source, env)?
-                    } else {
-                        match self.eval_node(&source, env, agg_group_key)? {
-                            Value::List(values) => Some(RowIter::many(Box::new(
-                                Arc::unwrap_or_clone(values).into_iter(),
-                            ))),
-                            Value::Null => {
-                                res.push(Value::Null);
-                                continue;
-                            }
-                            value => {
-                                return Err(format!(
-                                    "Type mismatch: expected List or Null but was {}",
-                                    value.name()
-                                ));
-                            }
-                        }
-                    };
-                    if let Some(result) = items {
-                        for value in result {
-                            row.insert(var, value);
-                            match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
-                                Value::Bool(true) => {}
-                                _ => continue,
-                            }
-                            acc.push(self.eval_node(&node.child(2), Some(&row), agg_group_key)?);
-                        }
-                    }
-
-                    res.push(Value::List(Arc::new(acc)));
+                ExprIR::ListComprehension(_) => {
+                    res.push(self.eval_list_comprehension(&node, env, agg_group_key, false)?);
                 }
                 ExprIR::Reduce(vars) => {
                     let (acc_var, iter_var) = (&vars.accumulator, &vars.iterator);
@@ -1206,6 +1299,365 @@ impl<'a> ExprEval<'a> {
             values.push(self.eval_node(&root, Some(&view), None)?);
         }
         Ok(classify_join_keys(values))
+    }
+
+    /// Evaluates the quantifier `node` (`any(x IN l WHERE p)` and friends).
+    ///
+    /// Kept out of line, like the other list loops: `eval_compound` recurses
+    /// for every compound expression, and inlining a loop body into it grows
+    /// the frame every one of those calls pays for.
+    #[inline(never)]
+    fn eval_quantifier<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        quantifier: &QuantifierType,
+        var: &Variable,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        match self.eval_node(&node.child(0), env, agg_group_key)? {
+            // A short list never takes the columnar path, and for the few
+            // elements of a typical per-row quantifier (`any(x IN [a, b, c]
+            // WHERE ..)`) the `ListLoop` set-up measured ~5% of the whole
+            // query; this is that loop with nothing around it.
+            Value::List(values) if values.len() < LIST_LOOP_VECTOR_MIN => {
+                let e = env.ok_or_else(|| String::from("Variable not found"))?;
+                let predicate = node.child(1);
+                let mut row = e.to_owned_row();
+                let mut counts = [0usize; 3];
+                for value in values.iter() {
+                    row.insert(var, value.clone());
+                    match self.eval_node(&predicate, Some(&row), agg_group_key)? {
+                        Value::Bool(true) => counts[0] += 1,
+                        Value::Bool(false) => counts[1] += 1,
+                        Value::Null => counts[2] += 1,
+                        value => {
+                            return Err(format!(
+                                "Type mismatch: expected Boolean but was {}",
+                                value.name()
+                            ));
+                        }
+                    }
+                }
+                Ok(eval_quantifier(quantifier, counts[0], counts[1], counts[2]))
+            }
+            Value::List(values) => {
+                let e = env.ok_or_else(|| String::from("Variable not found"))?;
+                let mut lp = ListLoop::new(var, Some(node.child(1)), None);
+                let mut counts = [0usize; 3];
+                for chunk in values.chunks(LIST_LOOP_CHUNK) {
+                    self.list_loop_chunk(
+                        &mut lp,
+                        e,
+                        agg_group_key,
+                        chunk,
+                        &mut LoopSink::Count(&mut counts),
+                    )?;
+                }
+                Ok(eval_quantifier(quantifier, counts[0], counts[1], counts[2]))
+            }
+            Value::Null => Ok(Value::Null),
+            value => Err(format!(
+                "Type mismatch: expected List but was {}",
+                value.name()
+            )),
+        }
+    }
+
+    /// Evaluates the list comprehension `node` (`[x IN l WHERE p | e]`): the
+    /// list, or with `count` just its length — what `size()` of it would
+    /// return, without building it. Counting still evaluates the projection,
+    /// so an error it raises is raised either way.
+    #[inline(never)]
+    fn eval_list_comprehension<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+        count: bool,
+    ) -> Result<Value, String> {
+        let ExprIR::ListComprehension(var) = node.data() else {
+            unreachable!("caller passes a list comprehension")
+        };
+        let e = env.ok_or_else(|| String::from("Variable not found"))?;
+        let mut acc = thin_vec![];
+        let mut passed = 0usize;
+        let mut sink = if count {
+            LoopSink::Tally(&mut passed)
+        } else {
+            LoopSink::Collect(&mut acc)
+        };
+        let mut lp = ListLoop::new(var, Some(node.child(1)), Some(node.child(2)));
+        // A list literal or `range(..)` always yields a list, so stream it
+        // without materialising (`eval_iter_expr`). Any other source is
+        // checked here: `eval_iter_expr`'s UNWIND fallback would turn null
+        // into no rows and a scalar into one, where a comprehension gives
+        // null / a type error.
+        let source = node.child(0);
+        let streams = matches!(source.data(), ExprIR::List)
+            || matches!(source.data(), ExprIR::FuncInvocation(func) if func.name == "range");
+        if streams {
+            if let Some(items) = self.eval_iter_expr(&source, env)? {
+                // Streamed in chunks, so the body is evaluated a chunk at a
+                // time exactly as for a stored list. The buffer is sized by the
+                // source when it reports its length: a short `range(..)` in a
+                // nested comprehension runs once per outer element, and a full
+                // chunk each time was most of what such a query allocated.
+                let cap = items
+                    .size_hint()
+                    .1
+                    .map_or(LIST_LOOP_CHUNK, |n| n.min(LIST_LOOP_CHUNK));
+                let mut chunk = Vec::with_capacity(cap);
+                for value in items {
+                    chunk.push(value);
+                    if chunk.len() == LIST_LOOP_CHUNK {
+                        self.list_loop_chunk(&mut lp, e, agg_group_key, &chunk, &mut sink)?;
+                        chunk.clear();
+                    }
+                }
+                self.list_loop_chunk(&mut lp, e, agg_group_key, &chunk, &mut sink)?;
+            }
+        } else {
+            match self.eval_node(&source, env, agg_group_key)? {
+                // Iterated in place: the list is usually also held by the row
+                // it was read from, so taking it by value would deep-clone
+                // every element.
+                Value::List(values) => {
+                    // The result has at most one entry per element: size it
+                    // once instead of growing it by doubling (a copy of the
+                    // list so far each time), and give back what the filter
+                    // left unused.
+                    if let LoopSink::Collect(acc) = &mut sink {
+                        acc.reserve(values.len());
+                    }
+                    for chunk in values.chunks(LIST_LOOP_CHUNK) {
+                        self.list_loop_chunk(&mut lp, e, agg_group_key, chunk, &mut sink)?;
+                    }
+                    if acc.capacity() / 2 > acc.len() {
+                        acc.shrink_to_fit();
+                    }
+                }
+                Value::Null => return Ok(Value::Null),
+                value => {
+                    return Err(format!(
+                        "Type mismatch: expected List or Null but was {}",
+                        value.name()
+                    ));
+                }
+            }
+        }
+        Ok(if count {
+            Value::Int(passed as i64)
+        } else {
+            Value::List(Arc::new(acc))
+        })
+    }
+
+    /// Runs `lp`'s body over one chunk of its list, feeding `sink`.
+    ///
+    /// Tries the columnar path first (see [`ListLoop`]). Anything it reports
+    /// as an error is re-run per element instead, so the error raised is the
+    /// one the per-element order meets first; the columnar path commits to
+    /// `sink` only once the whole chunk has succeeded.
+    #[inline]
+    fn list_loop_chunk<R: RowView + ?Sized>(
+        &self,
+        lp: &mut ListLoop<'_, '_>,
+        env: &R,
+        agg_group_key: Option<u64>,
+        chunk: &[Value],
+        sink: &mut LoopSink<'_>,
+    ) -> Result<(), String> {
+        // The columnar path, when the chunk is long enough to pay for a batch
+        // and the body can take it.
+        if chunk.len() >= LIST_LOOP_VECTOR_MIN
+            && (lp.predicate.is_some() || lp.projection.is_some())
+            && let Some(rt) = self.runtime
+            && lp.vector_plan(env).is_some()
+            && let ListLoop {
+                var,
+                predicate,
+                projection,
+                plan: Some(Some(outer)),
+                ..
+            } = &*lp
+            && Self::list_loop_columnar(
+                rt,
+                var,
+                predicate.as_ref(),
+                projection.as_ref(),
+                outer,
+                chunk,
+                sink,
+            )
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        let ListLoop {
+            var,
+            predicate,
+            projection,
+            row,
+            ..
+        } = lp;
+        if predicate.is_none() && projection.is_none() {
+            match sink {
+                LoopSink::Collect(acc) => acc.extend(chunk.iter().cloned()),
+                LoopSink::Count(counts) => counts[0] += chunk.len(),
+                LoopSink::Tally(n) => **n += chunk.len(),
+            }
+            return Ok(());
+        }
+        let row = row.get_or_insert_with(|| env.to_owned_row());
+        for value in chunk {
+            row.insert(var, value.clone());
+            let pass = match predicate {
+                Some(p) => self.eval_node(p, Some(&*row), agg_group_key)?,
+                None => Value::Bool(true),
+            };
+            match sink {
+                LoopSink::Collect(acc) => {
+                    if matches!(pass, Value::Bool(true)) {
+                        acc.push(match projection {
+                            Some(p) => self.eval_node(p, Some(&*row), agg_group_key)?,
+                            None => value.clone(),
+                        });
+                    }
+                }
+                LoopSink::Tally(n) => {
+                    if matches!(pass, Value::Bool(true)) {
+                        if let Some(p) = projection {
+                            self.eval_node(p, Some(&*row), agg_group_key)?;
+                        }
+                        **n += 1;
+                    }
+                }
+                LoopSink::Count(counts) => match pass {
+                    Value::Bool(true) => counts[0] += 1,
+                    Value::Bool(false) => counts[1] += 1,
+                    Value::Null => counts[2] += 1,
+                    value => {
+                        return Err(format!(
+                            "Type mismatch: expected Boolean but was {}",
+                            value.name()
+                        ));
+                    }
+                },
+            }
+        }
+        Ok(())
+    }
+
+    /// The columnar half of [`list_loop_chunk`](Self::list_loop_chunk): one
+    /// batch whose rows are the chunk's elements, the predicate evaluated over
+    /// all of them, the projection over those that passed.
+    #[inline(never)]
+    fn list_loop_columnar(
+        rt: &Runtime<'_>,
+        var: &Variable,
+        predicate: Option<&ExprNode<'_>>,
+        projection: Option<&ExprNode<'_>>,
+        outer: &[(u32, Value)],
+        chunk: &[Value],
+        sink: &mut LoopSink<'_>,
+    ) -> Result<(), String> {
+        let len = chunk.len();
+        let mut batch = Batch::new(0);
+        batch.set_column(var.id, loop_var_column(chunk));
+        for (id, value) in outer {
+            batch.set_column(*id, broadcast_column(value, len));
+        }
+        let ve = VectorEval::new(rt);
+        let all: Vec<usize> = (0..len).collect();
+        let tested = match predicate {
+            Some(p) => Some(ve.eval(p, &batch, &all)?),
+            None => None,
+        };
+        match sink {
+            LoopSink::Count(counts) => {
+                let mut local = [0usize; 3];
+                match &tested {
+                    None => local[0] = len,
+                    Some(ExprColumn::Bools(mask, nulls)) => {
+                        for (i, &b) in mask.iter().enumerate() {
+                            local[if nulls.is_null(i) { 2 } else { usize::from(!b) }] += 1;
+                        }
+                    }
+                    Some(column) => {
+                        for i in 0..len {
+                            match column.get(i) {
+                                Value::Bool(true) => local[0] += 1,
+                                Value::Bool(false) => local[1] += 1,
+                                Value::Null => local[2] += 1,
+                                value => {
+                                    return Err(format!(
+                                        "Type mismatch: expected Boolean but was {}",
+                                        value.name()
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                for (total, n) in counts.iter_mut().zip(local) {
+                    *total += n;
+                }
+            }
+            // Only how many passed is needed: no row list to build.
+            LoopSink::Tally(n) if projection.is_none() => {
+                **n += match tested {
+                    None => len,
+                    Some(ExprColumn::Bools(mask, nulls)) => mask
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, &b)| b && !nulls.is_null(i))
+                        .count(),
+                    Some(column) => (0..len)
+                        .filter(|&i| matches!(column.get(i), Value::Bool(true)))
+                        .count(),
+                };
+            }
+            LoopSink::Collect(_) | LoopSink::Tally(_) => {
+                let passed: Vec<usize> = match tested {
+                    None => all,
+                    Some(ExprColumn::Bools(mask, nulls)) => {
+                        let mut passed = all;
+                        passed.retain(|&i| mask[i] && !nulls.is_null(i));
+                        passed
+                    }
+                    Some(column) => {
+                        let mut passed = all;
+                        passed.retain(|&i| matches!(column.get(i), Value::Bool(true)));
+                        passed
+                    }
+                };
+                match (sink, projection) {
+                    (LoopSink::Tally(n), None) => **n += passed.len(),
+                    (LoopSink::Tally(n), Some(p)) => {
+                        // Evaluated for its errors only.
+                        if !passed.is_empty() {
+                            ve.eval(p, &batch, &passed)?;
+                        }
+                        **n += passed.len();
+                    }
+                    (LoopSink::Collect(acc), None) if passed.len() == len => {
+                        acc.extend_from_slice(chunk);
+                    }
+                    (LoopSink::Collect(acc), None) => {
+                        acc.extend(passed.iter().map(|&i| chunk[i].clone()));
+                    }
+                    (LoopSink::Collect(acc), Some(p)) => {
+                        if !passed.is_empty() {
+                            acc.extend(ve.eval_values(p, &batch, &passed)?);
+                        }
+                    }
+                    (LoopSink::Count(_), _) => unreachable!("matched above"),
+                }
+            }
+        }
+        Ok(())
     }
 
     // -------------------------------------------------------------------
