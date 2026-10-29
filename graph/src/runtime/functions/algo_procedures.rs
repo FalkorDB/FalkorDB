@@ -442,6 +442,17 @@ unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
     indices.into_iter().zip(values).collect()
 }
 
+/// Map a node-valued LAGraph result (a component or community representative)
+/// from the compact index space back to the original node id. LAGraph reports
+/// these as vertex indices of the matrix it ran on, so on the `nodeLabels`
+/// path they are compact indices, like the vector's own indices.
+fn compact_to_original(
+    compact_to_id: Option<&[u64]>,
+    idx: i64,
+) -> i64 {
+    compact_to_id.map_or(idx, |m| m[idx as usize] as i64)
+}
+
 /// Extract GrB_Vector entries as (index, i64) pairs.
 unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, i64)> {
     use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_INT64, GrB_Vector_nvals};
@@ -761,7 +772,7 @@ fn register_pagerank(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -871,7 +882,7 @@ fn register_wcc(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -920,7 +931,7 @@ fn register_wcc(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    component_ids.push(comp_id);
+                    component_ids.push(compact_to_original(compact_to_id.as_deref(), comp_id));
                 }
 
                 GrB_Vector_free(&raw mut component);
@@ -998,7 +1009,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -1019,7 +1030,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
-                    || (g.node_count() + g.deleted_nodes_count()) as usize,
+                    || g.node_id_bound() as usize,
                     Vec::len,
                 );
                 let sources: Vec<u64> = if n_nodes == 0 {
@@ -1293,7 +1304,7 @@ fn register_cdlp(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -1341,7 +1352,7 @@ fn register_cdlp(funcs: &mut Functions) {
                         continue;
                     }
                     node_ids.push(NodeId::from(orig_id));
-                    community_ids.push(community_id);
+                    community_ids.push(compact_to_original(compact_to_id.as_deref(), community_id));
                 }
 
                 GrB_Vector_free(&raw mut cdlp);
@@ -2355,9 +2366,12 @@ fn dijkstra_single_path(
     edges.reverse();
 
     // `costProp` is not what the search optimises for, just an attribute the
-    // caller asked to have reported: sum it over the winning path only.
+    // caller asked to have reported: sum it over the winning path only. Like
+    // C, an edge that lacks a configured `costProp` costs 1 (#3121), while no
+    // `costProp` at all reports 0.
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
     let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
-        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0)
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
     });
 
     Ok(Some((edges, labels[&target].weight, cost)))
@@ -2809,7 +2823,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                         adj.inner(),
                         std::ptr::null_mut(),
                     );
-                    let n = g.node_count() + g.deleted_nodes_count();
+                    let n = g.node_id_bound();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -2831,9 +2845,12 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
                 runtime.check_timeout()?;
                 let mut nodes: GrB_Vector = null_mut();
-                let node_vec_len = compact_to_id
-                    .as_ref()
-                    .map_or_else(|| g.node_count(), |m| m.len() as u64);
+                // Unfiltered, the matrix spans every id up to the highest
+                // (deleted ids included, as above), so the source vector must too.
+                let node_vec_len = compact_to_id.as_ref().map_or_else(
+                    || g.node_id_bound(),
+                    |m| m.len() as u64,
+                );
                 GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
                 GrB_Vector_assign_BOOL(
                     nodes,
