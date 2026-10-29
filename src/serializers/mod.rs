@@ -28,11 +28,28 @@ pub const ENCODING_VERSION: u64 = 19;
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
     std::sync::LazyLock::new(|| Mutex::new(VirtualKeyState::new()));
 
+/// A Redis key: the logical database it is in, and its (lossily rendered) name.
+///
+/// Graphs are only unique per database, so the RDB bookkeeping that tracks a
+/// graph by name across several callbacks qualifies the name with the database
+/// (#2782): a save or load can hold two graphs of the same name at once.
+pub type DbKey = (i32, String);
+
+/// One key's slice of a multi-key graph being saved.
+pub struct KeySlice {
+    /// The graph's [`graph_id`](crate::graph_core::graph_id) in `GRAPH_REGISTRY`.
+    pub graph_id: usize,
+    /// The graph's name, written into every key's header.
+    pub graph_name: String,
+    pub payloads: Vec<PayloadEntry>,
+}
+
 pub struct VirtualKeyState {
-    /// vkey_name → (graph_name, key_index, payloads for that key)
-    pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
-    /// graph_name → list of virtual key names
-    pub graph_vkeys: HashMap<String, Vec<String>>,
+    /// (db, key name) → the slice this save assigned that key: the graph's own
+    /// key carries slice 0, each virtual key one of the rest.
+    pub vkey_map: HashMap<DbKey, KeySlice>,
+    /// (db, graph name) → the graph's virtual key names, all in that db.
+    pub graph_vkeys: HashMap<DbKey, Vec<String>>,
 }
 
 impl VirtualKeyState {
@@ -54,15 +71,17 @@ pub static DECODE_STATE: LazyLock<Mutex<DecodeState>> =
     LazyLock::new(|| Mutex::new(DecodeState::new()));
 
 /// Tracks pending multi-key graph loads.
+/// All keyed by (db, graph name): an RDB holding the same graph name in two
+/// databases must not fold their slices into one graph.
 pub struct DecodeState {
-    pub pending: HashMap<String, PendingGraph>,
+    pub pending: HashMap<DbKey, PendingGraph>,
     /// Placeholder `Arc<RwLock<ThreadedGraph>>` values returned by `graph_rdb_load`
     /// for multi-key graphs. Used to replace the placeholder's inner graph
     /// with the finalized graph once all keys are loaded.
-    pub placeholders: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
+    pub placeholders: HashMap<DbKey, Arc<RwLock<ThreadedGraph>>>,
     /// Finalized graphs ready to be picked up by graph_rdb_load or
     /// the finalize_pending_graphs callback.
-    pub finalized: HashMap<String, Graph>,
+    pub finalized: HashMap<DbKey, Graph>,
     /// Redis keys this load has identified as virtual keys: every key of a
     /// multi-key graph other than the one the graph itself is stored under.
     /// They carry a slice of the graph rather than a graph of their own, so
@@ -76,7 +95,7 @@ pub struct DecodeState {
     /// of guessing which keys in the keyspace look like its own — the guess
     /// (a `__placeholder` name prefix) deleted user graphs that chose such a
     /// name, since the name is the client's to pick (#2773).
-    pub meta_keys: Vec<String>,
+    pub meta_keys: Vec<DbKey>,
 }
 
 pub struct PendingGraph {

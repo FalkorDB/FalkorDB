@@ -56,6 +56,6 @@ pub fn graph_profile(
     let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
     drop(key);
     create_key.set_value(&GRAPH_TYPE, graph.clone())?;
-    register_graph(name, graph);
+    register_graph(ctx, name, graph);
     result
 }
