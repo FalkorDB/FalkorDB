@@ -416,7 +416,8 @@ fn build_in_one_batch(
     attr: &Arc<String>,
 ) {
     g.falkordb_index.create_building(entity, label, attr);
-    g.indexer_prepare(
+    // Applied to `g` itself: a writer's version, published with the writer's changes.
+    let _ = g.indexer_prepare(
         &IndexId::Column(entity, (label.clone(), attr.clone())),
         usize::MAX,
     );
