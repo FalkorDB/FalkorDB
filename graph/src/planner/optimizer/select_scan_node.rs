@@ -76,6 +76,7 @@ use crate::{
 
 use super::super::IR;
 use super::{collect_expr_variables, collect_subtree_variables};
+use crate::runtime::runtime::GetVariables;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -208,13 +209,14 @@ fn collect_filtered_vars(
 /// `include_pending` wraps the scan with `IncludePending`, required inside
 /// MERGE match branches so the scan sees in-flight mutations. `argument`
 /// attaches an `Argument` leaf below the scan, so correlated rows keep
-/// flowing when the scan replaces a bare `Argument` child. `filters` are the
+/// flowing when the scan replaces a bare `Argument` child; it may be a whole
+/// subtree (an `Unwind`, a `Project`) whose rows the scan then runs once per. `filters` are the
 /// `Filter` operators salvaged from the subtree this one replaces — see
 /// [`filters_of`].
 fn make_scan_subtree(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     include_pending: bool,
-    argument: Option<IR>,
+    argument: Option<DynTree<IR>>,
     filters: Vec<IR>,
 ) -> DynTree<IR> {
     let mut scan = if node.labels.is_empty() {
@@ -224,7 +226,7 @@ fn make_scan_subtree(
     };
     if let Some(arg) = argument {
         let root_idx = scan.root().idx();
-        scan.node_mut(root_idx).push_child(arg);
+        scan.node_mut(root_idx).push_child_tree(arg);
     }
     if include_pending {
         scan = tree!(IR::IncludePending { node: node.clone() }, scan);
@@ -832,6 +834,42 @@ pub(super) fn select_scan_node(
                 .iter()
                 .all(|(node, _, _)| !vars.contains(&(node.alias.id, node.alias.scope_id)))
         });
+        // The same holds for any other outer-context child (an `Unwind`, a
+        // `Project`, an earlier clause's plan) that provably binds none of the
+        // chain's endpoints or edges: it only supplies rows. Leaving it as the
+        // chain's child makes the bottom traverse enumerate every edge of its
+        // type once per such row, however selective the endpoint is
+        // (`UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() ...`), so the scan
+        // goes between the traverse and that child instead, as it does for a
+        // bare `Argument`. The child rides beneath the new scan.
+        let transparent_child: Option<DynTree<IR>> =
+            if is_leaf || has_planner_scan || arg_transparent {
+                None
+            } else {
+                let child = optimized_plan.node(bottom_idx).child(0);
+                let opaque = child
+                    .walk::<Bfs>()
+                    .any(|ir| matches!(ir, IR::Argument(None)));
+                let bound_here = child.get_variables();
+                let binds_chain = |alias: &Variable| {
+                    bound_here
+                        .iter()
+                        .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+                };
+                let chain_aliases_bound = chain.iter().any(|&ct_idx| {
+                    matches!(
+                        optimized_plan.node(ct_idx).data(),
+                        IR::CondTraverse { relationship, .. } if binds_chain(&relationship.alias)
+                    )
+                });
+                (!opaque
+                    && !chain_aliases_bound
+                    && !candidates
+                        .iter()
+                        .any(|(node, _, _)| binds_chain(&node.alias)))
+                .then(|| child.clone_as_tree())
+            };
+        let arg_transparent = arg_transparent || transparent_child.is_some();
         let effectively_leaf = effectively_leaf || arg_transparent;
         // Any scan this pass builds inside a MERGE match branch must see
         // in-flight mutations, mirroring the planner's
@@ -843,7 +881,11 @@ pub(super) fn select_scan_node(
         // mutations.
         let in_merge = in_merge_match_branch(optimized_plan, bottom_idx);
         // The Argument leaf to re-attach beneath any scan that replaces it.
-        let make_argument = || IR::Argument(child_argument_vars.clone());
+        let make_argument = || {
+            transparent_child
+                .clone()
+                .unwrap_or_else(|| tree!(IR::Argument(child_argument_vars.clone())))
+        };
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
@@ -953,9 +995,13 @@ pub(super) fn select_scan_node(
                 preserved_argument = if arg_transparent {
                     Some(make_argument())
                 } else {
-                    argument_leaf_of(optimized_plan, child_idx)
+                    argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                 };
-                salvaged_filters = filters_of(optimized_plan, child_idx);
+                salvaged_filters = if child_is_planner_scan {
+                    filters_of(optimized_plan, child_idx)
+                } else {
+                    vec![]
+                };
                 None // Will create a new scan for best_node instead
             } else {
                 Some(optimized_plan.node_mut(child_idx).clone_as_tree())
@@ -1104,13 +1150,13 @@ pub(super) fn select_scan_node(
                     let arg = if arg_transparent {
                         Some(make_argument())
                     } else if is_scan {
-                        argument_leaf_of(optimized_plan, child_idx)
+                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                     } else {
                         None
                     };
                     // Only when the subtree is actually discarded below; if it
                     // is kept, its Filters stay with it.
-                    let salvaged = if is_scan || arg_transparent {
+                    let salvaged = if is_scan {
                         filters_of(optimized_plan, child_idx)
                     } else {
                         vec![]
@@ -1303,14 +1349,14 @@ pub(super) fn select_scan_node(
                         Some(make_argument())
                     } else if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        argument_leaf_of(optimized_plan, child_idx)
+                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
                     } else {
                         None
                     };
                     // Not a swap: the rebuilt scan is for the same node the
                     // pruned one scanned, so its Filters can go straight back
                     // inside the new subtree — their variable is bound there.
-                    let salvaged_filters = if has_planner_scan || arg_transparent {
+                    let salvaged_filters = if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         filters_of(optimized_plan, child_idx)
                     } else {
