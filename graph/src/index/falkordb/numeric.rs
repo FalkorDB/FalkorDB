@@ -511,6 +511,14 @@ impl NumericIndex {
             tree: Tree::from_sorted(&pairs),
         }
     }
+
+    /// Every `(key, doc)` tuple the index holds, in order. For tests that compare a column with
+    /// what it must hold.
+    #[cfg(test)]
+    #[must_use]
+    pub fn tuples(&self) -> Vec<(u64, u64)> {
+        self.tree.range_tuples(0, u64::MAX).collect()
+    }
 }
 
 #[cfg(test)]

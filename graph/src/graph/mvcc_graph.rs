@@ -165,6 +165,30 @@ impl MvccGraph {
             self.write.store(false, Ordering::Release);
             return Err(Claim::Stale);
         }
+        // Only indexer batches committed since the fork was made, if anything did: it takes their
+        // progress, with what it wrote re-applied. Borrowed mutably only then: until a build runs
+        // in the background, no published column is `Building`, and a claim is what it was.
+        #[cfg(feature = "index-falkordb")]
+        if fork
+            .try_borrow()
+            .is_ok_and(|fork| !fork.overtaken_by_indexer_batches(&self.graph.borrow()))
+        {
+            return Ok(());
+        }
+        #[cfg(feature = "index-falkordb")]
+        {
+            // A claimant's fork is never borrowed: its writer has stopped reading it to claim it.
+            // One that is is a bug, which a debug build stops on. A release build refuses the
+            // claim, and the host runs the write again.
+            let Ok(mut fork) = fork.try_borrow_mut() else {
+                self.write.store(false, Ordering::Release);
+                if cfg!(debug_assertions) {
+                    panic!("a fork is claimed while it is borrowed");
+                }
+                return Err(Claim::Stale);
+            };
+            fork.rebase_onto_indexer_batches(&self.graph.borrow());
+        }
         Ok(())
     }
 
@@ -199,10 +223,13 @@ impl MvccGraph {
     /// - nothing: `prepared` is published as it is;
     /// - only other indexes' batches: `batch`'s index is put into a new build version of the
     ///   published one, which is published ([`Graph::with_batch_index`]);
-    /// - `batch`'s index was dropped or created again, or a writer committed, or another batch
-    ///   committed on the same index: nothing is published, and the index's next batch starts from
-    ///   its published cursor. Another batch on the index is a bug in the builder's one chain per
-    ///   index, and is reported ([`report_batch_race`]).
+    /// - writers, and no other batch on `batch`'s index: its index as `prepared` has it, caught up
+    ///   on the entities the writers changed in it, is put into a new build version of the
+    ///   published one, which is published ([`Graph::caught_up_onto`]);
+    /// - `batch`'s index was dropped or created again, or another batch committed on the same
+    ///   index: nothing is published, and the index's next batch starts from its published cursor.
+    ///   Another batch on the index is a bug in the builder's one chain per index, and is reported
+    ///   ([`report_batch_race`]).
     ///
     /// The commit changes no graph data and keeps the data version, so a writer's fork made before
     /// it can still be claimed ([`Self::claim`]).
@@ -231,6 +258,9 @@ impl MvccGraph {
             IndexerCommit::Same => Arc::clone(prepared),
             IndexerCommit::Swap => Arc::new(AtomicRefCell::new(
                 prepared.borrow().with_batch_index(&graph.borrow(), batch),
+            )),
+            IndexerCommit::CatchUp(_) => Arc::new(AtomicRefCell::new(
+                prepared.borrow().caught_up_onto(&graph.borrow(), batch),
             )),
             IndexerCommit::Dropped(why) => {
                 if why == Dropped::AnotherBatch {
@@ -270,6 +300,8 @@ impl MvccGraph {
         if !writer && PANIC_IN_INDEXER_COMMIT.with(std::cell::Cell::get) {
             panic!("an indexer batch's commit unwinds");
         }
+        #[cfg(feature = "index-falkordb")]
+        new_graph.borrow_mut().falkordb_index.publish();
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
