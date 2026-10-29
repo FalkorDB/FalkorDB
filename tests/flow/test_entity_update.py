@@ -305,7 +305,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}")
-        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.labels_added, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
 
 
@@ -320,7 +320,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)   
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{':'.join(labels)}")
-        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.labels_added, 4)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
     
 
@@ -335,7 +335,7 @@ class testEntityUpdate():
         # multiple node updates
         self.validate_node_labels(self.multiple_entity_graph, labels, 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}, n:{labels[1]}")
-        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.labels_added, 4)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
 
 
@@ -357,7 +357,7 @@ class testEntityUpdate():
         result = self.multiple_entity_graph.query("MATCH (n {testprop:'testvalue'}) RETURN n")
         self.env.assertEqual(len(result.result_set), 0)
         result = self.multiple_entity_graph.query(f"MATCH (n) SET n:{labels[0]}, n.testprop='testvalue'")
-        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.labels_added, 2)
         self.env.assertEqual(result.properties_set, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
         result = self.multiple_entity_graph.query("MATCH (n {testprop:'testvalue'}) RETURN n")
@@ -371,7 +371,7 @@ class testEntityUpdate():
         self.env.assertEqual(len(result.result_set), 0)
 
         result = self.multiple_entity_graph.query(f"MATCH (n), (m) SET n:{labels[0]}, n.testprop2='testvalue', m:{labels[1]}")
-        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.labels_added, 4)
         self.env.assertEqual(result.properties_set, 2)
         self.validate_node_labels(self.multiple_entity_graph, labels, 2)
         result = self.multiple_entity_graph.query("MATCH (n {testprop2:'testvalue'}) RETURN n")
@@ -506,7 +506,7 @@ class testEntityUpdate():
         # remove prior to set: the label is kept
         result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN labels(n)")
         self.env.assertEqual(result.result_set[0][0], ["L"])
-        self.env.assertEqual(result.labels_removed, 0)
+        self.env.assertEqual(result.labels_removed, 1)
         # still reachable by a label scan, and still a single node
         self.validate_node_labels(self.graph, ["L"], 1)
         self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
@@ -534,7 +534,7 @@ class testEntityUpdate():
         self.graph.query("UNWIND range(1, 5) AS i CREATE (:L {v: i})")
         result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 5)
-        self.env.assertEqual(result.labels_removed, 0)
+        self.env.assertEqual(result.labels_removed, 5)
         self.validate_node_labels(self.graph, ["L"], 5)
 
     def test_32_mix_merge_and_remove_node_labels(self):

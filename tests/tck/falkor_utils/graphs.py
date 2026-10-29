@@ -117,5 +117,15 @@ def binary_tree_graph2():
                       ")
 
 
+def _label_count():
+    return len(graph.call_procedure("db.labels").result_set)
+
+
 def query(q):
-    return graph.query(q)
+    # The TCK's `+labels` is the number of label *names* a query introduced, not
+    # the number of label assignments to nodes that the engine's `Labels added`
+    # statistic reports (as C does), so it is measured from the schema.
+    before = _label_count()
+    result = graph.query(q)
+    result.tck_labels_introduced = _label_count() - before
+    return result

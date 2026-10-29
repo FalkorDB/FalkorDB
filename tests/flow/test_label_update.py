@@ -40,7 +40,7 @@ class testLabelUpdate():
 
         # --- bulk ADD path ---
         res = self.query_master_and_wait("MATCH (n) SET n:L RETURN n")
-        self.env.assertEqual(res.labels_added, 1)
+        self.env.assertEqual(res.labels_added, node_count)
         # Every node must now carry label L
         res = self.query_master_and_wait("MATCH (n:L) RETURN count(n) AS c")
         self.env.assertEqual(res.result_set[0][0], node_count)
@@ -107,8 +107,11 @@ class testLabelUpdate():
         # --- REMOVE then SET: the label is kept ---
         # no WITH between the clauses: both land in the same segment, so the
         # add has to cancel the staged removal rather than commit after it
+        # the removal and the re-add are both counted, as C counts them: the
+        # statistic is what each clause did, not the net change at commit
         res = self.query_master_and_wait("MATCH (n:A:L) REMOVE n:L SET n:L RETURN n")
-        self.env.assertEqual(res.labels_removed, 0)
+        self.env.assertEqual(res.labels_removed, 1)
+        self.env.assertEqual(res.labels_added, 1)
 
         res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
         self.env.assertEqual(res.result_set[0][0], 1)
@@ -167,6 +170,87 @@ class testLabelUpdate():
         self.env.assertEqual(res.result_set[0][0], 0)
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
+    # Regression for #2655. `Labels added` / `Labels removed` count label
+    # assignments (one per (node, label) pair a clause changes), not the label
+    # types registered in the schema, and not the net change at commit. The
+    # expected values are what the C engine reports.
+    def test_labels_added_counts_assignments(self):
+        # one label type, two nodes: two assignments
+        res = self.master_graph.query("CREATE (:Node), (:Node)")
+        self.env.assertEqual(res.labels_added, 2)
+
+        # a known label still counts on every node
+        res = self.master_graph.query("CREATE (:Node), (:Node), (:Node)")
+        self.env.assertEqual(res.labels_added, 3)
+
+        # one node, two labels
+        res = self.master_graph.query("CREATE (:A:B)")
+        self.env.assertEqual(res.labels_added, 2)
+
+        # SET on many matched nodes: one per node
+        res = self.master_graph.query("MATCH (n:Node) SET n:Extra")
+        self.env.assertEqual(res.labels_added, 5)
+
+        # a label the node already carries is not an assignment
+        res = self.master_graph.query("MATCH (n:Node) SET n:Extra")
+        self.env.assertEqual(res.labels_added, 0)
+
+        # the same label twice in one query counts once per node
+        res = self.master_graph.query("MATCH (n:Node) SET n:D:D")
+        self.env.assertEqual(res.labels_added, 5)
+        res = self.master_graph.query("MATCH (n:A) SET n:L WITH n SET n:L")
+        self.env.assertEqual(res.labels_added, 1)
+
+        # MERGE that creates
+        res = self.master_graph.query("MERGE (:M:N)")
+        self.env.assertEqual(res.labels_added, 2)
+
+    def test_labels_removed_counts_assignments(self):
+        self.master_graph.query("UNWIND range(1, 5) AS i CREATE (:Node)")
+        self.master_graph.query("MATCH (n:Node) SET n:Extra")
+
+        res = self.master_graph.query("MATCH (n:Node) REMOVE n:Extra")
+        self.env.assertEqual(res.labels_removed, 5)
+
+        # a label the node does not carry is not a removal
+        res = self.master_graph.query("MATCH (n:Node) REMOVE n:Extra")
+        self.env.assertEqual(res.labels_removed, 0)
+        res = self.master_graph.query("MATCH (n:Node) REMOVE n:Unknown")
+        self.env.assertEqual(res.labels_removed, 0)
+
+        # removed twice in one query: the second finds nothing to remove
+        self.master_graph.query("MATCH (n:Node) SET n:Extra")
+        res = self.master_graph.query("MATCH (n:Node) REMOVE n:Extra REMOVE n:Extra")
+        self.env.assertEqual(res.labels_removed, 5)
+
+        # two labels on one node
+        self.master_graph.query("CREATE (:L1:L2)")
+        res = self.master_graph.query("MATCH (n:L1) REMOVE n:L1:L2")
+        self.env.assertEqual(res.labels_removed, 2)
+
+    def test_labels_stats_remove_and_set_in_one_query(self):
+        self.master_graph.query("CREATE (:A)")
+
+        # REMOVE then SET: both happened, even though the label survives
+        res = self.master_graph.query("MATCH (n:A) REMOVE n:A SET n:A")
+        self.env.assertEqual(res.labels_removed, 1)
+        self.env.assertEqual(res.labels_added, 1)
+
+        # SET then REMOVE
+        res = self.master_graph.query("MATCH (n:A) SET n:B REMOVE n:B")
+        self.env.assertEqual(res.labels_added, 1)
+        self.env.assertEqual(res.labels_removed, 1)
+
+        # SET, REMOVE, SET again: two additions and one removal
+        res = self.master_graph.query("MATCH (n:A) SET n:W REMOVE n:W SET n:W")
+        self.env.assertEqual(res.labels_added, 2)
+        self.env.assertEqual(res.labels_removed, 1)
+
+        # a node created and stripped of a label in the same query
+        res = self.master_graph.query("CREATE (n:X:Y) REMOVE n:X")
+        self.env.assertEqual(res.labels_added, 2)
+        self.env.assertEqual(res.labels_removed, 1)
 
     def test_remove_nonexisting_label(self):
         # Try to remove a non existing label

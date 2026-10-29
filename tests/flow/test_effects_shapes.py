@@ -37,7 +37,8 @@ class testEffects_01_Shapes(_EffectsBase):
         # partitioning at all.
         res = self.query_and_sync("CREATE (:A), (:B), (:A:B)")
         self.env.assertEqual(res.nodes_created, 3)
-        self.env.assertEqual(res.labels_added, 2)
+        # one per (node, label) pair: A, B, then A and B
+        self.env.assertEqual(res.labels_added, 4)
 
         self.assert_agree("MATCH (n) RETURN count(n)", [[3]])
         self.assert_agree("MATCH (n:A) RETURN count(n)", [[2]])
