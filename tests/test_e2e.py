@@ -1811,6 +1811,71 @@ def test_boolean_operator_type_mismatch_names_the_type():
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
 
 
+def test_boolean_operator_static_operand_type_3293():
+    # AND/OR/XOR/NOT short-circuit at runtime, but an operand whose type is
+    # known at bind time to be neither Boolean nor Null is rejected up front,
+    # as C does when it evaluates every operand.
+    for q, t in [
+        ("RETURN false AND (1+2)", "Integer"),
+        ("RETURN true OR (1+2)", "Integer"),
+        ("RETURN true XOR (1+2)", "Integer"),
+        ("RETURN NOT (1+2)", "Integer"),
+        ("RETURN true OR 'a'+'b'", "String"),
+        ("RETURN false AND 1.5*2", "Float"),
+        ("RETURN false AND (2^2)", "Float"),
+        ("RETURN false AND 1", "Integer"),
+        ("RETURN false AND [1]", "List"),
+        ("RETURN true OR {a: 1}", "Map"),
+        ("RETURN CASE WHEN true THEN false AND (1+2) END", "Integer"),
+    ]:
+        query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
+
+    # A Null-valued constant expression is still a valid operand.
+    res = query("RETURN false AND (null+1), true OR (1+null), false AND (null = 1)")
+    assert res.result_set == [[False, True, False]]
+
+
+def test_boolean_operator_runtime_typed_operands_short_circuit_3293():
+    # Documented intentional difference from C: operands whose type is only
+    # known at runtime are not evaluated when the result is already decided,
+    # so they are not type-checked (C rejects them) and guards keep working.
+    assert query("UNWIND [3] AS x RETURN false AND x").result_set == [[False]]
+    assert query("UNWIND [3] AS x RETURN true OR x").result_set == [[True]]
+    assert query("UNWIND [0] AS x RETURN x <> 0 AND 10/x > 1").result_set == [[False]]
+    # Both engines short-circuit in WHERE.
+    assert query("UNWIND [0] AS x WITH x WHERE x <> 0 AND 10/x > 1 RETURN 1").result_set == []
+    assert query("UNWIND [3] AS x WITH x WHERE false AND x RETURN 1").result_set == []
+    # A runtime-typed operand that is evaluated is still checked.
+    query_exception("UNWIND [3] AS x RETURN true AND x", "Type mismatch: expected Boolean or Null but was Integer")
+
+
+def test_boolean_operator_filter_contexts_short_circuit_3293():
+    # C short-circuits in every filter and accepts operands there that it
+    # rejects in a projection; the static operand check must not apply.
+    for q, expected in [
+        ("RETURN [x IN [1] WHERE false AND (1+2)]", [[[]]]),
+        ("RETURN [x IN [1] WHERE false AND [1]]", [[[]]]),
+        ("RETURN [x IN [1] WHERE false AND 1]", [[[]]]),
+        ("RETURN [x IN [1] WHERE true OR 1]", [[[1]]]),
+        ("RETURN [x IN [1] WHERE (false AND (1+2)) OR false]", [[[]]]),
+        ("RETURN [x IN [1] WHERE false AND (1+2) | x]", [[[]]]),
+        ("RETURN any(x IN [1] WHERE false AND (1+2))", [[False]]),
+        ("RETURN all(x IN [1] WHERE true OR (1+2))", [[True]]),
+        ("RETURN none(x IN [1] WHERE false AND [1])", [[True]]),
+        ("RETURN single(x IN [1] WHERE false AND 1)", [[False]]),
+    ]:
+        assert query(q).result_set == expected, q
+    # An operand that is evaluated is still checked, and the projection of a
+    # comprehension is not a filter.
+    query_exception("RETURN [x IN [1] WHERE true AND 1]", "Type mismatch")
+    query_exception("RETURN [x IN [1] WHERE NOT 1]", "Type mismatch")
+    query_exception("RETURN any(x IN [1] WHERE true AND 1)", "Type mismatch")
+    query_exception(
+        "RETURN [x IN [1] | false AND (1+2)]",
+        "Type mismatch: expected Boolean or Null but was Integer",
+    )
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
