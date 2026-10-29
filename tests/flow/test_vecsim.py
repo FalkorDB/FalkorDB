@@ -354,3 +354,44 @@ class testVecsim():
             res = query_edge_vector_index(self.graph, "Points", "embeddings", k, [50, 50])
             self.env.assertGreater(len(res.result_set), 0)
         self.env.assertTrue(self.conn.ping())
+
+    def test13_query_while_index_is_under_construction(self):
+        # regression (#3382): a vector query used to answer from the half-built
+        # index. Like C, it is refused until the index is OPERATIONAL, for node
+        # and relationship queries alike.
+        g = self.db.select_graph("vecsim_under_construction")
+        g.query("""UNWIND range(1, 20000) AS i
+                   CREATE (:V {e: vecf32([toFloat(i), 1.0])})-[:R {e: vecf32([toFloat(i), 1.0])}]->(:W)""")
+        create_node_vector_index(g, "V", "e", dim=2)
+        create_edge_vector_index(g, "R", "e", dim=2)
+
+        def constructing():
+            res = g.ro_query("CALL db.indexes() YIELD status RETURN status")
+            return any("UNDER CONSTRUCTION" in row[0] for row in res.result_set)
+
+        queries = [
+            ("db.idx.vector.queryNodes",
+             "CALL db.idx.vector.queryNodes('V', 'e', 3, vecf32([1.0, 1.0])) YIELD node RETURN count(node)"),
+            ("db.idx.vector.queryRelationships",
+             "CALL db.idx.vector.queryRelationships('R', 'e', 3, vecf32([1.0, 1.0])) YIELD relationship RETURN count(relationship)"),
+        ]
+
+        # Population is asynchronous. A query sandwiched between two reads that
+        # both see an index under construction must fail; once the indexes
+        # are done the same queries answer.
+        saw_refusal = False
+        for name, q in queries:
+            while constructing():
+                try:
+                    res = g.ro_query(q)
+                    # answered: only acceptable if population finished meanwhile
+                    self.env.assertFalse(constructing() and res.result_set[0][0] > 0,
+                                         message=f"{name} answered from an index under construction")
+                except Exception as e:
+                    self.env.assertContains(f"Invalid arguments for procedure '{name}'", str(e))
+                    saw_refusal = True
+                    break
+
+        wait_for_indices_to_sync(g)
+        for _, q in queries:
+            self.env.assertEqual(g.ro_query(q).result_set, [[3]])
