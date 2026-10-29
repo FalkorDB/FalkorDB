@@ -14,6 +14,18 @@ g = None
 shutdown = False
 
 
+def server_binary() -> str:
+    """The server binary to spawn locally: /usr/local/bin/<server>-server.
+
+    FALKORDB_SERVER picks the server -- `redis` (default) or `valkey` -- as
+    it does in the docker images and flow.sh.
+    """
+    server = os.environ.get("FALKORDB_SERVER") or "redis"
+    if server not in ("redis", "valkey"):
+        raise ValueError(f"FALKORDB_SERVER must be redis or valkey, not {server!r}")
+    return f"/usr/local/bin/{server}-server"
+
+
 def start_redis(release=None, moduleEnvs=[]):
     global redis_server, client, g, shutdown
     host = os.environ.get("FALKORDB_HOST", "localhost")
@@ -49,7 +61,7 @@ def start_redis(release=None, moduleEnvs=[]):
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(
-            ["/usr/local/bin/redis-server",
+            [server_binary(),
              "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)

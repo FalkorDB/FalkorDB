@@ -7,9 +7,10 @@
 #
 # Two targets:
 #   artifact  the .so alone:  docker build --target artifact --output type=local,dest=<dir>
-#   server    an Amazon Linux 2023 server image: Redis built from source on
-#             this OS, plus that same .so. The counterpart of the Debian
-#             image's `server` target; no browser.
+#   server    an Amazon Linux 2023 server image: Redis or Valkey
+#             (--build-arg SERVER) built from source on this OS, plus that
+#             same .so. The counterpart of the Debian image's `server`
+#             target; no browser.
 # Package set mirrors the C repo's build/docker/builder/Dockerfile.amazonlinux2023, minus
 # the C-only peg/libcypher-parser bits the Rust port doesn't use.
 
@@ -18,8 +19,11 @@ ARG CXX=clang++-19
 # BUILD_IMAGE uniformly without a "not consumed" warning; self-contained OSes
 # don't use a toolchain base image.
 ARG BUILD_IMAGE
-# Same Redis release as build/runtime/Dockerfile.
+# Which server the `server` target ships, and the server releases: the same
+# as build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
+ARG SERVER=redis
 ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.1.2
 
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
@@ -119,47 +123,28 @@ FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
 
 # ---------------------------------------------------------------------------
-# Redis, built on this OS so redis-server runs against the image's own glibc
-# and OpenSSL. Same recipe as build/runtime/Dockerfile's redis-builder stage:
-# protected-mode off by default, as in the upstream redis image, and the same
-# jemalloc page sizes.
+# The server, built on this OS so it runs against the image's own glibc and
+# OpenSSL, by the same build/build-server.sh as build/runtime/Dockerfile.
+# Only the builder the SERVER arg selects is built.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260918.0 AS redis-builder
-
-ARG REDIS_VERSION
-
+FROM amazonlinux:2023.12.20260918.0 AS server-builder-base
 RUN dnf install -y git gcc gcc-c++ make openssl-devel && \
     dnf clean all
+COPY ./build/build-server.sh /usr/local/bin/build-server
 
-WORKDIR /tmp
-RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+FROM server-builder-base AS redis-builder
+ARG REDIS_VERSION
+RUN build-server redis "${REDIS_VERSION}" /server-install
 
-WORKDIR /tmp/redis-src
-RUN set -eux; \
-    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
-    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
-    arch="$(uname -m)"; \
-    case "$arch" in \
-        x86_64 | i?86) lgPage=12 ;; \
-        *) lgPage=16 ;; \
-    esac; \
-    extraJemallocConfigureFlags="--build=${arch}-linux-gnu --with-lg-page=${lgPage} --with-lg-hugepage=21"; \
-    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
-    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
-    make -j "$(nproc)" all; \
-    make PREFIX=/redis-install install; \
-    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
-    /redis-install/bin/redis-server --version; \
-    /redis-install/bin/redis-cli --version
+FROM server-builder-base AS valkey-builder
+ARG VALKEY_VERSION
+RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
 # Server image. Mirrors build/runtime/Dockerfile's `server` stage -- same
-# paths, user, entrypoint and environment -- on amazonlinux:2023.12.20260817.0.
+# paths, user, entrypoint and environment -- on amazonlinux:2023.12.20260918.0.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023.12.20260918.0 AS server
-
-# BuildKit auto-ARGs must be re-declared in each stage that consumes them.
-ARG TARGETPLATFORM
+FROM amazonlinux:2023.12.20260918.0 AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -169,7 +154,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 # Required at runtime:
 #   libstdc++       : falkordb.so
-#   openssl-libs    : redis-server with BUILD_TLS=yes
+#   openssl-libs    : the server, built with BUILD_TLS=yes
 #   openssl, bash   : gen-certs.sh (TLS=1)
 #   findutils       : run.sh's data-dir ownership fix-up
 #   util-linux      : setpriv(1), behind the gosu that run.sh calls
@@ -182,20 +167,35 @@ RUN dnf update -y && \
     groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb && \
     dnf clean all
 
-COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
-COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 COPY ./build/runtime/gosu-setpriv.sh /usr/local/bin/gosu
-# The sentinel/check-* entry points are symlinks, as in the Debian image.
-RUN chmod 0755 /usr/local/bin/gosu && \
-    ln -s redis-server /usr/local/bin/redis-sentinel && \
-    ln -s redis-server /usr/local/bin/redis-check-rdb && \
-    ln -s redis-server /usr/local/bin/redis-check-aof
+RUN chmod 0755 /usr/local/bin/gosu
 
 # root:falkordb 0775, for the reasons given in build/runtime/Dockerfile.
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
     chown root:falkordb ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
     chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
     ln -s ${FALKORDB_DATA_PATH} /data
+
+# The server tree, symlinked entry points included, as in the Debian image.
+FROM server-base AS server-redis
+ARG REDIS_VERSION
+ENV FALKORDB_SERVER=redis \
+    FALKORDB_SERVER_VERSION=${REDIS_VERSION}
+COPY --from=redis-builder /server-install/ /usr/local/
+
+FROM server-base AS server-valkey
+ARG VALKEY_VERSION
+ENV FALKORDB_SERVER=valkey \
+    FALKORDB_SERVER_VERSION=${VALKEY_VERSION}
+COPY --from=valkey-builder /server-install/ /usr/local/
+
+FROM server-${SERVER} AS server
+
+# BuildKit auto-ARGs must be re-declared in each stage that consumes them.
+ARG TARGETPLATFORM
+
+LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
+      com.falkordb.server.version="${FALKORDB_SERVER_VERSION}"
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -205,15 +205,20 @@ RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # The builder checked the module against the builder's packages; this image
-# installs far fewer, so check it again here. Then every redis entry point,
-# and that gosu really switches to falkordb.
+# installs far fewer, so check it again here. Then that the server is the one
+# the labels name, every server entry point (and on valkey the redis-*
+# aliases), and that gosu really switches to falkordb.
 RUN unresolved="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
     if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this image cannot resolve:"; echo "$unresolved"; exit 1; fi && \
-    redis-server --version && \
-    redis-cli --version && \
-    redis-sentinel --version && \
-    redis-check-rdb --version && \
-    redis-check-aof --version && \
+    "${FALKORDB_SERVER}-server" --version | grep -F " v=${FALKORDB_SERVER_VERSION} " && \
+    for name in "${FALKORDB_SERVER}" redis; do \
+        for tool in server cli sentinel check-aof; do \
+            "${name}-${tool}" --version || exit 1; \
+        done; \
+        # valkey-check-rdb only reads --version after a file argument; see
+        # build/runtime/Dockerfile.
+        "${name}-check-rdb" --version 2>&1 | grep -E 'check-rdb|Checking RDB file' || exit 1; \
+    done && \
     test "$(gosu falkordb id -u):$(gosu falkordb id -g)" = "999:999"
 
 ENV ARCH=${TARGETPLATFORM} \
@@ -223,5 +228,5 @@ ENV ARCH=${TARGETPLATFORM} \
 
 EXPOSE 6379/tcp
 
-# run.sh execs redis-server itself and ignores container args (no CMD).
+# run.sh execs ${FALKORDB_SERVER}-server itself and ignores container args (no CMD).
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]

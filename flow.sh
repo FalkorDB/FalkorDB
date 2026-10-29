@@ -48,8 +48,10 @@ fi
 #   syntax — the helper bypasses it entirely.
 #
 # - Local dev (FALKORDB_TEST_IMAGE unset):
-#   Original behavior — RLTest spawns redis-server locally with --loadmodule.
+#   Original behavior — RLTest spawns the server locally with --loadmodule.
 #   Cargo-build the .so, run ./flow.sh — works the same as before this PR.
+#   FALKORDB_SERVER=valkey runs valkey-server (from PATH) instead of
+#   redis-server; in CI mode the image decides.
 #
 # --parallelism 1 in CI because the shared `master` service is process-singleton;
 # parallel RLTest classes would collide on its state. Locally RLTest spawns one
@@ -58,7 +60,11 @@ if [[ "$FALKORDB_TEST_IMAGE" != "" ]]; then
     MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-master}:${FALKORDB_PORT:-6379}")
     PARALLELISM="--parallelism 1"
 else
-    MODULE_ARGS=(--module "$TARGET_DIR/$TARGET")
+    case "${FALKORDB_SERVER:-redis}" in
+        redis | valkey) ;;
+        *) echo "FALKORDB_SERVER must be redis or valkey, not '$FALKORDB_SERVER'" >&2; exit 1 ;;
+    esac
+    MODULE_ARGS=(--module "$TARGET_DIR/$TARGET" --oss-redis-path "${FALKORDB_SERVER:-redis}-server")
 fi
 
 # Add test filter support

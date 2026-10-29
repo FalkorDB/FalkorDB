@@ -1,26 +1,41 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
-# Keep in sync with REDIS_VERSION in build/Dockerfile and build/runtime/Dockerfile
-# so all four images (toolchain, release, coverage, asan) build from the same
-# upstream redis tag.
-ARG REDIS_ASAN_VER=8.10.2
+# Which server the image runs, and the server releases: the same as
+# build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
+ARG SERVER=redis
+ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.1.2
 
-# Stage 1: ASAN-instrumented redis-server built from source.
-# Redis's Makefile honors SANITIZER=address (sets MALLOC=libc, adds
-# -fsanitize=address to CFLAGS/LDFLAGS). OPTIMIZATION=-O1 disables LTO,
-# which clashes with ASAN ctor/dtor sections at link time.
-FROM $BUILD_IMAGE AS redis-asan
-ARG REDIS_ASAN_VER
+# Stage 1: the ASAN-instrumented server, built from source. Not
+# build/build-server.sh: that builds the release flavour. Both servers'
+# Makefiles honor SANITIZER=address (sets MALLOC=libc, adds -fsanitize=address
+# to CFLAGS/LDFLAGS). OPTIMIZATION=-O1 disables LTO, which clashes with ASAN
+# ctor/dtor sections at link time.
+FROM $BUILD_IMAGE AS server-asan
+ARG SERVER
+ARG REDIS_VERSION
+ARG VALKEY_VERSION
 WORKDIR /tmp
 COPY tests/memcheck/redis.san-ignorelist /tmp/redis.san-ignorelist
-RUN git clone --depth 1 --branch ${REDIS_ASAN_VER} https://github.com/redis/redis.git redis-src && \
-    cd redis-src && \
+RUN set -eu; \
+    case "$SERVER" in \
+      redis) repo=https://github.com/redis/redis.git version=$REDIS_VERSION ;; \
+      valkey) repo=https://github.com/valkey-io/valkey.git version=$VALKEY_VERSION ;; \
+      *) echo "unknown SERVER '$SERVER' (expected redis or valkey)"; exit 1 ;; \
+    esac; \
+    git clone --depth 1 --branch "$version" "$repo" server-src && \
+    cd server-src && \
+    # CFLAGS from the environment is exported to deps/ with SANITIZER's
+    # -fsanitize=address appended, so deps are instrumented too. LDFLAGS has
+    # to come from the environment as well, or deps that link a program
+    # (valkey builds luac) miss the ASAN runtime.
     CFLAGS="-fsanitize-ignorelist=/tmp/redis.san-ignorelist" \
+    LDFLAGS="-fsanitize=address" \
     make -j"$(nproc)" SANITIZER=address CC=clang-23 CXX=clang++-23 OPTIMIZATION="-O1" && \
-    mkdir -p /out && cp src/redis-server /out/redis-server && \
+    mkdir -p /out && cp "src/${SERVER}-server" /out/ && \
     # Sanity check: a working ASAN binary has 100+ __asan_ symbols (init,
     # poison/unpoison, shadow memory bookkeeping). Mangled symbol names
     # like __asan_init_v8 vary by clang version, so just count occurrences.
-    SYMS=$({ nm /out/redis-server 2>/dev/null; nm -D /out/redis-server 2>/dev/null; } | grep -c __asan_ || true) && \
+    SYMS=$({ nm "/out/${SERVER}-server" 2>/dev/null; nm -D "/out/${SERVER}-server" 2>/dev/null; } | grep -c __asan_ || true) && \
     echo "ASAN symbols: $SYMS" && \
     test "$SYMS" -gt 10
 
@@ -96,18 +111,15 @@ RUN set -eux; \
       cargo build --target "$RT"; \
     mkdir -p /out && cp "target/$RT/debug/libfalkordb.so" /out/falkordb.so
 
-# Stage 3 — runtime. debian:trixie-slim because the asan redis-server
+# Stage 3 — runtime. debian:trixie-slim because the asan server
 # (built in stage 1 against the toolchain image's glibc) needs GLIBC_2.38
 # and GLIBCXX_3.4.32 — bookworm-slim's glibc 2.36 can't satisfy these and
 # the binary fails to load with "version not found" errors. trixie-slim
 # ships glibc 2.41 / GLIBCXX_3.4.33 which is compatible with everything
-# the toolchain (redis:8.10.x base, also trixie-derived) produces.
-#
-# We replace redis-server with our ASAN-instrumented one so the stock
-# binary that would come from the redis:8.10.x base is irrelevant. Going
-# directly to debian:trixie-slim keeps the image lean.
+# the toolchain (also trixie-derived) produces.
 FROM debian:trixie-slim AS server
 ARG TARGETPLATFORM
+ARG SERVER
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -145,14 +157,17 @@ RUN apt-get update && \
 # which pulls llvm-23-dev -> llvm-23 (the package that ships the symbolizer
 # and llvm-objcopy-23, already used by the builder stage above).
 #
-# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-23
-# bin/lib layout makes it self-locating: no LD_LIBRARY_PATH, no ldconfig, and
-# no arch-specific multiarch path to get wrong. 101 KB of binary, and the
+# The /usr/lib/llvm-23 bin/lib layout is kept, and its lib dir registered with
+# the dynamic loader: apt.llvm.org builds have shipped the binary both with a
+# RUNPATH of $ORIGIN/../lib (23.1.4) and with none (23.1.5), so the RUNPATH
+# alone cannot be relied on. The path is the same on every arch: no
+# LD_LIBRARY_PATH and no multiarch triple to get wrong. 101 KB of binary, and the
 # 143 MB libLLVM it links -- which the old `llvm-<major>` install pulled in anyway,
 # on top of ~90 MB of unused llvm tools and the clang/lldb/lld/clangd that
 # llvm.sh drags in by default and the purge above never removed.
 COPY --from=builder /usr/lib/llvm-23/lib/libLLVM.so.23.1 /usr/lib/llvm-23/lib/
 COPY --from=builder /usr/lib/llvm-23/bin/llvm-symbolizer /usr/lib/llvm-23/bin/
+RUN echo /usr/lib/llvm-23/lib > /etc/ld.so.conf.d/llvm-23.conf && ldconfig
 # Fail the build loudly if the closure above ever goes stale -- otherwise a
 # missing .so degrades ASAN output to raw addresses only at test time.
 RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version
@@ -166,12 +181,13 @@ RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY ./tests/memcheck/asan.supp    ${FALKORDB_HOME}/asan.supp
 
 # ASAN-instrumented binaries
-COPY --from=redis-asan /out/redis-server  /usr/local/bin/redis-server
-COPY --from=builder    /out/falkordb.so   ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=server-asan /out/              /usr/local/bin/
+COPY --from=builder     /out/falkordb.so   ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Sanitizer env defaults — overridable at runtime via `docker run -e …` or
 # GitHub Actions services.<svc>.env.
 ENV ARCH=${TARGETPLATFORM} \
+    FALKORDB_SERVER=${SERVER} \
     TLS=0 \
     BROWSER=0 \
     FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
