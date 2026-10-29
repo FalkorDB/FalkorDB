@@ -25,12 +25,11 @@
 //!  Value::Date(ts)      -- seconds at midnight UTC of that date
 //!  Value::Time(ts)      -- seconds since epoch for 1970-01-01 + time
 //!  Value::Datetime(ts)  -- full UTC timestamp in seconds
-//!  Value::Duration(ts)  -- encoded as epoch + year/month offset + day/time
+//!  Value::Duration(p)   -- signed months, days and seconds packed in an i64
 //! ```
 //!
-//! Duration encoding uses `construct_duration_secs` to anchor the
-//! year/month components to a concrete date, then adds days and
-//! sub-day offsets.  `decompose_duration` reverses this for display.
+//! A duration keeps its months, days and seconds as independent signed
+//! components (openCypher / Neo4j semantics); see `pack_duration`.
 //!
 //! ## Date parsing modes
 //!
@@ -474,9 +473,57 @@ const fn days_from_civil(
     era as i64 * 146_097 + doe as i64 - 719_468
 }
 
-/// Construct a duration i64 (seconds from epoch) from components.
-/// The encoding stores the target datetime = epoch + years/months + days + time.
-pub fn construct_duration_secs(
+// A duration is three independent signed components, as in openCypher / Neo4j:
+// months (years * 12 + months), days (weeks * 7 + days) and seconds
+// (hours, minutes and seconds). No component ever borrows from or carries into
+// another, so `-1 day` stays `-1 day` and `P1M-3D` stays `P1M-3D`.
+//
+// They are packed into the single `i64` of `Value::Duration` (8 bytes, like the
+// C engine's `time_t`): months in the top 14 bits, days in the next 18 and
+// seconds in the low 32, each two's complement. Every field is limited to a
+// symmetric range so that negating a duration always fits.
+
+const DUR_SEC_BITS: u32 = 32;
+const DUR_DAY_BITS: u32 = 18;
+const DUR_MONTH_BITS: u32 = 14;
+/// Largest absolute value of the seconds component (about 68 years).
+pub const DUR_MAX_SECONDS: i64 = (1 << (DUR_SEC_BITS - 1)) - 1;
+/// Largest absolute value of the days component (about 358 years).
+pub const DUR_MAX_DAYS: i64 = (1 << (DUR_DAY_BITS - 1)) - 1;
+/// Largest absolute value of the months component (about 682 years).
+pub const DUR_MAX_MONTHS: i64 = (1 << (DUR_MONTH_BITS - 1)) - 1;
+
+/// Pack signed (months, days, seconds) into a `Value::Duration` payload.
+pub fn pack_duration(
+    months: i64,
+    days: i64,
+    seconds: i64,
+) -> Result<i64, String> {
+    if months.unsigned_abs() > DUR_MAX_MONTHS as u64
+        || days.unsigned_abs() > DUR_MAX_DAYS as u64
+        || seconds.unsigned_abs() > DUR_MAX_SECONDS as u64
+    {
+        return Err(format!(
+            "Duration out of range: months={months}, days={days}, seconds={seconds}"
+        ));
+    }
+    Ok((months << (DUR_DAY_BITS + DUR_SEC_BITS))
+        | ((days & ((1 << DUR_DAY_BITS) - 1)) << DUR_SEC_BITS)
+        | (seconds & ((1 << DUR_SEC_BITS) - 1)))
+}
+
+/// Unpack a `Value::Duration` payload into signed (months, days, seconds).
+#[inline]
+pub const fn unpack_duration(packed: i64) -> (i64, i64, i64) {
+    let months = packed >> (DUR_DAY_BITS + DUR_SEC_BITS);
+    let days = (packed << DUR_MONTH_BITS) >> (64 - DUR_DAY_BITS);
+    let seconds = (packed << (DUR_MONTH_BITS + DUR_DAY_BITS)) >> (64 - DUR_SEC_BITS);
+    (months, days, seconds)
+}
+
+/// Build a duration from the user-facing components, normalising them the way
+/// Neo4j does: years into months, weeks into days, hours/minutes into seconds.
+pub fn construct_duration(
     years: i64,
     months: i64,
     weeks: i64,
@@ -485,48 +532,61 @@ pub fn construct_duration_secs(
     minutes: i64,
     seconds: i64,
 ) -> Result<i64, String> {
-    let total_month_offset = years
+    let overflow = || {
+        format!(
+            "Duration overflow: years={years}, months={months}, weeks={weeks}, days={days}, hours={hours}, minutes={minutes}, seconds={seconds}"
+        )
+    };
+    let total_months = years
         .checked_mul(12)
         .and_then(|y| y.checked_add(months))
-        .ok_or_else(|| format!("Duration overflow: years={years}, months={months}"))?;
-    let total_month_offset_i32: i32 = total_month_offset
-        .try_into()
-        .map_err(|_| format!("Duration out of range: years={years}, months={months}"))?;
-    let base_year = 1970i32
-        .checked_add(total_month_offset_i32.div_euclid(12))
-        .ok_or_else(|| format!("Duration out of range: years={years}, months={months}"))?;
-    let base_month = (total_month_offset_i32.rem_euclid(12) + 1) as u32;
-
-    let anchor_ts = days_from_civil(base_year, base_month, 1) * 86400;
-
-    let extra = weeks
+        .ok_or_else(overflow)?;
+    let total_days = weeks
         .checked_mul(7)
         .and_then(|w| w.checked_add(days))
-        .and_then(|wd| wd.checked_mul(86400))
-        .and_then(|s| hours.checked_mul(3600).and_then(|h| s.checked_add(h)))
-        .and_then(|s| minutes.checked_mul(60).and_then(|m| s.checked_add(m)))
+        .ok_or_else(overflow)?;
+    let total_seconds = hours
+        .checked_mul(3600)
+        .and_then(|h| minutes.checked_mul(60).and_then(|m| h.checked_add(m)))
         .and_then(|s| s.checked_add(seconds))
-        .ok_or_else(|| {
-            format!(
-                "Duration overflow: weeks={weeks}, days={days}, hours={hours}, minutes={minutes}, seconds={seconds}"
-            )
-        })?;
-    anchor_ts
-        .checked_add(extra)
-        .ok_or_else(|| "Duration overflow when combining components".to_string())
+        .ok_or_else(overflow)?;
+    pack_duration(total_months, total_days, total_seconds)
 }
 
-/// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).
-pub const fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
-    let days = dur_secs.div_euclid(86400);
-    let time_of_day = dur_secs.rem_euclid(86400);
+/// Convert a duration stored with the legacy encoding (seconds from the Unix
+/// epoch of `epoch + years/months + days + time`, as written by the C engine
+/// and by earlier Rust versions) into the packed component form. The legacy
+/// decomposition is replayed exactly, so a stored value reads back as it did.
+pub fn duration_from_legacy(legacy: i64) -> Result<i64, String> {
+    let days = legacy.div_euclid(86400);
+    let time_of_day = legacy.rem_euclid(86400);
     let (y, m, d) = crate::runtime::value::civil_from_days(days);
+    let months = i64::from(y - 1970) * 12 + i64::from(m) - 1;
+    let remaining = (i64::from(d) - 1) * 86400 + time_of_day;
+    pack_duration(months, remaining / 86400, remaining % 86400)
+}
 
-    let year_diff = y - 1970;
-    let month_diff = m as i32 - 1;
-    let remaining_secs = (d as i64 - 1) * 86400 + time_of_day;
+/// The wire form of a duration: `(is_v2, payload)`. A duration the legacy
+/// epoch-offset encoding holds losslessly is written in it, byte for byte what
+/// the C engine writes; any other (negative components, a day count past the
+/// month length, ...) is written as the packed form under `T_DURATION_V2`.
+pub fn duration_wire(packed: i64) -> (bool, i64) {
+    let legacy = duration_to_legacy(packed);
+    if duration_from_legacy(legacy) == Ok(packed) {
+        (false, legacy)
+    } else {
+        (true, packed)
+    }
+}
 
-    Ok((year_diff, month_diff, remaining_secs))
+/// Encode a duration in the legacy epoch-offset form, which is what the compact
+/// result-set protocol carries (C clients read it that way). Components that
+/// cannot be expressed non-negatively borrow exactly as the C engine does.
+pub fn duration_to_legacy(packed: i64) -> i64 {
+    let (months, days, seconds) = unpack_duration(packed);
+    let base_year = 1970 + months.div_euclid(12) as i32;
+    let base_month = (months.rem_euclid(12) + 1) as u32;
+    days_from_civil(base_year, base_month, 1) * 86400 + days * 86400 + seconds
 }
 
 // ---------------------------------------------------------------------------
@@ -615,12 +675,12 @@ pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
                     _ => {}
                 }
             }
-            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
             Ok(Value::Duration(ts))
         }
         Some(Value::String(s)) => {
             let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
-            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
             Ok(Value::Duration(ts))
         }
         Some(Value::Null) => Ok(Value::Null),
@@ -677,7 +737,7 @@ pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
     let hours = slot_to_int(&args[4]).unwrap_or(0);
     let minutes = slot_to_int(&args[5]).unwrap_or(0);
     let seconds = slot_to_int(&args[6]).unwrap_or(0);
-    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+    let ts = construct_duration(years, months, weeks, days, hours, minutes, seconds)?;
     Ok(Value::Duration(ts))
 }
 
@@ -1064,5 +1124,135 @@ mod compact_parser_rejects_junk_tests {
     fn the_colon_time_form_is_untouched() {
         let t = parse_time_string("21:40:32").unwrap();
         assert_eq!((t.hour(), t.minute(), t.second()), (21, 40, 32));
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::{
+        DUR_MAX_DAYS, DUR_MAX_MONTHS, DUR_MAX_SECONDS, construct_duration, duration_from_legacy,
+        duration_to_legacy, duration_wire, pack_duration, unpack_duration,
+    };
+    use crate::runtime::value::Value;
+
+    fn dur(
+        months: i64,
+        days: i64,
+        secs: i64,
+    ) -> i64 {
+        pack_duration(months, days, secs).unwrap()
+    }
+
+    #[test]
+    fn components_round_trip_with_every_sign() {
+        for m in [-DUR_MAX_MONTHS, -13, -1, 0, 1, 13, DUR_MAX_MONTHS] {
+            for d in [-DUR_MAX_DAYS, -3, 0, 3, DUR_MAX_DAYS] {
+                for s in [-DUR_MAX_SECONDS, -86_401, -1, 0, 1, 86_401, DUR_MAX_SECONDS] {
+                    assert_eq!(unpack_duration(dur(m, d, s)), (m, d, s));
+                }
+            }
+        }
+        assert_eq!(dur(0, 0, 0), 0);
+        assert!(pack_duration(DUR_MAX_MONTHS + 1, 0, 0).is_err());
+        assert!(pack_duration(0, -DUR_MAX_DAYS - 1, 0).is_err());
+        assert!(pack_duration(0, 0, DUR_MAX_SECONDS + 1).is_err());
+    }
+
+    #[test]
+    fn constructor_never_borrows_between_units() {
+        let p = construct_duration(0, 0, 0, -1, 0, 0, 0).unwrap();
+        assert_eq!(unpack_duration(p), (0, -1, 0));
+        let p = construct_duration(1, -14, 1, 0, 1, -90, 0).unwrap();
+        assert_eq!(unpack_duration(p), (-2, 7, -1800));
+    }
+
+    #[test]
+    fn printing_uses_each_components_own_sign() {
+        for (m, d, s, want) in [
+            (0, -1, 0, "P-1D"),
+            (1, -3, 0, "P1M-3D"),
+            (0, 0, -3600, "PT-1H"),
+            (0, 0, -5400, "PT-1H-30M"),
+            (-13, 0, 0, "P-1Y-1M"),
+            (149, -14, 57_600, "P12Y5M-14DT16H"),
+            (0, 0, 90_000, "PT25H"),
+            (0, 0, 0, "PT0S"),
+        ] {
+            assert_eq!(Value::format_duration(dur(m, d, s)), want);
+        }
+    }
+
+    #[test]
+    fn issue_2745_rows() {
+        let a = Value::Duration(construct_duration(0, 0, 0, 2, 0, 0, 0).unwrap());
+        let b = Value::Duration(construct_duration(0, 0, 0, -3, 0, 0, 0).unwrap());
+        let Ok(Value::Duration(sum)) = a + b else {
+            panic!()
+        };
+        assert_eq!(Value::format_duration(sum), "P-1D");
+        // 2020-03-01 + (-1 day) = 2020-02-29
+        let date = Value::Date(1_583_020_800);
+        let Ok(Value::Date(d)) = date + Value::Duration(sum) else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-02-29");
+    }
+
+    #[test]
+    fn add_and_sub_a_negative_duration_are_calendar_correct() {
+        let date = Value::Date(1_583_020_800); // 2020-03-01
+        let minus_month = Value::Duration(dur(-1, 0, 0));
+        let Ok(Value::Date(d)) = date.clone() + minus_month.clone() else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-02-01");
+        let Ok(Value::Date(d)) = date - minus_month else {
+            panic!()
+        };
+        assert_eq!(Value::format_date(d), "2020-04-01");
+        let Ok(Value::Datetime(t)) =
+            Value::Datetime(1_583_056_800) + Value::Duration(dur(0, -1, -39_600))
+        else {
+            panic!()
+        };
+        assert_eq!(Value::format_datetime(t), "2020-02-28T23:00:00");
+    }
+
+    #[test]
+    fn duration_difference_keeps_components() {
+        let Ok(Value::Duration(p)) = Value::Duration(dur(1, 0, 0)) - Value::Duration(dur(0, 3, 0))
+        else {
+            panic!()
+        };
+        assert_eq!(Value::format_duration(p), "P1M-3D");
+    }
+
+    #[test]
+    fn legacy_encoding_converts_losslessly_where_canonical() {
+        // Round trip for everything the legacy form holds.
+        for p in [
+            dur(0, 0, 0),
+            dur(13, 2, 3_661),
+            dur(0, 1, 0),
+            dur(1, 0, 86_399),
+        ] {
+            let legacy = duration_to_legacy(p);
+            assert_eq!(duration_from_legacy(legacy), Ok(p));
+            assert_eq!(duration_wire(p), (false, legacy));
+        }
+        // What C stored for P1D / P1Y1M1DT1H1M1S.
+        assert_eq!(duration_from_legacy(86_400), Ok(dur(0, 1, 0)));
+        // Components the legacy form cannot hold use the packed tag.
+        for p in [dur(0, -1, 0), dur(0, 40, 0), dur(0, 0, 90_000)] {
+            assert!(duration_wire(p).0, "{:?}", unpack_duration(p));
+        }
+    }
+
+    #[test]
+    fn ordering_follows_length() {
+        let lt = |a: i64, b: i64| Value::Duration(a).sort_cmp(&Value::Duration(b)).is_lt();
+        assert!(lt(dur(0, -1, 0), dur(0, 1, 0)));
+        assert!(lt(dur(0, 1, 0), dur(0, 0, 90_000)));
+        assert!(lt(dur(0, 40, 0), dur(2, 0, 0)));
     }
 }

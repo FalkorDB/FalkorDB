@@ -110,7 +110,13 @@ pub mod si_type {
     pub const T_DATETIME: u64 = 1 << 5;
     pub const T_DATE: u64 = 1 << 7;
     pub const T_TIME: u64 = 1 << 8;
+    /// Legacy duration: seconds from the Unix epoch of `epoch + months + days +
+    /// time` (the C engine's `time_t`). Read-only here: it cannot hold negative
+    /// components, so new data is written as `T_DURATION_V2`.
     pub const T_DURATION: u64 = 1 << 10;
+    /// Duration as signed months, days and seconds packed into an `i64`
+    /// (`temporal::pack_duration`). A tag the C engine does not define.
+    pub const T_DURATION_V2: u64 = 1 << 24;
     pub const T_STRING: u64 = 1 << 11;
     pub const T_BOOL: u64 = 1 << 12;
     pub const T_INT64: u64 = 1 << 13;

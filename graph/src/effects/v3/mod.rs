@@ -493,6 +493,7 @@ mod tests {
             ("T_DATE", si_type::T_DATE),
             ("T_TIME", si_type::T_TIME),
             ("T_DURATION", si_type::T_DURATION),
+            ("T_DURATION_V2", si_type::T_DURATION_V2),
             ("T_STRING", si_type::T_STRING),
             ("T_BOOL", si_type::T_BOOL),
             ("T_INT64", si_type::T_INT64),

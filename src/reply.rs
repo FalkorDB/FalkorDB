@@ -23,6 +23,7 @@
 //! machine-oriented or human-oriented output.
 
 use graph::runtime::{
+    functions::temporal::duration_to_legacy,
     runtime::{QueryStatistics, ResultSummary, Runtime},
     value::Value,
 };
@@ -184,7 +185,7 @@ pub fn reply_compact_value(
         }
         Value::Duration(dur) => {
             raw::reply_with_long_long(ctx.ctx, 16);
-            raw::reply_with_long_long(ctx.ctx, *dur as _);
+            raw::reply_with_long_long(ctx.ctx, duration_to_legacy(*dur) as _);
         }
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);

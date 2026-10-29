@@ -569,6 +569,67 @@ class testTemporalDuration(FlowTestsBase):
         self.env.assertTrue(le)
         self.env.assertTrue(e)
 
+    def test_negative_duration_keeps_signed_components(self):
+        # #2745: a duration holds months, days and seconds as independent signed
+        # components (openCypher / Neo4j). Nothing borrows from a larger unit,
+        # so -1 day is -1 day and not -1 year + 11 months + 30 days. C has the
+        # same bug; this intentionally follows openCypher instead.
+        cases = [
+            ("duration({days: -1})",                          "P-1D"),
+            ("duration('P-1D')",                              "P-1D"),
+            ("duration({days: 2}) + duration({days: -3})",    "P-1D"),
+            ("duration({days: 5}) - duration({days: 7})",     "P-2D"),
+            ("duration({months: 1, days: -3})",               "P1M-3D"),
+            ("duration({months: 1}) - duration({days: 3})",   "P1M-3D"),
+            ("duration({hours: -1})",                         "PT-1H"),
+            ("duration({hours: -1, minutes: -30})",           "PT-1H-30M"),
+            ("duration('PT-1H30M')",                          "PT-30M"),
+            ("duration({years: 1, months: -14})",             "P-2M"),
+            ("duration({months: -13})",                       "P-1Y-1M"),
+            ("duration({years: 12, months: 5, days: -14, hours: 16})", "P12Y5M-14DT16H"),
+            ("duration({hours: 25})",                         "PT25H"),
+            ("duration({days: 1, hours: 2})",                 "P1DT2H"),
+            ("duration({})",                                  "PT0S"),
+        ]
+        for expr, expected in cases:
+            actual = self.graph.query(f"RETURN toString({expr})").result_set[0][0]
+            self.env.assertEqual(actual, expected, depth=1)
+
+        # components are read back with their own sign
+        res = self.graph.query("""WITH duration({months: -14, days: -3, hours: -2, minutes: -5, seconds: -7}) AS d
+                                  RETURN d.years, d.months, d.days, d.hours, d.minutes, d.seconds""").result_set
+        self.env.assertEqual(res[0], [-1, -2, -3, -2, -5, -7])
+
+        # comparison and equality
+        res = self.graph.query("""RETURN duration({days: -1}) < duration({days: 1}),
+                                         duration({days: -1}) = duration('P-1D'),
+                                         duration({days: 2}) + duration({days: -3}) = duration({days: -1})""").result_set
+        self.env.assertEqual(res[0], [True, True, True])
+
+    def test_date_plus_negative_duration(self):
+        q = """RETURN date('2020-03-01') + (duration({days: 2}) + duration({days: -3})),
+                      date('2020-03-01') - duration({days: -1}),
+                      date('2020-03-01') + duration({months: -1}),
+                      date('2020-03-01') - duration({months: -1}),
+                      date('2020-03-01') + duration({months: 1, days: -3}),
+                      localdatetime('2020-03-01T10:00:00') + duration({days: -1, hours: -11}),
+                      localtime('10:00') + duration({hours: -11})"""
+        res = self.graph.query(q).result_set[0]
+        self.env.assertEqual(res[0], date(2020, 2, 29))
+        self.env.assertEqual(res[1], date(2020, 3, 2))
+        self.env.assertEqual(res[2], date(2020, 2, 1))
+        self.env.assertEqual(res[3], date(2020, 4, 1))
+        self.env.assertEqual(res[4], date(2020, 3, 29))
+        self.env.assertEqual(res[5], datetime(2020, 2, 28, 23, 0, 0, tzinfo=timezone.utc))
+        self.env.assertEqual(res[6], time(23, 0, 0))
+
+    def test_duration_out_of_range_component_errors(self):
+        try:
+            self.graph.query("RETURN duration({days: 100000000})")
+            self.env.assertFalse(True)
+        except Exception as e:
+            self.env.assertContains("out of range", str(e))
+
     def test_duration_add(self):
         #-----------------------------------------------------------------------
         # duration + duration

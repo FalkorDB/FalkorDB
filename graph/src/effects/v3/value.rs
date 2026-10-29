@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use thin_vec::ThinVec;
 
+#[cfg(test)]
+use crate::runtime::functions::temporal::pack_duration;
+use crate::runtime::functions::temporal::{duration_from_legacy, duration_wire};
 use crate::runtime::value::{Point, Value};
 
 use crate::graph::graphblas::serialization::si_type;
@@ -113,8 +116,13 @@ impl EffectEncode<3> for Value {
                 buf.i64(*ts);
             }
             Value::Duration(d) => {
-                buf.u32(si_type::T_DURATION as u32);
-                buf.i64(*d);
+                let (v2, wire) = duration_wire(*d);
+                buf.u32(if v2 {
+                    si_type::T_DURATION_V2
+                } else {
+                    si_type::T_DURATION
+                } as u32);
+                buf.i64(wire);
             }
             // Nodes, edges and paths are never property values, so they cannot reach
             // an effect. Encoding one as NULL would corrupt the stream silently.
@@ -275,7 +283,10 @@ fn read_one(
         si_type::T_DATETIME => Value::Datetime(r.i64()?),
         si_type::T_DATE => Value::Date(r.i64()?),
         si_type::T_TIME => Value::Time(r.i64()?),
-        si_type::T_DURATION => Value::Duration(r.i64()?),
+        si_type::T_DURATION => Value::Duration(
+            duration_from_legacy(r.i64()?).map_err(|_| DecodeError::BadValueType(t as u32))?,
+        ),
+        si_type::T_DURATION_V2 => Value::Duration(r.i64()?),
         // Back to `u32` for the error: the tag is four bytes on the wire and
         // `other` was widened from exactly those, so this cannot truncate.
         other => return Err(DecodeError::BadValueType(other as u32)),
@@ -358,6 +369,10 @@ mod tests {
             Value::Date(19_000),
             Value::Time(3_600),
             Value::Duration(90),
+            // Negative, mixed-sign and non-canonical components (issue 2745)
+            Value::Duration(pack_duration(0, -1, 0).unwrap()),
+            Value::Duration(pack_duration(1, -3, 0).unwrap()),
+            Value::Duration(pack_duration(-13, 40, -5400).unwrap()),
         ];
         for case in cases {
             let mut buf = Vec::new();
