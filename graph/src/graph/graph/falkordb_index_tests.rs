@@ -11,6 +11,7 @@ use crate::index::falkordb::graph_writes;
 use crate::index::falkordb::versioned::BuildState;
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
+use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -175,9 +176,11 @@ fn create_index_builds_the_column_from_live_nodes() {
         Some(BuildState::Ready)
     );
     assert!(
-        g.falkordb_index
-            .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
-            .is_some(),
+        matches!(
+            g.falkordb_index
+                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(Ok(_))
+        ),
         "a Ready column serves reads"
     );
 
@@ -279,7 +282,10 @@ fn create_index_builds_the_column_from_live_edges() {
     assert_eq!(
         g.falkordb_index
             .query_numeric(EntityType::Relationship, &ty, &eq(&attr, 2))
-            .map(Iterator::collect::<Vec<u64>>),
+            .map(|answer| match answer {
+                Ok(rows) => rows.collect::<Vec<u64>>(),
+                Err(_) => panic!("a Ready column answered with a ScanFilter"),
+            }),
         Some(vec![eids[1]]),
         "a Ready column serves reads"
     );
@@ -1076,6 +1082,146 @@ fn any_batch_size_builds_the_one_pass_column() {
             edges,
             "edges, {batch} per batch"
         );
+    }
+}
+
+/// While a column is building, a read of it scans, and the scan keeps what the built column will
+/// answer: at every cursor a build passes through, for nodes and for edges, for each shape a
+/// column serves. The planner drops the predicate it hands an index scan, so nothing else checks
+/// the scan's rows; a scan that kept them all would return every entity of the label. `= null`,
+/// and a range with a null bound, hold for nothing, and are answered with no rows rather than
+/// declined.
+#[test]
+fn a_building_columns_scan_keeps_what_the_built_column_answers() {
+    let (mut g, label, v, ty, w) = scan_fixture();
+    let int = Value::Int;
+    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>, inclusive: bool| {
+        IndexQuery::Range {
+            key: key.clone(),
+            min: min.map(int),
+            max: max.map(int),
+            include_min: inclusive,
+            include_max: inclusive,
+        }
+    };
+    let in_list = |key: &Arc<String>, values: &[Value]| IndexQuery::InList {
+        key: key.clone(),
+        list: Value::List(Arc::new(values.iter().cloned().collect())),
+    };
+    let equal = |key: &Arc<String>, value: Value| IndexQuery::Equal {
+        key: key.clone(),
+        value,
+    };
+    let bounds = |key: &Arc<String>, min: Value, max: Value| IndexQuery::Range {
+        key: key.clone(),
+        min: Some(min),
+        max: Some(max),
+        include_min: true,
+        include_max: true,
+    };
+    // Node `v` is `10 * id` over ids 0..10 with node 4 deleted; edge `w` is 0..8.
+    let node_queries = [
+        eq(&v, 30),
+        eq(&v, 40),
+        eq(&v, 35),
+        equal(&v, Value::Float(30.0)),
+        equal(&v, Value::Null),
+        range(&v, Some(20), Some(60), true),
+        range(&v, Some(20), Some(60), false),
+        range(&v, Some(50), None, true),
+        range(&v, None, Some(30), false),
+        bounds(&v, Value::Null, int(60)),
+        bounds(&v, int(20), Value::Null),
+        in_list(&v, &[int(10), int(70), int(70), int(1000)]),
+        IndexQuery::Or(vec![
+            eq(&v, 0),
+            in_list(&v, &[int(90)]),
+            equal(&v, Value::Null),
+        ]),
+    ];
+    let edge_queries = [
+        eq(&w, 3),
+        equal(&w, Value::Null),
+        range(&w, Some(2), Some(5), true),
+        bounds(&w, Value::Null, int(5)),
+        in_list(&w, &[int(0), int(7)]),
+        IndexQuery::Or(vec![eq(&w, 1), eq(&w, 7)]),
+        IndexQuery::Or(vec![eq(&w, 1), equal(&w, Value::Null)]),
+    ];
+    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let sorted = |mut ids: Vec<u64>| {
+        ids.sort_unstable();
+        ids
+    };
+
+    // What each scan kept, at every cursor: `(edge?, query, kept)`.
+    let mut kept: Vec<(bool, usize, Vec<u64>)> = Vec::new();
+    // Ten nodes and eight edges, two per batch: a build that stops moving fails here rather than
+    // looping forever.
+    for batch in 0.. {
+        assert!(batch < 64, "the build stopped making progress");
+        for (i, q) in node_queries.iter().enumerate() {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_nodes(&label, q) {
+                let attr = g
+                    .get_node_attribute_id(scan_filter.attribute())
+                    .expect("registered") as u16;
+                let ids = g
+                    .get_nodes(&labels, 0)
+                    .filter(|&id| g.node_matches(id, attr, &scan_filter))
+                    .map(u64::from)
+                    .collect();
+                kept.push((false, i, sorted(ids)));
+            }
+        }
+        for (i, q) in edge_queries.iter().enumerate() {
+            if let Some(Err(scan_filter)) = g.query_index_numeric_edges(&ty, q) {
+                let attr = g
+                    .get_relationship_attribute_id(scan_filter.attribute())
+                    .expect("registered") as u16;
+                let ids = g
+                    .get_all_edges(&ty)
+                    .into_iter()
+                    .filter(|&(_, _, edge)| g.relationship_matches(edge, attr, &scan_filter))
+                    .map(|(_, _, edge)| u64::from(edge))
+                    .collect();
+                kept.push((true, i, sorted(ids)));
+            }
+        }
+        if !g.falkordb_index.has_building_columns() {
+            break;
+        }
+        graph_writes::run_indexer_batch(&mut g, 2);
+    }
+    for edges in [false, true] {
+        let queries = if edges {
+            edge_queries.len()
+        } else {
+            node_queries.len()
+        };
+        for i in 0..queries {
+            assert!(
+                kept.iter()
+                    .filter(|&&(e, j, _)| e == edges && j == i)
+                    .count()
+                    >= 2,
+                "edges={edges}, query {i}: scanned at more than one cursor"
+            );
+        }
+    }
+
+    for (edges, i, scanned) in kept {
+        let built = if edges {
+            match g.query_index_numeric_edges(&ty, &edge_queries[i]) {
+                Some(Ok(rows)) => rows.map(|(_, _, edge)| u64::from(edge)).collect(),
+                _ => panic!("edge query {i}: a built column serves it"),
+            }
+        } else {
+            match g.query_index_numeric_nodes(&label, &node_queries[i]) {
+                Some(Ok(rows)) => rows.map(u64::from).collect(),
+                _ => panic!("node query {i}: a built column serves it"),
+            }
+        };
+        assert_eq!(scanned, sorted(built), "edges={edges}, query {i}");
     }
 }
 
