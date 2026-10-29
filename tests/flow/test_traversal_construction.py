@@ -571,3 +571,42 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A traversal planned after an UNWIND (or any clause that only supplies
+    # rows) must scan its start node once per row. Without the scan the
+    # traverse enumerated every edge of its type for each row, which made
+    # `UNWIND $ids AS i MATCH (d:L {id: i})-[r:R]->() DELETE r` quadratic (#2134).
+    def test_traverse_after_unwind_scans_start_node(self):
+        g = self.db.select_graph("TraverseAfterUnwind")
+        g.query("CREATE INDEX FOR (d:Doc) ON (d.id)")
+        g.query("UNWIND range(0, 49) AS i CREATE (:Doc {id: i})")
+        g.query("UNWIND range(0, 199) AS i CREATE (:Other {id: i})")
+        g.query("""UNWIND range(0, 49) AS i UNWIND range(0, 3) AS k
+                   MATCH (d:Doc {id: i}), (o:Other {id: (i * 4 + k) % 200})
+                   CREATE (d)-[:LINK {k: k}]->(o)""")
+
+        for q in ["UNWIND [3, 5] AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)",
+                  "UNWIND [3, 5] AS pid MATCH (d:Doc)-[r:LINK]->() WHERE d.id = pid RETURN count(r)",
+                  "UNWIND [3, 5] AS pid MATCH (d:Doc {id: pid})-[:LINK]->(o) RETURN count(o)"]:
+            plan = str(g.explain(q))
+            self.env.assertContains("Node By Index Scan | (d:Doc)", plan)
+            self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
+        q = "WITH 3 AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
+        self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        # No predicate: still one scan of the labelled start per row, so the
+        # cross product keeps its multiplicity.
+        q = "UNWIND [1, 2, 3] AS x MATCH (d:Doc)-[r:LINK]->() RETURN count(r)"
+        self.env.assertContains("Node By Label Scan | (d:Doc)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[600]])
+
+        # The delete from the report.
+        res = g.query("UNWIND range(0, 9) AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() DELETE r")
+        self.env.assertEqual(res.relationships_deleted, 40)
+        self.env.assertEqual(g.query("MATCH ()-[r:LINK]->() RETURN count(r)").result_set, [[160]])
+
+        # A variable the earlier clause binds is not rescanned.
+        q = "MATCH (d:Doc {id: 20}) WITH d MATCH (d)-[r:LINK]->() RETURN count(r)"
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+        g.delete()
