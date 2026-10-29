@@ -456,6 +456,33 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_collapsed_edge_ignores_uniqueness_only_among_parallel_edges():
+    # `r` and `s` collapse to one representative edge per endpoint pair. When
+    # the pair holds parallel edges the representative is arbitrary, so a
+    # collision with it must not reject a row: reading only `s.w` gave one row
+    # and reading only `r.w` gave two, depending on which edge was picked.
+    # When the pair holds a single edge the representative is that edge and
+    # uniqueness applies (the (b)->(c) pair below).
+    query(
+        "CREATE (a:N {id: 1}), (b:N {id: 2}), (c:N {id: 3}), "
+        "(a)-[:R {w: 1}]->(b), (a)-[:R {w: 2}]->(b), (b)-[:R {w: 3}]->(c)",
+        write=True,
+    )
+    res = query("MATCH (a)-[r]->(x)<-[s]-(c) RETURN s.w ORDER BY s.w")
+    assert res.result_set == [[1], [2]]
+    res = query("MATCH (a)-[r]->(x)<-[s]-(c) RETURN r.w ORDER BY r.w")
+    assert res.result_set == [[1], [2]]
+    res = query("MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (a)-[r:R]->(x)<-[s:R]-(c) RETURN a.id, c.id")
+    assert res.result_set == [[1, 1]]
+    res = query("MATCH (a)-[r]->(x)-[s]->(c) RETURN count(*)")
+    assert res.result_set == [[1]]
+    # when both edges are read, uniqueness applies per edge as before
+    res = query("MATCH (a)-[r]->(x)<-[s]-(c) RETURN r.w, s.w ORDER BY r.w")
+    assert res.result_set == [[1, 2], [2, 1]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []

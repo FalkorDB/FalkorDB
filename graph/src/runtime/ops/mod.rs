@@ -111,7 +111,7 @@ pub use value_hash_join::ValueHashJoinOp;
 
 use std::collections::VecDeque;
 
-use crate::graph::graph::RelationshipId;
+use crate::graph::graph::{Graph, RelationshipId};
 use crate::runtime::value::Value;
 
 use super::{
@@ -137,6 +137,30 @@ pub fn drain_pending(
     }
 }
 
+/// Marks an entry of a `sibling_edges` list as a *collapsed* edge: one the
+/// planner stopped emitting per edge, so it binds one arbitrary representative
+/// of its parallel edges. The flag is the top bit of the alias id.
+pub const COLLAPSED_SIBLING: u32 = 1 << 31;
+
+/// Does another edge join the same endpoints as `edge_id`, with the same type?
+fn has_parallel_edge(
+    g: &Graph,
+    edge_id: RelationshipId,
+) -> bool {
+    let raw = u64::from(edge_id);
+    let Some((src, dst)) = g.endpoints_for_edge(raw) else {
+        return false;
+    };
+    g.relationship_type_matrix_iter(raw, raw)
+        .next()
+        .is_some_and(|(_, tidx)| {
+            g.relationship_tensors()[tidx as usize]
+                .get(src, dst)
+                .count()
+                > 1
+        })
+}
+
 /// Check whether a given edge ID is already bound to another relationship
 /// variable in the environment.
 ///
@@ -145,26 +169,41 @@ pub fn drain_pending(
 /// distinct physical edge.
 ///
 /// `own_alias_id` is the variable slot of the current relationship being
-/// expanded — it is skipped during the scan.
+/// expanded — it is skipped during the scan. `own_collapsed` says that this
+/// relationship is collapsed (`emit_relationship == false`).
 ///
 /// `sibling_edges` contains the alias IDs of other relationship variables
 /// in the same MATCH clause component. Only these are checked — relationship
 /// variables from other MATCH/OPTIONAL MATCH clauses are ignored per the
 /// Cypher spec.
+///
+/// A collapsed edge stands for all the parallel edges of its (src, dst) pair
+/// and binds an arbitrary one of them, so its representative colliding with
+/// another edge says nothing when a parallel edge exists: some other choice
+/// would not collide. Such a collision is ignored, which keeps the result from
+/// depending on which parallel edge was picked. When the pair holds one edge
+/// the representative is that edge and the check applies as usual.
 #[must_use]
 pub fn edge_already_used<R: RowView + ?Sized>(
     env: &R,
+    g: &Graph,
     edge_id: RelationshipId,
     own_alias_id: u32,
+    own_collapsed: bool,
     sibling_edges: &[u32],
 ) -> bool {
-    for &sibling_id in sibling_edges {
+    for &entry in sibling_edges {
+        let sibling_id = entry & !COLLAPSED_SIBLING;
         if sibling_id == own_alias_id {
             continue;
         }
         if let Some(Value::Relationship(rel)) = env.value_at(sibling_id)
             && rel == edge_id
         {
+            let collapsed = own_collapsed || entry & COLLAPSED_SIBLING != 0;
+            if collapsed && has_parallel_edge(g, edge_id) {
+                continue;
+            }
             return true;
         }
     }
