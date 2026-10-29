@@ -97,6 +97,30 @@ uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
 // return a pointer to the newly allocated item.
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 
+// Claim a BATCH of specific indices for live allocation, maintaining the free
+// list.
+//
+// DataBlock_AllocateItemOutOfOrder (oo_datablock.h) requires that the id is NOT
+// on the free list - it never touches it. That holds for its RDB callers, where
+// live and deleted ids arrive as two disjoint lists. It does not hold for
+// effects apply, where a create naming a free id is the ordinary case, so this
+// maintains the list instead: claimed ids are removed from it, and any id
+// skipped past the high-water mark is pushed onto it.
+//
+// A batch rather than one at a time because the free list is a flat array:
+// claiming one id means scanning it, so n claims cost O(n*k). This walks it
+// once. See the definition for the measurement.
+//
+// Nothing is claimed when it returns false. Returns false if any id is already
+// live, or if the batch names one id twice.
+bool DataBlock_AllocateItemsAtIdx
+(
+	DataBlock *dataBlock,
+	const uint64_t *ids,  // ids to claim
+	uint32_t n,           // how many
+	void **items          // out: 'n' item pointers, caller allocated
+);
+
 // Removes item at position idx.
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
 
