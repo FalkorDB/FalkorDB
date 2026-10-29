@@ -1413,6 +1413,9 @@ impl<'a> Parser<'a> {
                             if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
                                 break;
                             }
+                            // `<-` is lost once from/to are swapped when both
+                            // ends share one alias (`(a)<-[*]-(a)`); note it here.
+                            let is_incoming = self.lexer.current()? == Token::LessThan;
                             let (relationship, right) =
                                 self.parse_relationship_pattern(prev_node, clause)?;
 
@@ -1448,7 +1451,7 @@ impl<'a> Parser<'a> {
                                     relationship.max_hops,
                                 );
                                 new_rel.all_shortest_paths = if !relationship.bidirectional
-                                    && relationship.from.alias != left_alias
+                                    && (relationship.from.alias != left_alias || is_incoming)
                                 {
                                     AllShortestPaths::Reversed
                                 } else {
