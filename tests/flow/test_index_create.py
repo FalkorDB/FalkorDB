@@ -980,9 +980,12 @@ class testIndexCreationOnMissingKey():
         self.conn = self.env.getConnection()
 
     def tearDown(self):
+        # The AOF test turns appendonly on; turn it off for the next test.
         try:
             self.conn.config_set("appendonly", "no")
         except Exception:
+            # Best effort: a failure here must not hide the test's own result, and the next
+            # test's setup does not depend on it.
             pass
         self.conn.flushall()
 
