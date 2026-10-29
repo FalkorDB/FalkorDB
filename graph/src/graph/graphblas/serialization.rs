@@ -245,6 +245,82 @@ impl Decode<19> for RoaringTreemap {
     }
 }
 
+/// In-memory [`Writer`] and [`Reader`] for tests: records an encoder's calls
+/// and replays them to a decoder in the same order. Reading a different kind
+/// than was written next, or reading past the end, is an error, so a test sees
+/// a short or misaligned payload the way a real reader would.
+#[cfg(test)]
+#[derive(Debug, Default, Clone)]
+pub struct Tape {
+    pub ops: std::collections::VecDeque<TapeOp>,
+}
+
+/// One recorded [`Tape`] call.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub enum TapeOp {
+    Unsigned(u64),
+    Signed(i64),
+    Double(f64),
+    Buffer(Vec<u8>),
+}
+
+#[cfg(test)]
+impl Writer for Tape {
+    fn write_unsigned(
+        &mut self,
+        val: u64,
+    ) {
+        self.ops.push_back(TapeOp::Unsigned(val));
+    }
+    fn write_signed(
+        &mut self,
+        val: i64,
+    ) {
+        self.ops.push_back(TapeOp::Signed(val));
+    }
+    fn write_double(
+        &mut self,
+        val: f64,
+    ) {
+        self.ops.push_back(TapeOp::Double(val));
+    }
+    fn write_buffer(
+        &mut self,
+        data: &[u8],
+    ) {
+        self.ops.push_back(TapeOp::Buffer(data.to_vec()));
+    }
+}
+
+#[cfg(test)]
+impl Reader for Tape {
+    fn read_unsigned(&mut self) -> Result<u64, String> {
+        match self.ops.pop_front() {
+            Some(TapeOp::Unsigned(v)) => Ok(v),
+            _ => Err("tape: expected unsigned".to_string()),
+        }
+    }
+    fn read_signed(&mut self) -> Result<i64, String> {
+        match self.ops.pop_front() {
+            Some(TapeOp::Signed(v)) => Ok(v),
+            _ => Err("tape: expected signed".to_string()),
+        }
+    }
+    fn read_double(&mut self) -> Result<f64, String> {
+        match self.ops.pop_front() {
+            Some(TapeOp::Double(v)) => Ok(v),
+            _ => Err("tape: expected double".to_string()),
+        }
+    }
+    fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+        match self.ops.pop_front() {
+            Some(TapeOp::Buffer(v)) => Ok(v),
+            _ => Err("tape: expected buffer".to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

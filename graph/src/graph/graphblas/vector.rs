@@ -78,6 +78,23 @@ impl<T> Drop for Vector<T> {
     }
 }
 
+/// Element-type marker for a vector whose GraphBLAS type is only known at run
+/// time: the five components of a matrix's `GxB_Container` (`p`, `h`, `i`, `b`,
+/// `x`), which hold `uint32`/`uint64` offsets and indices, `int8` bitmaps and
+/// the matrix's values. Their codec ([`Encode`]/[`Decode`] below) carries the
+/// real type by name, so nothing is converted; the marker only keeps the Rust
+/// side from claiming a type the vector does not have.
+pub enum Untyped {}
+
+impl From<GrB_Vector> for Vector<Untyped> {
+    fn from(v: GrB_Vector) -> Self {
+        Self {
+            v,
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl From<GrB_Vector> for Vector<bool> {
     fn from(v: GrB_Vector) -> Self {
         Self {
@@ -97,6 +114,11 @@ impl From<GrB_Vector> for Vector<u64> {
 }
 
 impl<T> Vector<T> {
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Vector_clear(self.v);
@@ -171,11 +193,6 @@ impl Vector<bool> {
     }
 
     #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
-    }
-
-    #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<bool> {
         Iter::new(self)
@@ -186,7 +203,7 @@ impl Vector<bool> {
     /// GrB_BOOL, GrB_INDEX_MAX)` with `setElement_BOOL(V, true, edge_id)`, so
     /// the edge ids are the vector's *indices*).
     ///
-    /// Distinct from `<Vector<bool> as Encode<19>>::encode`, which writes the
+    /// Distinct from `<Vector<Untyped> as Encode<19>>::encode`, which writes the
     /// unload-to-array form that `Matrix::encode` uses for container payloads.
     pub fn encode_blob(
         &self,
@@ -276,7 +293,7 @@ impl Decode<19> for Vector<u64> {
     }
 }
 
-impl Encode<19> for Vector<bool> {
+impl Encode<19> for Vector<Untyped> {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -346,7 +363,7 @@ impl Encode<19> for Vector<bool> {
     }
 }
 
-impl Decode<19> for Vector<bool> {
+impl Decode<19> for Vector<Untyped> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let arr_data = r.read_buffer()?;
         let type_name = r.read_buffer()?;
@@ -486,11 +503,6 @@ impl Vector<u64> {
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
-    }
-
-    #[must_use]
-    pub const fn ptr(&self) -> GrB_Vector {
-        self.v
     }
 
     /// The sum of the stored values (`PLUS` monoid; 0 when empty).
@@ -663,7 +675,7 @@ mod decode_tests {
     use std::collections::VecDeque;
 
     /// Minimal in-memory [`Reader`] that replays scripted values in call order.
-    /// It drives `Vector::<bool>::decode`'s input-validation paths without a live
+    /// It drives `Vector::<Untyped>::decode`'s input-validation paths without a live
     /// GraphBLAS context: every rejection path returns before any FFI call.
     #[derive(Default)]
     struct MockReader {
@@ -786,7 +798,7 @@ mod decode_tests {
         // arr_data is 3 bytes but the payload declares n_bytes = 999: copying
         // n_bytes would over-read the buffer, so decode must reject it.
         let mut r = reader(vec![1, 2, 3], b"bool\0".to_vec(), 0, 999, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<Untyped> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(
                 err.contains("does not match buffer length"),
                 "unexpected error: {err}"
@@ -799,7 +811,7 @@ mod decode_tests {
     fn decode_rejects_type_name_without_trailing_nul() {
         // No NUL anywhere: the C-string read would run off the end of the buffer.
         let mut r = reader(Vec::new(), b"Int".to_vec(), 0, 0, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<Untyped> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name without a trailing NUL"),
         }
@@ -810,7 +822,7 @@ mod decode_tests {
         // NUL present but not the final byte: rejected so the buffer matches what
         // the encoder writes (name followed by a single trailing NUL).
         let mut r = reader(Vec::new(), vec![b'I', 0, b'X'], 0, 0, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<Untyped> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
         }
