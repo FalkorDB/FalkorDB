@@ -1156,7 +1156,10 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
 
     // What each scan kept, at every cursor: `(edge?, query, kept)`.
     let mut kept: Vec<(bool, usize, Vec<u64>)> = Vec::new();
-    loop {
+    // Ten nodes and eight edges, two per batch: a build that stops moving fails here rather than
+    // looping forever.
+    for batch in 0.. {
+        assert!(batch < 64, "the build stopped making progress");
         for (i, q) in node_queries.iter().enumerate() {
             if let Some(NumericAnswer::NotReady(recheck)) = g.query_index_numeric_nodes(&label, q) {
                 let attr = g
