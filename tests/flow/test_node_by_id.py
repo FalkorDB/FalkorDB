@@ -259,3 +259,47 @@ class testNodeByIDFlow(FlowTestsBase):
         except Exception as e:
             self.env.assertFalse("query crashed")
 
+
+    def test_parenthesised_id_predicates(self):
+        # #3187: parentheses around an id() predicate still seek by id.
+        queries = [
+            ("MATCH (n) WHERE (ID(n) = 3) RETURN n.id", [[3]], 1),
+            ("MATCH (n) WHERE ((ID(n) = 3)) RETURN n.id", [[3]], 1),
+            ("MATCH (n) WHERE (ID(n) > 7) RETURN n.id ORDER BY n.id", [[8], [9]], 1),
+            ("MATCH (a), (b) WHERE ((ID(a) = 1) AND (ID(b) = 2)) RETURN a.id, b.id",
+             [[1, 2]], 2),
+            ("MATCH (a), (b) WHERE (ID(a) = $a AND ID(b) = $b) RETURN a.id, b.id",
+             [[1, 2]], 2),
+        ]
+        for q, expected, seeks in queries:
+            params = {'a': 1, 'b': 2}
+            plan = str(self.graph.explain(q, params))
+            self.env.assertEqual(plan.count("NodeByIdSeek"), seeks, message=q)
+            self.env.assertNotContains("All Node Scan", plan, message=q)
+            self.env.assertNotContains("Filter", plan, message=q)
+            self.env.assertEqual(self.graph.query(q, params).result_set, expected, message=q)
+
+    def test_seek_on_a_graph_without_nodes(self):
+        # #3353: id 0 was sought on a graph that never had a node.
+        g = self.db.select_graph("node_by_id_empty")
+        queries = [
+            "MATCH (n) WHERE id(n) = 0 RETURN n",
+            "MATCH (n) WHERE id(n) >= 0 RETURN n",
+            "MATCH (n) WHERE id(n) < 3 RETURN n",
+            "MATCH (n) WHERE id(n) = 0 DELETE n",
+        ]
+        g.query("RETURN 1")
+        for q in queries:
+            self.env.assertContains("NodeByIdSeek", str(g.explain(q)), message=q)
+            self.env.assertEqual(g.query(q).result_set, [], message=q)
+
+        # Nor once every node it had is deleted.
+        g.query("CREATE (), ()")
+        g.query("MATCH (n) DELETE n")
+        for q in queries:
+            self.env.assertEqual(g.query(q).result_set, [], message=q)
+
+        # A node created in the same query is still found.
+        res = g.query("CREATE (a) WITH a MATCH (n) WHERE id(n) = id(a) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        g.delete()

@@ -4,7 +4,7 @@ name: Cleanup PR images
 #
 #   - falkordb / falkordb-server : `rc-pr-*` runtime images. They live past
 #     PR close because they may be retagged into a release tag by
-#     release-image.yml. 30 days is long enough to cut a release for a PR's
+#     release-tag.yml. 30 days is long enough to cut a release for a PR's
 #     content but short enough that orphans from un-released PRs don't
 #     accumulate indefinitely.
 #

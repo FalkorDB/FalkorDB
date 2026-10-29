@@ -28,6 +28,15 @@ fn write_header<W: EffectWrite + ?Sized>(
             opcode: opcode as u32,
         });
     }
+    // The reader refuses a record covering no entities (`read_record`), so the
+    // writer must not produce one: it would be a buffer this engine cannot read
+    // back. Checked here because this is the first byte of every record, so a
+    // refusal leaves the buffer as it was.
+    if count == Some(0) {
+        return Err(EncodeError::EmptyRecord {
+            opcode: opcode as u32,
+        });
+    }
     buf.u32(opcode as u32);
     if let Some(count) = count {
         buf.u32(count);
@@ -843,6 +852,30 @@ fn check_endpoint_columns(
     Ok(())
 }
 
+/// One value per entity per attribute, or refuse the record.
+///
+/// `AttrValues` carries no length of its own: the reader takes
+/// `count × attr_ids.len()` values, from the header and the `AttrIds` block. A
+/// block with more values than that leaves the rest to be read as the next
+/// record's opcode, and one with fewer takes the next record's bytes as values.
+/// Either way the reader refuses the buffer, or worse, misreads it.
+///
+/// Checked before the header, so a refusal leaves the buffer as it was.
+fn check_row_shape(
+    ids: &IdList,
+    attr_ids: &[u16],
+    rows: &[Value],
+) -> Result<(), EncodeError> {
+    if ids.len().checked_mul(attr_ids.len()) != Some(rows.len()) {
+        return Err(EncodeError::RowShapeMismatch {
+            entities: ids.len(),
+            attrs: attr_ids.len(),
+            got: rows.len(),
+        });
+    }
+    Ok(())
+}
+
 /// The label, name and property list both constraint records end with.
 ///
 /// Shared so the create and the drop cannot drift: they differ only in the
@@ -918,6 +951,7 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
+                check_row_shape(ids, attr_ids, rows)?;
                 write_header(buf, Opcode::CreateNode, Some(ids.count()))?;
                 LabelSet(labels.as_slice()).encode(buf)?;
                 AttrIds(attr_ids.as_slice()).encode(buf)?;
@@ -940,6 +974,7 @@ impl EffectEncode<3> for Record {
                 rows,
             } => {
                 check_endpoint_columns(ids, src, dst)?;
+                check_row_shape(ids, attr_ids, rows)?;
                 write_header(buf, Opcode::CreateEdge, Some(ids.count()))?;
                 RelType(*relation_id).encode(buf)?;
                 AttrIds(attr_ids.as_slice()).encode(buf)?;
@@ -973,6 +1008,7 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
+                check_row_shape(ids, attr_ids, rows)?;
                 write_header(buf, Opcode::UpdateNode, Some(ids.count()))?;
                 LabelSet(labels.as_slice()).encode(buf)?;
                 AttrIds(attr_ids.as_slice()).encode(buf)?;
@@ -986,6 +1022,7 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
+                check_row_shape(ids, attr_ids, rows)?;
                 write_header(buf, Opcode::UpdateEdge, Some(ids.count()))?;
                 // No `expect` here any more: the type carries the relationship
                 // type, so an edge update cannot be built without one.
@@ -1329,6 +1366,11 @@ pub fn maybe_compress(
     if min_bytes == 0 || buf.len() < HEADER || buf.len() - HEADER < min_bytes {
         return false;
     }
+    // Too long for the frame's `u32` length: see `frame_prefix`. Checked here
+    // too so a payload that cannot be framed is not compressed for nothing.
+    if u32::try_from(buf.len() - HEADER).is_err() {
+        return false;
+    }
     // Compressing twice produces a payload nothing can read: the second pass
     // would swallow the first one's length prefix and checksum as if they were
     // records, and the reader inflates once. This must be called exactly once,
@@ -1349,16 +1391,35 @@ pub fn maybe_compress(
         return false;
     }
 
-    let plain_len = (buf.len() - HEADER) as u32;
-    let comp_len = frame.len() as u32;
     let checksum = crc32fast::hash(&buf[HEADER..]);
+    let Some(prefix) = frame_prefix(buf.len() - HEADER, frame.len(), checksum) else {
+        return false;
+    };
     buf.truncate(HEADER);
     buf[1] |= FLAG_COMPRESSED;
-    buf.bytes(&plain_len.to_le_bytes());
-    buf.bytes(&comp_len.to_le_bytes());
-    buf.bytes(&checksum.to_le_bytes());
+    buf.bytes(&prefix);
     buf.bytes(&frame);
     true
+}
+
+/// The `u32 plain_len · u32 comp_len · u32 checksum` that heads a compressed
+/// frame, or `None` when a length does not fit its `u32`.
+///
+/// A truncated length is not a smaller payload, it is a wrong one: the reader
+/// takes `plain_len` as the decompress ceiling and refuses the frame. Such a
+/// payload ships uncompressed instead, which has no length field to overflow.
+fn frame_prefix(
+    plain_len: usize,
+    comp_len: usize,
+    checksum: u32,
+) -> Option<[u8; COMPRESSED_PREFIX]> {
+    let plain_len = u32::try_from(plain_len).ok()?;
+    let comp_len = u32::try_from(comp_len).ok()?;
+    let mut out = [0_u8; COMPRESSED_PREFIX];
+    out[0..4].copy_from_slice(&plain_len.to_le_bytes());
+    out[4..8].copy_from_slice(&comp_len.to_le_bytes());
+    out[8..12].copy_from_slice(&checksum.to_le_bytes());
+    Some(out)
 }
 
 #[cfg(test)]
@@ -1964,6 +2025,128 @@ mod tests {
         // Nothing was written for any of them: a refused record must not leave
         // a prefix behind for the next one to be parsed against.
         assert_eq!(buf, new_buffer(), "a refused record wrote bytes anyway");
+    }
+
+    /// The encoder is held to what `read_record` accepts: a value block that is
+    /// not `count × attr_ids.len()` values, or a record covering no entities,
+    /// used to be written and then refused by this engine's own reader. A block
+    /// one value too long left that value to be read as the next record's
+    /// opcode.
+    #[test]
+    fn a_record_its_own_reader_would_refuse_is_not_written() {
+        let one = || (7..8).collect::<IdList>();
+        let two = || (7..9).collect::<IdList>();
+        let v = |n: i64| (0..n).map(Value::Int).collect::<Vec<_>>();
+        let shape = |entities, attrs, got| {
+            Err(EncodeError::RowShapeMismatch {
+                entities,
+                attrs,
+                got,
+            })
+        };
+
+        let mut buf = new_buffer();
+        let cases = [
+            // One value too many.
+            (
+                Record::CreateNode {
+                    ids: one(),
+                    labels: vec![],
+                    attr_ids: vec![0],
+                    rows: v(2),
+                },
+                shape(1, 1, 2),
+            ),
+            // One value too few.
+            (
+                Record::CreateEdge {
+                    ids: two(),
+                    relation_id: 0,
+                    src: two(),
+                    dst: two(),
+                    attr_ids: vec![0, 1],
+                    rows: v(3),
+                },
+                shape(2, 2, 3),
+            ),
+            // Values under no attributes at all.
+            (
+                Record::UpdateNode {
+                    ids: two(),
+                    labels: vec![],
+                    attr_ids: vec![],
+                    rows: v(1),
+                },
+                shape(2, 0, 1),
+            ),
+            (
+                Record::UpdateEdge {
+                    ids: one(),
+                    relation_id: 0,
+                    attr_ids: vec![0],
+                    rows: vec![],
+                },
+                shape(1, 1, 0),
+            ),
+            // No entities, across the batchable record shapes.
+            (
+                Record::CreateNode {
+                    ids: IdList::new(),
+                    labels: vec![],
+                    attr_ids: vec![],
+                    rows: vec![],
+                },
+                Err(EncodeError::EmptyRecord {
+                    opcode: Opcode::CreateNode as u32,
+                }),
+            ),
+            (
+                Record::DeleteNode {
+                    ids: IdList::new(),
+                    labels: vec![1],
+                },
+                Err(EncodeError::EmptyRecord {
+                    opcode: Opcode::DeleteNode as u32,
+                }),
+            ),
+            (
+                Record::DeleteEdge {
+                    ids: IdList::new(),
+                    relation_id: 0,
+                    src: IdList::new(),
+                    dst: IdList::new(),
+                },
+                Err(EncodeError::EmptyRecord {
+                    opcode: Opcode::DeleteEdge as u32,
+                }),
+            ),
+            (
+                Record::SetLabels {
+                    ids: IdList::new(),
+                    labels: vec![0],
+                },
+                Err(EncodeError::EmptyRecord {
+                    opcode: Opcode::SetLabels as u32,
+                }),
+            ),
+        ];
+        for (record, want) in &cases {
+            assert_eq!(&record.encode(&mut buf), want, "{record:?}");
+        }
+        assert_eq!(buf, new_buffer(), "a refused record wrote bytes anyway");
+
+        // The control: the right shape encodes and reads back.
+        let ok = Record::CreateEdge {
+            ids: two(),
+            relation_id: 0,
+            src: two(),
+            dst: two(),
+            attr_ids: vec![0, 1],
+            rows: v(4),
+        };
+        ok.encode(&mut buf).expect("the right shape encodes");
+        let mut r = Reader::new(&buf[2..]);
+        assert_eq!(read_record(&mut r).expect("and reads back"), ok);
     }
 
     #[test]
@@ -2812,6 +2995,23 @@ mod tests {
 
         // And it decodes to exactly what the uncompressed payload does.
         assert_eq!(read_buffer(&buf).unwrap(), read_buffer(&plain).unwrap());
+    }
+
+    #[test]
+    fn a_frame_whose_lengths_do_not_fit_u32_is_not_written() {
+        // The prefix carries both lengths as `u32`. A 4 GiB plaintext written
+        // as `len as u32` declares 0, and the replica's decompress — which
+        // takes the declared length as its ceiling — refuses the frame, so
+        // the write never applies and the replica loops on forced resyncs.
+        // Built from the lengths alone: nothing here allocates 4 GiB.
+        let four_gib = 1_usize << 32;
+        assert_eq!(frame_prefix(four_gib + 5, 10, 0), None);
+        assert_eq!(frame_prefix(10, four_gib, 0), None);
+
+        let prefix = frame_prefix(u32::MAX as usize, 7, 9).unwrap();
+        assert_eq!(&prefix[0..4], &u32::MAX.to_le_bytes());
+        assert_eq!(&prefix[4..8], &7_u32.to_le_bytes());
+        assert_eq!(&prefix[8..12], &9_u32.to_le_bytes());
     }
 
     #[test]

@@ -32,6 +32,11 @@
 //! triggers a deep copy of the affected matrix.
 
 use std::ops::{Deref, DerefMut};
+#[cfg(debug_assertions)]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crate::graph::graphblas::matrix::Dup;
 
@@ -39,23 +44,64 @@ use crate::graph::graphblas::matrix::Dup;
 ///
 /// Wraps any type implementing `Dup` and `Clone`. The inner value is
 /// shared until `deref_mut` is called, at which point it's duplicated.
-#[derive(Clone)]
+///
+/// # Contract: isolation is one-directional
+///
+/// [`Cow::new_version`] marks only the *new* version copy-on-write. The
+/// source keeps writing in place into the inner value it now shares, so a
+/// write through the source after `new_version` leaks into the new version.
+/// The same holds for every shallow [`Clone`] of the source, since a clone
+/// shares the source's inner value. Snapshot isolation therefore holds only
+/// while a version that has been branched from (or any clone of it) is never
+/// written again, which is the rule `MvccGraph` follows: the committed graph
+/// is read-only and every write goes through the version `write()` hands out.
+/// Debug builds assert the rule in `deref_mut`; release builds do not check
+/// it.
 pub struct Cow<T: Dup<T> + Clone> {
     inner: T,
     /// If true, the next mutable access will duplicate the inner value
     dup: bool,
+    /// Set once [`Cow::new_version`] has shared `inner` with a new version;
+    /// a later in-place write through `self` would leak into it. Shared by
+    /// every shallow clone of `self`, because they all write the same `inner`.
+    /// A fresh flag goes with every fresh `inner` (a dup or `replace`).
+    #[cfg(debug_assertions)]
+    branched: Arc<AtomicBool>,
+}
+
+impl<T: Dup<T> + Clone> Clone for Cow<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            dup: self.dup,
+            #[cfg(debug_assertions)]
+            branched: Arc::clone(&self.branched),
+        }
+    }
 }
 
 impl<T: Dup<T> + Clone> Cow<T> {
-    pub const fn new(inner: T) -> Self {
-        Self { inner, dup: false }
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            dup: false,
+            #[cfg(debug_assertions)]
+            branched: Arc::default(),
+        }
     }
 
+    /// A new version sharing `inner`, copied on its first mutable access.
+    /// Neither `self` nor any clone of it may be written afterwards (see the
+    /// type-level contract).
     #[must_use]
     pub fn new_version(&self) -> Self {
+        #[cfg(debug_assertions)]
+        self.branched.store(true, Ordering::Relaxed);
         Self {
             inner: self.inner.clone(),
             dup: true,
+            #[cfg(debug_assertions)]
+            branched: Arc::default(),
         }
     }
 
@@ -69,6 +115,10 @@ impl<T: Dup<T> + Clone> Cow<T> {
     ) {
         self.inner = inner;
         self.dup = false;
+        #[cfg(debug_assertions)]
+        {
+            self.branched = Arc::default();
+        }
     }
 }
 
@@ -85,7 +135,89 @@ impl<T: Dup<T> + Clone> DerefMut for Cow<T> {
         if self.dup {
             self.inner = self.inner.dup();
             self.dup = false;
+            #[cfg(debug_assertions)]
+            {
+                self.branched = Arc::default();
+            }
         }
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            !self.branched.load(Ordering::Relaxed),
+            "Cow: write through a version after new_version() would leak into the new version"
+        );
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    /// A stand-in for `Matrix`: `Clone` shares the handle, `Dup` deep-copies,
+    /// and writes take `&mut self` so they go through `DerefMut`.
+    #[derive(Clone)]
+    struct Handle(Rc<Cell<i32>>);
+
+    impl Handle {
+        fn get(&self) -> i32 {
+            self.0.get()
+        }
+
+        fn set(
+            &mut self,
+            v: i32,
+        ) {
+            self.0.set(v);
+        }
+    }
+
+    impl Dup<Self> for Handle {
+        fn dup(&self) -> Self {
+            Self(Rc::new(Cell::new(self.0.get())))
+        }
+    }
+
+    #[test]
+    fn new_version_write_is_isolated() {
+        let mut v1 = Cow::new(Handle(Rc::new(Cell::new(1))));
+        let mut v2 = v1.new_version();
+        v2.set(2);
+        assert_eq!(v1.get(), 1);
+        assert_eq!(v2.get(), 2);
+        // `replace` gives the source a fresh inner it shares with nobody, so
+        // writing it again is allowed and still isolated.
+        v1.replace(Handle(Rc::new(Cell::new(3))));
+        v1.set(4);
+        assert_eq!(v2.get(), 2);
+    }
+
+    /// Isolation is one-directional: writing the source after `new_version`
+    /// would leak into the new version, so debug builds refuse it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "would leak into the new version")]
+    fn write_through_branched_source_is_caught() {
+        let mut v1 = Cow::new(Handle(Rc::new(Cell::new(1))));
+        let v2 = v1.new_version();
+        v1.set(99);
+        assert_eq!(v2.get(), 1);
+    }
+
+    /// A shallow clone made *before* `new_version` shares the same inner
+    /// handle, so writing through it after the branch would leak into the new
+    /// version just like writing through the source. Debug builds must catch
+    /// it too.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "would leak into the new version")]
+    fn write_through_clone_of_branched_source_is_caught() {
+        let v1 = Cow::new(Handle(Rc::new(Cell::new(1))));
+        let mut alias = v1.clone();
+        let v2 = v1.new_version();
+        alias.set(99);
+        assert_eq!(v2.get(), 1, "write through the alias leaked into v2");
     }
 }

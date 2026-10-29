@@ -1,3 +1,4 @@
+import math
 from common import *
 
 GRAPH_ID = "order_by_test"
@@ -225,3 +226,64 @@ class testOrderBy(FlowTestsBase):
             # not accumulate duplicate cities and roads
             g.delete()
 
+
+    def test09_order_by_is_a_total_order(self):
+        """ORDER BY must never crash on NaN, Int/Float near 2^53 or maps.
+
+        The sort comparator was not a total order, and Rust's sort panics once
+        it notices (from ~21 rows), taking the server down (#2891)."""
+
+        g = self.db.select_graph("order_by_total_order")
+        nan = float('nan')
+        floats = [1.0, 6.0, nan, 2.0, nan, 1.0, 3.0, 20.0, 1.0, 12.0, nan, nan,
+                  4.0, nan, nan, nan, 5.0, nan, 6.0, 17.0, 18.0]
+        numbers = sorted(f for f in floats if not math.isnan(f))
+        nans = len(floats) - len(numbers)
+
+        try:
+            literal = ", ".join("0.0 / 0.0" if math.isnan(f) else repr(f) for f in floats)
+            g.query(f"UNWIND [{literal}] AS v CREATE (:N {{v: v}})")
+
+            # full sort and top-k (LIMIT), both directions: numbers, then NaN
+            for suffix in ["", " LIMIT 100"]:
+                res = g.ro_query("MATCH (n:N) RETURN n.v ORDER BY n.v" + suffix).result_set
+                vs = [row[0] for row in res]
+                self.env.assertEqual(vs[:len(numbers)], numbers)
+                self.env.assertTrue(all(math.isnan(v) for v in vs[len(numbers):]))
+                self.env.assertEqual(len(vs), len(floats))
+
+                res = g.ro_query("MATCH (n:N) RETURN n.v ORDER BY n.v DESC" + suffix).result_set
+                vs = [row[0] for row in res]
+                self.env.assertTrue(all(math.isnan(v) for v in vs[:nans]))
+                self.env.assertEqual(vs[nans:], numbers[::-1])
+
+            # integers and floats compare by exact value, not through `as f64`
+            p53 = 2 ** 53
+            mixed = [p53 - 1 + (i * 7) % 4 for i in range(24)]
+            mixed = [v if i % 2 == 0 else float(v) for i, v in enumerate(mixed)]
+            literal = ", ".join(repr(v) for v in mixed)
+            # return positions: the reply formats floats with limited precision
+            res = g.query(f"""WITH [{literal}] AS l
+                              UNWIND range(0, size(l) - 1) AS i
+                              RETURN i ORDER BY l[i]""").result_set
+            # Python compares int and float exactly, and its sort is stable
+            self.env.assertEqual([r[0] for r in res],
+                                 sorted(range(len(mixed)), key=lambda i: mixed[i]))
+
+            # maps: key count, then keys, then values in key order
+            res = g.query("""UNWIND range(1, 8) AS i
+                             UNWIND [{a: 1, b: 2}, {a: 's', b: 3}, {a: 1, b: 1}] AS m
+                             RETURN m ORDER BY m""").result_set
+            self.env.assertEqual([r[0] for r in res],
+                                 [{'a': 's', 'b': 3}] * 8 + [{'a': 1, 'b': 1}] * 8 +
+                                 [{'a': 1, 'b': 2}] * 8)
+
+            # list.sort and percentiles sort with the same order
+            literal = ", ".join("0.0 / 0.0" if math.isnan(f) else repr(f) for f in floats)
+            res = g.query(f"RETURN list.sort([{literal}])").result_set[0][0]
+            self.env.assertEqual(res[:len(numbers)], numbers)
+            self.env.assertTrue(all(math.isnan(v) for v in res[len(numbers):]))
+            res = g.query(f"UNWIND [{literal}] AS x RETURN percentileDisc(x, 0.5)").result_set
+            self.env.assertEqual(res[0][0], 17.0)
+        finally:
+            g.delete()

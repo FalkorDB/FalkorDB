@@ -1012,6 +1012,31 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set[0][0], 0)
 
 
+    def test42_fused_hop_keeps_a_node_a_live_edge_still_reaches(self):
+        # s reaches z through x and through y. Deleting x->z must not hide z:
+        # y->z is live. A fused anonymous chain multiplies a frontier row that
+        # holds both x and y, and masking that product with the deleted layer
+        # dropped z. The 1000 filler edges fold the creates into the base
+        # matrix, so the delete stays in the deletion layer.
+        self.graph.delete()
+        self.graph.query("""CREATE (s {n:'s'}), (x {n:'x'}), (y {n:'y'}), (z {n:'z'}),
+                                   (s)-[:A]->(x), (s)-[:A]->(y), (x)-[:A]->(z), (y)-[:A]->(z),
+                                   (s)-[:B]->(x)
+                            WITH 1 AS one UNWIND range(1, 1000) AS i
+                            CREATE (:F)-[:A]->(:F)""")
+        self.graph.query("MATCH ({n:'x'})-[e:A]->({n:'z'}) DELETE e")
+
+        for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
+                  "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
+            self.env.assertEqual(self.graph.query(q).result_set, [['z']], message=q)
+
+        # with both paths deleted, z is gone
+        self.graph.query("MATCH ({n:'y'})-[e:A]->({n:'z'}) DELETE e")
+        for q in ["MATCH (s {n:'s'})-[:A]->()-[:A]->(t) RETURN t.n",
+                  "MATCH (s {n:'s'})-[:A|B]->()-[:A|B]->(t) RETURN t.n"]:
+            self.env.assertEqual(self.graph.query(q).result_set, [], message=q)
+
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

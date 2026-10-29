@@ -1,10 +1,24 @@
-import asyncio
 from common import *
-from falkordb.asyncio import FalkorDB
 from packaging.version import Version
-from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "slowlog_test"
+
+# Rows behind every populate_slowlog entry. The queries that have to out-rank
+# those entries are sized as a multiple of it rather than as a literal of their
+# own: #2628 raised the populate size tenfold without touching them, which
+# quietly took away most of their margin.
+POPULATE_ROWS = 2_500_000
+DISPLACER_ROWS = POPULATE_ROWS * 10
+
+
+def slow_query(rows, divisor):
+    # Every query here that is ranked against a populate_slowlog entry has this
+    # one shape, so which of the two is slower comes down to row count, not to
+    # how coverage instrumentation or an engine optimization treats two
+    # different expression paths. Kept on one line and short: redis truncates
+    # slowlog arguments at 128 bytes, and test01 matches its command in full.
+    return f"UNWIND range(0, {rows}) AS x WITH x WHERE x % {divisor} = 0 RETURN count(x)"
+
 
 class testSlowLog():
     def __init__(self):
@@ -13,33 +27,25 @@ class testSlowLog():
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def populate_slowlog(self, n):
-        async def populate(self, n):
-            pool = BlockingConnectionPool(max_connections=n, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True, socket_timeout=SOCKET_TIMEOUT)
-            db = FalkorDB(connection_pool=pool)
-            g = db.select_graph(GRAPH_ID)
-
-            # Sized to run an order of magnitude past the slowlog's 10ms floor
-            # (SLOW_LOG_MIN_REQ_LATENCY), the same way test01's own slow query
-            # is. range(0, 250000) used to measure ~11ms, which stopped
-            # qualifying once `WHERE x % i = 0` moved onto the columnar
-            # expression path and the same query dropped to ~4.7ms — the
-            # entries silently stopped being logged and the assertions below
-            # started reading 2 instead of 10. range(0, 2500000) measures
-            # ~47ms.
-            tasks = []
-            for i in range(1, n):
-                q = f"""UNWIND range(0, 2500000) AS x
-                       WITH x
-                       WHERE x % {i} = 0
-                       RETURN count(x)"""
-                tasks.append(asyncio.create_task(g.query(q)))
-
-            await asyncio.gather(*tasks)
-
-            # close the connection pool
-            await pool.aclose()
-
-        asyncio.run(populate(self, n))
+        # Adds n - 1 distinct entries, one query at a time.
+        #
+        # These used to be issued concurrently, which is what made test01 and
+        # test06 flaky (#1896). An entry records the query's own wall-clock
+        # latency, so queries that compete for the same cores also record the
+        # contention: under coverage-flow the entries left behind read 3-5s
+        # each, many times what the same queries take one at a time. The
+        # queries that must then displace them run alone, so whether they could
+        # depended on how much the runner inflated the entries, not on how big
+        # the displacing query was. Nothing in this file asserts on concurrent
+        # behaviour.
+        #
+        # POPULATE_ROWS keeps each entry an order of magnitude past the
+        # slowlog's 10ms floor (MIN_LATENCY_MS in src/slow_log.rs).
+        # range(0, 250000) dropped below it once `WHERE x % i = 0` moved onto
+        # the columnar expression path, and the entries silently stopped being
+        # logged.
+        for i in range(1, n):
+            self.graph.query(slow_query(POPULATE_ROWS, i))
 
     def test01_slowlog(self):
         # Slowlog should fail when graph doesn't exists
@@ -79,27 +85,11 @@ class testSlowLog():
         # Issue a long running query, this should replace an existing entry in
         # the slowlog.
         #
-        # This query has to outrank all ten entries populate_slowlog just left,
-        # so it deliberately reuses *their exact shape* and only scales the row
-        # count up. Sizing alone is not enough: a query of a different shape has
-        # to stay slower across coverage instrumentation, which amplifies
-        # per-row work non-uniformly, and across engine optimizations that may
-        # land on one shape and not the other. Both of those cancel between two
-        # queries built the same way, leaving the row-count margin as the only
-        # thing that decides the ordering.
-        #
-        # The previous body here was a double `UNWIND ... RETURN SUM(i + j)`
-        # while populate_slowlog used a filtered single `UNWIND ... RETURN
-        # count(x)`. It measured ~3.7x the slowest populated entry on a release
-        # build and still dropped below it under coverage-flow, which is the
-        # mismatch this avoids.
-        #
-        # populate_slowlog's heaviest case is `x % 1 = 0`, where every one of
-        # its 2,500,000 rows survives the filter; 7,500,000 rows keeps a 3x
-        # margin over it. Kept on one line and well under redis's 128-byte
-        # slowlog argument limit, so the assertion below still matches the
-        # command in full rather than a truncated copy of it.
-        q = "UNWIND range(0, 7500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        # It evicts the fastest retained entry, so it has to be slower than
+        # that one. Same shape as the populate_slowlog queries (including their
+        # heaviest divisor, 1) at ten times the rows, so the margin is the row
+        # ratio.
+        q = slow_query(DISPLACER_ROWS, 1)
 
         self.graph.query(q)
         B = self.graph.slowlog()
@@ -128,7 +118,9 @@ class testSlowLog():
             self.env.assertContains("Unknown subcommand", str(e))
 
         # populate slowlog
-        self.populate_slowlog(36)
+        # 20 already saturates the 10-entry log; with populate_slowlog serial,
+        # every query past that only adds wall time.
+        self.populate_slowlog(20)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
         self.env.assertGreater(len(slowlog), 0)
 
@@ -142,7 +134,7 @@ class testSlowLog():
         self.env.assertEqual(len(slowlog), 0)
 
         # make sure slowlog repopulates after RESET
-        self.populate_slowlog(36)
+        self.populate_slowlog(20)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
         self.env.assertGreater(len(slowlog), 0)
 
@@ -159,8 +151,9 @@ class testSlowLog():
         # NOTE: the query body must be heavy enough to deterministically exceed
         # the slowlog MIN_LATENCY_MS (10ms) threshold even on a fast engine /
         # under coverage. A single UNWIND range(0, 200000) dropped below 10ms
-        # once the engine got faster, leaving the slowlog empty. Use the same
-        # double-UNWIND pattern as test01.
+        # once the engine got faster, leaving the slowlog empty. This is only
+        # measured against that fixed floor, never ranked against another
+        # entry, so unlike test01 and test06 it does not need slow_query().
         long_string = 'a' * 4000
         query = f"WITH '{long_string}' AS str UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
         self.graph.query(query)
@@ -303,15 +296,15 @@ class testSlowLog():
 
         # issue 2 slower queries
         # expecting to have them replace existing entries
-        # NOTE: nested UNWINDs make these queries deterministically slower
-        # than the populate_slowlog baseline (UNWIND range(0, 250000)) even
-        # under coverage instrumentation, where per-row work is amplified
-        # non-uniformly (see the same fix in test01).
-
-        q0 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i % 2 = 0 RETURN count(j)"
+        #
+        # q1 evicts whichever entry is the fastest once q0 is in, and that has
+        # to be a populate_slowlog entry rather than q0, so both are sized from
+        # DISPLACER_ROWS the way test01's query is. The divisors differ only to
+        # make the two query texts distinct, since the slowlog keys on text.
+        q0 = slow_query(DISPLACER_ROWS, 2)
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE j % 2 = 0 RETURN count(i)"
+        q1 = slow_query(DISPLACER_ROWS, 3)
         self.graph.query(q1)
 
         entries = self.graph.slowlog()
@@ -323,3 +316,78 @@ class testSlowLog():
         queries = [entry[2] for entry in entries]
         self.env.assertContains (q0, queries)
         self.env.assertContains (q1, queries)
+
+    def test07_truncate_on_char_boundary(self):
+        # A query or parameter longer than the slowlog's 2048-byte cap, with a
+        # multi-byte character straddling byte 2048, used to panic the server
+        # (the cut landed inside the character, #3233). C stores the first
+        # 2048 bytes even if that splits the character; we keep whole
+        # characters, so the stored text stays valid UTF-8.
+        STR_MAX_LEN = 2048
+        body = "UNWIND range(1, 2000000) AS x WITH x WHERE x < 0 RETURN count(x)"
+
+        # make sure the graph key exists, so RESET works when run on its own
+        self.graph.query("RETURN 1")
+
+        for c in ['é', '€', '😀']:
+            self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
+
+            # query text: `c` occupies bytes 2047.. of the query
+            head = f"{body} AS n, '"
+            query = head + 'a' * (STR_MAX_LEN - 1 - len(head)) + c + "'"
+            self.graph.query(query)
+
+            # parameters: `c` occupies bytes 2047.. of the CYPHER prefix
+            head = "CYPHER p='"
+            params = head + 'b' * (STR_MAX_LEN - 1 - len(head)) + c + "'"
+            self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID,
+                                           f"{params} {body}")
+
+            # server survived and logged both, cut before the character
+            self.env.assertTrue(self.redis_con.ping())
+            entries = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
+            self.env.assertEqual(len(entries), 2)
+
+            logged = {e[2]: e[4] for e in entries}
+            self.env.assertContains(query[:STR_MAX_LEN - 1] + "...", logged)
+            self.env.assertEqual(logged[body], params[:STR_MAX_LEN - 1] + "...")
+
+    def test08_update_refreshes_min_latency(self):
+        # Re-running a logged query slower updates its entry in place. That
+        # update used to leave the log's cached minimum latency stale (#3442):
+        # once the log was full, a query faster than every retained entry
+        # passed the admission check against the stale minimum and evicted a
+        # slower one. C recomputes the minimum on the update path too.
+
+        # make sure the graph key exists, so RESET works when run on its own
+        self.graph.query("RETURN 1")
+        self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
+
+        # Each tier is 4x the rows of the one below it, so the latency order
+        # Q1 < Q11 < Q2..Q10 < Q1-again holds with a 4x margin.
+        rows = 1_000_000
+
+        # Q1: the fastest entry, and so the log's cached minimum.
+        q1 = "UNWIND range(0, $n) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        self.graph.query(q1, {'n': rows})
+
+        # Q2..Q10 fill the log.
+        for d in range(2, 11):
+            self.graph.query(slow_query(rows * 16, d))
+        self.env.assertEqual(len(self.graph.slowlog()), 10)
+
+        # Q1 again, now the slowest: its entry is updated in place, and the
+        # true minimum moves up to the fastest of Q2..Q10.
+        self.graph.query(q1, {'n': rows * 64})
+
+        # Q11 is slower than Q1 was but faster than every retained entry: it
+        # must be rejected rather than evict one of Q2..Q10.
+        q11 = slow_query(rows * 4, 1)
+        self.graph.query(q11)
+
+        queries = [entry[2] for entry in self.graph.slowlog()]
+        self.env.assertEqual(len(queries), 10)
+        self.env.assertNotContains(q11, queries)
+        self.env.assertContains(q1, queries)
+        for d in range(2, 11):
+            self.env.assertContains(slow_query(rows * 16, d), queries)

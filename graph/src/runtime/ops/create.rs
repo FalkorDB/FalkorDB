@@ -149,15 +149,14 @@ impl Runtime<'_> {
         for node in pattern.nodes() {
             let active_len = batch.active_len();
 
-            // Reserve all node IDs at once
-            // The graph lends its recycle bin and is not otherwise touched:
-            // allocation is the id space's, so this needs no write borrow.
+            // Reserve all node IDs at once. The id space decides; this query
+            // only lends it the ids it is already holding, so the graph needs no
+            // write borrow.
             let node_ids: Vec<NodeId> = {
                 let pending = self.pending.borrow();
-                let g = self.g.borrow();
-                pending
-                    .node_id_space()
-                    .reserve(active_len, g.deleted_nodes(), &pending.issued_nodes())?
+                let g = self.graph();
+                g.node_id_space()
+                    .reserve(active_len, &pending.created_nodes)?
                     .into_iter()
                     .map(NodeId::from)
                     .collect()
@@ -174,7 +173,7 @@ impl Runtime<'_> {
             // NOTE: eval() may borrow pending internally (e.g. property reads),
             // so we cannot hold pending.borrow_mut() across eval calls.
             let template = build_attr_template(&node.attrs, |k| {
-                self.g.borrow_mut().get_or_create_node_attr_id(k)
+                self.graph_mut().get_or_create_node_attr_id(k)
             });
             let mut all_attrs: Vec<Vec<(u16, Value)>> = Vec::new();
             match &template {
@@ -210,7 +209,7 @@ impl Runtime<'_> {
                             }
                         }
                     }
-                    let mut g = self.g.borrow_mut();
+                    let mut g = self.graph_mut();
                     all_attrs.extend(
                         maps.into_iter()
                             .map(|m| resolve_map_attrs(m, |k| g.get_or_create_node_attr_id(k))),
@@ -249,7 +248,7 @@ impl Runtime<'_> {
                     endpoints.push((from_id, to_id));
                 }
             } else {
-                let g = self.g.borrow();
+                let g = self.graph();
                 let pending = self.pending.borrow_mut();
                 for row in batch.active_indices() {
                     let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
@@ -277,14 +276,9 @@ impl Runtime<'_> {
             // Reserve all relationship IDs at once
             let ids: Vec<RelationshipId> = {
                 let pending = self.pending.borrow();
-                let g = self.g.borrow();
-                pending
-                    .rel_id_space()
-                    .reserve(
-                        endpoints.len(),
-                        g.deleted_relationships(),
-                        &pending.issued_relationships(),
-                    )?
+                let g = self.graph();
+                g.relationship_id_space()
+                    .reserve(endpoints.len(), &pending.taken_relationship_ids)?
                     .into_iter()
                     .map(RelationshipId::from)
                     .collect()
@@ -302,7 +296,7 @@ impl Runtime<'_> {
             // Evaluate relationship attributes per row, then batch-insert.
             // Same as nodes: eval() may borrow pending, so separate eval from insert.
             let template = build_attr_template(&rel.attrs, |k| {
-                self.g.borrow_mut().get_or_create_rel_attr_id(k)
+                self.graph_mut().get_or_create_rel_attr_id(k)
             });
             let mut all_rel_attrs: Vec<Vec<(u16, Value)>> = Vec::new();
             match &template {
@@ -334,7 +328,7 @@ impl Runtime<'_> {
                             }
                         }
                     }
-                    let mut g = self.g.borrow_mut();
+                    let mut g = self.graph_mut();
                     all_rel_attrs.extend(
                         maps.into_iter()
                             .map(|m| resolve_map_attrs(m, |k| g.get_or_create_rel_attr_id(k))),
@@ -366,7 +360,7 @@ impl Runtime<'_> {
                 node.alias.clone(),
                 node.labels
                     .iter()
-                    .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                    .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                     .collect(),
                 node.attrs.clone(),
             )));
@@ -381,7 +375,7 @@ impl Runtime<'_> {
                     rel.from
                         .labels
                         .iter()
-                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                     rel.from.attrs.clone(),
                 )),
@@ -390,7 +384,7 @@ impl Runtime<'_> {
                     rel.to
                         .labels
                         .iter()
-                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .map(|l| self.graph_mut().get_label_id_mut(l.as_str()))
                         .collect(),
                     rel.to.attrs.clone(),
                 )),

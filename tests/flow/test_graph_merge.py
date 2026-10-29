@@ -842,3 +842,97 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test39_equal_patterns_in_separate_merge_clauses(self):
+        # The created-pattern cache was shared by every MERGE clause, so a
+        # later clause with an equal pattern reused the earlier clause's
+        # bindings: its own variable stayed unbound, or (in a UNION branch)
+        # it aliased the other branch's node (#3038).
+        g = self.db.select_graph("merge_equal_patterns")
+        res = g.query("""MERGE (a:M {v: 1}) ON CREATE SET a.v = 2
+                                  MERGE (b:M {v: 1})
+                                  RETURN a.v, b.v""")
+        self.env.assertEqual(res.result_set, [[2, 1]])
+        self.env.assertEqual(res.nodes_created, 2)
+
+        g.delete()
+        res = g.query("""MERGE (a:U {v: 1}) ON CREATE SET a.v = 2 RETURN a.v AS v
+                                  UNION ALL
+                                  MERGE (b:U {v: 1}) RETURN b.v AS v""")
+        self.env.assertEqual(res.result_set, [[2], [1]])
+        self.env.assertEqual(res.nodes_created, 2)
+        g.delete()
+
+    def test41_merge_result_does_not_depend_on_batch_boundaries(self):
+        # MERGE matched batch by batch and created in between, so a row in a
+        # later batch saw an earlier batch's creation (after ON CREATE SET)
+        # while a row of the same batch did not (#3039). Like C, every row is
+        # now matched before anything is created.
+        g = self.db.select_graph("merge_batch_boundaries")
+        for last in [2, 1025, 3000]:
+            res = g.query(f"""UNWIND range(1, {last}) AS x WITH x WHERE x = 1 OR x = {last}
+                              MERGE (n:L {{v: CASE x WHEN 1 THEN 1 ELSE 2 END}})
+                              ON CREATE SET n.v = 2""")
+            self.env.assertEqual(res.nodes_created, 2)
+            g.delete()
+
+        # duplicates across batches still resolve to one node per pattern
+        res = g.query("""UNWIND range(1, 3000) AS x
+                         MERGE (n:Q {v: x % 7}) ON CREATE SET n.c = x
+                         RETURN count(*), count(DISTINCT n)""")
+        self.env.assertEqual(res.result_set, [[3000, 7]])
+        self.env.assertEqual(res.nodes_created, 7)
+        g.delete()
+
+    def test42_merge_edge_of_detach_deleted_node(self):
+        """
+        DETACH DELETE defers a node's edges to commit, but a MERGE later in
+        the same query must not match one of them: the endpoint is gone, so
+        the MERGE has to create, and creating on a deleted node is an error
+        https://github.com/FalkorDB/FalkorDB/issues/3452
+        """
+
+        queries = ["""MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE b
+                      MERGE (a)-[r:R]->(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[r:R]-(b) RETURN count(r)""",
+                   """MATCH (a:A), (b:B) DETACH DELETE a
+                      MERGE (a)-[:R]->(b)"""]
+
+        con = self.env.getConnection()
+        for q in queries:
+            self.graph.query("MATCH (n) DETACH DELETE n")
+            self.graph.query("CREATE (:A)-[:R]->(:B)")
+
+            msg = assert_error_reply(self.env, con, "GRAPH.QUERY", GRAPH_ID, q)
+            self.env.assertContains("endpoint was not found", msg or "")
+
+            # the failed query left the graph as it was
+            actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
+                                         RETURN count(r)""")
+            self.env.assertEqual(actual.result_set, [[1]])
+
+    def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
+        # With every node bound and no named relationship, MERGE kept only the
+        # first match. A path variable still tells parallel edges apart (#3040).
+        # a run interrupted before its cleanup can leave the graph behind
+        if "merge_path_all_bound" in self.db.list_graphs():
+            self.db.select_graph("merge_path_all_bound").delete()
+        g = self.db.select_graph("merge_path_all_bound")
+        g.query("CREATE (a:A), (b:B), (a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)")
+        res = g.query("""MATCH (a:A), (b:B) MERGE p = (a)-[:R]->(b)
+                         RETURN [r IN relationships(p) | r.k][0] AS k ORDER BY k""")
+        self.env.assertEqual(res.result_set, [[1], [2]])
+        self.env.assertEqual(res.relationships_created, 0)
+        # without a path variable one row is still enough
+        res = g.query("MATCH (a:A), (b:B) MERGE (a)-[:R]->(b) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+        # a path without relationships cannot tell the matches apart either
+        res = g.query("MATCH (a:A) MERGE p = (a) RETURN count(p)")
+        self.env.assertEqual(res.result_set, [[1]])
+        # a named relationship is part of the output, path or not
+        res = g.query("MATCH (a:A), (b:B) MERGE p = (a)-[r:R]->(b) RETURN r.k ORDER BY r.k")
+        self.env.assertEqual(res.result_set, [[1], [2]])
+        g.delete()

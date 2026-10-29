@@ -1,5 +1,69 @@
 from common import *
+import socket
+import struct
 import time
+
+
+# The deepest a value may nest (`MAX_VALUE_NESTING` in graph/src/runtime/value.rs).
+MAX_VALUE_NESTING = 4096
+
+
+def _read_line(f):
+    return f.readline()[:-2]
+
+
+def _read_resp(f):
+    t = f.read(1)
+    if t == b"*":
+        return [_read_resp(f) for _ in range(int(_read_line(f)))]
+    if t == b"$":
+        data = f.read(int(_read_line(f)))
+        f.read(2)
+        return data
+    if t in (b"+", b"-", b":"):
+        return _read_line(f)
+    raise RuntimeError(f"unexpected RESP type {t!r}")
+
+
+def capture_restore_payload(conn, src, dst):
+    """The `GRAPH.RESTORE` payload `GRAPH.COPY src dst` replicates, read by
+    posing as a replica on a raw socket."""
+    # The server's address as the test connection sees it: a local server, or
+    # the CI service container.
+    kw = conn.connection_pool.connection_kwargs
+    s = socket.create_connection((kw["host"], kw["port"]))
+    try:
+        f = s.makefile("rb")
+        s.sendall(b"*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n")
+        _read_line(f)
+        s.sendall(b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n")
+        line = _read_line(f)
+        while not line.startswith(b"$"):
+            line = _read_line(f)
+        f.read(int(line[1:]))  # the RDB snapshot, which has no trailing CRLF
+        conn.execute_command("GRAPH.COPY", src, dst)
+        while True:
+            cmd = _read_resp(f)
+            if isinstance(cmd, list) and cmd and cmd[0].upper() == b"GRAPH.RESTORE":
+                return cmd[2]
+    finally:
+        s.close()
+
+
+def _unsigned(v):
+    # `VecWriter::write_unsigned`: a TYPE_UNSIGNED byte, then 8 bytes LE.
+    return b"\x04" + struct.pack("<Q", v)
+
+
+T_ARRAY = 1 << 3
+T_STRING = 1 << 11
+T_NULL = 1 << 15
+MARKER = b"DEEPMARKER"
+# The encoded string property `MARKER`: its tag, then a TYPE_BYTES buffer
+# holding the NUL-terminated bytes.
+ENCODED_MARKER = (
+    _unsigned(T_STRING) + b"\x00" + struct.pack("<Q", len(MARKER) + 1) + MARKER + b"\x00"
+)
 
 
 class testRdbLoad():
@@ -7,6 +71,9 @@ class testRdbLoad():
         self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10',
                                 enableDebugCommand=True)
         self.conn = self.env.getConnection()
+
+    def tearDown(self):
+        self.conn.flushall()
 
     # assert that |keyspace| == `n`
     def validate_key_count(self, n):
@@ -65,6 +132,16 @@ class testRdbLoad():
                 graphmeta_keys.append(key)
 
         self.env.assertIsNotNone(graphdata_key)
+
+        # Virtual keys must be typed graphmeta, as C types its own: C frees a
+        # graphdata key by dropping its graph from GRAPH.LIST, so a virtual
+        # key saved as graphdata emptied GRAPH.LIST once C finished loading
+        # the RDB and deleted it (#3160).
+        for key in graphmeta_keys:
+            key_type = self.conn.type(key)
+            if isinstance(key_type, bytes):
+                key_type = key_type.decode()
+            self.env.assertEqual(key_type, 'graphmeta')
 
         # Flush and verify empty
         self.conn.flushall()
@@ -147,3 +224,83 @@ class testRdbLoad():
         self.env.assertEqual(dst.query(count % "AFTER_RELOAD_DST").result_set, [[1]])
         self.env.assertEqual(src.query(count % "AFTER_RELOAD_DST").result_set, [[0]])
         self.env.assertEqual(dst.query(count % "AFTER_RELOAD_SRC").result_set, [[0]])
+
+    def nested_payload(self, depth):
+        """A real `GRAPH.RESTORE` payload for one node whose property is
+        `depth` nested single-element lists around NULL."""
+        self.conn.flushall()
+        self.conn.execute_command(
+            "GRAPH.QUERY", "src", f"CREATE ({{v: '{MARKER.decode()}'}})"
+        )
+        payload = capture_restore_payload(self.conn, "src", "dst")
+        self.conn.flushall()
+        self.env.assertEqual(payload.count(ENCODED_MARKER), 1)
+        nested = (_unsigned(T_ARRAY) + _unsigned(1)) * depth + _unsigned(T_NULL)
+        return payload.replace(ENCODED_MARKER, nested)
+
+    def test_restore_nested_payload(self):
+        # The crafted payload is well-formed: shallow nesting restores intact.
+        payload = self.nested_payload(10)
+        self.env.assertEqual(self.conn.execute_command("GRAPH.RESTORE", "x", payload), "OK")
+        res = self.conn.execute_command("GRAPH.QUERY", "x", "MATCH (n) RETURN n.v")
+        self.env.assertEqual(res[1], [["[" * 10 + "NULL" + "]" * 10]])
+
+        # So does one nested exactly at the cap.
+        payload = self.nested_payload(MAX_VALUE_NESTING)
+        self.env.assertEqual(self.conn.execute_command("GRAPH.RESTORE", "x", payload), "OK")
+        res = self.conn.execute_command("GRAPH.QUERY", "x", "MATCH (n) RETURN size(n.v)")
+        self.env.assertEqual(res[1], [[1]])
+
+    def test_restore_refuses_nesting_past_the_cap(self):
+        # One past the cap, and 60,000 levels: deep enough to exhaust the
+        # decoder's stack before the depth was bounded.
+        for depth in (MAX_VALUE_NESTING + 1, 60_000):
+            payload = self.nested_payload(depth)
+            try:
+                self.conn.execute_command("GRAPH.RESTORE", "x", payload)
+                self.env.assertTrue(False, message=f"a {depth}-deep payload restored")
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("nesting exceeds the maximum depth", str(e))
+            self.env.assertEqual(self.conn.exists("x"), 0)
+            self.env.assertTrue(self.conn.ping())
+
+    def test_nested_list_properties_survive_reload(self):
+        self.conn.flushall()
+        q = "CREATE ({v: [1, [2, [3, ['a', [true, [4.5]]]]], []]})"
+        self.conn.execute_command("GRAPH.QUERY", "x", q)
+        before = self.conn.execute_command("GRAPH.QUERY", "x", "MATCH (n) RETURN n.v")[1]
+        self.conn.execute_command("DEBUG", "RELOAD")
+        after = self.conn.execute_command("GRAPH.QUERY", "x", "MATCH (n) RETURN n.v")[1]
+        self.env.assertEqual(before, after)
+        self.env.assertEqual(after, [["[1, [2, [3, [a, [true, [4.500000]]]]], []]"]])
+
+    def test_runtime_built_nesting_is_bounded_on_write(self):
+        # Expressions can build a list of any depth at runtime, so the bound
+        # is enforced where a value is stored, not when the query is parsed.
+        self.conn.flushall()
+        deep = "reduce(a = 1, i IN range(1, {}) | [a])"
+
+        # At the cap: stored, and it loads back from the RDB.
+        for q in (f"CREATE ({{v: {deep.format(MAX_VALUE_NESTING)}}})",
+                  f"CREATE ()-[:R {{v: {deep.format(MAX_VALUE_NESTING)}}}]->()"):
+            self.conn.execute_command("GRAPH.QUERY", "x", q)
+        self.conn.execute_command("DEBUG", "RELOAD")
+        res = self.conn.execute_command(
+            "GRAPH.QUERY", "x",
+            "MATCH (n) WHERE n.v IS NOT NULL RETURN size(n.v) AS s "
+            "UNION ALL MATCH ()-[e]->() RETURN size(e.v) AS s")
+        self.env.assertEqual(res[1], [[1], [1]])
+
+        # One past the cap: refused by CREATE and SET, on nodes and edges.
+        past = deep.format(MAX_VALUE_NESTING + 1)
+        for q in (f"CREATE ({{v: {past}}})",
+                  f"CREATE ()-[:R {{v: {past}}}]->()",
+                  f"MATCH (n) SET n.w = {past}",
+                  f"MATCH ()-[e]->() SET e.w = {past}"):
+            try:
+                self.conn.execute_command("GRAPH.QUERY", "x", q)
+                self.env.assertTrue(False, message=f"stored a too-deep value: {q}")
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains(
+                    f"nested up to {MAX_VALUE_NESTING} levels deep", str(e))
+        self.env.assertTrue(self.conn.ping())

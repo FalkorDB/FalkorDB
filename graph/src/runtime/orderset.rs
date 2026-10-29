@@ -30,8 +30,24 @@ impl<T> Default for OrderSet<T> {
 }
 
 impl<T: PartialEq> OrderSet<T> {
+    /// Wrap `vec` as a set, keeping the first occurrence of each element.
+    ///
+    /// Callers normally pass distinct elements (the only one, label
+    /// reordering in the planner, permutes an existing set). The duplicate
+    /// check still runs in release builds because a duplicate would break the
+    /// set: `remove` drops only the first copy, so the element would stay
+    /// present. It is in place and allocation-free, O(n^2) in the element
+    /// count, which is small here (a node's labels) and off the per-row path.
     #[must_use]
-    pub const fn from_vec(vec: Vec<T>) -> Self {
+    pub fn from_vec(mut vec: Vec<T>) -> Self {
+        let mut i = 1;
+        while i < vec.len() {
+            if vec[..i].contains(&vec[i]) {
+                vec.remove(i);
+            } else {
+                i += 1;
+            }
+        }
         Self { vec }
     }
 
@@ -143,5 +159,29 @@ impl<T> IntoIterator for OrderSet<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.vec.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_vec_keeps_distinct_elements() {
+        let mut s = OrderSet::from_vec(vec![1, 2, 3]);
+        s.remove(&2);
+        assert!(!s.contains(&2));
+        assert_eq!(s.len(), 2);
+    }
+
+    /// A duplicate passed to `from_vec` is dropped in every build, so
+    /// `remove` really removes the element.
+    #[test]
+    fn from_vec_drops_duplicates() {
+        let mut s = OrderSet::from_vec(vec![1, 2, 1, 3, 2]);
+        assert_eq!(s.iter().copied().collect::<Vec<_>>(), [1, 2, 3]);
+        s.remove(&1);
+        assert!(!s.contains(&1));
+        assert_eq!(s.len(), 2);
     }
 }

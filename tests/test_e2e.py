@@ -511,6 +511,15 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
+def test_list_range_bound_errors():
+    # A bound that fails to parse used to be read as a missing bound, so the
+    # slice ran as [..2] / [1..] instead of failing.
+    query_exception("RETURN [1, 2, 3][abs()..2]", "Received 0 arguments to function 'abs'")
+    query_exception("RETURN [1, 2, 3][1..abs()]", "Received 0 arguments to function 'abs'")
+    for q in ["RETURN [1, 2, 3][1+..2]", "RETURN [1, 2, 3][1..2+]", "RETURN [1, 2, 3][(1..2]"]:
+        query_exception(q, "Invalid input")
+
+
 @given(st.integers(-10, 10), st.integers(-10, 10))
 def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
@@ -1162,6 +1171,32 @@ def test_pow():
     assert res.result_set == [[None]]
 
 
+
+def test_pow_operator_propagates_errors():
+    res = query("RETURN 2 ^ 3, 2 ^ -1, null ^ 2, 2 ^ null")
+    assert res.result_set == [[8.0, 0.5, None, None]]
+
+    # An operand's error must not be dropped.
+    query_exception("RETURN 2 ^ (1/0)", "Division by zero")
+    query_exception("RETURN (1/0) ^ 3", "Division by zero")
+
+    # Non-numeric operands are a type error, like pow().
+    for q in ["RETURN 'a' ^ 2", "RETURN 2 ^ 'a'", "RETURN null ^ 'a'"]:
+        query_exception(
+            q, "Type mismatch: expected Integer, Float, or Null but was String"
+        )
+    query_exception(
+        "UNWIND [1, 2] AS x RETURN x ^ true",
+        "Type mismatch: expected Integer, Float, or Null but was Boolean",
+    )
+
+    # The optimizer must not fold this predicate to constant true and drop
+    # the filter: it is a type error at runtime (C errors too).
+    query_exception(
+        "UNWIND [1, 2] AS x WITH x WHERE x ^ true RETURN x",
+        "Type mismatch",
+    )
+
 def shannon_entropy(data):
     n = len(data)
     counts = Counter(data)
@@ -1201,6 +1236,19 @@ def signum(x):
 def test_sign(a):
     res = query("RETURN sign($a)", params={"a": a})
     assert res.result_set == [[signum(a) if a is not None else None]]
+    # sign() returns an Integer even for a Float argument (Python's
+    # -1 == -1.0, so check the type too).
+    if a is not None:
+        assert type(res.result_set[0][0]) is int
+
+
+def test_sign_float_special_values():
+    res = query(
+        "RETURN sign(-2.5), sign(2.5), sign(0.0), sign(-0.0), sign(0.0/0.0), "
+        "sign(1.0/0.0), sign(-1.0/0.0), sign(1e-300)"
+    )
+    assert res.result_set == [[-1, 1, 0, 0, 0, 1, -1, 1]]
+    assert all(type(v) is int for v in res.result_set[0])
 
 
 def test_sqrt():
@@ -1692,7 +1740,77 @@ def test_list_comprehension():
     assert res.result_set == [[[]]]
 
 
+def test_list_comprehension_non_list_source():
+    # A null source gives null, like reduce() and the quantifiers; it is not
+    # UNWIND, where null means "no rows".
+    for q in [
+        "RETURN [x IN null | x] AS result",
+        "RETURN [x IN null WHERE x > 1] AS result",
+        "WITH null AS l RETURN [x IN l | x + 1] AS result",
+    ]:
+        assert query(q).result_set == [[None]], q
+
+    # A scalar source is a type error, not a one-element list.
+    for q in [
+        "RETURN [x IN 5 | x] AS result",
+        "WITH 'a' AS l RETURN [x IN l | x] AS result",
+    ]:
+        query_exception(q, "Type mismatch: expected List or Null but was")
+
+    # Empty lists and ranges still give [].
+    assert query("RETURN [x IN [] | x] AS result").result_set == [[[]]]
+    assert query("RETURN [x IN range(1, 0) | x] AS result").result_set == [[[]]]
+
+    # The error names the type the way C does (and typeOf() does): Edge and
+    # Vectorf32, not Relationship and VecF32.
+    query("CREATE (:TypeNameA)-[:TYPE_NAME_R]->(:TypeNameB)", write=True)
+    for src, name in [("r", "Edge"), ("vecf32([1.0])", "Vectorf32"), ("n", "Node")]:
+        query_exception(
+            f"MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN [x IN {src} | x]",
+            f"Type mismatch: expected List or Null but was {name}")
+    res = query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN typeOf(r), typeOf(vecf32([1.0])), typeOf(n)")
+    assert res.result_set == [["Edge", "Vectorf32", "Node"]]
+    query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->(m) DELETE r, n, m", write=True)
+
+
 @pytest.mark.extra
+def test_syntax_outside_the_grammar_is_rejected():
+    # Each of these used to parse and run.
+    query_exception("RETURN abs(-1,)", "Invalid input")
+    query_exception("MATCH MATCH (n) RETURN n", "Invalid input")
+    query_exception("LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r", "Invalid input")
+    query("CREATE (:SetBracket {x: 1})", write=True)
+    query_exception("MATCH (n:SetBracket) SET [n).x = 5", "Invalid input")
+    query_exception("MATCH (n:SetBracket) REMOVE [n).x", "Invalid input")
+    res = query("MATCH (n:SetBracket) RETURN n.x")
+    assert res.result_set == [[1]]
+    query("MATCH (n:SetBracket) DELETE n", write=True)
+
+
+def test_predicates_after_is_null():
+    res = query("RETURN 1 IS NULL IN [false], 1 IS NOT NULL = true, null IS NULL IS NOT NULL")
+    assert res.result_set == [[True, True, True]]
+
+
+def test_not_not_type_checks_its_operand():
+    query_exception("RETURN NOT NOT 1", "Type mismatch")
+    query_exception("RETURN NOT NOT NOT NOT 1", "Type mismatch")
+    res = query("RETURN NOT NOT true, NOT NOT NOT true, NOT NOT null")
+    assert res.result_set == [[True, False, None]]
+
+
+def test_boolean_operator_type_mismatch_names_the_type():
+    # The operand's type in the engine's own vocabulary, as C words it — not
+    # Rust's Debug form (`Int(3)`, `String("a")`).
+    for q, t in [
+        ("UNWIND [3] AS x RETURN x AND true", "Integer"),
+        ("UNWIND [3] AS x RETURN x OR false", "Integer"),
+        ("UNWIND [3] AS x RETURN x XOR true", "Integer"),
+        ("UNWIND ['a'] AS x RETURN x AND true", "String"),
+    ]:
+        query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
@@ -1709,6 +1827,27 @@ def test_nested_list():
     for _ in range(100):
         expected = [expected]
     assert res.result_set == [expected]
+
+
+def test_literal_lexing_matches_c():
+    # Lexer and literal cases that differed from the C implementation (#2909).
+    assert query("UNWIND [1, 2] AS x\r\nRETURN x").result_set == [[1], [2]]
+    assert query("RETURN 0e5, 0E1, 0e-2").result_set == [[0.0, 0.0, 0.0]]
+    assert query("RETURN -0x08000000000000000").result_set == [
+        [-9223372036854775808]
+    ]
+    query_exception("RETURN 9223372036854775808.x", "Integer overflow")
+    query_exception("RETURN 9223372036854775808[0]", "Integer overflow")
+    query_exception("RETURN '\\u+041'", "Invalid unicode escape")
+
+
+def test_block_comments():
+    # A block comment ends at the first `*/`, not at the first `/` (#2901).
+    assert query("RETURN 5 /* a/ -1 //*/").result_set == [[5]]
+    assert query("RETURN 1 /* a/b */ + 1").result_set == [[2]]
+    # A lone `/` is division, and an unterminated `/*` is not a comment.
+    query_exception("RETURN 1 /", "Invalid input")
+    query_exception("RETURN 1 /* never closed", "Invalid input")
 
 
 def test_deep_expression_nesting_is_rejected():
@@ -1885,3 +2024,22 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_self_loop_hop_after_other_hops_keeps_them():
+    """A fixed-length self-loop whose node is reached only through a later
+    (var-length) hop must not drop the hops planned before it (#2999)."""
+    query(
+        "CREATE (a:A {v:1})-[:R]->(b:B {v:2})-[:S]->(c:C {v:3}), (c)-[:L]->(c), "
+        "(:C {v:4})-[:L]->(:C {v:4}), (b)-[:S]->(:C {v:5})",
+        write=True,
+    )
+    for q in [
+        "MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*1..1]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*]->(c:C {v: 3})-[e:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (c)-[:L]->(c)<-[:S*]-(b)<-[:R]-(a) RETURN a.v, b.v, c.v",
+    ]:
+        assert query(q).result_set == [[1, 2, 3]], q
+    res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
+    assert res.result_set == [[1]]

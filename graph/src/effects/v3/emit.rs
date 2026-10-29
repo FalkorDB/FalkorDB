@@ -20,7 +20,6 @@
 use super::records::IndexFieldOptions;
 use crate::index::indexer::IndexOptions as EngineIndexOptions;
 use crate::runtime::runtime::map_to_index_options;
-use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -226,12 +225,11 @@ const fn index_field_flags(t: &IndexType) -> u32 {
 /// along with the fields.
 pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     p: &Pending,
-    g: &AtomicRefCell<Graph>,
+    g: &Graph,
     create: bool,
     ix: &AnnouncedIndex<'_>,
     buf: &mut W,
 ) -> Result<(), String> {
-    let g = &g.borrow();
     // Derived here rather than by the caller, for the same reason
     // `build_effects_buffer` derives it: which schema entries still need
     // announcing is this module's business, not the runtime's.
@@ -324,7 +322,7 @@ type Shape = (Vec<u32>, Vec<u16>);
 /// effects are only built when something is actually replicating.
 pub fn for_each_record(
     p: &Pending,
-    g: &AtomicRefCell<Graph>,
+    g: &Graph,
     mut out: impl FnMut(Record),
 ) {
     let out = &mut out;
@@ -333,9 +331,9 @@ pub fn for_each_record(
     // is normative in v3, not incidental: the ids on every later record are
     // only meaningful once the replica has agreed on the numbering.
     {
-        let graph = g.borrow();
+        let graph = g;
         emit_schema_additions(
-            &graph,
+            graph,
             &SchemaBaseline {
                 labels: p.schema_label_count,
                 types: p.schema_rel_type_count,
@@ -351,19 +349,19 @@ pub fn for_each_record(
         // The entities still exist here — effects are encoded after `commit`
         // applies — so a node's labels and an edge's type are read straight off
         // the graph.
-        let graph = g.borrow();
+        let graph = g;
         digest_updates(
             &p.existing_nodes_attrs,
             &p.deleted_nodes,
             EntityType::Node,
-            &graph,
+            graph,
             out,
         );
         digest_updates(
             &p.existing_relationships_attrs,
             &p.deleted_relationships,
             EntityType::Relationship,
-            &graph,
+            graph,
             out,
         );
     }
@@ -380,7 +378,7 @@ pub fn for_each_record(
 /// the master skipped.
 ///
 /// The master takes a shortcut for these — `delete_pending_node` unwinds the
-/// node out of `Pending` and `return_node_id` hands the id back — so nothing
+/// node out of `Pending` and `cancel_node_id` hands the id back — so nothing
 /// it commits mentions the id at all. The buffer said nothing either, and the
 /// replica's id space came out one short: its next allocation after a
 /// promotion landed on a node that was already live, fusing two entities.
@@ -396,7 +394,7 @@ pub fn for_each_record(
 /// has to be in the buffer before that create, not merely somewhere in it.
 fn digest_cancelled(
     p: &Pending,
-    g: &AtomicRefCell<Graph>,
+    g: &Graph,
     out: &mut impl FnMut(Record),
 ) {
     if p.cancelled_nodes.is_empty() && p.cancelled_relationships.is_empty() {
@@ -418,7 +416,7 @@ fn digest_cancelled(
     // Both kinds are cancelled by the same event: `delete_pending_node` unwinds
     // a node created in this commit, and every relationship hanging off it goes
     // with it. Their ids are reserved and returned the same way
-    // (`return_node_id` / `return_relationship_id` both push into a recycle
+    // (`cancel_node_id` / `cancel_relationship_id` both push into a recycle
     // bin), and `IdSpace::verify` checks both spaces for holes — so a buffer
     // that covers one and not the other is refused outright, naming the ids it
     // allocated and did not create.
@@ -440,7 +438,7 @@ fn digest_cancelled(
 
     // Grouped by type, because `CreateEdge` states one relationship id for the
     // whole record.
-    let graph = g.borrow();
+    let graph = g;
     let mut by_type: FxHashMap<Arc<String>, Vec<&CancelledRelationship>> = FxHashMap::default();
     for r in &p.cancelled_relationships {
         by_type.entry(Arc::clone(&r.type_name)).or_default().push(r);
@@ -575,13 +573,13 @@ fn digest_created_nodes(
 
 fn digest_created_edges(
     p: &Pending,
-    g: &AtomicRefCell<Graph>,
+    g: &Graph,
     out: &mut impl FnMut(Record),
 ) {
     if p.created_rels_by_type.is_empty() {
         return;
     }
-    let graph = g.borrow();
+    let graph = g;
     for (type_name, entries) in &p.created_rels_by_type {
         // Not `expect`, for the same reason `digest_updates` does not use the
         // panicking type lookup: a type resolves only once an edge of it has
@@ -962,6 +960,7 @@ mod tests {
     };
     use crate::entity_type::EntityType;
     use crate::runtime::pending::Pending;
+    use atomic_refcell::AtomicRefCell;
     // The module itself no longer needs these — the announced types moved to
     // `effects::announce` — but the tests still build the values they carry.
     use std::sync::Arc;
@@ -1004,7 +1003,7 @@ mod tests {
         // attribute are announced ahead of the record that names their ids.
         build_index_buffer(
             &Pending::default(),
-            &g,
+            &g.borrow(),
             true,
             &announced("D", &fields, &IndexType::Fulltext, Some(&options)),
             &mut buf,
@@ -1064,7 +1063,7 @@ mod tests {
         let mut buf = v3::new_buffer();
         let err = build_index_buffer(
             &Pending::default(),
-            &g,
+            &g.borrow(),
             true,
             &announced("Missing", &fields, &IndexType::Range, None),
             &mut buf,
@@ -1087,7 +1086,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["a"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         for id in 0..100u64 {
             p.stage_created_node(id, &[0], &[(0, Value::Int(id as i64))]);
         }
@@ -1118,7 +1117,7 @@ mod tests {
         // multi-labeled node is not a member of either single-label shape.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[0], &[]);
         p.stage_created_node(2, &[1], &[]);
         p.stage_created_node(3, &[0, 1], &[]);
@@ -1152,7 +1151,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["x", "y"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[0], &[(0, Value::Int(1))]);
         p.stage_created_node(2, &[0], &[(1, Value::Int(2))]);
         p.stage_created_node(3, &[0], &[(0, Value::Int(3)), (1, Value::Int(4))]);
@@ -1183,7 +1182,7 @@ mod tests {
         live_node(&g, 2, &["A", "B"]);
 
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_updated_node(1, &[(0, Value::Int(10))]);
         p.stage_updated_node(2, &[(0, Value::Int(20))]);
 
@@ -1210,7 +1209,7 @@ mod tests {
         // :B or the replica leaves a stale entry in :B's index.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_deleted_node(1, &[0]);
         p.stage_deleted_node(2, &[0, 1]);
 
@@ -1235,7 +1234,7 @@ mod tests {
         // must still land in a record, under the empty label set.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_deleted_node(1, &[]);
         p.stage_deleted_node(2, &[3]);
         p.stage_deleted_node(3, &[]);
@@ -1265,7 +1264,7 @@ mod tests {
         with_attrs(&g, &["x"]);
         with_edge(&g, "R", 5);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_updated_edge(5, &[(0, Value::Int(1))]);
 
         let records = build(&p, &g);
@@ -1291,7 +1290,7 @@ mod tests {
         with_edge(&g, "R", 5);
         with_edge(&g, "S", 6);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_updated_edge(5, &[(0, Value::Int(1))]);
         p.stage_updated_edge(6, &[(0, Value::Int(2))]);
 
@@ -1322,7 +1321,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["x"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
 
         p.stage_updated_edge(5, &[(0, Value::Int(1))]);
         p.deleted_relationship(RelationshipId::from(5_u64));
@@ -1343,7 +1342,7 @@ mod tests {
         // for the same set. They must land in one record, sorted.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[0, 1], &[]);
         p.stage_created_node(2, &[1, 0], &[]);
 
@@ -1361,7 +1360,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["a", "b"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[], &[(0, Value::Int(1))]);
         p.stage_created_node(2, &[], &[(1, Value::Int(2))]);
 
@@ -1377,7 +1376,7 @@ mod tests {
     fn a_created_node_carries_its_labels_and_emits_no_set_labels() {
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[3], &[]);
         // A node that already existed does need a SET_LABELS record.
         p.stage_label_change(99, &[3]);
@@ -1400,7 +1399,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["a", "b"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_updated_node(1, &[(0, Value::Int(1))]);
         p.stage_updated_node(2, &[(0, Value::Int(2))]);
         p.stage_updated_node(3, &[(0, Value::Int(3)), (1, Value::Int(4))]);
@@ -1463,8 +1462,8 @@ mod tests {
         with_attrs(&g, &["a", "b"]);
         let mut forward = Pending::default();
         let mut backward = Pending::default();
-        forward.set_schema_baseline(&g);
-        backward.set_schema_baseline(&g);
+        forward.set_schema_baseline(&g.borrow());
+        backward.set_schema_baseline(&g.borrow());
         for id in 0..50u64 {
             forward.stage_created_node(id, &[], &[((id % 2) as u16, Value::Int(id as i64))]);
         }
@@ -1517,7 +1516,7 @@ mod tests {
         // about types that carry an index.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_deleted_edges(vec![
             DeletedEdge {
                 id: 1.into(),
@@ -1607,7 +1606,7 @@ mod tests {
         // which shows up as too few groups.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         // Alternating widths, so a stale scratch would merge them.
         for id in 0..100u64 {
             if id % 2 == 0 {
@@ -1653,7 +1652,7 @@ mod tests {
             graph.add_node_attribute_name("age");
         }
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         for id in 0..200u64 {
             p.stage_created_node(id, &[0], &[(0, Value::Int(id as i64)), (1, Value::Int(30))]);
         }
@@ -1676,7 +1675,7 @@ mod tests {
         // instead of the test having to decode a buffer to find out.
         let g = graph();
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[], &[(0, Value::Int(1))]);
         p.stage_created_node(2, &[], &[(1, Value::Int(2))]);
 
@@ -1703,7 +1702,7 @@ mod tests {
         let g = graph();
         with_attrs(&g, &["v"]);
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         for id in 0..10_000u64 {
             p.stage_created_node(id, &[0], &[(0, Value::Int(id as i64))]);
         }
@@ -1726,15 +1725,17 @@ mod cancelled {
     use crate::effects::v3::test_aux::{digest, graph_cell, with_attrs};
     use crate::graph::graph::NodeId;
     use crate::runtime::pending::Pending;
+    use atomic_refcell::AtomicRefCell;
 
     /// `CREATE (a:A {v:1}), (b:B) DELETE a` — a's id is handed back and the
     /// master commits nothing for it.
     fn cancelled(g: &AtomicRefCell<Graph>) -> Pending {
         let mut p = Pending::default();
-        p.set_schema_baseline(g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(0, &[0], &[(0, Value::Int(1))]);
         p.stage_created_node(1, &[1], &[]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1811,7 +1812,7 @@ mod cancelled {
     /// Two edges, the node owning one of them cancelled.
     fn cancelled_with_edges(g: &AtomicRefCell<Graph>) -> Pending {
         let mut p = Pending::default();
-        p.set_schema_baseline(g);
+        p.set_schema_baseline(&g.borrow());
         for id in 0..4u64 {
             p.stage_created_node(id, &[0], &[]);
         }
@@ -1830,7 +1831,8 @@ mod cancelled {
             NodeId::from(3_u64),
         ));
         // Cancels node 0, and with it the edge hanging off it.
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1946,7 +1948,7 @@ mod cancelled {
             graph.get_type_id_mut("R");
         }
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[0], &[]);
         let t = Arc::new(String::from("R"));
         p.created_rels_by_type.entry(t).or_default().push((
@@ -1956,7 +1958,8 @@ mod cancelled {
         ));
         // Node 0 is committed, so this cascades the pending edge without
         // cancelling the node — the shape `delete.rs` reaches twice.
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p.stage_deleted_node(0, &[0]);
 
         let mut buf = crate::effects::v3::new_buffer();
@@ -1967,10 +1970,9 @@ mod cancelled {
             let mut rg = replica.borrow_mut();
             rg.get_label_id_mut("A");
             rg.get_type_id_mut("R");
-            let mut space = crate::graph::id_space::IdSpace::at(rg.node_id_bound());
             let mut ids = RoaringTreemap::new();
             ids.insert(0);
-            rg.create_nodes(&ids, &mut space).unwrap();
+            rg.create_nodes(&ids).unwrap();
         }
         let mut rg = replica.borrow_mut();
         crate::effects::v3::apply::apply_effects(&mut rg, &buf)
@@ -1997,10 +1999,11 @@ mod cancelled {
             graph.get_label_id_mut("A");
         }
         let mut p = Pending::default();
-        p.set_schema_baseline(&g);
+        p.set_schema_baseline(&g.borrow());
         p.stage_created_node(0, &[0], &[]);
         p.stage_deleted_node(7, &[0]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
 
         let records = digest(&p, &g);
         let last_two = &records[records.len() - 2..];
@@ -2024,6 +2027,9 @@ mod cascade {
     /// `CREATE (a)-[:R]->(b) DELETE a` — the delete cascades to the edge before
     /// either reaches the graph.
     fn cascaded() -> Pending {
+        // A graph only so the cascade has somewhere to return the ids to; the
+        // fixture is the `Pending` it leaves behind.
+        let g = graph_cell();
         let mut p = Pending::default();
         p.stage_created_node(0, &[], &[]);
         p.stage_created_node(1, &[], &[]);
@@ -2033,7 +2039,8 @@ mod cascade {
             NodeId::from(1_u64),
             Arc::new("R".to_owned()),
         );
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 

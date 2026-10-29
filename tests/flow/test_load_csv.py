@@ -466,6 +466,21 @@ class testLoadRemoteCSV():
             except Exception:
                 pass
 
+    def test_03_redirect_not_followed(self):
+        # The fetch is pinned to the addresses validated for the URL's own
+        # host, so a redirect is not followed (#3443): it used to be, to the
+        # first host's IP whatever host it named, and over http as well.
+        # Like C (libcurl without CURLOPT_FOLLOWLOCATION) no second request
+        # is made; unlike C, which parses the 3xx body as the CSV, the query
+        # fails and says why. github.com/<repo>/raw/... answers 302 to the
+        # same file on raw.githubusercontent.com, a different host.
+        url = "https://github.com/FalkorDB/FalkorDB/raw/refs/heads/master/demo/social/resources/friends.csv"
+        target = "https://raw.githubusercontent.com/FalkorDB/FalkorDB/refs/heads/master/demo/social/resources/friends.csv"
+
+        msg = assert_error_reply(self.env, self.env.getConnection(), "GRAPH.QUERY",
+                                 GRAPH_ID_REMOTE, f"LOAD CSV FROM '{url}' AS row RETURN row")
+        self.env.assertContains(f"LOAD CSV does not follow redirects (HTTP 302 to {target})", msg)
+
 class testLoadCsvPlan():
     def __init__(self):
         self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")

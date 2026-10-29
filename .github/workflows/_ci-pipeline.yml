@@ -49,7 +49,7 @@ on:
           Gate the image vehicle. True in the merge queue, where the published
           image is the thing being gated on. False on a pull request, where the
           artifact vehicle has already run the same suites and publishing an
-          image only exists so release-image.yml can retag one.
+          image only exists so release-tag.yml can retag one.
         required: false
         type: boolean
         default: false
@@ -61,53 +61,26 @@ jobs:
   # Builds the engine once and runs the Rust unit tests here, where the compiled
   # tree already exists, rather than making `test` compile it a second time.
   build-engine:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container: ${{ inputs.build_image }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "release"
-      - name: Build
-        run: cargo build --release
-      - name: Run unit tests
-        run: |
-          # Doctests are linked separately by rustdoc, which ignores RUSTFLAGS and
-          # the .cargo rustflags, so the duplicate-symbol allowance for
-          # libredisearch_rs.a's bundled std has to come via RUSTDOCFLAGS. Release
-          # LTO is off for the test build: the embedded C/Rust archives carry no
-          # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
-          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
-      - name: Upload release binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-binary
-          path: target/release/libfalkordb.so
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      cache_key: release
+      artifact_name: release-binary
+      unit_tests: true
+
   build-engine-coverage:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container: ${{ inputs.build_image }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "coverage"
-          env-vars: "RUSTFLAGS"
-      - name: Build with coverage
-        run: |
-          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
-      - name: Upload coverage binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-binary
-          path: target/debug/libfalkordb.so
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      profile: debug
+      rustflags: "-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition"
+      cache_key: coverage
+      artifact_name: coverage-binary
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -119,7 +92,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download the engine
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-binary
           path: target/release
@@ -201,6 +174,93 @@ jobs:
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
       # create_manifest defaults true (release is multi-arch).
 
+  # Trivy scan of the RC images: master's `security-scan` job (build.yml),
+  # ported. Fails on a HIGH or CRITICAL vulnerability that has a fixed version;
+  # unfixed ones go in the JSON report but do not gate, since nothing in this
+  # repo can clear them.
+  #
+  # Image vehicle only, like everything else that needs the RC image. Every
+  # merge still passes through it: a fork pull request skips it, but its
+  # merge-queue entry builds the image and scans it. And it scans what ships:
+  # `:edge` (rust-push.yml) and releases (release-tag.yml) retag the queue's
+  # rc-mg-<sha> image rather than rebuilding it.
+  #
+  # `full` is FROM `server` plus the bundled browser, so scanning `full` covers
+  # both repos. The per-arch tags are single-platform manifests, so one amd64
+  # runner fetches the arm64 image from the registry with no emulation.
+  #
+  # What Trivy sees here is the Debian packages and the browser's node_modules.
+  # It cannot see the Rust crates linked into libfalkordb.so or the
+  # redis-server built from source: neither carries package metadata.
+  security-scan:
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64v8]
+    env:
+      IMAGE: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-${{ matrix.arch }}
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Action and Trivy pins match master's security-scan job.
+      - name: Scan (full report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: json
+          output: trivy-report.json
+          exit-code: '0'
+          version: 'v0.69.2'
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-report-${{ matrix.arch }}
+          path: trivy-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Fail on fixable HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+          version: 'v0.69.2'
+
+      # master posts these as a PR comment. That needs `pull-requests: write`
+      # and has no pull request to land on in the merge queue; the run summary
+      # needs neither.
+      - name: Summarise blocking findings
+        if: ${{ failure() && hashFiles('trivy-report.json') != '' }}
+        run: |
+          {
+            echo "### Trivy: fixable HIGH/CRITICAL in \`$IMAGE\`"
+            echo
+            echo "| Severity | ID | Package | Installed | Fixed | Target |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]?
+                   | select((.Severity == "HIGH" or .Severity == "CRITICAL") and (.FixedVersion // "") != "")
+                   | "| \(.Severity) | \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \($t) |"' \
+              trivy-report.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).
   build-rc-asan-image:
@@ -258,7 +318,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "release"
       # Cargo unit tests run against in-process code and don't touch redis.
@@ -271,6 +331,8 @@ jobs:
           # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
           # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
           CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
+          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
       - name: Run pytest tests against the RC image
         run: |
           . /data/venv/bin/activate
@@ -297,7 +359,7 @@ jobs:
           done
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: test-service-logs
           path: tests/flow/logs/
@@ -327,3 +389,106 @@ jobs:
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
       sanitizer_env: address
+
+  # Build the engine with the native index compiled in (`index-falkordb`) and upload it, as
+  # `build-engine` does for the default build. An artifact rather than an RC image: nothing ships
+  # with the flag, so there is no image to gate on, and an artifact needs no `packages: write`.
+  # That is what lets a fork, and a stacked pull request, run the ledger below. amd64 only: the
+  # ledger asks whether the native index serves the index suites, which a second arch would not
+  # change.
+  build-engine-nextgen:
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      features: index-falkordb
+      # The same key as `build-engine`: the feature adds no dependencies, and rust-cache keeps
+      # only the dependencies, so the two builds restore the same cache.
+      cache_key: release
+      artifact_name: nextgen-binary
+
+  # Reconcile the index flow suites against the xfail ledger.
+  #
+  # Not a pass/fail gate on the suites themselves: with no RediSearch fallback the native index
+  # cannot yet serve every predicate, and those gaps are recorded in
+  # tests/flow/nextgen_index_xfail.txt. The gate is that the run MATCHES the ledger — an
+  # unrecorded failure or a ledgered test that started passing both fail the build. That is what
+  # keeps the ledger describing reality instead of decaying into a list of stale excuses.
+  #
+  # Runs the suites in one job rather than through the flow matrix because the check needs the
+  # combined output of all of them; a per-file matrix would need cross-cell collection to say
+  # anything.
+  #
+  # The artifact vehicle, as `_flow-artifact.yml`: RLTest starts redis itself with the downloaded
+  # module, so there is no service and no registry read, and every event runs it.
+  nextgen-index-ledger:
+    needs: [build-engine-nextgen]
+    if: ${{ !cancelled() && needs.build-engine-nextgen.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ inputs.build_image }}
+    permissions:
+      contents: read
+    env:
+      # Where the artifact is unpacked, so flow.sh loads it (see `_flow-artifact.yml`).
+      TARGET_DIR: target/release
+      # The ledger parser reads per-test result lines, and parallel classes interleave them.
+      PARALLELISM: "--parallelism 1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The suites below are test code from the pull request. Do not leave the token in
+          # .git/config.
+          persist-credentials: false
+      - name: Download the native-index binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nextgen-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run the index flow suites against the native-index build
+        # A failing suite is expected while gaps remain, so this step must not fail the job — the
+        # ledger check below is the gate. But each suite's exit status is recorded: a suite that
+        # dies without running its tests would otherwise let its ledger entries reconcile
+        # silently, and the check cannot tell "did not run" from "passed" on its own.
+        #
+        # `shell: bash` is load-bearing. Without it this container job ran the step as `sh -e`, and
+        # the image's `sh` (dash) has no `PIPESTATUS`: the step died with "Bad substitution" right
+        # after the first suite, the other five never ran, and the reconciliation step was
+        # skipped. `set +e` is then needed because an explicit `bash` runs with `-e -o pipefail`,
+        # and a suite with failing tests would abort the step the same way.
+        #
+        # `test_constraint` is here because under the flag a unique constraint looks up duplicates
+        # in the native index, and every class in that file creates or enforces constraints.
+        shell: bash
+        run: |
+          set +e
+          . /data/venv/bin/activate
+          rc=0
+          for t in tests/flow/test_index_create tests/flow/test_index_scans \
+                   tests/flow/test_index_updates tests/flow/test_index_delete \
+                   tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates \
+                   tests/flow/test_constraint; do
+            TEST="$t" ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
+            status=${PIPESTATUS[0]}
+            echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log
+            if [ "$status" -gt 1 ]; then rc=1; fi   # >1 = harness died, not just test failures
+          done
+          exit $rc
+      - name: Reconcile against the xfail ledger
+        # Also after the suites step failed: that failure means a suite died, and the ledger
+        # check is what reports which entries it left unreconciled.
+        if: ${{ !cancelled() }}
+        run: |
+          . /data/venv/bin/activate
+          python3 tests/flow/check_xfail_ledger.py \
+            --ledger tests/flow/nextgen_index_xfail.txt \
+            --results /tmp/nextgen_flow.log
+      - name: Upload flow log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nextgen-index-flow-log
+          path: /tmp/nextgen_flow.log
+          retention-days: 7

@@ -70,10 +70,11 @@ fn record_mut(
             IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
         )
     });
-    // Writes need the MVCC write slot so they build a private version instead of
-    // mutating the published one in place; reads run on the committed snapshot.
+    // Writes build a private version instead of mutating the published one in
+    // place (the MVCC write slot is claimed when the query escalates); reads run
+    // on the committed snapshot.
     let g = if is_write {
-        let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
+        let Ok(g) = session.write_version() else {
             return Err(RedisError::String(
                 "ERR another write is in progress, retry the query".to_string(),
             ));

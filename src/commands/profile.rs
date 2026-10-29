@@ -4,6 +4,7 @@
 //! per-operator statistics (records produced, execution time).
 
 use crate::{
+    commands::query_args::{QueryFlags, parse_query_flags},
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{
         ThreadedGraph, c_graph_key, c_graph_name, profile_mut, register_graph, up_to_nul,
@@ -18,20 +19,11 @@ pub fn graph_profile(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    let QueryFlags { timeout, .. } = parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.
     let query = up_to_nul(args.next_str()?);
-    let mut timeout: Option<i64> = None;
-    while let Ok(arg) = args.next_str() {
-        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
-        // `TIMEOUT` is the documented spelling.
-        if arg.eq_ignore_ascii_case("timeout")
-            && let Ok(t_str) = args.next_str()
-        {
-            timeout = t_str.parse::<i64>().ok();
-        }
-    }
 
     // The key the graph lives at, not C's name for it — see `graph_query`.
     let key_name: Arc<str> = Arc::from(key_str.to_string());

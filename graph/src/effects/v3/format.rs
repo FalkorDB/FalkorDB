@@ -5,8 +5,6 @@
 //! to the dispatch, and touching nothing else — the trait's module stays free
 //! of any single version's rules.
 
-use atomic_refcell::AtomicRefCell;
-
 use super::emit::{build_constraint_buffer, build_index_buffer, for_each_record};
 use super::{
     EFFECTS_VERSION, FLAG_COMPRESSED, apply::ApplyError, apply::apply_effects, open_payload, seal,
@@ -114,7 +112,7 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
 
     fn build<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         buf: &mut W,
     ) -> Result<u64, String> {
         // The loop itself, not a call to a function that is only this loop.
@@ -143,7 +141,7 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
 
     fn build_index<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
         buf: &mut W,

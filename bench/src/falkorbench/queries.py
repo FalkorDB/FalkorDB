@@ -19,6 +19,21 @@ SETUP = [
     "CREATE INDEX FOR (p:Person) ON (p.id)",
     "UNWIND range(0, 9999) AS i CREATE (:Person {id: i, name: 'p' + toString(i)})",
     "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:KNOWS]->(b)",
+    # A second ring carrying edge properties, so an inline edge predicate can be
+    # measured across a selectivity range at constant fan-out. `w` spreads
+    # 0..9 (1,000 edges each, 10%); `c` is constant, so `{c: 1}` matches every
+    # edge and `{w: 11}` matches none. :KNOWS deliberately carries no
+    # properties, which makes it useless for this — a predicate on it is not
+    # 0%-selective, it is unsatisfiable against a property that does not exist.
+    #
+    # It doubles SETUP's edges (10,109 -> 20,109) but changes few rows outside
+    # its own: profiling every read row with and without it, 7 of 287 differ.
+    # Three are rows that use it (`{w: 11}` matches nothing either way), two
+    # are the catalogue procedures, `multi-type` only prints its types in a
+    # different order, and `untyped var-length` now walks both rings (6 -> 14
+    # rows out of the walk). The untyped edge scans do not move:
+    # `reduce_count` answers them from per-type counts without visiting an edge.
+    "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:RATED {w: i % 10, c: 1}]->(b)",
     "MATCH (p:Person) SET p.age = p.id % 80, p.score = p.id * 1.5",
     # ---- Doc corpus for coverage features (fulltext / vector / edge index /
     # constraints). Kept on separate labels/types so the Person/KNOWS perf
@@ -76,6 +91,27 @@ SETUP = [
     # the constraint goes OPERATIONAL (unlike the SIMILAR one, which fails).
     "CREATE INDEX FOR ()-[r:UREL]-() ON (r.uid)",
     "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[:UREL {uid: 1}]->(b), (a)-[:UREL {uid: 2}]->(b)",
+    # ---- write-path index-maintenance corpus --------------------------------
+    # Deliberately NOT constrained. A unique constraint adds its own duplicate
+    # check to every write, and that would be measured along with the index
+    # maintenance this corpus exists to isolate. `WIdx` carries `v` (indexed)
+    # beside `w` (not), so a write to each is identical apart from the index.
+    "CREATE INDEX FOR (n:WIdx) ON (n.id)",
+    "CREATE INDEX FOR (n:WIdx) ON (n.v)",
+    "UNWIND range(0, 999) AS i CREATE (:WIdx {id: i, v: i, w: i})",
+    # Deletion pool. Sized for one run of `mass delete indexed` with room to
+    # spare: its warmup and 50 reps take 5,100. Running dry does not fail, it
+    # quietly measures a no-op, and a `--reuse` run, which skips this setup,
+    # starts from the 900 an earlier run left.
+    "CREATE INDEX FOR (n:WDel) ON (n.v)",
+    "UNWIND range(0, 5999) AS i CREATE (:WDel {v: i})",
+    # Indexed label for creates and deletes.
+    "CREATE INDEX FOR (n:WTmp) ON (n.v)",
+    # Indexed label for `label churn indexed`; its twin, `WPlain`, has none.
+    "CREATE INDEX FOR (n:WExtra) ON (n.v)",
+    # Edge equivalent: `wv` indexed, `ww` not, no constraint.
+    "CREATE INDEX FOR ()-[r:WREL]-() ON (r.wv)",
+    "MATCH (a:WIdx {id: 0}), (b:WIdx {id: 1}) CREATE (a)-[:WREL {wv: 1, ww: 1}]->(b)",
 ]
 
 # Raw redis commands run after SETUP (redis-cli arg lists). {graph} is
@@ -223,9 +259,10 @@ QUERIES = [
     Q("SET property",        True,  "MATCH (p:Person {id: 500}) SET p.age = 30 RETURN p.age", cg=True),
     Q("REMOVE",              True,  "MATCH (p:Person {id: 3}) SET p.tmp = 1 REMOVE p.tmp", cg=True),
     Q("create node",         True,  "CREATE (:Tmp {x: 1})", cg=True),
-    Q("delete node",         True,  "MATCH (t:Tmp) WITH t LIMIT 1 DELETE t", cg=True),
+    Q("delete node",         True,  "MATCH (t:Tmp) WITH t LIMIT 1 DELETE t", cg=True, drains=True),
     Q("create edge",         True,  "MATCH (a:Person {id: 0}), (b:Person {id: 1}) CREATE (a)-[:TKNOWS]->(b)"),
-    Q("delete edge",         True,  "MATCH (:Person {id: 0})-[r:TKNOWS]->() WITH r LIMIT 1 DELETE r"),
+    Q("delete edge",         True,  "MATCH (:Person {id: 0})-[r:TKNOWS]->() WITH r LIMIT 1 DELETE r",
+      drains=True),
 
     # ---- mixed clauses -----------------------------------------------------
     Q("aggregates",          False, "MATCH (p:Person) RETURN min(p.id), max(p.id), avg(p.score), sum(p.age), count(*)", cg=True),
@@ -488,7 +525,7 @@ QUERIES = [
     Q("MSF nodes yield",     False, "CALL algo.MSF({relationshipTypes: ['SIMILAR'], weightAttribute: 'weight'}) YIELD nodes, edges RETURN size(nodes), size(edges)", 200),
     Q("maxFlow KNOWS",       False, "MATCH (a:Person {id: 1}), (b:Person {id: 5}) CALL algo.maxFlow({sourceNodes: [a], targetNodes: [b], relationshipTypes: ['KNOWS'], capacityProperty: 'weight', defaultCapacity: 1.0}) YIELD maxFlow RETURN maxFlow", 200),
 
-    # ---- round 10: comprehension-body (Row-context) eval, null/scalar
+    # ---- round 10: comprehension-body (Row-context) eval, null
     # iterables, chained-compare null arms, temporal component accessors,
     # value ordering arms, CALL{}+UNION binder, pending-entity reads,
     # label predicate, label-filtered algo matrices, lexer corners ----------
@@ -503,7 +540,6 @@ QUERIES = [
     Q("rel subscript",       False, "MATCH (a:Person {id: 1})-[r:KNOWS]->() RETURN r['weight'] LIMIT 5"),
     Q("list null subscript", False, "RETURN [1, 2, 3][null]"),
     Q("null iterable",       False, "RETURN [x IN null | x], all(x IN null WHERE x > 0), any(x IN null WHERE x > 0), none(x IN null WHERE x > 0), single(x IN null WHERE x > 0)"),
-    Q("scalar iterables",    False, "UNWIND 5 AS x RETURN x, [y IN 6 | y]"),
     Q("single multi true",   False, "RETURN single(x IN [1, 2, 3] WHERE x > 1)"),
     Q("unary minus null",    False, "MATCH (p:Person {id: 1}) RETURN -p.noSuchProp"),
     Q("untyped shortestPath", False, "MATCH (a:Person {id: 1}), (b:Person {id: 5}) RETURN shortestPath((a)-[*..5]->(b))"),
@@ -566,6 +602,22 @@ QUERIES = [
     # Upper-bound-only index ranges (Le on node index, Lt on edge index).
     Q("index le range",       False, "MATCH (p:Person) WHERE p.id <= 50 RETURN count(p)"),
     Q("edge index lt range",  False, "MATCH ()-[r:SIMILAR]->() WHERE r.weight < 5 RETURN count(r)"),
+
+    # ---- inline edge predicate, swept by selectivity -----------------------
+    # `absorb_edge_filters_into_traverse` moves these into the CondTraverse so
+    # they reject during edge iteration instead of after the row is built. The
+    # win should scale with how much the predicate rejects, so measure the ends
+    # and the middle rather than one point.
+    Q("rel attr match none", False, "MATCH (a:Person)-[:RATED {w: 11}]->(b) RETURN count(b)"),
+    Q("rel attr match 10pct", False, "MATCH (a:Person)-[:RATED {w: 5}]->(b) RETURN count(b)"),
+    Q("rel attr match all",  False, "MATCH (a:Person)-[:RATED {c: 1}]->(b) RETURN count(b)"),
+
+    # allShortestPaths with an inline edge predicate. Uses :RATED, not :KNOWS —
+    # :KNOWS carries no properties, so a predicate on it is unsatisfiable rather
+    # than selective and would measure the walk never starting. `c` is constant,
+    # so every edge passes and the per-edge check runs on the whole walk, which
+    # is the case that actually costs.
+    Q("allShortestPaths edge attr", False, "MATCH (a:Person {id: 0}), (b:Person {id: 3}) WITH a, b MATCH p = allShortestPaths((a)-[:RATED* {c: 1}]->(b)) RETURN count(p)"),
     # Two lower bounds on the same attribute: merge_range_queries falls back
     # to IndexQuery::And (can't compare expr values at plan time).
     Q("index same-bound and", False, "MATCH (p:Person) WHERE p.id > 10 AND p.id >= 20 RETURN count(p)"),
@@ -590,6 +642,48 @@ QUERIES = [
     Q("expr case filter",    False, "MATCH (p:Person) WHERE (CASE WHEN p.age > 40 THEN 1 ELSE 2 END) = 1 RETURN count(p)", cg=True),
     Q("expr project computed", False, "MATCH (p:Person) WITH p.age * 2 AS d RETURN count(d)", cg=True),
 
+    # ---- write-path index maintenance ---------------------------------------
+    # Each indexed write is paired with the identical write to an UNINDEXED
+    # property of the same node, so the delta between the pair is the index
+    # maintenance cost and nothing else — same match, same commit, same
+    # attribute-store write.
+    #
+    # Values are incremented rather than assigned a constant: `SET n.v = 42`
+    # writes the same value every rep after the first, and an update that does
+    # not move the key is not the update this is meant to measure.
+    # Read-only baseline for the pair below: the same indexed lookup with no
+    # write at all. Both SET queries pay this lookup, and it is itself served by
+    # a different engine in each build, so it has to be measured separately
+    # before the pair's delta can be attributed to write-side maintenance.
+    Q("WIdx lookup only",      False, "MATCH (n:WIdx {id: 500}) RETURN n.w"),
+    Q("SET indexed prop",      True, "MATCH (n:WIdx {id: 500}) SET n.v = n.v + 1 RETURN n.v"),
+    Q("SET unindexed prop",    True, "MATCH (n:WIdx {id: 500}) SET n.w = n.w + 1 RETURN n.w"),
+    Q("SET += indexed map",    True, "MATCH (n:WIdx {id: 501}) SET n += {v: n.v + 1, x: 1} RETURN n.v"),
+    Q("SET += unindexed map",  True, "MATCH (n:WIdx {id: 501}) SET n += {w: n.w + 1, x: 1} RETURN n.w"),
+    # Create, then delete, as separate commits. A node created and deleted in one
+    # query is never committed, so it never reaches an index. The unindexed twins
+    # are `create node` and `delete node` on :Tmp; as there, the delete takes the
+    # nodes the create added.
+    Q("create indexed node",   True, "CREATE (:WTmp {v: 1})"),
+    Q("delete indexed node",   True, "MATCH (t:WTmp) WITH t LIMIT 1 DELETE t",
+      needs=("create indexed node",), drains=True),
+    # Mass delete — the `remove_batch` path, 100 nodes per rep. The label scan
+    # yields ids in order, so each rep deletes the lowest 100 left: adjacent keys.
+    # Explicit reps because this drains its pool (see the setup).
+    Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50, drains=True),
+    # A label added or removed moves a node in or out of that label's columns.
+    # Each rep toggles the label, so every rep commits one direction; setting and
+    # removing it in one query would cancel before the commit.
+    Q("label churn indexed",   True, "MATCH (n:WIdx {id: 502}) WITH n, n:WExtra AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WExtra) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WExtra)"),
+    Q("label churn unindexed", True, "MATCH (n:WIdx {id: 503}) WITH n, n:WPlain AS had "
+                                     "FOREACH (_ IN CASE WHEN had THEN [1] ELSE [] END | REMOVE n:WPlain) "
+                                     "FOREACH (_ IN CASE WHEN had THEN [] ELSE [1] END | SET n:WPlain)"),
+    # Edge pair.
+    Q("SET indexed edge prop",   True, "MATCH ()-[r:WREL]->() SET r.wv = r.wv + 1 RETURN r.wv"),
+    Q("SET unindexed edge prop", True, "MATCH ()-[r:WREL]->() SET r.ww = r.ww + 1 RETURN r.ww"),
+
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),
     # which would slow every full-graph query measured after them.
@@ -608,17 +702,17 @@ QUERIES = [
     Q("write 10",            True,  "UNWIND range(1, 10) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 100",           True,  "UNWIND range(1, 100) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 500),
     Q("create 100",          True,  "UNWIND range(1, 100) AS i CREATE (:Tmp {x: i})", 500),
-    Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500),
+    Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500, drains=True),
     Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
     Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
     Q("create 10k",          True,  "UNWIND range(1, 10000) AS i CREATE (:Tmp {x: i})", 50),
-    Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
+    Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50, drains=True),
     Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
     Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
 
     # ---- one write against a large EDGE population -------------------------
     # Every sized row above creates and deletes *nodes*, so the edge count
-    # stays at SETUP's ~10k for the whole run and no row in the suite is
+    # stays at SETUP's ~20k for the whole run and no row in the suite is
     # sensitive to the cost of a write scaling with |E|. That hid #2687, where
     # the edge-endpoint index was copied whole on the first edge mutation of
     # every write transaction: 2,676,794 bytes allocated to create one edge
@@ -629,7 +723,7 @@ QUERIES = [
     # `urel create delete`, three orders of magnitude further up the edge count.
     # It DEPENDS on `bulk edges 200k` having run first, which `needs=` declares
     # so that selecting it by name pulls the builder in. Without that a named
-    # run measures it at 10k edges instead, quietly and without failing.
+    # run measures it at ~20k edges instead, quietly and without failing.
     #
     # Both go last so the 200k edges cannot shift any other row, and the
     # measured row follows a large *create* rather than a large delete, so it

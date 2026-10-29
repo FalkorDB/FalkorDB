@@ -114,6 +114,13 @@ fn udf_load(
         )));
     }
 
+    // An empty name would register functions as `.f`, which no query can call.
+    if lib_name.is_empty() {
+        return Err(RedisError::Str("empty lib name"));
+    }
+    if script.is_empty() {
+        return Err(RedisError::Str("empty script"));
+    }
     validate_identifier_len(&lib_name, "Library name").map_err(RedisError::String)?;
 
     let repo = get_udf_repo();

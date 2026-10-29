@@ -42,8 +42,38 @@ use crate::{
         graph::{LabelId, NodeId, RelationshipId},
         graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
     },
-    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
+    runtime::{
+        functions::{
+            Type,
+            temporal::{construct_duration_secs, decompose_duration},
+        },
+        ordermap::OrderMap,
+        runtime::Runtime,
+    },
 };
+
+/// The deepest a value may nest: `[]` and `{}` are depth 1, `[[]]` is depth 2.
+///
+/// `Value` is recursive, and so is everything that walks one — drop, hash,
+/// compare, the RDB encoder, reply formatting, the UDF conversions — one stack
+/// frame (or a few) per level. A value deep enough exhausts the stack of the
+/// thread that touches it, which is an abort rather than an error. So every
+/// place a nested value can *enter* the engine refuses one deeper than this,
+/// and every recursive walk can then rely on the bound.
+///
+/// On a release build a 2 MiB thread (Rust's default, and what the query pool
+/// runs on) frees a nested list of about 25,900 levels before its stack runs
+/// out. 4,096 leaves a wide margin below that, and is far beyond any nesting
+/// real data uses; the tests run values at exactly this depth on a 2 MiB
+/// thread.
+pub const MAX_VALUE_NESTING: usize = 4096;
+
+/// The error an entry point returns for a value nested past
+/// [`MAX_VALUE_NESTING`].
+#[must_use]
+pub fn value_nesting_error() -> String {
+    format!("Value nesting exceeds the maximum depth of {MAX_VALUE_NESTING}")
+}
 
 /// A trait for formatting values as JSON, similar to Display but for JSON output
 pub trait DisplayJson {
@@ -132,8 +162,11 @@ impl Point {
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
+        // `a` is sin²(c/2), mathematically in [0, 1]; for (near-)antipodal
+        // points it rounds just above 1 and `(1.0 - a).sqrt()` would be NaN.
         let a = (lat1.cos() * lat2.cos())
-            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2));
+            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2))
+            .clamp(0.0, 1.0);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in meters
@@ -294,7 +327,6 @@ impl Value {
 
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
-        use crate::runtime::functions::temporal::decompose_duration;
         use std::fmt::Write;
         let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
             return format!("PT{duration_secs}S");
@@ -697,9 +729,31 @@ fn add_duration_to_timestamp(
     ts: i64,
     dur_secs: i64,
 ) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, years, months);
+    Ok(days * 86400 + time_of_day + remaining_secs)
+}
+
+/// Subtract a duration from a timestamp.
+fn sub_duration_from_timestamp(
+    ts: i64,
+    dur_secs: i64,
+) -> Result<i64, String> {
+    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, -years, -months);
+    Ok(days * 86400 + time_of_day - remaining_secs)
+}
+
+/// Move `ts` by whole years and months, returning (days since epoch, time of
+/// day). A day past the end of the target month rolls over into the next
+/// month (2020-03-31 minus one month is 2020-03-02), as C's `timegm`
+/// normalisation does. Addition and subtraction share this so that
+/// `d - dur == d + (-dur)`.
+fn shift_months(
+    ts: i64,
+    years: i32,
+    months: i32,
+) -> (i64, i64) {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
@@ -722,31 +776,10 @@ fn add_duration_to_timestamp(
         (adj_year, adj_month, d)
     };
 
-    let new_days = days_from_civil(final_year, final_month, final_day);
-    Ok(new_days * 86400 + time_of_day + remaining_secs)
-}
-
-/// Subtract a duration from a timestamp.
-fn sub_duration_from_timestamp(
-    ts: i64,
-    dur_secs: i64,
-) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
-    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let days = ts.div_euclid(86400);
-    let time_of_day = ts.rem_euclid(86400);
-    let (y, m, d) = civil_from_days(days);
-
-    let new_year = y - years;
-    let new_month_raw = m as i32 - months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
-    let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
-    let max_day = days_in_month(adj_year, adj_month);
-    let day = d.min(max_day);
-
-    let new_days = days_from_civil(adj_year, adj_month, day);
-    Ok(new_days * 86400 + time_of_day - remaining_secs)
+    (
+        days_from_civil(final_year, final_month, final_day),
+        time_of_day,
+    )
 }
 
 const fn days_in_month(
@@ -842,6 +875,9 @@ impl Hash for Value {
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
                     casted.hash(state);
+                } else if x.is_nan() {
+                    // every NaN is one grouping key, whatever its sign/payload
+                    f64::NAN.to_bits().hash(state);
                 } else {
                     x.to_bits().hash(state);
                 }
@@ -873,13 +909,13 @@ impl Hash for Value {
             Self::VecF32(x) => {
                 9.hash(state);
                 for f in x.iter() {
-                    f.to_bits().hash(state);
+                    f32_hash_bits(*f).hash(state);
                 }
             }
             Self::Point(p) => {
                 10.hash(state);
-                p.latitude.to_bits().hash(state);
-                p.longitude.to_bits().hash(state);
+                f32_hash_bits(p.latitude).hash(state);
+                f32_hash_bits(p.longitude).hash(state);
             }
             Self::Datetime(x) => {
                 11.hash(state);
@@ -1006,9 +1042,6 @@ impl Value {
             }
             // Duration + Duration: decompose both, add components
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
@@ -1024,9 +1057,12 @@ impl Value {
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
                 Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
-                Ok(Self::Time(add_duration_to_timestamp(t, dur)?))
-            }
+            // A time has no date: keep only the time of day. Every duration
+            // encoding is whole days (years/months/days) plus a clock offset,
+            // so the time of day of `t + dur` is the openCypher result.
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
+                Self::Time((t.rem_euclid(86400) + dur.rem_euclid(86400)).rem_euclid(86400)),
+            ),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1051,9 +1087,6 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
@@ -1069,9 +1102,9 @@ impl Sub for Value {
             (Self::Datetime(d), Self::Duration(dur)) => {
                 Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) => {
-                Ok(Self::Time(sub_duration_from_timestamp(t, dur)?))
-            }
+            (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
+                (t.rem_euclid(86400) - dur.rem_euclid(86400)).rem_euclid(86400),
+            )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
                 Err("Type mismatch: cannot subtract a temporal value from a duration".to_string())
@@ -1348,6 +1381,8 @@ impl ValueGetType for Value {
 }
 
 impl Value {
+    /// The type's name as C spells it (`SIType_ToString`): what `typeOf()`
+    /// returns and what every "Type mismatch: … but was <name>" error prints.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -1359,9 +1394,9 @@ impl Value {
             Self::List(_) => "List",
             Self::Map(_) => "Map",
             Self::Node(_) => "Node",
-            Self::Relationship(..) => "Relationship",
+            Self::Relationship(..) => "Edge",
             Self::Path(_) => "Path",
-            Self::VecF32(_) => "VecF32",
+            Self::VecF32(_) => "Vectorf32",
             Self::Point(_) => "Point",
             Self::Datetime(_) => "Datetime",
             Self::Date(_) => "Date",
@@ -1506,6 +1541,77 @@ impl Value {
             }
         }
         (Ordering::Equal, DisjointOrNull::None)
+    }
+
+    /// The total order `ORDER BY` and `list.sort` sort by.
+    ///
+    /// [`CompareValue::compare_value`] answers the three-valued `=`/`<`
+    /// question, and its ordering half is not a total order: NaN is `Less`
+    /// than every number in both directions, `Int` against `Float` rounds the
+    /// integer to `f64` (so `2^53 = 2^53.0 = 2^53+1` while `2^53 < 2^53+1`),
+    /// and maps stop at the first null/disjoint value. `slice::sort_by` panics
+    /// on such a comparator, so sorting uses this order instead:
+    ///
+    /// - values of different types order by type, except that `Int` and
+    ///   `Float` are one numeric type ordered by exact value (no rounding);
+    /// - NaN sorts above every number and equal to itself;
+    /// - lists and paths are lexicographic, then shorter first;
+    /// - maps order by key count, then sorted keys, then values in key order.
+    #[must_use]
+    pub fn sort_cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (Self::Int(a), Self::Int(b))
+            | (Self::Datetime(a), Self::Datetime(b))
+            | (Self::Date(a), Self::Date(b))
+            | (Self::Time(a), Self::Time(b))
+            | (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
+            (Self::Float(a), Self::Float(b)) => sort_cmp_f64(*a, *b),
+            (Self::Int(i), Self::Float(f)) => sort_cmp_int_float(*i, *f),
+            (Self::Float(f), Self::Int(i)) => sort_cmp_int_float(*i, *f).reverse(),
+            (Self::String(a), Self::String(b)) => a.cmp(b),
+            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| x.sort_cmp(y))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| a.len().cmp(&b.len())),
+            (Self::Map(a), Self::Map(b)) => Self::sort_cmp_map(a, b),
+            (Self::VecF32(a), Self::VecF32(b)) => a.len().cmp(&b.len()).then_with(|| {
+                a.iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| sort_cmp_f32(*x, *y))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            }),
+            (Self::Node(a), Self::Node(b)) => a.cmp(b),
+            (Self::Relationship(a), Self::Relationship(b)) => a.cmp(b),
+            (Self::Point(a), Self::Point(b)) => sort_cmp_f32(a.longitude, b.longitude)
+                .then_with(|| sort_cmp_f32(a.latitude, b.latitude)),
+            _ => self.order().cmp(&other.order()),
+        }
+    }
+
+    fn sort_cmp_map(
+        a: &OrderMap<Arc<String>, Self>,
+        b: &OrderMap<Arc<String>, Self>,
+    ) -> Ordering {
+        a.len().cmp(&b.len()).then_with(|| {
+            let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
+            a_keys.sort();
+            let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
+            b_keys.sort();
+            a_keys.cmp(&b_keys).then_with(|| {
+                a_keys
+                    .iter()
+                    .map(|key| a[*key].sort_cmp(&b[*key]))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            })
+        })
     }
 
     /// True when Cypher `=` involving this value can never be TRUE — not even
@@ -1810,6 +1916,78 @@ fn compare_floats(
     }
 }
 
+/// Total order on `f64` for sorting: IEEE order for numbers (`-0.0` equals
+/// `0.0`), with NaN above every number and equal to itself.
+#[inline]
+#[must_use]
+pub fn sort_cmp_f64(
+    a: f64,
+    b: f64,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// [`sort_cmp_f64`] for `f32` (points and vectors), except that `-0.0` sorts
+/// before `0.0`: C groups vectors and points by their component bits, so
+/// signed zeros are different keys there, while every NaN is one key.
+#[inline]
+fn sort_cmp_f32(
+    a: f32,
+    b: f32,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(Ordering::Equal) => b.is_sign_negative().cmp(&a.is_sign_negative()),
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// The bits [`Value::hash`] uses for an `f32` component: one value for every
+/// NaN, as [`sort_cmp_f32`] treats them as equal.
+#[inline]
+fn f32_hash_bits(f: f32) -> u32 {
+    if f.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        f.to_bits()
+    }
+}
+
+/// Compares an integer with a float by exact value, without rounding the
+/// integer to `f64` (above 2^53 `i as f64` merges neighbouring integers). NaN
+/// sorts above every integer, as in [`sort_cmp_f64`].
+#[inline]
+fn sort_cmp_int_float(
+    i: i64,
+    f: f64,
+) -> Ordering {
+    // 2^63 is exactly representable; every f64 in [-2^63, 2^63) truncates to
+    // an i64 without overflow.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f.is_nan() || f >= TWO_POW_63 {
+        return Ordering::Less;
+    }
+    if f < -TWO_POW_63 {
+        return Ordering::Greater;
+    }
+    let whole = f.trunc();
+    // `whole` is integral and in range, so the cast is exact, and so is the
+    // fractional part `f - whole`.
+    i.cmp(&(whole as i64)).then_with(|| {
+        let frac = f - whole;
+        if frac > 0.0 {
+            Ordering::Less
+        } else if frac < 0.0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    })
+}
+
 /// Orders two vectors the way C's `SIVector_Compare` does: dimension first,
 /// then the first element where `x != y` decides by `x > y`. So a NaN element
 /// never compares equal (not even to NaN) and orders `Less` in both
@@ -1983,66 +2161,83 @@ impl Encode<19> for Value {
 
 impl Decode<19> for Value {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let tag = r.read_unsigned()?;
-        match tag {
-            si_type::T_NULL => Ok(Self::Null),
-            si_type::T_BOOL => Ok(Self::Bool(r.read_signed()? != 0)),
-            si_type::T_INT64 => Ok(Self::Int(r.read_signed()?)),
-            si_type::T_DOUBLE => Ok(Self::Float(r.read_double()?)),
-            // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
-            t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
-                let buf = r.read_buffer()?;
-                let s = if buf.last() == Some(&0) {
-                    String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
-                } else {
-                    String::from_utf8_lossy(&buf).to_string()
-                };
-                if t == (si_type::T_INTERN | si_type::T_STRING) {
-                    Ok(Self::String(
-                        crate::runtime::string_pool::global().intern(Arc::new(s)),
-                    ))
-                } else {
-                    Ok(Self::String(Arc::new(s)))
-                }
+        decode_value(r, 0)
+    }
+}
+
+/// [`Value::decode`] for a value inside `depth` enclosing arrays.
+///
+/// Recursive, so the depth is counted and a value inside more than
+/// [`MAX_VALUE_NESTING`] arrays is a decode error: `GRAPH.RESTORE` hands this
+/// a client's bytes, and a few hundred KB of nested `T_ARRAY` headers would
+/// otherwise be tens of thousands of frames. Every value the engine accepts is
+/// within the same bound, so nothing it saved is refused here.
+fn decode_value(
+    r: &mut dyn Reader,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(value_nesting_error());
+    }
+    let tag = r.read_unsigned()?;
+    match tag {
+        si_type::T_NULL => Ok(Value::Null),
+        si_type::T_BOOL => Ok(Value::Bool(r.read_signed()? != 0)),
+        si_type::T_INT64 => Ok(Value::Int(r.read_signed()?)),
+        si_type::T_DOUBLE => Ok(Value::Float(r.read_double()?)),
+        // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
+            let buf = r.read_buffer()?;
+            let s = if buf.last() == Some(&0) {
+                String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
+            } else {
+                String::from_utf8_lossy(&buf).to_string()
+            };
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
+                Ok(Value::String(
+                    crate::runtime::string_pool::global().intern(Arc::new(s)),
+                ))
+            } else {
+                Ok(Value::String(Arc::new(s)))
             }
-            si_type::T_ARRAY => {
-                let len = r.read_unsigned()?;
-                let mut items = ThinVec::with_capacity(len as usize);
-                for _ in 0..len {
-                    items.push(Self::decode(r)?);
-                }
-                Ok(Self::List(Arc::new(items)))
-            }
-            si_type::T_POINT => {
-                let lat = r.read_double()?;
-                let lon = r.read_double()?;
-                Ok(Self::Point(Point {
-                    latitude: lat as f32,
-                    longitude: lon as f32,
-                }))
-            }
-            si_type::T_VECTOR_F32 => {
-                let bytes = r.read_buffer()?;
-                if bytes.len() < 4 {
-                    return Err("vector buffer too short".into());
-                }
-                let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-                let mut v = ThinVec::with_capacity(dim);
-                for i in 0..dim {
-                    let off = 4 + i * 4;
-                    if off + 4 > bytes.len() {
-                        return Err("vector data truncated".into());
-                    }
-                    v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
-                }
-                Ok(Self::VecF32(Arc::new(v)))
-            }
-            si_type::T_DATETIME => Ok(Self::Datetime(r.read_signed()?)),
-            si_type::T_DATE => Ok(Self::Date(r.read_signed()?)),
-            si_type::T_TIME => Ok(Self::Time(r.read_signed()?)),
-            si_type::T_DURATION => Ok(Self::Duration(r.read_signed()?)),
-            _ => Err(format!("unknown SIType tag: {tag}")),
         }
+        si_type::T_ARRAY => {
+            let len = r.read_unsigned()?;
+            let mut items = ThinVec::with_capacity(len as usize);
+            for _ in 0..len {
+                items.push(decode_value(r, depth + 1)?);
+            }
+            Ok(Value::List(Arc::new(items)))
+        }
+        si_type::T_POINT => {
+            let lat = r.read_double()?;
+            let lon = r.read_double()?;
+            Ok(Value::Point(Point {
+                latitude: lat as f32,
+                longitude: lon as f32,
+            }))
+        }
+        si_type::T_VECTOR_F32 => {
+            let bytes = r.read_buffer()?;
+            if bytes.len() < 4 {
+                return Err("vector buffer too short".into());
+            }
+            let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+            let mut v = ThinVec::with_capacity(dim);
+            for i in 0..dim {
+                let off = 4 + i * 4;
+                if off + 4 > bytes.len() {
+                    return Err("vector data truncated".into());
+                }
+                v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+            }
+            Ok(Value::VecF32(Arc::new(v)))
+        }
+        si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
+        si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
+        si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
+        si_type::T_DURATION => Ok(Value::Duration(r.read_signed()?)),
+        _ => Err(format!("unknown SIType tag: {tag}")),
     }
 }
 
@@ -2318,5 +2513,390 @@ mod is_never_equal_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sort_cmp_tests {
+    use super::{OrderMap, Ordering, Point, Value, sort_cmp_f64};
+    use std::hash::{Hash, Hasher};
+    use std::sync::Arc;
+
+    const P53: i64 = 1 << 53;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(Arc::new(s.to_string()))
+    }
+
+    /// Values on which `compare_value(..).0` is not a total order (#2891),
+    /// plus neighbours of every type so the order between types is covered.
+    fn corpus() -> Vec<Value> {
+        vec![
+            Value::Null,
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Int(i64::MIN),
+            Value::Int(-1),
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(P53 - 1),
+            Value::Int(P53),
+            Value::Int(P53 + 1),
+            Value::Int(P53 + 2),
+            Value::Int(i64::MAX),
+            Value::Float(f64::NEG_INFINITY),
+            Value::Float(-1.5),
+            Value::Float(-0.0),
+            Value::Float(0.0),
+            Value::Float(0.5),
+            Value::Float(1.0),
+            Value::Float(P53 as f64),
+            Value::Float((P53 + 2) as f64),
+            Value::Float(9_223_372_036_854_775_808.0),
+            Value::Float(-9_223_372_036_854_775_808.0),
+            Value::Float(f64::INFINITY),
+            Value::Float(f64::NAN),
+            Value::Float(-f64::NAN),
+            string(""),
+            string("s"),
+            list(vec![]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(1))]),
+            map(vec![("a", string("s")), ("b", Value::Int(3))]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(2))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, -f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
+            Value::VecF32(Arc::new([-0.0].into_iter().collect())),
+            Value::VecF32(Arc::new([0.0].into_iter().collect())),
+            list(vec![Value::VecF32(Arc::new([-0.0].into_iter().collect()))]),
+            list(vec![Value::VecF32(Arc::new([0.0].into_iter().collect()))]),
+            point(-0.0, 0.0),
+            point(0.0, 0.0),
+            point(f32::NAN, 1.0),
+            point(-f32::NAN, 1.0),
+        ]
+    }
+
+    fn point(
+        latitude: f32,
+        longitude: f32,
+    ) -> Value {
+        Value::Point(Point {
+            latitude,
+            longitude,
+        })
+    }
+
+    fn hash_of(v: &Value) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+
+    /// Grouping and DISTINCT put keys in a hash table whose equality is
+    /// `sort_cmp`, so keys that `sort_cmp` calls equal must hash equally.
+    /// Floats merge `-0.0` with `0.0` and every NaN; vector and point
+    /// components merge every NaN but keep signed zeros apart, as C does.
+    #[test]
+    fn sort_cmp_equal_keys_hash_equally() {
+        let values = corpus();
+        for a in &values {
+            for b in &values {
+                if a.sort_cmp(b) == Ordering::Equal {
+                    assert_eq!(hash_of(a), hash_of(b), "{a:?} vs {b:?}");
+                }
+            }
+        }
+        let vec = |f: f32| Value::VecF32(Arc::new([f].into_iter().collect()));
+        assert_eq!(vec(f32::NAN).sort_cmp(&vec(-f32::NAN)), Ordering::Equal);
+        assert_ne!(vec(-0.0).sort_cmp(&vec(0.0)), Ordering::Equal);
+        assert_ne!(point(-0.0, 0.0).sort_cmp(&point(0.0, 0.0)), Ordering::Equal);
+        assert_eq!(
+            Value::Float(-0.0).sort_cmp(&Value::Float(0.0)),
+            Ordering::Equal
+        );
+    }
+
+    /// `sort_cmp` is a total order: reflexive, antisymmetric and transitive
+    /// over every pair and triple of the corpus. `compare_value` breaks each
+    /// of these (NaN, `2^53` Int/Float, maps).
+    #[test]
+    fn sort_cmp_is_a_total_order() {
+        let values = corpus();
+        for a in &values {
+            assert_eq!(a.sort_cmp(a), Ordering::Equal, "{a:?}");
+            for b in &values {
+                let ab = a.sort_cmp(b);
+                assert_eq!(ab, b.sort_cmp(a).reverse(), "{a:?} vs {b:?}");
+                for c in &values {
+                    let bc = b.sort_cmp(c);
+                    if ab == bc {
+                        assert_eq!(a.sort_cmp(c), ab, "{a:?} {b:?} {c:?}");
+                    }
+                    if ab == Ordering::Equal {
+                        assert_eq!(a.sort_cmp(c), bc, "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nan_sorts_above_every_number_and_below_null() {
+        let nan = Value::Float(f64::NAN);
+        for number in [
+            Value::Int(i64::MAX),
+            Value::Float(f64::INFINITY),
+            Value::Float(-1.0),
+        ] {
+            assert_eq!(nan.sort_cmp(&number), Ordering::Greater);
+            assert_eq!(number.sort_cmp(&nan), Ordering::Less);
+        }
+        assert_eq!(nan.sort_cmp(&Value::Null), Ordering::Less);
+        assert_eq!(sort_cmp_f64(f64::NAN, f64::NAN), Ordering::Equal);
+        assert_eq!(sort_cmp_f64(-0.0, 0.0), Ordering::Equal);
+    }
+
+    #[test]
+    fn int_float_compare_exactly() {
+        let f = Value::Float(P53 as f64);
+        assert_eq!(Value::Int(P53).sort_cmp(&f), Ordering::Equal);
+        assert_eq!(Value::Int(P53 + 1).sort_cmp(&f), Ordering::Greater);
+        assert_eq!(f.sort_cmp(&Value::Int(P53 + 1)), Ordering::Less);
+        assert_eq!(Value::Int(P53 - 1).sort_cmp(&f), Ordering::Less);
+        assert_eq!(Value::Int(1).sort_cmp(&Value::Float(1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(2).sort_cmp(&Value::Float(1.5)),
+            Ordering::Greater
+        );
+        assert_eq!(Value::Int(-2).sort_cmp(&Value::Float(-1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(-1).sort_cmp(&Value::Float(-1.5)),
+            Ordering::Greater
+        );
+        // i64::MAX rounds up to 2^63 as f64, but is below it.
+        let two_63 = Value::Float(9_223_372_036_854_775_808.0);
+        assert_eq!(Value::Int(i64::MAX).sort_cmp(&two_63), Ordering::Less);
+        assert_eq!(
+            Value::Int(i64::MIN).sort_cmp(&Value::Float(-9_223_372_036_854_775_808.0)),
+            Ordering::Equal
+        );
+    }
+
+    /// The inputs that made `ORDER BY` panic with "comparison function does
+    /// not correctly implement a total order" sort cleanly.
+    #[test]
+    fn sorting_the_panicking_inputs_succeeds() {
+        let nan = f64::NAN;
+        let mut floats: Vec<Value> = [
+            1.0, 6.0, nan, 2.0, nan, 1.0, 3.0, 20.0, 1.0, 12.0, nan, nan, 4.0, nan, nan, nan, 5.0,
+            nan, 6.0, 17.0, 18.0,
+        ]
+        .into_iter()
+        .map(Value::Float)
+        .collect();
+        floats.sort_by(Value::sort_cmp);
+        let numbers: Vec<f64> = floats
+            .iter()
+            .map(|v| match v {
+                Value::Float(f) => *f,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(numbers[..13].is_sorted());
+        assert!(numbers[13..].iter().all(|f| f.is_nan()));
+
+        let mut mixed: Vec<Value> = (0..24)
+            .map(|i| {
+                let n = P53 - 1 + (i * 7) % 4;
+                if i % 2 == 0 {
+                    Value::Int(n)
+                } else {
+                    Value::Float(n as f64)
+                }
+            })
+            .collect();
+        mixed.sort_by(Value::sort_cmp);
+        assert!(mixed.is_sorted_by(|a, b| a.sort_cmp(b).is_le()));
+    }
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
+    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, si_type};
+    use std::{collections::VecDeque, sync::Arc};
+    use thin_vec::thin_vec;
+
+    /// The query pool's worker stack: Rust's default for a spawned thread.
+    const WORKER_STACK: usize = 2 << 20;
+
+    #[derive(Debug)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Double(f64),
+        Buffer(Vec<u8>),
+    }
+
+    #[derive(Default)]
+    struct Tape(VecDeque<Op>);
+
+    impl Writer for Tape {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.0.push_back(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.0.push_back(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.0.push_back(Op::Double(val));
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.0.push_back(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    impl Reader for Tape {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.0.pop_front() {
+                Some(Op::Unsigned(v)) => Ok(v),
+                other => Err(format!("tape: expected unsigned, got {other:?}")),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.0.pop_front() {
+                Some(Op::Signed(v)) => Ok(v),
+                other => Err(format!("tape: expected signed, got {other:?}")),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            match self.0.pop_front() {
+                Some(Op::Double(v)) => Ok(v),
+                other => Err(format!("tape: expected double, got {other:?}")),
+            }
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.0.pop_front() {
+                Some(Op::Buffer(v)) => Ok(v),
+                other => Err(format!("tape: expected buffer, got {other:?}")),
+            }
+        }
+    }
+
+    /// `[[...[1]...]]` with `depth` lists, built without recursion.
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// The RDB encoding of `depth` nested single-element lists around a NULL,
+    /// written directly so a payload deeper than any `Value` can be built.
+    fn nested_tape(depth: usize) -> Tape {
+        let mut t = Tape::default();
+        for _ in 0..depth {
+            t.write_unsigned(si_type::T_ARRAY);
+            t.write_unsigned(1);
+        }
+        t.write_unsigned(si_type::T_NULL);
+        t
+    }
+
+    fn list_depth(mut v: &Value) -> usize {
+        let mut depth = 0;
+        while let Value::List(items) = v {
+            depth += 1;
+            v = &items[0];
+        }
+        depth
+    }
+
+    /// Run `f` on a thread with the query pool's stack size.
+    fn on_worker_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn rdb_decode_accepts_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING);
+            let v = Value::decode(&mut t).expect("a value at the cap decodes");
+            assert!(t.0.is_empty());
+            assert_eq!(list_depth(&v), MAX_VALUE_NESTING);
+            drop(v);
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_one_past_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING + 1);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_the_advisory_payload() {
+        // 60,000 levels: the GRAPH.RESTORE payload that used to exhaust the
+        // stack. The decoder stops at the cap, so this runs on a worker-sized
+        // stack too.
+        on_worker_stack(|| {
+            let mut t = nested_tape(60_000);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_round_trip_at_the_cap() {
+        // Everything a stored value goes through on its way to an RDB and
+        // back, and the drop of both copies, on a worker-sized stack.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            let mut t = Tape::default();
+            v.encode(&mut t);
+            let back = Value::decode(&mut t).expect("what was saved loads back");
+            assert!(t.0.is_empty());
+            assert_eq!(back, v);
+            drop(back);
+            drop(v);
+        });
     }
 }

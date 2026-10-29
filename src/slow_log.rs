@@ -24,12 +24,22 @@ const MIN_LATENCY_MS: f64 = 10.0;
 /// with a trailing `"..."`.
 const STR_MAX_LEN: usize = 2048;
 
-/// Truncate `s` to at most `STR_MAX_LEN` characters, appending `"..."` if
-/// truncated.
+/// The longest prefix of `s` that is at most `STR_MAX_LEN` bytes and ends on a
+/// character boundary.
+///
+/// C cuts at byte `STR_MAX_LEN` even inside a character; slicing a `&str` there
+/// panics, so a multi-byte character straddling the limit is left out whole.
+fn prefix(s: &str) -> &str {
+    &s[..s.floor_char_boundary(STR_MAX_LEN)]
+}
+
+/// Truncate `s` to at most `STR_MAX_LEN` bytes (on a character boundary),
+/// appending `"..."` if truncated.
 fn truncate(s: &str) -> String {
     if s.len() > STR_MAX_LEN {
-        let mut t = String::with_capacity(STR_MAX_LEN + 3);
-        t.push_str(&s[..STR_MAX_LEN]);
+        let head = prefix(s);
+        let mut t = String::with_capacity(head.len() + 3);
+        t.push_str(head);
         t.push_str("...");
         t
     } else {
@@ -45,8 +55,7 @@ fn entry_hash(
     let mut hasher = DefaultHasher::new();
     cmd.hash(&mut hasher);
     // Hash at most STR_MAX_LEN bytes of the query (matches C behaviour).
-    let n = query.len().min(STR_MAX_LEN);
-    query[..n].hash(&mut hasher);
+    prefix(query).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -110,54 +119,44 @@ impl SlowLog {
 
         // Check for existing entry with same hash.
         if let Some(existing) = inner.entries.iter_mut().find(|e| e.hash == hash) {
-            if latency_ms > existing.latency {
-                // Update latency, timestamp, and params.
-                existing.latency = latency_ms;
-                existing.timestamp = unix_now();
-                existing.params = if params_text.is_empty() {
+            if latency_ms <= existing.latency {
+                return;
+            }
+            // Update latency, timestamp, and params. This can raise the
+            // minimum, so fall through to recompute it (#3442).
+            existing.latency = latency_ms;
+            existing.timestamp = unix_now();
+            existing.params = if params_text.is_empty() {
+                None
+            } else {
+                Some(truncate(params_text))
+            };
+        } else {
+            let entry = SlowLogEntry {
+                cmd: cmd.to_owned(),
+                query: truncate(query_text),
+                params: if params_text.is_empty() {
                     None
                 } else {
                     Some(truncate(params_text))
-                };
-            }
-            return;
-        }
-
-        // Build truncated strings.
-        let truncated_query = truncate(query_text);
-        let truncated_params = if params_text.is_empty() {
-            None
-        } else {
-            Some(truncate(params_text))
-        };
-        let timestamp = unix_now();
-
-        if inner.entries.len() < MAX_ENTRIES {
-            inner.entries.push(SlowLogEntry {
-                cmd: cmd.to_owned(),
-                query: truncated_query,
-                params: truncated_params,
+                },
                 latency: latency_ms,
-                timestamp,
-                hash,
-            });
-        } else {
-            // Replace the fastest (min-latency) entry.
-            let idx = inner
-                .entries
-                .iter()
-                .enumerate()
-                .min_by(|a, b| a.1.latency.total_cmp(&b.1.latency))
-                .map(|(i, _)| i)
-                .unwrap();
-            inner.entries[idx] = SlowLogEntry {
-                cmd: cmd.to_owned(),
-                query: truncated_query,
-                params: truncated_params,
-                latency: latency_ms,
-                timestamp,
+                timestamp: unix_now(),
                 hash,
             };
+            if inner.entries.len() < MAX_ENTRIES {
+                inner.entries.push(entry);
+            } else {
+                // Replace the fastest (min-latency) entry.
+                let idx = inner
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.latency.total_cmp(&b.1.latency))
+                    .map(|(i, _)| i)
+                    .unwrap();
+                inner.entries[idx] = entry;
+            }
         }
 
         // Recompute min_latency.

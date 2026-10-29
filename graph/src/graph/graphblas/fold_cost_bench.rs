@@ -29,8 +29,8 @@
 //! Caveat on absolute numbers: taken on macOS, and `w` is cache-bound, so
 //! expect different values in CI. Re-measure in the toolchain image before
 //! re-tuning. Note the numbers above were taken *with* the vendored PreJIT
-//! kernels compiled in (`GRAPHBLAS_LIB_DIR` pointed at a local
-//! `graphblas.sh` build) — vendoring them did not move the fold's shape, so
+//! kernels compiled in (`GRAPHBLAS_PREFIX` pointed at a local
+//! native-deps GraphBLAS build) — vendoring them did not move the fold's shape, so
 //! the sub-linearity is a property of eWiseAdd, not of kernel fallback.
 //!
 //! Run with:

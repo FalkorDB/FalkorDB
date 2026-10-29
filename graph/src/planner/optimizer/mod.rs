@@ -54,6 +54,7 @@ mod reduce_bound_edge;
 mod reduce_count;
 mod reduce_expand_into;
 mod reduce_var_len_path;
+mod references;
 mod reorder_labels;
 mod replace_cartesian_with_hash_join;
 mod select_scan_node;

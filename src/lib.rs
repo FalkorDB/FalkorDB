@@ -100,7 +100,7 @@ redis_module! {
             ["THREAD_COUNT", &*CONFIGURATION_THREAD_COUNT, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
             ["INDEX_WORKER_THREADS", &*CONFIGURATION_INDEX_WORKER_THREADS, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
             ["NODE_CREATION_BUFFER", &*CONFIGURATION_NODE_CREATION_BUFFER, graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64, 0, 1_073_741_824, ConfigurationFlags::IMMUTABLE, None],
-            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 1, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
+            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 0, i64::MAX, ConfigurationFlags::DEFAULT, None],
             ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268_435_456, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
             ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1_048_576, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
         ],
@@ -113,6 +113,9 @@ redis_module! {
             ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
         ],
         enum: [],
-        module_args_as_configuration: true,
+        // Module arguments are parsed once, in `graph_init`, the way C's
+        // `Config_Init` parses them (see `apply_module_args`). They are applied
+        // after redis.conf's `graph.*` lines, so a module argument wins.
+        module_args_as_configuration: false,
     ]
 }

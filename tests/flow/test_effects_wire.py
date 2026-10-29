@@ -258,6 +258,108 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
         except ResponseError as e:
             self.env.assertContains("read only replica", str(e))
 
+    @staticmethod
+    def _single_id_list(id):
+        """An `IdList` of one id: `u32 n_segments · Range{base: id, len: 1}`.
+
+        Header `0x0c` is kind Range, an 8-byte value and a 1-byte count, so any
+        u64 fits without working out its narrowest width."""
+        return (b"\x01\x00\x00\x00" + b"\x0c"
+                + int(id).to_bytes(8, "little") + b"\x01")
+
+    @classmethod
+    def _create_node_record(cls, id):
+        """`3 CREATE_NODE` — `count · LabelSet · AttrIds · IdList · AttrValues`,
+        with no labels and no attributes."""
+        return (b"\x03\x00\x00\x00" + b"\x01\x00\x00\x00"  # opcode, count 1
+                + b"\x00\x00" + b"\x00\x00"                # no labels, no attrs
+                + cls._single_id_list(id))
+
+    @classmethod
+    def _create_edge_record(cls, id, relation_id, src, dst):
+        """`4 CREATE_EDGE` — `count · RelType · AttrIds · IdList · IdList(src)
+        · IdList(dst) · AttrValues`, with no attributes."""
+        return (b"\x04\x00\x00\x00" + b"\x01\x00\x00\x00"  # opcode, count 1
+                + int(relation_id).to_bytes(4, "little")
+                + b"\x00\x00"                              # no attrs
+                + cls._single_id_list(id)
+                + cls._single_id_list(src)
+                + cls._single_id_list(dst))
+
+    def test08_an_id_past_the_end_of_the_id_space_is_refused(self):
+        # #2892. These ids used to be admitted by `IdSpace::create` and sized
+        # into the matrices before `verify` could call them a hole: 2^60 - 1
+        # and up failed an assert in `GrB_Matrix_new` and killed the server,
+        # and u64::MAX - 1 wrapped `grow_cap` into an infinite loop. The
+        # boundary is GrB_INDEX_MAX = 2^60 - 1: creating id n sizes the
+        # matrices to n + 1 rows, and no matrix can have more than that.
+        key = "effects_huge_ids"
+        g = Graph(self.master, key)
+        g.query("CREATE (:A)-[:R]->(:A)")
+        self.wait_for_replica_offset()
+        full_before = self.master.info()["sync_full"]
+
+        huge = [(1 << 60) - 1, 1 << 60, 1 << 61, (1 << 64) - 2, (1 << 64) - 1]
+        for id in huge:
+            msg = self._refused(b"\x03\x00" + self._create_node_record(id),
+                                f"a node with id {id}", key)
+            self.env.assertContains("past the end of the id space", msg)
+            # `R` is relationship type 0, and nodes 0 and 1 exist, so the
+            # edge id is the only thing wrong with this record.
+            msg = self._refused(
+                b"\x03\x00" + self._create_edge_record(id, 0, 0, 1),
+                f"an edge with id {id}", key)
+            self.env.assertContains("past the end of the id space", msg)
+
+        self._still_healthy(full_before)
+        # Nothing was applied, and the graph still takes a write.
+        self.env.assertEqual(
+            g.ro_query("MATCH (n) RETURN count(n)").result_set, [[2]])
+        self.env.assertEqual(
+            g.ro_query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        g.query("MATCH (a:A) CREATE (a)-[:R]->(:A)")
+        self.env.assertEqual(
+            g.ro_query("MATCH ()-[r]->() RETURN count(r)").result_set, [[3]])
+
+    @staticmethod
+    def _id_list(*ids):
+        """An `IdList` of one single-id Range segment per id, repeats included."""
+        return len(ids).to_bytes(4, "little") + b"".join(
+            b"\x0c" + int(id).to_bytes(8, "little") + b"\x01" for id in ids)
+
+    def test09_a_repeated_id_in_one_create_record_is_refused(self):
+        # #3247. A record naming the same id twice says it creates two entities
+        # and could only create one. CREATE_EDGE has refused that since #2846;
+        # CREATE_NODE folded the ids into a set first and applied one node.
+        key = "effects_repeated_ids"
+        g = Graph(self.master, key)
+        g.query("CREATE (:A)-[:R]->(:A)")
+        self.wait_for_replica_offset()
+        full_before = self.master.info()["sync_full"]
+
+        # Nodes 2 and 3 are the next free ids, so the repeat is all that is wrong.
+        node = (b"\x03\x00\x00\x00" + b"\x03\x00\x00\x00"   # opcode, count 3
+                + b"\x00\x00" + b"\x00\x00"                 # no labels, no attrs
+                + self._id_list(2, 3, 2))
+        msg = self._refused(b"\x03\x00" + node, "a node id repeated", key)
+        self.env.assertContains("distinct", msg)
+
+        edge = (b"\x04\x00\x00\x00" + b"\x02\x00\x00\x00"   # opcode, count 2
+                + b"\x00\x00\x00\x00" + b"\x00\x00"         # type R, no attrs
+                + self._id_list(1, 1) + self._id_list(0, 0) + self._id_list(1, 1))
+        msg = self._refused(b"\x03\x00" + edge, "an edge id repeated", key)
+        self.env.assertContains("distinct", msg)
+
+        self._still_healthy(full_before)
+        self.env.assertEqual(
+            g.ro_query("MATCH (n) RETURN count(n)").result_set, [[2]])
+        self.env.assertEqual(
+            g.ro_query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        # The ids the refused records named are still free to the next write.
+        g.query("CREATE (:A), (:A)")
+        self.env.assertEqual(
+            g.ro_query("MATCH (n) RETURN max(id(n))").result_set, [[3]])
+
 
 #-----------------------------------------------------------------------------
 # 6. compression must be transparent

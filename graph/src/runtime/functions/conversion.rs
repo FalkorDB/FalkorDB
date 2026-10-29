@@ -50,6 +50,13 @@ pub fn register(funcs: &mut Functions) {
                     if let Ok(i) = s.parse::<i64>() {
                         return Ok(Value::Int(i));
                     }
+                    // A plain integer that didn't parse is out of i64 range. Don't
+                    // retry it as f64: everything in [-2^63-1024, -2^63-1] rounds
+                    // to exactly -2^63 and would pass the range check below.
+                    let digits = s.strip_prefix(['-', '+']).unwrap_or(s);
+                    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+                        return Ok(Value::Null);
+                    }
                     match s.parse::<f64>() {
                         Ok(f) if f.is_finite() => {
                             let floored = f.floor();

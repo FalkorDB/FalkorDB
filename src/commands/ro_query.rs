@@ -16,7 +16,10 @@
 //! non-mutating behavior.
 
 use crate::{
-    commands::EMPTY_KEY_ERR,
+    commands::{
+        EMPTY_KEY_ERR,
+        query_args::{QueryFlags, parse_query_flags},
+    },
     graph_core::{ThreadedGraph, query_mut, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
@@ -28,30 +31,16 @@ pub fn graph_ro_query(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    let QueryFlags {
+        compact,
+        track_memory,
+        timeout,
+        version: version_check,
+    } = parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.
     let query = up_to_nul(args.next_str()?);
-    let mut compact = false;
-    let mut track_memory = false;
-    let mut version_check: Option<u64> = None;
-    let mut timeout: Option<i64> = None;
-    while let Ok(arg) = args.next_str() {
-        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
-        // `TIMEOUT` is the documented spelling.
-        if arg.eq_ignore_ascii_case("--compact") {
-            compact = true;
-        } else if arg.eq_ignore_ascii_case("--track-memory") {
-            track_memory = true;
-        } else if arg.eq_ignore_ascii_case("version") {
-            let ver_str = args.next_str()?;
-            version_check = Some(ver_str.parse::<u64>()?);
-        } else if arg.eq_ignore_ascii_case("timeout")
-            && let Ok(t_str) = args.next_str()
-        {
-            timeout = t_str.parse::<i64>().ok();
-        }
-    }
 
     // The key the graph lives at, not C's name for it — see `graph_query`. A read-only
     // query never creates one, so it is always the key the command named.

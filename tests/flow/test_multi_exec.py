@@ -1,3 +1,5 @@
+import threading
+
 from common import *
 
 GRAPH_ID = "multiexec-graph"
@@ -120,3 +122,42 @@ class testMultiExecFlow(FlowTestsBase):
         results = redis_con_a.execute_command("EXEC")
 
         self.env.assertNotEqual(results, None)
+
+    def test_write_while_queued_write_matches(self):
+        # A write inside MULTI runs inline on the main thread. While a queued write
+        # on the same graph is still matching (a reader, no mutation yet), the inline
+        # write used to fail with "another write is in progress" and be lost (#3093).
+        # Both must commit, the queued one exactly once.
+        graph_id = "multiexec-race"
+        con = self.env.getConnection()
+        con.execute_command("DEL", graph_id)
+        con.execute_command("GRAPH.QUERY", graph_id, "CREATE (:Seed)")
+
+        n = 20_000_000
+        runs = 0
+        overlapped = False
+        while not overlapped and runs < 5:
+            runs += 1
+            slow_con = self.env.getConnection()
+            slow = ("UNWIND range(1, %d) AS x WITH x WHERE x %% 3 = 0 "
+                    "WITH count(x) AS c CREATE (:N {c: c})") % n
+            t = threading.Thread(target=slow_con.execute_command,
+                                 args=("GRAPH.QUERY", graph_id, slow))
+            t.start()
+            time.sleep(0.2)
+
+            p = con.pipeline(transaction=True)
+            p.execute_command("GRAPH.QUERY", graph_id, "CREATE (:M)")
+            res = p.execute(raise_on_error=False)
+            # Only a run where the queued write was still going exercises the race.
+            overlapped = t.is_alive()
+            t.join()
+
+            self.env.assertFalse(isinstance(res[0], Exception), message=str(res[0]))
+            n *= 4
+
+        self.env.assertTrue(overlapped)
+        res = con.execute_command("GRAPH.QUERY", graph_id,
+                                  "MATCH (n) RETURN labels(n)[0], count(n) ORDER BY labels(n)[0]")
+        self.env.assertEqual(res[1], [["M", runs], ["N", runs], ["Seed", 1]])
+

@@ -220,7 +220,12 @@ impl Decode<19> for RoaringTreemap {
         _attr_limit: usize,
     ) -> Result<(), String> {
         let bytes = r.read_buffer()?;
-        let expected_len = count as usize * 8;
+        // `count` is read from the payload: a product that overflows would
+        // wrap to a small length, pass the check below and index past the end.
+        let expected_len = usize::try_from(count)
+            .ok()
+            .and_then(|c| c.checked_mul(8))
+            .ok_or_else(|| format!("deleted entities count {count} is out of range"))?;
         if bytes.len() != expected_len {
             return Err(format!(
                 "deleted entities buffer length mismatch: got {} bytes, expected {} bytes",
@@ -237,5 +242,37 @@ impl Decode<19> for RoaringTreemap {
             self.insert(id);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct OneBuffer(Option<Vec<u8>>);
+
+    impl Reader for OneBuffer {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            Err("unused".to_string())
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            Err("unused".to_string())
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            Err("unused".to_string())
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            self.0.take().ok_or_else(|| "no buffer".to_string())
+        }
+    }
+
+    /// `count * 8` used to wrap for a payload count of `2^61`, match an empty
+    /// buffer and index past its end.
+    #[test]
+    fn deleted_entities_count_that_overflows_is_rejected() {
+        let mut bitmap = RoaringTreemap::new();
+        let res = bitmap.decode_with_count(&mut OneBuffer(Some(Vec::new())), 1 << 61, 0);
+        let err = res.expect_err("overflowing count accepted");
+        assert!(err.contains("out of range"), "unexpected error: {err}");
     }
 }
