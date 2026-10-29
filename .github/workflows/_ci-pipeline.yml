@@ -61,55 +61,26 @@ jobs:
   # Builds the engine once and runs the Rust unit tests here, where the compiled
   # tree already exists, rather than making `test` compile it a second time.
   build-engine:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container: ${{ inputs.build_image }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: "release"
-      - name: Build
-        run: cargo build --release
-      - name: Run unit tests
-        run: |
-          # Doctests are linked separately by rustdoc, which ignores RUSTFLAGS and
-          # the .cargo rustflags, so the duplicate-symbol allowance for
-          # libredisearch_rs.a's bundled std has to come via RUSTDOCFLAGS. Release
-          # LTO is off for the test build: the embedded C/Rust archives carry no
-          # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
-          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
-          # The module crate's own unit tests (the RDB codec); `--lib` skips doctests.
-          CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p falkordb-rs --lib
-      - name: Upload release binary
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: release-binary
-          path: target/release/libfalkordb.so
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      cache_key: release
+      artifact_name: release-binary
+      unit_tests: true
+
   build-engine-coverage:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container: ${{ inputs.build_image }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: "coverage"
-          env-vars: "RUSTFLAGS"
-      - name: Build with coverage
-        run: |
-          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
-      - name: Upload coverage binary
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: coverage-binary
-          path: target/debug/libfalkordb.so
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      profile: debug
+      rustflags: "-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition"
+      cache_key: coverage
+      artifact_name: coverage-binary
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -426,26 +397,16 @@ jobs:
   # ledger asks whether the native index serves the index suites, which a second arch would not
   # change.
   build-engine-nextgen:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container: ${{ inputs.build_image }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup default stable
-      # The same key as `build-engine`: the feature adds no dependencies, and rust-cache keeps only
-      # the dependencies, so the two builds restore the same cache.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: "release"
-      - name: Build with the native index
-        run: cargo build --release --features index-falkordb
-      - name: Upload the native-index binary
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: nextgen-binary
-          path: target/release/libfalkordb.so
+    uses: ./.github/workflows/_build-engine.yml
+    permissions:
+      contents: read
+    with:
+      build_image: ${{ inputs.build_image }}
+      features: index-falkordb
+      # The same key as `build-engine`: the feature adds no dependencies, and rust-cache keeps
+      # only the dependencies, so the two builds restore the same cache.
+      cache_key: release
+      artifact_name: nextgen-binary
 
   # Reconcile the index flow suites against the xfail ledger.
   #
