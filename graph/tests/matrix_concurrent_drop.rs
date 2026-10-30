@@ -65,12 +65,16 @@ unsafe extern "C" fn counting_free(p: *mut c_void) {
 
 #[test]
 fn concurrently_dropped_clones_free_the_matrix_once() {
-    matrix::init(
-        Some(counting_malloc),
-        Some(counting_calloc),
-        Some(counting_realloc),
-        Some(counting_free),
-    )
+    // SAFETY: the counting pair wraps libc malloc/free, and the test binary's
+    // global allocator is `System`, whose `dealloc` is `free(ptr)` on unix.
+    unsafe {
+        matrix::init(
+            Some(counting_malloc),
+            Some(counting_calloc),
+            Some(counting_realloc),
+            Some(counting_free),
+        )
+    }
     .unwrap();
 
     // A leak shows up as live GraphBLAS blocks left behind; a double free

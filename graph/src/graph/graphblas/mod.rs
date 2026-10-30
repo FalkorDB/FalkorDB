@@ -10,6 +10,7 @@
 //! graphblas/
 //!   mod.rs                  <-- Auto-generated FFI bindings (GrB_* / GxB_* symbols)
 //!   matrix.rs               <-- Safe wrapper around GrB_Matrix (boolean sparse matrix)
+//!   csr.rs                  <-- Row-major CSR export of a matrix
 //!   vector.rs               <-- Safe wrapper around GrB_Vector (boolean sparse vector)
 //!   tensor.rs               <-- 3D sparse structure for multi-edge storage
 //!   versioned_matrix.rs     <-- Copy-on-write matrix with MVCC delta tracking
@@ -70,6 +71,7 @@
 
 #[cfg(test)]
 mod block_scaling_bench;
+pub mod csr;
 #[cfg(test)]
 mod degree_bench;
 #[cfg(test)]
@@ -154,7 +156,12 @@ pub(crate) mod test_init {
 
     pub fn ensure_init() {
         INIT.call_once(|| {
-            super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+            // SAFETY: GraphBLAS allocates with libc malloc/free, and the test
+            // binary's global allocator is `System`, whose `dealloc` is
+            // `free(ptr)` on unix.
+            unsafe {
+                super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+            }
             // libtest runs every test on its own freshly spawned thread. With
             // libomp linked statically (the Linux toolchain image and CI —
             // macOS resolves it dynamically, which is why this never

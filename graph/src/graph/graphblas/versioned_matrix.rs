@@ -80,8 +80,91 @@ use super::{
 };
 use crate::graph::{
     cow::Cow,
-    graphblas::matrix::{BoolExtract, IterExtract, MatrixType},
+    graphblas::matrix::{BoolExtract, EWiseAdd, IterExtract, MatrixType},
 };
+
+/// The effective matrix of a base and its two delta layers, `(m ∖ dm) ∪ dp`,
+/// as [`effective`] returns it: the base itself, `Borrowed`, when neither
+/// delta holds anything; a new matrix, `Owned`, otherwise.
+///
+/// Copy on write. Reading (it derefs to `&Matrix`) never copies. Writing goes
+/// through [`Self::to_mut`], the one way to a `&mut Matrix`: it deep-copies a
+/// `Borrowed` base once and is free on an `Owned` matrix. There is no
+/// `DerefMut`, so a copy is never implicit.
+///
+/// Why not an existing `Cow`: the repo's `graph::cow::Cow` decides whether to
+/// copy from a flag set at a version boundary, not from a reference count, so
+/// a handle cloned mid-version would see the writer's in-place changes; and
+/// `std::borrow::Cow` needs `ToOwned`, which `Matrix` can only get through its
+/// `Clone`, a shallow clone that shares the GraphBLAS handle.
+pub enum Effective<'a, T> {
+    /// The base layer itself, shared with every snapshot that holds it.
+    Borrowed(&'a Matrix<T>),
+    /// A matrix no layer or snapshot shares: the merge, or a copy of the base.
+    Owned(Matrix<T>),
+}
+
+impl<T> Effective<'_, T> {
+    /// A mutable reference to a matrix this value owns, copying first if it
+    /// does not own one: a `Borrowed` base is deep-copied (`GrB_Matrix_dup`,
+    /// `O(nvals)` time and memory) and the value becomes `Owned`; an `Owned`
+    /// matrix is returned as it is. Writes through the result never reach the
+    /// layers or any snapshot.
+    ///
+    /// The copy cannot be a `clone()`: a cloned `Matrix` shares its handle,
+    /// so writing through it would write into the base.
+    pub fn to_mut(&mut self) -> &mut Matrix<T> {
+        if let Self::Borrowed(base) = *self {
+            *self = Self::Owned(base.dup());
+        }
+        match self {
+            Self::Owned(m) => m,
+            Self::Borrowed(_) => unreachable!("replaced by its copy above"),
+        }
+    }
+}
+
+impl<T> Deref for Effective<'_, T> {
+    type Target = Matrix<T>;
+
+    fn deref(&self) -> &Matrix<T> {
+        match self {
+            Self::Borrowed(m) => m,
+            Self::Owned(m) => m,
+        }
+    }
+}
+
+/// `(m ∖ dm) ∪ dp` in one GraphBLAS call: `eff<¬dm, replace> = m ⊕ dp`, with
+/// `⊕` from the element type ([`EWiseAdd`]), so on a `u64` layer a pending
+/// value in `dp` shadows the committed one; `dp ∩ dm = ∅`, so the mask never
+/// drops a pending addition. The mask is structural: a pair is deleted by
+/// being in `dm`, whatever value `dm` stores there. The same expression the
+/// delta fold writes into the new base, here into a matrix of its own, and
+/// skipped entirely when both deltas are empty.
+///
+/// The layers must not have pending work: reading a pending layer finishes
+/// that work, a mutation of a matrix readers may share. The callers wait
+/// first.
+pub(super) fn effective<'a, T: EWiseAdd + MatrixType>(
+    m: &'a Matrix<T>,
+    dp: &Matrix<T>,
+    dm: &Matrix<bool>,
+) -> Effective<'a, T> {
+    let (has_dp, has_dm) = (dp.nvals() != 0, dm.nvals() != 0);
+    if !has_dp && !has_dm {
+        return Effective::Borrowed(m);
+    }
+    let mut eff = T::new_matrix(m.nrows(), m.ncols());
+    let (mask, desc) = if has_dm {
+        (Some(dm), Some(matrix::Descriptor::RSC))
+    } else {
+        (None, None)
+    };
+    eff.element_wise_add(mask, Some(m), Some(dp), desc);
+    eff.wait();
+    Effective::Owned(eff)
+}
 
 /// A delta layer is folded into the base once its size justifies a base
 /// rewrite. Every write transaction pays `O(|delta|)` just to touch a shared
@@ -690,6 +773,18 @@ impl<T> VersionedMatrix<T> {
     #[must_use]
     pub fn dm(&self) -> &Matrix<bool> {
         &self.dm
+    }
+
+    /// The matrix a reader sees, `(m ∖ dm) ∪ dp`, as one GraphBLAS matrix
+    /// (see [`Effective`]): no copy when both deltas are empty. Writable
+    /// through [`Effective::to_mut`], which copies only a borrowed base.
+    #[must_use]
+    pub fn effective(&self) -> Effective<'_, T>
+    where
+        T: EWiseAdd + MatrixType,
+    {
+        self.wait_all();
+        effective(&self.m, &self.dp, &self.dm)
     }
 
     #[must_use]
@@ -1528,8 +1623,39 @@ mod tests {
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
     use super::{
-        MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
+        Effective, MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, effective,
+        should_fold, should_fold_read,
     };
+
+    /// `dm` masks structurally: a pair stored in `dm` is deleted even when
+    /// the stored value is `false`. A valued mask would read that `false` as
+    /// "not deleted" and let the committed entry through. Checked with `dm`
+    /// alone and with a pending addition in `dp`.
+    #[test]
+    fn effective_masks_dm_by_structure_not_value() {
+        ensure_init();
+        let mut m = Matrix::<u64>::new(4, 4);
+        m.set(0, 1, 10);
+        m.set(2, 3, 20);
+        m.wait();
+        let mut dm = Matrix::<bool>::new(4, 4);
+        dm.set(0, 1, false);
+        dm.wait();
+        assert_eq!(dm.get(0, 1), Some(false), "an explicit stored false");
+        for with_dp in [false, true] {
+            let mut dp = Matrix::<u64>::new(4, 4);
+            if with_dp {
+                dp.set(1, 2, 30);
+            }
+            dp.wait();
+            let eff = effective(&m, &dp, &dm);
+            assert!(matches!(eff, Effective::Owned(_)));
+            assert_eq!(eff.get(0, 1), None, "deleted pair visible, dp: {with_dp}");
+            assert_eq!(eff.get(2, 3), Some(20));
+            assert_eq!(eff.get(1, 2), with_dp.then_some(30));
+            assert_eq!(eff.nvals(), 1 + u64::from(with_dp));
+        }
+    }
 
     /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
     fn threshold(
