@@ -1572,7 +1572,8 @@ mod real_index_tests {
         for (e, &id) in edges.edges.iter().zip(&rel_ids) {
             weights.insert(id, vec![(attr, Value::Float(e.2))]);
         }
-        g.import_relationship_attrs(&weights, &mut IndexDocs::default());
+        g.import_relationship_attrs(&weights, &mut IndexDocs::default())
+            .expect("valid weights");
         (g, attr)
     }
 

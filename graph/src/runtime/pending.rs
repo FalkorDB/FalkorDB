@@ -1339,8 +1339,10 @@ impl Pending {
         if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
         {
             if !self.new_relationships_attrs.is_empty() {
-                let nset = g
-                    .import_relationship_attrs(&self.new_relationships_attrs, &mut self.index_docs);
+                let nset = g.import_relationship_attrs(
+                    &self.new_relationships_attrs,
+                    &mut self.index_docs,
+                )?;
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {

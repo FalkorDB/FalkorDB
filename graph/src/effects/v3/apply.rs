@@ -2395,6 +2395,7 @@ mod tests {
     #[cfg(feature = "index-falkordb")]
     mod cch {
         use super::*;
+        use crate::index::falkordb::cch::maint::flush_count;
         use crate::index::falkordb::cch::{Cch, CchDirty, CchIndexDef, CchInput};
         use crate::index::falkordb::graph_writes;
 
@@ -2756,13 +2757,67 @@ mod tests {
             }
         }
 
+        /// The write-time weight check runs on replay too: the graph methods the records apply
+        /// through hold it. A primary with the index refuses these before emitting them, so a
+        /// buffer carrying one comes from a primary without it (CCH DDL is not replicated), and the
+        /// replica refuses it like any apply failure rather than corrupt its index.
         #[test]
         fn a_weight_the_index_cannot_hold_fails_the_buffer() {
-            // The primary would have refused it, so the replica diverges like on any apply failure.
-            let (mut g, _) = cch_setup();
-            let err = apply_one(&mut g, float_edge_update(&[0], ROAD, TIME, -1.0))
-                .expect_err("a negative weight cannot be indexed");
-            assert!(err.to_string().contains("could not be updated"), "{err}");
+            for (what, record) in [
+                (
+                    "a negative update",
+                    float_edge_update(&[0], ROAD, TIME, -1.0),
+                ),
+                (
+                    "a NaN update",
+                    float_edge_update(&[0], ROAD, TIME, f64::NAN),
+                ),
+                (
+                    "a -inf weight on a created edge",
+                    Record::CreateEdge {
+                        ids: IdList::from([3]),
+                        relation_id: ROAD,
+                        src: IdList::from([3]),
+                        dst: IdList::from([4]),
+                        attr_ids: vec![TIME],
+                        rows: vec![Value::Float(f64::NEG_INFINITY)],
+                    },
+                ),
+            ] {
+                let (mut g, _) = cch_setup();
+                let flushes = flush_count();
+                let err = apply_one(&mut g, record).expect_err(what);
+                assert!(
+                    err.to_string().contains("CCH weight constraint violation"),
+                    "{what}: {err}"
+                );
+                assert_eq!(flush_count(), flushes, "{what}: refused before the flush");
+            }
+            // Not indexed: another type, another attribute.
+            for record in [
+                float_edge_update(&[2], FERRY, TIME, -1.0),
+                float_edge_update(&[0], ROAD, OTHER, -1.0),
+            ] {
+                let (mut g, _) = cch_setup();
+                apply_one(&mut g, record).expect("not an indexed weight");
+            }
+            // `+inf` is a closed edge, legal on the indexed weight: it applies and the index
+            // is rebuilt to match.
+            for record in [
+                float_edge_update(&[0], ROAD, TIME, f64::INFINITY),
+                Record::CreateEdge {
+                    ids: IdList::from([3]),
+                    relation_id: ROAD,
+                    src: IdList::from([3]),
+                    dst: IdList::from([4]),
+                    attr_ids: vec![TIME],
+                    rows: vec![Value::Float(f64::INFINITY)],
+                },
+            ] {
+                let (mut g, def) = cch_setup();
+                apply_one(&mut g, record).expect("+inf is legal");
+                assert_index_is_current(&g, &def);
+            }
         }
 
         /// A refused buffer commits none of its index writes: every refusal, the CCH flush's
