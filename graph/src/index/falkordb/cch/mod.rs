@@ -1,19 +1,16 @@
-//! Customizable Contraction Hierarchies (CCH) path index — contract skeleton.
+//! Customizable Contraction Hierarchies (CCH) path index.
 //!
-//! Everything here is a stub: types and signatures the implementation changes build against.
-//! The engine does not call any of it yet: `Graph` only holds an empty list of indexes, and
-//! the query pipeline never reaches the `unimplemented!()` bodies below. (The public
-//! `Graph` methods in `graph.rs` delegate to `index.rs`, whose bodies are stubs too, so a
-//! caller that invokes them directly reaches `unimplemented!()`.)
+//! A graph version holds its indexes as `Arc<Cch>`; the `Graph` methods in `graph.rs`
+//! create, drop, list and rebuild them, through the logic in `index.rs`.
 //!
 //! Layout (one file per area, so changes to different areas do not touch each other's files):
 //! - `order.rs`     Phase 1: nested-dissection ordering and triangulation (#3208)
 //! - `nd.rs`        the nested-dissection call behind Phase 1's ordering
 //! - `customize.rs` Phase 2: customization, `WeightArr` (#3209)
-//! - `partial.rs`   scoped recustomization (#3217)
 //! - `query.rs`     bidirectional upward search and path unpacking (#3210)
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `index.rs`     the logic behind `Graph`'s CCH methods, over [`CchIndex`] (#3212)
+//! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
 //! files are where the `impl` blocks land.
@@ -519,9 +516,8 @@ mod tests {
     /// hierarchy. Drop `cch_indexes` from `Graph::new_version` and this fails on the length;
     /// deep-copy the hierarchy instead of cloning the `Arc` and it fails on `ptr_eq`.
     ///
-    /// Reaches past the (still unimplemented) DDL by pushing onto the field directly, which is
-    /// also why this test and `CchIndex::entry` are the only things in the crate that touch
-    /// `cch_indexes` at all.
+    /// Pushes onto the field directly, so it checks `new_version` alone, independent of
+    /// `create_cch_index` and the graph input.
     #[test]
     fn new_version_shares_the_hierarchy() {
         test_init::ensure_init();

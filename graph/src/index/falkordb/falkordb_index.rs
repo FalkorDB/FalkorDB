@@ -349,7 +349,6 @@ pub struct FalkorDbIndex {
     /// per index: no hierarchy data is copied, a reader that already holds the old version
     /// keeps it, and rollback costs nothing. `pub(crate)` because the logic behind `Graph`'s
     /// CCH methods lives in [`super::cch::index`].
-    #[allow(dead_code)]
     pub(crate) cch_indexes: Vec<IndexEntry<CchIndex>>,
 }
 

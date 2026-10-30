@@ -5194,9 +5194,6 @@ impl Graph {
     /// [`CchError::AlreadyExists`] if an index with the same definition is already held,
     /// [`CchError::UnknownRelType`] / [`CchError::UnknownAttribute`] for an unresolvable
     /// definition, and whatever [`Cch::build`](cch::Cch::build) reports.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
     pub fn create_cch_index(
         &mut self,
         def: CchIndexDef,
@@ -5204,11 +5201,11 @@ impl Graph {
         cch::index::create(self, def)
     }
 
+    /// Stop holding the index for `def` on this version. Earlier versions that still hold
+    /// it keep their `Arc`, so a reader mid-query is unaffected.
+    ///
     /// # Errors
     /// [`CchError::NotFound`] if no index with this definition is held.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
     pub fn drop_cch_index(
         &mut self,
         def: &CchIndexDef,
@@ -5217,18 +5214,12 @@ impl Graph {
     }
 
     /// Every CCH index definition held by this version, in no guaranteed order.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
     pub fn cch_indexes(&self) -> impl Iterator<Item = &CchIndexDef> {
         cch::index::defs(self)
     }
 
-    /// The index for `def`, if this version holds it and it is ready to answer: a building
-    /// index is not returned.
-    ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
+    /// The index held for exactly `def`, if it is ready to answer: a building index is not
+    /// returned.
     #[must_use]
     pub fn cch_index(
         &self,
@@ -5240,11 +5231,13 @@ impl Graph {
     /// Rebuild every CCH index from the current graph. Used by RDB load (the hierarchy is not
     /// persisted, only the definition) and by maintenance.
     ///
-    /// # Errors
-    /// Whatever [`Cch::build`](cch::Cch::build) reports for any held definition.
+    /// Every definition is re-resolved, so one whose relationship type or attribute no
+    /// longer exists fails here rather than being rebuilt over nothing. All indexes are
+    /// built before any is replaced: on error, none is.
     ///
-    /// # Panics
-    /// Always — unimplemented until #3212. Nothing calls it yet.
+    /// # Errors
+    /// Whatever [`Self::create_cch_index`] would report for any held definition, other
+    /// than [`CchError::AlreadyExists`].
     pub fn rebuild_cch_indexes(&mut self) -> Result<(), CchError> {
         cch::index::rebuild_all(self)
     }
