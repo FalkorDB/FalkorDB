@@ -26,8 +26,9 @@ prejit_harvest = []
 # attribute, is served natively, and a predicate it cannot serve raises an error
 # instead of falling through to RediSearch. tests/flow/nextgen_index_xfail.txt
 # lists the flow tests that fail on one. Fulltext and Vector indexes are still
-# RediSearch's.
-index-falkordb = []
+# RediSearch's. The CCH shortest-path index (`index::falkordb::cch`) is part of
+# it, and its nested-dissection ordering is the only user of `feral-metis` below.
+index-falkordb = ["dep:feral-metis"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -39,6 +40,9 @@ atomic_refcell = "0.1.14"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"
+# Nested-dissection ordering for the CCH index: vendored, MIT, 64-bit indices
+# (vendor/feral/README.md).
+feral-metis = { path = "../vendor/feral/feral-metis", optional = true }
 itertools = "0.15.0"
 json-escape = "0.3.1"
 lru = "0.19.0"

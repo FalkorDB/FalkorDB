@@ -1,0 +1,18 @@
+[package]
+name = "feral-ordering-core"
+version = "0.2.2"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Shared input/output types for FERAL's fill-reducing ordering crates (feral-amd, feral-metis, feral-scotch, feral-kahip). Defines the locked contract surface — CscPattern, OrderingStats, OrderingError."
+authors = ["John Kitchin <jkitchin@andrew.cmu.edu>"]
+repository = "https://github.com/jkitchin/feral"
+homepage = "https://github.com/jkitchin/feral"
+readme = "README.md"
+keywords = ["sparse", "ordering", "fill-reducing", "linear-algebra"]
+categories = ["mathematics", "science"]
+
+[lib]
+name = "feral_ordering_core"
+
+[dependencies]

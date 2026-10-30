@@ -1,0 +1,2 @@
+# The vendored feral crates keep upstream's formatting, rustfmt's defaults, so
+# they stay diffable against the release they came from.
