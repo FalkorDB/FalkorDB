@@ -142,7 +142,7 @@ fn create_index_builds_the_column_from_live_nodes() {
     for &id in &ids {
         set.insert(id);
     }
-    g.create_nodes(&set)
+    g.create_nodes(&set, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
 
     // Assign the :Person label to all three.
@@ -249,7 +249,7 @@ fn create_index_builds_the_column_from_live_edges() {
     let attr = Arc::new("w".to_string());
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 3);
-    g.create_nodes(&nodes.iter().copied().collect())
+    g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     // a->b twice (one multi-edge pair), a->c and c->b; w = 1..=4.
     let (a, b, c) = (nodes[0], nodes[1], nodes[2]);
@@ -258,7 +258,7 @@ fn create_index_builds_the_column_from_live_edges() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let attrs: FxHashMap<u64, Vec<(u16, Value)>> = eids
         .iter()
@@ -317,7 +317,7 @@ fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
     for &id in &ids {
         set.insert(id);
     }
-    g.create_nodes(&set)
+    g.create_nodes(&set, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let cols = vec![lid.0 as u64; ids.len()];
     applied!(g, |w| g.set_nodes_labels_bulk(&ids, &cols, &mut w, false));
@@ -404,7 +404,7 @@ fn delete_then_reuse_id_and_value_stays_correct() {
     assert_eq!(reused[0], ids[0], "the deleted id should be reclaimed");
     let mut set = RoaringTreemap::new();
     set.insert(reused[0]);
-    g.create_nodes(&set)
+    g.create_nodes(&set, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let lid = g.get_label_id_mut("Person");
     applied!(g, |w| g.set_nodes_labels_bulk(
@@ -431,7 +431,7 @@ fn unlabeled_graph_with_index() -> (Graph, Arc<String>, Arc<String>, u64) {
     let ids: Vec<u64> = reserve_nodes(&mut g, 1);
     let mut set = RoaringTreemap::new();
     set.insert(ids[0]);
-    g.create_nodes(&set)
+    g.create_nodes(&set, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     (g, label, attr, ids[0])
 }
@@ -487,7 +487,7 @@ fn remove_label_drops_tuple_and_no_resurrect_on_reuse() {
     assert_eq!(reused[0], ids[0]);
     let mut set = RoaringTreemap::new();
     set.insert(reused[0]);
-    g.create_nodes(&set)
+    g.create_nodes(&set, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g.set_nodes_labels_bulk(
         &reused,
@@ -519,14 +519,14 @@ fn edge_writes_maintain_the_index() {
 
     // Two nodes, a and b, and three a->b edges with w = 10, 20, 30.
     let nodes = reserve_nodes(&mut g, 2);
-    g.create_nodes(&nodes.iter().copied().collect())
+    g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let (a, b) = (nodes[0], nodes[1]);
     let ids: Vec<u64> = g
         .relationship_id_space()
         .reserve(3, &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &[a; 3], &[b; 3], &ids)
+    g.create_relationships_bulk(&ty, &[a; 3], &[b; 3], &ids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     for (i, &id) in ids.iter().enumerate() {
@@ -584,7 +584,7 @@ fn people_with(
     let label = Arc::new("Person".to_string());
     let lid = g.get_label_id_mut("Person");
     let ids = reserve_nodes(&mut g, values.len());
-    g.create_nodes(&ids.iter().copied().collect())
+    g.create_nodes(&ids.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g.set_nodes_labels_bulk(
         &ids,
@@ -606,7 +606,7 @@ fn add_person(
 ) -> u64 {
     let lid = g.get_label_id_mut("Person");
     let id = reserve_nodes(g, 1)[0];
-    g.create_nodes(&std::iter::once(id).collect())
+    g.create_nodes(&std::iter::once(id).collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g.set_nodes_labels_bulk(
         &[id],
@@ -807,7 +807,7 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     let attr = Arc::new("w".to_string());
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 4);
-    g.create_nodes(&nodes.iter().copied().collect())
+    g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
 
@@ -817,7 +817,7 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
         pairs
@@ -859,7 +859,7 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
         .relationship_id_space()
         .reserve(1, &RoaringTreemap::new())
         .expect("reserved")[0];
-    g.create_relationships_bulk(&ty, &[a], &[b], &[added])
+    g.create_relationships_bulk(&ty, &[a], &[b], &[added], &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g
         .import_relationship_attrs(&with_w(&[(added, 8)]), &mut w));
@@ -893,7 +893,7 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     let attr = Arc::new("w".to_string());
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 4);
-    g.create_nodes(&nodes.iter().copied().collect())
+    g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     // In batch order: 0->2, 1->0, 1->3, 2->1; w = 1..=4.
     let (srcs, dsts) = (
@@ -904,7 +904,7 @@ fn an_edge_write_is_placed_by_its_source_then_its_destination() {
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
         pairs
@@ -962,7 +962,7 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
         let attr = Arc::new("w".to_string());
         let aid = g.get_or_create_rel_attr_id(&attr);
         let nodes = reserve_nodes(&mut g, 4);
-        g.create_nodes(&nodes.iter().copied().collect())
+        g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
             .expect("freshly reserved ids are creatable");
         let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
         // In batch order: a->b, a->c, c->d; w = 1..=3.
@@ -971,7 +971,7 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
             .relationship_id_space()
             .reserve(srcs.len(), &RoaringTreemap::new())
             .expect("reserved");
-        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
             .expect("freshly reserved ids are creatable");
         let with_w = |pairs: &[(u64, i64)]| -> FxHashMap<u64, Vec<(u16, Value)>> {
             pairs
@@ -1004,7 +1004,7 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
         del.insert(eids[0]);
         g.delete_relationships(&del, &mut w).unwrap();
         let reused = eids[0];
-        g.create_relationships_bulk(&ty, &[d], &[a], &[reused])
+        g.create_relationships_bulk(&ty, &[d], &[a], &[reused], &mut IndexDocs::default())
             .expect("a freed id is creatable");
         g.import_relationship_attrs(&with_w(&[(reused, new_w)]), &mut w);
         g.apply_index_writes(&mut w);
@@ -1038,7 +1038,7 @@ fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>)
         .relationship_id_space()
         .reserve(srcs.len(), &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids)
+    g.create_relationships_bulk(&ty, &srcs, &dsts, &eids, &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
     for (i, &eid) in eids.iter().enumerate() {
@@ -1439,7 +1439,7 @@ fn replica_node_rows_maintain_the_index() {
 
     // CREATE_NODE: two nodes, v = 5 and 6.
     let ids = reserve_nodes(&mut g, 2);
-    g.create_nodes(&ids.iter().copied().collect())
+    g.create_nodes(&ids.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     applied!(g, |w| g.set_node_labels_product(&ids, &[lid], &mut w, true));
     applied!(g, |w| g.set_nodes_attributes_rows_of_labels(
@@ -1499,14 +1499,20 @@ fn replica_edge_update_of_type_maintains_the_index() {
         .create_numeric(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 2);
-    g.create_nodes(&nodes.iter().copied().collect())
+    g.create_nodes(&nodes.iter().copied().collect(), &mut IndexDocs::default())
         .expect("freshly reserved ids are creatable");
     let ids: Vec<u64> = g
         .relationship_id_space()
         .reserve(1, &RoaringTreemap::new())
         .expect("reserved");
-    g.create_relationships_bulk(&ty, &nodes[..1], &nodes[1..], &ids)
-        .expect("freshly reserved ids are creatable");
+    g.create_relationships_bulk(
+        &ty,
+        &nodes[..1],
+        &nodes[1..],
+        &ids,
+        &mut IndexDocs::default(),
+    )
+    .expect("freshly reserved ids are creatable");
     let type_id = g.get_type_id_mut("R");
 
     let attrs_of = |w: i64| -> FxHashMap<u64, Vec<(u16, Value)>> {

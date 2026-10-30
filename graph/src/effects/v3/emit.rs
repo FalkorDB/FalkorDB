@@ -1972,7 +1972,8 @@ mod cancelled {
             rg.get_type_id_mut("R");
             let mut ids = RoaringTreemap::new();
             ids.insert(0);
-            rg.create_nodes(&ids).unwrap();
+            rg.create_nodes(&ids, &mut crate::index::index_docs::IndexDocs::default())
+                .unwrap();
         }
         let mut rg = replica.borrow_mut();
         crate::effects::v3::apply::apply_effects(&mut rg, &buf)

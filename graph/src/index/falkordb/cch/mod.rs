@@ -11,6 +11,7 @@
 //! - `input.rs`     `Graph` -> [`CchInput`] (#3211)
 //! - `index.rs`     the logic behind `Graph`'s CCH methods, over [`CchIndex`] (#3212)
 //! - `ddl.rs`       the runtime side of `CREATE`/`DROP CCH INDEX` (#3213)
+//! - `maint.rs`     keeping the indexes correct after writes (#3214)
 //! - `testkit.rs`   test fixtures and oracles (#3207), in test builds only
 //!
 //! The types themselves live here in `mod.rs` because every part needs them; the other
@@ -20,11 +21,14 @@ pub mod customize;
 pub mod ddl;
 pub mod index;
 pub mod input;
+pub(crate) mod maint;
 mod nd;
 pub mod order;
 pub mod query;
 #[cfg(test)]
 pub(crate) mod testkit;
+
+pub use maint::CchDirty;
 
 use std::sync::Arc;
 
@@ -390,19 +394,6 @@ impl VersionedIndex for CchIndex {
     ) {
         unreachable!("CCH is not dispatched through IndexId until the background build")
     }
-}
-
-/// What a unit of work's writes touched that the graph's CCH indexes might care about. The
-/// graph's write methods stage it in the unit's
-/// [`IndexDocs::cch`](crate::index::index_docs::IndexDocs::cch), next to the native index's
-/// staged tuples, and the owner of the unit flushes it into rebuilt indexes once the unit's
-/// writes are in (#3214).
-///
-/// Empty for every graph with no CCH index, so the maintenance hook costs one
-/// `is_empty()` check on the existing write path.
-#[derive(Clone, Default)]
-pub struct CchDirty {
-    // filled in by the maintenance change (#3214): touched rel types and weight attributes, created/deleted nodes
 }
 
 #[cfg(test)]

@@ -63,7 +63,13 @@ pub(crate) fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .create_relationships_bulk(
+            &Arc::new(type_name.to_owned()),
+            &[0],
+            &[1],
+            &[id],
+            &mut IndexDocs::default(),
+        )
         .expect("a fixture's own ids, nothing to refuse");
 }
 
@@ -75,7 +81,9 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    graph.create_nodes(&ids).expect("fixture ids are fresh");
+    graph
+        .create_nodes(&ids, &mut IndexDocs::default())
+        .expect("fixture ids are fresh");
     let mut rows = Vec::new();
     let mut cols = Vec::new();
     for name in labels {

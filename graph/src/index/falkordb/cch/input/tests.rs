@@ -49,7 +49,8 @@ impl Builder {
             .into_iter()
             .collect();
         assert_eq!(ids, (0..nodes).collect(), "a fresh graph hands out 0..n");
-        g.create_nodes(&ids).expect("creatable");
+        g.create_nodes(&ids, &mut IndexDocs::default())
+            .expect("creatable");
         let weight_attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
         Self { g, weight_attr }
     }
@@ -73,7 +74,7 @@ impl Builder {
         let srcs: Vec<u64> = edges.iter().map(|e| e.0).collect();
         let dsts: Vec<u64> = edges.iter().map(|e| e.1).collect();
         self.g
-            .create_relationships_bulk(&name, &srcs, &dsts, &ids)
+            .create_relationships_bulk(&name, &srcs, &dsts, &ids, &mut IndexDocs::default())
             .expect("creatable");
 
         let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
@@ -622,7 +623,7 @@ fn more_than_max_nodes_is_refused() {
     let make = |cap: u64, name: &str| {
         let mut g = Graph::new(cap, 16, 1, 0, name);
         let rel = Arc::new(String::from("R"));
-        g.create_relationships_bulk(&rel, &[], &[], &[])
+        g.create_relationships_bulk(&rel, &[], &[], &[], &mut IndexDocs::default())
             .expect("creatable");
         let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
         let def = CchIndexDef::new(vec![g.get_type_id("R").unwrap()], attr);
@@ -1111,8 +1112,9 @@ fn cch_input_memory_per_node() {
     let dsts: Vec<u64> = (0..1_000).map(|k| (k * 104_729 + 1) % n).collect();
     let mut nodes: RoaringTreemap = srcs.iter().chain(&dsts).copied().collect();
     nodes.insert(n - 1);
-    g.create_nodes(&nodes).expect("creatable");
-    g.create_relationships_bulk(&rel, &srcs, &dsts, &ids)
+    g.create_nodes(&nodes, &mut IndexDocs::default())
+        .expect("creatable");
+    g.create_relationships_bulk(&rel, &srcs, &dsts, &ids, &mut IndexDocs::default())
         .expect("creatable");
     let attr = g.get_or_create_rel_attr_id(&Arc::new(String::from("w")));
     let def = CchIndexDef::new(vec![g.get_type_id("R").unwrap()], attr);

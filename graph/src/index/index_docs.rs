@@ -40,8 +40,10 @@ pub struct IndexDocs {
     #[cfg(feature = "index-falkordb")]
     pub native: PendingIndexWrites,
     /// What the unit's writes touched that a CCH index might care about, staged by the same
-    /// write methods as [`native`](Self::native) and flushed by the same owner into rebuilt
-    /// indexes on the private version (#3214). Empty for a graph with no CCH index.
+    /// write methods as [`native`](Self::native) and flushed by the owner into rebuilt indexes
+    /// on the private version once the unit's graph writes are all in
+    /// ([`Graph::apply_cch_writes`](crate::graph::graph::Graph::apply_cch_writes)). Empty for a
+    /// graph with no CCH index.
     #[cfg(feature = "index-falkordb")]
     pub cch: CchDirty,
 }
