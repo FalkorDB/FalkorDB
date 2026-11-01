@@ -700,15 +700,11 @@ impl<'a> CondTraverseOp<'a> {
         // edges are only dropped at commit (`DETACH DELETE` defers them), so
         // e.g. `DETACH DELETE a MERGE (a)-[:R]->(x:B)` would otherwise match an
         // edge that is about to disappear. Take the snapshot once per batch so
-        // rows pay nothing when nothing was deleted.
-        let (has_deleted_edges, deleted_nodes) = {
-            let pending = runtime.pending.borrow();
-            (
-                pending.has_deleted_relationships(),
-                pending.has_deleted_nodes().then(|| pending.deleted_nodes()),
-            )
-        };
-        if has_deleted_edges {
+        // rows pay nothing when nothing was deleted. The borrow is held (not a
+        // bitmap clone) so large deletes do not cost a copy per batch.
+        let pending = runtime.pending.borrow();
+        let has_deleted_nodes = pending.has_deleted_nodes();
+        if pending.has_deleted_relationships() {
             // The matrix product cannot tell a deleted edge from a live one
             // between the same pair; the per-row path can.
             drop(g);
@@ -737,10 +733,7 @@ impl<'a> CondTraverseOp<'a> {
                 drop(g);
                 return false;
             };
-            if deleted_nodes
-                .as_ref()
-                .is_some_and(|d| d.contains(u64::from(src_id)))
-            {
+            if has_deleted_nodes && pending.is_node_deleted(src_id) {
                 continue;
             }
             // Pre-filter src by label (= L_src * F in C's algebra).
@@ -810,7 +803,7 @@ impl<'a> CondTraverseOp<'a> {
 
         for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
-            if deleted_nodes.as_ref().is_some_and(|d| d.contains(dest_raw)) {
+            if has_deleted_nodes && pending.is_node_deleted(dest_id) {
                 continue;
             }
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).

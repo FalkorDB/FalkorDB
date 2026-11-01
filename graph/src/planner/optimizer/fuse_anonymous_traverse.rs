@@ -192,6 +192,17 @@ fn can_fuse(
 }
 
 pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
+    // A node or edge deleted earlier in the query stays in the matrices until
+    // commit. The fused F·A1·…·An product cannot tell such an entity from a
+    // live one at an intermediate hop (nor can it skip a deleted edge), while
+    // an unfused chain of traversals filters pending deletes at every hop.
+    if plan
+        .root()
+        .indices::<Bfs>()
+        .any(|idx| matches!(plan.node(idx).data(), IR::Delete { .. }))
+    {
+        return;
+    }
     loop {
         // Find one fusable pair (parent CT, child CT). Restart after each
         // mutation to avoid stale node indices.

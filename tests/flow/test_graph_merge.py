@@ -966,3 +966,34 @@ class testGraphMergeFlow():
             actual = self.graph.query("""MATCH (a:A)-[r:R]->(b:B)
                                          RETURN count(r)""")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test44_merge_fused_chain_with_pending_deletes(self):
+        """
+        An anonymous multi-hop MERGE pattern is fused into one traversal; an
+        earlier DELETE in the query must neither drop its remaining hops (a
+        deleted unrelated edge) nor let it match through a deleted
+        intermediate node
+        """
+
+        setup = """CREATE (:A)-[:R]->(:M)-[:S]->(:B), (:X)-[:Z]->(:Y)"""
+        pattern = "MERGE (a:A)-[:R]->()-[:S]->(c:B)"
+
+        # an unrelated deleted edge: the path still exists, nothing is created
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query(setup)
+        res = self.graph.query(f"MATCH ()-[z:Z]->() DELETE z {pattern} RETURN count(c)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = self.graph.query("MATCH (n:A) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = self.graph.query("MATCH (n:B) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # the intermediate node is deleted: the old path is gone, so MERGE
+        # creates a fresh one
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query(setup)
+        self.graph.query(f"MATCH (m:M) DETACH DELETE m {pattern}")
+        for label, expected in (("A", 2), ("M", 0), ("B", 2)):
+            res = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
+            self.env.assertEqual(res.result_set, [[expected]])
+        self.graph.query("MATCH (n) DETACH DELETE n")
