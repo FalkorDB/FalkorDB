@@ -87,22 +87,55 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
     flag_collapsed_siblings(plan, &collapsed);
 }
 
-/// The root of the plan branch containing `idx`: the child of the nearest
-/// `Union` above it, else the plan root. Top-level `UNION` branches are bound
-/// separately and reuse alias ids and scopes, so an edge only relates to the
-/// operators of its own branch.
+/// Is `child` the root of a plan of its own below `parent`? A `Union` branch,
+/// a `CALL {}` / subquery body (every child of an apply but the first, which
+/// feeds it) and a nested plan are bound separately and reuse alias ids and
+/// scopes, so an edge only relates to the operators of its own plan.
+fn starts_plan(
+    parent: &IR,
+    child_pos: usize,
+) -> bool {
+    match parent {
+        IR::Union | IR::NestedPlans => true,
+        IR::Apply | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => child_pos > 0,
+        _ => false,
+    }
+}
+
+/// The root of the plan containing `idx`: the topmost operator reached without
+/// crossing into another plan (see [`starts_plan`]).
 fn branch_root(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
 ) -> NodeIdx<Dyn<IR>> {
     let mut cur = idx;
     while let Some(parent) = plan.node(cur).parent() {
-        if matches!(parent.data(), IR::Union) {
+        if starts_plan(parent.data(), plan.node(cur).sibling_idx()) {
             break;
         }
         cur = parent.idx();
     }
     cur
+}
+
+/// The operators of the plan rooted at `root`, not descending into plans of
+/// their own.
+fn plan_indices(
+    plan: &DynTree<IR>,
+    root: NodeIdx<Dyn<IR>>,
+) -> Vec<NodeIdx<Dyn<IR>>> {
+    let mut out = vec![];
+    let mut stack = vec![root];
+    while let Some(idx) = stack.pop() {
+        out.push(idx);
+        let node = plan.node(idx);
+        for (pos, child) in node.children().enumerate() {
+            if !starts_plan(node.data(), pos) {
+                stack.push(child.idx());
+            }
+        }
+    }
+    out
 }
 
 /// A collapsed edge stands for every parallel edge of its (src, dst) pair, so
@@ -123,7 +156,7 @@ fn flag_collapsed_siblings(
             continue;
         }
         done.push(first.branch);
-        let indices: Vec<_> = plan.node(first.branch).indices::<Bfs>().collect();
+        let indices = plan_indices(plan, first.branch);
         for idx in indices {
             if let IR::CondTraverse {
                 relationship,

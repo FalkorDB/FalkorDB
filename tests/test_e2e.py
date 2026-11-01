@@ -531,6 +531,19 @@ def test_collapsed_edge_alternative_ignores_edges_deleted_by_the_query():
     assert res.result_set == [[0]]
 
 
+def test_collapsed_undirected_edge_keeps_one_row_per_stored_edge():
+    # An undirected collapsed `r` reaches the edge stored the other way round
+    # through its own row, so that edge is not an alternative for this row: `r`
+    # may not reuse the edge `s` took.
+    query(
+        "CREATE (a:N {n: 'A'}), (b:N {n: 'B'}), "
+        "(a)-[:R {w: 1}]->(b), (b)-[:R {w: 2}]->(a)",
+        write=True,
+    )
+    res = query("MATCH (a)-[r]-(x)-[s]->(a) RETURN a.n, x.n, s.w ORDER BY a.n")
+    assert res.result_set == [["A", "B", 2], ["B", "A", 1]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []

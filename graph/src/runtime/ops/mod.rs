@@ -197,6 +197,9 @@ impl Parallel<'_> {
                 .collect(),
             Matching::AnyType => (0..g.relationship_tensors().len()).collect(),
         };
+        // Only the stored direction: an undirected pattern reaches an edge
+        // stored the other way round through its own row (the reversed pair),
+        // not as a stand-in for this one.
         tensors
             .iter()
             .filter_map(|&tidx| g.relationship_tensors().get(tidx))
