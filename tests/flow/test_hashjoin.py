@@ -172,10 +172,14 @@ class testHashJoin(FlowTestsBase):
         res = g.query(q)
         self.env.assertEqual(res.result_set, [[1, 2], [2, 2]])
 
-        # only the second outer row has a string key on the build side
+        # the build side depends on the outer row: x = 1 builds an integer key
+        # only (its table stays on the integer path) while x = 2 also builds a
+        # string key and promotes its own table to the general one
         q = """UNWIND [1, 2] AS x
                OPTIONAL MATCH (a:M), (b:N)
-               WHERE a.k = b.k AND a.k = x
+               WHERE a.k = b.k AND (a.k = x OR a.k = toString(x))
+                 AND (b.k = x OR (x = 2 AND b.k = toString(x)))
                RETURN x, count(b) ORDER BY x"""
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
         res = g.query(q)
-        self.env.assertEqual(res.result_set, [[1, 1], [2, 1]])
+        self.env.assertEqual(res.result_set, [[1, 1], [2, 2]])
