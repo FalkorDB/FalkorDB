@@ -278,9 +278,11 @@ class testBFSEdgeChanges(FlowTestsBase):
         # converging edges (every mid node reaches the hub), a cycle back to
         # the source and dense edges among the mids. Matrices keep a capacity
         # of 16384 rows, so the layer must hold more than 16384/14 nodes to
-        # switch to pull and the graph needs an average degree above ~1.1 for
-        # a depth-limited run to take the same path. A reload leaves the
-        # transpose clean so pull is available.
+        # switch to pull and the graph needs
+        # avg_degree^depth >= 16384/64 (an average degree above ~1.2 at depth
+        # 30) for a depth-limited run to take the same path; the test is
+        # coupled to that capacity and to the BFS heuristics. A reload leaves
+        # the transpose clean so pull is available.
         g = self.db.select_graph("proc_bfs_push_pull")
         W, TAIL, FANOUT = 2000, 30, 8
         hub = W + 1
