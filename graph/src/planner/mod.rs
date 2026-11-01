@@ -41,7 +41,7 @@ use std::{
 };
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
-use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::optimizer::collect_expr_scoped_variables;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -1822,9 +1822,9 @@ impl Planner {
         let mut vec = vec![];
         // Variables the WHERE predicate constrains. Used below to order the
         // hops of a component so constrained endpoints are reached first.
-        let filter_vars: HashSet<u32> = filter
+        let filter_vars: HashSet<(u32, u32)> = filter
             .as_ref()
-            .map(|f| collect_expr_variables(f))
+            .map(|f| collect_expr_scoped_variables(f))
             .unwrap_or_default();
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
@@ -1862,10 +1862,12 @@ impl Planner {
             // An endpoint the query constrains (inline attributes, or a WHERE
             // predicate) is a cheap place to start: an index lookup or a short
             // scan rather than every node of a label.
+            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || filter_vars.contains(&(n.alias.scope_id, n.alias.id))
+            };
             let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
-                [&r.from, &r.to]
-                    .iter()
-                    .any(|n| n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id))
+                is_constrained(&r.from) || is_constrained(&r.to)
             };
             // A variable-length hop on an anchored endpoint leads the component
             // when no fixed-length hop is anchored and nothing is bound yet.
@@ -1873,6 +1875,15 @@ impl Planner {
             // above a fixed-length hop that `select_scan_node` then starts from
             // an unrelated label scan, and the var-length expansion runs from
             // every candidate that scan finds (#2558).
+            //
+            // Only one walk leads, and only one that can start the plan:
+            //   - its endpoint and edge attributes reference no variable, so
+            //     moving it ahead of the hops that bind one loses no match;
+            //   - the anchored endpoint is one the scan can start from: a
+            //     bidirectional walk is only started from its `from` endpoint
+            //     (`select_var_len_scan_node` does not reverse it).
+            // Any other walk keeps its place after the fixed-length hops, where
+            // its endpoints are bound by the hops before it.
             let var_len_anchor_leads = !relationships.iter().any(|r| {
                 self.visited
                     .contains(&(r.from.alias.id, r.from.alias.scope_id))
@@ -1881,9 +1892,29 @@ impl Planner {
                         && r.all_shortest_paths == AllShortestPaths::No
                         && anchored(r))
             });
+            let references_variable =
+                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                    [&r.attrs, &r.from.attrs, &r.to.attrs]
+                        .into_iter()
+                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+                };
+            let leading_walk = if var_len_anchor_leads {
+                relationships
+                    .iter()
+                    .find(|r| {
+                        r.min_hops.is_some()
+                            && r.all_shortest_paths == AllShortestPaths::No
+                            && !references_variable(r)
+                            && (is_constrained(&r.from)
+                                || (!r.bidirectional && is_constrained(&r.to)))
+                    })
+                    .map(|r| (r.alias.scope_id, r.alias.id))
+            } else {
+                None
+            };
             sorted_rels.sort_by_key(|r| {
                 let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    if var_len_anchor_leads && r.min_hops.is_some() && anchored(r) {
+                    if leading_walk == Some((r.alias.scope_id, r.alias.id)) {
                         -1
                     } else {
                         i32::from(r.min_hops.is_some())
@@ -1910,7 +1941,8 @@ impl Planner {
                 // the filters land.
                 let unfiltered = if has_bound == 0 {
                     i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id)
+                        n.attrs.root().num_children() > 0
+                            || filter_vars.contains(&(n.alias.scope_id, n.alias.id))
                     }))
                 } else {
                     0

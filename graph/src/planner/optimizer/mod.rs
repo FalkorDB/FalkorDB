@@ -99,6 +99,21 @@ pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSe
     vars
 }
 
+/// Collects the `(scope_id, id)` of every variable an expression references.
+/// Variable ids are only unique within a scope, so callers that mix scopes
+/// (a pattern next to a `WHERE` with comprehension variables) key on both.
+pub(crate) fn collect_expr_scoped_variables(
+    expr: &DynTree<ExprIR<Variable>>
+) -> HashSet<(u32, u32)> {
+    let mut vars = HashSet::new();
+    for idx in expr.root().indices::<Bfs>() {
+        if let ExprIR::Variable(var) = expr.node(idx).data() {
+            vars.insert((var.scope_id, var.id));
+        }
+    }
+    vars
+}
+
 /// Collects all variable IDs provided by a plan subtree.
 pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
     use crate::runtime::runtime::GetVariables;

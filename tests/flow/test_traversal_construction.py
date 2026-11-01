@@ -579,6 +579,7 @@ class testTraversalConstruction():
     def test_var_len_anchor_with_second_pattern(self):
         g = self.db.select_graph("VarLenAnchorSecondPattern")
         g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
         g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
         g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
         g.query("""UNWIND range(0, 199) AS i
@@ -595,8 +596,9 @@ class testTraversalConstruction():
                   """MATCH (person:Person)-[:KNOWS*2..2]-(friend), (friend)-[:LIVES]->(city:City)
                      WHERE person.id = 5 RETURN count(*)"""]:
             plan = str(g.explain(q))
-            self.env.assertContains("Node By Index Scan | (person:Person)", plan)
-            self.env.assertNotContains("Node By Label Scan | (city:City)", plan)
+            # the index scan on `person` is the only scan: it leads the plan
+            scans = [l.strip() for l in plan.splitlines() if "Scan" in l]
+            self.env.assertEqual(scans, ["Node By Index Scan | (person:Person)"], message=plan)
             # every friend lives in exactly one city, so the counts agree
             self.env.assertEqual(g.query(q).result_set, g.query(single).result_set, message=q)
 
@@ -604,4 +606,55 @@ class testTraversalConstruction():
         anchored = """MATCH (friend:Person {id: 9})-[:LIVES]->(city:City),
                             (person:Person)-[:KNOWS*2..2]-(friend) RETURN count(*)"""
         self.env.assertContains("Node By Index Scan | (friend:Person)", str(g.explain(anchored)))
+        g.delete()
+
+    # The walk that leads a component must be one that can start the plan, and
+    # must not be moved before the hops that bind variables it depends on.
+    def test_var_len_anchor_not_promoted_when_unsafe(self):
+        g = self.db.select_graph("VarLenAnchorUnsafe")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 199) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i % 5}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+
+        # A bidirectional walk anchored only on its `to` endpoint cannot be
+        # started from it, so it does not lead; the City scan does.
+        q = """MATCH (friend)-[:KNOWS*2..2]-(person:Person {id: 5}),
+                     (friend)-[:LIVES]->(city:City) RETURN count(*)"""
+        single = "MATCH (person:Person {id: 5})-[:KNOWS*2..2]-(friend) RETURN count(*)"
+        self.env.assertContains("Node By Label Scan | (city:City)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
+
+        # A directed walk anchored on its `to` endpoint still leads.
+        q = """MATCH (friend)-[:LIVES]->(city:City),
+                     (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"""
+        single = "MATCH (friend)-[:KNOWS*2..2]->(person:Person {id: 5}) RETURN count(*)"
+        self.env.assertContains("Node By Index Scan | (person:Person)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
+        g.delete()
+
+        # Attribute expressions that read a variable keep their binding hop first.
+        g = self.db.select_graph("VarLenAnchorDeps")
+        g.query("""CREATE (a:A {id: 1})-[:R {weight: 5}]->(b:B)-[:S]->(c:C {limit: 5, aid: 1})""")
+        for q in ["MATCH (b)-[:S]->(c), (a:A {id: 1})-[:R*1..2 {weight: c.limit}]->(b) RETURN count(*)",
+                  "MATCH (b)-[:S]->(c), (a:A {id: c.aid})-[:R*1..2]->(b) RETURN count(*)"]:
+            self.env.assertEqual(g.query(q).result_set, [[1]], message=q)
+        g.delete()
+
+        # Only one walk leads: the second one runs from the node the fixed hop
+        # between them binds, not from every node.
+        g = self.db.select_graph("VarLenAnchorChain")
+        g.query("""CREATE (a:A {id: 1})-[:R]->(b:B)-[:S]->(c:C)-[:T]->(d:D {id: 2})""")
+        g.query("UNWIND range(0, 99) AS i CREATE (:C)-[:T]->(:D {id: 3})")
+        q = "MATCH (a:A {id: 1})-[:R*1..2]->(b)-[:S]->(c)-[:T*1..2]->(d:D {id: 2}) RETURN count(*)"
+        plan = str(g.explain(q))
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+        # the plan reads top-down, so the first hop run is the last line: R, S, T
+        self.env.assertLess(plan.index(":T*1..2"), plan.index("Conditional Traverse | (b)->(c)"))
+        self.env.assertLess(plan.index("Conditional Traverse | (b)->(c)"), plan.index(":R*1..2"))
         g.delete()
