@@ -342,3 +342,27 @@ class testFilters():
         res = g.query("""CALL { CREATE () } UNWIND [1, 2] AS x
                          MATCH (n:A) WHERE x = 2 RETURN count(*)""")
         self.env.assertEqual(res.result_set, [[2]])
+
+    def test13_filter_after_hidden_scope_variables(self):
+        # What a plan subtree binds is what leaves its `WITH` / existence
+        # check, not the variables hidden below them: the copy a WITH keeps
+        # for its ORDER BY is reported under its output variable, and the
+        # branch of a pattern predicate under a SemiApply is not reported at
+        # all. Ids restart per scope, so a hidden one must not pass for the
+        # variable a later MATCH reuses it for (#2557).
+        g = self.db.select_graph("filter_after_hidden_scope")
+        g.query("""CREATE (a:A {w:1, p:1}), (b:B {p:1, w:2}), (a)-[:R]->(b),
+                          (b)-[:R]->(:C {p:1}), (:D {p:1})""")
+        for q, expected in [
+            ("""MATCH (a:A)-[:R]->(b) WITH a.w AS w ORDER BY b.w, a.p
+                MATCH (x)-[:R]->(y) WHERE y.p = 1 AND x.p = 1 RETURN count(*)""", 2),
+            ("""MATCH (a) WHERE (a)-[:R]->(:B) WITH a.p AS p ORDER BY a.w
+                MATCH (m)-[:R]->(n) WHERE n.p = 1 RETURN count(*)""", 2),
+            ("""MATCH (a) WHERE NOT (a)-[:R]->() OR (a)-[:R]->(:B)
+                WITH a.p AS p ORDER BY a.w
+                MATCH (m)-[:R]->(n) WHERE n.p = 1 RETURN count(*)""", 6),
+            ("""MATCH (a) WHERE (a)-[:R]->(:B) WITH a.p AS p, count(*) AS c ORDER BY p
+                MATCH (m)-[:R]->(n) WHERE n.p = 1 RETURN count(*)""", 2),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[expected]], depth=1)
