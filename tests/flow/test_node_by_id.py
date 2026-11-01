@@ -286,6 +286,15 @@ class testNodeByIDFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[["Q"], {}]])
         g.delete()
 
+        # A non-integer bound is still rejected when no node was ever created.
+        g = self.db.select_graph("node_by_id_empty_type")
+        try:
+            g.query("MATCH (n) WHERE id(n) = '0' RETURN n")
+            self.env.assertTrue(False)
+        except Exception as e:
+            self.env.assertContains("Node ID must be an integer", str(e))
+        g.delete()
+
     def test_parenthesised_id_predicates(self):
         # #3187: parentheses around an id() predicate still seek by id.
         queries = [

@@ -1419,10 +1419,10 @@ impl<'a> Runtime<'a> {
     ) -> Result<Option<RoaringTreemap>, String> {
         // Bounded by where the id space ends rather than by `max_node_id`,
         // whose 0 for a graph with no nodes reads as "id 0 was handed out": on
-        // a graph that never held one, that seeked a phantom node 0.
-        let Some(mut max) = self.graph().node_id_bound().checked_sub(1) else {
-            return Ok(None);
-        };
+        // a graph that never held one, that sought a phantom node 0. For an
+        // empty id space `max` saturates to 0 and the `node_count() == 0` check
+        // below returns nothing, after the predicates have been type-checked.
+        let mut max = self.graph().node_id_bound().saturating_sub(1);
         let mut min = 0u64;
         for (expr, op) in filter {
             let id = match {
