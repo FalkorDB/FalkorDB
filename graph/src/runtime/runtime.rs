@@ -417,6 +417,63 @@ impl ReturnNames for DynNode<'_, IR> {
     }
 }
 
+/// The smallest integer `i` in `i64::MIN..=i64::MAX + 1` whose `f64` image is
+/// not below `f`, or `i64::MAX + 1` when none is.
+///
+/// The `Filter` a seek replaces compares an integer id with a float by first
+/// casting the id to `f64`, which is exact up to 2^53 and rounds beyond it, so
+/// the cast is searched (it is monotonic) rather than `f.ceil()` assumed.
+fn first_id_where(reached: impl Fn(f64) -> bool) -> i128 {
+    let (mut lo, mut hi) = (i128::from(i64::MIN), i128::from(i64::MAX) + 1);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reached(mid as f64) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// The smallest id `i` with `(i as f64) >= f`.
+fn first_id_ge(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.ceil() as i128;
+    }
+    first_id_where(|x| x >= f)
+}
+
+/// The largest id `i` with `(i as f64) <= f`.
+fn last_id_le(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.floor() as i128;
+    }
+    first_id_where(|x| x > f) - 1
+}
+
+#[cfg(test)]
+mod id_bound_tests {
+    use super::{first_id_ge, last_id_le};
+
+    #[test]
+    fn float_bounds_follow_the_f64_cast_of_the_id() {
+        // Below 2^53 the cast is exact: plain ceil / floor.
+        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
+        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
+        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
+        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
+        let b = 9_007_199_254_740_992_i128;
+        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
+        assert_eq!(((b - 1) as f64 == b as f64), false);
+        // Infinities saturate past every id.
+        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
+        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
+        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
+        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
+    }
+}
+
 impl<'a> Runtime<'a> {
     #[inline]
     pub fn inspect_batch(
@@ -1442,7 +1499,7 @@ impl<'a> Runtime<'a> {
             // `id = 1.5` has no solution because `ceil > floor`.
             let (ceil, floor) = match value {
                 Value::Int(id) => (i128::from(id), i128::from(id)),
-                Value::Float(f) if !f.is_nan() => (f.ceil() as i128, f.floor() as i128),
+                Value::Float(f) if !f.is_nan() => (first_id_ge(f), last_id_le(f)),
                 _ => return Ok(None),
             };
             match op {
