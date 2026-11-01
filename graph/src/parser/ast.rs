@@ -1258,7 +1258,8 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                         "The first argument of db.idx.fulltext.drop must be a string literal",
                     ));
                 }
-                Ok(())
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
             Self::Match { pattern, .. } => {
                 Self::validate_inlined_properties(pattern)?;
