@@ -1069,8 +1069,9 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
         finally:
             g.delete()
 
-    # A LIMIT above a bound-endpoint edge index scan keeps the answer equal to
-    # the unindexed graph (the hit cache is off under a record cap).
+    # A LIMIT above a bound-endpoint edge index scan, with or without a Filter
+    # between them (a labelled destination adds one), keeps the answer equal to
+    # the unindexed graph; the hit cache stays off so the scan streams.
     def test_bound_endpoint_hit_cache_under_limit(self):
         with_idx = self.db.select_graph("edge_idx_bound_cache_lim")
         no_idx = self.db.select_graph("edge_idx_bound_cache_lim_plain")
@@ -1085,12 +1086,13 @@ class testEdgeIndexRdbRoundtripFlow(FlowTestsBase):
             q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
                  "RETURN count(r) AS c LIMIT 1")
             self.env.assertEqual(with_idx.query(q).result_set, no_idx.query(q).result_set)
-            q = ("MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 "
-                 "RETURN id(r) LIMIT 5")
-            full = {row[0] for row in no_idx.query(q.replace(" LIMIT 5", "")).result_set}
-            got = [row[0] for row in with_idx.query(q).result_set]
-            self.env.assertEqual(len(got), 5)
-            self.env.assertTrue(set(got) <= full)
+            for q in ["MATCH (a:N), (b:N) MATCH (a)-[r:P]->(b) WHERE r.v >= 500 RETURN id(r) LIMIT 5",
+                      "MATCH (a:N)-[r:P]->(b:N) WHERE r.v >= 500 RETURN id(r) LIMIT 5"]:
+                self.env.assertContains('Edge By Index Scan', str(with_idx.explain(q)))
+                full = {row[0] for row in no_idx.query(q.replace(" LIMIT 5", "")).result_set}
+                got = [row[0] for row in with_idx.query(q).result_set]
+                self.env.assertEqual(len(got), 5)
+                self.env.assertLessEqual(set(got), full)
         finally:
             with_idx.delete()
             no_idx.delete()

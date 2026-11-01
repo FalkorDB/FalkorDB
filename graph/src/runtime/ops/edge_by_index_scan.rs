@@ -299,9 +299,10 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
-        // Unused by the emitter (see below); a downstream LIMIT keeps the index
-        // streaming instead of building the full hit set.
-        record_cap: Option<usize>,
+        // A LIMIT above (see `Runtime::has_streaming_limit_above`) keeps the index
+        // streaming instead of building the full hit set. The emitter is
+        // uncapped (see below).
+        limited: bool,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -328,7 +329,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
             transposed,
             all_edges_cache: std::cell::RefCell::new(None),
             hit_cache: HitCache {
-                row_invariant: query_is_row_invariant(query) && record_cap.is_none(),
+                row_invariant: query_is_row_invariant(query) && !limited,
                 bound_rows: std::cell::Cell::new(0),
                 hits: std::cell::RefCell::new(None),
                 transposed,
