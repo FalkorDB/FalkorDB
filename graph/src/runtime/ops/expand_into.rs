@@ -193,9 +193,12 @@ impl<'a> ExpandIntoOp<'a> {
                     .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
                     .collect()
             };
-            let multi_edge = indices
-                .iter()
-                .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
+            // A pair joined by edges of different types holds several edges
+            // although no single tensor stores a parallel one.
+            let multi_edge = indices.len() > 1
+                || indices
+                    .iter()
+                    .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
             (indices, multi_edge)
         });
 

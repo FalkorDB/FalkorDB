@@ -204,9 +204,11 @@ struct CtState {
     /// count, so `emit_relationship: false` is only honoured when this is false.
     multi_edge: bool,
     /// Edges per pair, for the pairs of the requested types that hold more than
-    /// one. Empty unless `multi_edge`. Lets a traverse that needs no edge id
-    /// emit the right number of rows without reading the tensor per pair.
+    /// one. Lets a traverse that needs no edge id emit the right number of rows
+    /// without reading the tensor per pair. Built on first use, only by a
+    /// traverse that needs no edge id and only when `multi_edge`; empty before.
     multi_counts: Arc<FxHashMap<(u64, u64), u32>>,
+    multi_counts_built: bool,
     /// Parallel edges beyond the first per pair, for the first hop of the
     /// batched path; `None` when it has none. Built with `batched_matrix`.
     batched_surplus: Option<Matrix<u64>>,
@@ -778,13 +780,9 @@ impl<'a> CondTraverseOp<'a> {
                 .collect()
         };
 
-        let mut multi_counts: FxHashMap<(u64, u64), u32> = FxHashMap::default();
-        for &tidx in &edge_type_indices {
-            for (src, dst, _) in g.relationship_tensors()[tidx].iter_multi_edges() {
-                *multi_counts.entry((src, dst)).or_default() += 1;
-            }
-        }
-        let multi_edge = !multi_counts.is_empty();
+        let multi_edge = edge_type_indices
+            .iter()
+            .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
 
         CtState {
             fwd_iter: std::cell::RefCell::new(fwd_iter),
@@ -797,7 +795,8 @@ impl<'a> CondTraverseOp<'a> {
             rev_dst_label_ids,
             edge_type_indices,
             multi_edge,
-            multi_counts: Arc::new(multi_counts),
+            multi_counts: Arc::new(FxHashMap::default()),
+            multi_counts_built: false,
             batched_surplus: None,
             batched_added: Vec::new(),
             chain_added: Vec::new(),
@@ -1082,7 +1081,14 @@ impl<'a> CondTraverseOp<'a> {
         let mut sibling_row = u64::MAX;
         let mut sibling_seed: Option<NodeId> = None;
         let mut sibling_pairs: Vec<(NodeId, NodeId)> = Vec::new();
+        // Rows the record cap still allows, so an entry that fans out into a
+        // huge multiplicity is not materialized past it.
+        let cap_left = self.record_cap.map(|c| c.saturating_sub(self.produced));
+        let mut emitted = 0usize;
         for (row_i, dest_raw, count) in f.iter(0, u64::MAX) {
+            if cap_left.is_some_and(|left| emitted + out_indices.len() >= left) {
+                break;
+            }
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids
@@ -1175,29 +1181,44 @@ impl<'a> CondTraverseOp<'a> {
                 // are not exposed, or a single hop whose alias nothing reads.
                 // `f` is built from these same tensors, so every pair it
                 // yields has at least one edge in one of them.
-                for _ in 0..count {
-                    out_indices.push(row_idx);
-                    out_dest_ids.push(dest_id);
+                let mut left = count as usize;
+                if let Some(cap) = cap_left {
+                    left = left.min(cap.saturating_sub(emitted + out_indices.len()));
+                }
+                while left > 0 {
+                    // A batch holds at most `BATCH_SIZE` rows: its selection
+                    // vector indexes them with a `u16`.
+                    let n = left.min(BATCH_SIZE - out_indices.len());
+                    out_indices.extend(std::iter::repeat_n(row_idx, n));
+                    out_dest_ids.extend(std::iter::repeat_n(dest_id, n));
+                    left -= n;
+                    if out_indices.len() >= BATCH_SIZE {
+                        let out_batch = Self::take_batch(
+                            batch,
+                            &mut out_indices,
+                            &mut out_dest_ids,
+                            None,
+                            to_alias.id,
+                        );
+                        emitted += out_batch.active_len();
+                        out_pending.push_back(out_batch);
+                    }
                 }
                 if self.optional {
                     matched[row_i as usize] = true;
                 }
             }
 
-            if out_indices.len() >= BATCH_SIZE {
-                let mut out_batch = batch.gather(&out_indices);
-                if bind_edge {
-                    out_batch.set_column(
-                        rp.alias.id,
-                        Column::RelIds(std::mem::take(&mut out_edge_ids)),
-                    );
-                }
-                out_batch.set_column(
+            while out_indices.len() >= BATCH_SIZE {
+                let out_batch = Self::take_batch(
+                    batch,
+                    &mut out_indices,
+                    &mut out_dest_ids,
+                    bind_edge.then_some((rp.alias.id, &mut out_edge_ids)),
                     to_alias.id,
-                    Column::NodeIds(std::mem::take(&mut out_dest_ids)),
                 );
+                emitted += out_batch.active_len();
                 out_pending.push_back(out_batch);
-                out_indices.clear();
             }
         }
 
@@ -1224,6 +1245,26 @@ impl<'a> CondTraverseOp<'a> {
 
         drop(g);
         true
+    }
+
+    /// Moves the first `BATCH_SIZE` rows buffered by `expand_batch` out as a
+    /// batch: the input rows gathered at `indices`, with the destination (and
+    /// the edge, when bound) columns.
+    fn take_batch(
+        batch: &Batch<'a>,
+        indices: &mut Vec<usize>,
+        dest_ids: &mut Vec<NodeId>,
+        edge_ids: Option<(u32, &mut Vec<RelationshipId>)>,
+        to_alias: u32,
+    ) -> Batch<'a> {
+        let n = indices.len().min(BATCH_SIZE);
+        let mut out = batch.gather(&indices[..n]);
+        indices.drain(..n);
+        if let Some((alias, ids)) = edge_ids {
+            out.set_column(alias, Column::RelIds(ids.drain(..n).collect()));
+        }
+        out.set_column(to_alias, Column::NodeIds(dest_ids.drain(..n).collect()));
+        out
     }
 
     /// Enumerate the single-hop results for `batch[row_idx]`, pushing each as a
@@ -1285,7 +1326,20 @@ impl<'a> CondTraverseOp<'a> {
         let g = runtime.graph();
         // Collapsing parallel edges to one row per pair is only exact when the
         // relation has none.
-        let emit_relationship = emit_relationship || state.multi_edge;
+        // A pair joined by edges of different types holds several edges too,
+        // although no single tensor stores a parallel one.
+        let emit_relationship =
+            emit_relationship || state.multi_edge || state.edge_type_indices.len() > 1;
+        if !need_edge_id && state.multi_edge && !state.multi_counts_built {
+            let mut counts: FxHashMap<(u64, u64), u32> = FxHashMap::default();
+            for &tidx in &state.edge_type_indices {
+                for (src, dst, _) in g.relationship_tensors()[tidx].iter_multi_edges() {
+                    *counts.entry((src, dst)).or_default() += 1;
+                }
+            }
+            state.multi_counts = Arc::new(counts);
+            state.multi_counts_built = true;
+        }
         let id_free = (!need_edge_id).then(|| Arc::clone(&state.multi_counts));
         let bidir_dedup = bidir_dedup.filter(|_| !state.multi_edge);
         // Siblings compared by node (the caller filters the results) need no id

@@ -445,3 +445,40 @@ class testRelationPattern(FlowTestsBase):
         g.query("MATCH (a:A)-[:R]->(m:M) CREATE (a)-[:R]->(m)")
         res = g.query("MATCH (a)-[:R]->(m)<-[:R]-(c) RETURN count(*)")
         self.env.assertEqual(res.result_set, [[20]])
+
+    # A pair joined by edges of different types holds several edges although
+    # no single type has a parallel one; every traverse path counts them all.
+    def test18_cross_type_pair_without_parallel_edges(self):
+        g = self.db.select_graph("cross_type_pair")
+        g.query("CREATE (a:A)-[:R]->(b:B), (a)-[:S]->(b)")
+        for query in [
+            "MATCH (a:A)-[:R|S]->(b:B) RETURN count(*)",
+            "MATCH (a:A)-[]->(b:B) RETURN count(*)",
+            "MATCH (a:A)-[:R|S]-(b:B) RETURN count(*)",
+            "MATCH (a:A)-[]-(b:B) RETURN count(*)",
+            "MATCH (a:A)-[r:R|S]->(b:B) RETURN count(*)",
+            "OPTIONAL MATCH (a:A)-[:R|S]-(b:B) RETURN count(*)",
+            "MATCH (a:A), (b:B) WITH a, b MATCH (a)-[:R|S]->(b) RETURN count(*)",
+            "MATCH (a:A), (b:B) WITH a, b MATCH (a)-[]->(b) RETURN count(*)",
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[2]], depth=1)
+
+    # One input entry fanning out into more rows than a batch (or a u16 row
+    # index) holds is split, and stops at the record cap.
+    def test19_fused_multiplicity_is_batched(self):
+        g = self.db.select_graph("fused_multiplicity")
+        # the big entry sits between two that pass, whichever way the scan runs
+        g.query("CREATE (:A {v: 2})-[:R]->(:M)-[:S]->(:C {v: 2}), "
+                "(a:A {v: 1})-[:R]->(m:M)-[:S]->(c:C {v: 2}), "
+                "(:A {v: 2})-[:R]->(:M)-[:S]->(:C {v: 2})")
+        g.query("UNWIND range(1, 256) AS i MATCH (a:A {v: 1}), (m:M)<-[:R]-(a), (c:C)<-[:S]-(m) "
+                "CREATE (a)-[:R]->(m), (m)-[:S]->(c)")
+        base = "MATCH (a:A)-[:R]->()-[:S]->(c:C) "
+        self.env.assertEqual(g.query(base + "RETURN count(*)").result_set, [[257 * 257 + 2]])
+        # a filter over rows of one oversized entry must keep each row's own values
+        res = g.query(base + "WHERE a.v + c.v >= 3 RETURN a.v, count(*) ORDER BY a.v")
+        self.env.assertEqual(res.result_set, [[1, 257 * 257], [2, 2]])
+        res = g.query(base + "WHERE a.v + c.v = 99 RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[0]])
+        res = g.query(base + "RETURN c.v LIMIT 5")
+        self.env.assertEqual(res.result_set, [[2]] * 5)
