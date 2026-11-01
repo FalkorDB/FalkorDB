@@ -19,8 +19,9 @@
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
   History: before #3297 the arm returned `Ok(())`; `CALL db.labels() YIELD label MATCH (n)` then reached the
   optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
-* `with_last_accepted`: a query ending in `WITH` is accepted (`MATCH (n) WITH n` returns
-  rows); C rejects it ("Query cannot conclude with WITH"), as openCypher does.
+* FIXED by #3291 (608b62542): a query ending in `WITH` is rejected (`with_last_rejected`,
+  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher. Before, the
+  `With`/`Return` arm accepted it and the query returned rows.
 * `validate_ends`: away from those, a query cannot end in MATCH / UNWIND / a
   returning subquery.
 -/
@@ -368,7 +369,10 @@ def innerValidate : QC → List QC → Except String Unit
   | .delete, rest => next rest
   | .set s, rest => (setItemsOk s).bind fun _ => next rest
   | .remove nt, rest => if nt then .error "Type mismatch: expected Node or Relationship but was Null" else next rest
-  | .loadCsv, rest | .with_, rest | .return_, rest | .createIndex, rest | .dropIndex, rest => next rest
+  | .with_, rest => match rest with     -- #3291 (ast.rs:1327-1331)
+    | [] => .error "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)"
+    | c :: cs => innerValidate c cs
+  | .loadCsv, rest | .return_, rest | .createIndex, rest | .dropIndex, rest => next rest
   | .query cs, _ => match cs with
     | [] => .error "Error: empty query."
     | c :: rest => innerValidate c rest
@@ -426,11 +430,15 @@ theorem call_then_create_multi_type_rejected :
     validate (.query [.call "db.labels" none, .create true [2]]) = .error "Exactly one relationship type must be specified for each relation in a CREATE pattern." := by
   simp [validate, innerValidate, callCheck, next, inlinedOk, relTypesOk, Except.bind]; rfl
 
-/-! ### History: before #3297 (b6567cb97 and earlier) -/
+/-- **PROVEN** (#3291, closes W4-plan-5): `MATCH (n) WITH n` is rejected, as in C. -/
+theorem with_last_rejected :
+    validate (.query [.match_ true, .with_]) = .error "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)" := by
+  simp [validate, innerValidate, inlinedOk, Except.bind]
 
-/-- `MATCH (n) WITH n` validates (C and openCypher reject a final WITH). -/
-theorem with_last_accepted : validate (.query [.match_ true, .with_]) = .ok () := by
-  simp [validate, innerValidate, inlinedOk, next, Except.bind]
+/-- A WITH in the middle is transparent: what follows it is validated. -/
+theorem with_transparent (rest : List QC) (c : QC) :
+    innerValidate .with_ (c :: rest) = innerValidate c rest := by
+  rw [innerValidate]
 
 /-- Without a procedure call before it, a final MATCH / UNWIND is rejected. -/
 theorem validate_ends :

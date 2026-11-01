@@ -81,11 +81,11 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * `agree_on_outer_refs`: nodes-first binding and textual binding accept the same patterns when property maps only mention earlier-clause variables.
 * `mergeSV_ge`, `mergeSV_covers`: merged scope tables are pointwise at least as long as each input.
 * `foreachRestore_covers`: FOREACH restore keeps every inner id reserved.
-* `callBody_query_disjoint`: a plain CALL body's scopes are disjoint from the live outer scopes.
+* `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
 * Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
   `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
-  `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`, `callBody_union_aliases`,
+  `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
   `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
@@ -96,7 +96,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`.
 * #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
-  `body_import_value`, `union_branch_label_alias` (open, #3027), `pushed_read_unbound` (W6-opt-1).
+  `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
 
 ## Confirmed bugs (repro: `cargo test -p graph --test lean_binder`; tests assert the C answer and fail today)
 1. **Clause fold** (general cause of #2923): parser/cypher.rs:1540-1547 folds `MATCH p MATCH q` (and `CREATE`,
@@ -164,7 +164,6 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   reading pending pattern variables (`split_inline_attrs`) — removes `node_attr_on_rel_rust_rejects` / bug 2.
 * #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
-* #3027: UNION branch scopes inside CALL {} start above the outer scopes — fixes `callBody_union_aliases` (bug 4).
 * #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
 * #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY

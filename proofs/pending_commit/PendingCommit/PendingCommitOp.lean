@@ -15,7 +15,7 @@ import PendingCommit.Labels
   has every property; UNIQUE iff, when some affected member participates, the
   label's (type's) scan passes. Membership of an edge created in this batch
   comes from `created_rel_types`. **Since #3334 (4ace60ec7)** UNIQUE goes through
-  `unique_violated` (index lookup per member): `UniqueIndex.lean`, whose
+  `unique_violated` (index lookup per member, `query_for`/`lookup` since #3547): `UniqueIndex.lean`, whose
   `uniqueViolated_agrees` shows it equals this label-scan spec under the
   constraint's pre-commit invariant; `check` stays as that reference spec, and
   `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.

@@ -1,6 +1,6 @@
 # native_index: the native numeric index answers like a label scan plus a filter
 
-This project proves that the native numeric index (#2350, with writes batched by #3307 and a build state with indexer batches since #2351) returns exactly the rows a full label scan plus a `WHERE` filter would return, and that every graph write keeps the index in step with the data. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it serves range and equality predicates on indexed numeric properties instead of RediSearch:
+This project proves that the native numeric index (#2350, with writes batched by #3307 and a build state with indexer batches since #2351) returns exactly the rows a full label scan plus a `WHERE` filter would return, and that every graph write keeps the index in step with the data. The index is built only with `--features index-falkordb` (off by default in the shipped module); when it is on, it is the **only** Range index (#3547, #2386): RediSearch is not fed Range fields and there is no fallthrough to it. It serves range and equality predicates, `IN` lists and same-attribute `OR`s on indexed numeric properties, answers a read on a column still being built by scanning, and raises an error for any predicate it cannot serve:
 
 ```cypher
 CREATE INDEX FOR (p:Person) ON (p.age)
@@ -12,7 +12,7 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
 
-The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`, and the native route of `runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
+The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -30,17 +30,17 @@ Yes, for non-Bool data and a guarded numeric bound. `filter_iff_key` proves that
 
 - `range_agrees` and `point_agrees`: a column built from `(value, id)` pairs answers a `Range` or an `Equal` with exactly the ids whose value passes the filter;
 - `nodeScan_native_agrees`: the same, end to end, for `NodeByIndexScanOp` on the native route;
-- `queryNumeric_spec`: only numeric `Equal`/`Range` queries on an existing column take the native route.
+- `queryNumeric_spec`: `query_numeric`'s three-way answer (below): rows from a `Ready` column, a `ScanFilter` from a `Building` one, `None` for a shape the column does not serve.
 
 **3b. Does an `IN` list (#2383) return what a label scan plus `IN` filter returns?**
 
-Yes, and it declines rather than answering part. `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and takes the union of the point scans over the sorted, deduplicated keys (`union_of`).
+Yes, and it declines rather than answering part. `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
 
 - `inList_agrees`: a served list returns exactly the ids whose value equals some member (members guarded, no `Bool` data), via `point_agrees` per key;
-- `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined and the caller falls back;
-- `union_agrees`, `union_nil`, `union_attr_mismatch`, `union_range_declines`: an `OR` is served only when every child is an `Equal` or a non-empty `IN` list on one attribute, and then returns the ids equal to some member. An empty `OR` is not match-all, and an `OR` over two attributes would return wrong rows from one column, so both are declined;
-- `unionNext_spec` (`UnionIter::next`): the lazy chain builds one cursor at a time and each `next` yields the head of what remains, so draining it enumerates the point scans in key order, and the eager model `unionOf` is exact. The tree snapshot is pinned when the union is built (the model tree is an immutable value);
-- `queryNumeric_spec`: the facade routes an `IN` list to its attribute's column and an `OR` by its first member's attribute, which `union` rechecks;
+- `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined (`inListKeys_isSome_iff`), and under `index-falkordb` a decline is an error, not a RediSearch query;
+- `union_agrees`, `union_nil`, `union_attr_mismatch`, `union_range_declines`: an `OR` is served only when every child is an `Equal` or a non-empty `IN` list on one attribute, and then returns the ids equal to some member. An empty `OR` is not match-all, and an `OR` over two attributes would return wrong rows from one column, so both are declined. A member `a = null` holds for nothing and adds no key (`union_null_only`, #2386);
+- `unionNext_spec` (`UnionIter::next`): the lazy chain builds one cursor at a time and each `next` yields the head of what remains, so draining it enumerates the point scans in key order, and the eager model `lookup (.keys ks)` is exact (`unionIter_initial`). The tree snapshot is pinned when the union is built (the model tree is an immutable value);
+- `queryNumeric_spec`: the facade routes an `IN` list to its attribute's column and an `OR` by its first member's attribute, which `unionKeys` rechecks;
 - `nodeScan_native_inList_agrees`: end to end, a non-empty guarded `IN` list on a built column returns exactly the ids the filter keeps.
 
 Order is deliberately unspecified (the chain is not merged into id order), so every statement is about membership. Uniqueness of ids rests on the encoder rejecting lists (a doc has one key per column) and is not modelled. A `Bool` member shares a key with `0`/`1` as in `bool_divergence`.
@@ -51,11 +51,29 @@ No. #3307 stages index changes during a query and applies them once at commit: `
 
 **4b. Is a column that is still being built ever read, and do writes during the build get lost? (#2351)**
 
-A column is created `Building` (`create_building`) and filled by indexer batches; the batch that reaches the end flips it `Ready`. While `Building`, `query_numeric` declines every query routed to it (`queryNumeric_building`), so RediSearch answers; a `Ready` column answers as before (`queryNumeric_ready`). Two things keep the part of the column below the cursor current while the rest is still unread:
+A column is created `Building` (`create_building`) and filled by indexer batches; the batch that reaches the end flips it `Ready`. While `Building`, `query_numeric` answers a shape the column serves with a `ScanFilter`, never with rows (`queryNumeric_building`), and the scan op scans instead (below; before #2386 it fell through to RediSearch); a `Ready` column answers from its tree (`queryNumeric_ready`). What is declined does not depend on the build state (`queryNumeric_isSome_iff`): an unservable shape is never turned into a quiet scan. Two things keep the part of the column below the cursor current while the rest is still unread:
 
 - **Writes.** `writerRecord_eq_sequential` states what a unit of work does to a column at any state: its staged changes, filtered by `stateLog`, applied one by one. `stateLog_removes` / `stateLog_adds` say the filter keeps every removal and an addition only for an entity `place`d below the cursor (a node by its id, an edge by its `(src, dst)` pair, `None` for an edge deleted in the unit). The filter runs *before* the collapse: `building_reuse_removed` shows a removed-then-re-added tuple for an entity at or above the cursor (a reused edge id) is still removed, where collapsing first would have kept it (`collapse_first_would_keep`). Writes never move the cursor (`applyWrites_state`).
 - **Batches.** `scanNodes_below_cursor` and `scanEdges_below_cursor` prove the entities a batch read are exactly those that `precede` the cursor it returns (with the matrices iterated in ascending order, a GraphBLAS fact), so "indexed" and "below the cursor" are the same set; a batch never stops inside a multi-edge `(src, dst)` pair (`edgeLoop_spec`). `prepareBatch_building` / `prepareBatch_idle` say a batch adds its tuples and moves the cursor (or flips `Ready`), and changes nothing on a column that is gone or not `Building`.
 - **CREATE INDEX** is one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `createIndex_nodeScan_agrees` carries `nodeScan_native_agrees` over to the new batch path.
+
+**4c. What does a read do under `index-falkordb`, and is there a fallthrough? (#3547, #2386)**
+
+`query_numeric` has three outcomes: `Some(Ok(rows))` (a `Ready` column), `Some(Err(scan_filter))` (a servable shape on a `Building` column) and `None` (anything else), which the scan op turns into `unsupported_by_native_index`. Nothing reads RediSearch for a Range index.
+
+- `scanOp_spec`, `scanOp_none_iff`, `nodeScanOp_error_iff`, `edgeScanOp_error_iff`: the op errors exactly when the native index declines the predicate, never because a column is building;
+- `queryNumeric_range_served`, `nodeScanOp_range_served`, `edgeScanOp_range_served`: a `Range` (bounds `Null` or encodable) on an existing column is never declined, so it is rows or a scan;
+- `queryNumeric_null_equal`: `= null` holds for nothing and is answered with no rows, not declined as a value no column indexes (#2386);
+- `nodeFilteredScan_agrees`, `edgeFilteredScan_agrees` (`node_matches` / `relationship_matches`): **the scan that stands in for a building column keeps exactly the ids the built column returns for the same keys**, because both use one `KeySet` (`lookup_fromEntries`). `nodeScan_building_agrees` / `edgeScan_building_agrees` state it for the whole read: if `query_numeric` answers with a `ScanFilter`, the scan equals what the column `CREATE INDEX` would build answers. The planner drops a predicate it hands to an index scan, so this filter is the only check the scanned rows get.
+- `describe` / `unsupportedByNativeIndex` (`Decline.lean`): the error names the entity, label and predicate shape. The three union reasons are decided by the flattened members (`describe_or`) and the "spanning" and "non-member" reasons are always real declines (`describe_or_reason_sound`). One cosmetic inexactness: `a = 1 OR a IN []` is described as "not all-numeric" (`describe_empty_in_misreported`).
+
+**4d. Who feeds RediSearch now? (`redisearch_fields`)**
+
+With the feature, RediSearch gets every field except Range: `redisearchFields_no_range`, `redisearchFields_keeps_nonrange` (Fulltext/Vector fields stay, also on a label that has a Range field), `redisearchFields_nonempty` (a key left with no field is dropped), `redisearchFields_drops_range_only`, `redisearchFields_idem`. `native_owns_range`: an attribute with a Range field is built natively by `populate` (from every field) and never fed to RediSearch. Without the feature `redisearch_fields` is the identity (`redisearchFieldsAll_id`). `index_only_writes` (the `FALKORDB_INDEX_ONLY` measurement gate) is gone and its theorem with it.
+
+**4e. Where does a unique-constraint check look? (`unique.rs`, #3334)**
+
+`equalCandidates_some` / `_none`: a lookup is made exactly when there is a column, it is not `Building` (it has not seen every entity) and its kind indexes the value; an empty answer from a `Ready` column really means no entity holds the value (`equalCandidates_complete`, `rows_mem`). `nativeUniqueQuery_none_iff`: no lookups exactly when no column can answer exactly. `fewest_eq_minRow`, `fewest_mem`, `fewest_minimal`: the round-robin loop returns the first shortest lookup. `readOnce_first`, `readOnce_repeat`, `readOnce_skip_sound`: a lookup set is read once and a repeat reads nothing (the same ids give the same rows, `rows_eq_of_id_eq`).
 
 **5. Do `SET`, `DELETE` and label changes keep the index in step?**
 
@@ -83,9 +101,13 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `unionNext_spec` | The lazy cursor chain yields exactly the point scans in key order | `Numeric.lean` |
 | `nodeScan_native_inList_agrees` | Node `IN` scan on the native route = label scan + `IN` filter | `Ddl.lean` |
 | `nodeScan_native_agrees` | Node index scan on the native route = label scan + filter | `Ddl.lean` |
+| `nodeFilteredScan_agrees`, `edgeFilteredScan_agrees`, `nodeScan_building_agrees` | The scan standing in for a building column keeps exactly what the built column returns | `Scan.lean` |
+| `queryNumeric_isSome_iff`, `queryNumeric_range_served`, `scanOp_none_iff` | A decline does not depend on the build state; a Range is never declined; the op errors exactly on a decline | `Query.lean`, `Ddl.lean`, `Scan.lean` |
+| `redisearchFields_no_range`, `redisearchFields_keeps_nonrange` | RediSearch is fed every field but Range | `Scan.lean` |
+| `nativeUniqueQuery_none_iff`, `fewest_eq_minRow`, `readOnce_repeat` | The unique-constraint lookups: declines exactly when no column can answer, reads the smallest, reads once | `Unique.lean` |
 | `lastWriteWins_spec` | The collapse keeps exactly each tuple's last staged change | `Pending.lean` |
 | `writerRecord_eq_sequential` | #3307's batched apply = applying each staged change one by one (filtered by the column's build state since #2351) | `Pending.lean` |
-| `queryNumeric_building` | a `Building` column is never read from | `Index.lean` |
+| `queryNumeric_building` | a `Building` column is answered with a `ScanFilter`, never rows | `Query.lean` |
 | `scanNodes_below_cursor`, `scanEdges_below_cursor` | a batch reads exactly the entities that precede its returned cursor | `Build.lean` |
 | `buildInOneBatch_entry` | CREATE INDEX leaves a `Ready` column holding `from_entries` of the live pairs | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
@@ -127,23 +149,27 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Agree.lean` | `filter_iff_key`; counterexamples `bool_divergence`, `i64min_hole`, `p53_collision` |
 | `Tree.lean` | The `CowBTree` contract as its contents (`tInsert`, `tRemoveBatch`, `tRange`, …) |
 | `Contract.lean` | The contract discharged: on every reachable tree each `CowBTree` operation (the `cow_btree` model) equals its `Tree.lean` model (`contract_*`) |
-| `Numeric.lean` | `NumericIndex`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, `IndexQuery` (with `inList` and `or`), `inList`, `union`, `unionOf`, `unionNext`, per-write contents specs |
-| `Index.lean` | `HashMap` as an association list, `IndexColumn`, `BuildCursor`, `BuildState`, `IndexEntry`, `FalkorDbIndex`, `queryNumeric_building` |
+| `Numeric.lean` | `NumericIndex`, `KeySet`, `rangeBounds`, `range_keys`, `range_agrees`, `point_agrees`, `IndexQuery` (with `inList` and `or`), `keysOf`, `lookup`, `inListKeys`, `unionKeys`, `unionNext`, `lookup_fromEntries`, per-write contents specs |
+| `Index.lean` | `HashMap` as an association list, `IndexColumn`, `BuildCursor`, `BuildState`, `IndexEntry`, `FalkorDbIndex`, `rowsAt` |
+| `Query.lean` | `ScanFilter`, `queryKey`, `queryNumeric` (three-way answer), `EqualCandidates`, `equalCandidates` |
 | `Pending.lean` | Staged writes (`IndexWrite`, `IndexChanges`, `PendingIndexWrites`), `lastWriteWins`, `stateLog`, `writerRecord`, `writerRecord_eq_sequential`, `applyWrites_numeric` |
 | `Writes.lean` | The staging functions of `graph_writes.rs` (`nodeAttrsSet`, `nodesDeleted`, `labelsAdded`, …), `lastOp_ops`, the per-path `*_hit` theorems |
 | `Build.lean` | Indexer batches: `scan`/`scanNodes`/`scanEdges`/`edgeLoop`, `prepareBatch`, `scanNodes_below_cursor`, `scanEdges_below_cursor` |
-| `Ddl.lean` | `createIndex`, `populate`, `buildInOneBatch`, the scan routing `scanRoute`, `nodeScan_native_agrees`, `snapshot_isolated`, `runUnit_spec` |
+| `Ddl.lean` | `createIndex`, `populate`, `buildInOneBatch`, `queryIndexNumericNodes/Edges`, `scanOp`, `nodeScan_native_agrees`, `snapshot_isolated`, `runUnit_spec` |
+| `Scan.lean` | `nodeMatches`, `relationshipMatches`, the filtered scans, `nodeScanOp`/`edgeScanOp`, `redisearchFields` |
+| `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
+| `Decline.lean` | `unsupported_by_native_index`'s `describe`, `unionMembers` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entry encoding `enc` and the sorted-list lemmas, and [`../core`](../core) for `roundNat`/`bitlen` (IEEE round-to-nearest-even).
 
 ## Coverage
 
-`COVERAGE.tsv` has 116 function rows (plus one comment row):
+`COVERAGE.tsv` has 137 function rows (plus one comment row):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 116 |
+| PROVEN | 137 |
 
 - The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
 - Three PROVEN rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under a caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
@@ -155,7 +181,8 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 - **The graph's own stores.** How the graph mutates its attribute store, label matrices and `remove_all` is modelled in other projects; here each per-entry outcome is stated against the graph *before* the write.
 - **`HashMap` order.** Iteration order is arbitrary, so theorems about a whole map are stated per key. The `bulk`, `rows` and `product` paths have exact staged-ops theorems (`*_changes`); their per-entry outcome follows from `lastOp_ops` as for the other paths.
 - **Schema.** Attribute names are assumed unique (`attrNames.Nodup`), which the single `attrs_name` dictionary guarantees.
-- **RediSearch.** When a query is not routed natively, it goes to RediSearch through FFI, which is not modelled here.
+- **RediSearch.** Under `index-falkordb` nothing reads a Range index from RediSearch. Fulltext and Vector indexes still do (FFI, not modelled here).
+- **Scan op details.** The scan ops' label scan (the pattern's labels, `extra_labels`, the edge cache, undirected orientation) belongs to `ops_traverse`; here the scan is the index label's nodes / the type's edges.
 
 ## Build and check
 

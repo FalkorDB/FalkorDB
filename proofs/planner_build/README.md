@@ -50,7 +50,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 **6. What does validation let through?**
 
 - **Too much after a procedure CALL — fixed by #3297.** `inner_validate` used to return `Ok(())` at a `CALL` without checking the clauses after it, so `CALL db.labels() YIELD label CREATE (a)-[:R|S]->(b)` created an edge with two types. On main b84473a7f the clauses after a CALL are validated (`call_validates_rest`, `call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-- **A final `WITH`.** `MATCH (n) WITH n` returns rows; C and openCypher reject it (`with_last_accepted`).
+- **A final `WITH` — fixed by #3291.** `MATCH (n) WITH n` used to return rows; it is now rejected as in C and openCypher (`with_last_rejected`).
 
 ## The headline theorems
 
@@ -90,7 +90,7 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 | 4 | `selfloop_ignores_chain`, removed (17ccc5412) | A self-loop hop after other hops dropped them: `[null,2,3]` vs C `[1,2,3]` | Fixed by #3102 (#2999; `chainRel_selfloop_unbound`, `selfloop_scan_keeps_chain`) |
 | 5 (W4-plan-1) | `toPlan_not_null_bug` | `NOT (complex)` with an inline pattern keeps null rows: Rust 2, C 1 | **Open** |
 | 6 (W4-plan-4) | `call_validates_rest`, `call_then_match_rejected` | Nothing after a procedure CALL was validated; `CALL db.labels() YIELD label MATCH (n)` reached a `parent().unwrap()` in `utilize_node_by_id` | **Fixed by #3297** (b774fdfad); the `unwrap()` in `utilize_node_by_id` remains as a hazard |
-| 7 (W4-plan-5) | `with_last_accepted` | A query may end with WITH; C and openCypher reject it | **Open** |
+| 7 (W4-plan-5) | `with_last_rejected` | A query could end with WITH; C and openCypher reject it | **Fixed by #3291** (608b62542) |
 | 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8) |
 | #2311 | `bug2311_optional_path_null` | `MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0`: Rust `1, null`, C `1, [(0)]`. The bound node-only branch never builds the path (`BindsAllPaths` fails) | **Open** |
 | #2737 | `bug2737_optional_path_null` | `MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6`: Rust `null`, C `[(0)]`. Same cause as #2311 | **Open** |

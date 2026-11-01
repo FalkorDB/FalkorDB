@@ -44,7 +44,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:183-205` (std `str::replace`); C `AR_REPLACE` |
 | `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:138-165`; C `str_tolower` (utf8proc simple map) |
 | `isMatchRust`, `isMatchSpec` | `regex_matches` `internal.rs:100-120`, `RegexFnKind::Matches` `eval.rs:1274` |
-| `expandRust` | `Regex::replace_all(_, &str)` `$`-expansion, `string.rs:462,469`, `eval.rs:1294-1302` |
+| `spliceLit` | `Regex::replace_all(_, NoExpand(&str))` literal replacement (#3604), `string.rs:454`, `eval.rs:1350` |
 | `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:324-386` |
 | `startsWith` | `internal_starts_with`, `internal.rs:32-48` (ends/contains analogous) |
 | `cmpFloatModel` | `compare_floats` `value.rs:1801` as used by `list.sort` `list.rs:213` |
@@ -107,9 +107,9 @@ D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
    misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
    check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
    and equals C whenever the mapping is simple (`case_agrees_C_if_simple`).
-E. **`string.replaceRegEx` expands `$` references** — `string.rs:469`,
-   `eval.rs:1302`: `replaceRegEx('abc','b','$0x')` → `'ac'`, `'[$0]'` → `'a[b]c'`;
-   C copies literally: `'a$0xc'`, `'a[$0]c'`. Test `bug_replace_regex_dollar_expansion`.
+E. **`string.replaceRegEx` expanded `$` references** — FIXED by #3604 (53d694496): both call
+   sites now pass `regex::NoExpand(repl)`, so `replaceRegEx('abc','b','$0x')` → `'a$0xc'`, as in C
+   (`replaceRegex_literal`, `spliceLit_single`).
    Fix: `regex::NoExpand(repl)`.
 F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
    #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
@@ -1367,26 +1367,32 @@ theorem regexMatches_unanchored :
     let m : Nat → Nat → Bool := fun i j => i == 1 && j == 2
     isMatchRust 3 m = true ∧ isMatchSpec 3 m = false := by decide
 
-/-! ### `string.replaceRegEx` replacement (`string.rs:469`, `eval.rs:1302`)
+/-! ### `string.replaceRegEx` replacement (`string.rs:454`, `eval.rs:1350`)
 
-`Regex::replace_all(text, &str)` interprets `$n` / `$name` / `${name}` in the
-replacement; C copies it verbatim. Model of the expansion on the `$0x` case:
-`$0x` names the (absent) group `0x`, which expands to the empty string. -/
+Fixed by #3604 (53d694496, closes #2929): both call sites pass `NoExpand(repl)` to
+`Regex::replace_all`, so the replacement is inserted verbatim (`$n`, `$name`, `${name}` are
+not interpreted), like C. `NoExpand::replace_append` appends the string unchanged. Model:
+each matched span `[i, j)` of the text is replaced by the replacement as it is. -/
 
-def expandRust (groupName : Str → Option Str) : Str → Str
-  | '$' :: rest =>
-    let name := rest.takeWhile (fun c => c.isAlphanum || c == '_')
-    if name = [] then '$' :: expandRust groupName rest
-    else (groupName name).getD [] ++ expandRust groupName (rest.drop name.length)
-  | c :: rest => c :: expandRust groupName rest
-  | [] => []
-termination_by s => s.length
-decreasing_by all_goals simp_wf <;> omega
+/-- Replace the non-overlapping, ascending spans (`(start, stop)` offsets into the text)
+by `r`, copying `r` literally (`NoExpand`). -/
+def spliceLit (r : Str) : Nat → Str → List (Nat × Nat) → Str
+  | _, t, [] => t
+  | off, t, (i, j) :: rest =>
+    t.take (i - off) ++ r ++ spliceLit r j (t.drop (j - off)) rest
 
-/-- **Bug E.** `replaceRegEx('abc','b','$0x')`: Rust `'ac'`, C `'a$0xc'`. -/
-theorem replaceRegex_dollar :
-    let g : Str → Option Str := fun n => if n = ['0'] then some ['b'] else none
-    expandRust g "$0x".toList = [] ∧ expandRust g "[$0]".toList = "[b]".toList := by decide +kernel
+/-- The replacement string reaches the output byte for byte: with no match the text is
+unchanged and with one match at `[i, j)` the output is prefix ++ `r` ++ suffix, for every
+`r` (in particular one containing `$`). -/
+theorem spliceLit_single (r t : Str) (i j : Nat) :
+    spliceLit r 0 t [(i, j)] = t.take i ++ r ++ t.drop j := by
+  simp [spliceLit]
+
+/-- **Bug E, fixed (#3604).** `replaceRegEx('abc','b','$0x')` is `'a$0xc'` and
+`replaceRegEx('abc','b','[$0]')` is `'a[$0]c'`, as in C (`$` is copied literally). -/
+theorem replaceRegex_literal :
+    spliceLit "$0x".toList 0 "abc".toList [(1, 2)] = "a$0xc".toList ∧
+    spliceLit "[$0]".toList 0 "abc".toList [(1, 2)] = "a[$0]c".toList := by decide +kernel
 
 /-! ### `string.join` length pre-computation (`string.rs:324-361`) -/
 

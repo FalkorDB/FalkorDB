@@ -6,25 +6,33 @@ import FalkorNativeIndex.Tree
 import FalkorNativeIndex.Contract
 import FalkorNativeIndex.Numeric
 import FalkorNativeIndex.Index
+import FalkorNativeIndex.Query
 import FalkorNativeIndex.Pending
 import FalkorNativeIndex.Writes
 import FalkorNativeIndex.Build
 import FalkorNativeIndex.Ddl
+import FalkorNativeIndex.Scan
+import FalkorNativeIndex.Unique
+import FalkorNativeIndex.Decline
 
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets origin/main e860645bb (re-targeted from ca36bfa15: #2351 `d1a73f65a` (a column's build state and the
-indexer batches that fill it: new `versioned.rs`, `EncodedTuples`, `BuildCursor`, `scan`, `create_building`;
-`build_column`/`collect_*_entries`/`build_numeric`/`ColumnEntry` are gone; `from_entries` is `#[cfg(test)]`),
-#3538 `aa19b5270` (the managed index is generic over its kind: `VersionedIndex`, `IndexEntry`),
-#3550 `a299692a2` (`unlock_fair` between population batches: lock handover only, no model change; it is
-`populate_index_batch`, in `search_concurrency`). Earlier: #2383 `IN [...]` as a union of point lookups,
-#3436 `g.borrow()` → `graph()`, #3283 fixed the cow_btree invariant this project's tree rows rested on.)
-Files: `graph/src/index/falkordb/{encode,numeric,falkordb_index,versioned,
+Targets the worktree at origin/main b02266c2b (re-targeted from e860645bb: #3547 `155a246f8` (native-only
+writes: no Range field is fed to RediSearch under `index-falkordb`; `redisearch_fields`; `index_only_writes` is
+gone), #2386 `41ed78225` (no fallback under the flag: `query_numeric` answers `Option<Result<rows, ScanFilter>>`,
+a predicate the native index cannot serve is the error `unsupported_by_native_index`, a column still building is
+answered by a scan whose `ScanFilter` is built from the same `KeySet` the column looks up; `= null` and null
+bounds are answered with no rows; new `unique.rs` for the unique-constraint lookups `equal_candidates`,
+`native_unique_query`, `ReadOnce`, `fewest_candidates`). Earlier: #2351 `d1a73f65a` (a column's build state and
+the indexer batches that fill it: `versioned.rs`, `EncodedTuples`, `BuildCursor`, `scan`, `create_building`),
+#3538 `aa19b5270` (the managed index is generic over its kind), #3550 `a299692a2` (lock handover only), #2383
+`IN [...]` as a union of point lookups, #3436 `g.borrow()` → `graph()`, #3283 fixed the cow_btree invariant.)
+Files: `graph/src/index/falkordb/{encode,numeric,falkordb_index,versioned,unique,mod,
 pending_writes,graph_writes}.rs`, the native-index parts of `graph/src/graph/graph.rs`
-(`apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`, `new_version`'s
-fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
+(`redisearch_fields`, `apply_index_writes`, `commit_index_docs`, `query_index_numeric_{nodes,edges}`,
+`node_matches`, `relationship_matches`, `new_version`'s fork) and the index route of
+`runtime/ops/{node,edge}_by_index_scan.rs::next`.
 
 ## Lean ↔ Rust
 | Lean | Rust |
@@ -34,12 +42,16 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 | `Value.lean`: `Value`, `compareValue`, `cmpPred`, `encodeNumeric`, `intLosesPrecision` | `value.rs:1181-1270`, `eval.rs:446-462`, `:1665-1686`, `encode.rs:29-41`, `index/mod.rs:1371` |
 | `Tree.lean`: `tInsert`…`tRange` (CowBTree contents; encoding/sorted lemmas imported from cow_btree) | `cow_btree/mod.rs:190-324` |
 | `Contract.lean`: `contract_fromSorted`, `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_range` | `cow_btree/mod.rs:190-324` on every reachable tree |
-| `Numeric.lean`: `EncodedTuples.*`, `NumericIndex.*` (`addEncoded` bulk-builds into an empty tree), `rangeBounds`, `IndexQuery`, `encodeAll`, `unionOf`, `inList`, `unionMember`/`unionGo`/`union`, `UState`/`unionNext` | `numeric.rs:92-426` (`EncodedTuples` :92-128, `add_encoded` :226, `UnionIter::next` :79, `in_list` :356, `union` :376, `union_of` :408; `from_entries` :434 is test-only) |
-| `Index.lean`: `hmGet`…, `IndexColumn.*` (`pushEncoded`), `BuildCursor`, `BuildState`, `IndexEntry.*`, `FalkorDbIndex.*` (`entry`, `insertColumn`, `createBuilding`, `applyIndexerBatch`), `queryKey`, `queryNumeric` | `falkordb_index.rs:41-143`, `:218-257` (`BuildCursor`), `:273-502`, `:560-596`; `versioned.rs:36-185` |
-| `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `stateLog`, `IndexColumn.writerRecord`, `IndexEntry.writerRecord`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:177-193` (`writer_record`), `:516-549`; `versioned.rs:99-156` |
-| `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:65-396`, `:466-516` |
-| `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:528-632` (`scan` :528, `scan_nodes` :553, `scan_edges` :589); `falkordb_index.rs:197-212`; `versioned.rs:187-218`; `graph.rs:3795-3808` (`place`) |
-| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `indexOnlyWrites`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanRoute`, `newVersion`, `runUnit` | `graph_writes.rs:49-55`, `:411-458`; `graph.rs:1072`, `:3790-3811`, `:3821-3835`, `:4109-4144`; `node_by_index_scan.rs:300`, `edge_by_index_scan.rs:316` |
+| `Numeric.lean`: `EncodedTuples.*`, `NumericIndex.*` (`addEncoded` bulk-builds into an empty tree), `KeySet` (`distinct`, `contains`, `matchesValue`), `pointKeys`, `rangeBounds`/`rangeKeys`, `lookup`, `point`, `pointKey`, `range`, `IndexQuery`, `encodeAll`, `inListKeys`, `unionMember`/`unionGo`/`unionKeys`, `keysOf`, `query`, `UState`/`unionNext` | `numeric.rs:60-95` (`KeySet`, `distinct` :77, `contains` :85), `:119` (`UnionIter::next`), `:141-170` (`EncodedTuples`), `:266` (`add_encoded`), `:295-330` (`point`, `point_key`, `range`, `query`), `:341` (`keys`), `:367` (`lookup`), `:385`/`:389` (`point_keys`/`range_keys`), `:448` (`in_list`), `:466` (`union`); `from_entries` :503 is test-only |
+| `Index.lean`: `hmGet`…, `IndexColumn.*` (`pushEncoded`, `rowsAt`), `BuildCursor`, `BuildState`, `IndexEntry.*`, `FalkorDbIndex.*` (`entry`, `insertColumn`, `createBuilding`, `applyIndexerBatch`) | `falkordb_index.rs:41-153`, `:280-322` (`BuildCursor`), `:338-632`; `versioned.rs:36-185` |
+| `Query.lean`: `ScanFilter`, `queryKey`, `queryNumeric` (three-way `Option (Except ScanFilter rows)`), `EqualCandidates`, `equalCandidates` | `falkordb_index.rs:162-182` (`EqualCandidates`), `:258-277` (`ScanFilter`), `:633-695` (`query_numeric`), `:697-715` (`equal_candidates`) |
+| `Pending.lean`: `IndexWrite`, `IndexChanges.*`, `PendingIndexWrites.*`, `lastWriteWins`, `stateLog`, `IndexColumn.writerRecord`, `IndexEntry.writerRecord`, `applyStep`, `FalkorDbIndex.applyWrites`/`apply` | `pending_writes.rs:24-179`, `falkordb_index.rs:215-232` (`writer_record`), `:581-632`; `versioned.rs:99-156` |
+| `Writes.lean`: `G`, `StageOp`, `stage`, `nodeAttrsSet`, `nodeRowsSet`, `newNodeAttrs`, `bulkNodeAttrs`, `labelsAdded`, `labelsProductAdded`, `labelsRemoved`, `nodesDeleted`, `edgeAttrsSetWith`/`edgeAttrsSet`/`edgeAttrsSetOfType`, `newEdgeAttrs`, `bulkEdgeAttrs`, `edgesDeleted`, `addNodeUnderLabel`, `removeNodeUnderLabel`, `nodeLabelIdsInto`, `edgeType` | `graph_writes.rs:50-380`, `:451-510` |
+| `Build.lean`: `pushAttr`, `scanNodes`, `edgeLoop`, `scanEdges`, `scan`, `G.place`, `IndexColumn.indexerRead`/`indexerAdd`, `G.prepareBatch`, `G.indexerPrepare` | `graph_writes.rs:513-620` (`scan` :513, `scan_nodes` :538, `scan_edges` :574); `falkordb_index.rs:235-250`; `versioned.rs:187-230`; `graph.rs:3858-3888` (`place`, in `apply_index_writes`) |
+| `Ddl.lean`: `collectNodeEntries`, `collectEdgeEntries` (specifications), `buildInOneBatch`, `createIndex`, `populate`, `applyIndexWrites`, `commitIndexDocs`, `queryIndexNumericNodes/Edges`, `scanOp`, `newVersion`, `runUnit` | `graph_writes.rs:396-450`; `graph.rs:1083`, `:3858`, `:3889`, `:4181`, `:4199`; `node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318` |
+| `Scan.lean`: `G.nodeMatches`/`relationshipMatches`, `nodeFilteredScan`/`edgeFilteredScan`, `nodeScanOp`/`edgeScanOp`, `redisearchFieldsAll`/`redisearchFields` | `graph.rs:4230` (`node_matches`), `:4244` (`relationship_matches`), `:144`/`:151` (`redisearch_fields`); the `Some(Err(scan_filter))` arms of `node_by_index_scan.rs:~330`, `edge_by_index_scan.rs:~375` |
+| `Unique.lean`: `nativeUniqueQuery`, `roundGo`/`fewestLoop`/`fewest`, `ReadOnce` | `unique.rs:20`, `:48`, `:69` |
+| `Decline.lean`: `Pred`, `describe`, `oneKey`, `unionMembers`, `unsupportedByNativeIndex` | `mod.rs:43` (`unsupported_by_native_index`), `:59` (`describe_predicate`), `:145` (`union_members`) |
 
 ## Proven
 - **Encoding** (`Float.lean`, bit-level f64: both zeros, every NaN sign/payload, ±inf):
@@ -55,10 +67,10 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
   (every data variant vs a guarded non-NaN numeric bound, all five operators), `range_keys` (the
   inclusive key bounds incl. exclusive `±1` steps are exact), `range_agrees`, `point_agrees`,
   `nodeScan_native_agrees` (a built column answers a `Range` with exactly the ids the Filter keeps),
-  `queryNumeric_spec` (routing: a numeric `Equal`/`Range`, an `IN` list, or a same-attribute `OR` on an existing column).
-- **`IN` lists and `OR` unions of point lookups (#2383)** (`Numeric.lean`, `Ddl.lean`): `inList_agrees`, `union_agrees` (served result = ids equal to some member), `inList_isSome_iff` (declined unless non-empty and every member encodes), `union_nil`, `union_attr_mismatch`, `union_range_declines` (declined, not answered in part), `unionNext_spec` (the lazy cursor chain yields exactly the point scans in key order), `unionIter_initial`, `nodeScan_native_inList_agrees`. Order is unspecified: statements are membership. Not modelled: id uniqueness across keys (rests on the encoder rejecting lists).
+  `queryNumeric_spec` (routing: a numeric `Equal`/`Range`, an `IN` list, or a same-attribute `OR` on an existing column; three-way answer).
+- **`IN` lists and `OR` unions of point lookups (#2383)** (`Numeric.lean`, `Ddl.lean`): `inList_agrees`, `union_agrees` (served result = ids equal to some member), `inListKeys_isSome_iff` / `inList_isSome_iff` (declined unless non-empty and every member encodes), `union_nil`, `union_attr_mismatch`, `union_range_declines` (declined, not answered in part), `union_null_only` (`a = null` adds no key, #2386), `keysOf_sorted` (`Keys` is sorted, so `contains` = membership), `unionNext_spec` (the lazy cursor chain yields exactly the point scans in key order), `unionIter_initial`, `nodeScan_native_inList_agrees`. Order is unspecified: statements are membership. Not modelled: id uniqueness across keys (rests on the encoder rejecting lists).
 - **#2351 / #3538, build state and indexer batches** (`Index.lean`, `Pending.lean`, `Build.lean`, `Ddl.lean`):
-  `queryNumeric_building` / `queryNumeric_ready` (a `Building` column is never read from),
+  `queryNumeric_building` / `queryNumeric_ready` (a `Building` column is answered with a `ScanFilter`, never rows),
   `writerRecord_eq_sequential` (a column records a unit's staged changes filtered by its state, applied one by
   one; `writerRecord_ready` is #3307's claim), `stateLog_removes` / `stateLog_adds` (every removal stays, an
   addition only for an entity placed below the cursor), `building_reuse_removed` + `collapse_first_would_keep`
@@ -70,6 +82,22 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
   `buildInOneBatch_entry` (CREATE INDEX = one unlimited batch: the column is `Ready` and holds
   `from_entries` of the live pairs), `createIndex_builds`, `createIndex_ready`,
   `createIndex_nodeScan_agrees`, `addEncoded_spec` / `addEncoded_sorted` (an empty tree is bulk-built).
+- **#3547 / #2386, the native index is the only Range index** (`Query.lean`, `Scan.lean`, `Ddl.lean`,
+  `Unique.lean`, `Decline.lean`): `queryNumeric_isSome_iff` (what is declined does not depend on the build
+  state), `queryNumeric_ok` / `_error` (rows only from a `Ready` column, a `ScanFilter` only from a `Building`
+  one, with the query's keys and attribute), `queryNumeric_range_served` (a Range is never declined),
+  `queryNumeric_null_equal`, `queryNumeric_declined`, `scanOp_spec` / `scanOp_none_iff` /
+  `nodeScanOp_error_iff` / `edgeScanOp_error_iff` (the scan op errors exactly when the index declines, never
+  falls through), `nodeScanOp_range_served` / `edgeScanOp_range_served`; **the scan that stands in for a
+  building column equals what the built column returns** (`lookup_fromEntries`, `nodeFilteredScan_agrees`,
+  `edgeFilteredScan_agrees`, `nodeScan_building_agrees`, `edgeScan_building_agrees`; `nodeMatches_spec`,
+  `relationshipMatches_spec`); `redisearchFields_mem` / `_no_range` / `_keeps_nonrange` / `_nonempty` /
+  `_drops_range_only` / `_idem`, `redisearchFieldsAll_id`, `native_owns_range`;
+  `equalCandidates_some` / `_none` / `_complete`, `rows_mem`, `nativeUniqueQuery_some` / `_none_iff`,
+  `fewest_eq_minRow` / `fewest_mem` / `fewest_minimal`, `readOnce_first` / `_repeat` / `_twice` /
+  `_skip_sound`, `rows_eq_of_id_eq`; `unsupported_spec`, `describe_or`, `describe_or_reason_sound`.
+  Removed: `indexOnlyWrites_spec` (`index_only_writes` is gone), `scanRoute_spec` (there is no RediSearch
+  branch), `unionOf_mem` (`union_of` is `lookup`: `lookup_keys_mem`).
 - **#3307, apply once per unit of work** (`Pending.lean`): `sortLog_filter` (stable sort keeps each
   tuple's history), `lwwGo_spec`, `lastWriteWins_spec` (keeps exactly each tuple's last change),
   `writerRecord_eq_sequential` (collapsed `remove_batch`+`insert_batch` = applying every staged change
@@ -98,7 +126,18 @@ fork) and the native route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 2. `bool_divergence` — Bool and number share a key; pinned in the Rust (`encode.rs:248-294`) as the
    behaviour C and the RediSearch path share (measured there); not a regression.
 
+3. `describe_empty_in_misreported` (cosmetic, `mod.rs:describe_predicate`): `a = 1 OR a IN []` is described as
+   "a union ... that is not all-numeric"; the real reason it is declined is the empty `IN` list (likewise a
+   non-list `IN` payload). Message text only; not reachable from the planner today.
+
 ## Gaps / hypotheses
+- **Scan ops** (`Scan.lean`): the filtered scan is modelled over the index label's nodes / the type's edges; the
+  Rust scans the pattern's labels (`get_nodes(&node_pattern.labels)`) and the op's `extra_labels` filter follows,
+  so the rows agree; that part and the edge cache / undirected orientation are `ops_traverse`'s.
+  `nodeFilteredScan_agrees` takes `hlt` (ids fit a `u64`, the model's `W`). `EqualCandidates.id` is the column's
+  address in the Rust; the model uses the column's slot (`rows_eq_of_id_eq`): distinct entries are distinct
+  objects. `fewest` assumes at least one lookup (the Rust loops forever on none; `native_unique_query` never
+  passes none).
 - **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its content spec. No longer a
   hypothesis: since #3283 (799968a8b, W7-btree-1 fixed) cow_btree proves every reachable tree is
   `TreeWF` (`Reachable_wf_asserted`: `from_sorted`, `insert`, `remove`, `insert_batch`, `remove_batch`)

@@ -159,9 +159,9 @@ Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still
    `CALL db.labels() YIELD label MATCH (n)` reached a scan at the plan root (`utilize_node_by_id`
    `parent().unwrap()`), `… UNWIND [1] AS x` was accepted, `… CREATE (a)-[:R|S]->(b)` created an edge.
    Still open independently: `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()`.
-7. **A query may end with WITH** (NEW, deviation from C and openCypher): the `With`/`Return` arm
-   (ast.rs:1268-1271) accepts a final WITH: `MATCH (n) WITH n` / `UNWIND [1] AS x WITH x` → Rust returns
-   rows, C `Query cannot conclude with WITH (must be a RETURN clause, …)`. Lean `with_last_accepted`.
+7. **A query could end with WITH** — FIXED by #3291 (608b62542): `With` has its own arm
+   (ast.rs:1327-1331) that errors `Query cannot conclude with WITH (must be a RETURN clause, …)` when
+   nothing follows, as C does. Lean `with_last_rejected`, `with_transparent`.
 8. **CREATE with a named path as the last clause, after any other clause** (NEW — a regression from
    #2829, `eab2722c4`, which wraps a CREATE that declares a path in `PathBuilder`, mod.rs:3134-3153):
    bug 1's shape — the first walk (mod.rs:2743-2749) does not step over `PathBuilder`, so the previous

@@ -146,7 +146,8 @@ def vClause : IR → List IR → V
   | .set items, rest => (vSetItems items).andThen (vNext rest)
   | .remove items, rest => (vRemove items).andThen (vNext rest)
   | .loadCsv _ _ _ _, rest => vNext rest
-  | .with_ _ _ _, rest => vNext rest
+  | .with_ _ _ _, rest => match rest with     -- #3291: a final WITH is rejected
+      | [] => V.err | c :: r => vClause c r
   | .return_ _ _, rest => vNext rest
   | .createIndex _ _ _ _ _, rest => vNext rest
   | .dropIndex _ _ _ _, rest => vNext rest
@@ -195,6 +196,7 @@ clause, a procedure call or a non-returning subquery" rule). -/
 def canConclude : IR → Bool
   | .match_ _ _ _ | .unwind _ _ => false
   | .callSub _ true => false
+  | .with_ _ _ _ => false                       -- #3291
   | _ => true
 
 /-- **The query-end rule holds when no CALL precedes the end**: for a query
@@ -235,6 +237,12 @@ theorem call_transparent (f : List Nat) (args : List ET) ys as fl ex (rest : Lis
 theorem match_last_rejected (p : QG Nat) (hp : vInlined p = .ok) :
     validate (.query [.match_ p none false] false) = .err := by
   simp [validate, vClause, hp, V.andThen]
+
+/-- **PROVEN** (#3291, ast.rs:1327-1331): a query ending in `WITH` is rejected
+("Query cannot conclude with WITH …"), as in C. -/
+theorem with_last_rejected (p : Proj) (f : Option ET) (w : Bool) :
+    validate (.query [.with_ p f w] false) = .err := by
+  simp [validate, vClause, V.andThen]
 
 /-- **PROVEN** (#3297): a MATCH-terminated tail is rejected after a CALL as
 well (`CALL db.labels() YIELD label MATCH (n)`; C rejects it too). -/

@@ -204,7 +204,9 @@ theorem add_exact {a b : Int} (h : InI64 (a + b)) : wAdd a b = a + b := wrap_id 
 
 theorem div_exact {a b : Int} (h : InI64 (Int.tdiv a b)) : wDiv a b = Int.tdiv a b := wrap_id h
 
-/-- `i64::MIN / -1` wraps to `i64::MIN` (C traps / is UB here). -/
+/-- `i64::MIN / -1` wraps to `i64::MIN` under `wrapping_div`; `Value`'s `/` no longer uses it:
+since #3603 the scalar and the columnar paths both raise `divOverflow`
+(`min_div_neg_one_error`, `min_div_neg_one_gate`). -/
 theorem min_div_neg_one : wDiv I64MIN (-1) = I64MIN := by decide
 
 /-- `i64::MIN % -1` is `0` (no trap). -/
@@ -450,6 +452,9 @@ def AOp.flt : AOp → F → F → F
 def AOp.isDiv : AOp → Bool
   | .div | .rem => true | _ => false
 
+/-- `i64::MIN / -1` is an error since #3603 (value.rs:1163-1167, `checked_div`). -/
+def divOverflow : String := "ArgumentError: integer overflow in division"
+
 def typeMismatch : String := "Type mismatch: expected Integer, Float, or Null"
 
 /-- `impl Add/Sub/Mul/Div/Rem for Value` on scalars (value.rs:904-1175). `+`
@@ -459,7 +464,9 @@ def vArith (op : AOp) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
   | .int a, .int b =>
-    if op.isDiv && b == 0 then .error "Division by zero" else .ok (.int (op.int a b))
+    if op.isDiv && b == 0 then .error "Division by zero"
+    else if op == .div && a == I64MIN && b == -1 then .error divOverflow   -- #3603 (checked_div)
+    else .ok (.int (op.int a b))
   | .flt a, .flt b => .ok (.flt (op.flt a b))
   | .flt a, .int b => .ok (.flt (op.flt a (FM.ofInt b)))
   | .int a, .flt b => .ok (.flt (op.flt (FM.ofInt a) b))
@@ -529,10 +536,12 @@ def intRow (op : AOp) (x y : Option Int) : Option Int := do
 def fltRow (op : AOp) (x y : Option (Cell F)) : Option F := do
   let x ← x; let y ← y; pure (op.flt x.toF y.toF)
 
-/-- The divide-by-zero gate: no non-null row divides by zero. -/
-def divGate (a b : List (Option Int)) : Bool :=
+/-- The divide gate (vector_expr.rs:892-902): no non-null row divides by zero and, for `/`
+(#3603), none is `i64::MIN / -1`; either row is left to the scalar path. -/
+def divGate (op : AOp) (a b : List (Option Int)) : Bool :=
   (List.zip a b).all fun p => match p with
     | (some _, some 0) => false
+    | (some x, some y) => !(op == .div && x == I64MIN && y == -1)
     | _ => true
 
 def generic (op : AOp) (len : Nat) (l r : Col F) : Except String (Col F) :=
@@ -542,7 +551,7 @@ def generic (op : AOp) (len : Nat) (l r : Col F) : Except String (Col F) :=
 def arith (op : AOp) (len : Nat) (l r : Col F) : Except String (Col F) :=
   match intLane len l, intLane len r with
   | some a, some b =>
-    if !op.isDiv || divGate a b then .ok (.ints (List.zipWith (intRow op) a b))
+    if !op.isDiv || divGate op a b then .ok (.ints (List.zipWith (intRow op) a b))
     else generic op len l r
   | _, _ =>
     if floatOperand l || floatOperand r then
@@ -621,7 +630,8 @@ def mixedOK (x y : Option (Cell F)) : Prop :=
   ∀ p q, x = some p → y = some q → (∃ u, p = Cell.f u) ∨ (∃ u, q = Cell.f u)
 
 theorem intRow_ok (op : AOp) (x y : Option Int)
-    (hg : op.isDiv = true → ∀ a, x = some a → y ≠ some 0) :
+    (hg : op.isDiv = true → ∀ a, x = some a → y ≠ some 0)
+    (ho : op = .div → ∀ a b, x = some a → y = some b → ¬ (a = I64MIN ∧ b = -1)) :
     vArith op (optV .int x : V F) (optV .int y) = .ok (optV .int (intRow op x y)) := by
   cases x with
   | none => cases y <;> rfl
@@ -633,8 +643,10 @@ theorem intRow_ok (op : AOp) (x y : Option Int)
       by_cases hd : op.isDiv = true
       · have hb : b ≠ 0 := fun hb => hg hd a rfl (by rw [hb])
         simp [hd, hb]
+        intro h1 h2 h3; exact ho h1 a b rfl rfl ⟨h2, h3⟩
       · have : op.isDiv = false := by simpa using hd
         simp [this]
+        intro h1; subst h1; exact absurd this (by decide)
 
 theorem fltRow_ok (op : AOp) (x y : Option (Cell F)) (hm : mixedOK x y) :
     vArith op (optV Cell.v x : V F) (optV Cell.v y) = .ok (optV .flt (fltRow op x y)) := by
@@ -652,13 +664,40 @@ theorem fltRow_ok (op : AOp) (x y : Option (Cell F)) (hm : mixedOK x y) :
         | f b => rfl
       | f a => cases q <;> rfl
 
-theorem divGate_spec (a b : List (Option Int)) (hg : divGate a b = true) :
-    ∀ p ∈ List.zip a b, ∀ z, p.1 = some z → p.2 ≠ some 0 := by
-  intro p hp z hz h0
+/-- **Fixed by #3603** (closes #3205, #3242; formerly `i64::MIN / -1` wrapped to `i64::MIN`):
+`Value`'s `/` raises the overflow error, as the columnar path now does. -/
+theorem min_div_neg_one_error :
+    vArith (F := F) .div (.int I64MIN) (.int (-1)) = .error divOverflow := by
+  simp [vArith, AOp.isDiv]
+
+/-- … and the columnar gate refuses such a row (it goes to the scalar path, which errors);
+`%` is unchanged (`MIN % -1 = 0`). -/
+theorem min_div_neg_one_gate : divGate .div [some I64MIN] [some (-1)] = false := by decide
+
+theorem min_rem_neg_one_ok :
+    vArith (F := F) .rem (.int I64MIN) (.int (-1)) = .ok (.int 0) := by
+  simp [vArith, AOp.isDiv, AOp.int]; decide
+
+theorem divGate_spec (op : AOp) (a b : List (Option Int)) (hg : divGate op a b = true) :
+    ∀ p ∈ List.zip a b, (∀ z, p.1 = some z → p.2 ≠ some 0) ∧
+      (op = .div → ∀ x y, p.1 = some x → p.2 = some y → ¬ (x = I64MIN ∧ y = -1)) := by
+  intro p hp
   unfold divGate at hg
   have := List.all_eq_true.mp hg p hp
   obtain ⟨p1, p2⟩ := p
-  simp at hz h0; subst hz; subst h0; simp at this
+  cases p1 with
+  | none => simp
+  | some x =>
+    cases p2 with
+    | none => simp
+    | some y =>
+      refine ⟨fun z hz h0 => ?_, fun hop x' y' hx hy => ?_⟩
+      · simp at hz h0; subst h0
+        simp [Option.some.injEq] at this
+      · simp at hx hy; subst hx; subst hy; subst hop
+        rintro ⟨h1, h2⟩; subst h1; subst h2
+        have h0 : ¬ ((-1 : Int) = 0) := by decide
+        simp [h0] at this
 
 /-- **The columnar arithmetic is the per-row `Value` arithmetic**: same rows,
 same values, and an error exactly when (and with exactly the message) the
@@ -676,16 +715,21 @@ theorem arith_agrees (op : AOp) (len : Nat) (l r : Col F) (wl : l.WF len) (wr : 
       obtain ⟨vl, la⟩ := intLane_vals hl wl
       obtain ⟨vr, lb⟩ := intLane_vals hr wr
       simp only
-      by_cases hc : (!op.isDiv || divGate a b) = true
+      by_cases hc : (!op.isDiv || divGate op a b) = true
       · simp only [hc, ↓reduceIte]
         show Except.ok ((List.zipWith (intRow op) a b).map (optV .int)) = _
         unfold perRow; rw [vl, vr]
         refine (zip_mapM op (optV .int) (optV .int) (optV .int) (intRow op)
-          (fun x y => op.isDiv = true → ∀ z, x = some z → y ≠ some 0)
-          (fun x y h => intRow_ok op x y h) a b (by omega) ?_).symm
-        intro p hp hd z hz
-        have : divGate a b = true := by simpa [hd] using hc
-        exact divGate_spec a b this p hp z hz
+          (fun x y => (op.isDiv = true → ∀ z, x = some z → y ≠ some 0) ∧
+            (op = .div → ∀ a b, x = some a → y = some b → ¬ (a = I64MIN ∧ b = -1)))
+          (fun x y h => intRow_ok op x y h.1 h.2) a b (by omega) ?_).symm
+        intro p hp
+        refine ⟨fun hd z hz => ?_, fun hop => ?_⟩
+        · have : divGate op a b = true := by simpa [hd] using hc
+          exact (divGate_spec op a b this p hp).1 z hz
+        · have hd : op.isDiv = true := by subst hop; rfl
+          have : divGate op a b = true := by simpa [hd] using hc
+          exact (divGate_spec op a b this p hp).2 hop
       · simp only [hc, ↓reduceIte, Bool.false_eq_true]; exact gen
     | none =>
       simp only

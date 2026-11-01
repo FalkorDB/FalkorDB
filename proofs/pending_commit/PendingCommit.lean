@@ -6,10 +6,35 @@ A Lean model of how a FalkorDB-rs write query stages mutations in
 the attribute store they land in; and of the deleted-entity snapshots later
 clauses read through. 370 theorems, no `sorry`/`admit`/`axiom`. Coverage per
 Rust function: `COVERAGE.tsv` — every function of `attribute_store.rs` (66) is PROVEN;
-of `pending.rs` (68 non-test) 66 are PROVEN and `check_node_constraint` /
-`check_edge_constraint` are CONDITIONAL on the supporting index's completeness (#3334). Repros: `graph/tests/lean_pending_commit.rs`
+of `pending.rs` (71 non-test) 69 are PROVEN and `check_node_constraint` /
+`check_edge_constraint` are CONDITIONAL on the native index lookup's completeness (#3334, #3547). Repros: `graph/tests/lean_pending_commit.rs`
 (asserting C's behaviour / the agreed semantics, so each FAILS today).
 Line numbers are origin/main (`2c874022a`); COVERAGE.tsv rows are re-cited to `1d15bf713`.
+
+## Re-target to 53d694496 (from 5b18b9cab): #3547 / #2386, unique enforcement through `query_for` + `lookup`
+
+`unique_violated` (pending.rs:217) no longer takes `indexed: bool` and `lookup(IndexQuery)`; it takes
+`query_for: Fn(Vec<Value>) -> Option<Q>` and `lookup: Fn(Q) -> L`. `use_index` starts `true`, and a
+member for which `query_for` is `None` sends the whole set to the label scan (the lookups gathered so far
+are dropped, none runs). The RediSearch pair is `redisearch_unique_query` (:174, new) + `get_indexed_*`;
+under `index-falkordb` it is `native_unique_query` + `ReadOnce::candidates` (index/falkordb/unique.rs,
+not modelled here: an abstract hypothesis). `check_node_constraint` is now :1522, `check_edge_constraint`
+:1614, `commit` :1280 (`Pending::commit` in replication), `is_value_valid_for_index_lookup` :160 (compiled
+only without `index-falkordb`); the new `native_unique_tests` module is test code.
+
+| Lean | Rust |
+| --- | --- |
+| `UQ.gather` (`qf : List V → Option Q`) | member loop of `unique_violated` (:231-262): `use_index = true`, `query_for(values)`, `lookups.push(query)`, decline clears `lookups` |
+| `UQ.uniqueViolated` | `unique_violated` (:217): `lookups.into_iter().any(\|q\| lookup(q).any(collides))` / `scan().any(collides)` |
+| `UQ.checkUnique/checkNode2/checkEdge2` | `check_node_constraint` (:1522), `check_edge_constraint` (:1614) |
+| `UQ.redisearchQuery`, `evalQ` (UniqueQuery.lean) | `redisearch_unique_query` (:174), `get_indexed_nodes/_edges` |
+
+Re-proved with the new signature: `gather_none`, `gather_some` (now also: `use_index` ends true iff no
+gathered key is declined), `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec`. New:
+`uniqueViolated_declined` (a declined member: verdict independent of `lookup`), `uniqueViolated_indexed`
+(none declined: scan not consulted), `redisearchQuery_none_iff` / `_single` / `_and`, `redisearch_hIdx`
+(from Equal-exactness of the index alone), `checkUnique_redisearch_spec`, `redisearch_unindexed_scans`.
+The check rows stay CONDITIONAL: the native `(query_for, lookup)` contract (`hIdx`) is undischarged.
 
 ## Re-target to 1c0e6c8de (from e860645bb)
 
@@ -314,6 +339,7 @@ import PendingCommit.PendingDeg
 import PendingCommit.PendingDocs
 import PendingCommit.PendingCommitOp
 import PendingCommit.UniqueIndex
+import PendingCommit.UniqueQuery
 import PendingCommit.PendingCancel
 import PendingCommit.CancelRust
 import PendingCommit.CommitOpNext

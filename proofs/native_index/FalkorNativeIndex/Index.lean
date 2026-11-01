@@ -3,7 +3,7 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # `IndexColumn`, `BuildCursor`, `IndexEntry`, `FalkorDbIndex`
-# (`graph/src/index/falkordb/falkordb_index.rs:41-596`, `versioned.rs:36-185`)
+# (`graph/src/index/falkordb/falkordb_index.rs:41-632`, `versioned.rs:36-185`; `query_numeric` is in `Query.lean`)
 
 A `HashMap<K, V>` is an association list with unique keys (`hmGet`/`hmInsert`/`hmRemove`); its
 iteration order (`drain`) is arbitrary, so every theorem about a whole map is stated per key.
@@ -116,6 +116,10 @@ def IndexColumn.removeEncoded (c : IndexColumn) (tuples : EncodedTuples) : Index
 /-- `IndexColumn::is_empty` (`:139-143`). -/
 def IndexColumn.isEmpty (c : IndexColumn) : Bool :=
   match c with | .numeric ix => ix.isEmpty
+/-- `IndexColumn::rows_at` (`:147-153`): the ids stored under `key`, a key `encode_value` gave
+    (`NumericIndex::point_key`). -/
+def IndexColumn.rowsAt (c : IndexColumn) (key : Nat) : List Nat :=
+  match c with | .numeric ix => ix.pointKey key
 
 /-! ## Build state (`versioned.rs`, `BuildCursor` in `falkordb_index.rs`) -/
 
@@ -263,35 +267,6 @@ def applyIndexerBatch (x : FalkorDbIndex) (e : EntityType) (k : IndexKey) (work 
   | some en =>
     let r := en.indexerApply work next
     (x.setEntry e k r.1, r.2.2)
-
-/-- The column a query is routed to (`query_numeric`'s `let key = match query`, `:569-588`): an
-    `Equal`/`Range` only when its bounds encode (the column answers an unencodable bound with "no
-    rows", not `None`), an `IN` list always (the column declines), an `OR` by its first member. -/
-def queryKey : IndexQuery → Option String
-  | .equal key v => if (encodeNumeric v).isSome then some key else none
-  | .range key min max _ _ =>
-    if (min.all (fun v => (encodeNumeric v).isSome)) && (max.all (fun v => (encodeNumeric v).isSome))
-    then some key else none
-  | .inList key _ => some key
-  | .or cs => match cs with
-    | .equal key _ :: _ => some key
-    | .inList key _ :: _ => some key
-    | _ => none
-  | .other => none
-
-/-- `query_numeric` (`:560-596`): a numeric `Equal`/`Range`, an `IN` list whose values are all numeric,
-    or an `OR` of equalities and `IN` lists on one attribute (#2383), on an existing column that is
-    not `Building` (#2351: not every entity is indexed yet, so RediSearch answers). -/
-def queryNumeric (x : FalkorDbIndex) (e : EntityType) (label : String) (q : IndexQuery) : Option (List Nat) :=
-  match queryKey q with
-  | none => none
-  | some key =>
-    match x.entry e label key with
-    | none => none
-    | some entry =>
-      if entry.isBuilding then none
-      else match entry.index with
-        | .numeric ix => ix.query q
 
 end FalkorDbIndex
 
@@ -477,73 +452,5 @@ theorem createUnpopulated_creates (x : FalkorDbIndex) (e : EntityType) (l : Stri
         | nil => intro y h; exact h
         | cons c cs ih2 => intro y h; simp only [List.foldl_cons]; apply ih2; rw [numeric_createNumeric]; split <;> simp_all
       apply keep; rw [numeric_createNumeric]; simp
-
-/-- **`query_numeric` routing**: it answers exactly a numeric `Equal`/`Range`, an `IN` list or a
-    same-attribute `OR` (the column declines what it cannot answer whole) on an existing column that
-    is not `Building`, from that column; everything else, including every `Building` column, falls
-    through (`None`) to RediSearch. -/
-theorem queryNumeric_spec (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) :
-    x.queryNumeric e l q =
-      match q with
-      | .equal key v => if (encodeNumeric v).isSome then (x.readyNumeric e l key).map (fun ix => ix.point v) else none
-      | .range key mn mx a b =>
-        if (mn.all (fun v => (encodeNumeric v).isSome)) && (mx.all (fun v => (encodeNumeric v).isSome))
-        then (x.readyNumeric e l key).map (fun ix => ix.range mn mx a b) else none
-      | .inList key (some items) => (x.readyNumeric e l key).bind (fun ix => ix.inList items)
-      | .inList _ none => none
-      | .or cs => match cs with
-        | .equal key _ :: _ => (x.readyNumeric e l key).bind (fun ix => ix.union cs)
-        | .inList key _ :: _ => (x.readyNumeric e l key).bind (fun ix => ix.union cs)
-        | _ => none
-      | .other => none := by
-  have routed : ∀ key, queryKey q = some key →
-      x.queryNumeric e l q = (x.readyNumeric e l key).bind (fun ix => ix.query q) := by
-    intro key hk
-    simp only [queryNumeric, hk, readyNumeric]
-    cases x.entry e l key with
-    | none => rfl
-    | some c =>
-      obtain ⟨⟨ix⟩, st⟩ := c
-      by_cases hb : IndexEntry.isBuilding ⟨.numeric ix, st⟩ = true <;> simp [hb, IndexColumn.ix]
-  have declined : queryKey q = none → x.queryNumeric e l q = none := by
-    intro hk; simp only [queryNumeric, hk]
-  cases q with
-  | equal key v =>
-    by_cases h : (encodeNumeric v).isSome = true
-    · simp only [h, if_true]; rw [routed key (by simp [queryKey, h])]
-      generalize x.readyNumeric e l key = o; cases o <;> rfl
-    · simp only [h, if_false]; exact declined (by simp [queryKey, h])
-  | range key mn mx a b =>
-    by_cases h : ((mn.all (fun v => (encodeNumeric v).isSome)) && (mx.all (fun v => (encodeNumeric v).isSome))) = true
-    · simp only [h, if_true]; rw [routed key (by simp only [queryKey]; simp only [h, if_true])]
-      generalize x.readyNumeric e l key = o; cases o <;> rfl
-    · simp only [h, if_false]; exact declined (by simp only [queryKey]; simp [h])
-  | inList key items =>
-    rw [routed key rfl]
-    cases items <;> (dsimp only [NumericIndex.query]; try (generalize x.readyNumeric e l key = o; cases o <;> rfl))
-  | or cs =>
-    rcases cs with _ | ⟨c, cs'⟩
-    · exact declined rfl
-    · cases c with
-      | equal key v => rw [routed key rfl]; rfl
-      | inList key it => rw [routed key rfl]; rfl
-      | range _ _ _ _ _ => exact declined rfl
-      | or _ => exact declined rfl
-      | other => exact declined rfl
-  | other => exact declined rfl
-
-/-- **A `Building` column is never read from** (#2351): `query_numeric` declines every query routed to it,
-    so RediSearch answers until the last batch flips it `Ready`. -/
-theorem queryNumeric_building (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) (key : String)
-    (hk : queryKey q = some key) (en : IndexEntry) (hen : x.entry e l key = some en)
-    (hb : en.isBuilding = true) : x.queryNumeric e l q = none := by
-  simp [queryNumeric, hk, hen, hb]
-
-/-- ... and a `Ready` column answers as before. -/
-theorem queryNumeric_ready (x : FalkorDbIndex) (e : EntityType) (l : String) (q : IndexQuery) (key : String)
-    (hk : queryKey q = some key) (c : NumericIndex) (st : BuildState) (hen : x.entry e l key = some ⟨.numeric c, st⟩)
-    (hb : st = .ready) : x.queryNumeric e l q = c.query q := by
-  subst hb
-  simp [queryNumeric, hk, hen, IndexEntry.isBuilding]
 
 end NI

@@ -1,10 +1,11 @@
 import FalkorNativeIndex.Build
+import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# Index DDL (`graph_writes.rs:395-480`, `:510-552`), the graph's index entry points
-# (`graph.rs:3780-3809`, `:4087-4122`), the scan routing (`node_by_index_scan.rs:306-323`,
-# `edge_by_index_scan.rs:329-349`), and folded-roots MVCC (`graph.rs:441-451`, `:1062-1065`)
+# Index DDL (`graph_writes.rs:396-460`), the graph's index entry points
+# (`graph.rs:3858-3888`, `:3889`, `:4181-4224`), the scan routing (`node_by_index_scan.rs:302`,
+# `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1083`)
 -/
 
 namespace NI
@@ -41,13 +42,13 @@ structure G.Fits (g : G) : Prop where
   nodes : ∀ label lm, g.labelNodes label = some lm → lm.length ≤ usizeMax
   edges : ∀ label t, g.typeEdges label = some t → t.length ≤ usizeMax
 
-/-- `build_in_one_batch` (`graph_writes.rs:427-440`): create the column `Building`, then one indexer
+/-- `build_in_one_batch` (`graph_writes.rs:412-425`): create the column `Building`, then one indexer
     batch with no limit on its size, which reaches the end and flips it `Ready`. -/
 def buildInOneBatch (g : G) (e : EntityType) (label attr : String) : G :=
   let g := { g with idx := g.idx.createBuilding e label attr }
   (g.indexerPrepare (.column e (label, attr)) usizeMax).1
 
-/-- `create_index` (`graph_writes.rs:411-421`). -/
+/-- `create_index` (`graph_writes.rs:396-406`). -/
 def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : String) (attrs : List String) : G :=
   if t = .range then attrs.foldl (fun g a => buildInOneBatch g e label a) g else g
 
@@ -55,7 +56,7 @@ def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : 
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:449-458`). -/
+/-- `populate` (`graph_writes.rs:434-443`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -367,29 +368,19 @@ theorem populate_builds (g : G) (e : EntityType) (label : String) (af : String �
     (h : af.2.any (fun f => f.ty == .range) = true) : populate g e label [af] = buildInOneBatch g e label af.1 := by
   unfold populate; simp only [List.foldl_cons, List.foldl_nil]; rw [h]; rfl
 
-/-! ## `index_only_writes` (`graph_writes.rs:46-52`) -/
-
-/-- `FALKORDB_INDEX_ONLY` read once (`OnceLock`): `"1"` or ASCII-case-insensitive `"true"`. -/
-def indexOnlyWrites (env : Option String) : Bool :=
-  env.any (fun v => v == "1" || v.toLower == "true")
-
-theorem indexOnlyWrites_spec (v : String) :
-    indexOnlyWrites none = false ∧ (indexOnlyWrites (some v) = true ↔ v = "1" ∨ v.toLower = "true") := by
-  simp [indexOnlyWrites]
-
 /-! ## The graph's entry points (`graph.rs`) -/
 
 /-- The slice of `IndexDocs` (`index_docs.rs:585-600`) the native index owns. -/
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3790-3811`): `apply` with the graph's `place` (a node by its
+/-- `Graph::apply_index_writes` (`graph.rs:3858-3888`): `apply` with the graph's `place` (a node by its
     id, an edge by its endpoints, `None` for an edge this unit deleted). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native g.place
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3821-3835`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs:3889-3902`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -401,27 +392,33 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4109-4118`). -/
-def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (List Nat) :=
-  (g.idx.queryNumeric .node label q).map (fun it => it.map id)
+/-- `Graph::query_index_numeric_nodes` (`graph.rs:4181-4191`): `query_numeric`'s three-way answer,
+    raw docs mapped to `NodeId` (the map is the identity here). -/
+def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except ScanFilter (List Nat)) :=
+  (g.idx.queryNumeric .node label q).map (fun a => a.map (fun rows => rows.map id))
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4126-4144`): endpoints from the `edge_id → (src, dst)`
-    reverse index; an id it does not know (a deleted, not reused edge) is skipped. -/
+/-- `Graph::query_index_numeric_edges` (`graph.rs:4199-4224`): endpoints from the `edge_id → (src, dst)`
+    reverse index; an id it does not know (a deleted, not reused edge) is skipped. The map runs on
+    `Ok` only, so a `ScanFilter` passes through untouched. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :
-    Option (List (Nat × Nat × Nat)) :=
-  (g.idx.queryNumeric .relationship typeName q).map (fun it =>
-    it.filterMap (fun eid => (endpoints eid).map (fun sd => (sd.1, sd.2, eid))))
+    Option (Except ScanFilter (List (Nat × Nat × Nat))) :=
+  (g.idx.queryNumeric .relationship typeName q).map (fun a =>
+    a.map (fun rows => rows.filterMap (fun eid => (endpoints eid).map (fun sd => (sd.1, sd.2, eid)))))
 
 theorem queryIndexNumericNodes_spec (g : G) (label : String) (q : IndexQuery) :
     queryIndexNumericNodes g label q = g.idx.queryNumeric .node label q := by
-  unfold queryIndexNumericNodes; cases g.idx.queryNumeric .node label q <;> simp
+  unfold queryIndexNumericNodes
+  cases h : g.idx.queryNumeric .node label q with
+  | none => rfl
+  | some a => cases a <;> simp [Except.map]
 
 theorem queryIndexNumericEdges_spec (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery)
-    (r : List Nat) (h : g.idx.queryNumeric .relationship t q = some r) (s d eid : Nat) :
-    (∃ out, queryIndexNumericEdges g ep t q = some out ∧ (s, d, eid) ∈ out) ↔ eid ∈ r ∧ ep eid = some (s, d) := by
+    (r : List Nat) (h : g.idx.queryNumeric .relationship t q = some (.ok r)) (s d eid : Nat) :
+    (∃ out, queryIndexNumericEdges g ep t q = some (.ok out) ∧ (s, d, eid) ∈ out) ↔ eid ∈ r ∧ ep eid = some (s, d) := by
   unfold queryIndexNumericEdges
   rw [h]
-  simp only [Option.map_some, Option.some.injEq, exists_eq_left', List.mem_filterMap, Option.map_eq_some_iff]
+  simp only [Option.map_some, Except.map, Option.some.injEq, Except.ok.injEq, exists_eq_left',
+    List.mem_filterMap, Option.map_eq_some_iff]
   constructor
   · rintro ⟨e, he, ⟨a, b⟩, hab, heq⟩
     simp only [Prod.mk.injEq] at heq
@@ -429,19 +426,50 @@ theorem queryIndexNumericEdges_spec (g : G) (ep : Nat → Option (Nat × Nat)) (
     exact ⟨he, hab⟩
   · rintro ⟨he, hab⟩; exact ⟨eid, he, (s, d), hab, rfl⟩
 
+/-- A `ScanFilter` (column still building) passes through the edge wrapper unchanged. -/
+theorem queryIndexNumericEdges_scan (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery)
+    (f : ScanFilter) :
+    queryIndexNumericEdges g ep t q = some (.error f) ↔ g.idx.queryNumeric .relationship t q = some (.error f) := by
+  unfold queryIndexNumericEdges
+  cases h : g.idx.queryNumeric .relationship t q with
+  | none => simp
+  | some a => cases a <;> simp [Except.map]
+
 theorem queryIndexNumericEdges_none (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery) :
     queryIndexNumericEdges g ep t q = none ↔ g.idx.queryNumeric .relationship t q = none := by
   unfold queryIndexNumericEdges; cases g.idx.queryNumeric .relationship t q <;> simp
 
-/-! ## The scan ops route to the native column first -/
+/-! ## The scan ops (`node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318`)
 
-/-- `NodeByIndexScanOp::next` / `EdgeByIndexScanOp::next`'s index branch: the native hit if any, else
-    RediSearch (`get_indexed_nodes` / `get_indexed_edges`, FFI). -/
-def scanRoute {α} (native : Option (List α)) (redisearch : List α) : List α :=
-  match native with | some hit => hit | none => redisearch
+Under `index-falkordb` the index branch of `next` is: `can_utilize_index(q)` false → scan (the planner
+kept a filter); else the three-way answer: rows, or the scan the `ScanFilter` describes, or the error
+`unsupported_by_native_index`. There is no RediSearch branch. -/
 
-theorem scanRoute_spec {α} (native : Option (List α)) (rs : List α) :
-    scanRoute native rs = native.getD rs := by cases native <;> rfl
+/-- The index branch of `NodeByIndexScanOp::next` / `EdgeByIndexScanOp::next`. `none` is the
+    `Err(unsupported_by_native_index(..))` the op returns; `scanAll` is the op's plain scan (the label,
+    or the type's cached edge list); `filtered f` is the scan standing in for a building column. -/
+def scanOp {α} (utilize : Bool) (answer : Option (Except ScanFilter (List α))) (scanAll : List α)
+    (filtered : ScanFilter → List α) : Option (List α) :=
+  if utilize then
+    match answer with
+    | some (.ok rows) => some rows
+    | some (.error f) => some (filtered f)
+    | none => none
+  else some scanAll
+
+/-- **No fallthrough**: an index-shaped predicate is served by rows or by the filtered scan, and fails
+    exactly when the native index declines it. -/
+theorem scanOp_spec {α} (answer : Option (Except ScanFilter (List α))) (all : List α) (filt : ScanFilter → List α) :
+    scanOp false answer all filt = some all ∧
+    (∀ rows, scanOp true (some (.ok rows)) all filt = some rows) ∧
+    (∀ f, scanOp true (some (.error f)) all filt = some (filt f)) ∧
+    scanOp true none all filt = none := ⟨rfl, fun _ => rfl, fun _ => rfl, rfl⟩
+
+theorem scanOp_none_iff {α} (answer : Option (Except ScanFilter (List α))) (all : List α) (filt : ScanFilter → List α) :
+    scanOp true answer all filt = none ↔ answer = none := by
+  cases answer with
+  | none => simp [scanOp]
+  | some a => cases a <;> simp [scanOp]
 
 /-- **Node index scan ≡ label scan + filter on the native route**: a numeric `Range` on a column built
     from a label's `(value, id)` pairs (no `Bool` values) returns exactly the ids the Filter keeps. -/
@@ -450,16 +478,14 @@ theorem nodeScan_native_agrees (g : G) (label key : String) (min max : Option Va
     (hwf : ∀ p ∈ collectNodeEntries g label key, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
     (hmin : ∀ v, min = some v → GoodBound v) (hmax : ∀ v, max = some v → GoodBound v)
     (hsome : min.isSome ∨ max.isSome) (id : Nat) (hid : id < W) :
-    ∃ hit, queryIndexNumericNodes g label (.range key min max a b) = some hit ∧
+    ∃ hit, queryIndexNumericNodes g label (.range key min max a b) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ rangeFilter v min max a b) := by
-  have henc : (min.all (fun v => (encodeNumeric v).isSome) && max.all (fun v => (encodeNumeric v).isSome)) = true := by
-    simp only [Bool.and_eq_true, Option.all_eq_true]
-    constructor
-    · intro v hv; obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmin v (by simpa using hv)); simp [hkb]
-    · intro v hv; obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmax v (by simpa using hv)); simp [hkb]
+  have hk := queryKey_range key min max a b
+    (fun v hv => Or.inr (by obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmin v hv); simp [hkb]))
+    (fun v hv => Or.inr (by obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmax v hv); simp [hkb]))
   refine ⟨_, ?_, range_agrees _ hwf min max a b hmin hmax hsome id hid⟩
-  rw [queryIndexNumericNodes_spec, queryNumeric_spec]
-  simp only [henc, if_true, hcol, Option.map_some]
+  rw [queryIndexNumericNodes_spec, queryNumeric_of_ready _ _ _ _ key hk _ hcol]
+  rfl
 
 /-- **After `CREATE INDEX`, a node range scan ≡ label scan + filter on the native route**: the column
     `create_index` built (one unlimited indexer batch) serves reads, and answers exactly the ids the
@@ -469,7 +495,7 @@ theorem createIndex_nodeScan_agrees (g : G) (hf : g.Fits) (label key : String) (
     (hwf : ∀ p ∈ collectNodeEntries g label key, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
     (hmin : ∀ v, min = some v → GoodBound v) (hmax : ∀ v, max = some v → GoodBound v)
     (hsome : min.isSome ∨ max.isSome) (id : Nat) (hid : id < W) :
-    ∃ hit, queryIndexNumericNodes (createIndex g .range .node label attrs) label (.range key min max a b) = some hit ∧
+    ∃ hit, queryIndexNumericNodes (createIndex g .range .node label attrs) label (.range key min max a b) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ rangeFilter v min max a b) := by
   obtain ⟨i, hi⟩ := createIndex_fields g .node label attrs
   have hready := createIndex_ready g hf .node label attrs key hk
@@ -488,7 +514,7 @@ theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List
     (hcol : g.idx.readyNumeric .node label key = some (NumericIndex.fromEntries (collectNodeEntries g label key)))
     (hwf : ∀ p ∈ collectNodeEntries g label key, p.1.WF ∧ NotBool p.1 ∧ p.2 < W)
     (hgood : ∀ b ∈ items, GoodBound b) (id : Nat) (hid : id < W) :
-    ∃ hit, queryIndexNumericNodes g label (.inList key (some items)) = some hit ∧
+    ∃ hit, queryIndexNumericNodes g label (.inList key (some items)) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ ∃ b ∈ items, cmpPred .eq v b = some true) := by
   have hs : ((NumericIndex.fromEntries (collectNodeEntries g label key)).inList items).isSome = true := by
     rw [inList_isSome_iff]
@@ -496,12 +522,13 @@ theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List
     obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hgood v hv); simp [hkb]
   obtain ⟨r, hr⟩ := Option.isSome_iff_exists.1 hs
   refine ⟨r, ?_, inList_agrees _ hwf items hgood r hr id hid⟩
-  rw [queryIndexNumericNodes_spec, queryNumeric_spec]
-  simp only [hcol, Option.bind_some, hr]
+  rw [queryIndexNumericNodes_spec, queryNumeric_of_ready _ _ _ _ key rfl _ hcol]
+  show Option.map _ (NumericIndex.inList _ items) = _
+  rw [hr]; rfl
 
 /-! ## Folded-roots MVCC -/
 
-/-- `Graph::new_version` (`graph.rs:1062-1065`): the index is a field of the version and is cloned
+/-- `Graph::new_version` (`graph.rs:1083`): the index is a field of the version and is cloned
     with it (`O(1)` per column: root `Arc` bumps; pages are immutable once built, cow_btree
     `Snapshot.lean`), so as a value the new version's index *is* the old one. -/
 def newVersion (g : G) : G := { g with idx := g.idx }

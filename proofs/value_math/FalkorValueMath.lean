@@ -109,7 +109,7 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
 
 ## Divergences from C (live; Rust often the better answer — decide per case)
 
-- `MIN / -1` Rust MIN, C MAX; `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
+- `MIN / -1`: was Rust MIN, C MAX; Rust now errors (#3603, `Value.div_min_neg_one`); `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
 - `abs(MIN)` Rust error, C MIN; `abs(-0.0)` Rust 0, C -0.
 - `+` typing: `'a'+date(..)`, `'a'+{b:1}`, `'a'+localtime(..)` Rust error, C concatenates;
   `true+1`, `1.5+true`, `duration+1`, `date+1` Rust error, C Float; `null*'a'`, `'a'/null`

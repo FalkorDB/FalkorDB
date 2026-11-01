@@ -15,8 +15,7 @@ on main before #2845 (da6f808c3) were removed (in 17ccc5412)
   `entry_ids_below`); body scope disjoint from outer scopes (`body_scope_disjoint`).
 * No slot aliasing for plain bodies at runtime (`body_own_unbound`,
   `body_import_value`, `new_scan_scans`).
-* UNION bodies alias binder keys `(scope_id, id)` (`union_branch_label_alias`,
-  open, #3027 fixes it: `relabel_3027`, `union_branch_label_3027`).
+* UNION bodies alias binder keys `(scope_id, id)` (fixed by #3027: `relabel_3027`, `union_branch_label_fixed`).
 * W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
   `filter_pushed_through_boundary`): the pushed read is unbound
   (`pushed_read_unbound`).
@@ -50,14 +49,13 @@ def bodyOld (outerLen : Nat) (imported : List (Name × Var)) (rest : List Clause
   if imported.isEmpty then rest else .with_ (importProj [] outerLen imported).2 :: rest
 
 /-- The UNION arm (binder.rs:899-925): each branch binder starts with
-`env_stack: vec![HashMap::new()]`, so its scope is 0 (origin/main and this
-PR); #3027 changes it to `env_stack.len()` empty tables + 1, i.e. scope
-`outerLen`. -/
-def branchScope (outerLen : Nat) (with3027 : Bool) : Nat := if with3027 then outerLen else 0
+`env_stack: vec![HashMap::new(); self.env_stack.len() + 1]` (#3027, d42d121c6,
+binder.rs:897-905), so its scope is `outerLen`, above the live outer scopes. -/
+def branchScope (outerLen : Nat) : Nat := outerLen
 
-def branchNew (outerLen : Nat) (with3027 : Bool) (imported : List (Name × Var))
+def branchNew (outerLen : Nat) (imported : List (Name × Var))
     (rest : List Clause) : List Clause :=
-  .with_ (importProj [] (branchScope outerLen with3027) imported).2 :: rest
+  .with_ (importProj [] (branchScope outerLen) imported).2 :: rest
 
 /-! ## Claim 1: every body starts with its entry projection -/
 
@@ -69,8 +67,8 @@ theorem bodyNew_entry (o : Nat) (imp : List (Name × Var)) (rest : List Clause) 
   | nil => intro e; rfl
   | cons p r ih => intro e; obtain ⟨n, v⟩ := p; simp [importProj, ih]
 
-theorem branchNew_entry (o : Nat) (b : Bool) (imp : List (Name × Var)) (rest : List Clause) :
-    ∃ ps, branchNew o b imp rest = .with_ ps :: rest := ⟨_, rfl⟩
+theorem branchNew_entry (o : Nat) (imp : List (Name × Var)) (rest : List Clause) :
+    ∃ ps, branchNew o imp rest = .with_ ps :: rest := ⟨_, rfl⟩
 
 /-- An import-less body: the entry projection names nothing. -/
 theorem bodyNew_empty (o : Nat) (rest : List Clause) : bodyNew o [] rest = .with_ [] :: rest := rfl
@@ -185,18 +183,17 @@ the branch's `q` is minted at scope 0 (the branch binder's only scope) after
 its entry projection (no imports), id 0: same key. The branch scans `(q:A)`. -/
 def outerLabels : Labels := [((0, 0), ["A"])]
 
-def branchQ (with3027 : Bool) : Var :=
-  let s := branchScope 1 with3027
+def branchQ : Var :=
+  let s := branchScope 1
   freshVar (importProj [] s []).1 "q" .node s
 
-theorem union_branch_label_alias : relabel outerLabels (branchQ false) ["B"] = ["A"] := by decide
-
-/-- #3027's scope numbering removes the collision: with every key of the
+/-- Fixed by #3027 (merged; the former counterexample `union_branch_label_alias`
+is replaced by this): the scope numbering removes the collision: with every key of the
 outer table in a live outer scope (`< outerLen`; step 2c of
 `bind_call_subquery` removes inner-scope keys), a branch variable's key
 `(outerLen, _)` is never found. -/
 theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < outerLen)
-    (v : Var) (hv : v.scope = branchScope outerLen true) (own : List Name) :
+    (v : Var) (hv : v.scope = branchScope outerLen) (own : List Name) :
     relabel L v own = own := by
   unfold relabel
   have : L.lookup (v.scope, v.id) = none := by
@@ -209,7 +206,7 @@ theorem relabel_3027 (L : Labels) (outerLen : Nat) (hL : ∀ p ∈ L, p.1.1 < ou
     simp [hv, branchScope] at this
   rw [this]
 
-theorem union_branch_label_3027 : relabel outerLabels (branchQ true) ["B"] = ["B"] := by decide
+theorem union_branch_label_fixed : relabel outerLabels branchQ ["B"] = ["B"] := by decide
 
 /-! ## Runtime side: the entry projection is a record boundary
 

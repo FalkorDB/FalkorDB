@@ -16,7 +16,7 @@ graph/src/runtime/functions/string.rs	to_string_vec	293	PROVEN	Misc.toStringVec:
 graph/src/runtime/functions/string.rs	compute_join_length	308	PROVEN	joinLen_correct
 graph/src/runtime/functions/string.rs	join_with_preallocate	348	PROVEN	joinStr_length, joinStr_eq_intercalate
 graph/src/runtime/functions/string.rs	string_match_reg_ex	401	PROVEN	Misc.matchRegEx (Rx structure): matchRegEx_null, capturesList_shape
-graph/src/runtime/functions/string.rs	string_replace_reg_ex	424	PROVEN	Misc.replaceRegEx: replaceRegEx_default, replaceRegEx_null; earlier: expandRust, replaceRegex_dollar (BUG E)
+graph/src/runtime/functions/string.rs	string_replace_reg_ex	424	PROVEN	Misc.replaceRegEx: replaceRegEx_default, replaceRegEx_null; replaceRegex_literal, spliceLit_single (BUG E fixed, #3604)
 graph/src/runtime/functions/string.rs	regex_captures_list	474	PROVEN	Misc.capturesList: capturesList_shape
 graph/src/runtime/functions/list.rs	remove_span	38	PROVEN	removeSpan: removeSpan_wf, removeSpan_clamps_huge_count, listRemove_eq_spec
 graph/src/runtime/functions/list.rs	register	53	PROVEN	Misc.listRegistered: listRegistered_nodup
@@ -62,10 +62,10 @@ graph/src/runtime/eval.rs	eval_compound/Quantifier	535	PROVEN	all_is_kand, any_i
 graph/src/runtime/eval.rs	eval_compound/ListComprehension	535	PROVEN	comprehensionRust/CSrc (#2954): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehension_literal_range_unchanged; Entity.comprehensionSourceCheck_err (arm at eval.rs:1040-1085); bug F fixed
 graph/src/runtime/eval.rs	eval_compound/Reduce	535	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1048)
 graph/src/runtime/eval.rs	eval_iter_expr	1226	MODELLED	comprehensionRust literal/range arms (since #2954 only these sources reach it from a comprehension; fallback arm was bug F, pre2954_comprehensionRust); range arm = rangeLen/rangeIter (rangeIter_eq_range)
-graph/src/runtime/eval.rs	eval_compiled_regex	1302	MODELLED	isMatchRust, expandRust (BUG C, E)
+graph/src/runtime/eval.rs	eval_compiled_regex	1302	MODELLED	isMatchRust, spliceLit (BUG C; E fixed #3604)
 graph/src/runtime/eval.rs	check_string_or_null	1309	NOT COVERED	type check only
 graph/src/runtime/eval.rs	eval_quantifier	1664	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
 graph/src/runtime/eval.rs	list_contains	1760	PROVEN	contains_false_iff
 graph/src/runtime/eval.rs	get_elements	1774	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
-graph/src/runtime/value.rs	Contains::contains	1869	PROVEN	contains_false_iff
+graph/src/runtime/value.rs	Contains::contains	1871	PROVEN	contains_false_iff
 graph/src/runtime/value.rs	add_slow (String/List arms)	961	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)

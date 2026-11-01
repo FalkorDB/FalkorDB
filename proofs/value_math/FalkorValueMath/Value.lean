@@ -144,15 +144,28 @@ def mul (o : FOps F) : V F → V F → Except String (V F)
 def divMsg (a b : V F) : String :=
   s!"Type mismatch: expected Integer, Float, or Null but was ({a.name}, {b.name})"
 
-/-- `impl Div for Value` (value.rs:1120). -/
+/-- `impl Div for Value` (value.rs:1153-1170). -/
 def div (o : FOps F) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
   | _, .null => .ok .null
-  | .int a, .int b => if b = 0 then .error "Division by zero" else .ok (.int (wDiv a b))
+  | .int a, .int b =>
+    if b = 0 then .error "Division by zero"
+    else if a = I64MIN ∧ b = -1 then .error "ArgumentError: integer overflow in division"  -- #3603 checked_div
+    else .ok (.int (wDiv a b))
   | .float a, .float b => .ok (.float (o.div a b))
   | .float a, .int b => .ok (.float (o.div a (o.ofInt b)))
   | .int a, .float b => .ok (.float (o.div (o.ofInt a) b))
   | a, b => .error (divMsg a b)
+
+/-- **Fixed by #3603** (closes #3205, #3242): `i64::MIN / -1` is an overflow error, not a wrap to `MIN`. -/
+theorem div_min_neg_one (o : FOps F) :
+    div o (.int I64MIN) (.int (-1)) = .error "ArgumentError: integer overflow in division" := by
+  simp [div]
+
+/-- Every other integer quotient is the exact (wrapping, never wrapped) `wDiv`. -/
+theorem div_int_ok (o : FOps F) (a b : Int) (hb : b ≠ 0) (hx : ¬ (a = I64MIN ∧ b = -1)) :
+    div o (.int a) (.int b) = .ok (.int (wDiv a b)) := by
+  simp [div, hb, hx]
 
 /-- `impl Rem for Value` (value.rs:1148). -/
 def rem (o : FOps F) : V F → V F → Except String (V F)
@@ -378,8 +391,8 @@ theorem mul_ok_iff (x y : V F) :
 theorem div_ok_iff (x y : V F) :
     (∃ r, div o x y = .ok r) ↔
       (x.isNull ∨ y.isNull ∨ (x.isNum ∧ y.isNum ∧ ¬ (∃ a, x = .int a) ∨
-        x.isNum ∧ y.isNum ∧ y ≠ .int 0)) := by
-  cases x <;> cases y <;> simp [div, V.isNull, V.isNum] <;> split <;> simp_all
+        x.isNum ∧ y.isNum ∧ y ≠ .int 0 ∧ ¬ (x = .int I64MIN ∧ y = .int (-1)))) := by
+  cases x <;> cases y <;> simp [div, V.isNull, V.isNum] <;> split <;> simp_all <;> split <;> simp_all
 
 theorem rem_ok_iff (x y : V F) :
     (∃ r, rem o x y = .ok r) ↔

@@ -208,7 +208,8 @@ theorem c_div_loses_precision :
     wDiv 9007199254740993 1 = 9007199254740993 ∧ cDivExact 9007199254740993 1 = 9007199254740992 := by
   decide
 
-/-- `MIN / -1`: Rust `MIN` (wraps), C `MAX` (double 2^63 saturates) — live-confirmed. -/
+/-- `MIN / -1`: `wrapping_div` gives `MIN` and C's double division `MAX` (2^63 saturates, live-confirmed
+before #3603). Rust's `Value` `/` no longer wraps: it raises an overflow error (`Value.div_min_neg_one`). -/
 theorem min_div_neg1_diverges : wDiv I64MIN (-1) = I64MIN ∧ cDivExact I64MIN (-1) = I64MAX := by
   decide
 

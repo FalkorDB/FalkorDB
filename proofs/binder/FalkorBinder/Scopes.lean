@@ -100,26 +100,24 @@ theorem comprehension_cleanup_breaks :
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
   · intro h; exact absurd (h 1 (by decide)) (by decide)
 
-/-! ## `CALL { … UNION … }` scope numbering (binder.rs:845 vs 897-905) -/
+/-! ## `CALL { … UNION … }` scope numbering (binder.rs:845, 897-905) -/
 
 /-- Scope id of the first scope of a CALL body, with `outerLen =
-env_stack.len()` at the CALL. A plain body is pushed on the stack; each
-UNION branch gets `Binder { env_stack: vec![HashMap::new()], .. }`. -/
-def callBodyScope (outerLen : Nat) (isUnion : Bool) : Nat :=
-  if isUnion then 0 else outerLen
+env_stack.len()` at the CALL. A plain body is pushed on the stack; since #3027
+each UNION branch gets `Binder { env_stack: vec![HashMap::new(); outerLen + 1], .. }`
+(binder.rs:897-905), so both start at `outerLen`. -/
+def callBodyScope (outerLen : Nat) (_isUnion : Bool) : Nat := outerLen
 
 /-- A plain body's scopes are disjoint from the live outer scopes … -/
 theorem callBody_query_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen false ≠ s := by
   simp [callBodyScope]; omega
 
-/-- … a UNION branch's first scope **is** outer scope 0 (root cause 3): its
-first variable has id 0 in scope 0, the same slot as the outer query's first
-variable. Rust: `MATCH (n:A) CALL { MATCH (q:B) RETURN q UNION MATCH (q:B)
-RETURN q } RETURN n.v, q.v` returns `[1, 1]` (q reads n); C `[1,0],[1,5]`. -/
-theorem callBody_union_aliases (outerLen : Nat) (h : 0 < outerLen) :
-    callBodyScope outerLen true < outerLen := by
-  simp [callBodyScope]; exact h
+/-- … and, since #3027 (fixes W2-binder-4, formerly `callBody_union_aliases`:
+a UNION branch's first scope was outer scope 0), so are a UNION branch's. -/
+theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
+    callBodyScope outerLen true ≠ s := by
+  simp [callBodyScope]; omega
 
 /-! ## Label accumulation (binder.rs:1356-1360, 122-154) -/
 
