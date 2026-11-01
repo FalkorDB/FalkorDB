@@ -273,20 +273,31 @@ class testBFSEdgeChanges(FlowTestsBase):
         self.env.assertEqual(self.reach(2), [1, 3])
 
     def test02_push_pull_push_transitions(self):
-        # A wide layer (300 nodes) between a single source and a narrow tail
-        # drives the direction-optimizing BFS push -> pull -> push, with
-        # converging edges (every mid node reaches the hub) and a cycle back
-        # to the source. A reload leaves the transpose clean so pull is used.
+        # A wide layer (W mid nodes) between a single source and a narrow
+        # tail drives the direction-optimizing BFS push -> pull -> push, with
+        # converging edges (every mid node reaches the hub), a cycle back to
+        # the source and dense edges among the mids. Matrices keep a capacity
+        # of 16384 rows, so the layer must hold more than 16384/14 nodes to
+        # switch to pull and the graph needs an average degree above ~1.1 for
+        # a depth-limited run to take the same path. A reload leaves the
+        # transpose clean so pull is available.
         g = self.db.select_graph("proc_bfs_push_pull")
-        g.query("UNWIND range(0, 331) AS i CREATE (:N {v: i})")
-        g.query("""MATCH (s:N {v: 0}), (m:N) WHERE 1 <= m.v <= 300
+        W, TAIL, FANOUT = 2000, 30, 8
+        hub = W + 1
+        last = hub + TAIL
+        g.query("CREATE INDEX FOR (n:N) ON (n.v)")
+        g.query(f"UNWIND range(0, {last}) AS i CREATE (:N {{v: i}})")
+        g.query(f"""MATCH (s:N {{v: 0}}), (m:N) WHERE 1 <= m.v <= {W}
                    CREATE (s)-[:E]->(m)""")
-        g.query("""MATCH (m:N), (h:N {v: 301}) WHERE 1 <= m.v <= 300
+        g.query(f"""MATCH (m:N), (h:N {{v: {hub}}}) WHERE 1 <= m.v <= {W}
                    CREATE (m)-[:E]->(h)""")
-        g.query("""UNWIND range(301, 330) AS i
-                   MATCH (a:N {v: i}), (b:N {v: i + 1})
+        g.query(f"""UNWIND range(1, {W}) AS i UNWIND range(1, {FANOUT}) AS d
+                   MATCH (a:N {{v: i}}), (b:N {{v: 1 + (i - 1 + d) % {W}}})
                    CREATE (a)-[:E]->(b)""")
-        g.query("MATCH (a:N {v: 331}), (b:N {v: 0}) CREATE (a)-[:E]->(b)")
+        g.query(f"""UNWIND range({hub}, {last - 1}) AS i
+                   MATCH (a:N {{v: i}}), (b:N {{v: i + 1}})
+                   CREATE (a)-[:E]->(b)""")
+        g.query(f"MATCH (a:N {{v: {last}}}), (b:N {{v: 0}}) CREATE (a)-[:E]->(b)")
         self.env.dumpAndReload()
 
         def reach(depth, edges=False):
@@ -296,9 +307,12 @@ class testBFSEdgeChanges(FlowTestsBase):
                     RETURN [n IN nodes | n.v]"""
             return sorted(g.query(q).result_set[0][0])
 
-        everything = list(range(1, 332))
+        # level of tail node hub + j is 2 + j; the mids are level 1 and the
+        # hub level 2
+        def upto(depth):
+            return list(range(1, W + 1)) + list(range(hub, min(last, hub + depth - 2) + 1))
+
         for edges in (False, True):
-            self.env.assertEqual(reach(-1, edges), everything)
-            self.env.assertEqual(reach(4, edges), list(range(1, 304)))
-            self.env.assertEqual(reach(2, edges), list(range(1, 302)))
-            self.env.assertEqual(reach(1, edges), list(range(1, 301)))
+            self.env.assertEqual(reach(-1, edges), list(range(1, last + 1)))
+            for depth in (1, 2, 4, 30, 40):
+                self.env.assertEqual(reach(depth, edges), upto(depth))
