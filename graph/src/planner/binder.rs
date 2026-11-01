@@ -231,6 +231,7 @@ impl Binder {
                     rel.max_hops,
                 );
                 new_rel.all_shortest_paths = rel.all_shortest_paths;
+                new_rel.written_incoming = rel.written_incoming;
                 *rel = Arc::new(new_rel);
             }
         }
@@ -1520,6 +1521,7 @@ impl Binder {
                 relationship.max_hops,
             );
             new_rel.all_shortest_paths = relationship.all_shortest_paths;
+            new_rel.written_incoming = relationship.written_incoming;
             let rel = Arc::new(new_rel);
             bound.add_relationship(rel);
         }

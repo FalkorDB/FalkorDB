@@ -1114,17 +1114,29 @@ impl Planner {
                 let path_var = self.fresh_var(scope_id, Type::Path);
                 let mut path_component_vars = Vec::new();
                 let mut incoming = Vec::new();
-                let nodes = graph.nodes();
+                // `graph.nodes()` is deduplicated, so it cannot give the node
+                // before each relationship when a pattern revisits an alias.
+                // Walk the relationships instead, each in its written
+                // direction (an incoming one is stored with `from`/`to`
+                // swapped).
                 let rels = graph.relationships();
-                for i in 0..nodes.len() {
-                    path_component_vars.push(nodes[i].alias.clone());
-                    if i < rels.len() {
-                        path_component_vars.push(rels[i].alias.clone());
-                        // Written `<-`: stored with `from`/`to` swapped.
-                        incoming.push(
-                            !rels[i].bidirectional && rels[i].from.alias.id != nodes[i].alias.id,
-                        );
-                    }
+                if let Some(first) = rels.first() {
+                    let start = if first.written_incoming {
+                        &first.to
+                    } else {
+                        &first.from
+                    };
+                    path_component_vars.push(start.alias.clone());
+                }
+                for rel in rels {
+                    let next = if rel.written_incoming {
+                        &rel.from
+                    } else {
+                        &rel.to
+                    };
+                    path_component_vars.push(rel.alias.clone());
+                    path_component_vars.push(next.alias.clone());
+                    incoming.push(rel.written_incoming);
                 }
                 let query_path = Arc::new(QueryPath::new(
                     path_var.clone(),

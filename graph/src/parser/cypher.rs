@@ -3051,7 +3051,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses `-[...]->(dst)` / `<-[...]-(dst)` / `-[...]-(dst)` after `src`.
-    /// Also returns whether it was written `<-` (`from`/`to` swapped).
+    /// Also returns whether `from`/`to` were swapped (written `<-`, not `<-[]->`).
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
@@ -3160,7 +3160,7 @@ impl<'a> Parser<'a> {
             Some((min, max)) => (Some(min), max),
             None => (None, None),
         };
-        let relationship = match (is_incoming, is_outgoing) {
+        let mut relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {
                     return Err(self
@@ -3199,7 +3199,9 @@ impl<'a> Parser<'a> {
                 max_hops,
             ),
         };
-        Ok((Arc::new(relationship), dst, is_incoming && !is_outgoing))
+        let written_incoming = is_incoming && !is_outgoing;
+        relationship.written_incoming = written_incoming;
+        Ok((Arc::new(relationship), dst, written_incoming))
     }
 
     fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {

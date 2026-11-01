@@ -579,6 +579,9 @@ pub struct QueryRelationship<T, L, TVar> {
     pub min_hops: Option<u32>,
     pub max_hops: Option<u32>,
     pub all_shortest_paths: AllShortestPaths,
+    /// Written `<-`: `from`/`to` are stored swapped. The endpoints alone cannot
+    /// tell it from `->` when both are the same node, as in `(a)<-[*]-(a)`.
+    pub written_incoming: bool,
 }
 
 /// Whether this relationship is part of an allShortestPaths pattern,
@@ -643,6 +646,7 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
             min_hops,
             max_hops,
             all_shortest_paths: AllShortestPaths::No,
+            written_incoming: false,
         }
     }
 }

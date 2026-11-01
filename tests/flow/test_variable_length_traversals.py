@@ -636,6 +636,10 @@ class testVariableLengthTraversals(FlowTestsBase):
         # relationships in pattern order, also when both ends are the same
         # node (#3451)
         g = self.db.select_graph("vlt_incoming_cycle")
+        try:
+            g.delete()
+        except ResponseError:
+            pass
         g.query("""CREATE (a:N {id: 0})-[:R {w: 1}]->(b:N {id: 1}),
                           (b)-[:R {w: 2}]->(c:N {id: 2}),
                           (c)-[:R {w: 3}]->(a)""")
@@ -673,6 +677,17 @@ class testVariableLengthTraversals(FlowTestsBase):
              [[[[0, 2, 1]]]]),
             ("MATCH (a:N {id: 0}) "
              "RETURN [p IN (a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1]]]]),
+            # a bare pattern that is an incoming cycle
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p IN (a)<-[:R*3..3]-(a) | [n IN nodes(p) | n.id]]",
+             [[[[0, 2, 1, 0]]]]),
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p IN (a)-[:R*3..3]->(a) | [n IN nodes(p) | n.id]]",
+             [[[[0, 1, 2, 0]]]]),
+            # a bare pattern that revisits an alias before an incoming segment
+            ("MATCH (a:N {id: 0}) "
+             "RETURN [p IN (a)-[:R*0..0]->(a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
              [[[[0, 2, 1]]]]),
         ]
         for q, expected in queries:
