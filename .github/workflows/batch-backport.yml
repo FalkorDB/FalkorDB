@@ -59,10 +59,11 @@ jobs:
         id: tag_date
         run: |
           TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
-          TAG_DATE=$(git log -1 --format="%cI" "$TAG")
-          TAG_DATE_SHORT=$(echo "$TAG_DATE" | cut -d'T' -f1)
-          echo "Tag date: $TAG_DATE_SHORT"
-          echo "TAG_DATE=$TAG_DATE_SHORT" >> $GITHUB_OUTPUT
+          # The full UTC timestamp, not just the day: `merged:>DAY` skips
+          # everything merged later on the day the tag was made.
+          TAG_DATE=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd "$TAG")
+          echo "Tag date: $TAG_DATE"
+          echo "TAG_DATE=$TAG_DATE" >> $GITHUB_OUTPUT
 
       - name: Find PRs with version label
         id: find_prs
@@ -76,13 +77,26 @@ jobs:
 
           SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:$TRUNK merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
 
-          PR_DATA=$(gh api -X GET search/issues \
+          # The search API returns 30 results per page by default, so page
+          # through all of them. Sort by creation time: unlike `updated`, it
+          # can't change between page requests and move a PR across a page
+          # boundary.
+          gh api -X GET search/issues --paginate --slurp \
             -f q="$SEARCH_QUERY" \
-            -f sort=updated \
+            -f per_page=100 \
+            -f sort=created \
             -f order=asc \
-            --jq '.items | map({number: .number, title: .title, user: .user.login})')
+            > /tmp/search.json
 
-          PR_COUNT=$(echo "$PR_DATA" | jq 'length')
+          TOTAL=$(jq '.[0].total_count' /tmp/search.json)
+          jq '[.[].items[] | {number: .number, title: .title, user: .user.login}] | unique_by(.number)' \
+            /tmp/search.json > /tmp/prs.json
+          PR_COUNT=$(jq 'length' /tmp/prs.json)
+
+          if [ "$PR_COUNT" -ne "$TOTAL" ]; then
+            echo "::error::Search reports $TOTAL matching PRs but returned $PR_COUNT; refusing to backport a partial list"
+            exit 1
+          fi
 
           if [ "$PR_COUNT" -eq 0 ]; then
             echo "::error::No merged PRs found with label '$VERSION' since tag ${{ steps.find_tag.outputs.LATEST_TAG }}"
@@ -90,7 +104,6 @@ jobs:
           fi
 
           echo "Found $PR_COUNT PRs to backport"
-          echo "$PR_DATA" > /tmp/prs.json
           echo "PR_COUNT=$PR_COUNT" >> $GITHUB_OUTPUT
 
       - name: Get merge commit SHAs

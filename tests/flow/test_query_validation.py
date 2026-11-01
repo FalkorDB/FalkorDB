@@ -199,6 +199,39 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("wrong number of arguments" in str(e))
             pass
 
+    # QUERY, RO_QUERY, PROFILE and EXPLAIN share C's flag parser
+    def test17b_query_flags(self):
+        cmds = ["GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.PROFILE", "GRAPH.EXPLAIN"]
+        bad = [
+            (("TIMEOUT", "-5"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "+10"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "010"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "abc"), "Failed to parse query timeout value"),
+            (("TIMEOUT",), "Failed to parse query timeout value"),
+            (("version", "4294967296"), "Failed to parse graph version value"),
+            (("version", "-1"), "Failed to parse graph version value"),
+            (("version",), "Failed to parse graph version value"),
+            # at most 8 arguments, command name included
+            (("a", "b", "c", "d", "e", "f"), "wrong number of arguments"),
+        ]
+        for cmd in cmds:
+            for flags, err in bad:
+                try:
+                    self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+                    self.env.assertTrue(False, message=f"{cmd} {flags}")
+                except redis.ResponseError as e:
+                    self.env.assertContains(err, str(e))
+
+            # valid flags, unknown ones skipped
+            for flags in [("TIMEOUT", "0"), ("timeout", "10"), ("a", "b", "c", "d", "e")]:
+                self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+
+        # a non-UTF-8 argument is an unknown flag, not the end of the flags
+        for cmd in ["GRAPH.QUERY", "GRAPH.RO_QUERY"]:
+            res = self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", b"\xff", "--compact")
+            # compact header: [[type, name]]
+            self.env.assertEqual(res[0], [[1, "1"]])
+
     # Run queries in which compile-time variables are accessed but not defined.
     def test18_undefined_variable_access(self):
         try:
@@ -1134,5 +1167,77 @@ class testQueryValidationFlow(FlowTestsBase):
             g.query(ns + "FOREACH (x IN ns | SET x.c = size([(x)-->() | 1]))")
             actual = g.query("MATCH (n:N) RETURN n.name, n.c ORDER BY n.name").result_set
             self.env.assertEqual(actual, [['a', 1], ['b', 0]])
+        finally:
+            g.delete()
+
+    # An error reply used to be built one `char` at a time with `c as u8`, so any
+    # code point whose low byte is 0 -- '一' (U+4E00), 'Ā' (U+0100) -- became a NUL,
+    # and the `CString::new(..).unwrap()` that followed panicked and took Redis down
+    # (#3185); every other non-ASCII character came back as a garbage byte. An error
+    # reply must keep its message's UTF-8 verbatim and never take the server down.
+    def test52_error_reply_keeps_utf8_and_never_crashes(self):
+        con = self.redis_con
+        for cmd in ("GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.EXPLAIN"):
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID,
+                                     "MATCH (n:Person {name:'一'}) RETURN n +")
+            self.env.assertContains("'一'", msg)
+            msg = assert_error_reply(self.env, con, cmd, GRAPH_ID, "RETURN 'Ā中文' +")
+            self.env.assertContains("Ā中文", msg)
+
+    def test53_paren_update_targets_and_colon_joined_types(self):
+        # a parenthesized SET/REMOVE target only opens a property lookup, and
+        # a relationship's types are joined by '|', never a bare ':'; these
+        # used to run (SET (n.x) = 5 set n.x, [:A:B] matched A or B)
+        g = self.fresh_graph("paren_targets_colon_types")
+        try:
+            g.query("CREATE (:N {x: 1})-[:A]->()")
+            for q in ["MATCH (n:N) SET (n.x) = 5",
+                      "MATCH (n:N) SET (n) = {x: 5}",
+                      "MATCH (n:N) SET (n):L",
+                      "MATCH (n:N) REMOVE (n):N",
+                      "MATCH ()-[:A:B]->() RETURN count(*)",
+                      "MATCH ()-[r:A:B]->() RETURN count(r)"]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False, message=q)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Invalid input", str(e))
+            # nothing was written by the rejected updates
+            res = g.query("MATCH (n:N) RETURN n.x, labels(n)").result_set
+            self.env.assertEqual(res, [[1, ['N']]])
+            # the valid spellings still work
+            g.query("MATCH (n:N) SET (n).x = 2")
+            res = g.query("MATCH (n:N)-[:A|:B]->() RETURN n.x").result_set
+            self.env.assertEqual(res, [[2]])
+        finally:
+            g.delete()
+
+    def test54_query_cannot_conclude_with_with(self):
+        # a query, or a CALL subquery body, may not end with WITH
+        # https://github.com/FalkorDB/FalkorDB/issues/3271
+        g = self.fresh_graph("conclude_with_with")
+        try:
+            queries = [
+                "MATCH (n) WITH n",
+                "UNWIND [1] AS x WITH x",
+                "WITH 1 AS x",
+                "CREATE (a) WITH a",
+                "MATCH (n) CALL { WITH n MATCH (m) WITH m } RETURN 1",
+                "MATCH (n) CALL { WITH n } RETURN 1",
+            ]
+            for query in queries:
+                try:
+                    g.query(query)
+                    self.env.assertTrue(False, message=query)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Query cannot conclude with WITH", str(e))
+
+            # the rejected CREATE did not run
+            self.env.assertEqual(g.query("MATCH (n) RETURN count(n)").result_set, [[0]])
+
+            # WITH followed by a RETURN or an update clause is fine
+            self.env.assertEqual(g.query("WITH 1 AS x RETURN x").result_set, [[1]])
+            g.query("WITH 1 AS x CREATE (:N {x: x})")
+            self.env.assertEqual(g.query("MATCH (n:N) RETURN n.x").result_set, [[1]])
         finally:
             g.delete()
