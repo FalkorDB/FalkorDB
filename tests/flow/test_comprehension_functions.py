@@ -748,7 +748,7 @@ class testComprehensionFunctions(FlowTestsBase):
                        CREATE (:N {id: i, v: CASE WHEN i % 7 = 0 THEN null
                                                   WHEN i % 11 = 0 THEN 'str'
                                                   ELSE i END})""")
-            ns = "MATCH (n:N) WITH collect(n) AS ns "
+            ns = "MATCH (n:N) WITH n ORDER BY n.id WITH collect(n) AS ns "
 
             def q(query, params=None):
                 return g.query(query, params).result_set[0][0]

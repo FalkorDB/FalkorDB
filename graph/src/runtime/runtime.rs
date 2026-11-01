@@ -1675,7 +1675,7 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
         {
-            let g = self.g.borrow();
+            let g = self.graph();
             if let Some(attr_idx) = self.node_attr_id(&g, attr)
                 && self.deleted_nodes.borrow().is_empty()
                 && !self.pending.borrow().has_node_attrs()
