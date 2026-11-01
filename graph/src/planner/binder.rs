@@ -28,7 +28,7 @@
 use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
-    Variable,
+    Variable, is_generated_anon_alias,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -89,14 +89,6 @@ impl Default for Binder {
 enum ProjectionKind {
     With,
     Return,
-}
-
-/// True for the aliases the parser generates for unnamed pattern entities
-/// (`_anon_<counter>`), as opposed to a user-written name that happens to
-/// start with `_anon`.
-fn is_generated_anon_alias(name: &str) -> bool {
-    name.strip_prefix("_anon_")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl Binder {

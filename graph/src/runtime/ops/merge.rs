@@ -30,7 +30,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::graph::graph::LabelId;
-use crate::parser::ast::{QueryGraph, SetItem, Variable};
+use crate::parser::ast::{QueryGraph, SetItem, Variable, is_generated_anon_alias};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
@@ -376,7 +376,7 @@ impl<'a> Iterator for MergeOp<'a> {
                                 rel.alias
                                     .name
                                     .as_ref()
-                                    .is_some_and(|n| !n.starts_with("_anon_"))
+                                    .is_some_and(|n| !is_generated_anon_alias(n))
                             })
                             .all(|rel| input_env.is_bound_by_id(rel.alias.id));
 
