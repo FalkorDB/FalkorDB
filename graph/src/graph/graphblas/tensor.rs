@@ -1328,15 +1328,30 @@ impl Tensor {
         if !self.has_multi_edge() {
             return None;
         }
-        let mut per_pair: FxHashMap<(u64, u64), u64> = FxHashMap::default();
-        for (src, dst, _) in self.iter_multi_edges() {
-            *per_pair.entry((src, dst)).or_default() += 1;
-        }
+        // `me` yields the ids of one pair together and pairs in key order, so
+        // the surplus of a pair is the length of its run less one.
         let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
-        for ((src, dst), n) in per_pair {
-            rows.push(src);
-            cols.push(dst);
-            vals.push(n - 1);
+        for (block, me) in self.edge_versioned_all() {
+            let mut run: Option<(u64, u64)> = None;
+            for (key, _) in me.iter(0, GrB_INDEX_MAX) {
+                match run.as_mut() {
+                    Some((k, n)) if *k == key => *n += 1,
+                    _ => {
+                        if let Some((k, n)) = run.replace((key, 1)) {
+                            let (src, dst) = compound_key_inverse(block, k);
+                            rows.push(src);
+                            cols.push(dst);
+                            vals.push(n - 1);
+                        }
+                    }
+                }
+            }
+            if let Some((k, n)) = run {
+                let (src, dst) = compound_key_inverse(block, k);
+                rows.push(src);
+                cols.push(dst);
+                vals.push(n - 1);
+            }
         }
         let mut surplus = Matrix::<u64>::new(self.nrows(), self.ncols());
         surplus.build(&rows, &cols, &vals);
