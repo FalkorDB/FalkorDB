@@ -711,7 +711,8 @@ _EDGES = [["R0", 1, 1], ["R1", 1, 2], ["R2", 1, 3]]
 
 class testRdbLegacyEmptyTensorSection():
     def __init__(self):
-        self.env, self.db = Env()
+        # DEBUG RELOAD checks the round trip
+        self.env, self.db = Env(enableDebugCommand=True)
         self.conn = self.env.getConnection()
         self.conn.flushall()
         g = self.db.select_graph(GRAPH_ID)

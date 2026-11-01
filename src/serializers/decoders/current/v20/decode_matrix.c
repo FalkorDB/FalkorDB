@@ -398,11 +398,16 @@ void RdbLoadRelationMatrices_v20
 		if (r == 0 && i > 0) {
 			uint64_t z = SerializerIO_TryReadUnsigned (rdb) ;
 			uint64_t id = SerializerIO_TryReadUnsigned (rdb) ;
-			if (z == 0 && id == (uint64_t) i) {
-				RedisModule_Log (NULL, "warning", "skipped a malformed empty "
-						"tensor section before relation matrix %d", i) ;
-				r = id ;
+			if (z != 0 || id != (uint64_t) i) {
+				// not the legacy encoding, some other malformed data
+				SerializerIO_SetError (rdb, EMSG_DECODE_MATRIX_ORDER,
+						"relation") ;
+				return ;
 			}
+
+			RedisModule_Log (NULL, "warning", "skipped a malformed empty "
+					"tensor section before relation matrix %d", i) ;
+			r = id ;
 		}
 
 		// relation matrices are encoded in id order

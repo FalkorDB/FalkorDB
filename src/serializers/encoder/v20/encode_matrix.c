@@ -55,7 +55,7 @@ static void _ExtractTensors
 			MSB_MASK, GrB_DESC_SC) ;
 	ASSERT(info == GrB_SUCCESS);
 
-	// no tensor may be extracted: Graph_RelationshipContainsMultiEdge compares
+	// zero tensors may be extracted: Graph_RelationshipContainsMultiEdge compares
 	// the matrix's entry count with the relation's edge count statistic, and
 	// the two can disagree without any tensor; _EncodeTensors handles that
 }
