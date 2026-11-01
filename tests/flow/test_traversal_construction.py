@@ -597,11 +597,11 @@ class testTraversalConstruction():
         g.query("""UNWIND range(1,3) AS i
                    CREATE (:A {id:i})-[:R]->(:B {id:10*i})-[:R]->(:C {id:100*i})""")
         cases = [
-            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id SKIP 1 LIMIT 1", 1),
-            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1", 1),
-            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 1 RETURN b.id SKIP 1 LIMIT 5", 1),
-            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 5", 3),
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id SKIP 1 LIMIT 1", [[200]]),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1", [[20]]),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 1 RETURN b.id SKIP 1 LIMIT 5", [[30]]),
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 5", [[100], [200], [300]]),
         ]
-        for q, n in cases:
-            self.env.assertEqual(len(g.query(q).result_set), n)
+        for q, expected in cases:
+            self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
         g.delete()
