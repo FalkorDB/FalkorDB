@@ -517,13 +517,19 @@ pub fn construct_duration_secs(
         .and_then(check_date_range)
 }
 
-/// Largest day count whose civil year still fits the `i32` year that
-/// `civil_from_days` returns (about 2.1 billion years). Past it the year would
-/// silently wrap, so a duration or date beyond it is an error instead.
-const MAX_DATE_DAYS: i64 = i32::MAX as i64 * 365;
+/// Largest civil year a date or duration may reach. `civil_from_days` returns
+/// an `i32` year, so past this the year would silently wrap; the margin keeps
+/// the `year - 1970` and month-carry arithmetic around it inside `i32` too.
+pub const MAX_DATE_YEAR: i32 = i32::MAX - 2000;
+
+/// The day counts of the first and last supported days, taken from the
+/// Gregorian calendar itself so leap days are counted and the (asymmetric)
+/// epoch-relative range is exact.
+const MIN_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(-MAX_DATE_YEAR, 1, 1);
+const MAX_DATE_DAYS: i64 = crate::runtime::value::days_from_civil(MAX_DATE_YEAR, 12, 31);
 
 pub fn check_date_range(ts: i64) -> Result<i64, String> {
-    if ts.div_euclid(86400).abs() > MAX_DATE_DAYS {
+    if !(MIN_DATE_DAYS..=MAX_DATE_DAYS).contains(&ts.div_euclid(86400)) {
         return Err("Date out of range".to_string());
     }
     Ok(ts)

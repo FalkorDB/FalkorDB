@@ -426,19 +426,30 @@ class testTemporalLocalDateTime(FlowTestsBase):
             ("date('2026-01-01') + duration({days: 1000000000})", '2739933-01-03'),
             ("date('9999-12-31') + duration({days: 1})", '10000-01-01'),
             ("date('9999-12-31') + duration({years: 20})", '10019-12-31'),
-            ("date('2026-01-01') + duration({days: 365000})", '3025-05-03'),
         ]
         for expr, expected in cases:
             # toString only: the Python client cannot decode years above 9999
             res = self.graph.query(f"RETURN toString({expr})")
             self.env.assertEqual(res.result_set[0][0], expected)
 
-        # beyond what the year can hold is an error, not a wrapped date
-        try:
-            self.graph.query("RETURN date('2026-01-01') + duration({days: 3000000000000})")
-            self.env.assertFalse(True)
-        except ResponseError as e:
-            self.env.assertIn("out of range", str(e))
+        # a leap-day-aware bound: this one still fits the i32 year
+        res = self.graph.query(
+            "RETURN toString(date('1970-01-01') + duration({days: 783831531156}))")
+        self.env.assertEqual(res.result_set[0][0], '2146059811-06-15')
+
+        # beyond what the year can hold is an error, not a wrapped date --
+        # also when it is reached by repeated addition or subtraction
+        for expr in [
+            "date('2026-01-01') + duration({days: 3000000000000})",
+            "date('1970-01-01') + duration({days: 438291000000}) + duration({days: 438291000000})",
+            "date('1970-01-01') - duration({days: 438291000000}) - duration({days: 438291000000})",
+            "date('2026-01-01') + duration({days: 783000000000}) + duration({years: 10000000})",
+        ]:
+            try:
+                self.graph.query(f"RETURN toString({expr})")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("out of range", str(e))
 
 class testTemporalDuration(FlowTestsBase):
     def __init__(self):
