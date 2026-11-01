@@ -48,6 +48,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use regex::NoExpand;
 use smallvec::SmallVec;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -1798,7 +1799,7 @@ impl<'a> ExprEval<'a> {
                     Some(Value::Null) => Ok(Value::Null),
                     Some(Value::String(repl)) => Ok(Value::String(Arc::new(
                         rf.regex
-                            .replace_all(text.as_str(), repl.as_str())
+                            .replace_all(text.as_str(), NoExpand(repl.as_str()))
                             .into_owned(),
                     ))),
                     Some(_) => unreachable!(),
@@ -1837,7 +1838,7 @@ impl<'a> ExprEval<'a> {
         };
 
         let rt = self.rt()?;
-        let g = rt.g.borrow();
+        let g = rt.graph();
 
         // min_hops == 0: if src == dest, return single-node path
         if min_hops == 0 && src_id == dst_id {
