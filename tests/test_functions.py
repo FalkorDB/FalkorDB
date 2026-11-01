@@ -267,6 +267,9 @@ def test_temporal_map_components_are_validated():
         ("date({year: 2020, month: 'x', Month: 2})", integer.format("month")),
         ("localtime({hour: 1, Hour: 2})", unknown),
         ("localtime({hour: 1, millisecond: 1, Millisecond: 2})", unknown),
+        # the error names the canonical key, whatever the spelling
+        ("localtime({hour: 1, Millisecond: null})", integer.format("millisecond")),
+        ("localdatetime({year: 2020, NANOSECOND: 1.5})", integer.format("nanosecond")),
         ("duration({days: 1, Days: 2})", unknown),
         ("duration({days: 1.5, foo: 1})", unknown),
         ("duration({days: null, foo: 1})", numeric.format("days")),

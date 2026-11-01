@@ -87,7 +87,7 @@ fn map_components<'a>(
             if std::mem::replace(&mut extra_seen[i], true) {
                 unknown = true;
             } else {
-                int_component(v, k)?;
+                int_component(v, extra[i])?;
             }
         } else {
             unknown = true;
