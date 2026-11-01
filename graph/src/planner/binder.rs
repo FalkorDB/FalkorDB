@@ -1342,8 +1342,8 @@ impl Binder {
         }
 
         // Define the named relationship aliases before binding any node attrs.
-        // Consecutive MATCH clauses are parsed into one pattern, so in
-        // `MATCH (a)-[r]->(b) MATCH (c {v: id(r)})` the node `c` is bound here
+        // The parts of one MATCH clause are one pattern, so in
+        // `MATCH (a)-[r]->(b), (c {v: id(r)})` the node `c` is bound here
         // together with `r`, and must see it as it sees `a`. The planner
         // checks such attrs once every variable they read is bound. Nodes
         // are still defined one by one, so a node's attrs cannot read a node
