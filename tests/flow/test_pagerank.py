@@ -165,13 +165,19 @@ class testPagerank(FlowTestsBase):
 
         result = self.graph.query("""CALL algo.pageRank('Node', NULL)
                                      YIELD node, score
-                                     RETURN node.id""").result_set
-        self.env.assertEqual(result, [['a']])
+                                     RETURN node.id, score""").result_set
+        # a single node holds all the rank
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'a')
+        self.env.assertAlmostEqual(result[0][1], 1.0, 1e-6)
 
         # a graph holding a single node, unfiltered
         self.graph.delete()
         self.graph.query("CREATE (:Node {id: 'a'})")
         result = self.graph.query("""CALL algo.pageRank(NULL, NULL)
                                      YIELD node, score
-                                     RETURN node.id""").result_set
-        self.env.assertEqual(result, [['a']])
+                                     RETURN node.id, score""").result_set
+        # a single node holds all the rank
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'a')
+        self.env.assertAlmostEqual(result[0][1], 1.0, 1e-6)

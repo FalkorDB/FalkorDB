@@ -89,13 +89,13 @@ class testBetweenness(FlowTestsBase):
         self.graph.query("CREATE (:Node {name: 'a'}), (:Other {name: 'b'}), (:Other {name: 'c'})")
 
         result = self.betweenness_centrality(nodeLabels=['Node'])
-        self.env.assertEqual([row[0] for row in result.result_set], ['a'])
+        self.env.assertEqual(result.result_set, [['a', 0.0]])
 
         # a graph holding a single node, unfiltered
         self.graph.delete()
         self.graph.query("CREATE (:Node {name: 'a'})")
         result = self.betweenness_centrality()
-        self.env.assertEqual([row[0] for row in result.result_set], ['a'])
+        self.env.assertEqual(result.result_set, [['a', 0.0]])
 
     def test_betweenness_centrality(self):
         """Test betweenness centrality algorithm on a simple directed graph structure."""
