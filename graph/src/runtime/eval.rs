@@ -913,7 +913,9 @@ impl<'a> ExprEval<'a> {
                     // The guard must be an *equality* against the slot count.
                     // `rewrite_struct_constructor` only rewrites a call with a
                     // single Map argument, and always emits exactly one child
-                    // per slot (absent keys become `Constant(Null)`), so any
+                    // per slot (absent keys become `Constant(Null)`), plus one
+                    // trailing presence-mask child when `struct_masked` is set,
+                    // so any
                     // other arity did not come from the rewrite. A `> 1` test
                     // let a genuine multi-argument call — these constructors are
                     // declared `var_arg`, so arity validation accepts one — reach

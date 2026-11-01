@@ -262,6 +262,15 @@ def test_temporal_map_components_are_validated():
         ("duration({days: null})", numeric.format("days")),
         ("duration({days: '1'})", numeric.format("days")),
         ("duration({foo: 1})", unknown),
+        # a second spelling of one component is left over, as in C
+        ("date({year: 2020, month: 1, Month: 2})", unknown),
+        ("date({year: 2020, month: 'x', Month: 2})", integer.format("month")),
+        ("localtime({hour: 1, Hour: 2})", unknown),
+        ("localtime({hour: 1, millisecond: 1, Millisecond: 2})", unknown),
+        ("duration({days: 1, Days: 2})", unknown),
+        # an integer that does not fit the component is not truncated
+        ("localtime({hour: 4294967297})", "Invalid time"),
+        ("localtime({hour: 1, minute: 4294967296})", "Invalid time"),
     ]:
         map_literal = literal[literal.index("(") + 1:-1]
         func = literal[:literal.index("(")]

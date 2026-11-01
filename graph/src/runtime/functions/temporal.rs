@@ -62,8 +62,8 @@ const SUBSECOND_KEYS: &[&str] = &["millisecond", "microsecond", "nanosecond"];
 type Components<'a> = [Option<&'a Value>; MAX_SLOTS];
 
 /// Sort a map's entries into `keys` slots in one pass. Keys match
-/// case-insensitively, as in C. A key in neither `keys` nor `extra` is an
-/// error, reported after any bad value like C does.
+/// case-insensitively, as in C. A key in neither `keys` nor `extra`, or a
+/// repeated one, is an error, reported after any bad value like C does.
 fn map_components<'a>(
     map: &'a OrderMap<Arc<String>, Value>,
     keys: &[&str],
@@ -71,16 +71,30 @@ fn map_components<'a>(
 ) -> Result<Components<'a>, String> {
     let mut out: Components = [None; MAX_SLOTS];
     let mut unknown = false;
+    let mut extra_seen = [false; MAX_SLOTS];
     for (k, v) in map.iter() {
         if let Some(i) = keys.iter().position(|s| s.eq_ignore_ascii_case(k)) {
-            out[i] = Some(v);
-        } else if extra.iter().any(|s| s.eq_ignore_ascii_case(k)) {
-            int_component(v, k)?;
+            // C counts every key of the map and subtracts the components it
+            // found, so a second spelling of one (`month`, `Month`) is left
+            // over and counts as an unknown key. The first one is the value.
+            if out[i].is_some() {
+                unknown = true;
+            } else {
+                out[i] = Some(v);
+            }
+        } else if let Some(i) = extra.iter().position(|s| s.eq_ignore_ascii_case(k)) {
+            if std::mem::replace(&mut extra_seen[i], true) {
+                unknown = true;
+            } else {
+                int_component(v, k)?;
+            }
         } else {
             unknown = true;
         }
     }
     if unknown {
+        // A bad value is reported before the unknown key, as in C.
+        int_components(&out[..keys.len()], keys)?;
         return Err(UNKNOWN_KEY.to_string());
     }
     Ok(out)
@@ -227,10 +241,15 @@ fn time_from_components(
     minute: Option<i64>,
     second: Option<i64>,
 ) -> Result<NaiveTime, String> {
-    let hour = hour.unwrap_or(0) as u32;
-    let minute = minute.unwrap_or(0) as u32;
-    let second = second.unwrap_or(0) as u32;
-    NaiveTime::from_hms_opt(hour, minute, second)
+    let hour = hour.unwrap_or(0);
+    let minute = minute.unwrap_or(0);
+    let second = second.unwrap_or(0);
+    // `try_from`, not `as`: 4294967297 must not wrap to 1.
+    u32::try_from(hour)
+        .ok()
+        .zip(u32::try_from(minute).ok())
+        .zip(u32::try_from(second).ok())
+        .and_then(|((h, m), s)| NaiveTime::from_hms_opt(h, m, s))
         .ok_or_else(|| format!("Invalid time: hour={hour}, minute={minute}, second={second}"))
 }
 
