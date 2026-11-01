@@ -757,25 +757,50 @@ pub fn with_plan_stack<R>(
     stacker::grow(STACK_BASE + height * STACK_PER_LEVEL, f)
 }
 
+/// Levels one `CartesianProduct` branch can add while the optimizer works:
+/// `push_filters_down` nests it under a Filter and a `CartesianProduct`, and
+/// the join rewrite then turns that into a hash join.
+const LEVELS_PER_CP_BRANCH: usize = 3;
+
+/// The tallest `plan` can be once the optimizer has rewritten it.
+///
+/// A pass can make a plan far taller than it came in: a wide `CartesianProduct`
+/// of N connected patterns becomes a chain of nested levels, one set per
+/// branch, and the passes after it recurse once per level. Only a
+/// `CartesianProduct` branch deepens a plan this way, so the bound is the input's
+/// height plus [`LEVELS_PER_CP_BRANCH`] levels for each of those, and a plan
+/// that is wide for any other reason (`UNION` branches, say) stays as short as it
+/// is. The walk is iterative.
+fn optimizer_depth_bound(plan: &DynTree<IR>) -> usize {
+    let mut branches = 0;
+    let mut stack = vec![plan.root().idx()];
+    while let Some(idx) = stack.pop() {
+        let node = plan.node(idx);
+        if matches!(node.data(), IR::CartesianProduct) {
+            branches += node.num_children();
+        }
+        for i in 0..node.num_children() {
+            stack.push(node.child(i).idx());
+        }
+    }
+    plan.root().height() + LEVELS_PER_CP_BRANCH * branches
+}
+
 /// Runs `optimize`, the optimizer passes over `plan`, on a stack sized for the
-/// tallest plan they can build from it.
+/// tallest plan they can build from it ([`optimizer_depth_bound`]).
 ///
-/// A pass can make a plan far taller than it came in: `push_filters_down` turns
-/// a wide `CartesianProduct` of N connected patterns into a chain of N nested
-/// Filter/`CartesianProduct` (then hash-join) levels, and the passes after it
-/// recurse once per level. The input's height says nothing about that, but its
-/// node count bounds it: a pass rearranges the nodes it is given, so the height
-/// it can reach is no more than their number. Sized from that bound, the stack
-/// is reserved address space, of which only the pages a query touches are
-/// committed.
-///
-/// The result is checked against [`MAX_PLAN_DEPTH`] by the caller, since the
-/// plan this returns is the one the runtime recurses over.
+/// The input's height says nothing about that, so [`Planner::check_depth`]
+/// rejects a plan whose bound exceeds [`MAX_PLAN_DEPTH`] before this runs, which
+/// also caps the stack it reserves. The stack is address space: only the pages a
+/// query touches are committed.
 pub fn with_optimizer_stack<R>(
     plan: &DynTree<IR>,
     f: impl FnOnce() -> R,
 ) -> R {
-    let bound = plan.len();
+    if plan.len() <= SHALLOW_PLAN {
+        return f();
+    }
+    let bound = optimizer_depth_bound(plan);
     if bound <= SHALLOW_PLAN {
         return f();
     }
@@ -909,7 +934,8 @@ impl Planner {
         root
     }
 
-    /// Rejects a plan taller than [`MAX_PLAN_DEPTH`].
+    /// Rejects a plan that is, or can become under the optimizer, taller than
+    /// [`MAX_PLAN_DEPTH`] ([`optimizer_depth_bound`]).
     ///
     /// Clauses stack: every `UNWIND`, `WITH`, `OPTIONAL MATCH`, `CALL {}`
     /// ... puts its operator on top of the previous clause's, so a long
@@ -917,7 +943,7 @@ impl Planner {
     /// to match. Parsing, binding and planning are iterative over clauses and
     /// get here fine; the height walk itself is iterative too.
     pub fn check_depth(plan: &DynTree<IR>) -> Result<(), String> {
-        if plan.root().height() > MAX_PLAN_DEPTH {
+        if optimizer_depth_bound(plan) > MAX_PLAN_DEPTH {
             return Err(format!("{TOO_DEEP} {MAX_PLAN_DEPTH}"));
         }
         Ok(())
@@ -3574,30 +3600,45 @@ impl Planner {
 mod stack_tests {
     use super::*;
 
-    /// A wide, shallow plan: one `CartesianProduct` over `n` leaves.
-    fn wide_plan(n: usize) -> DynTree<IR> {
+    /// A wide, shallow plan: one `root` over `n` leaves.
+    fn wide_plan(
+        root: IR,
+        n: usize,
+    ) -> DynTree<IR> {
         let leaves: Vec<DynTree<IR>> = (0..n).map(|_| tree!(IR::Argument(None))).collect();
-        tree!(IR::CartesianProduct; leaves)
+        tree!(root; leaves)
     }
 
     #[test]
-    fn optimizer_stack_is_sized_by_node_count_not_height() {
-        // Height 2, but the passes can nest its 5000 branches into a chain
-        // 5000 levels tall, so the optimizer gets the stack for that.
-        let plan = wide_plan(5000);
-        assert!(plan.root().height() <= SHALLOW_PLAN);
+    fn optimizer_stack_follows_cartesian_product_branches() {
+        // Height 2, but the passes can nest its 2000 branches into a chain
+        // thousands of levels tall, so the optimizer gets the stack for that.
+        let plan = wide_plan(IR::CartesianProduct, 2000);
+        let bound = optimizer_depth_bound(&plan);
+        assert_eq!(bound, plan.root().height() + 3 * 2000);
         let remaining = with_optimizer_stack(&plan, stacker::remaining_stack);
         assert!(
-            remaining.is_some_and(|r| r >= plan.len() * STACK_PER_LEVEL),
+            remaining.is_some_and(|r| r >= bound * STACK_PER_LEVEL),
             "remaining stack {remaining:?}"
         );
+        assert!(Planner::check_depth(&plan).is_ok());
     }
 
     #[test]
-    fn small_plan_runs_in_place() {
-        let plan = wide_plan(8);
+    fn wide_plan_without_a_cartesian_product_reserves_nothing_extra() {
+        // 10000 UNION branches never get deeper than they are.
+        let plan = wide_plan(IR::Union, 10_000);
+        assert_eq!(optimizer_depth_bound(&plan), plan.root().height());
+        assert!(Planner::check_depth(&plan).is_ok());
         let before = stacker::remaining_stack().unwrap();
         let during = with_optimizer_stack(&plan, || stacker::remaining_stack().unwrap());
-        assert!(during <= before);
+        assert!(during <= before, "ran on a new stack: {during} > {before}");
+    }
+
+    #[test]
+    fn cartesian_product_too_wide_to_optimize_is_rejected() {
+        let plan = wide_plan(IR::CartesianProduct, MAX_PLAN_DEPTH);
+        let err = Planner::check_depth(&plan).unwrap_err();
+        assert!(err.starts_with(TOO_DEEP), "{err}");
     }
 }
