@@ -216,10 +216,11 @@ impl MvccGraph {
     /// - nothing: `prepared` is published as it is;
     /// - only other indexes' batches: `batch`'s index is put into a new build version of the
     ///   published one, which is published ([`Graph::with_batch_index`]);
-    /// - writers, and no other batch on `batch`'s index: the index caught up on the entities the
-    ///   writers changed in it, by refreshing them in `prepared`'s copy or by inserting the batch
-    ///   less them into the published copy, whichever costs less, is put into a new build version
-    ///   of the published one, which is published ([`Graph::caught_up_onto`]);
+    /// - writers, and no other batch on `batch`'s index: the index is caught up with what the
+    ///   writers changed, whichever way is cheaper. Either the changed entities are refreshed in
+    ///   `prepared`'s copy, or the batch, without them, is inserted into the published copy. The
+    ///   result goes into a new build version of the published one, which is published
+    ///   ([`Graph::caught_up_onto`]);
     /// - `batch`'s index was dropped or created again, or another batch committed on the same
     ///   index: nothing is published, and the index's next batch starts from its published cursor.
     ///   Another batch on the index is a bug in the builder's one chain per index

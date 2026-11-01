@@ -143,30 +143,35 @@ pub enum IndexerCommit {
     Discarded(Discarded),
 }
 
-/// How an indexer batch caught up on writers' changes ([`IndexerCommit::CatchUp`]): whichever
-/// costs less, by [`REFRESH_COST`].
+/// How an indexer batch caught up with writes committed after it was read
+/// ([`IndexerCommit::CatchUp`]). The commit takes the cheaper way, as [`REFRESH_COST`] decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CatchUp {
     /// The entities the writers changed were refreshed in the batch's index.
     Refresh,
-    /// The batch, less the entities the writers changed, was inserted into the published index,
-    /// and those of them in the batch's range were added as the published version has them.
+    /// The batch was inserted into the published index, without the entities the writers
+    /// changed. Those of them in the batch's range were then added with their published values.
     Insert,
 }
 
-/// How many tuples inserted into an index count as one entity refreshed in it, under the host's
-/// locks: a batch that writers committed after refreshes the entities they wrote if there are fewer
-/// than its batch's tuples over this, and inserts the batch otherwise ([`CatchUp`]).
+/// The cost of refreshing one entity, counted in inserted tuples; both happen under the host's
+/// locks. When writers committed after a batch was read, the batch refreshes the entities they
+/// changed if `changed * REFRESH_COST` is less than its tuple count, and inserts itself otherwise
+/// ([`CatchUp`]).
 ///
-/// The true ratio depends on how the batch's values spread over the column. Measured on 2M nodes
-/// with batches of 10,000 (on the online build's first branch, `0742bcefb`), a refreshed entity
-/// cost 0.5–1.8 µs, and an inserted tuple 0.31–0.35 µs when the values were scattered but
-/// 0.010–0.015 µs when they were consecutive: a ratio of about 2–5 one way and 40–100 the other.
-/// 10 keeps the cost of the wrong choice to about 1.5 ms of held locks either way.
+/// The real ratio depends on how the batch's values are spread over the column. Measured on 2M
+/// nodes with batches of 10,000 (`0742bcefb`, the online build's first branch):
+///
+/// - refreshing an entity cost 0.5–1.8 µs;
+/// - inserting a tuple cost 0.31–0.35 µs when the values were scattered, and 0.010–0.015 µs when
+///   they were consecutive.
+///
+/// That is a ratio of about 2–5 for scattered values and 40–100 for consecutive ones. At 10, the
+/// wrong choice costs about 1.5 ms of extra lock time either way.
 pub(crate) const REFRESH_COST: u64 = 10;
 
-/// How a batch of `batch` tuples catches up on `written` entities: refresh them if that costs
-/// less than inserting the batch, an entity costing [`REFRESH_COST`] tuples.
+/// Whether a batch of `batch` tuples refreshes the `written` entities or inserts itself: refresh
+/// if that is cheaper, counting each entity as [`REFRESH_COST`] tuples.
 fn catch_up_by(
     written: u64,
     batch: usize,
@@ -265,10 +270,11 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         published: &Graph,
     );
 
-    /// Indexer side, under the lock, the other way to catch up: this is `published`'s copy of
-    /// index `name`, whose cursor is `from`, and `batch` was read from `from` to `next` on an
-    /// older version. Insert `batch` less the entities in `written`, the ones writers changed
-    /// since, and add those of them `published` places from `from` up to `next` as it has them.
+    /// Indexer side, under the lock: catch up by inserting ([`CatchUp::Insert`]). `self` is
+    /// `published`'s copy of index `name`, with its cursor at `from`. `batch` was read from `from`
+    /// up to `next` on an older version, and `written` holds the entities writers changed since.
+    /// Insert `batch` without the `written` entities, then add the `written` entities that
+    /// `published` places from `from` up to `next`, with their values in `published`.
     fn indexer_insert(
         &mut self,
         name: &Self::Name,
@@ -279,7 +285,7 @@ pub(crate) trait VersionedIndex: Clone + Sized {
         published: &Graph,
     );
 
-    /// How many tuples `batch` holds: what inserting it costs.
+    /// The number of tuples in `batch`: what inserting it costs.
     fn batch_len(batch: &Self::Batch) -> usize;
 
     /// Indexer side, off the lock: read index `name`'s batch from `from`, at most `budget`
@@ -487,11 +493,13 @@ impl Graph {
         version
     }
 
-    /// A new build version of `published` with `batch`'s index caught up on the entities writers
-    /// changed in it since this version was made, for a batch that writers committed after
-    /// ([`IndexerCommit::CatchUp`]), as `how` says: this version's copy with those entities
-    /// refreshed ([`VersionedIndex::indexer_catch_up`]), or `published`'s with the batch inserted
-    /// ([`VersionedIndex::indexer_insert`]).
+    /// Used when writers committed after this version was made ([`IndexerCommit::CatchUp`]).
+    /// Returns a new build version of `published` in which `batch`'s index is caught up with what
+    /// those writers changed, the way `how` says:
+    /// - [`CatchUp::Refresh`]: this version's copy, with the changed entities refreshed
+    ///   ([`VersionedIndex::indexer_catch_up`]);
+    /// - [`CatchUp::Insert`]: `published`'s copy, with the batch inserted
+    ///   ([`VersionedIndex::indexer_insert`]).
     pub(crate) fn caught_up_onto(
         &self,
         published: &Self,
@@ -510,10 +518,10 @@ impl Graph {
         version
     }
 
-    /// [`Self::caught_up_onto`] for one kind, by [`CatchUp::Insert`]: `published`'s copy of index
-    /// `name` with `work`, the batch read on `batch_version`, inserted less the entities writers
-    /// changed since, and those in the batch's range added as `published` has them
-    /// ([`VersionedIndex::indexer_insert`]). The index's build moves on as the batch's did.
+    /// The [`CatchUp::Insert`] case of [`Self::caught_up_onto`], for one kind of index: take
+    /// `published`'s copy of index `name` and insert `work`, the batch read on `batch_version`
+    /// ([`VersionedIndex::indexer_insert`]). The index's build then goes on from where the batch
+    /// left it.
     fn insert_index<K: VersionedIndex>(
         &mut self,
         batch_version: &Self,
@@ -698,8 +706,8 @@ impl Graph {
 
 #[cfg(test)]
 thread_local! {
-    /// For tests, which take each way on purpose: while set, every batch that writers committed
-    /// after catches up this way, whatever the sizes ([`catch_up_by`]).
+    /// Test hook, so tests can take each way on purpose: while set, every batch that has to catch
+    /// up takes this way, whatever the sizes ([`catch_up_by`]).
     pub(crate) static CATCH_UP_BY: std::cell::Cell<Option<CatchUp>> =
         const { std::cell::Cell::new(None) };
 }

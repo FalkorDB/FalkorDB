@@ -1733,10 +1733,10 @@ fn an_indexer_batch_on_a_dropped_or_recreated_column_publishes_nothing() {
     }
 }
 
-/// An indexer batch read on a version writers have since moved past catches up on what they
-/// changed in its column, and is published: the batch's progress with the writers' values. A
-/// writer's change below the batch's new cursor is in the column; one at or above it is not, since
-/// the next batch reads it. Both ways of catching up, refreshing and inserting, give that.
+/// An indexer batch read before a writer committed catches up with the writer's changes in its
+/// column, and is published with the batch's progress and the writer's values. A change below the
+/// batch's new cursor is in the column; one at or above it is not, since the next batch reads it.
+/// Both ways of catching up, refresh and insert, give that.
 #[test]
 fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
     for how in [CatchUp::Refresh, CatchUp::Insert] {
@@ -1781,8 +1781,9 @@ fn an_indexer_batch_after_a_writer_catches_up_on_its_changes() {
     }
 }
 
-/// A batch that writers committed after refreshes what they changed when that costs less than
-/// inserting the batch, an entity costing [`REFRESH_COST`] tuples, and inserts the batch otherwise.
+/// When writers committed after a batch was read, the batch refreshes the entities they changed if
+/// that is cheaper than inserting the batch, counting each entity as [`REFRESH_COST`] tuples, and
+/// inserts the batch otherwise.
 #[test]
 fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it() {
     let budget = 2 * REFRESH_COST as usize;
@@ -1874,20 +1875,20 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
     );
 }
 
-/// A writer's unit of work that deletes an edge on one side of a batch's new cursor and reuses its
-/// id for an edge on the other side, committed before the batch or after it. The batch reads
-/// a->b, and its cursor moves to a->c. Either a->b is deleted and its id reused by d->a, ahead of
-/// the cursor, or c->d, ahead of it, is deleted and its id reused by a->a, behind it. Committed
-/// first, the batch is rebased onto as the writer escalates; committed after, it catches up on the
-/// writer, by refreshing or by inserting. Each written edge is placed by its endpoints in the
-/// version that holds it, so the column holds exactly the edges below the cursor: nothing, or a->b
-/// and a->a. Built to the end, it is a one-pass build of the final data.
+/// A writer deletes an edge on one side of a batch's new cursor, reuses its id for an edge on the
+/// other side, and commits before or after the batch. The batch reads a->b, so its cursor moves to
+/// a->c. In one case a->b is deleted and its id reused by d->a, above the cursor; in the other,
+/// c->d (above the cursor) is deleted and its id reused by a->a, below it. If the batch commits
+/// first, the writer rebases onto it as it escalates; if the writer commits first, the batch
+/// catches up with it, by refresh or by insert. Each written edge is placed by its endpoints in
+/// the version that holds it, so the column holds exactly the edges below the cursor: nothing, or
+/// a->b and a->a. Built to the end, the column equals a one-pass build of the final data.
 #[test]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
     // (which edge is deleted, its id's new endpoints, the column after both commits as
     // (edge, value) pairs)
     for (deleted, (src, dst), after) in [(0, (3, 0), vec![]), (2, (0, 0), vec![(0, 1), (2, 9)])] {
-        // The batch first, or the writer first and the batch catching up each way.
+        // Batch first; or writer first, with the batch forced to refresh, then to insert.
         for writer_first in [None, Some(CatchUp::Refresh), Some(CatchUp::Insert)] {
             ensure_graphblas();
             let mut g = Graph::new(64, 64, 10, 1, "t");
@@ -2115,14 +2116,15 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
     }
 }
 
-/// A final indexer batch, which reaches the end of its column and flips it `Ready`, and a writer
-/// that re-values a node the batch read and creates one past the batch's last, commit in either
-/// order. Writer first: the batch catches up on the writer's changes, by refreshing or by
-/// inserting. Batch first: the writer rebases onto the `Ready` column as it escalates. Either way
-/// the column is `Ready` and holds exactly what the final graph does, the new node included.
+/// A final indexer batch, which reaches the end of its column and makes it `Ready`, and a writer
+/// that re-values a node the batch read and creates a node past the batch's last one, commit in
+/// either order. If the writer commits first, the batch catches up with it, by refresh or by
+/// insert; if the batch commits first, the writer rebases onto the `Ready` column as it
+/// escalates. Either way the column ends `Ready` and holds exactly what the final graph does, new
+/// node included.
 #[test]
 fn a_writer_creating_past_a_final_batch_is_indexed_in_either_commit_order() {
-    // The batch first, or the writer first and the batch catching up each way.
+    // Batch first; or writer first, with the batch forced to refresh, then to insert.
     for writer_first in [None, Some(CatchUp::Refresh), Some(CatchUp::Insert)] {
         let what = match writer_first {
             Some(how) => format!("writer, then batch, {how:?}"),
@@ -2597,7 +2599,7 @@ fn every_order_of_two_writers_and_two_batches_keeps_both_columns_right() {
     }
 }
 
-/// Delete node `id` and the edges on it, in the order a commit does.
+/// Delete node `id` and its edges, in the order a commit does.
 fn delete_node_with_edges(
     g: &mut Graph,
     id: u64,
@@ -2612,8 +2614,8 @@ fn delete_node_with_edges(
     .expect("deleted");
 }
 
-/// `ty`-typed edges from each of `srcs` to the matching `dsts`, with `attr` = `first`,
-/// `first + 1`, ...: their ids.
+/// Create `ty` edges from each of `srcs` to the matching `dsts`, with `attr` set to `first`,
+/// `first + 1`, and so on. Returns their ids.
 fn add_edges(
     g: &mut Graph,
     ty: &Arc<String>,
@@ -2654,10 +2656,11 @@ fn set_edge_attr(
     applied!(g, |d| g.set_relationships_attributes(&set, &mut d)).expect("set");
 }
 
-/// Column `key` of `entity` checked against `g`'s own data, by the rules on [`BuildState`]: it
-/// holds exactly the current tuples of every `label` node, or `label`-typed edge, if `Ready`, or
-/// of those `g` places below its cursor if `Building`, and nothing else. Reads `g` entity by
-/// entity, not through the build's own scans. A column `g` does not have passes.
+/// Check column `key` of `entity` against `g`'s own data, by the rules on [`BuildState`]. A
+/// `Ready` column holds exactly the current tuples of every `label` node (or `label` edge); a
+/// `Building` column holds exactly those of the entities `g` places below its cursor; neither
+/// holds anything else. The check reads `g` entity by entity, not through the build's own scans.
+/// A column `g` does not have passes.
 fn check_column(
     g: &Graph,
     entity: EntityType,
@@ -2711,16 +2714,21 @@ fn check_column(
     assert_eq!(held, expected, "{what}: {label}.{attr} ({state:?})");
 }
 
-/// Writers and indexer batches on real threads, on three columns at once (two node columns and an
-/// edge column), with one indexer thread per column, as the builder runs one chain of batches per
-/// column, and three writer threads that fork, write and escalate, or fork and write under the
-/// lock: re-values, creates, deletes (a node's edges with it), labels moved off, edges added and
-/// re-valued, and now and then a column dropped and created again, `Building`. Until commits
-/// publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads share it behind
-/// a test lock: forks and reads take its read side, escalations and commits its write side, and a
-/// batch is read with no lock held. After every commit the published version keeps the rules on
-/// [`BuildState`] against its own data ([`check_column`]), and every column ends `Ready`, as a
-/// one-pass build of the final data. It runs until every way a commit can go was seen, so a run
+/// Writers and indexer batches on real threads, on three columns at once: two node columns and an
+/// edge column.
+///
+/// - One indexer thread per column, as the builder runs one chain of batches per column.
+/// - Three writer threads. Each either forks, writes and escalates, or forks and writes under the
+///   lock. They re-value nodes and edges, create nodes, delete nodes with their edges, take nodes
+///   off the label, add edges, and now and then drop a column and create it again `Building`.
+///
+/// Until commits publish by atomic swap, `MvccGraph` commits through `&mut self`, so the threads
+/// share it behind a test lock: forks and reads take the read side, escalations and commits the
+/// write side, and a batch is read with no lock held.
+///
+/// After every commit, the published version must keep the rules on [`BuildState`] against its
+/// own data ([`check_column`]). At the end every column must be `Ready` and equal a one-pass
+/// build of the final data. The test runs until every outcome of a commit has been seen, so a run
 /// in which the threads never raced fails.
 #[test]
 fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
@@ -2773,17 +2781,18 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         SEEN.iter()
             .all(|how| counts.get(how).copied().unwrap_or(0) > 0)
     };
-    // Checks the version a commit published, taken while the commit still held the lock: by the
-    // time the check runs, another thread may have published over it.
+    // Check the version a commit published, captured while the commit still held the lock. By the
+    // time the check runs, another thread may have published a newer one.
     let check = |published: &Arc<AtomicRefCell<Graph>>, what: &str| {
         let g = published.borrow();
         for (entity, key) in &columns {
             check_column(&g, *entity, key, what);
         }
     };
-    // A random write on `g`, by `op`: re-create a column, delete a node and its edges, create a
-    // node, move one off `:Person`, add an edge, re-value an edge or a node. Half the time a node
-    // it picks is one of those just past a node column's cursor, which its next batches read.
+    // One random write on `g`, chosen by `op`: re-create a column, delete a node and its edges,
+    // create a node, take a node off `:Person`, add an edge, or re-value an edge or a node. Half
+    // the time the node it picks is just past a node column's cursor, where that column's next
+    // batches read.
     let random_write = |g: &mut Graph, op: u32, rng: &mut StdRng| {
         let mut people: Vec<u64> = g
             .get_label_matrix(&label)
@@ -2849,9 +2858,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
         }
     };
 
-    /// Counts a writer thread out however it ends, a panic included. The batch threads run until no
-    /// writer is left, so a writer that panicked without counting out would leave them spinning,
-    /// and the test hanging, instead of failing on the panic.
+    /// Takes a writer thread off `writers_left` when it ends, a panic included. The batch threads
+    /// run until no writer is left, so a writer that panicked without this would leave them
+    /// spinning, and the test would hang instead of failing.
     struct WriterLeft<'a>(&'a AtomicUsize);
     impl Drop for WriterLeft<'_> {
         fn drop(&mut self) {
@@ -2868,8 +2877,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                 let mut rng = StdRng::seed_from_u64(seed);
                 let id = IndexId::Column(*entity, key.clone());
                 loop {
-                    // Before the batch reads: once no writer is left, a column that is not
-                    // `Building` stays so.
+                    // Read before the batch is: once no writer is left, a column that is not
+                    // `Building` stays that way, so finding no batch then means it is done.
                     let done = writers_left.load(Ordering::Acquire) == 0;
                     let prepared = Arc::new(AtomicRefCell::new(
                         mvcc.read().read().borrow().new_build_version(),
@@ -2881,12 +2890,12 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                         thread::yield_now();
                         continue;
                     };
-                    // A batch's read takes milliseconds at full size; this one's, microseconds.
-                    // The wait gives writers the time to commit while it is taken.
+                    // A full-size batch takes milliseconds to read; one this small takes
+                    // microseconds. The wait lets writers commit between its read and its commit.
                     thread::sleep(Duration::from_micros(rng.random_range(0..200)));
-                    // A batch this small refreshes by cost only when nothing was written: its
-                    // `BATCH` tuples against `REFRESH_COST` per written entity. So each way of
-                    // catching up is forced now and then, on real writes.
+                    // With only `BATCH` tuples, the cost rule picks refresh only when nothing was
+                    // written, since one written entity already counts as `REFRESH_COST` tuples.
+                    // So force each way now and then, to run both on real writes.
                     let forced = match rng.random_range(0..3) {
                         0 => Some(CatchUp::Refresh),
                         1 => Some(CatchUp::Insert),
@@ -2951,7 +2960,8 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
                             (mvcc.read(), mvcc.fork())
                         };
                         random_write(&mut fork.borrow_mut(), op, &mut rng);
-                        // As a batch's, so batches commit while a fork waits to escalate.
+                        // A wait like the batches', so batches commit while a fork waits to
+                        // escalate.
                         thread::sleep(Duration::from_micros(rng.random_range(0..200)));
                         let mut mvcc = mvcc.write();
                         let over_batches = !Arc::ptr_eq(&mvcc.read(), &base);
