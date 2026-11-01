@@ -310,3 +310,13 @@ class testOrderBy(FlowTestsBase):
             self.env.assertEqual(g.query(q).result_set, [[20]])
         finally:
             g.delete()
+
+    def test11_top_k_budget_with_filter_above_sort(self):
+        """A Filter between the Sort and the Limit drops rows, so the Sort must
+        keep more than the Limit's n rows."""
+        g = self.db.select_graph("TopKFilterAboveSort")
+        try:
+            q = "UNWIND range(1, 20) AS x WITH x ORDER BY x WITH x WHERE x % 2 = 0 RETURN x LIMIT 3"
+            self.env.assertEqual(g.query(q).result_set, [[2], [4], [6]])
+        finally:
+            g.delete()

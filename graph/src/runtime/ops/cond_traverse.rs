@@ -239,7 +239,7 @@ impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
-        child: Box<BatchOp<'a>>,
+        mut child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
         sibling_edges: &'a [u32],
@@ -291,6 +291,17 @@ impl<'a> CondTraverseOp<'a> {
             } else {
                 (None, None)
             };
+
+        // The dedup set is cleared per input batch, so a LIMIT hint must not split the
+        // child's output at a small batch boundary: the same (source, destination)
+        // pair reached through intermediates on both sides of it would be emitted
+        // twice, and the LIMIT would count the duplicate. Let the child pack full
+        // batches, as it does without a LIMIT.
+        if bidir_dedup.is_some()
+            && let BatchOp::CondTraverse(child_ct) = &mut *child
+        {
+            child_ct.emitter.lift_pack_ceiling();
+        }
 
         // For fused chains the batched path is the ONLY correct path —
         // expand_row only handles single-hop.

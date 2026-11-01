@@ -605,3 +605,19 @@ class testTraversalConstruction():
         for q, expected in cases:
             self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
         g.delete()
+
+    # Two anonymous bidirectional hops deduplicate (source, destination) pairs
+    # per input batch of the second hop. A LIMIT hint must not shrink those
+    # batches, or a pair reached through several intermediates is emitted once
+    # per batch and the LIMIT counts the duplicates.
+    def test_limit_keeps_bidirectional_dedup(self):
+        g = self.db.select_graph("LimitBidirectionalDedup")
+        try:
+            g.query("""UNWIND range(1, 5) AS i CREATE (:M {i: i})""")
+            g.query("""CREATE (:A {id: 1}), (:B {id: 2})""")
+            g.query("""MATCH (a:A), (m:M), (b:B) CREATE (a)-[:R]->(m), (m)-[:R]->(b)""")
+            for limit in ["", "LIMIT 1", "LIMIT 2", "LIMIT 3", "LIMIT 100"]:
+                q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
+                self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()

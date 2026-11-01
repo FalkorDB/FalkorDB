@@ -88,8 +88,9 @@ impl<'a> ExpandIntoOp<'a> {
             == relationship_pattern.to.alias.id
             && relationship_pattern.from.labels.is_empty()
             && !relationship_pattern.to.labels.is_empty();
-        // `pack_hint` only sizes the emitter's batches; the hard stop is
-        // `record_cap`, which no row-dropping operator sits above.
+        // `pack_hint` only sizes the emitter's batches. The hard stop is
+        // `record_cap`: no row-dropping operator sits above this one except a
+        // `Skip`, whose count `row_budget` adds to the limit.
         let emitter: BatchedResultEmitter<'a, RelationshipId> = if synthetic_label {
             BatchedResultEmitter::new_without_alias(pack_hint)
         } else {

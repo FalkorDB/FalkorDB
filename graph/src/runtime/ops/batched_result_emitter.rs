@@ -567,6 +567,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         }
     }
 
+    /// Pack full [`BATCH_SIZE`] batches from now on, ignoring the hint the emitter
+    /// was built with. For a consumer whose correctness depends on how many rows
+    /// arrive per batch.
+    pub(crate) const fn lift_pack_ceiling(&mut self) {
+        self.pack_ceiling = BATCH_SIZE;
+    }
+
     /// Install a parent batch for the lazy expand path: installs the batch but
     /// builds **no** per-row iterators up front. Resets the active-row
     /// [`cursor`](Self::cursor) so the next [`emit_lazy`](Self::emit_lazy) starts
