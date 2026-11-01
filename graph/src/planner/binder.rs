@@ -2375,21 +2375,41 @@ impl Binder {
         }
     }
 
+    /// The value of a constant operand: a literal, a literal list, a negated
+    /// constant or constant arithmetic. `None` for anything else, and when
+    /// evaluating it would fail (the runtime reports that, as for an overflow).
+    fn constant_value(node: &DynNode<ExprIR<Variable>>) -> Option<Value> {
+        match node.data() {
+            ExprIR::Constant(v) => Some(v.clone()),
+            ExprIR::List => {
+                let mut elements = thin_vec::ThinVec::with_capacity(node.num_children());
+                for element in node.children() {
+                    elements.push(Self::constant_value(&element)?);
+                }
+                Some(Value::List(Arc::new(elements)))
+            }
+            ExprIR::Negate => match Self::constant_value(&node.get_child(0)?)? {
+                Value::Int(i) => i.checked_neg().map(Value::Int),
+                Value::Float(f) => Some(Value::Float(-f)),
+                Value::Null => Some(Value::Null),
+                _ => None,
+            },
+            ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo => Self::constant_arithmetic(node),
+            _ => None,
+        }
+    }
+
     /// Evaluates an arithmetic subtree made only of constants. Returns `None`
     /// for anything else, and when evaluation fails (left to the runtime).
     fn constant_arithmetic(node: &DynNode<ExprIR<Variable>>) -> Option<Value> {
         let mut values = Vec::with_capacity(node.num_children());
         for child in node.children() {
-            values.push(match child.data() {
-                ExprIR::Constant(v) => v.clone(),
-                ExprIR::Add
-                | ExprIR::Sub
-                | ExprIR::Mul
-                | ExprIR::Div
-                | ExprIR::Pow
-                | ExprIR::Modulo => Self::constant_arithmetic(&child)?,
-                _ => return None,
-            });
+            values.push(Self::constant_value(&child)?);
         }
         let mut it = values.into_iter();
         let first = it.next()?;

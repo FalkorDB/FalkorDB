@@ -1829,12 +1829,21 @@ def test_boolean_operator_static_operand_type_3293():
         ("RETURN false AND [1]", "List"),
         ("RETURN true OR {a: 1}", "Map"),
         ("RETURN CASE WHEN true THEN false AND (1+2) END", "Integer"),
+        # negated literals and literal lists are constants too
+        ("RETURN false AND (-1 + 2)", "Integer"),
+        ("RETURN true OR (-1.5 * 2)", "Float"),
+        ("RETURN false AND ([1] + [2])", "List"),
+        ("RETURN false AND ([1] + 2)", "List"),
     ]:
         query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
 
     # A Null-valued constant expression is still a valid operand.
     res = query("RETURN false AND (null+1), true OR (1+null), false AND (null = 1)")
     assert res.result_set == [[False, True, False]]
+    res = query("RETURN false AND (-null + 1), false AND (-9223372036854775807 - 1 < 0)")
+    assert res.result_set == [[False, False]]
+    # an overflowing constant is left to the runtime, which short-circuits
+    assert query("RETURN false AND (-(-9223372036854775807 - 1) = 0)").result_set == [[False]]
 
 
 def test_boolean_operator_runtime_typed_operands_short_circuit_3293():
@@ -1870,6 +1879,8 @@ def test_boolean_operator_filter_contexts_short_circuit_3293():
     # An operand that is evaluated is still checked, and the projection of a
     # comprehension is not a filter.
     query_exception("RETURN [x IN [1] WHERE true AND 1]", "Type mismatch")
+    # a pattern comprehension's predicate is not a filter context
+    query_exception("RETURN [p = (a)-->() WHERE false AND 1 | p]", "Type mismatch")
     query_exception("RETURN [x IN [1] WHERE NOT 1]", "Type mismatch")
     query_exception("RETURN any(x IN [1] WHERE true AND 1)", "Type mismatch")
     query_exception(
