@@ -116,13 +116,14 @@ pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet
         match node.data() {
             IR::Project { exprs, copies, .. } => {
                 vars.extend(exprs.iter().map(|(v, _)| v.id));
-                vars.extend(copies.iter().map(|(v, _)| v.id));
+                // `(old, new)`: only `new` is written into the output.
+                vars.extend(copies.iter().map(|(_, v)| v.id));
             }
             IR::Aggregate {
                 names, projections, ..
             } => {
                 vars.extend(names.iter().map(|v| v.id));
-                vars.extend(projections.iter().map(|(v, _)| v.id));
+                vars.extend(projections.iter().map(|(_, v)| v.id));
             }
             ir => {
                 push_node_variables(ir, &mut own);
