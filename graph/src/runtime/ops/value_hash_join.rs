@@ -209,14 +209,16 @@ pub struct ValueHashJoinOp<'a> {
     pub(crate) lhs_exp: &'a QueryExpr<Variable>,
     pub(crate) rhs_exp: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
-    /// Build/probe hash tables, one per origin row (see `per_origin`), else a
-    /// single one; `None` until the right side has been consumed.
-    pub(crate) hash_table: Option<Vec<JoinHashTable>>,
+    /// Build/probe hash tables keyed by origin row (see `per_origin`; origin 0
+    /// holds the single table otherwise). Origins are sparse, so only those
+    /// that occur on the build side get a table; `None` until the right side
+    /// has been consumed.
+    pub(crate) hash_table: Option<FxHashMap<usize, JoinHashTable>>,
     /// Set when the join runs inside a batched correlated sub-plan (Apply,
     /// Optional, Merge): its argument batch then holds several outer rows,
     /// tagged by `origin_row`, and a left row may only join right rows of the
     /// same outer row. The build keeps one table per origin and the probe
-    /// looks in the left row's.
+    /// looks in the table of the left row's origin.
     pub(crate) per_origin: bool,
     /// The right sub-plan's batches, retained so probe can gather matched rows
     /// by `RightRowRef` position without the build phase materialising an owned
@@ -261,15 +263,17 @@ impl<'a> ValueHashJoinOp<'a> {
     /// keeps its rows in place; the table stores `RightRowRef` positions into
     /// `right_batches` rather than owned `Row`s, so the build side allocates
     /// nothing per row and only matched rows are materialised during probe.
-    fn build_hash_table(&mut self) -> Result<Vec<JoinHashTable>, String> {
+    fn build_hash_table(&mut self) -> Result<FxHashMap<usize, JoinHashTable>, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         // Build on the integer fast path; the first non-integer-valued key
         // promotes the entries gathered so far into the general `Value` table,
         // and the rest of the build continues there. One such pair per origin
         // row when `per_origin`, else just one.
         let new_int_table = || HashMap::with_hasher((*JOIN_HASH_SEED).clone());
-        let mut int_tables: Vec<HashMap<i64, BuildSlot, RandomState>> = vec![new_int_table()];
-        let mut value_tables: Vec<Option<ValueTable>> = vec![None];
+        let mut tables: FxHashMap<
+            usize,
+            (HashMap<i64, BuildSlot, RandomState>, Option<ValueTable>),
+        > = FxHashMap::default();
 
         for result in self.right.by_ref() {
             let batch = result?;
@@ -300,12 +304,9 @@ impl<'a> ValueHashJoinOp<'a> {
                 } else {
                     0
                 };
-                if origin >= int_tables.len() {
-                    int_tables.resize_with(origin + 1, new_int_table);
-                    value_tables.resize_with(origin + 1, || None);
-                }
-                let int_table = &mut int_tables[origin];
-                let value_table = &mut value_tables[origin];
+                let (int_table, value_table) = tables
+                    .entry(origin)
+                    .or_insert_with(|| (new_int_table(), None));
                 match value_table {
                     // General path already active: re-materialize the key value.
                     Some(table) => insert_value(table, column.get(i), slot),
@@ -333,11 +334,12 @@ impl<'a> ValueHashJoinOp<'a> {
             self.right_batches.push(batch);
         }
 
-        Ok(int_tables
+        Ok(tables
             .into_iter()
-            .zip(value_tables)
-            .map(|(int_table, value_table)| {
-                value_table.map_or_else(|| JoinHashTable::Int(int_table), JoinHashTable::Value)
+            .map(|(origin, (int_table, value_table))| {
+                let table =
+                    value_table.map_or_else(|| JoinHashTable::Int(int_table), JoinHashTable::Value);
+                (origin, table)
             })
             .collect())
     }
@@ -354,7 +356,7 @@ impl<'a> ValueHashJoinOp<'a> {
     ) {
         self.right_match_envs.clear();
         self.right_match_pos = 0;
-        let Some(table) = self.hash_table.as_ref().unwrap().get(origin) else {
+        let Some(table) = self.hash_table.as_ref().unwrap().get(&origin) else {
             return;
         };
         let refs = match table {
@@ -398,7 +400,7 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
         if self.hash_table.is_none() {
             match self.build_hash_table() {
                 Ok(tables) => {
-                    if tables.iter().all(JoinHashTable::is_empty) {
+                    if tables.values().all(JoinHashTable::is_empty) {
                         return None;
                     }
                     self.hash_table = Some(tables);
