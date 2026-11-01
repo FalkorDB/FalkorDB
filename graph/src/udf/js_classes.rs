@@ -745,10 +745,12 @@ fn js_traverse_impl<'js>(
             let mut visited: HashSet<u64> = HashSet::new();
 
             // Track seen relationship IDs per source node to avoid emitting
-            // the same edge twice when direction == "both" and returnType == "edges".
-            // An edge A->B discovered from A at depth N would otherwise be
-            // rediscovered from B at depth N+1.
-            let dedup_edges = return_type == "edges" && direction == "both";
+            // the same edge twice when returnType == "edges". With direction
+            // "both", an edge A->B discovered from A at depth N would otherwise
+            // be rediscovered from B at depth N+1; and since the start node can
+            // re-enter the frontier (self-loop or cycle back to it), a directed
+            // edge out of it would be re-emitted at the next depth.
+            let dedup_edges = return_type == "edges";
             let mut seen_edges: HashMap<u64, HashSet<u64>> = HashMap::new();
 
             let mut frontier = vec![start_id];
@@ -793,9 +795,8 @@ fn js_traverse_impl<'js>(
                             }
 
                             if return_type == "edges" {
-                                // When direction is "both", de-dup edges so that
-                                // an edge A->B found from A isn't re-emitted when
-                                // discovered from B at the next depth.
+                                // De-dup edges so that an edge found once isn't
+                                // re-emitted when rediscovered at a later depth.
                                 if dedup_edges {
                                     let source_seen = seen_edges.entry(nid).or_default();
                                     if source_seen.insert(rel_id) {

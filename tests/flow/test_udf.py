@@ -1865,3 +1865,24 @@ class test_udf_javascript():
             res = self.graph.query(f"MATCH (a {{id:0}}) RETURN lib_tsl.t(a, '{d}')").result_set
             expected = [0] if d == 'incoming' else [0, 1]
             self.env.assertEqual(sorted(res[0][0]), expected)
+
+    def test_traverse_edges_not_reemitted_when_cycle_returns_to_start(self):
+        """
+        Re-admitting the start node to the frontier must not make
+        returnType 'edges' emit an edge twice (self-loop, a->b->a cycle).
+        """
+
+        script = """
+        falkor.register('te', function(n, d) {
+            return graph.traverse([n], {direction: d, returnType: 'edges', maxDepth: 3})[0].map(function(e) { return e.id; });
+        });
+        """
+        self.db.udf_load("lib_tre", script)
+        self.graph.query("CREATE (a {id:7})-[:R]->(a), (a)-[:R]->(b:B), (b)-[:R]->(a)")
+        edge_count = self.graph.query("MATCH (a {id:7})-[r]->() RETURN count(r)").result_set[0][0]
+        self.env.assertEqual(edge_count, 2)
+
+        for d in ['outgoing', 'incoming', 'both']:
+            res = self.graph.query(f"MATCH (a {{id:7}}) RETURN lib_tre.te(a, '{d}')").result_set[0][0]
+            self.env.assertEqual(len(res), len(set(res)), message=f"{d}: {res}")
+            self.env.assertEqual(len(res), 3, message=f"{d}: {res}")
