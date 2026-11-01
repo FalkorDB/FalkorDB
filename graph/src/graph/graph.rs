@@ -4127,6 +4127,47 @@ impl Graph {
         self.drop_index_populated_at(index_type, entity_type, label, attrs, None)
     }
 
+    /// The attributes a drop of `index_type` fields on `label` removes: `attrs`,
+    /// or, when empty, every field of that type (matches the `target_attrs`
+    /// derivation in `Indexer::drop_index`).
+    fn drop_target_attrs(
+        &self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) -> Vec<Arc<String>> {
+        let indexer = match entity_type {
+            EntityType::Node => &self.node_indexer,
+            EntityType::Relationship => &self.edge_indexer,
+        };
+        if attrs.is_empty() {
+            indexer
+                .get_fields(label)
+                .into_iter()
+                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                .map(|(attr, _)| attr)
+                .collect()
+        } else {
+            attrs.to_vec()
+        }
+    }
+
+    /// Whether a UNIQUE constraint present now depends on a field the drop
+    /// would remove.
+    #[must_use]
+    pub fn index_drop_blocked_by_constraint(
+        &self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) -> bool {
+        self.drop_target_attrs(index_type, entity_type, label, attrs)
+            .iter()
+            .any(|attr| self.constraint_depends_on_index(entity_type, label, attr, index_type))
+    }
+
     /// [`Self::drop_index`], with the remaining fields' repopulation waiting
     /// for `published_at` as in [`Self::create_index_populated_at`].
     pub fn drop_index_populated_at(
@@ -4137,30 +4178,27 @@ impl Graph {
         attrs: &[Arc<String>],
         published_at: Option<u64>,
     ) -> Result<usize, String> {
-        // Expand an empty `attrs` to the full set of fields of `index_type`
-        // (matches the `target_attrs` derivation in `Indexer::drop_index`);
-        // otherwise an empty-attr drop would bypass constraint protection.
-        let indexer = match entity_type {
-            EntityType::Node => &self.node_indexer,
-            EntityType::Relationship => &self.edge_indexer,
-        };
-        let effective_attrs: Vec<Arc<String>> = if attrs.is_empty() {
-            indexer
-                .get_fields(label)
-                .into_iter()
-                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
-                .map(|(attr, _)| attr)
-                .collect()
-        } else {
-            attrs.to_vec()
-        };
-
-        // Check if any UNIQUE constraint depends on this index
-        for attr in &effective_attrs {
-            if self.constraint_depends_on_index(entity_type, label, attr, index_type) {
-                return Err("Index supports constraint".to_string());
-            }
+        // An empty-attr drop must not bypass constraint protection.
+        if self.index_drop_blocked_by_constraint(index_type, entity_type, label, attrs) {
+            return Err("Index supports constraint".to_string());
         }
+        self.drop_index_unchecked(index_type, entity_type, label, attrs, published_at)
+    }
+
+    /// [`Self::drop_index_populated_at`] without the constraint check, for a drop
+    /// whose constraint protection was judged where it appeared in a buffer
+    /// (see `IndexDdl`): the constraints standing by the time it runs include
+    /// ones the buffer installed after it.
+    pub fn drop_index_unchecked(
+        &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+        published_at: Option<u64>,
+    ) -> Result<usize, String> {
+        #[cfg(feature = "index-falkordb")]
+        let effective_attrs = self.drop_target_attrs(index_type, entity_type, label, attrs);
 
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
@@ -4889,6 +4927,31 @@ impl Graph {
                 && c.label.as_str() == label.as_str()
                 && c.properties.iter().any(|p| p.as_str() == attr.as_str())
         })
+    }
+
+    /// Gives an index an up-to-date population after the buffer that created or
+    /// changed it was refused: its job waits for a version that will never be
+    /// published, and would otherwise reschedule itself until some later write
+    /// reaches that version, leaving the index UNDER CONSTRUCTION. A fresh
+    /// generation makes that job stop, and the new one populates from the
+    /// committed graph. No-op when the index no longer exists.
+    pub fn repopulate_abandoned_index(
+        &mut self,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+    ) {
+        let (indexer, kind) = match entity_type {
+            EntityType::Node => (self.node_indexer.clone(), IndexKind::Node),
+            EntityType::Relationship => (self.edge_indexer.clone(), IndexKind::Edge),
+        };
+        {
+            let lock = indexer.write_lock();
+            let _guard = lock.lock();
+            if indexer.recreate_index(label).is_err() {
+                return;
+            }
+        }
+        populate_index(kind, label.clone(), indexer, None);
     }
 
     pub fn cancel_indexing(&self) {

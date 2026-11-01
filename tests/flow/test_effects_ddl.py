@@ -981,3 +981,100 @@ class testEffects_07_RefusedBufferIndexDDL(_EffectsBase):
                 self.env.assertEqual(
                     g.ro_query(probe, {'t': term}).result_set, [[count]],
                     message=f"{name}: '{term}' must be indexed")
+
+    def _constraint_records(self, key):
+        """The records of the effect of a UNIQUE constraint on `A(zz)` (the
+        index it needs is created first, outside the window)."""
+        g = self.db.select_graph(key)
+        g.query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(g, 'A', 'zz', sync=True)
+        self.wait_for_replica_offset()
+        self.monitor_mark()
+        self.master.execute_command(
+            "GRAPH.CONSTRAINT", "CREATE", key, "UNIQUE", "NODE", "A",
+            "PROPERTIES", 1, "zz")
+        self.wait_for_replica_offset()
+        payloads = self.effect_payloads(self.monitor_mark(), key)
+        self.env.assertEqual(len(payloads), 1)
+        return self.payload_bytes(payloads[0])[2:]
+
+    def _dst_with_two_range_fields(self, key):
+        g = self.db.select_graph(key)
+        g.query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(g, 'A', 'zz', sync=True)
+        create_node_range_index(g, 'A', 'other', sync=True)
+
+    def test04_a_drop_is_judged_against_the_constraints_before_it(self):
+        # DROP_INDEX A(zz), CREATE_INDEX A(zz), then a UNIQUE constraint on
+        # A(zz). The drop is deferred past the constraint record, but the
+        # constraint did not exist where the drop appeared: the buffer is valid.
+        p = f"{self.GRAPH_ID}_u"
+        dst = f"{p}_dst"
+        self._dst_with_two_range_fields(dst)
+        drop_src, create_src = f"{p}_drop", f"{p}_create"
+        self.db.select_graph(drop_src).query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(self.db.select_graph(drop_src), 'A', 'zz', sync=True)
+        self.db.select_graph(create_src).query("CREATE (:A {zz: 1, other: 1})")
+        self.wait_for_replica_offset()
+        drop = self._records_of(drop_src, "DROP INDEX FOR (n:A) ON (n.zz)")
+        create = self._records_of(create_src, "CREATE INDEX FOR (n:A) ON (n.zz)")
+        uniq = self._constraint_records(f"{p}_uniq")
+
+        self.master.execute_command(
+            "GRAPH.EFFECT", dst, b"\x03\x00" + drop + create + uniq)
+
+        self.env.assertEqual(len(list_constraints(self.db.select_graph(dst))), 1)
+        rows = self._indexes(dst, self.db)
+        self.env.assertEqual(len(rows), 1)
+        self.env.assertContains('zz', str(rows))
+        self.env.assertContains('other', str(rows))
+
+    def test05_a_drop_that_a_constraint_before_it_protects_is_refused_whole(self):
+        # The constraint first, then DROP_INDEX of its field: the drop is
+        # refused at its position, and nothing the buffer carried stays.
+        p = f"{self.GRAPH_ID}_p"
+        dst = f"{p}_dst"
+        self._dst_with_two_range_fields(dst)
+        drop_src = f"{p}_drop"
+        self.db.select_graph(drop_src).query("CREATE (:A {zz: 1, other: 1})")
+        create_node_range_index(self.db.select_graph(drop_src), 'A', 'zz', sync=True)
+        self.wait_for_replica_offset()
+        drop = self._records_of(drop_src, "DROP INDEX FOR (n:A) ON (n.zz)")
+        uniq = self._constraint_records(f"{p}_uniq")
+        before = self._indexes(dst, self.db)
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + uniq + drop)
+        except ResponseError as e:
+            self.env.assertContains("supports constraint", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+        self.env.assertEqual(self._indexes(dst, self.db), before)
+        self.env.assertEqual(len(list_constraints(self.db.select_graph(dst))), 0)
+
+    def test06_a_refused_later_statement_leaves_no_population_waiting(self):
+        # CREATE FULLTEXT INDEX, then the same statement again: the second is
+        # refused (already indexed) after the first spawned a population that
+        # waits for this buffer's version, which is never published. The index
+        # the first one left behind must still be populated from the committed
+        # graph, not stay UNDER CONSTRUCTION.
+        p = f"{self.GRAPH_ID}_w"
+        src, dst = f"{p}_src", f"{p}_dst"
+        for key in (src, dst):
+            self.db.select_graph(key).query("CREATE (:F {body: 'seed'})")
+        create = self._records_of(src, "CREATE FULLTEXT INDEX FOR (n:F) ON (n.body)")
+
+        try:
+            self.master.execute_command(
+                "GRAPH.EFFECT", dst, b"\x03\x00" + create + create)
+        except ResponseError as e:
+            self.env.assertContains("already indexed", str(e))
+        else:
+            raise AssertionError("the buffer was accepted; it must be refused")
+
+        g = self.db.select_graph(dst)
+        wait_for_indices_to_sync(g)
+        self.env.assertEqual(
+            g.ro_query("CALL db.idx.fulltext.queryNodes('F', 'seed') "
+                       "YIELD node RETURN count(node)").result_set, [[1]])

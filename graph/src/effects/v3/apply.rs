@@ -99,8 +99,20 @@ pub fn apply_effects(
     // One case this does not cover: a statement that is itself refused here
     // (an index that already exists, a drop of one that does not) still leaves
     // the statements before it applied.
+    //
+    // When one is refused, the indexes the earlier ones created or changed are
+    // repopulated from the committed graph: their population waits for this
+    // version, which is not going to be published.
+    let mut touched = Vec::with_capacity(index_ddl.len());
     for ddl in index_ddl {
-        ddl.run(g)?;
+        let target = ddl.target();
+        if let Err(e) = ddl.run(g) {
+            for (entity_type, label) in &touched {
+                g.repopulate_abandoned_index(entity_type, label);
+            }
+            return Err(e);
+        }
+        touched.push(target);
     }
 
     // Both indexes once for the whole buffer: the native index's staged changes, then
@@ -194,6 +206,17 @@ enum IndexDdl {
 }
 
 impl IndexDdl {
+    fn target(&self) -> (EntityType, Arc<String>) {
+        match self {
+            Self::Create {
+                schema_type, label, ..
+            }
+            | Self::Drop {
+                schema_type, label, ..
+            } => (*schema_type, label.clone()),
+        }
+    }
+
     fn run(
         self,
         g: &mut Graph,
@@ -229,13 +252,8 @@ impl IndexDdl {
                 label,
                 fields,
             } => {
-                g.drop_index_populated_at(
-                    &index_type,
-                    &schema_type,
-                    &label,
-                    &fields,
-                    published_at,
-                )?;
+                // Constraint protection was judged when the record was read.
+                g.drop_index_unchecked(&index_type, &schema_type, &label, &fields, published_at)?;
             }
         }
         Ok(())
@@ -545,6 +563,12 @@ fn apply_record(
             let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
+            // Judged here, against the constraints this buffer has installed so
+            // far, as it was when the records applied in order: by the time the
+            // deferred statement runs, later records' constraints are in place.
+            if g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, &fields) {
+                return Err(ApplyError::Graph("Index supports constraint".to_string()));
+            }
             index_ddl.push(IndexDdl::Drop {
                 index_type,
                 schema_type,
