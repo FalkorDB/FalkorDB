@@ -83,24 +83,24 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
-    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Info, GrB_MINUS_UINT64, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL,
+    GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
+    GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_select_UINT64, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
-    GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_VALUEEQ_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
-    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
-    GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_PAIR_UINT64, GxB_Print_Level,
-    GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_PLUS_UINT64,
+    GrB_SECOND_UINT64, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL,
+    GrB_Type, GrB_UINT64, GrB_VALUEEQ_UINT64, GrB_VALUENE_UINT64, GrB_WaitMode, GrB_finalize,
+    GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
+    GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE,
+    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
+    GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_PLUS_FIRST_UINT64,
+    GxB_PLUS_PAIR_UINT64, GxB_PLUS_TIMES_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 use super::{
     GrB_GT_UINT64, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_select_BOOL, GrB_VALUEEQ_BOOL,
@@ -1066,6 +1066,33 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// The pattern of `self` outside the pattern of `mask`, as a `bool` matrix;
+    /// `None` when `self` is empty. `O(nvals)`, so callers cache it.
+    #[must_use]
+    pub fn pattern_outside<TM>(
+        &self,
+        mask: &Matrix<TM>,
+    ) -> Option<Matrix<bool>> {
+        self.wait();
+        if self.nvals() == 0 {
+            return None;
+        }
+        let out = Matrix::<bool>::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_apply(
+                out.inner(),
+                mask.inner(),
+                GxB_ANY_BOOL,
+                GxB_ONE_BOOL,
+                self.inner(),
+                GrB_DESC_SC,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        out.has_pending.store(true, Ordering::Relaxed);
+        Some(out)
+    }
+
     /// `self = self * b` over the `ANY_PAIR_BOOL` semiring. Accepts a matrix
     /// of any element type: `PAIR` only inspects the sparsity pattern, so the
     /// values of `b` (e.g. inline edge ids in a UINT64 relationship matrix)
@@ -1346,6 +1373,135 @@ impl Matrix<u64> {
         max_row: u64,
     ) -> Iter<Uint64Extract> {
         Iter::new(self, min_row, max_row)
+    }
+
+    /// `self * b` over `PLUS_FIRST`: each entry of `self` is a number of
+    /// partial paths ending at a node, and the product adds it to every node
+    /// reachable over one edge of `b`. So an entry of the result is the exact
+    /// number of paths, where [`Matrix::lmxm`] over `ANY_PAIR` only records that
+    /// one exists. `b` may be of any element type; only its pattern is read, one
+    /// edge per entry. `first_hop` says every entry of `self` is 1, which lets
+    /// `PAIR` stand in for `FIRST`. Parallel edges are not in `b`'s pattern: see
+    /// [`Self::add_counted_product`].
+    fn count_product<TB>(
+        &self,
+        b: &Matrix<TB>,
+        first_hop: bool,
+    ) -> Self {
+        let next = Self::new(self.nrows(), b.ncols());
+        unsafe {
+            let info = GrB_mxm(
+                next.inner(),
+                null_mut(),
+                null_mut(),
+                if first_hop {
+                    GxB_PLUS_PAIR_UINT64
+                } else {
+                    GxB_PLUS_FIRST_UINT64
+                },
+                self.inner(),
+                b.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        next.has_pending.store(true, Ordering::Relaxed);
+        next
+    }
+
+    /// `self = self * (m + dp - dm)` counting paths, over the layers of one
+    /// versioned matrix without merging them. The effective pattern is
+    /// `(m - dm) + (dp - m)`, as `dm` is inside `m` and `dp` may shadow entries
+    /// of `m`, so the product is `self*m - self*dm + self*added`, where `added`
+    /// is `dp - m` from [`Self::pattern_outside`].
+    pub fn count_lmxm_layers<TV>(
+        &mut self,
+        m: &Matrix<TV>,
+        added: Option<&Matrix<bool>>,
+        dm: &Matrix<bool>,
+        first_hop: bool,
+    ) {
+        // The delta layer arrives raw from a shared snapshot and may hold
+        // pending work; a GrB op would finish it internally (a mutation),
+        // racing other readers. Materialize through the mutex-guarded wait.
+        dm.wait();
+        let mut acc = self.count_product(m, first_hop);
+        if dm.nvals() > 0 {
+            let deleted = self.count_product(dm, first_hop);
+            unsafe {
+                let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                    acc.inner(),
+                    null_mut(),
+                    null_mut(),
+                    GrB_MINUS_UINT64,
+                    acc.inner(),
+                    deleted.inner(),
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                // A pair whose every path was deleted subtracts to an explicit 0.
+                let info = GrB_Matrix_select_UINT64(
+                    acc.inner(),
+                    null_mut(),
+                    null_mut(),
+                    GrB_VALUENE_UINT64,
+                    acc.inner(),
+                    0,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            acc.has_pending.store(true, Ordering::Relaxed);
+        }
+        if let Some(added) = added {
+            let more = self.count_product(added, first_hop);
+            acc.add_counts(&more);
+        }
+        *self = acc;
+    }
+
+    /// `self += prev * extra` over `PLUS_TIMES`, where `extra` holds, for each
+    /// pair with parallel edges, the number of edges beyond the first. Adds the
+    /// paths that [`Self::count_lmxm`] leaves out because `b` stores a pair once.
+    pub fn add_counted_product(
+        &mut self,
+        prev: &Self,
+        extra: &Self,
+    ) {
+        unsafe {
+            let info = GrB_mxm(
+                self.inner(),
+                null_mut(),
+                GrB_PLUS_UINT64,
+                GxB_PLUS_TIMES_UINT64,
+                prev.inner(),
+                extra.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// `self += other`, entrywise over `PLUS`, an entry present in only one
+    /// operand kept as is.
+    pub fn add_counts(
+        &mut self,
+        other: &Self,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                self.inner(),
+                null_mut(),
+                null_mut(),
+                GrB_PLUS_UINT64,
+                self.inner(),
+                other.inner(),
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.

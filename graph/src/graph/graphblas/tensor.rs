@@ -1306,6 +1306,43 @@ impl Tensor {
             .chain(multi)
     }
 
+    /// Every `(src, dst, edge_id)` triple of the pairs that hold more than one
+    /// edge, and only those. Costs `O(multi)` rather than `O(|E|)`, so a caller
+    /// that must treat parallel edges apart can ask this without a pass over a
+    /// tensor that has none: it is empty when [`Self::has_multi_edge`] is false.
+    pub fn iter_multi_edges(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.edge_versioned_all().flat_map(|(block, me)| {
+            me.iter(0, GrB_INDEX_MAX).map(move |(key, edge_id)| {
+                let (src, dst) = compound_key_inverse(block, key);
+                (src, dst, edge_id)
+            })
+        })
+    }
+
+    /// For each pair with parallel edges, how many edges it holds beyond the
+    /// first, as a matrix the size of the tensor; `None` when no pair has any.
+    /// A traversal stores a pair once, so a path count over it is short by
+    /// exactly this much per pair. Costs `O(multi)`.
+    #[must_use]
+    pub fn parallel_edge_surplus(&self) -> Option<Matrix<u64>> {
+        if !self.has_multi_edge() {
+            return None;
+        }
+        let mut per_pair: FxHashMap<(u64, u64), u64> = FxHashMap::default();
+        for (src, dst, _) in self.iter_multi_edges() {
+            *per_pair.entry((src, dst)).or_default() += 1;
+        }
+        let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
+        for ((src, dst), n) in per_pair {
+            rows.push(src);
+            cols.push(dst);
+            vals.push(n - 1);
+        }
+        let mut surplus = Matrix::<u64>::new(self.nrows(), self.ncols());
+        surplus.build(&rows, &cols, &vals);
+        Some(surplus)
+    }
+
     #[must_use]
     pub fn iter(
         &self,

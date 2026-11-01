@@ -315,10 +315,9 @@ class testBidirectionalTraversals(FlowTestsBase):
         query = """MATCH (a)-[]-()-[]-(c) RETURN a.val, c.val ORDER BY a.val, c.val"""
 
         actual_result = self.acyclic_graph.query(query)
-        expected_result = [['v1', 'v1'],
-                           ['v1', 'v3'],
-                           ['v2', 'v2'],
-                           ['v3', 'v1'],
-                           ['v3', 'v3']]
+        # A relationship is matched at most once per pattern, so the second
+        # hop cannot walk back over the first edge: (v1)-(v2)-(v1) is excluded.
+        expected_result = [['v1', 'v3'],
+                           ['v3', 'v1']]
         self.env.assertEqual(actual_result.result_set, expected_result)
 

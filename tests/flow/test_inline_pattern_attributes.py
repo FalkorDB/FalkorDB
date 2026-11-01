@@ -188,12 +188,9 @@ class testInlinePatternAttributes(FlowTestsBase):
             actual = g.query("MATCH (a:E)-[{k: %d}]->(b:E) RETURN count(*)" % k)
             self.env.assertEqual(actual.result_set, [[1]])
 
-        # Contrast: with no predicate on the edge, an anonymous traverse still
-        # collapses the pair to a single representative edge, so this counts 1
-        # rather than 2. That is long-standing behaviour, independent of this
-        # file — it is here to pin the boundary the predicate cases rely on.
+        # Without a predicate each parallel edge is still a match of its own.
         actual = g.query("MATCH (a:E)-[]->(b:E) RETURN count(*)")
-        self.env.assertEqual(actual.result_set, [[1]])
+        self.env.assertEqual(actual.result_set, [[2]])
 
         # ExpandInto: both endpoints already bound.
         actual = g.query(

@@ -353,3 +353,77 @@ class testRelationPattern(FlowTestsBase):
         self.env.assertEqual(e12.src_node, 1)
         self.env.assertEqual(e12.dest_node, 2)
         self.env.assertEqual(e12.relation, 'R')
+
+    # Relationship uniqueness and multigraph cardinality must not depend on
+    # whether the relationship (or the middle node) is named.
+    def test14_relationship_uniqueness_ignores_naming(self):
+        # 3-cycle: 3 edges * 2 endpoints * 1 remaining incident edge = 6
+        g = self.db.select_graph("rel_uniqueness_cycle")
+        g.query("CREATE (a:N), (b:N), (c:N), (a)-[:R]->(b), (b)-[:R]->(c), (c)-[:R]->(a)")
+        for pattern in ["(x)-[r1]-()-[r2]-(z)",
+                        "(x)-[r1]-(m)-[r2]-(z)",
+                        "(x)-[]-()-[]-(z)",
+                        "(x)-[]-(m)-[]-(z)",
+                        "(x)-[:R]-()-[:R]-(z)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[6]])
+
+        # converging pattern: Alice->Bob<-Charlie, 2 distinct edges
+        g = self.db.select_graph("rel_uniqueness_converge")
+        g.query("CREATE (:P {n:'A'})-[:F]->(:P {n:'B'})<-[:F]-(:P {n:'C'})")
+        for pattern in ["(p1:P)-[:F]->(p2:P)<-[:F]-(p3:P)",
+                        "(p1:P)-[e1:F]->(p2:P)<-[e2:F]-(p3:P)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(p1)")
+            self.env.assertEqual(res.result_set, [[2]])
+
+        # multigraph: parallel edges keep their multiplicity
+        g = self.db.select_graph("rel_uniqueness_multigraph")
+        g.query("CREATE (a:V {id:1}), (b:V {id:2}), (c:V {id:3}), "
+                "(a)-[:R {eid:1}]->(b), (a)-[:R {eid:2}]->(b), "
+                "(b)-[:R {eid:3}]->(c), (b)-[:R {eid:4}]->(c), "
+                "(c)-[:R {eid:5}]->(a), (a)-[:R {eid:6}]->(a)")
+        expected = [[2, 2], [3, 4]]
+        for pattern in ["(a:V {id:1})-[:R*2]->(b:V)",
+                        "(a:V {id:1})-[r1:R]->(v:V)-[r2:R]->(b:V)",
+                        "(a:V {id:1})-[:R]->(v:V)-[:R]->(b:V)",
+                        "(a:V {id:1})-[:R]->()-[:R]->(b:V)"]:
+            res = g.query(f"MATCH {pattern} RETURN b.id AS dst, count(*) AS n ORDER BY dst")
+            self.env.assertEqual(res.result_set, expected)
+        for pattern in ["(a:V)-[:R]->(b:V)", "(a:V)-[r:R]->(b:V)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[6]])
+
+    # A fused anonymous chain counts paths, not (src, dst) pairs.
+    def test15_fused_chain_counts_paths(self):
+        # diamond: two paths a -> c through distinct anonymous middle nodes
+        g = self.db.select_graph("fused_chain_diamond")
+        g.query("CREATE (a:A), (b1:B), (b2:B), (c:C), "
+                "(a)-[:R]->(b1), (a)-[:R]->(b2), (b1)-[:R]->(c), (b2)-[:R]->(c)")
+        for pattern in ["(a:A)-[:R]->()-[:R]->(c:C)", "(a:A)-[:R]->(m)-[:R]->(c:C)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[2]])
+        # the anonymous form runs as one fused traverse
+        plan = str(g.explain("MATCH (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)"))
+        self.env.assertContains("fused hop", plan)
+
+        # self-loops: two on `a` and an edge a -> b. Distinct edge pairs:
+        # (s1,s2), (s2,s1) to a, and (s1,e), (s2,e) to b.
+        g = self.db.select_graph("fused_chain_self_loops")
+        g.query("CREATE (a:A), (b:B), (a)-[:R]->(a), (a)-[:R]->(a), (a)-[:R]->(b)")
+        for pattern in ["(a:A)-[:R]->()-[:R]->(c)",
+                        "(a:A)-[r1:R]->(m)-[r2:R]->(c)",
+                        "(a:A)-[]->()-[]->(c)"]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[4]])
+
+    # A pair joined by several edges of different types is several matches.
+    def test16_multi_type_pair(self):
+        g = self.db.select_graph("multi_type_pair")
+        g.query("CREATE (a:A)-[:R]->(b:B), (a)-[:S]->(b), (a)-[:R]->(b)")
+        for pattern, expected in [("(a:A)-[:R|S]->(b)", 3),
+                                  ("(a:A)-[]->(b)", 3),
+                                  ("(a:A)-[:R]->(b)", 2),
+                                  # 3 edges, each paired with another one
+                                  ("(a:A)-[]->()<-[]-(c)", 6)]:
+            res = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(res.result_set, [[expected]])
