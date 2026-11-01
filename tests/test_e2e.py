@@ -2047,6 +2047,10 @@ def test_previous_match_where_kept_under_traverse():
             "MATCH (x:C) WHERE x.v = 7 MATCH (a)-[r:R]->(b) RETURN x.v, count(r)",
             [[7, 2]],
         ),
+        # a LIMIT / SKIP / ORDER BY / DISTINCT barrier still binds its variables
+        ("MATCH (a:A) WITH a LIMIT 1 MATCH (a)-[r:R]->(b:B)-[:S]->(c:C) RETURN count(r)", [[2]]),
+        ("MATCH (a:A) WITH a ORDER BY a.v SKIP 0 LIMIT 1 MATCH (a)-[r:R]->(b:B)-[:S]->(c:C) RETURN count(r)", [[2]]),
+        ("MATCH (a:A) WITH DISTINCT a MATCH (a)-[r:R]->(b:B)-[:S]->(c:C) RETURN count(r)", [[2]]),
     ]
     for q, expected in cases:
         assert query(q).result_set == expected, q
