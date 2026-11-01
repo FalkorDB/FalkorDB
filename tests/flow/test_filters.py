@@ -283,6 +283,9 @@ class testFilters():
             # a non-boolean element is a runtime type error
             ("WITH [1] AS l WHERE l[0] RETURN 1",
              "Type mismatch: expected Boolean but was Integer"),
+            # a comprehension's predicate is checked the same way, not skipped
+            ("WITH [[1]] AS lists RETURN [l IN lists WHERE l[0] | l]",
+             "Type mismatch: expected Boolean but was Integer"),
             # a slice is always a list, never a predicate
             ("WITH [true] AS l WHERE l[0..1] RETURN 1",
              "Expected boolean predicate"),
