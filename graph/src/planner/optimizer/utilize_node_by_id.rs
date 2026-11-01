@@ -47,6 +47,7 @@ use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 
 use super::super::IR;
+use super::references::subtree_references_variable;
 
 fn get_id_filter(
     filter: &DynNode<ExprIR<Variable>>,
@@ -58,8 +59,9 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(0).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
-        && var == node_alias
-        && !references_var(&filter.child(1), node_alias)
+        && var.id == node_alias.id
+        && var.scope_id == node_alias.scope_id
+        && !subtree_references_variable(&filter.child(1), node_alias.id, node_alias.scope_id)
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -71,8 +73,9 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(1).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
-        && var == node_alias
-        && !references_var(&filter.child(0), node_alias)
+        && var.id == node_alias.id
+        && var.scope_id == node_alias.scope_id
+        && !subtree_references_variable(&filter.child(0), node_alias.id, node_alias.scope_id)
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,
@@ -86,21 +89,6 @@ fn get_id_filter(
     } else {
         None
     }
-}
-
-/// Returns true if the expression tree references the given variable.
-fn references_var(
-    expr: &DynNode<ExprIR<Variable>>,
-    var: &Variable,
-) -> bool {
-    for node in expr.walk::<Bfs>() {
-        if let ExprIR::Variable(v) = node
-            && v == var
-        {
-            return true;
-        }
-    }
-    false
 }
 
 /// Replaces label scan + ID filter with direct node ID lookup.
