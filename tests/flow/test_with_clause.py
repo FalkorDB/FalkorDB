@@ -447,3 +447,23 @@ class testWithClause(FlowTestsBase):
             self.env.assertEqual(res.result_set, [[0, 0, 1, 0]])
         finally:
             g.delete()
+
+    def test18_hidden_slot_is_not_nameable_and_underscore_locals_leave_scope(self):
+        g = self.db.select_graph("with_slot_nameable")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            # A later alias spelling the old hidden key gets a fresh variable,
+            # not the filter-only copy of `n`: the MATCH sees (_slot_1_2) unbound.
+            res = g.query("""MATCH (n) WITH n.v AS k, n.v + 0 AS o WHERE n.v = 0
+                             MATCH (_slot_1_2)-->(y) RETURN k, y.v""")
+            self.env.assertEqual(res.result_set, [[0, 0]])
+
+            # A `_`-prefixed local of a pattern predicate is not visible after it,
+            # like any other local.
+            try:
+                g.query("MATCH (n:A) WHERE (n)-->(_l) RETURN _l")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("'_l' not defined", str(e))
+        finally:
+            g.delete()

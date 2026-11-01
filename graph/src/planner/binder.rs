@@ -271,9 +271,11 @@ impl Binder {
         let scope_id = self.env_stack.len() - 1;
         for name in names {
             if let Some(var) = self.env_stack[scope_id].remove(&name) {
-                // `_slot_..` is a valid alias, so a query can already hold the
-                // key; take one that is free instead of overwriting it.
-                let mut key = format!("_slot_{scope_id}_{}", var.id);
+                // `#` cannot appear in an unquoted alias, so a query cannot
+                // spell this key later and be handed the hidden variable. A
+                // backtick-quoted alias could already hold it: take a free key
+                // rather than overwrite it.
+                let mut key = format!("_slot_#{scope_id}_{}", var.id);
                 while self.env_stack[scope_id].contains_key(&key) {
                     key.push('_');
                 }
@@ -283,7 +285,9 @@ impl Binder {
     }
 
     /// Hides every name of the current scope that is not in `keep`, leaving
-    /// the reserved and anonymous entries (`_`-prefixed) as they are.
+    /// the generated anonymous entries (`_anon*`) and the already hidden ones
+    /// as they are. Other `_`-prefixed names are legal aliases and go out of
+    /// scope like any other.
     fn hide_names_except(
         &mut self,
         keep: &HashSet<Arc<String>>,
@@ -291,7 +295,9 @@ impl Binder {
         let hidden: Vec<Arc<String>> = self
             .current_env()
             .keys()
-            .filter(|name| !keep.contains(*name) && !name.starts_with('_'))
+            .filter(|name| {
+                !keep.contains(*name) && !name.starts_with("_anon") && !name.starts_with("_slot_")
+            })
             .cloned()
             .collect();
         self.hide_names(hidden);
