@@ -42,7 +42,7 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef, Traversal, Traverser};
+use orx_tree::{Bfs, Dyn, NodeIdx, NodeRef, Traversal, Traverser};
 
 /// Active batched sub-plan for all rows from one input batch.
 struct ActiveSubPlan<'a> {
@@ -99,9 +99,15 @@ pub struct ApplyOp<'a> {
     /// concatenated into a single output batch once it holds a full batch.
     acc: Vec<Batch<'a>>,
     acc_rows: usize,
+    /// Rows of the last sub-plan batch that did not fit in `acc` without going
+    /// past `BATCH_SIZE`; they lead the next output batch.
+    overflow: Option<Batch<'a>>,
     /// Whether the sub-plan deletes, so a row whose imported entity an
     /// earlier row already deleted must be skipped (as C does).
     sub_plan_deletes: bool,
+    /// The outer variables the body imports: what its leading `WITH` reads.
+    /// Only these decide whether a row's sub-plan is skipped.
+    imported: Vec<u32>,
     /// A non-returning CALL {} (a keyless, empty Aggregate over the body):
     /// every input row passes through once, whatever the body yields.
     passthrough: bool,
@@ -172,6 +178,8 @@ impl<'a> ApplyOp<'a> {
             per_row: None,
             acc: Vec::new(),
             acc_rows: 0,
+            overflow: None,
+            imported: imported_ids(runtime, child_idx),
             sub_plan_deletes: subtree_contains(&runtime.plan, child_idx, |ir| {
                 matches!(ir, IR::Delete { .. })
             }),
@@ -275,16 +283,18 @@ impl<'a> ApplyOp<'a> {
     // Per-row mode helpers (fallback for sub-plans with Aggregate)
     // -----------------------------------------------------------------------
 
-    /// Whether any entity bound in `row` was deleted by an earlier invocation.
-    /// C does not run the sub-query for such a row.
+    /// Whether any entity the body imports from `row` was deleted by an
+    /// earlier invocation. C does not run the sub-query for such a row; an
+    /// outer binding the body does not import does not matter.
     fn row_has_deleted_entity(
         runtime: &Runtime<'_>,
+        imported: &[u32],
         input: &Batch<'a>,
         row: usize,
     ) -> bool {
         let g = runtime.graph();
         let pending = runtime.pending.borrow();
-        (0..input.num_columns() as u32).any(|id| {
+        imported.iter().any(|&id| {
             if !input.is_bound_at(id, row) {
                 return false;
             }
@@ -308,18 +318,37 @@ impl<'a> ApplyOp<'a> {
         out
     }
 
+    /// Append `batch` to the output being built, keeping it within
+    /// `BATCH_SIZE`: the rows that do not fit wait in `overflow`.
     fn push_acc(
         &mut self,
         batch: Batch<'a>,
     ) {
-        self.acc_rows += batch.active_len();
-        self.acc.push(batch);
+        let n = batch.active_len();
+        let room = BATCH_SIZE.saturating_sub(self.acc_rows);
+        if n <= room {
+            self.acc_rows += n;
+            self.acc.push(batch);
+            return;
+        }
+        let compact = batch.into_compacted();
+        let head: Vec<usize> = (0..room).collect();
+        let tail: Vec<usize> = (room..n).collect();
+        if room > 0 {
+            self.acc.push(compact.gather(&head));
+            self.acc_rows += room;
+        }
+        self.overflow = Some(compact.gather(&tail));
     }
 
     fn next_per_row(&mut self) -> Option<Result<Batch<'a>, String>> {
         loop {
             if self.acc_rows >= BATCH_SIZE {
                 return Some(Ok(self.flush_acc()));
+            }
+            if let Some(rest) = self.overflow.take() {
+                self.push_acc(rest);
+                continue;
             }
 
             if let Some(st) = self.per_row.as_mut() {
@@ -377,7 +406,12 @@ impl<'a> ApplyOp<'a> {
                     st.pos += 1;
                     let env = st.input.gather(&[row]);
                     if self.sub_plan_deletes
-                        && Self::row_has_deleted_entity(self.runtime, &st.input, row)
+                        && Self::row_has_deleted_entity(
+                            self.runtime,
+                            &self.imported,
+                            &st.input,
+                            row,
+                        )
                     {
                         // No sub-plan ran, so there are no results; the
                         // optional fallback still applies, and a non-returning
@@ -472,5 +506,40 @@ fn sub_plan_distincts(
             }
         }
     }
+    out
+}
+
+/// The ids of the outer variables a CALL {} body imports: those read by the
+/// `Project` its leading `WITH` plans directly above each `Argument` leaf.
+fn imported_ids(
+    runtime: &Runtime<'_>,
+    root: NodeIdx<Dyn<IR>>,
+) -> Vec<u32> {
+    let mut out = Vec::new();
+    for node in runtime
+        .plan
+        .node(root)
+        .walk_with(&mut Traversal.bfs().over_nodes())
+    {
+        if !matches!(node.data(), IR::Argument(_)) {
+            continue;
+        }
+        let Some(parent) = node.parent() else {
+            continue;
+        };
+        let IR::Project { exprs, copies } = parent.data() else {
+            continue;
+        };
+        for (_, expr) in exprs {
+            for data in expr.root().walk::<Bfs>() {
+                if let ExprIR::Variable(v) = data {
+                    out.push(v.id);
+                }
+            }
+        }
+        out.extend(copies.iter().map(|(v, _)| v.id));
+    }
+    out.sort_unstable();
+    out.dedup();
     out
 }

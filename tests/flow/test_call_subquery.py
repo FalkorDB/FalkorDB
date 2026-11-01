@@ -3215,6 +3215,45 @@ updating clause.")
             [[1], [2]])
         self.get_res_and_assertEquals("MATCH (m:M) RETURN count(m)", [[1]])
 
+    def test_62_only_imported_entities_decide_whether_a_row_runs(self):
+        # A row is skipped when an entity the body *imports* was deleted by an
+        # earlier row, as in C; a deleted outer binding it does not import
+        # changes nothing.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {id: 1})")
+        res = self.graph.query(
+            """UNWIND [1, 2] AS i
+               MATCH (a:A {id: 1})
+               CALL { WITH i CREATE (:M) WITH i MATCH (x:A {id: 1})
+                      DETACH DELETE x RETURN 1 AS z }
+               RETURN count(*)""")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.get_res_and_assertEquals("MATCH (m:M) RETURN count(m)", [[2]])
+
+        self.graph.delete()
+        self.graph.query("CREATE (:A {id: 1})")
+        self.graph.query(
+            """UNWIND [1, 2] AS i
+               MATCH (a:A {id: 1})
+               CALL { WITH a CREATE (:M) WITH a DETACH DELETE a RETURN 1 AS z }
+               RETURN count(*)""")
+        self.get_res_and_assertEquals("MATCH (m:M) RETURN count(m)", [[1]])
+
+    def test_63_per_row_results_larger_than_a_batch_keep_order_and_content(self):
+        # A sub-plan batch that does not fit in the batch being built is split.
+        res = self.graph.query(
+            """UNWIND range(1, 30) AS i
+               CALL { WITH i UNWIND range(1, 1000) AS x RETURN x ORDER BY x }
+               RETURN count(*), sum(x), sum(x * i)""")
+        self.env.assertEqual(res.result_set, [[30000, 15015000, 232732500]])
+        res = self.graph.query(
+            """UNWIND range(1, 3) AS i
+               CALL { WITH i UNWIND range(1, 1500) AS x RETURN x ORDER BY x }
+               WITH i, collect(x) AS xs
+               RETURN i, size(xs), xs[0], xs[1499] ORDER BY i""")
+        self.env.assertEqual(res.result_set,
+                             [[i, 1500, 1, 1500] for i in (1, 2, 3)])
+
     def test_61_union_branch_variables_do_not_alias_outer_ones(self):
         # The branches of a UNION inside CALL {} have their own scopes: a
         # branch variable must not read the record slot of an outer one.
