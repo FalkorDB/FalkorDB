@@ -14,17 +14,38 @@ libraries (GraphBLAS and RediSearch) that must be compiled and installed
 
 Only needed once per machine/container (skip if `cargo build` already works).
 
+On macOS, point the build at Homebrew clang first: the system clang has no
+OpenMP, and GraphBLAS would build single-threaded without saying so.
+
 ```bash
-./graphblas.sh    # clones, builds (static, PIC) and installs GraphBLAS v10.5.0 + LAGraph
-git submodule update --init --recursive   # populates deps/RediSearch (git owns it)
-./redisearch.sh   # builds that checkout (static) into deps/RediSearch/bin
+export CC=$(brew --prefix llvm)/bin/clang
+export CXX=$(brew --prefix llvm)/bin/clang++
 ```
 
-If a script fails, read it before retrying by hand — `graphblas.sh` documents
-the exact `cmake` flags it uses (`-DGRAPHBLAS_COMPACT=OFF`,
-`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`, static build, shared install prefix)
-and has a `--skip-graphblas` flag to reuse an already-installed
-`libgraphblas.a` while iterating on the LAGraph step.
+```bash
+git submodule update --init --recursive   # populates deps/{GraphBLAS,LAGraph,RediSearch}
+cargo build                               # graph/build.rs builds them via native-deps
+```
+
+`cargo build` builds whatever is missing, so this is usually all you need. To
+build them ahead of time, or to see what is happening:
+
+```bash
+cargo run --manifest-path native-deps/Cargo.toml
+```
+
+Results are cached at
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
+(`$FALKORDB_DEPS_CACHE` overrides the root), keyed on the submodule revision,
+the GB_control patch, the vendored PreJIT kernels, the recipe sources,
+`$CC`/`$CXX --version`, the target triple and the OpenMP/sanitizer flavour.
+
+If a build fails, `native-deps/src/recipes/<dep>.rs` documents the exact cmake
+flags (`-DGRAPHBLAS_COMPACT=OFF`, `-DCMAKE_POSITION_INDEPENDENT_CODE=ON`, static
+build). To build one dep only, name it, e.g. `... -- graphblas`; add
+`FALKORDB_NATIVE_DEPS_FORCE=1` to rebuild it even on a cache hit. A cache miss
+is diffable: each entry's
+`.stamp` records the full key manifest after a `--- manifest ---` marker.
 
 ## 2. Build
 
