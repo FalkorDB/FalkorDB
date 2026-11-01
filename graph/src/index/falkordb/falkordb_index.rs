@@ -175,15 +175,44 @@ impl IndexColumn {
         }
         let (mut removes, mut adds) = (EncodedTuples::default(), EncodedTuples::default());
         graph_writes::entity_tuples(from, *entity, key, written, self, &mut removes);
-        graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
-        if let BuildState::Building { next } = state {
-            adds.scalar.retain(|&(_, id)| {
-                BuildCursor::from_id(*entity, id, &to.edge_endpoints)
-                    .is_some_and(|at| at.precedes(next))
-            });
+        // Placed before their values are read, so an entity past the cursor costs a place, not an
+        // attribute read.
+        match state {
+            BuildState::Ready => {
+                graph_writes::entity_tuples(to, *entity, key, written, self, &mut adds);
+            }
+            BuildState::Building { next } => {
+                let below = placed_below(written, *entity, next, to);
+                graph_writes::entity_tuples(to, *entity, key, &below, self, &mut adds);
+            }
         }
         self.remove_encoded(&mut removes);
         self.add_encoded(&mut adds);
+    }
+}
+
+/// The entities of `written` that `version` places below `next`, a column's cursor: the nodes
+/// below it, one range of the set, or the edges whose endpoints come before it, one lookup each. An
+/// edge `version` no longer has is not below it.
+fn placed_below(
+    written: &RoaringTreemap,
+    entity: EntityType,
+    next: BuildCursor,
+    version: &Graph,
+) -> RoaringTreemap {
+    match next {
+        BuildCursor::Node(next) => {
+            let mut below = written.clone();
+            below.remove_range(u64::from(next)..);
+            below
+        }
+        BuildCursor::Edge { .. } => written
+            .iter()
+            .filter(|&id| {
+                BuildCursor::from_id(entity, id, &version.edge_endpoints)
+                    .is_some_and(|at| at.precedes(next))
+            })
+            .collect(),
     }
 }
 
