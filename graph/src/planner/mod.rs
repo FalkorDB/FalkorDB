@@ -707,6 +707,18 @@ fn has_labels_filter(
     )
 }
 
+/// `var IS NOT NULL`, the same internal call the parser emits.
+fn is_not_null_filter(var: &Variable) -> DynTree<ExprIR<Variable>> {
+    let is_null_fn = get_functions()
+        .get("is_null", &FnType::Internal)
+        .expect("is_null function must exist");
+    tree!(
+        ExprIR::FuncInvocation(is_null_fn),
+        tree!(ExprIR::Constant(Value::Bool(true))),
+        tree!(ExprIR::Variable(var.clone()))
+    )
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -1919,6 +1931,11 @@ impl Planner {
                         lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     if let Some(filter_expr) = attr_filter {
                         bound_filters.push(filter_expr);
+                    }
+                    // A node an earlier OPTIONAL MATCH left null is not a path:
+                    // the pattern matches nothing for that row.
+                    if !component.paths().is_empty() {
+                        bound_filters.push(is_not_null_filter(&node.alias));
                     }
                     if node.labels.is_empty() {
                         tree!(IR::Argument(None))

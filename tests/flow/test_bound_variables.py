@@ -10,6 +10,7 @@ IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/csvs/'
 
 class testBoundVariables(FlowTestsBase):
     def __init__(self):
+        os.makedirs(IMPORT_DIR, exist_ok=True)
         self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
@@ -155,6 +156,20 @@ class testBoundVariables(FlowTestsBase):
                          MATCH (alias4), p1 = (alias4)
                          RETURN alias4.id, length(p1), size(alias0), alias1""")
         self.env.assertEqual(res.result_set, [[1, 0, 1, 'x']])
+
+        # a node an earlier OPTIONAL MATCH left null has no path: the
+        # optional pattern pads null, the mandatory one drops the row
+        g2 = self.db.select_graph("bound_node_path_null")
+        res = g2.query("""OPTIONAL MATCH (n) WITH n
+                          OPTIONAL MATCH p = (n) RETURN p IS NULL""")
+        self.env.assertEqual(res.result_set, [[True]])
+        res = g2.query("OPTIONAL MATCH (n) WITH n MATCH p = (n) RETURN p")
+        self.env.assertEqual(res.result_set, [])
+        g2.delete()
+
+        # mixed bound and unbound components, no WITH in between
+        res = g.query("MATCH (n:A) MATCH p = (n), (m:B) RETURN n.id, m.id, length(p)")
+        self.env.assertEqual(res.result_set, [[1, 2, 0]])
 
         g.delete()
 
