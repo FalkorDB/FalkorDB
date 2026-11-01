@@ -3,6 +3,7 @@ import common
 from falkordb import FalkorDB
 from multiprocessing import Pool
 from redis import Redis
+from redis.exceptions import ResponseError
 
 
 def setup_module(module):
@@ -193,19 +194,23 @@ def test_index_scan_write_concurrent_with_writes():
     common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
     _hammer_under_write_load(_index_scan_write)
 
-def _multi_write_loop(stop, counter):
+def _multi_write_loop(stop, counter, errors):
     # Inline (MULTI/EXEC) writers commit on the main thread whenever they like,
-    # making any queued write that is still matching stale.
-    r = Redis(
-        host=os.environ.get("FALKORDB_HOST", "localhost"),
-        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
-        socket_timeout=60,
-    )
-    while not stop.is_set():
-        p = r.pipeline(transaction=True)
-        p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
-        p.execute()
-        counter[0] += 1
+    # making any queued write that is still matching stale. A writer that dies
+    # records why, so the test fails instead of passing with no write load left.
+    try:
+        r = Redis(
+            host=os.environ.get("FALKORDB_HOST", "localhost"),
+            port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+            socket_timeout=60,
+        )
+        while not stop.is_set():
+            p = r.pipeline(transaction=True)
+            p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
+            p.execute()
+            counter[0] += 1
+    except Exception as e:
+        errors.append(e)
 
 
 def test_queued_write_not_starved_by_inline_writers():
@@ -226,8 +231,9 @@ def test_queued_write_not_starved_by_inline_writers():
 
     stop = threading.Event()
     counter = [0]
+    errors = []
     threads = [
-        threading.Thread(target=_multi_write_loop, args=(stop, counter))
+        threading.Thread(target=_multi_write_loop, args=(stop, counter, errors))
         for _ in range(8)
     ]
     for t in threads:
@@ -248,6 +254,7 @@ def test_queued_write_not_starved_by_inline_writers():
         stop.set()
         for t in threads:
             t.join()
+    assert not errors, errors
     assert counter[0] > 0
     res = common.g.query("MATCH (m:Marker) RETURN m.c")
     assert res.result_set[0][0] == expected
@@ -272,18 +279,24 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
     port = int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379")))
     stop = threading.Event()
     counter = [0]
+    errors = []
 
     def hammer():
-        r = Redis(host=host, port=port, socket_timeout=60)
-        # The graph key exists from the batch's BEGIN; start only then, so the
-        # hammer never creates the graph itself.
-        while not stop.is_set() and b"test" not in r.execute_command("GRAPH.LIST"):
-            time.sleep(0.001)
-        while not stop.is_set():
-            p = r.pipeline(transaction=True)
-            p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
-            p.execute()
-            counter[0] += 1
+        # A hammer that dies records why, so the test fails instead of passing
+        # with no write load left.
+        try:
+            r = Redis(host=host, port=port, socket_timeout=60)
+            # The graph key exists from the batch's BEGIN; start only then, so the
+            # hammer never creates the graph itself.
+            while not stop.is_set() and b"test" not in r.execute_command("GRAPH.LIST"):
+                time.sleep(0.001)
+            while not stop.is_set():
+                p = r.pipeline(transaction=True)
+                p.execute_command("GRAPH.QUERY", "test", "CREATE (:Hammer)")
+                p.execute()
+                counter[0] += 1
+        except Exception as e:
+            errors.append(e)
 
     threads = [threading.Thread(target=hammer) for _ in range(8)]
     for t in threads:
@@ -296,7 +309,7 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
             ["--server-url", f"redis://{host}:{port}", "--nodes", str(csv_path), "test"],
         )
 
-    loader = threading.Thread(target=load)
+    loader = threading.Thread(target=load, daemon=True)
     start = time.time()
     loader.start()
     try:
@@ -306,8 +319,73 @@ def test_bulk_insert_not_starved_by_inline_writers(tmp_path):
         stop.set()
         for t in threads:
             t.join()
-    loader.join()
+    # Bounded: a stalled load fails the test rather than hanging it.
+    loader.join(timeout=30)
+    assert not loader.is_alive()
+    assert not errors, errors
     assert elapsed < 30
     assert result["res"].exit_code == 0, result["res"].output
     assert f"{rows} nodes created" in result["res"].output
     assert counter[0] > 0
+
+
+def test_queued_write_timeout_spans_stale_retries():
+    # The write timeout is for the whole write, not for each run of it: a write
+    # that loses its version and runs again only gets what the first run left.
+    # One run fits the budget, two do not, so resetting the budget on a retry
+    # would let the write finish.
+    import threading
+    import time
+
+    common.g.query("UNWIND range(1, 500000) AS i CREATE (:Big {v: i})")
+    common.g.query("CREATE (:Marker {c: 0})")
+    # long enough that one run is far above the scheduling noise
+    slow = (
+        "UNWIND range(1, 30) AS k MATCH (n:Big) WHERE n.v % 7 = 3 "
+        "WITH k, count(n) AS c MATCH (m:Marker) SET m.c = c RETURN max(c)"
+    )
+    r = Redis(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+        socket_timeout=60,
+    )
+
+    # A write timeout is only enforced once TIMEOUT_MAX / TIMEOUT_DEFAULT is set.
+    r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 600000)
+    stop = threading.Event()
+    counter = [0]
+    errors = []
+    threads = []
+    try:
+        r.execute_command("GRAPH.QUERY", "test", slow, "TIMEOUT", 600000)  # warm up
+        start = time.time()
+        r.execute_command("GRAPH.QUERY", "test", slow, "TIMEOUT", 600000)
+        one_run_ms = (time.time() - start) * 1000
+        common.g.query("MATCH (m:Marker) SET m.c = 0")
+
+        budget_ms = int(one_run_ms * 1.5)
+        threads = [
+            threading.Thread(target=_multi_write_loop, args=(stop, counter, errors))
+            for _ in range(8)
+        ]
+        for t in threads:
+            t.start()
+        time.sleep(0.5)
+        timed_out = False
+        try:
+            r.execute_command("GRAPH.QUERY", "test", slow, "TIMEOUT", budget_ms)
+        except ResponseError as e:
+            assert "Query timed out" in str(e), e
+            timed_out = True
+    finally:
+        stop.set()
+        for t in threads:
+            t.join()
+        r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 0)
+    assert not errors, errors
+    assert timed_out, f"finished within {budget_ms} ms although one run is {one_run_ms:.0f} ms"
+    # the aborted write left nothing behind
+    assert common.g.query("MATCH (m:Marker) RETURN m.c").result_set[0][0] == 0
+    # and the next write is not affected
+    res = common.g.query(slow)
+    assert res.result_set[0][0] == len([v for v in range(1, 500001) if v % 7 == 3])
