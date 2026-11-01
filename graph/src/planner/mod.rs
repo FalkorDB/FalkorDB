@@ -1884,24 +1884,23 @@ impl Planner {
             // an unrelated label scan, and the var-length expansion runs from
             // every candidate that scan finds (#2558).
             //
-            // Only one walk leads, and only one that can start the plan:
+            // Only a lone walk leads, and only one that can start the plan:
+            //   - it is the component's only variable-length hop, so no second
+            //     walk is left bound at an endpoint the runtime cannot start
+            //     from, nor scheduled before the hop that binds its endpoint;
             //   - its endpoint and edge attributes reference no variable, so
             //     moving it ahead of the hops that bind one loses no match;
-            //   - the anchored endpoint is one the scan can start from: a
-            //     bidirectional walk is only started from its `from` endpoint
-            //     (`select_var_len_scan_node` does not reverse it).
+            //   - its `from` endpoint is the anchored one: that is the scan the
+            //     walk starts from as planned, with no reversal that would have
+            //     to agree with `select_scan_node` on what filters the other
+            //     endpoint.
             // Any other walk keeps its place after the fixed-length hops, where
             // its endpoints are bound by the hops before it.
-            // Nothing is bound at all, not just no endpoint: reversing the walk
-            // rebuilds its scan and would drop an earlier clause's input.
             let var_len_anchor_leads = self.visited.is_empty()
                 && !relationships.iter().any(|r| {
-                    self.visited
-                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
-                        || (r.min_hops.is_none()
-                            && r.all_shortest_paths == AllShortestPaths::No
-                            && anchored(r))
+                    r.min_hops.is_none()
+                        && r.all_shortest_paths == AllShortestPaths::No
+                        && anchored(r)
                 });
             let references_variable =
                 |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
@@ -1909,15 +1908,19 @@ impl Planner {
                         .into_iter()
                         .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
                 };
-            let leading_walk = if var_len_anchor_leads {
+            let is_walk_hop = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                r.min_hops.is_some() || r.all_shortest_paths != AllShortestPaths::No
+            };
+            let leading_walk = if var_len_anchor_leads
+                && relationships.iter().filter(|r| is_walk_hop(r)).count() == 1
+            {
                 relationships
                     .iter()
                     .find(|r| {
                         r.min_hops.is_some()
                             && r.all_shortest_paths == AllShortestPaths::No
                             && !references_variable(r)
-                            && (is_constrained(&r.from)
-                                || (!r.bidirectional && is_constrained(&r.to)))
+                            && is_constrained(&r.from)
                     })
                     .map(|r| (r.alias.scope_id, r.alias.id))
             } else {

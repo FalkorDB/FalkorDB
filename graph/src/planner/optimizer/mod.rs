@@ -117,7 +117,8 @@ pub(crate) fn collect_expr_scoped_variables(
 /// Collects the `(scope_id, id)` of every variable that a top-level `AND`
 /// conjunct of `expr` reads on its own: a conjunct over a single variable can
 /// run as soon as that variable is bound, one that also reads another
-/// (a path, a second node) has to wait for it.
+/// (a path, a second node) has to wait for it. A conjunct holding a pattern
+/// is left out: the aliases the pattern reads are not in the expression tree.
 pub(crate) fn collect_single_variable_conjuncts(
     expr: &DynTree<ExprIR<Variable>>
 ) -> HashSet<(u32, u32)> {
@@ -133,12 +134,17 @@ pub(crate) fn collect_single_variable_conjuncts(
             }
             _ => {
                 let mut vars = HashSet::new();
+                let mut has_pattern = false;
                 for data in node.walk::<Bfs>() {
-                    if let ExprIR::Variable(var) = data {
-                        vars.insert((var.scope_id, var.id));
+                    match data {
+                        ExprIR::Variable(var) => {
+                            vars.insert((var.scope_id, var.id));
+                        }
+                        ExprIR::Pattern(_) | ExprIR::PatternComprehension(_) => has_pattern = true,
+                        _ => {}
                     }
                 }
-                if vars.len() == 1 {
+                if !has_pattern && vars.len() == 1 {
                     out.extend(vars);
                 }
             }
