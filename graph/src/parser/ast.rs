@@ -713,20 +713,21 @@ impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq +
     }
 }
 
+/// True for the aliases the parser generates for unnamed pattern entities
+/// (`_anon_<counter>`), as opposed to a user-written name that happens to
+/// start with `_anon`. A user-written name spelled exactly `_anon_<digits>` is
+/// indistinguishable from a generated one: the AST carries no provenance flag.
+pub fn is_generated_anon_alias(name: &str) -> bool {
+    name.strip_prefix("_anon_")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Concatenates the entries of two inline-attribute maps (`{k: v, ...}`).
 ///
 /// Both trees are rooted at [`ExprIR::Map`] whose children are the keys, each
 /// holding its value expression as its single child. Repeated keys are kept as
 /// separate entries: `{v: 1}` merged with `{v: 2}` becomes `{v: 1, v: 2}`,
 /// which the planner turns into `n.v = 1 AND n.v = 2`.
-/// True for the aliases the parser generates for unnamed pattern entities
-/// (`_anon_<counter>`), as opposed to a user-written name that happens to
-/// start with `_anon`.
-pub fn is_generated_anon_alias(name: &str) -> bool {
-    name.strip_prefix("_anon_")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-}
-
 fn merge_attr_maps<TVar: Clone>(
     lhs: &QueryExpr<TVar>,
     rhs: &QueryExpr<TVar>,
