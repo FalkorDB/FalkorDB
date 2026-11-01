@@ -477,13 +477,14 @@ fn node_comparable_siblings(
             IR::CondTraverse {
                 relationship,
                 emit_relationship,
+                bind_relationship,
                 chain,
                 optional,
                 transposed,
                 ..
             } => (
                 relationship,
-                *emit_relationship,
+                *emit_relationship || *bind_relationship,
                 chain,
                 *optional,
                 *transposed,
@@ -538,23 +539,17 @@ fn bound_node(
     }
 }
 
-/// Whether an edge joining `own` (source, destination, in edge direction) is the
-/// edge some already-bound sibling joins. Valid only without parallel edges.
-fn shares_edge_with_sibling(
-    siblings: &[SiblingEnds],
-    own: (NodeId, NodeId),
-    batch: &Batch<'_>,
+/// The `(source, destination)` of every already-bound sibling edge on this row,
+/// in edge direction.
+fn sibling_edge_pairs<'s>(
+    siblings: &'s [SiblingEnds],
+    batch: &'s Batch<'_>,
     row_idx: usize,
-) -> bool {
-    siblings.iter().any(|s| {
-        let (Some(f), Some(t)) = (
-            bound_node(batch, s.from, row_idx),
-            bound_node(batch, s.to, row_idx),
-        ) else {
-            return false;
-        };
-        let pair = if s.transposed { (t, f) } else { (f, t) };
-        pair == own
+) -> impl Iterator<Item = (NodeId, NodeId)> + 's {
+    siblings.iter().filter_map(move |s| {
+        let f = bound_node(batch, s.from, row_idx)?;
+        let t = bound_node(batch, s.to, row_idx)?;
+        Some(if s.transposed { (t, f) } else { (f, t) })
     })
 }
 
@@ -628,10 +623,13 @@ impl<'a> CondTraverseOp<'a> {
         // sets it for an edge that carries one, because expand_batch binds one
         // representative edge per (src, dst) pair and the Filter above has to
         // see every parallel edge to test them apart.
-        let node_unique =
-            (!emit_relationship && !optional && chain.is_empty() && !rp.bidirectional)
-                .then(|| node_comparable_siblings(runtime, rp, sibling_edges))
-                .flatten();
+        let node_unique = (!emit_relationship
+            && !bind_relationship
+            && !optional
+            && chain.is_empty()
+            && !rp.bidirectional)
+            .then(|| node_comparable_siblings(runtime, rp, sibling_edges))
+            .flatten();
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
             && bidir_dedup.is_none()
@@ -864,10 +862,6 @@ impl<'a> CondTraverseOp<'a> {
             return true;
         }
 
-        // Parallel edges need the per-row path, which tells them apart by id.
-        if state.multi_edge && self.node_unique.is_some() {
-            return false;
-        }
         let node_mode = self.node_unique.as_deref();
 
         let g = runtime.graph();
@@ -1074,6 +1068,9 @@ impl<'a> CondTraverseOp<'a> {
             && (rp.types.is_empty()
                 || self.chain[0].types.is_empty()
                 || rp.types.iter().any(|t| self.chain[0].types.contains(t)));
+        let mut sibling_row = u64::MAX;
+        let mut sibling_seed: Option<NodeId> = None;
+        let mut sibling_pairs: Vec<(NodeId, NodeId)> = Vec::new();
         for (row_i, dest_raw, count) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
@@ -1093,19 +1090,29 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
 
-            // Two edges joining the same nodes are one edge here, so an entry
-            // that repeats an edge a sibling is bound to is not a match.
-            if let Some(siblings) = node_mode
-                && let Some(seed) = bound_node(batch, from_alias.id, row_idx)
-                && shares_edge_with_sibling(siblings, (seed, dest_id), batch, row_idx)
-            {
-                continue;
+            // Edges joining the same pair of nodes: a sibling bound to one of
+            // them leaves one fewer for this edge, and a pair of single edges
+            // is none. The siblings' nodes are read once per input row.
+            let mut shared = 0u64;
+            if let Some(siblings) = node_mode {
+                if sibling_row != row_i {
+                    sibling_row = row_i;
+                    sibling_seed = bound_node(batch, from_alias.id, row_idx);
+                    sibling_pairs.clear();
+                    sibling_pairs.extend(sibling_edge_pairs(siblings, batch, row_idx));
+                }
+                if let Some(seed) = sibling_seed {
+                    shared = sibling_pairs
+                        .iter()
+                        .filter(|&&pair| pair == (seed, dest_id))
+                        .count() as u64;
+                }
             }
 
             // `count` is the number of paths from this row's source to `dest_id`;
             // each is one output row. A chain-less hop knows which edge each
             // row is; a fused chain binds none.
-            let mut count = count;
+            let mut count = count.saturating_sub(shared);
             if chain_overlap
                 && let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx)
                 && src_id == dest_id
@@ -1218,6 +1225,7 @@ impl<'a> CondTraverseOp<'a> {
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        need_edge_id: bool,
         node_unique: Option<&[SiblingEnds]>,
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
@@ -1270,7 +1278,7 @@ impl<'a> CondTraverseOp<'a> {
         let bidir_dedup = bidir_dedup.filter(|_| !state.multi_edge);
         // Siblings compared by node (the caller filters the results) need no id
         // check here.
-        let sibling_edges = if node_unique.is_some() && !state.multi_edge {
+        let sibling_edges = if node_unique.is_some() {
             &[]
         } else {
             sibling_edges
@@ -1310,6 +1318,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                need_edge_id,
             );
         } else {
             let need_bwd_rev =
@@ -1358,6 +1367,7 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
+                    need_edge_id,
                     &state.edge_type_indices,
                     &state.fwd_src_label_ids,
                     &state.fwd_dst_label_ids,
@@ -1402,6 +1412,7 @@ impl<'a> CondTraverseOp<'a> {
                     out,
                     emit_relationship,
                     sibling_edges,
+                    need_edge_id,
                     &state.edge_type_indices,
                     &state.rev_src_label_ids,
                     &state.rev_dst_label_ids,
@@ -1460,6 +1471,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        need_edge_id: bool,
     ) {
         let iters = state.union.as_deref_mut().expect("multi-type state");
         let need_bwd_rev = iters.rev.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
@@ -1507,6 +1519,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                need_edge_id,
                 &state.edge_type_indices,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
@@ -1551,6 +1564,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
+                need_edge_id,
                 &state.edge_type_indices,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
@@ -1572,6 +1586,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
+        need_edge_id: bool,
         edge_type_indices: &[usize],
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
@@ -1608,6 +1623,13 @@ impl<'a> CondTraverseOp<'a> {
             let mat_src = u64::from(src);
             let mat_dst = u64::from(dst);
             if !emit_relationship {
+                if !need_edge_id {
+                    // Nothing reads the edge and nothing compares ids: the pair
+                    // is the match, so skip the tensor lookup for a
+                    // representative.
+                    out.push((from_node, to_node, RelationshipId::from(0u64)));
+                    continue;
+                }
                 let mut found_id: Option<RelationshipId> = None;
                 let env = BatchRow::new(batch, row_idx);
                 'outer: for &tidx in edge_type_indices {
@@ -1724,6 +1746,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let emit_relationship = self.emit_relationship;
         let sibling_edges = self.sibling_edges;
         let node_unique = self.node_unique.as_deref();
+        let need_edge_id = node_unique.is_none();
         let transposed = self.transposed;
         let state_cell = &self.state;
         let bidir_dedup = self.bidir_dedup.as_ref();
@@ -1751,6 +1774,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     rp,
                     emit_relationship,
                     sibling_edges,
+                    need_edge_id,
                     node_unique,
                     transposed,
                     state_cell,
@@ -1760,16 +1784,30 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     row_idx,
                     &mut expanded,
                 )?;
-                if let Some(siblings) = node_unique
-                    && state_cell
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|st| !st.multi_edge)
-                {
-                    expanded.retain(|&(from, to, _)| {
-                        let own = if transposed { (to, from) } else { (from, to) };
-                        !shares_edge_with_sibling(siblings, own, batch, row_idx)
-                    });
+                if let Some(siblings) = node_unique {
+                    // As in the batched path: each sibling bound to a pair of
+                    // nodes takes one of the edges that join them.
+                    let pairs: Vec<(NodeId, NodeId)> =
+                        sibling_edge_pairs(siblings, batch, row_idx).collect();
+                    if !pairs.is_empty() {
+                        let mut taken: Vec<((NodeId, NodeId), usize)> = Vec::new();
+                        expanded.retain(|&(from, to, _)| {
+                            let own = if transposed { (to, from) } else { (from, to) };
+                            let shared = pairs.iter().filter(|&&p| p == own).count();
+                            if shared == 0 {
+                                return true;
+                            }
+                            let n = match taken.iter_mut().find(|(p, _)| *p == own) {
+                                Some((_, n)) => n,
+                                None => {
+                                    taken.push((own, 0));
+                                    &mut taken.last_mut().unwrap().1
+                                }
+                            };
+                            *n += 1;
+                            *n > shared
+                        });
+                    }
                 }
                 if expanded.is_empty() {
                     // Optional traverse: remember the unexpanded row so it can
