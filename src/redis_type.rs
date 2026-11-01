@@ -344,8 +344,8 @@ unsafe extern "C" fn graph_aux_load(
 /// (RediSearch's ForkGC), we return immediately — mirroring the C port's
 /// `_ForkPrepare`, which also opts out of graph-side synchronization for
 /// ForkGC forks. ForkGC forks while holding the GIL (RediSearch
-/// `fork_gc.c`), so waiting here on a graph lock whose holder is about to
-/// escalate and wait for the GIL would deadlock.
+/// `fork_gc.c`), and its child only walks RediSearch's own data, so the graphs
+/// need no preparation there.
 ///
 /// On the main thread, BGSAVE is invoked from the Redis command loop which
 /// already holds the GIL. Writers cannot be mid-mutation against the graph
