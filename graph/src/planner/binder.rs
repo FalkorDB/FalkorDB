@@ -63,11 +63,6 @@ pub struct Binder {
     /// rather than per variable, since `n` may be reachable under other names
     /// (`WITH n AS a, n AS b`, a CALL body's import).
     removed_labels: OrderSet<Arc<String>>,
-    /// Per projected variable, the labels `carry_node_labels` left out because
-    /// a REMOVE stripped them. They are no longer assumed to hold, but a
-    /// MERGE that names one is still the same declaration as before the
-    /// REMOVE, not a redeclaration with a new label.
-    carried_out_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
@@ -91,7 +86,6 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             removed_labels: OrderSet::default(),
-            carried_out_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
         }
@@ -415,8 +409,7 @@ impl Binder {
                         let key = (existing.scope_id, existing.id);
                         if let Some(existing_labels) = self.node_labels.get(&key) {
                             for label in node.labels.iter() {
-                                if !existing_labels.contains(label) && !self.carried_out(key, label)
-                                {
+                                if !existing_labels.contains(label) {
                                     return Err(format!(
                                         "Variable `{}` can't be redeclared in a MERGE clause",
                                         node.alias
@@ -440,9 +433,7 @@ impl Binder {
                             let key = (existing.scope_id, existing.id);
                             if let Some(existing_labels) = self.node_labels.get(&key) {
                                 for label in endpoint.labels.iter() {
-                                    if !existing_labels.contains(label)
-                                        && !self.carried_out(key, label)
-                                    {
+                                    if !existing_labels.contains(label) {
                                         return Err(format!(
                                             "Variable `{}` can't be redeclared in a MERGE clause",
                                             endpoint.alias
@@ -941,7 +932,6 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         removed_labels: OrderSet::default(),
-                        carried_out_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
                     };
@@ -1019,17 +1009,6 @@ impl Binder {
         }
     }
 
-    /// Whether `label` was left out of the labels carried to `key`.
-    fn carried_out(
-        &self,
-        key: (u32, u32),
-        label: &Arc<String>,
-    ) -> bool {
-        self.carried_out_labels
-            .get(&key)
-            .is_some_and(|l| l.contains(label))
-    }
-
     /// Give the projected variable `to` the labels `from` still holds: the
     /// accumulated ones minus any a REMOVE stripped.
     fn carry_node_labels(
@@ -1040,20 +1019,12 @@ impl Binder {
         let Some(labels) = self.node_labels.get(&(from.scope_id, from.id)) else {
             return;
         };
-        let mut held = OrderSet::default();
-        let mut stripped = OrderSet::default();
-        for label in labels.iter() {
-            if self.removed_labels.contains(label) {
-                stripped.insert(label.clone());
-            } else {
-                held.insert(label.clone());
-            }
-        }
-        let key = (to.scope_id, to.id);
-        self.node_labels.insert(key, held);
-        if stripped.iter().next().is_some() {
-            self.carried_out_labels.insert(key, stripped);
-        }
+        let held = labels
+            .iter()
+            .filter(|l| !self.removed_labels.contains(*l))
+            .cloned()
+            .collect();
+        self.node_labels.insert((to.scope_id, to.id), held);
     }
 
     /// Build projection pairs that map outer variables to fresh inner variables.
