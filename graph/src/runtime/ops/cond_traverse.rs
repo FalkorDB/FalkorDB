@@ -1248,6 +1248,11 @@ impl<'a> CondTraverseOp<'a> {
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
     ) {
+        let parallel = super::Parallel {
+            graph: g,
+            own_types: (!emit_relationship).then_some(edge_type_indices),
+            deleted: &|_| false,
+        };
         for (src, dst) in pairs {
             // Per-pair label validation replaces the per-query rmxm/lmxm
             // restriction on the relationship matrix. `(src, dst)` here are
@@ -1287,10 +1292,9 @@ impl<'a> CondTraverseOp<'a> {
                         let id = RelationshipId::from(raw_id);
                         if !super::edge_already_used(
                             &env,
-                            g,
+                            &parallel,
                             id,
                             rp.alias.id,
-                            !emit_relationship,
                             sibling_edges,
                         ) {
                             found_id = Some(id);
@@ -1313,14 +1317,7 @@ impl<'a> CondTraverseOp<'a> {
                     let id = RelationshipId::from(raw_id);
                     // Relationship uniqueness: skip edges already bound to other
                     // relationship variables in this MATCH clause.
-                    if super::edge_already_used(
-                        &env,
-                        g,
-                        id,
-                        rp.alias.id,
-                        !emit_relationship,
-                        sibling_edges,
-                    ) {
+                    if super::edge_already_used(&env, &parallel, id, rp.alias.id, sibling_edges) {
                         continue;
                     }
                     out.push((from_node, to_node, id));

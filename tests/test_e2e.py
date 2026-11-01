@@ -483,6 +483,54 @@ def test_collapsed_edge_ignores_uniqueness_only_among_parallel_edges():
     assert res.result_set == [[1, 2], [2, 1]]
 
 
+def test_collapsed_edge_uniqueness_is_scoped_to_its_union_branch():
+    # The branches of a UNION reuse alias ids; collapsing `r` and `s` in one
+    # branch must not relax the uniqueness the other branch applies to them.
+    query(
+        "CREATE (a:N), (b:N), (a)-[:R {w: 1}]->(b), (a)-[:R {w: 2}]->(b)",
+        write=True,
+    )
+    res = query(
+        "MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*) AS n, 0 AS m "
+        "UNION ALL "
+        "MATCH (a)-[r]->(x)<-[s]-(c) RETURN r.w AS n, s.w AS m"
+    )
+    assert sorted(res.result_set) == [[1, 0], [1, 2], [2, 1]]
+
+
+def test_collapsed_edge_alternatives_span_every_type_it_matches():
+    # `r` and `s` collapse to one representative edge per pair; the pair holds
+    # one R and one S edge, and either could stand in for either variable, so
+    # which representative is picked must not change the row count.
+    query("CREATE (a:N)-[:R]->(b:N), (a)-[:S]->(b)", write=True)
+    for q in [
+        "MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)",
+        "MATCH (a)-[r:R|S]->(x)<-[s:R|S]-(c) RETURN count(*)",
+        "MATCH (a)-[r]->(x)<-[s:R|S]-(c) RETURN count(*)",
+    ]:
+        assert query(q).result_set == [[1]], q
+    # `s` binds either edge, and `r` the other one: with one representative per
+    # type, a colliding R edge used to leave `s` with nothing.
+    query("MATCH ()-[x]->() SET x.w = CASE type(x) WHEN 'R' THEN 1 ELSE 2 END", write=True)
+    res = query("MATCH (a)-[r]->(x)<-[s:R|S]-(c) RETURN s.w ORDER BY s.w")
+    assert res.result_set == [[1], [2]]
+    # a deleted edge is no alternative
+    query("MATCH ()-[s:S]->() DELETE s", write=True)
+    assert query("MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)").result_set == [[0]]
+
+
+def test_collapsed_edge_alternative_ignores_edges_deleted_by_the_query():
+    query("CREATE (a:N)-[:R]->(b:N), (a)-[:S]->(b)", write=True)
+    # The S edge is deleted by this query: the only live edge between the pair
+    # is R, so `r` and `s` cannot bind distinct edges.
+    res = query(
+        "MATCH (a)-[d:S]->(b) DELETE d "
+        "WITH a, b MATCH (a)-[r]->(b)<-[s]-(a) RETURN count(*)",
+        write=True,
+    )
+    assert res.result_set == [[0]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
