@@ -3386,6 +3386,8 @@ impl<'a> Parser<'a> {
             height = self.expr_height;
             match_token!(self.lexer, RParen);
         }
+        // The target itself may already be too tall, with no lookup to charge.
+        self.check_depth(height)?;
         let has_properties = self.lexer.current()? == Token::Dot;
         while self.lexer.current()? == Token::Dot {
             self.lexer.next();
@@ -3779,6 +3781,22 @@ mod tests {
                     "{name}: {n} levels were accepted as a tree {height} deep",
                 );
             }
+        }
+    }
+
+    // A SET/REMOVE target is charged for the primary expression wrapped
+    // around what it nests even when no `.prop` follows it, so one a level or
+    // two over the cap is refused as too deep rather than as a bad target.
+    #[test]
+    fn update_target_without_property_is_bounded() {
+        with_functions();
+        let target = |n: usize| format!("abs({}1{})", "(".repeat(n), "+1)".repeat(n));
+        // 126 levels still fit under the cap and are rejected as a target.
+        for clause in ["REMOVE", "SET"] {
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(126))).unwrap_err();
+            assert!(!is_too_deep(&err), "{clause}: {err}");
+            let err = parse_fully(&format!("MATCH (x) {clause} {}", target(127))).unwrap_err();
+            assert!(is_too_deep(&err), "{clause}: 127 levels: {err}");
         }
     }
 
