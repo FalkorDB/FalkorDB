@@ -1814,6 +1814,11 @@ impl Pending {
             + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len()
+            // A cancelled entity is emitted as a create and a delete, and its
+            // type (registered at commit) as a schema addition: a commit holding
+            // nothing else must still build its buffer.
+            + 2 * self.cancelled_nodes.len()
+            + 2 * self.cancelled_relationships.len() as u64
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64

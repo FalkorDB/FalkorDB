@@ -516,6 +516,31 @@ class testEffects_02_HarderShapes(_EffectsBase):
         self.env.assertEqual(self.master.info()["sync_full"], full_before)
         self.assert_graph_eq()
 
+    def test08_a_cascaded_edge_of_a_new_type_with_nothing_surviving(self):
+        # Neither endpoint survives, so the commit holds nothing but
+        # cancellations. The type is still registered on the master at commit,
+        # so the buffer has to announce it (and the cancelled pair) even though
+        # no created or deleted entity of the existing graph is in it.
+        # https://github.com/FalkorDB/FalkorDB/issues/3447
+        self.set_effects_config()
+        self.query_and_sync("CREATE ()-[:EXISTING]->()")
+        failures_before = self.effect_failures()
+        full_before = self.master.info()["sync_full"]
+
+        self.query_and_sync(
+            "CREATE (a)-[:ONLY_CANCELLED_TYPE]->(b) DETACH DELETE a, b")
+
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="the replica refused the buffer")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="the cancelled edge forced a resync")
+        self.assert_agree(
+            "CALL db.relationshipTypes() YIELD relationshipType "
+            "WHERE relationshipType = 'ONLY_CANCELLED_TYPE' "
+            "RETURN relationshipType",
+            [["ONLY_CANCELLED_TYPE"]])
+        self.assert_graph_eq()
+
 
 #-----------------------------------------------------------------------------
 # 4g. several kinds of record from one statement
