@@ -174,3 +174,13 @@ class testHashJoin(FlowTestsBase):
         self.env.assertEqual(len(res.result_set), 2)
         res = g.query("UNWIND [9007199254740992, 9007199254740993] AS x RETURN count(DISTINCT x)")
         self.env.assertEqual(res.result_set, [[2]])
+
+    def test_mixed_numeric_matches_keep_build_order(self):
+        # a probe key that equals several non-grouped build entries gets its
+        # rows in build order, not entry by entry
+        g = self.graph
+        g.query("CREATE (:P {id: 1, x: 9007199254740992}), (:P {id: 2, x: 9007199254740993}), "
+                "(:P {id: 3, x: 9007199254740992}), (:Q {x: 9007199254740992.0})")
+        q = "MATCH (q:Q), (p:P) WHERE q.x = p.x RETURN p.id"
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1], [2], [3]])

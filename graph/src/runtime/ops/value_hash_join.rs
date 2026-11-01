@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use ahash::RandomState;
+use itertools::Itertools;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -404,8 +405,9 @@ impl<'a> ValueHashJoinOp<'a> {
 
     /// Populate `right_match_envs` with the build-side rows whose key equals
     /// `key`, preserving build insertion order, and reset `right_match_pos`.
-    /// Build groups all rows for a given key under a single entry, so at most
-    /// one entry matches; its `RightRowRef`s are materialised straight into
+    /// Build groups all rows for a given key under a single entry, so usually
+    /// one entry matches (several only for the non-transitive `Int`/`Float`
+    /// case, merged back into build order); its `RightRowRef`s are materialised straight into
     /// `right_match_envs` from `right_batches` with no intermediate ref copy.
     fn fill_matches(
         &mut self,
@@ -432,15 +434,30 @@ impl<'a> ValueHashJoinOp<'a> {
                 // Usually one entry matches; more only when the build side
                 // holds keys `=` cannot group, like `2^53` and `2^53.0`, that
                 // both equal this probe key (see [`same_build_key`]).
-                for (_, refs) in bucket.iter().filter(|(k, _)| keys_match(k, key)) {
-                    for slot in refs {
-                        let env = BatchRow::new(
-                            &self.right_batches[slot.batch as usize],
-                            slot.row as usize,
-                        )
-                        .to_owned_row();
-                        self.right_match_envs.push(env);
-                    }
+                let mut entries = bucket.iter().filter(|(k, _)| keys_match(k, key));
+                let Some((_, first)) = entries.next() else {
+                    return;
+                };
+                let rest: Vec<&BuildSlot> = entries.map(|(_, refs)| refs).collect();
+                // Rows of several entries interleave in the build, so merge
+                // them back into build order.
+                let merged: SmallVec<[RightRowRef; 1]>;
+                let refs: &[RightRowRef] = if rest.is_empty() {
+                    first
+                } else {
+                    merged = std::iter::once(first)
+                        .chain(rest)
+                        .flatten()
+                        .copied()
+                        .sorted_by_key(|r| (r.batch, r.row))
+                        .collect();
+                    &merged
+                };
+                for slot in refs {
+                    let env =
+                        BatchRow::new(&self.right_batches[slot.batch as usize], slot.row as usize)
+                            .to_owned_row();
+                    self.right_match_envs.push(env);
                 }
                 return;
             }
