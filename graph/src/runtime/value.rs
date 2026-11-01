@@ -42,8 +42,38 @@ use crate::{
         graph::{LabelId, NodeId, RelationshipId},
         graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
     },
-    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
+    runtime::{
+        functions::{
+            Type,
+            temporal::{construct_duration_secs, decompose_duration},
+        },
+        ordermap::OrderMap,
+        runtime::Runtime,
+    },
 };
+
+/// The deepest a value may nest: `[]` and `{}` are depth 1, `[[]]` is depth 2.
+///
+/// `Value` is recursive, and so is everything that walks one — drop, hash,
+/// compare, the RDB encoder, reply formatting, the UDF conversions — one stack
+/// frame (or a few) per level. A value deep enough exhausts the stack of the
+/// thread that touches it, which is an abort rather than an error. So every
+/// place a nested value can *enter* the engine refuses one deeper than this,
+/// and every recursive walk can then rely on the bound.
+///
+/// On a release build a 2 MiB thread (Rust's default, and what the query pool
+/// runs on) frees a nested list of about 25,900 levels before its stack runs
+/// out. 4,096 leaves a wide margin below that, and is far beyond any nesting
+/// real data uses; the tests run values at exactly this depth on a 2 MiB
+/// thread.
+pub const MAX_VALUE_NESTING: usize = 4096;
+
+/// The error an entry point returns for a value nested past
+/// [`MAX_VALUE_NESTING`].
+#[must_use]
+pub fn value_nesting_error() -> String {
+    format!("Value nesting exceeds the maximum depth of {MAX_VALUE_NESTING}")
+}
 
 /// A trait for formatting values as JSON, similar to Display but for JSON output
 pub trait DisplayJson {
@@ -132,8 +162,11 @@ impl Point {
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
+        // `a` is sin²(c/2), mathematically in [0, 1]; for (near-)antipodal
+        // points it rounds just above 1 and `(1.0 - a).sqrt()` would be NaN.
         let a = (lat1.cos() * lat2.cos())
-            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2));
+            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2))
+            .clamp(0.0, 1.0);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in meters
@@ -294,7 +327,6 @@ impl Value {
 
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
-        use crate::runtime::functions::temporal::decompose_duration;
         use std::fmt::Write;
         let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
             return format!("PT{duration_secs}S");
@@ -697,9 +729,31 @@ fn add_duration_to_timestamp(
     ts: i64,
     dur_secs: i64,
 ) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, years, months);
+    Ok(days * 86400 + time_of_day + remaining_secs)
+}
+
+/// Subtract a duration from a timestamp.
+fn sub_duration_from_timestamp(
+    ts: i64,
+    dur_secs: i64,
+) -> Result<i64, String> {
+    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let (days, time_of_day) = shift_months(ts, -years, -months);
+    Ok(days * 86400 + time_of_day - remaining_secs)
+}
+
+/// Move `ts` by whole years and months, returning (days since epoch, time of
+/// day). A day past the end of the target month rolls over into the next
+/// month (2020-03-31 minus one month is 2020-03-02), as C's `timegm`
+/// normalisation does. Addition and subtraction share this so that
+/// `d - dur == d + (-dur)`.
+fn shift_months(
+    ts: i64,
+    years: i32,
+    months: i32,
+) -> (i64, i64) {
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
@@ -722,31 +776,10 @@ fn add_duration_to_timestamp(
         (adj_year, adj_month, d)
     };
 
-    let new_days = days_from_civil(final_year, final_month, final_day);
-    Ok(new_days * 86400 + time_of_day + remaining_secs)
-}
-
-/// Subtract a duration from a timestamp.
-fn sub_duration_from_timestamp(
-    ts: i64,
-    dur_secs: i64,
-) -> Result<i64, String> {
-    use crate::runtime::functions::temporal::decompose_duration;
-
-    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let days = ts.div_euclid(86400);
-    let time_of_day = ts.rem_euclid(86400);
-    let (y, m, d) = civil_from_days(days);
-
-    let new_year = y - years;
-    let new_month_raw = m as i32 - months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
-    let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
-    let max_day = days_in_month(adj_year, adj_month);
-    let day = d.min(max_day);
-
-    let new_days = days_from_civil(adj_year, adj_month, day);
-    Ok(new_days * 86400 + time_of_day - remaining_secs)
+    (
+        days_from_civil(final_year, final_month, final_day),
+        time_of_day,
+    )
 }
 
 const fn days_in_month(
@@ -1009,9 +1042,6 @@ impl Value {
             }
             // Duration + Duration: decompose both, add components
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
@@ -1027,9 +1057,12 @@ impl Value {
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
                 Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
-                Ok(Self::Time(add_duration_to_timestamp(t, dur)?))
-            }
+            // A time has no date: keep only the time of day. Every duration
+            // encoding is whole days (years/months/days) plus a clock offset,
+            // so the time of day of `t + dur` is the openCypher result.
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
+                Self::Time((t.rem_euclid(86400) + dur.rem_euclid(86400)).rem_euclid(86400)),
+            ),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1054,9 +1087,6 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                use crate::runtime::functions::temporal::{
-                    construct_duration_secs, decompose_duration,
-                };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
                 let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
@@ -1072,9 +1102,9 @@ impl Sub for Value {
             (Self::Datetime(d), Self::Duration(dur)) => {
                 Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) => {
-                Ok(Self::Time(sub_duration_from_timestamp(t, dur)?))
-            }
+            (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
+                (t.rem_euclid(86400) - dur.rem_euclid(86400)).rem_euclid(86400),
+            )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
                 Err("Type mismatch: cannot subtract a temporal value from a duration".to_string())
@@ -1351,6 +1381,8 @@ impl ValueGetType for Value {
 }
 
 impl Value {
+    /// The type's name as C spells it (`SIType_ToString`): what `typeOf()`
+    /// returns and what every "Type mismatch: … but was <name>" error prints.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -1362,9 +1394,9 @@ impl Value {
             Self::List(_) => "List",
             Self::Map(_) => "Map",
             Self::Node(_) => "Node",
-            Self::Relationship(..) => "Relationship",
+            Self::Relationship(..) => "Edge",
             Self::Path(_) => "Path",
-            Self::VecF32(_) => "VecF32",
+            Self::VecF32(_) => "Vectorf32",
             Self::Point(_) => "Point",
             Self::Datetime(_) => "Datetime",
             Self::Date(_) => "Date",
@@ -2129,66 +2161,83 @@ impl Encode<19> for Value {
 
 impl Decode<19> for Value {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let tag = r.read_unsigned()?;
-        match tag {
-            si_type::T_NULL => Ok(Self::Null),
-            si_type::T_BOOL => Ok(Self::Bool(r.read_signed()? != 0)),
-            si_type::T_INT64 => Ok(Self::Int(r.read_signed()?)),
-            si_type::T_DOUBLE => Ok(Self::Float(r.read_double()?)),
-            // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
-            t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
-                let buf = r.read_buffer()?;
-                let s = if buf.last() == Some(&0) {
-                    String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
-                } else {
-                    String::from_utf8_lossy(&buf).to_string()
-                };
-                if t == (si_type::T_INTERN | si_type::T_STRING) {
-                    Ok(Self::String(
-                        crate::runtime::string_pool::global().intern(Arc::new(s)),
-                    ))
-                } else {
-                    Ok(Self::String(Arc::new(s)))
-                }
+        decode_value(r, 0)
+    }
+}
+
+/// [`Value::decode`] for a value inside `depth` enclosing arrays.
+///
+/// Recursive, so the depth is counted and a value inside more than
+/// [`MAX_VALUE_NESTING`] arrays is a decode error: `GRAPH.RESTORE` hands this
+/// a client's bytes, and a few hundred KB of nested `T_ARRAY` headers would
+/// otherwise be tens of thousands of frames. Every value the engine accepts is
+/// within the same bound, so nothing it saved is refused here.
+fn decode_value(
+    r: &mut dyn Reader,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_VALUE_NESTING {
+        return Err(value_nesting_error());
+    }
+    let tag = r.read_unsigned()?;
+    match tag {
+        si_type::T_NULL => Ok(Value::Null),
+        si_type::T_BOOL => Ok(Value::Bool(r.read_signed()? != 0)),
+        si_type::T_INT64 => Ok(Value::Int(r.read_signed()?)),
+        si_type::T_DOUBLE => Ok(Value::Float(r.read_double()?)),
+        // T_STRING or T_INTERN_STRING (T_INTERN | T_STRING = (1<<19) | (1<<11) = 526336)
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
+            let buf = r.read_buffer()?;
+            let s = if buf.last() == Some(&0) {
+                String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()
+            } else {
+                String::from_utf8_lossy(&buf).to_string()
+            };
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
+                Ok(Value::String(
+                    crate::runtime::string_pool::global().intern(Arc::new(s)),
+                ))
+            } else {
+                Ok(Value::String(Arc::new(s)))
             }
-            si_type::T_ARRAY => {
-                let len = r.read_unsigned()?;
-                let mut items = ThinVec::with_capacity(len as usize);
-                for _ in 0..len {
-                    items.push(Self::decode(r)?);
-                }
-                Ok(Self::List(Arc::new(items)))
-            }
-            si_type::T_POINT => {
-                let lat = r.read_double()?;
-                let lon = r.read_double()?;
-                Ok(Self::Point(Point {
-                    latitude: lat as f32,
-                    longitude: lon as f32,
-                }))
-            }
-            si_type::T_VECTOR_F32 => {
-                let bytes = r.read_buffer()?;
-                if bytes.len() < 4 {
-                    return Err("vector buffer too short".into());
-                }
-                let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
-                let mut v = ThinVec::with_capacity(dim);
-                for i in 0..dim {
-                    let off = 4 + i * 4;
-                    if off + 4 > bytes.len() {
-                        return Err("vector data truncated".into());
-                    }
-                    v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
-                }
-                Ok(Self::VecF32(Arc::new(v)))
-            }
-            si_type::T_DATETIME => Ok(Self::Datetime(r.read_signed()?)),
-            si_type::T_DATE => Ok(Self::Date(r.read_signed()?)),
-            si_type::T_TIME => Ok(Self::Time(r.read_signed()?)),
-            si_type::T_DURATION => Ok(Self::Duration(r.read_signed()?)),
-            _ => Err(format!("unknown SIType tag: {tag}")),
         }
+        si_type::T_ARRAY => {
+            let len = r.read_unsigned()?;
+            let mut items = ThinVec::with_capacity(len as usize);
+            for _ in 0..len {
+                items.push(decode_value(r, depth + 1)?);
+            }
+            Ok(Value::List(Arc::new(items)))
+        }
+        si_type::T_POINT => {
+            let lat = r.read_double()?;
+            let lon = r.read_double()?;
+            Ok(Value::Point(Point {
+                latitude: lat as f32,
+                longitude: lon as f32,
+            }))
+        }
+        si_type::T_VECTOR_F32 => {
+            let bytes = r.read_buffer()?;
+            if bytes.len() < 4 {
+                return Err("vector buffer too short".into());
+            }
+            let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+            let mut v = ThinVec::with_capacity(dim);
+            for i in 0..dim {
+                let off = 4 + i * 4;
+                if off + 4 > bytes.len() {
+                    return Err("vector data truncated".into());
+                }
+                v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+            }
+            Ok(Value::VecF32(Arc::new(v)))
+        }
+        si_type::T_DATETIME => Ok(Value::Datetime(r.read_signed()?)),
+        si_type::T_DATE => Ok(Value::Date(r.read_signed()?)),
+        si_type::T_TIME => Ok(Value::Time(r.read_signed()?)),
+        si_type::T_DURATION => Ok(Value::Duration(r.read_signed()?)),
+        _ => Err(format!("unknown SIType tag: {tag}")),
     }
 }
 
@@ -2687,5 +2736,167 @@ mod sort_cmp_tests {
             .collect();
         mixed.sort_by(Value::sort_cmp);
         assert!(mixed.is_sorted_by(|a, b| a.sort_cmp(b).is_le()));
+    }
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::{MAX_VALUE_NESTING, Value, value_nesting_error};
+    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, si_type};
+    use std::{collections::VecDeque, sync::Arc};
+    use thin_vec::thin_vec;
+
+    /// The query pool's worker stack: Rust's default for a spawned thread.
+    const WORKER_STACK: usize = 2 << 20;
+
+    #[derive(Debug)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Double(f64),
+        Buffer(Vec<u8>),
+    }
+
+    #[derive(Default)]
+    struct Tape(VecDeque<Op>);
+
+    impl Writer for Tape {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.0.push_back(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.0.push_back(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.0.push_back(Op::Double(val));
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.0.push_back(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    impl Reader for Tape {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.0.pop_front() {
+                Some(Op::Unsigned(v)) => Ok(v),
+                other => Err(format!("tape: expected unsigned, got {other:?}")),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.0.pop_front() {
+                Some(Op::Signed(v)) => Ok(v),
+                other => Err(format!("tape: expected signed, got {other:?}")),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            match self.0.pop_front() {
+                Some(Op::Double(v)) => Ok(v),
+                other => Err(format!("tape: expected double, got {other:?}")),
+            }
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.0.pop_front() {
+                Some(Op::Buffer(v)) => Ok(v),
+                other => Err(format!("tape: expected buffer, got {other:?}")),
+            }
+        }
+    }
+
+    /// `[[...[1]...]]` with `depth` lists, built without recursion.
+    fn nested(depth: usize) -> Value {
+        let mut v = Value::Int(1);
+        for _ in 0..depth {
+            v = Value::List(Arc::new(thin_vec![v]));
+        }
+        v
+    }
+
+    /// The RDB encoding of `depth` nested single-element lists around a NULL,
+    /// written directly so a payload deeper than any `Value` can be built.
+    fn nested_tape(depth: usize) -> Tape {
+        let mut t = Tape::default();
+        for _ in 0..depth {
+            t.write_unsigned(si_type::T_ARRAY);
+            t.write_unsigned(1);
+        }
+        t.write_unsigned(si_type::T_NULL);
+        t
+    }
+
+    fn list_depth(mut v: &Value) -> usize {
+        let mut depth = 0;
+        while let Value::List(items) = v {
+            depth += 1;
+            v = &items[0];
+        }
+        depth
+    }
+
+    /// Run `f` on a thread with the query pool's stack size.
+    fn on_worker_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn rdb_decode_accepts_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING);
+            let v = Value::decode(&mut t).expect("a value at the cap decodes");
+            assert!(t.0.is_empty());
+            assert_eq!(list_depth(&v), MAX_VALUE_NESTING);
+            drop(v);
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_one_past_the_cap() {
+        on_worker_stack(|| {
+            let mut t = nested_tape(MAX_VALUE_NESTING + 1);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_decode_refuses_the_advisory_payload() {
+        // 60,000 levels: the GRAPH.RESTORE payload that used to exhaust the
+        // stack. The decoder stops at the cap, so this runs on a worker-sized
+        // stack too.
+        on_worker_stack(|| {
+            let mut t = nested_tape(60_000);
+            assert_eq!(Value::decode(&mut t), Err(value_nesting_error()));
+        });
+    }
+
+    #[test]
+    fn rdb_round_trip_at_the_cap() {
+        // Everything a stored value goes through on its way to an RDB and
+        // back, and the drop of both copies, on a worker-sized stack.
+        on_worker_stack(|| {
+            let v = nested(MAX_VALUE_NESTING);
+            let mut t = Tape::default();
+            v.encode(&mut t);
+            let back = Value::decode(&mut t).expect("what was saved loads back");
+            assert!(t.0.is_empty());
+            assert_eq!(back, v);
+            drop(back);
+            drop(v);
+        });
     }
 }

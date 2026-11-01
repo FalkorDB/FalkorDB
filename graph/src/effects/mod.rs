@@ -39,7 +39,6 @@ use std::fmt::Write as _;
 
 use crate::graph::graph::Graph;
 use announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
-use atomic_refcell::AtomicRefCell;
 use error::ApplyError;
 
 use crate::runtime::pending::Pending;
@@ -166,7 +165,7 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
     /// read differently.
     fn build<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         buf: &mut W,
     ) -> Result<u64, String>;
 
@@ -178,7 +177,7 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
     /// has not registered, which would mean the DDL did not run.
     fn build_index<W: EffectWrite + ?Sized>(
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
         buf: &mut W,
@@ -484,7 +483,7 @@ impl EffectsBuffer {
     pub fn build(
         &mut self,
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
     ) -> Result<u64, String> {
         <EffectsPayload as EffectsFormat<WIRE_VERSION>>::build(pending, graph, self)
     }
@@ -497,7 +496,7 @@ impl EffectsBuffer {
     pub fn build_index(
         &mut self,
         pending: &Pending,
-        graph: &AtomicRefCell<Graph>,
+        graph: &Graph,
         create: bool,
         index: &AnnouncedIndex<'_>,
     ) -> Result<(), String> {
