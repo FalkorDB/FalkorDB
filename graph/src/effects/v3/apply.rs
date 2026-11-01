@@ -566,7 +566,26 @@ fn apply_record(
             // Judged here, against the constraints this buffer has installed so
             // far, as it was when the records applied in order: by the time the
             // deferred statement runs, later records' constraints are in place.
-            if g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, &fields) {
+            let mut blocked =
+                g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, &fields);
+            if fields.is_empty() {
+                // An empty drop removes every field of its type, those an
+                // earlier queued create adds included, which the index map
+                // does not hold yet.
+                blocked |= index_ddl.iter().any(|ddl| match ddl {
+                    IndexDdl::Create {
+                        index_type: t,
+                        schema_type: e,
+                        label: l,
+                        fields: added,
+                        ..
+                    } if t == &index_type && e == &schema_type && l == &label => {
+                        g.index_drop_blocked_by_constraint(&index_type, &schema_type, &label, added)
+                    }
+                    _ => false,
+                });
+            }
+            if blocked {
                 return Err(ApplyError::Graph("Index supports constraint".to_string()));
             }
             index_ddl.push(IndexDdl::Drop {
@@ -1748,6 +1767,64 @@ mod tests {
 
         // Nothing is built on the way to refusing either: `single_index_label`
         // runs before `Graph::create_index` is called at all.
+    }
+
+    #[test]
+    fn an_empty_drop_counts_the_fields_an_earlier_queued_create_adds() {
+        // [CREATE_INDEX A(zz), UNIQUE constraint A(zz), DROP_INDEX A []]: the
+        // empty drop removes every range field, `zz` included, which the index
+        // map does not hold yet because the create is deferred. The constraint
+        // protects it, so the buffer is refused at the drop.
+        let mut g = graph();
+        g.get_label_id_mut("A");
+        g.add_node_attribute_name("zz");
+
+        let mut buf = new_buffer();
+        Record::CreateIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "A".to_owned(),
+            }],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "zz".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(None),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateConstraint {
+            constraint_type: ConstraintType::Unique,
+            entity_type: EntityType::Node,
+            status: ConstraintStatus::Operational,
+            label_id: 0,
+            label: "A".to_owned(),
+            props: vec![AttrRef {
+                id: 0,
+                name: "zz".to_owned(),
+            }],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::DropIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "A".to_owned(),
+            }],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+
+        let err = apply_effects(&mut g, &buf).expect_err("the drop must be refused");
+        assert!(
+            matches!(&err, ApplyError::Graph(m) if m == "Index supports constraint"),
+            "{err:?}"
+        );
     }
 
     #[test]
