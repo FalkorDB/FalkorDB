@@ -1962,6 +1962,43 @@ class test_udf_javascript():
         self.env.assertEqual(v, None)
 
 
+    def test_forged_entity_by_prototype_tricks(self):
+        """
+        An object that shares a real entity's prototype or constructor is still
+        not that entity: only the instances the engine made are references to
+        graph entities.
+        """
+
+        script = """
+        function viaCreate(n) { return Object.create(Object.getPrototypeOf(n)); }
+        function viaSetProto(n) {
+            return Object.setPrototypeOf({id: 1000}, Object.getPrototypeOf(n));
+        }
+        function viaNew(n) { return new n.constructor(); }
+        function viaConstruct(n) { return Reflect.construct(n.constructor, []); }
+        function viaAssign(n) { return Object.assign(Object.create(n), {id: 1000}); }
+        falkor.register('viaCreate', viaCreate);
+        falkor.register('viaSetProto', viaSetProto);
+        falkor.register('viaNew', viaNew);
+        falkor.register('viaConstruct', viaConstruct);
+        falkor.register('viaAssign', viaAssign);
+        """
+        self.db.udf_load("protoforge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for f in ["viaCreate", "viaSetProto", "viaNew", "viaConstruct", "viaAssign"]:
+            for q in [f"MATCH (a {{id:0}}) WITH protoforge.{f}(a) AS n "
+                      "MATCH (b {id:1}) CREATE (b)-[:R]->(n)",
+                      f"MATCH (a {{id:0}}) RETURN startNode(protoforge.{f}(a))"]:
+                try:
+                    self.graph.query(q)
+                except ResponseError:
+                    pass
+
+        # the server is alive and the graph is unchanged
+        self.env.assertEqual(self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
     def test_forged_entity_markers(self):
         """
         A plain JS object that copies the node/edge markers is a Map, not a
