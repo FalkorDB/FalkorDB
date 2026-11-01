@@ -291,3 +291,16 @@ class testFilters():
         plan = str(g.explain(
             "MATCH (x:B), (y:B) WITH count(*) AS s MATCH (b:B), (c:B) WHERE c.v = b.v RETURN count(*)"))
         self.env.assertContains("Value Hash Join", plan)
+
+    def test11_filter_over_carried_variable_across_aggregating_with(self):
+        # Variables a WITH carries over (an aggregating one included) are the
+        # only ones visible above it; a filter must see those, not the
+        # pre-WITH variable that happens to share the ID.
+        g = self.db.select_graph("filter_carried_across_with")
+        g.query("CREATE (:B {v: 0}), (:B {v: 5}), (:B {v: 5})")
+        for q, expected in [
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c MATCH (b:B) WHERE b.v = v RETURN v, c, count(b) ORDER BY v", [[0, 1, 1], [5, 2, 2]]),
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c WHERE c > 1 MATCH (b:B), (d:B) WHERE d.v = v AND b.v = v RETURN v, count(*)", [[5, 4]]),
+            ("MATCH (x:B) WITH x.v AS v, count(*) AS c ORDER BY c DESC LIMIT 1 MATCH (b:B), (d:B) WHERE d.v = b.v AND d.v = v RETURN v, c, count(*)", [[5, 2, 4]]),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, expected, depth=1)
