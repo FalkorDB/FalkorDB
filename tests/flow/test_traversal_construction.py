@@ -605,6 +605,13 @@ class testTraversalConstruction():
         self.env.assertContains("Node By Label Scan | (d:Doc)", str(g.explain(q)))
         self.env.assertEqual(g.query(q).result_set, [[600]])
 
+        # Variables a projection carries or drops are not rescanned or mistaken
+        # for bindings of the chain.
+        for q, expected in [
+                ("MATCH (a:Doc) WITH 1 AS x ORDER BY a.id MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000),
+                ("MATCH (a:Doc) WITH a.id AS aid, count(a) AS n MATCH (b:Doc)-[r:LINK]->() RETURN count(r)", 10000)]:
+            self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+
         # The delete from the report.
         res = g.query("UNWIND range(0, 9) AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() DELETE r")
         self.env.assertEqual(res.relationships_deleted, 40)
@@ -630,4 +637,17 @@ class testTraversalConstruction():
                 ("MATCH (d:Doc {id: 20}) CALL { WITH d UNWIND [1, 2] AS x MATCH (d)-[r:LINK]->() RETURN r } RETURN count(r)", 8),
                 ("UNWIND [20, 21] AS x MATCH (d:Doc)-[:LINK]->(o:Other) WHERE d.id = x AND o.id = x * 4 RETURN count(d)", 2)]:
             self.env.assertEqual(g.query(q).result_set, [[expected]], message=q)
+        g.delete()
+
+    # Variables an earlier clause dropped can share an id with a chain
+    # variable; they must not count as bound when the hops are ordered.
+    def test_traverse_after_unwind_ignores_dropped_variables(self):
+        g = self.db.select_graph("TraverseDroppedVars")
+        g.query("UNWIND range(0, 5) AS i CREATE (:C {id: i})")
+        g.query("UNWIND range(0, 4) AS i MATCH (a:C {id: i}), (b:C {id: i + 1}) CREATE (a)-[:R]->(b)")
+        g.query("MATCH (n:C) WHERE n.id IN [3, 4] SET n:D")
+        chain = "WITH x MATCH (a)-[:R]->(b)-[:R]->(c {id: x})-[:R]->(d:D {id: x + 1}) RETURN count(*)"
+        for dropped in ["", "UNWIND [0] AS u1 ", "UNWIND [0] AS u1 UNWIND [0] AS u2 UNWIND [0] AS u3 UNWIND [0] AS u4 "]:
+            q = f"UNWIND [2, 3] AS x {dropped}{chain}"
+            self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
         g.delete()

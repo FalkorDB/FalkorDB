@@ -398,9 +398,19 @@ fn collect_output_pairs(
     match ir {
         IR::Project { exprs, copies } => {
             out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
-            out.extend(copies.iter().map(|(v, _)| (v.id, v.scope_id)));
+            // A copy reads `old` and writes `new`: both are carried.
+            for (old, new) in copies {
+                out.extend([(old.id, old.scope_id), (new.id, new.scope_id)]);
+            }
         }
-        IR::Aggregate { names, .. } => out.extend(names.iter().map(|v| (v.id, v.scope_id))),
+        IR::Aggregate {
+            names, projections, ..
+        } => {
+            out.extend(names.iter().map(|v| (v.id, v.scope_id)));
+            for (old, new) in projections {
+                out.extend([(old.id, old.scope_id), (new.id, new.scope_id)]);
+            }
+        }
         IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
         _ => {}
     }
@@ -1066,10 +1076,22 @@ pub(super) fn select_scan_node(
             // The outer subtree moved beneath the new scan binds its
             // variables too (`UNWIND ... AS x` feeding `{id: x}` filters).
             if let Some(outer) = &preserved_argument {
+                let mut outer_ids = collect_subtree_variables(&outer.root());
                 for ir in outer.root().walk::<Bfs>() {
-                    b.extend(collect_output_aliases(ir));
+                    outer_ids.extend(collect_output_aliases(ir));
                 }
-                b.extend(collect_subtree_variables(&outer.root()));
+                if arg_transparent {
+                    // The outer subtree provably binds none of the chain's
+                    // variables, so an id it shares with one is a variable it
+                    // dropped (ids are reused across scopes): not a binding
+                    // the chain's hops may rely on.
+                    for (rel, ..) in &rels {
+                        for alias in [&rel.alias, &rel.from.alias, &rel.to.alias] {
+                            outer_ids.remove(&alias.id);
+                        }
+                    }
+                }
+                b.extend(outer_ids);
             }
             b
         };
