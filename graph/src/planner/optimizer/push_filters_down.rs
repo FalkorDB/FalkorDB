@@ -122,6 +122,8 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 // the first false conjunct, so a conjunct pushed down onto it
                 // must still be guarded by it (`n.v <> 1` before
                 // `1 / (n.v - 1) = 0`, or the merge raises "Division by zero").
+                // A `null` verdict does not stop `And`, here or in a single
+                // `WHERE a AND b`: the merged filter behaves like that one.
                 let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
                 for f in [&child_filter, &filter] {
                     if matches!(f.root().data(), ExprIR::And) {

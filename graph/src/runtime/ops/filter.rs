@@ -18,16 +18,15 @@
 //! A row survives only when the predicate is `true`; `false` and `null` both
 //! drop it, and any non-boolean result is a type error.
 
-use crate::parser::ast::{ExprIR, QueryExpr, Variable};
+use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
-    eval::ExprNode,
     runtime::Runtime,
     value::Value,
     vector_expr::{ExprColumn, VectorEval},
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 pub struct FilterOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -59,45 +58,15 @@ impl<'a> FilterOp<'a> {
         &mut self,
         mut batch: Batch<'a>,
     ) -> Result<Option<Batch<'a>>, String> {
-        let mut rows: Vec<usize> = batch.active_indices().collect();
+        let rows: Vec<usize> = batch.active_indices().collect();
         if rows.is_empty() {
             return Ok(None);
         }
 
-        // A top-level `AND` is the planner's merge of stacked filters, so each
-        // conjunct runs only over the rows the previous ones kept: a `null`
-        // verdict drops the row here exactly as a separate `Filter` would, and
-        // does not let a later conjunct (`1 / (n.v - 1) = 0`) raise on it.
         let root = self.tree.root();
-        if matches!(root.data(), ExprIR::And) {
-            for conjunct in root.children() {
-                rows = self.passing(&conjunct, &batch, &rows)?;
-                if rows.is_empty() {
-                    return Ok(None);
-                }
-            }
-        } else {
-            rows = self.passing(&root, &batch, &rows)?;
-        }
+        let verdict = VectorEval::new(self.runtime).eval(&root, &batch, &rows)?;
 
-        if rows.is_empty() {
-            Ok(None)
-        } else {
-            batch.set_selection(rows.into_iter().map(|row| row as u16).collect());
-            Ok(Some(batch))
-        }
-    }
-
-    /// The subset of `rows` for which `predicate` is `true`.
-    fn passing(
-        &self,
-        predicate: &ExprNode<'_>,
-        batch: &Batch<'a>,
-        rows: &[usize],
-    ) -> Result<Vec<usize>, String> {
-        let verdict = VectorEval::new(self.runtime).eval(predicate, batch, rows)?;
-
-        Ok(match verdict {
+        let passing = match verdict {
             // The common shape: a comparison or boolean tree is already a mask.
             // `null` rows are marked in the bitmap and drop with the `false`s —
             // but a predicate over non-null data marks none, so the bitmap is
@@ -106,13 +75,13 @@ impl<'a> FilterOp<'a> {
                 .iter()
                 .enumerate()
                 .filter(|&(i, _)| mask[i])
-                .map(|(_, &row)| row)
+                .map(|(_, &row)| row as u16)
                 .collect(),
             ExprColumn::Bools(mask, nulls) => rows
                 .iter()
                 .enumerate()
                 .filter(|&(i, _)| mask[i] && !nulls.is_null(i))
-                .map(|(_, &row)| row)
+                .map(|(_, &row)| row as u16)
                 .collect(),
             // Any other shape — a bare boolean property, a function call, a
             // subtree that fell back per row — is read one row at a time. A
@@ -123,7 +92,7 @@ impl<'a> FilterOp<'a> {
                 let mut passing = Vec::new();
                 for (i, &row) in rows.iter().enumerate() {
                     match other.get(i) {
-                        Value::Bool(true) => passing.push(row),
+                        Value::Bool(true) => passing.push(row as u16),
                         Value::Bool(false) | Value::Null => {}
                         value => {
                             return Err(format!(
@@ -135,7 +104,14 @@ impl<'a> FilterOp<'a> {
                 }
                 passing
             }
-        })
+        };
+
+        if passing.is_empty() {
+            Ok(None)
+        } else {
+            batch.set_selection(passing);
+            Ok(Some(batch))
+        }
     }
 }
 

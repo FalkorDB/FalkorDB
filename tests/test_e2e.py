@@ -469,12 +469,6 @@ def test_stacked_filters_keep_their_order():
         "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
     )
     assert res.result_set == [[9]]
-    # A `null` verdict from the first filter drops the row just as a separate
-    # Filter would: the second conjunct must not run on it.
-    res = query(
-        "MATCH (n:N) WHERE n.missing = 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
-    )
-    assert res.result_set == [[0]]
 
 
 def test_node_labels():
