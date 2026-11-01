@@ -220,6 +220,10 @@ pub struct Parser<'a> {
     /// with everything else that decides whether the attempt can succeed.
     /// See [`Parser::parse_list_literal_or_comprehension`].
     not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+    /// Set while a `CYPHER` parameter value is parsed as an expression: a sign run
+    /// is then limited to what the grammar took before runs parsed (`+`, `-` or
+    /// `+-`), at every nesting level, since the parser folds a run to its parity.
+    legacy_signs: bool,
 }
 
 /// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
@@ -283,6 +287,7 @@ impl<'a> Parser<'a> {
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
             not_pattern_comprehension: HashSet::new(),
+            legacy_signs: false,
         }
     }
 
@@ -437,16 +442,12 @@ impl<'a> Parser<'a> {
             return Ok(value);
         }
         self.restore_state(state);
-        // A parameter takes at most the sign the expression grammar took before
-        // runs of them parsed (`+`, `-` or `+-`). `parse_expr` folds a run to its
-        // parity, and `---1` or `--9223372036854775808` would come out accepted.
-        optional_match_token!(self.lexer, Plus);
-        optional_match_token!(self.lexer, Dash);
-        if let Ok(token @ (Token::Plus | Token::Dash)) = self.lexer.current() {
-            return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
-        }
-        self.restore_state(state);
-        evaluate_param(&self.parse_expr(false)?.root())
+        // `parse_expr` folds a run of signs to its parity, so `---1` would come out
+        // accepted: a parameter keeps the sign grammar it had before runs parsed.
+        self.legacy_signs = true;
+        let expr = self.parse_expr(false);
+        self.legacy_signs = false;
+        evaluate_param(&expr?.root())
     }
 
     /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
@@ -2239,9 +2240,19 @@ impl<'a> Parser<'a> {
                 } else if current == 9 {
                     // unary add or subtract, any run of them: `- -5` is 5
                     let mut negate_count = 0;
+                    let mut plus_count = 0;
                     loop {
                         match self.lexer.current() {
-                            Ok(Token::Plus) => {}
+                            Ok(token @ (Token::Plus | Token::Dash))
+                                if self.legacy_signs
+                                    && (negate_count > 0
+                                        || plus_count > 0 && matches!(token, Token::Plus)) =>
+                            {
+                                return Err(self
+                                    .lexer
+                                    .format_error(&format!("Invalid input {token:?}")));
+                            }
+                            Ok(Token::Plus) => plus_count += 1,
                             Ok(Token::Dash) => negate_count += 1,
                             // Handle integer overflow with negation
                             Err(err) if negate_count > 0 => {
@@ -4000,6 +4011,7 @@ mod tests {
         assert!(param_of("9223372036854775808").is_err());
         // A second `-` is not part of a literal, and never parsed before.
         assert_eq!(format!("{:?}", param_of("+-1").unwrap()), "Int(-1)");
+        assert!(param_of("[+-1, -2, {a: -3}]").is_ok());
         for value in [
             "--1",
             "---1",
@@ -4007,6 +4019,9 @@ mod tests {
             "--9223372036854775808",
             "-+-1",
             "++1",
+            "[--1]",
+            "{a: ---1}",
+            "[1, [-+1]]",
         ] {
             assert!(param_of(value).is_err(), "accepted parameter {value}");
         }
