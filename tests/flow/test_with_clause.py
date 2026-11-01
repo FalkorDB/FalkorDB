@@ -408,5 +408,13 @@ class testWithClause(FlowTestsBase):
             for pattern in ["size([(n:A)-->(x) | x]) > 0", "(n:A)-->()"]:
                 q = f"MATCH (n) WITH n AS m WHERE {pattern} OR m.v = 5 MATCH (m) RETURN m.v ORDER BY m.v"
                 self.env.assertEqual(g.query(q).result_set, [[1], [5]], message=q)
+
+            # ORDER BY sees the pre-projection variables too, through a pattern
+            # comprehension (a bare pattern predicate is not parsed there).
+            for q in [
+                "MATCH (n) WITH n.v AS k ORDER BY size([(n)-->(x) | x]) DESC, k RETURN k",
+                "MATCH (n) WITH n AS m ORDER BY size([(n)-->(x) | x]) DESC, m.v RETURN m.v",
+            ]:
+                self.env.assertEqual(g.query(q).result_set, [[1], [0], [5]], message=q)
         finally:
             g.delete()
