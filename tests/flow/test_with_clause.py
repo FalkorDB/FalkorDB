@@ -434,3 +434,16 @@ class testWithClause(FlowTestsBase):
             self.env.assertEqual(res.result_set, [[0], [1], [5]])
         finally:
             g.delete()
+
+    def test17_hidden_slot_key_does_not_clobber_an_alias(self):
+        # The hidden entry for the copy of `n` (scope 1, id 2) is keyed
+        # `_slot_1_2`, which is also a legal alias. It used to overwrite the
+        # alias, so the later MATCH lost its rows.
+        g = self.db.select_graph("with_slot_alias")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        try:
+            res = g.query("""MATCH (n) WITH n.v AS k, n.v + 0 AS _slot_1_2 WHERE n.v = 0
+                             MATCH (x)-->(y) RETURN k, _slot_1_2, x.v, y.v""")
+            self.env.assertEqual(res.result_set, [[0, 0, 1, 0]])
+        finally:
+            g.delete()

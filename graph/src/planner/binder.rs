@@ -263,7 +263,7 @@ impl Binder {
     /// planner), so removing an entry whose id the bound IR still uses would
     /// let the next variable of this scope reuse that id, and the two would
     /// share one record slot. The entry stays under a hidden `_slot_` key
-    /// that no query can name and that RETURN * and CALL {} skip.
+    /// that RETURN * and CALL {} skip, made unique against the aliases in scope.
     fn hide_names(
         &mut self,
         names: impl IntoIterator<Item = Arc<String>>,
@@ -271,8 +271,13 @@ impl Binder {
         let scope_id = self.env_stack.len() - 1;
         for name in names {
             if let Some(var) = self.env_stack[scope_id].remove(&name) {
-                let key = Arc::new(format!("_slot_{scope_id}_{}", var.id));
-                self.env_stack[scope_id].insert(key, var);
+                // `_slot_..` is a valid alias, so a query can already hold the
+                // key; take one that is free instead of overwriting it.
+                let mut key = format!("_slot_{scope_id}_{}", var.id);
+                while self.env_stack[scope_id].contains_key(&key) {
+                    key.push('_');
+                }
+                self.env_stack[scope_id].insert(Arc::new(key), var);
             }
         }
     }
