@@ -494,8 +494,6 @@ const DUR_MONTH_BITS: u32 = 13;
 const DUR_MAX_SECONDS: i64 = (1 << (DUR_SEC_BITS - 1)) - 1;
 const DUR_MAX_DAYS: i64 = (1 << (DUR_DAY_BITS - 1)) - 1;
 const DUR_MAX_MONTHS: i64 = (1 << (DUR_MONTH_BITS - 1)) - 1;
-/// The most months a duration can hold (an `i32`, as before).
-const DUR_LIMIT_MONTHS: i64 = i32::MAX as i64;
 
 pub struct Dur(u64);
 
@@ -513,7 +511,8 @@ impl Dur {
     ) -> Result<Self, String> {
         let err =
             || format!("Duration out of range: months={months}, days={days}, seconds={seconds}");
-        if months.unsigned_abs() > DUR_LIMIT_MONTHS as u64 {
+        // Months are an `i32`, both ends: `i32::MIN` is as valid as `i32::MAX`.
+        if i32::try_from(months).is_err() {
             return Err(err());
         }
         // The components must also be addable to a timestamp, and their legacy
@@ -1455,6 +1454,33 @@ mod duration_tests {
             assert_eq!(duration_from_legacy(legacy), Ok(p.clone()));
         }
         assert_eq!(duration_from_legacy(86_400), Ok(dur(0, 1, 0)));
+    }
+
+    /// The month bound is an `i32`'s, both ends: `i32::MIN` is as valid as
+    /// `i32::MAX`, and neither is exceeded by one.
+    #[test]
+    fn the_month_bounds_are_the_i32_bounds() {
+        for months in [i64::from(i32::MIN), i64::from(i32::MAX)] {
+            assert_eq!(dur(months, 0, 0).components().0, months);
+        }
+        assert!(Dur::new(i64::from(i32::MIN) - 1, 0, 0).is_err());
+        assert!(Dur::new(i64::from(i32::MAX) + 1, 0, 0).is_err());
+    }
+
+    /// A month offset far from the epoch is fine when the day offset brings the
+    /// result back: only the final timestamp has to be in range.
+    #[test]
+    fn month_and_day_offsets_cancel_before_the_range_is_checked() {
+        // 1,000,000 years is exactly 2,500 Gregorian 400-year cycles.
+        let cancel = v(12_000_000, -365_242_500, 0);
+        assert_eq!(Value::Datetime(0) + cancel.clone(), Ok(Value::Datetime(0)));
+        assert_eq!(
+            Value::Datetime(0) - v(-12_000_000, 365_242_500, 0),
+            Ok(Value::Datetime(0))
+        );
+        // nothing cancels: each is in range on its own
+        assert!((Value::Datetime(0) + v(12_000_000, 0, 0)).is_ok());
+        assert!((Value::Datetime(0) + v(i64::from(i32::MIN), 0, 0)).is_ok());
     }
 
     #[test]

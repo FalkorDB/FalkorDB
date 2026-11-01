@@ -665,6 +665,25 @@ class testTemporalDuration(FlowTestsBase):
             except Exception as e:
                 self.env.assertTrue("overflow" in str(e).lower() or "out of range" in str(e).lower())
 
+    def test_duration_month_bounds_and_cancelling_offsets(self):
+        # Months are an i32, both ends: the minimum is as valid as the maximum.
+        res = self.graph.query("""RETURN toString(duration({months: -2147483648})),
+                                         toString(duration({months: 2147483647}))""")
+        self.env.assertEqual(res.result_set[0],
+                             ['P-178956970Y-8M', 'P178956970Y7M'])
+        for months in (-2147483649, 2147483648):
+            try:
+                self.graph.query(f"RETURN duration({{months: {months}}})")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertTrue("out of range" in str(e).lower() or "overflow" in str(e).lower())
+
+        # A month offset far from the calendar is fine when the day offset
+        # brings the result back: only the final timestamp has to be in range.
+        res = self.graph.query("""RETURN toString(date('1970-01-01') + duration({months: 12000000, days: -365242500})),
+                                         toString(date('1970-01-01') - duration({months: -12000000, days: 365242500}))""")
+        self.env.assertEqual(res.result_set[0], ['1970-01-01', '1970-01-01'])
+
     def test_duration_minimum_seconds_subtraction(self):
         # A day brings i64::MIN seconds into range; subtracting must not overflow.
         res = self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d

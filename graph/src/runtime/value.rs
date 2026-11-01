@@ -752,26 +752,30 @@ fn shift_months(
     ts: i64,
     total_months: i64,
 ) -> Result<(i64, i64), String> {
-    // Years far outside the calendar are an error, not a wrapped date.
-    let years = i32::try_from(total_months.div_euclid(12))
-        .ok()
-        .filter(|y| y.abs() < 1_000_000)
-        .ok_or_else(|| "Duration out of range".to_string())?;
+    // Checked all the way: a year the calendar cannot represent (an `i32`) is an
+    // error, never a wrapped date. There is no narrower cutoff, because the
+    // day offset that follows can bring a far-off month shift back into range
+    // (`+ 12_000_000 months - 365_242_500 days` is the identity); only the
+    // timestamp this ends in has to fit, which `shift_timestamp` checks.
+    let out_of_range = || "Duration out of range".to_string();
+    let years = i32::try_from(total_months.div_euclid(12)).map_err(|_| out_of_range())?;
     let months = total_months.rem_euclid(12) as i32;
     let days = ts.div_euclid(86400);
     let time_of_day = ts.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
 
-    let new_year = y.saturating_add(years);
+    let new_year = y.checked_add(years).ok_or_else(out_of_range)?;
     let new_month_raw = m as i32 + months;
-    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    let adj_year = new_year
+        .checked_add((new_month_raw - 1).div_euclid(12))
+        .ok_or_else(out_of_range)?;
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
     let max_day = days_in_month(adj_year, adj_month);
     let (final_year, final_month, final_day) = if d > max_day {
         let overflow = d - max_day;
         let nm = adj_month + 1;
         let (ny, nm) = if nm > 12 {
-            (adj_year + 1, 1)
+            (adj_year.checked_add(1).ok_or_else(out_of_range)?, 1)
         } else {
             (adj_year, nm)
         };
@@ -779,6 +783,10 @@ fn shift_months(
     } else {
         (adj_year, adj_month, d)
     };
+    // `days_from_civil` steps the year back for January and February.
+    if final_year == i32::MIN {
+        return Err(out_of_range());
+    }
 
     Ok((
         days_from_civil(final_year, final_month, final_day),
