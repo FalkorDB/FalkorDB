@@ -704,7 +704,19 @@ unsafe extern "C" fn on_keyspace_event(
             // the graph and lives in the graph's database; the graph now lives
             // elsewhere, and a graph created here under the name must not append
             // to its history.
-            telemetry::delete_stream(&Context::new(ctx), &key_name);
+            //
+            // Only a graph has one: the event reaches every key that moves, and
+            // `telemetry{k}` of a string `k` is nobody's history. The registry
+            // still has the graph where it was (`move_to` relocates it).
+            let context = Context::new(ctx);
+            let db = selected_db(&context);
+            let moved_graph = GRAPH_REGISTRY
+                .lock()
+                .values()
+                .any(|e| e.db == db && e.name == key_name);
+            if moved_graph {
+                telemetry::delete_stream(&context, &key_name);
+            }
         }
         "move_to" => {
             // `ctx` has the destination database selected.

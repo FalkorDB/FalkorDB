@@ -194,7 +194,18 @@ class testMultiDb():
         self.assert_writable(1, "mv", "Moved")
 
         self.query(0, "mv", "CREATE (:Fresh)")
-        time.sleep(0.5)  # past the flusher's window
-        self.env.assertEqual(self.scalar(0, "mv", "MATCH (n:Moved) RETURN count(n)"), 0)
+        # Before any further query: each one logs an entry of its own.
+        deadline = time.time() + 10
+        while self.con(0).exists(stream) == 0 and time.time() < deadline:
+            time.sleep(0.05)
         self.env.assertEqual(self.con(0).xlen(stream), 1)
+        self.env.assertEqual(self.scalar(0, "mv", "MATCH (n:Moved) RETURN count(n)"), 0)
+        self.assert_alive()
+
+    def test08_move_of_a_plain_key_leaves_other_keys_alone(self):
+        con = self.con(0)
+        con.set("k", "value")
+        con.set("telemetry{k}", "keep")
+        self.env.assertEqual(con.move("k", 1), True)
+        self.env.assertEqual(con.get("telemetry{k}"), b"keep")
         self.assert_alive()
