@@ -2550,7 +2550,7 @@ mod tests {
             assert_eq!(back.get(1, 3).count(), 0);
             assert_eq!(back.get(7, 8).collect::<Vec<_>>(), vec![15]);
         }
-        // Writing unloads and reloads the base in place; it must still be whole.
+        // Encoding must leave the base matrix intact; it must still be whole.
         assert_eq!(edges(&once), expect);
     }
 

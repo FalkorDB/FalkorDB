@@ -2135,4 +2135,55 @@ mod tests {
         // encoding unloads and reloads the matrix; it must be intact
         assert_eq!(m.get(1, 2), Some(true));
     }
+
+    /// A foreground SAVE / DUMP / GRAPH.COPY encodes a matrix that read queries
+    /// share (a shallow clone) while they traverse it. The source must stay
+    /// readable for the whole encode, not only after it returns: a Writer
+    /// holding a clone reads the entries from inside `write_buffer`.
+    #[test]
+    fn source_matrix_stays_readable_while_encoding() {
+        struct ReadsSource {
+            reader: Matrix<bool>,
+            seen: usize,
+        }
+        impl super::Writer for ReadsSource {
+            fn write_unsigned(
+                &mut self,
+                _: u64,
+            ) {
+            }
+            fn write_signed(
+                &mut self,
+                _: i64,
+            ) {
+            }
+            fn write_double(
+                &mut self,
+                _: f64,
+            ) {
+            }
+            fn write_buffer(
+                &mut self,
+                _: &[u8],
+            ) {
+                assert_eq!(self.reader.get(1, 2), Some(true));
+                assert_eq!(self.reader.get(5, 6), Some(true));
+                assert_eq!(self.reader.get(3, 3), None);
+                self.seen += 1;
+            }
+        }
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.set(5, 6, true);
+        m.wait();
+        let mut w = ReadsSource {
+            reader: m.clone(),
+            seen: 0,
+        };
+        super::Encode::encode(&m, &mut w);
+        assert!(w.seen > 0, "the writer never ran");
+        assert_eq!(m.get(1, 2), Some(true));
+    }
 }
