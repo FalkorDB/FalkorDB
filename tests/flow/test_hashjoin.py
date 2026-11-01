@@ -165,3 +165,12 @@ class testHashJoin(FlowTestsBase):
         self.env.assertEqual(joined("(a), (b)", "a.x", "b.x"), [[7]])
         # the same one level down, inside a list key
         self.env.assertEqual(joined("(a), (b)", "[a.x]", "[b.x]"), [[7]])
+
+    def test_distinct_ints_above_2_pow_53(self):
+        # the join's Int/Float key handling must not leak into the shared
+        # value hash: DISTINCT identifies values by it
+        g = self.graph
+        res = g.query("UNWIND [9007199254740992, 9007199254740993] AS x RETURN DISTINCT x")
+        self.env.assertEqual(len(res.result_set), 2)
+        res = g.query("UNWIND [9007199254740992, 9007199254740993] AS x RETURN count(DISTINCT x)")
+        self.env.assertEqual(res.result_set, [[2]])

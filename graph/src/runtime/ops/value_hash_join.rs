@@ -33,6 +33,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use ahash::RandomState;
 use once_cell::sync::Lazy;
@@ -116,7 +117,58 @@ static JOIN_HASH_SEED: Lazy<RandomState> = Lazy::new(RandomState::new);
 /// Buckets re-check exact `Value` equality, so the hash only needs to spread
 /// keys; the random seed is what keeps that spread non-adversarial.
 fn hash_value(value: &Value) -> u64 {
-    JOIN_HASH_SEED.hash_one(value)
+    JOIN_HASH_SEED.hash_one(JoinKey(value))
+}
+
+/// A join key as the table hashes it: [`Value`]'s hash, except that an `Int`
+/// above 2^53 hashes as the `Float` it compares equal to.
+///
+/// `=` compares an `Int` with a `Float` as `i as f64`, which rounds above 2^53,
+/// so several ints equal the same float (`2^53 + 1 = 2^53.0`) and equal keys
+/// must land in one bucket. This lives here and not in `Value::hash`, because
+/// `DISTINCT` and the MERGE cache identify a value by its hash alone, and there
+/// `Int(2^53)` and `Int(2^53 + 1)` must stay different. Below 2^53 the
+/// `i64 -> f64 -> i64` round trip is exact, so nothing there changes.
+struct JoinKey<'a>(&'a Value);
+
+impl Hash for JoinKey<'_> {
+    fn hash<H: Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        match self.0 {
+            Value::Int(x) if x.unsigned_abs() > INT_KEY_LIMIT => {
+                2.hash(state);
+                (*x as f64 as i64).hash(state);
+            }
+            Value::List(items) => {
+                4.hash(state);
+                items.len().hash(state);
+                for item in items.iter() {
+                    JoinKey(item).hash(state);
+                }
+            }
+            Value::Path(items) => {
+                8.hash(state);
+                items.len().hash(state);
+                for item in items.iter() {
+                    JoinKey(item).hash(state);
+                }
+            }
+            Value::Map(map) => {
+                // Maps are equal whatever their entry order: hash by key.
+                5.hash(state);
+                map.len().hash(state);
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (k, v) in entries {
+                    k.hash(state);
+                    JoinKey(v).hash(state);
+                }
+            }
+            other => other.hash(state),
+        }
+    }
 }
 
 /// Cypher `=` between two join keys: a match only when they compare equal *and*
@@ -182,7 +234,7 @@ fn same_build_key(
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => false,
-        (Value::List(x), Value::List(y)) => {
+        (Value::List(x), Value::List(y)) | (Value::Path(x), Value::Path(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| same_build_key(a, b))
         }
         (Value::Map(x), Value::Map(y)) => {
@@ -540,6 +592,23 @@ mod tests {
 
     fn string(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
+    }
+
+    #[test]
+    fn mixed_numeric_keys_stay_apart_inside_paths_and_agree_on_the_hash() {
+        let path = |v: Value| Value::Path(Arc::new(std::iter::once(v).collect()));
+        let big = 1_i64 << 53;
+        let (i, f, i1) = (
+            Value::Int(big),
+            Value::Float(big as f64),
+            Value::Int(big + 1),
+        );
+        // Int and Float never share a build entry, at any depth ...
+        assert!(!same_build_key(&path(i.clone()), &path(f.clone())));
+        assert!(same_build_key(&path(i.clone()), &path(i.clone())));
+        // ... yet keys `=` equates hash alike, so a probe finds them.
+        assert_eq!(hash_value(&path(f.clone())), hash_value(&path(i1)));
+        assert_eq!(hash_value(&list(vec![f])), hash_value(&list(vec![i])));
     }
 
     #[test]
