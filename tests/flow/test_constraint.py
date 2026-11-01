@@ -1274,6 +1274,25 @@ class testUniqueConstraintValueEquality():
             admitted = self._admits(f"CREATE ()-[:{rel} {{v: {b}}}]->()")
             self.env.assertEqual(admitted, not dup, message=f"CREATE {a} then {b}")
 
+    def test04_unenforced_values_never_collide_in_one_commit(self):
+        # lists, points, temporals, vectors and NaN do not participate, so
+        # several of them in one commit, or next to committed ones, are fine,
+        # alone and inside a composite key
+        unenforced = ["[1, 2]", "point({latitude: 1, longitude: 2})",
+                      "date('2020-01-01')", "vecf32([1.0])", "0.0/0.0"]
+        for i, v in enumerate(unenforced):
+            lbl = f"U{i}"
+            create_unique_node_constraint(self.g, lbl, "v", sync=True)
+            create_unique_node_constraint(self.g, lbl, "a", "b", sync=True)
+            self.g.query(f"CREATE (:{lbl} {{v: {v}}}), (:{lbl} {{v: {v}}})")
+            self.g.query(f"CREATE (:{lbl} {{v: {v}}})")
+            self.g.query(f"CREATE (:{lbl} {{a: {v}, b: 1}}), (:{lbl} {{a: {v}, b: 1}})")
+            self.g.query(f"CREATE (:{lbl} {{a: {v}, b: 1}})")
+            rel = f"UR{i}"
+            create_unique_edge_constraint(self.g, rel, "v", sync=True)
+            self.g.query(f"CREATE ()-[:{rel} {{v: {v}}}]->(), ()-[:{rel} {{v: {v}}}]->()")
+            self.g.query(f"CREATE ()-[:{rel} {{v: {v}}}]->()")
+
     def test03_constraint_over_existing_data(self):
         # validating existing data uses the same equality: equal values make
         # the new constraint FAILED, unenforced kinds leave it OPERATIONAL
@@ -1565,10 +1584,12 @@ class testUniqueConstraintLookup():
 
     def test05_values_the_index_cannot_match(self):
         g = self.g
-        # strings (NUL included) and booleans go through the index; arrays,
-        # large integers, NaN and the empty string are checked by a scan
-        for v in ["'abc'", "'a\\u0000b'", "'\\u0000'", "true", "[1, 2]",
-                  "1152921504606846976", "0.0/0.0", "''"]:
+        # strings (NUL included) and booleans go through the index (`true` is
+        # left out: it equals the numeric id 1); large
+        # integers and the empty string are checked by a scan. Arrays and NaN
+        # are not enforced (C does not), see testUniqueConstraintValueEquality.
+        for v in ["'abc'", "'a\\u0000b'", "'\\u0000'", "false",
+                  "1152921504606846976", "''"]:
             g.query(f"CREATE (:U {{id: {v}}})")
             self._violates(f"CREATE (:U {{id: {v}}})")
 
