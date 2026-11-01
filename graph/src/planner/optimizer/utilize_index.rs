@@ -834,7 +834,9 @@ fn needs_post_filter(
         && matches!(rhs.data(), ExprIR::List)
         && rhs.num_children() > 0
         && rhs.children().all(|child| match child.data() {
-            ExprIR::Constant(Value::Bool(_) | Value::Float(_) | Value::String(_)) => true,
+            ExprIR::Constant(Value::Float(_) | Value::String(_)) => true,
+            // A Bool is exact only where the backend keys it apart from numbers.
+            ExprIR::Constant(v @ Value::Bool(_)) => is_exact_index_literal(v),
             // Large int64s can't round-trip through f64 exactly,
             // so the runtime will reject them and fall back to a
             // full scan — the Filter has to stay above to
@@ -866,8 +868,28 @@ fn needs_post_filter(
         ) && node
             .children()
             .any(|c| matches!(c.data(), ExprIR::Constant(Value::Bool(_))));
-        bool_range_bound || is_non_indexable_subexpr(node.data(), Some(scan_alias))
+        // Where a Bool is not exact, a comparison or boolean operator below a
+        // comparison can evaluate to the Bool the scan then cannot serve.
+        let bool_valued_operand = cfg!(feature = "index-falkordb")
+            && is_boolean_operator(node.data())
+            && std::iter::successors(node.parent(), |p| p.parent())
+                .find(|p| !matches!(p.data(), ExprIR::Paren))
+                .is_some_and(|p| is_comparison(p.data()));
+        bool_range_bound
+            || bool_valued_operand
+            || is_non_indexable_subexpr(node.data(), Some(scan_alias))
     })
+}
+
+const fn is_comparison(expr: &ExprIR<Variable>) -> bool {
+    matches!(
+        expr,
+        ExprIR::Eq | ExprIR::Lt | ExprIR::Gt | ExprIR::Le | ExprIR::Ge | ExprIR::In
+    )
+}
+
+const fn is_boolean_operator(expr: &ExprIR<Variable>) -> bool {
+    is_comparison(expr) || matches!(expr, ExprIR::And | ExprIR::Or)
 }
 
 /// Returns true when the given `ExprIR` describes a value that the
