@@ -1852,8 +1852,9 @@ fn a_writer_overtaken_by_an_indexer_batch_keeps_its_progress() {
 /// end, it is a one-pass build of the final data.
 #[test]
 fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
-    // (which edge is deleted, its id's new endpoints, the column after both commits)
-    for (deleted, (src, dst), held) in [(0, (3, 0), vec![]), (2, (0, 0), vec![0, 2])] {
+    // (which edge is deleted, its id's new endpoints, the column after both commits as
+    // (edge, value) pairs)
+    for (deleted, (src, dst), after) in [(0, (3, 0), vec![]), (2, (0, 0), vec![(0, 1), (2, 9)])] {
         for writer_first in [false, true] {
             ensure_graphblas();
             let mut g = Graph::new(64, 64, 10, 1, "t");
@@ -1895,21 +1896,34 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                 g.apply_index_writes(&mut w);
             };
             let what = format!("edge {deleted} reused, writer first: {writer_first}");
-            let held_ids = |mvcc: &MvccGraph| {
+            let values = [1, 2, 3, 9];
+            let column = |mvcc: &MvccGraph| {
                 contents(
                     &mvcc.read().borrow(),
                     EntityType::Relationship,
                     &ty,
                     &attr,
-                    &[],
+                    &values,
                 )
-                .1
+            };
+            // `contents` of a column holding exactly `held`, as (edge, value) pairs.
+            let holding = |held: &[(usize, i64)]| {
+                let per_value = values
+                    .iter()
+                    .map(|&v| {
+                        let ids = held.iter().filter(|&&(_, w)| w == v);
+                        (v, ids.map(|&(i, _)| eids[i]).collect())
+                    })
+                    .collect();
+                let mut all: Vec<(i64, u64)> = held.iter().map(|&(i, w)| (w, eids[i])).collect();
+                all.sort_unstable();
+                (per_value, all.into_iter().map(|(_, id)| id).collect())
             };
 
             let (prepared, batch) = prepare(mvcc, &id, 1);
             if writer_first {
                 commit_write(mvcc, write);
-                assert_eq!(held_ids(mvcc), Vec::<u64>::new(), "{what}: no batch yet");
+                assert_eq!(column(mvcc), holding(&[]), "{what}: no batch yet");
                 let committed = mvcc.commit_indexer_batch(&prepared, &batch);
                 assert!(
                     matches!(committed, Ok(IndexerCommit::CatchUp(_))),
@@ -1923,12 +1937,11 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
                     Ok(IndexerCommit::Same),
                     "{what}"
                 );
-                assert_eq!(held_ids(mvcc), vec![eids[0]], "{what}: the batch's a->b");
+                assert_eq!(column(mvcc), holding(&[(0, 1)]), "{what}: the batch's a->b");
                 assert_eq!(escalate(&mvcc, &fork), Ok(()), "{what}");
                 mvcc.commit(fork).expect("the write commits");
             }
-            let expected: Vec<u64> = held.iter().map(|&i| eids[i]).collect();
-            assert_eq!(held_ids(mvcc), expected, "{what}: both committed");
+            assert_eq!(column(mvcc), holding(&after), "{what}: both committed");
             assert_eq!(
                 cursor(&mvcc.read().borrow(), EntityType::Relationship, &ty, &attr),
                 cursor(&prepared.borrow(), EntityType::Relationship, &ty, &attr),
@@ -1951,7 +1964,6 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
             }
             let published = mvcc.read();
             let g = published.borrow();
-            let values = [1, 2, 3, 9];
             assert_eq!(
                 contents(&g, EntityType::Relationship, &ty, &attr, &values),
                 one_pass(&g, EntityType::Relationship, &ty, &attr, &values),
