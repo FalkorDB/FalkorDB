@@ -516,12 +516,18 @@ impl Dur {
         if months.unsigned_abs() > DUR_LIMIT_MONTHS as u64 {
             return Err(err());
         }
-        // The components must also be addable to a timestamp: the total length
-        // (a month counted as its longest, 31 days) has to fit an `i64`, so the
-        // legacy epoch-offset form of a duration never wraps.
-        let total = i128::from(months.unsigned_abs()) * 31 * 86400
-            + (i128::from(days) * 86400 + i128::from(seconds)).abs();
-        if total > i128::from(i64::MAX) {
+        // The components must also be addable to a timestamp, and their legacy
+        // epoch offset (the calendar offset of the months plus days and seconds)
+        // must fit an `i64`, so that form never wraps. Both are signed sums:
+        // opposite-sign components may cancel.
+        let offset = i128::from(days) * 86400 + i128::from(seconds);
+        if offset.unsigned_abs() > i64::MAX as u128 {
+            return Err(err());
+        }
+        let year = 1970 + months.div_euclid(12) as i32;
+        let month_offset =
+            i128::from(days_from_civil(year, (months.rem_euclid(12) + 1) as u32, 1)) * 86400;
+        if i64::try_from(month_offset + offset).is_err() {
             return Err(err());
         }
         if months.unsigned_abs() <= DUR_MAX_MONTHS as u64
@@ -1570,5 +1576,15 @@ mod duration_tests {
             panic!("date - d is in range")
         };
         assert_eq!(t, 86_400);
+    }
+
+    #[test]
+    fn opposite_sign_components_may_cancel() {
+        // The epoch offset of this one is 9223372036852097407: it fits.
+        let p = Dur::new(-1, 0, i64::MAX).unwrap();
+        assert_eq!(p.components(), (-1, 0, i64::MAX));
+        assert!(Dur::new(1, 0, i64::MIN + 1).is_ok());
+        assert!(Dur::new(1, 0, i64::MAX).is_err());
+        assert!(Dur::new(-1, 0, i64::MIN + 1).is_err());
     }
 }
