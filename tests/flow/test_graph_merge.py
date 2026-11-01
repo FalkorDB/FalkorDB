@@ -931,6 +931,23 @@ class testGraphMergeFlow():
         res = g.query("MATCH (n:A) SET n:B REMOVE n:A MERGE (m:A:B) RETURN id(m) = id(n)")
         self.env.assertEqual(res.result_set, [[False]])
         self.env.assertEqual(res.nodes_created, 1)
+
+        # With an index on the pattern label the committed index is what the
+        # scan reads: a node whose indexed value changed in this query is
+        # still found, and one the index scan already yields is not repeated.
+        g.delete()
+        g.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        g.query("CREATE (:A {v: 0})")
+        res = g.query("MATCH (n:A) SET n:A, n.v = 1 MERGE (m:A {v: 1}) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
+
+        g.delete()
+        g.query("CREATE INDEX FOR (n:A) ON (n.v)")
+        g.query("CREATE (:A {v: 1})")
+        res = g.query("MATCH (n:A) SET n:B MERGE (m:A:B {v: 1}) RETURN id(m) = id(n)")
+        self.env.assertEqual(res.result_set, [[True]])
+        self.env.assertEqual(res.nodes_created, 0)
         g.delete()
 
     def test40_merge_path_over_bound_endpoints_keeps_every_match(self):
