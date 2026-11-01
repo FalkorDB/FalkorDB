@@ -3298,3 +3298,38 @@ updating clause.")
                 "MATCH (n:l6 {id:130})-[:rt8]->(m:l8 {id:131}) RETURN count(n)").result_set,
             [[1]])
         g.delete()
+
+    def test_62_cancelled_creation_ids_are_not_reused_within_the_query(self):
+        """#3164: a creation cancelled by a DELETE in the same segment returns
+        its id to the free set. A later segment of the query must not hand that
+        id out, since the row still carries the stale node/relationship and a
+        later DELETE of it would remove the new entity."""
+
+        g = self.graph
+        g.query("MATCH (n) DETACH DELETE n")
+        res = g.query(
+            """CREATE (a:N) DELETE a
+               WITH a
+               CALL { CREATE (:X) }
+               CREATE (c:Y)
+               DELETE a
+               RETURN count(*)""")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(
+            g.query("MATCH (n) RETURN labels(n) ORDER BY labels(n)").result_set,
+            [[['X']], [['Y']]])
+
+        # cancelled by the cascade of a node delete
+        g.query("MATCH (n) DETACH DELETE n")
+        g.query(
+            """CREATE (a:N)-[r:R]->(c:N) DELETE a
+               WITH a, r
+               CALL { CREATE (:X)-[:Q]->(:X) }
+               CALL { CREATE (:X)-[:Q2]->(:X) }
+               DELETE r
+               RETURN count(*)""")
+        self.env.assertEqual(
+            g.query("MATCH ()-[r]->() RETURN type(r) ORDER BY type(r)").result_set,
+            [['Q'], ['Q2']])
+        self.env.assertEqual(
+            g.query("MATCH (n:X) RETURN count(n)").result_set, [[4]])

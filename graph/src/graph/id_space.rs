@@ -472,8 +472,12 @@ impl IdSpace {
     pub fn open_batch(&mut self) -> Result<(), IdSpaceError> {
         self.checked()?;
         self.entry_bound = self.bound();
-        self.taken.clear();
         // What this batch freed stays unavailable for the rest of the version.
+        // So does an id it took and handed back ([`Self::cancel`]): a creation
+        // cancelled before it committed is just as stale to a reference the
+        // query still holds, and it sits in `recycled` without being `released`.
+        self.released |= &self.taken & &self.recycled;
+        self.taken.clear();
         if self.quarantined.is_empty() {
             std::mem::swap(&mut self.quarantined, &mut self.released);
         } else {
@@ -1093,6 +1097,28 @@ mod tests {
             .reserve(1, &RoaringTreemap::new())
             .expect("reserved");
         assert_eq!(next, vec![0]);
+    }
+
+    /// #3164: a creation cancelled before its batch committed is stale to a
+    /// reference the query still holds, so a later batch must not reissue it.
+    #[test]
+    fn an_id_cancelled_by_an_earlier_batch_is_not_reissued_in_the_version() {
+        let mut space = IdSpace::restored(0, RoaringTreemap::new());
+        space.open_batch().expect("a consistent space");
+        let reserved = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(reserved, vec![0]);
+        space.cancel(0).expect("cancel");
+
+        space.open_batch().expect("a consistent space");
+        let next = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(next, vec![1], "fresh, not the cancelled 0");
+
+        let mut next_version = space.new_version();
+        next_version.open_batch().expect("a consistent space");
+        let next = next_version
+            .reserve(1, &RoaringTreemap::new())
+            .expect("reserved");
+        assert_eq!(next, vec![0], "a new version starts clean");
     }
 
     #[test]
