@@ -1932,6 +1932,11 @@ impl Pending {
             + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len()
+            // Created and deleted inside the segment: nothing reaches the graph,
+            // but `digest_cancelled` still emits the pair that moves the
+            // replica's id space, so a write that only cancels is not empty.
+            + self.cancelled_nodes.len()
+            + self.cancelled_relationships.len() as u64
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64
