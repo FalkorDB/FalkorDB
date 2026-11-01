@@ -96,7 +96,9 @@ impl<'a> DeleteOp<'a> {
         trees: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let snapshot = snapshot_required(&runtime.plan, idx);
+        // `GRAPH.RECORD` renders the rows every operator produced after the
+        // commit, so it reads them even when no operator above does.
+        let snapshot = runtime.inspect || snapshot_required(&runtime.plan, idx);
         Self {
             runtime,
             child,
@@ -202,7 +204,7 @@ impl Runtime<'_> {
             if self.pending.borrow().is_node_created(id) {
                 // Created in this txn — use existing per-node path
                 self.delete_entity(&Value::Node(id), snapshot)?;
-            } else if !self.g.borrow().is_node_deleted(id) {
+            } else if !self.graph().is_node_deleted(id) {
                 committed.push(id);
             }
         }
@@ -226,7 +228,7 @@ impl Runtime<'_> {
         if snapshot {
             for &id in &committed {
                 let incident: Vec<(NodeId, NodeId, RelationshipId)> =
-                    self.g.borrow().get_node_relationships(id).collect();
+                    self.graph().get_node_relationships(id).collect();
                 for (src, dst, rel) in incident {
                     // An edge between two deleted nodes is reached from both ends,
                     // and one already snapshotted by an earlier batch must keep
@@ -254,10 +256,10 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id);
+                        .remove_pending_relationships_for_node(id, &mut self.graph_mut())
+                        .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
-                        let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
+                        let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),
@@ -279,7 +281,7 @@ impl Runtime<'_> {
         if snapshot {
             let mut deleted_nodes = self.deleted_nodes.borrow_mut();
             deleted_nodes.reserve(committed.len());
-            let g = self.g.borrow();
+            let g = self.graph();
             for &id in &committed {
                 let labels = g.get_node_label_ids(id).collect();
                 let mut actual =
@@ -309,7 +311,7 @@ impl Runtime<'_> {
         let mut pending_created = Vec::new();
         {
             let pending = self.pending.borrow();
-            let g = self.g.borrow();
+            let g = self.graph();
             for rel_id in rels {
                 if !seen.insert(rel_id) {
                     continue;
@@ -350,7 +352,7 @@ impl Runtime<'_> {
                         committed.len(),
                         rustc_hash::FxBuildHasher,
                     );
-                let g = self.g.borrow();
+                let g = self.graph();
                 let min_id = committed.iter().map(|r| u64::from(*r)).min().unwrap();
                 let max_id = committed.iter().map(|r| u64::from(*r)).max().unwrap();
                 #[allow(clippy::cast_possible_truncation)]
@@ -402,17 +404,20 @@ impl Runtime<'_> {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_node_created(id) {
                     // Node was created in this transaction but not yet committed.
-                    let (label_ids, attrs, pending_rels) =
-                        self.pending.borrow_mut().delete_pending_node(id);
-                    // Return the node ID and relationship IDs to the graph for reuse.
-                    self.g.borrow_mut().return_node_id(id);
+                    // Unwinding the pending node returns its id, and its cascaded
+                    // edges' ids, to the graph — one call, so neither half can
+                    // happen without the other.
+                    let (label_ids, attrs, pending_rels) = self
+                        .pending
+                        .borrow_mut()
+                        .delete_pending_node(id, &mut self.graph_mut())
+                        .map_err(|e| e.to_string())?;
                     // Snapshot the cascaded relationships so expressions still
                     // holding them (e.g. `startNode(r)`) can be evaluated after
                     // the node — and with it the edge — is gone.
                     for (rel_id, src, dest, type_name, rel_attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
                         let rel_attrs =
-                            rel_attrs_to_map(&self.g.borrow(), rel_attrs.unwrap_or_default());
+                            rel_attrs_to_map(&self.graph(), rel_attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, rel_attrs),
@@ -422,12 +427,12 @@ impl Runtime<'_> {
                         id,
                         DeletedNode::new(
                             label_ids.into_iter().collect(),
-                            node_attrs_to_map(&self.g.borrow(), attrs),
+                            node_attrs_to_map(&self.graph(), attrs),
                         ),
                     );
-                } else if !self.g.borrow().is_node_deleted(id) {
+                } else if !self.graph().is_node_deleted(id) {
                     // Snapshot committed relationships for effects/replication
-                    for (src, dest, rel_id) in self.g.borrow().get_node_relationships(id) {
+                    for (src, dest, rel_id) in self.graph().get_node_relationships(id) {
                         // Skip edges whose other endpoint is already being
                         // deleted — they will be discovered from that node's
                         // perspective too. Only snapshot once.
@@ -446,10 +451,10 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id);
+                        .remove_pending_relationships_for_node(id, &mut self.graph_mut())
+                        .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
-                        let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
+                        let attrs = rel_attrs_to_map(&self.graph(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),
@@ -458,7 +463,7 @@ impl Runtime<'_> {
                     // Mark as implicit — edge cleanup deferred to commit time
                     self.pending.borrow_mut().deleted_node(id);
                     if snapshot {
-                        let labels = self.g.borrow().get_node_label_ids(id).collect();
+                        let labels = self.graph().get_node_label_ids(id).collect();
                         let attrs = self.get_node_attrs(id);
                         self.deleted_nodes
                             .borrow_mut()
@@ -470,7 +475,7 @@ impl Runtime<'_> {
                 if self.pending.borrow().is_relationship_deleted(*rel) {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_relationship_created(*rel)
-                    || !self.g.borrow().is_relationship_deleted(*rel)
+                    || !self.graph().is_relationship_deleted(*rel)
                 {
                     // A pending-created edge is deletable even though the
                     // committed graph still lists its id as deleted: ids are
