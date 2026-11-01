@@ -1370,11 +1370,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Adds `relationship` to `query_graph`, rejecting an alias the pattern
-    /// already holds. A relationship variable names exactly one edge, so a
-    /// repeat is never a back-reference: MATCH would need the same edge twice
-    /// and CREATE/MERGE would declare it twice. Every path shape (plain,
-    /// named, `allShortestPaths`) goes through here, so none can drop the
-    /// repeat on the floor.
+    /// already holds. Reusing an alias across relationship patterns is never
+    /// a back-reference: MATCH cannot bind it to two patterns, and
+    /// CREATE/MERGE would declare it twice. Every path shape (plain, named,
+    /// `allShortestPaths`, pattern comprehension) goes through here, so none
+    /// can drop the repeat on the floor.
     fn add_pattern_relationship(
         query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
@@ -2860,9 +2860,10 @@ impl<'a> Parser<'a> {
             if let Some(var) = self.try_parse_ident()
                 && optional_match_token!(self.lexer, Equal)
                 && self.lexer.current()? == Token::LParen
-                && let Ok(result) =
+                && let Ok((result, repeated)) =
                     self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
             {
+                repeated.map_or(Ok(()), Err)?;
                 self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
@@ -2871,8 +2872,10 @@ impl<'a> Parser<'a> {
 
             // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
             if self.lexer.current()? == Token::LParen {
-                if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate)
+                if let Ok((result, repeated)) =
+                    self.parse_pattern_comprehension(None, allow_pattern_predicate)
                 {
+                    repeated.map_or(Ok(()), Err)?;
                     self.reject_forbidden_pattern_comprehension()?;
                     self.reject_aggregate(&result)?;
                     return Ok((result, false));
@@ -2964,7 +2967,7 @@ impl<'a> Parser<'a> {
         &mut self,
         path_var: Option<Arc<String>>,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<(DynTree<ExprIR<Arc<String>>>, Option<String>), String> {
         let first_node = self.parse_node_pattern()?;
 
         // Must have at least one relationship
@@ -2975,11 +2978,17 @@ impl<'a> Parser<'a> {
         let mut graph = QueryGraph::default();
         graph.add_node(first_node.clone());
 
+        // A repeated relationship variable is only reported once the whole
+        // comprehension has parsed: the caller tries this speculatively and
+        // would otherwise swallow the error and fall back to a list literal.
+        let mut repeated = None;
         let mut left = first_node;
         while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
             let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
             graph.add_node(right.clone());
-            graph.add_relationship(rel);
+            if let Err(e) = Self::add_pattern_relationship(&mut graph, rel, &Keyword::Match) {
+                repeated.get_or_insert(e);
+            }
             left = right;
         }
 
@@ -2999,10 +3008,13 @@ impl<'a> Parser<'a> {
         let result_expr = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RBrace);
 
-        Ok(tree!(
-            ExprIR::PatternComprehension(Box::new(graph)),
-            condition,
-            result_expr
+        Ok((
+            tree!(
+                ExprIR::PatternComprehension(Box::new(graph)),
+                condition,
+                result_expr
+            ),
+            repeated,
         ))
     }
 
@@ -4129,8 +4141,8 @@ mod tests {
     }
 
     // A relationship variable names one edge, so repeating it inside one
-    // pattern is an error in every path shape. Named paths, and every MERGE
-    // shape, used to drop the repeat silently and create a single edge.
+    // pattern is an error in every path shape. Named paths, every MERGE shape
+    // and pattern comprehensions used to drop the repeat silently.
     #[test]
     fn repeated_relationship_variable_is_rejected() {
         with_functions();
@@ -4157,6 +4169,14 @@ mod tests {
             ),
             (
                 "MATCH p=(a)-[r]->(b)-[r]->(c) RETURN p",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "RETURN [(a)-[r]->(b)-[r]->(c) | r]",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "MATCH (a) RETURN [p = (a)-[r]->()<-[r]-() | p]",
                 "Cannot use the same relationship variable 'r' for multiple patterns.",
             ),
         ] {
