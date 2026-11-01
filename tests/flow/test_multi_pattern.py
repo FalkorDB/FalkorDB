@@ -156,6 +156,9 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             ("MATCH ()-[r]->() MATCH (x:A)-[q {w: r.w}]->() RETURN count(*)", [[1]]),
             ("MATCH (a:A) MATCH (x)-[q {w: a.v+1}]->() RETURN count(*)", [[1]]),
             ("MATCH (a:A)-[r]->(b) MATCH (c:B)-[q {w: id(r)}]->() RETURN count(*)", [[0]]),
+            # only an inline attr reads the earlier clause's variable
+            ("MATCH (a:A) MATCH (x:B {v: a.v-1}), (z:B) RETURN count(*)", [[2]]),
+            ("MATCH (a:A) MATCH (z:B), (x:B {v: a.v-1}) RETURN count(*)", [[2]]),
         ]
         for q, expected in cases:
             self.env.assertEqual(g.query(q).result_set, expected, message=q)

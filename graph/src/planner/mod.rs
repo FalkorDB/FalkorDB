@@ -619,6 +619,20 @@ fn split_inline_attrs(
     Some(Arc::new(kept))
 }
 
+/// Whether an inline-attribute map of `pattern` reads a variable in `visited`.
+fn pattern_attrs_read_visited(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<(u32, u32)>,
+) -> bool {
+    let reads = |attrs: &QueryExpr<Variable>| {
+        attrs.root().walk::<Bfs>().any(|data| {
+            matches!(data, ExprIR::Variable(v) if visited.contains(&(v.id, v.scope_id)))
+        })
+    };
+    pattern.nodes().iter().any(|n| reads(&n.attrs))
+        || pattern.relationships().iter().any(|r| reads(&r.attrs))
+}
+
 /// Takes the inline-attribute entries that read another variable of the same
 /// pattern out of `pattern` and appends them to `lifted` as filters.
 ///
@@ -3310,9 +3324,13 @@ impl Planner {
                     let all_visited = pattern
                         .variables()
                         .all(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    // A variable read only by an inline attr (`(x {v: a.v})`) is
+                    // not one the pattern binds, but it is as much a read of
+                    // the earlier clause.
                     let any_visited = pattern
                         .variables()
-                        .any(|v| self.visited.contains(&(v.id, v.scope_id)));
+                        .any(|v| self.visited.contains(&(v.id, v.scope_id)))
+                        || pattern_attrs_read_visited(&pattern, &self.visited);
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
