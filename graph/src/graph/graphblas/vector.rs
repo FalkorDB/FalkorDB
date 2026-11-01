@@ -40,7 +40,11 @@ use std::{
     ptr::{addr_of_mut, null_mut},
 };
 
-use crate::graph::graphblas::{GrB_UINT64, GrB_Vector_clear, GrB_Vector_setElement_UINT64};
+use crate::graph::graphblas::{
+    GrB_PLUS_MONOID_UINT64, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new,
+    GrB_Scalar_setElement_BOOL, GrB_UINT64, GrB_Vector_clear, GrB_Vector_reduce_UINT64,
+    GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
+};
 
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
@@ -136,6 +140,36 @@ impl Vector<bool> {
         }
     }
 
+    /// An indicator vector of size `nrows` with an entry at each of
+    /// `indices`, which must be ascending, distinct and below `nrows`.
+    ///
+    /// One `GxB_Vector_build_Scalar`: no values array, an iso vector, and no
+    /// pending tuples to sort the way a `set` per index leaves them.
+    #[must_use]
+    pub fn from_sorted_indices(
+        nrows: u64,
+        indices: &[u64],
+    ) -> Self {
+        debug_assert!(indices.windows(2).all(|w| w[0] < w[1]));
+        debug_assert!(indices.last().is_none_or(|&i| i < nrows));
+        let v = Self::new(nrows);
+        if indices.is_empty() {
+            return v;
+        }
+        unsafe {
+            let mut scalar: GrB_Scalar = null_mut();
+            let mut info = GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_setElement_BOOL(scalar, true);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GxB_Vector_build_Scalar(v.v, indices.as_ptr(), scalar, indices.len() as u64);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_free(&raw mut scalar);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        v
+    }
+
     #[must_use]
     pub const fn ptr(&self) -> GrB_Vector {
         self.v
@@ -180,16 +214,18 @@ impl Vector<bool> {
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GxB_Vector_deserialize(
                 v.as_mut_ptr(),
-                null_mut(),
+                GrB_BOOL,
                 blob.as_ptr().cast(),
                 blob.len() as u64,
                 null_mut(),
             );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Vector_deserialize failed: {info:?}"
-            );
+            // The blob comes from an RDB / `GRAPH.RESTORE` payload, so a
+            // failure here is bad input, not a broken invariant: refuse the
+            // load instead of taking the server down. Deserialize frees
+            // whatever it allocated before returning an error.
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("GxB_Vector_deserialize failed: {info:?}"));
+            }
             Ok(Self::from(v.assume_init()))
         }
     }
@@ -223,16 +259,18 @@ impl Decode<19> for Vector<u64> {
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GxB_Vector_deserialize(
                 v.as_mut_ptr(),
-                null_mut(),
+                GrB_UINT64,
                 blob.as_ptr().cast(),
                 blob.len() as u64,
                 null_mut(),
             );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Vector_deserialize failed: {info:?}"
-            );
+            // The blob comes from an RDB / `GRAPH.RESTORE` payload, so a
+            // failure here is bad input, not a broken invariant: refuse the
+            // load instead of taking the server down. Deserialize frees
+            // whatever it allocated before returning an error.
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("GxB_Vector_deserialize failed: {info:?}"));
+            }
             Ok(Self::from(v.assume_init()))
         }
     }
@@ -449,6 +487,28 @@ impl Vector<u64> {
     pub fn iter(&self) -> Iter<u64> {
         Iter::new(self)
     }
+
+    #[must_use]
+    pub const fn ptr(&self) -> GrB_Vector {
+        self.v
+    }
+
+    /// The sum of the stored values (`PLUS` monoid; 0 when empty).
+    #[must_use]
+    pub fn sum(&self) -> u64 {
+        let mut sum = 0u64;
+        unsafe {
+            let info = GrB_Vector_reduce_UINT64(
+                &raw mut sum,
+                null_mut(),
+                GrB_PLUS_MONOID_UINT64,
+                self.v,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        sum
+    }
 }
 
 pub trait Size<T> {
@@ -646,6 +706,78 @@ mod decode_tests {
             buffers: VecDeque::from(vec![arr_data, type_name]),
             unsigned: VecDeque::from(vec![n_entries, n_bytes]),
             signed: VecDeque::from(vec![handling]),
+        }
+    }
+
+    /// The blob of a multi-edge pair comes from an RDB / `GRAPH.RESTORE`
+    /// payload: a corrupt one must fail the decode, not panic.
+    #[test]
+    fn decode_blob_rejects_a_corrupt_blob() {
+        crate::graph::graphblas::test_init::ensure_init();
+        let mut v = Vector::<bool>::new(64);
+        v.set(3, true);
+        v.set(7, true);
+        let mut blob = Vec::new();
+        v.encode_blob(&mut BlobWriter(&mut blob));
+        blob.truncate(8);
+        let mut r = MockReader {
+            buffers: VecDeque::from(vec![blob]),
+            ..MockReader::default()
+        };
+        let err = Vector::<bool>::decode_blob(&mut r)
+            .err()
+            .expect("truncated blob accepted");
+        assert!(
+            err.contains("GxB_Vector_deserialize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A well-formed blob of the wrong type is refused too: `decode_blob` is
+    /// read as a BOOL vector and `Vector<u64>::decode` as a UINT64 one.
+    #[test]
+    fn decode_blob_rejects_a_blob_of_another_type() {
+        crate::graph::graphblas::test_init::ensure_init();
+        let mut v = Vector::<u64>::new(64);
+        v.set(3, 30);
+        let mut blob = Vec::new();
+        v.encode(&mut BlobWriter(&mut blob));
+        let mut r = MockReader {
+            buffers: VecDeque::from(vec![blob.clone()]),
+            ..MockReader::default()
+        };
+        assert!(Vector::<bool>::decode_blob(&mut r).is_err());
+        let mut r = MockReader {
+            buffers: VecDeque::from(vec![blob]),
+            ..MockReader::default()
+        };
+        assert!(<Vector<u64> as Decode<19>>::decode(&mut r).is_ok());
+    }
+
+    /// Captures the single buffer an encoder writes.
+    struct BlobWriter<'a>(&'a mut Vec<u8>);
+
+    impl Writer for BlobWriter<'_> {
+        fn write_unsigned(
+            &mut self,
+            _: u64,
+        ) {
+        }
+        fn write_signed(
+            &mut self,
+            _: i64,
+        ) {
+        }
+        fn write_double(
+            &mut self,
+            _: f64,
+        ) {
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.0.extend_from_slice(data);
         }
     }
 
