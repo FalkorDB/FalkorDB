@@ -1506,6 +1506,7 @@ mod duration_tests {
         assert_eq!(duration_from_legacy(big), Ok(dur(0, 0, big)));
         assert_eq!(duration_from_legacy(-big), Ok(dur(0, 0, -big)));
         assert!(duration_from_legacy(i64::MAX).is_ok());
+        assert!(duration_from_legacy(i64::MIN).is_ok());
     }
 
     #[test]
