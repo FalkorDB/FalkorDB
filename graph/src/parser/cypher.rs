@@ -1369,6 +1369,34 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Adds `relationship` to `query_graph`, rejecting an alias the pattern
+    /// already holds. Reusing an alias across relationship patterns is never
+    /// a back-reference: MATCH cannot bind it to two patterns, and
+    /// CREATE/MERGE would declare it twice. Every path shape (plain, named,
+    /// `allShortestPaths`, pattern comprehension) goes through here, so none
+    /// can drop the repeat on the floor.
+    fn add_pattern_relationship(
+        query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
+        clause: &Keyword,
+    ) -> Result<(), String> {
+        let alias = relationship.alias.clone();
+        if query_graph.add_relationship(relationship) {
+            return Ok(());
+        }
+        Err(match clause {
+            Keyword::Match => {
+                format!(
+                    "Cannot use the same relationship variable '{alias}' for multiple patterns."
+                )
+            }
+            Keyword::Merge => {
+                format!("The bound variable '{alias}' can't be redeclared in a MERGE clause")
+            }
+            _ => format!("The bound variable '{alias}' can't be redeclared in a CREATE clause"),
+        })
+    }
+
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
@@ -1461,26 +1489,20 @@ impl<'a> Parser<'a> {
 
                                 vars.push(relationship.alias.clone());
                                 vars.push(right.alias.clone());
-                                if !query_graph.add_relationship(relationship.clone())
-                                    && clause == &Keyword::Match
-                                {
-                                    return Err(format!(
-                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                        relationship.alias.as_str()
-                                    ));
-                                }
+                                Self::add_pattern_relationship(
+                                    &mut query_graph,
+                                    relationship,
+                                    clause,
+                                )?;
                             } else {
                                 // Fixed-length prefix/suffix relationship
                                 vars.push(relationship.alias.clone());
                                 vars.push(right.alias.clone());
-                                if !query_graph.add_relationship(relationship.clone())
-                                    && clause == &Keyword::Match
-                                {
-                                    return Err(format!(
-                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                        relationship.alias.as_str()
-                                    ));
-                                }
+                                Self::add_pattern_relationship(
+                                    &mut query_graph,
+                                    relationship,
+                                    clause,
+                                )?;
                             }
                             Self::add_pattern_node(
                                 &mut query_graph,
@@ -1520,14 +1542,7 @@ impl<'a> Parser<'a> {
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left = right.clone();
-                        if !query_graph.add_relationship(relationship.clone())
-                            && clause == &Keyword::Match
-                        {
-                            return Err(format!(
-                                "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                relationship.alias.as_str()
-                            ));
-                        }
+                        Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                         Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
                         query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
@@ -1541,20 +1556,7 @@ impl<'a> Parser<'a> {
                 while let Token::Dash | Token::LessThan = self.lexer.current()? {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    if !query_graph.add_relationship(relationship.clone()) {
-                        if clause == &Keyword::Match {
-                            return Err(format!(
-                                "Cannot use the same relationship variable '{}' for multiple patterns.",
-                                relationship.alias.as_str()
-                            ));
-                        }
-                        if clause == &Keyword::Create {
-                            return Err(format!(
-                                "The bound variable '{}' can't be redeclared in a CREATE clause",
-                                relationship.alias.as_str()
-                            ));
-                        }
-                    }
+                    Self::add_pattern_relationship(&mut query_graph, relationship, clause)?;
                     Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                 }
             }
@@ -2851,9 +2853,10 @@ impl<'a> Parser<'a> {
             if let Some(var) = self.try_parse_ident()
                 && optional_match_token!(self.lexer, Equal)
                 && self.lexer.current()? == Token::LParen
-                && let Ok(result) =
+                && let Ok((result, repeated)) =
                     self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
             {
+                repeated.map_or(Ok(()), Err)?;
                 self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
@@ -2862,8 +2865,10 @@ impl<'a> Parser<'a> {
 
             // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
             if self.lexer.current()? == Token::LParen {
-                if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate)
+                if let Ok((result, repeated)) =
+                    self.parse_pattern_comprehension(None, allow_pattern_predicate)
                 {
+                    repeated.map_or(Ok(()), Err)?;
                     self.reject_forbidden_pattern_comprehension()?;
                     self.reject_aggregate(&result)?;
                     return Ok((result, false));
@@ -2955,7 +2960,7 @@ impl<'a> Parser<'a> {
         &mut self,
         path_var: Option<Arc<String>>,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<(DynTree<ExprIR<Arc<String>>>, Option<String>), String> {
         let first_node = self.parse_node_pattern()?;
 
         // Must have at least one relationship
@@ -2966,11 +2971,17 @@ impl<'a> Parser<'a> {
         let mut graph = QueryGraph::default();
         graph.add_node(first_node.clone());
 
+        // A repeated relationship variable is only reported once the whole
+        // comprehension has parsed: the caller tries this speculatively and
+        // would otherwise swallow the error and fall back to a list literal.
+        let mut repeated = None;
         let mut left = first_node;
         while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
             let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
             graph.add_node(right.clone());
-            graph.add_relationship(rel);
+            if let Err(e) = Self::add_pattern_relationship(&mut graph, rel, &Keyword::Match) {
+                repeated.get_or_insert(e);
+            }
             left = right;
         }
 
@@ -2990,10 +3001,13 @@ impl<'a> Parser<'a> {
         let result_expr = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RBrace);
 
-        Ok(tree!(
-            ExprIR::PatternComprehension(Box::new(graph)),
-            condition,
-            result_expr
+        Ok((
+            tree!(
+                ExprIR::PatternComprehension(Box::new(graph)),
+                condition,
+                result_expr
+            ),
+            repeated,
         ))
     }
 
@@ -4135,6 +4149,54 @@ mod tests {
             assert!(
                 Parser::new(query).parse().is_ok(),
                 "failed to parse: {query}"
+            );
+        }
+    }
+
+    // A relationship variable names one edge, so repeating it inside one
+    // pattern is an error in every path shape. Named paths, every MERGE shape
+    // and pattern comprehensions used to drop the repeat silently.
+    #[test]
+    fn repeated_relationship_variable_is_rejected() {
+        with_functions();
+        for (query, expected) in [
+            (
+                "CREATE ()-[r:R]->()-[r:R]->()",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d) RETURN p, q",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "CREATE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p",
+                "The bound variable 'r' can't be redeclared in a CREATE clause",
+            ),
+            (
+                "MERGE (a)-[r:R]->(b)-[r:R]->(c)",
+                "The bound variable 'r' can't be redeclared in a MERGE clause",
+            ),
+            (
+                "MERGE p=(a)-[r:R]->(b)-[r:R]->(c) RETURN p",
+                "The bound variable 'r' can't be redeclared in a MERGE clause",
+            ),
+            (
+                "MATCH p=(a)-[r]->(b)-[r]->(c) RETURN p",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "RETURN [(a)-[r]->(b)-[r]->(c) | r]",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+            (
+                "MATCH (a) RETURN [p = (a)-[r]->()<-[r]-() | p]",
+                "Cannot use the same relationship variable 'r' for multiple patterns.",
+            ),
+        ] {
+            assert_eq!(
+                Parser::new(query).parse().err().as_deref(),
+                Some(expected),
+                "{query}"
             );
         }
     }
