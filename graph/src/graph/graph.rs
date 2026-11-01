@@ -2457,21 +2457,25 @@ impl Graph {
         types: &[Arc<String>],
         direction: EdgeDirection,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
-        let matrices: Vec<&Tensor> = if types.is_empty() {
-            self.relationship_matrices.iter().collect()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.get_relationship_matrix(t))
-                .collect()
-        };
+        // The all-types case walks the matrices in place (it runs once per
+        // visited node in graph.traverse, so it must not allocate); only a
+        // typed lookup gathers its matrices, and an empty `Vec` costs nothing.
+        let all_types = types
+            .is_empty()
+            .then(|| self.relationship_matrices.iter())
+            .into_iter()
+            .flatten();
+        let matrices: Vec<&Tensor> = types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .collect();
         let (with_outgoing, with_incoming) = match direction {
             EdgeDirection::Outgoing => (true, false),
             EdgeDirection::Incoming => (false, true),
             EdgeDirection::Both => (true, true),
         };
-        matrices
-            .into_iter()
+        all_types
+            .chain(matrices)
             .flat_map(move |m| {
                 let outgoing = with_outgoing
                     .then(|| m.iter(id.0, id.0, false))
