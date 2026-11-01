@@ -585,6 +585,7 @@ fn split_inline_attrs(
     pending: &HashSet<(u32, u32)>,
     local: &[&Variable],
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    seen: &mut HashSet<(u32, u32, usize)>,
 ) -> Option<QueryExpr<Variable>> {
     let reads_pending = |entry: &DynNode<ExprIR<Variable>>| {
         entry.walk::<Bfs>().any(|data| {
@@ -595,20 +596,26 @@ fn split_inline_attrs(
             )
         })
     };
-    if !attrs.root().children().any(|entry| reads_pending(&entry)) {
+    let moves: Vec<bool> = attrs
+        .root()
+        .children()
+        .map(|entry| reads_pending(&entry))
+        .collect();
+    if !moves.contains(&true) {
         return None;
     }
     let mut kept = tree!(ExprIR::Map);
     let mut moved = tree!(ExprIR::Map);
-    for entry in attrs.root().children() {
-        let target = if reads_pending(&entry) {
-            &mut moved
-        } else {
-            &mut kept
-        };
+    for (entry, moves) in attrs.root().children().zip(moves) {
+        let target = if moves { &mut moved } else { &mut kept };
         target.root_mut().push_child_tree(entry.as_cloned_subtree());
     }
-    lifted.extend(inline_attrs_to_filter(alias, &moved));
+    // The binder clones an endpoint for each occurrence that writes its own
+    // attrs, but the clones share the map: lift each map's filter once, as
+    // `lower_inline_attrs` does, or a non-deterministic predicate runs twice.
+    if seen.insert((alias.id, alias.scope_id, Arc::as_ptr(attrs) as usize)) {
+        lifted.extend(inline_attrs_to_filter(alias, &moved));
+    }
     Some(Arc::new(kept))
 }
 
@@ -629,6 +636,7 @@ fn lift_cross_entity_attrs(
     pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
     visited: &HashSet<(u32, u32)>,
     lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    lifted_rels: &mut HashSet<u32>,
 ) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
     let pending: HashSet<(u32, u32)> = pattern
         .variables()
@@ -640,33 +648,48 @@ fn lift_cross_entity_attrs(
     // relationships; rewrite each occurrence once so its filter is not
     // emitted twice.
     let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
-    let mut rewrite_node =
-        |node: &Arc<QueryNode<Arc<String>, Variable>>,
-         lifted: &mut Vec<DynTree<ExprIR<Variable>>>| {
-            rewritten
-                .entry(Arc::as_ptr(node))
-                .or_insert_with(|| {
-                    split_inline_attrs(&node.alias, &node.attrs, &pending, &[&node.alias], lifted)
-                        .map_or_else(
-                            || node.clone(),
-                            |attrs| {
-                                Arc::new(QueryNode::new(
-                                    node.alias.clone(),
-                                    node.labels.clone(),
-                                    attrs,
-                                ))
-                            },
-                        )
-                })
-                .clone()
-        };
-    let mut res = QueryGraph::default();
-    for node in pattern.nodes() {
-        res.add_node(rewrite_node(node, lifted));
-    }
+    let mut seen: HashSet<(u32, u32, usize)> = HashSet::new();
+    let mut rewrite_node = |node: &Arc<QueryNode<Arc<String>, Variable>>,
+                            lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+                            seen: &mut HashSet<(u32, u32, usize)>| {
+        rewritten
+            .entry(Arc::as_ptr(node))
+            .or_insert_with(|| {
+                split_inline_attrs(
+                    &node.alias,
+                    &node.attrs,
+                    &pending,
+                    &[&node.alias],
+                    lifted,
+                    seen,
+                )
+                .map_or_else(
+                    || node.clone(),
+                    |attrs| {
+                        Arc::new(QueryNode::new(
+                            node.alias.clone(),
+                            node.labels.clone(),
+                            attrs,
+                        ))
+                    },
+                )
+            })
+            .clone()
+    };
+    // Like the planner, lift an endpoint's attrs from the relationship that
+    // carries it, and from `nodes()` only a node no relationship touches: the
+    // binder gives the relationship's endpoint its own copy of the map, and
+    // reading both would apply one predicate twice.
+    let endpoints: HashSet<(u32, u32)> = pattern
+        .relationships()
+        .iter()
+        .flat_map(|rel| [&rel.from, &rel.to])
+        .map(|n| (n.alias.id, n.alias.scope_id))
+        .collect();
+    let mut hops = Vec::new();
     for rel in pattern.relationships() {
-        let from = rewrite_node(&rel.from, lifted);
-        let to = rewrite_node(&rel.to, lifted);
+        let from = rewrite_node(&rel.from, lifted, &mut seen);
+        let to = rewrite_node(&rel.to, lifted, &mut seen);
         let attrs = if rel.min_hops.is_none() && rel.all_shortest_paths == AllShortestPaths::No {
             split_inline_attrs(
                 &rel.alias,
@@ -674,10 +697,27 @@ fn lift_cross_entity_attrs(
                 &pending,
                 &[&rel.alias, &rel.from.alias, &rel.to.alias],
                 lifted,
+                &mut seen,
             )
         } else {
             None
         };
+        if attrs.is_some() {
+            lifted_rels.insert(rel.alias.id);
+        }
+        hops.push((from, to, attrs));
+    }
+    let mut res = QueryGraph::default();
+    let mut dropped = Vec::new();
+    for node in pattern.nodes() {
+        let target = if endpoints.contains(&(node.alias.id, node.alias.scope_id)) {
+            &mut dropped
+        } else {
+            &mut *lifted
+        };
+        res.add_node(rewrite_node(node, target, &mut seen));
+    }
+    for (rel, (from, to, attrs)) in pattern.relationships().iter().zip(hops) {
         let mut new_rel = QueryRelationship::new(
             rel.alias.clone(),
             rel.types.clone(),
@@ -1958,7 +1998,11 @@ impl Planner {
         // filters rather than as plan components, so they don't interfere
         // with stitching.
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
-        let lifted = lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters);
+        // Relationships whose attrs were lifted: the Filter reads the edge, so
+        // the traversal must emit every parallel edge for it to test.
+        let mut lifted_rels: HashSet<u32> = HashSet::new();
+        let lifted =
+            lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters, &mut lifted_rels);
         let pattern = lifted.as_ref().unwrap_or(pattern);
         // Inline attrs already lowered to a Filter in this clause, keyed by
         // (alias, attrs map identity). See `lower_inline_attrs`.
@@ -2132,6 +2176,7 @@ impl Planner {
                     .name
                     .as_ref()
                     .is_some_and(|n| n.starts_with("_anon"))
+                    || lifted_rels.contains(&rel.alias.id)
                     || component
                         .paths()
                         .iter()

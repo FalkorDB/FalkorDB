@@ -140,13 +140,17 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # one of another pattern part or of an earlier MATCH clause,
         # and must be checked where that variable is bound (#2923).
         g = self.db.select_graph("multi_pattern_inline_attrs")
+        try:
+            g.delete()
+        except Exception:
+            pass
         g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
         cases = [
             ("MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
             ("MATCH (a)-[r]->(b), (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
             ("MATCH (b:B), (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
             ("MATCH (b:B) MATCH (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
-            ("MATCH (a:A) MATCH (c:B {v: id(a)}) RETURN c.v", [[0]]),
+            ("MATCH (a:A) MATCH (c:B {v: id(a)*0}) RETURN c.v", [[0]]),
             ("MATCH (a:A)-[r]->(b {v: a.v-1}) RETURN count(*)", [[1]]),
             ("MATCH (a)-[r]->(b {v: r.w-2}) RETURN count(*)", [[1]]),
             ("MATCH ()-[r]->() MATCH (x:A)-[q {w: r.w}]->() RETURN count(*)", [[1]]),
@@ -228,4 +232,29 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         self.env.assertEqual(g.query(q + "count(*)").result_set, [[2]])
         res = g.query(q + "id(c) ORDER BY id(c)")
         self.env.assertEqual(len(res.result_set), 2)
+        g.delete()
+
+    def test13_lifted_relationship_attrs_see_every_parallel_edge(self):
+        # An anonymous relationship whose attrs read a variable of another
+        # component is checked above the traversal, which must then emit each
+        # parallel edge instead of one representative per (src, dst).
+        g = self.db.select_graph("multi_pattern_parallel_edges")
+        try:
+            g.delete()
+        except Exception:
+            pass
+        g.query("CREATE (a:A)-[:R {w:0}]->(b:B), (a)-[:R {w:2}]->(b), (:C)-[:S {w:2}]->(:D)")
+        q = "MATCH (c)-[s:S]->(d), (x)-[:R {w: s.w}]->(y) RETURN count(*)"
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # An endpoint's predicate is applied once: a non-deterministic one
+        # must not be squared (0.5 per edge, so 2 edges give 1 on average).
+        g.delete()
+        g.query("CREATE (a:A {v:1})-[:E]->(b:B {v:1}), (a)-[:E]->(b)")
+        total = 0
+        runs = 300
+        q = "MATCH (a)-[r:E]->(b {v: a.v + toInteger(rand() * 2)}) RETURN count(*)"
+        for _ in range(runs):
+            total += g.query(q).result_set[0][0]
+        self.env.assertGreater(total / runs, 0.35)
         g.delete()
