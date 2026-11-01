@@ -209,6 +209,34 @@ class testLabelUpdate():
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
+    def test_match_after_union_branch_removes_label(self):
+        # A label a CALL {} UNION branch removed is gone for the clauses after
+        # it, whichever branch ran.
+        call = "CALL { WITH a REMOVE a:A RETURN 0 AS x UNION ALL WITH a RETURN 1 AS x }"
+        row = [[], ['B']]
+        cases = [
+            # unlabeled MATCH must not be tightened to (a:A)
+            (f"MATCH (a:A) {call} WITH a MATCH (a)-[:R]->(b) RETURN labels(a), labels(b)", [row, row]),
+            # the explicit :A must be checked, not taken as already verified
+            (f"MATCH (a:A), (b:B) {call} WITH a, b MATCH (a:A)-[:R]->(b) RETURN labels(a), labels(b)", []),
+        ]
+        for q, expected in cases:
+            self.query_master_and_wait("MATCH (n) DETACH DELETE n")
+            self.query_master_and_wait("CREATE (:A)-[:R]->(:B)")
+            res = self.query_master_and_wait(q)
+            self.env.assertEqual(res.result_set, expected, message=q)
+
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
+    def test_merge_bound_label_after_unrelated_remove(self):
+        # Removing :A from one node must not turn a MERGE that repeats the
+        # label of another bound node into a redeclaration.
+        self.query_master_and_wait("MATCH (n) DETACH DELETE n")
+        self.query_master_and_wait("CREATE (:A {i: 1}), (:A {i: 2})")
+        res = self.query_master_and_wait(
+            "MATCH (a:A {i: 1}), (b:A {i: 2}) REMOVE a:A WITH a, b MERGE (b:A) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[1]])
+
     def test_constraint_violation_rollback(self):
         # A unique-constraint violation raised inside _LabelNodes_Single must
         # cause a full rollback: no labels are permanently added to any node

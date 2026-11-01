@@ -732,6 +732,9 @@ pub struct Planner {
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
     verified_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Labels a `REMOVE` in this plan (or a UNION branch's) stripped; they
+    /// are no longer verified for any variable.
+    removed_labels: OrderSet<Arc<String>>,
     /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
     /// hangs them under the plan's root.
     nested_plans: Vec<DynTree<IR>>,
@@ -812,6 +815,7 @@ impl Planner {
             visited: HashSet::new(),
             scope_vars,
             verified_labels: HashMap::new(),
+            removed_labels: OrderSet::default(),
             nested_plans: vec![],
             loop_vars: vec![],
             pattern_vars: vec![],
@@ -3216,6 +3220,9 @@ impl Planner {
                 // every variable, since the node may be bound under several.
                 for item in &items {
                     if let Some(labels) = removed_node_labels(item) {
+                        for label in &labels {
+                            self.removed_labels.insert(label.clone());
+                        }
                         for verified in self.verified_labels.values_mut() {
                             for label in &labels {
                                 verified.remove(label);
@@ -3333,6 +3340,16 @@ impl Planner {
                     planner.nested_plans = std::mem::take(&mut self.nested_plans);
                     let plan = planner.plan(branch);
                     self.nested_plans = std::mem::take(&mut planner.nested_plans);
+                    // A branch's REMOVE strips its labels for what follows the
+                    // UNION, whichever branch ran.
+                    for verified in self.verified_labels.values_mut() {
+                        for label in planner.removed_labels.iter() {
+                            verified.remove(label);
+                        }
+                    }
+                    for label in planner.removed_labels.iter() {
+                        self.removed_labels.insert(label.clone());
+                    }
                     plan
                 }));
                 if !all {
