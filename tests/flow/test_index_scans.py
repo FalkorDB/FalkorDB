@@ -1294,3 +1294,117 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def _index_vs_scan(self, indices, setup, queries, expect_index=True,
+                       expected_rows=None):
+        # Run each query on a graph with the indices and on one without,
+        # and require the same rows: an index must never change a result.
+        # `expected_rows`, when given, pins each query's sorted rows too, so the
+        # parity check cannot pass on two equally wrong (e.g. empty) results.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        try:
+            for label, attr in indices:
+                with_idx.create_node_range_index(label, attr)
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for i, q in enumerate(queries):
+                if expect_index:
+                    self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+                expected = sorted(no_idx.query(q).result_set)
+                actual = sorted(with_idx.query(q).result_set)
+                self.env.assertEqual(actual, expected, message=q)
+                if expected_rows is not None:
+                    self.env.assertEqual(actual, sorted(expected_rows[i]), message=q)
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    def test_38_exclusive_equal_string_bounds(self):
+        # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
+        # shortcut must only apply when both bounds are inclusive.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'a', k:'a'}), (:L {v:'b', k:'b'})",
+            ["MATCH (n:L) WHERE n.v > 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a' AND n.v <= 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v <= 'a' RETURN n.k"])
+
+    def test_40_temporals_not_in_numeric_range(self):
+        # Temporals must not be indexed as their raw number, where numeric
+        # ranges would match them. Each query has a numeric match, so the
+        # expected rows are non-empty and a temporal leaking in shows up.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:-3, k:'neg'}), (:L {v:86400, k:'day'}),"
+            " (:L {v:date('2020-01-01'), k:'date'}), (:L {v:date('1960-01-01'), k:'old'}),"
+            " (:L {v:duration('P1D'), k:'dur'}), (:L {v:localtime('01:00:00'), k:'time'}),"
+            " (:L {v:localdatetime('2020-01-01T00:00:00'), k:'ldt'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"],
+            expected_rows=[[['day'], ['int']], [['neg']], [['day']]])
+
+    def test_41_open_bound_includes_infinity(self):
+        # An absent bound is unbounded: `n.v > 0` selects a stored +inf.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1.0/0.0, k:'inf'}), (:L {v:-1.0/0.0, k:'-inf'}), (:L {v:1, k:'one'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 1.0/0.0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"],
+            expected_rows=[[['inf'], ['one']], [['-inf']], [['inf']], [['-inf']]])
+
+    def test_42_parenthesised_predicates_use_the_index(self):
+        # #3331: parentheses around a WHERE, or around one of its conjuncts,
+        # change nothing about what it means, so the index is used either way.
+        g = self.db.select_graph('parenthesised_index')
+        g.query("UNWIND range(1, 300) AS i CREATE (:A {k: i % 100, s: i % 3})")
+        g.create_node_range_index('A', 'k')
+        wait_for_indices_to_sync(g)
+
+        expected = g.query("MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN count(n)").result_set
+        self.env.assertEqual(expected, [[1]])
+        queries = [
+            ("MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.k = 7) AND n.s = 1 RETURN count(n)", None),
+            ("MATCH (n:A) WHERE ((n.k = 7) AND (n.s = 1)) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.s = 1 AND ((n.k = 7))) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.s = 1 AND n.s >= 0) AND (n.k = 7) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.k = $k AND n.s = $s) RETURN count(n)", {'k': 7, 's': 1}),
+            ("MATCH (n:A) WHERE ((n.k = $k) AND (n.s = $s)) RETURN count(n)", {'k': 7, 's': 1}),
+            ("MATCH (n:A) WHERE (n.k IN [7]) AND n.s = 1 RETURN count(n)", None),
+        ]
+        for q, params in queries:
+            plan = str(g.explain(q, params))
+            self.env.assertContains('Node By Index Scan', plan, message=q)
+            self.env.assertNotContains('Label Scan', plan, message=q)
+            self.env.assertEqual(g.query(q, params).result_set, expected, message=q)
+
+        g.delete()
+
+    def test_43_merged_filters_use_the_index(self):
+        # A pattern's inline attributes and its WHERE are separate filters
+        # that push-down merges into one; the merge keeps the conjuncts flat,
+        # so the index still sees the indexed one.
+        g = self.db.select_graph('merged_filters_index')
+        g.query("UNWIND range(1, 300) AS i CREATE (:A {k: i % 100, s: i % 3, t: i % 7})")
+        g.create_node_range_index('A', 'k')
+        wait_for_indices_to_sync(g)
+
+        expected = g.query("MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN count(n)").result_set
+        queries = [
+            "MATCH (n:A {s: 1}) WHERE (n.k = 7 AND n.t = 2) RETURN count(n)",
+            "MATCH (n:A {s: 1, t: 2}) WHERE ((n.k = 7) AND n.k >= 0) RETURN count(n)",
+            "MATCH (n:A {k: 7}) WHERE (n.s = 1 AND (n.t = 2)) RETURN count(n)",
+        ]
+        for q in queries:
+            plan = str(g.explain(q))
+            self.env.assertContains('Node By Index Scan', plan, message=q)
+            self.env.assertNotContains('Label Scan', plan, message=q)
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        g.delete()

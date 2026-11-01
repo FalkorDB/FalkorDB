@@ -193,3 +193,18 @@ class testValueComparison(FlowTestsBase):
         # 'test' = 'test' should be true
         self.env.assertEqual(actual_result.result_set[0][0], True)
 
+
+    def test_map_inequality_with_disjoint_values(self):
+        # Issue #2913: a map comparison stops at the first disjoint value pair,
+        # and `<>` read only that "equal" ordering, so `{a:1} <> {a:'x'}` was
+        # false (as was `=`). As in C, disjoint values make maps unequal.
+        query = """RETURN {a:1} <> {a:'x'}, {a:1} = {a:'x'},
+                          {a:1, b:1} <> {a:'x', b:2}, {a:1} <> {a:null},
+                          {a:1} <> {a:1}"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[True, False, True, None, False]])
+
+        query = """UNWIND [{a:1}, {a:'x'}, {a:2}, {a:null}] AS m
+                   WITH m WHERE m <> {a:'x'} RETURN collect(m)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[[{'a': 1}, {'a': 2}]]])

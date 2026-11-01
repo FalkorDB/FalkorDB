@@ -19,7 +19,7 @@ use crate::{
 };
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 
 pub fn graph_effect(
@@ -61,7 +61,7 @@ pub fn graph_effect(
 
     let mut tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
-        return Err(redis_module::RedisError::String(
+        return Err(RedisError::String(
             "ERR another write is in progress, retry the query".to_string(),
         ));
     };
@@ -76,9 +76,16 @@ pub fn graph_effect(
         EffectsPayload::apply(&mut g, buf).map_err(|e| e.to_string())
     };
 
+    // Folded into the same result rather than handled in the `Ok` arm. `commit`
+    // validates before publishing, and a version it refuses is discarded — so
+    // the master's write is missing here exactly as it would be if `apply` had
+    // rejected the buffer, and it needs the same forced resync. Answered
+    // separately, it replied with an error the master will not act on and left
+    // this replica serving a graph that had silently stopped following.
+    let result = result.and_then(|()| tg.graph.commit(g_arc).map_err(|e| e.to_string()));
+
     match result {
         Ok(()) => {
-            tg.graph.commit(g_arc);
             ctx.replicate_verbatim();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
@@ -92,9 +99,7 @@ pub fn graph_effect(
             // `on_failure` decides for itself whether this was replayed; a
             // client-sent payload returns the error below and nothing more.
             divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e, Some(buf));
-            Err(redis_module::RedisError::String(format!(
-                "ERR effect apply failed: {e}"
-            )))
+            Err(RedisError::String(format!("ERR effect apply failed: {e}")))
         }
     }
 }
