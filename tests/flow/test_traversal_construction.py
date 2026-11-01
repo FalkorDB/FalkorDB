@@ -591,6 +591,10 @@ class testTraversalConstruction():
             plan = str(g.explain(q))
             self.env.assertContains("Node By Index Scan | (d:Doc)", plan)
             self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
+        # A variable an earlier WITH dropped does not block the scan.
+        q = "UNWIND [3, 5] AS pid UNWIND [0] AS unused WITH pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
+        self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[8]], message=q)
         q = "WITH 3 AS pid MATCH (d:Doc {id: pid})-[r:LINK]->() RETURN count(r)"
         self.env.assertContains("Node By Index Scan | (d:Doc)", str(g.explain(q)))
         self.env.assertEqual(g.query(q).result_set, [[4]])

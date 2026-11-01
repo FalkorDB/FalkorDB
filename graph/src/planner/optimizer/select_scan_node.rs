@@ -388,6 +388,24 @@ fn swap_relationship(
     Arc::new(swapped)
 }
 
+/// Adds the `(id, scope_id)` of the variables an IR node outputs through a
+/// projection or a known `Argument`; the scope-aware counterpart of
+/// [`collect_output_aliases`] for the operators `get_variables` does not cover.
+fn collect_output_pairs(
+    ir: &IR,
+    out: &mut HashSet<(u32, u32)>,
+) {
+    match ir {
+        IR::Project { exprs, copies } => {
+            out.extend(exprs.iter().map(|(v, _)| (v.id, v.scope_id)));
+            out.extend(copies.iter().map(|(v, _)| (v.id, v.scope_id)));
+        }
+        IR::Aggregate { names, .. } => out.extend(names.iter().map(|v| (v.id, v.scope_id))),
+        IR::Argument(Some(vars)) => out.extend(vars.iter().copied()),
+        _ => {}
+    }
+}
+
 /// Collects output variable alias IDs from an IR node.
 /// Used to detect which variables a child operator provides.
 fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
@@ -857,18 +875,22 @@ pub(super) fn select_scan_node(
                 let opaque = child
                     .walk::<Bfs>()
                     .any(|ir| matches!(ir, IR::Argument(None)));
-                // Everything the child binds or carries: its own variables
-                // plus every operator's outputs (a known `Argument`'s
-                // bindings, a `Project`/`Aggregate`'s aliases), so a wrapped
-                // or projected endpoint is never mistaken for a bare row
-                // source. Compared by id: coarser than id+scope, so only ever
-                // more conservative.
-                let mut bound_here: HashSet<u32> =
-                    child.get_variables().iter().map(|v| v.id).collect();
+                // Everything the child binds or carries, as (id, scope) pairs:
+                // its own variables plus every operator's outputs (a known
+                // `Argument`'s bindings, a `Project`/`Aggregate`'s aliases), so
+                // a wrapped or projected endpoint is never mistaken for a bare
+                // row source. Scope-aware, since a variable the child dropped
+                // can share its id with a chain alias in a later scope.
+                let mut bound_here: HashSet<(u32, u32)> = child
+                    .get_variables()
+                    .iter()
+                    .map(|v| (v.id, v.scope_id))
+                    .collect();
                 for ir in child.walk::<Bfs>() {
-                    bound_here.extend(collect_output_aliases(ir));
+                    collect_output_pairs(ir, &mut bound_here);
                 }
-                let binds_chain = |alias: &Variable| bound_here.contains(&alias.id);
+                let binds_chain =
+                    |alias: &Variable| bound_here.contains(&(alias.id, alias.scope_id));
                 let chain_aliases_bound = chain.iter().any(|&ct_idx| {
                     matches!(
                         optimized_plan.node(ct_idx).data(),
