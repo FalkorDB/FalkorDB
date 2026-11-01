@@ -387,7 +387,7 @@ class testWithClause(FlowTestsBase):
         finally:
             g.delete()
 
-    def test17_where_pattern_predicate_reads_the_pre_projection_variable(self):
+    def test15_where_pattern_predicate_reads_the_pre_projection_variable(self):
         # In WITH ... WHERE, a pattern predicate naming a variable from before
         # the projection refers to that variable, as a scalar predicate does.
         g = self.db.select_graph("with_where_pattern_predicate")
@@ -402,5 +402,11 @@ class testWithClause(FlowTestsBase):
             ]
             for q, expected in cases:
                 self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+            # The label a comprehension's pattern puts on `n` holds inside it only:
+            # the B node survives through the other branch and still matches `(m)`.
+            for pattern in ["size([(n:A)-->(x) | x]) > 0", "(n:A)-->()"]:
+                q = f"MATCH (n) WITH n AS m WHERE {pattern} OR m.v = 5 MATCH (m) RETURN m.v ORDER BY m.v"
+                self.env.assertEqual(g.query(q).result_set, [[1], [5]], message=q)
         finally:
             g.delete()

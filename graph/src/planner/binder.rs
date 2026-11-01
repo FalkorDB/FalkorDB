@@ -1903,7 +1903,14 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                // Labels the comprehension's pattern puts on a name it shares with
+                // an outer variable (`WITH n AS m WHERE size([(n:A)-->(x) | x]) > 0
+                // OR m.v = 2 MATCH (m)`) hold inside the comprehension only, as
+                // for a pattern predicate below.
+                let saved_labels = self.node_labels.clone();
+                let bound_graph = self.bind_graph(graph, false);
+                self.node_labels = saved_labels;
+                let bound_graph = bound_graph?;
 
                 let children = node_ref
                     .children()
