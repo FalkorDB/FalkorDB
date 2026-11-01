@@ -259,7 +259,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "clippy"
       - name: Format
@@ -278,6 +278,38 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
+  native-index:
+    # The native index (`index-falkordb`) is off by default, so `lint` and
+    # `coverage` never compile it: its unit tests and its lints run only here.
+    # The flow suites under the flag run in ci-pipeline's `nextgen-index-ledger`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: "native-index"
+      - name: Lint
+        # Both packages by name: with none selected, clippy lints only the root
+        # package's targets, and graph's tests are where most of the index's
+        # code under the flag lives.
+        run: |
+          CXX=clang++-23 cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb
+      - name: Unit tests
+        # The doctests link GraphBLAS's bundled zstd and the zstd-sys crate together, and
+        # both define the zstd error helpers: the same link flag `coverage` and `fuzz` pass.
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
+          RUSTDOCFLAGS: "-C link-arg=-Wl,--allow-multiple-definition"
+        run: cargo test -p graph --features index-falkordb
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -293,7 +325,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: "coverage"
           env-vars: "RUSTFLAGS"
@@ -360,7 +392,7 @@ jobs:
           key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
       - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
       - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: fuzzing-corpus
           path: fuzz/corpus
@@ -391,12 +423,12 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: fuzz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ !cancelled() }}
         with:
           name: fuzzing-corpus
           path: fuzz/corpus
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: fuzzing-artifacts-fuzz_target_runtime-${{ github.sha }}
@@ -439,6 +471,7 @@ jobs:
       - flow-test-matrix
       - ci-pipeline
       - lint
+      - native-index
       - coverage
       - fuzz
     steps:
