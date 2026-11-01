@@ -664,6 +664,14 @@ class testTemporalDuration(FlowTestsBase):
             except Exception as e:
                 self.env.assertTrue("overflow" in str(e).lower() or "out of range" in str(e).lower())
 
+    def test_duration_minimum_seconds_subtraction(self):
+        # A day brings i64::MIN seconds into range; subtracting must not overflow.
+        res = self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d
+                                  RETURN d - d = duration({})""").result_set
+        self.env.assertEqual(res[0][0], True)
+        self.graph.query("""WITH duration('P1DT-9223372036854775808S') AS d
+                            RETURN (localdatetime('1970-01-01T00:00:00') - d) > localdatetime('2000-01-01T00:00:00')""")
+
     def test_duration_add(self):
         #-----------------------------------------------------------------------
         # duration + duration

@@ -380,8 +380,10 @@ impl Value {
             | Self::Datetime(_)
             | Self::Date(_)
             | Self::Time(_)
-            | Self::Duration(_)
             | Self::Node(_) => 0,
+            Self::Duration(d) => d
+                .heap_holders()
+                .map_or(0, |_| std::mem::size_of::<[i64; 3]>()),
             Self::String(s) => std::mem::size_of::<String>() + s.len(),
             Self::List(l) | Self::Path(l) => {
                 let header = l.len() * std::mem::size_of::<Self>();
@@ -429,8 +431,10 @@ impl Value {
             | Self::Datetime(_)
             | Self::Date(_)
             | Self::Time(_)
-            | Self::Duration(_)
             | Self::Node(_) => 0,
+            Self::Duration(d) => d
+                .heap_holders()
+                .map_or(0, |n| (ARC_HDR + std::mem::size_of::<[i64; 3]>()) / n),
             Self::Relationship(_) => std::mem::size_of::<(RelationshipId, NodeId, NodeId)>(),
             Self::String(s) => {
                 (ARC_HDR + std::mem::size_of::<String>() + s.capacity()) / Arc::strong_count(s)
@@ -669,14 +673,7 @@ fn add_duration_to_timestamp(
     ts: i64,
     dur: &Dur,
 ) -> Result<i64, String> {
-    let (months, dur_days, secs) = dur.components();
-    let out_of_range = || "Duration out of range".to_string();
-    let (days, time_of_day) = shift_months(ts, months)?;
-    days.checked_add(dur_days)
-        .and_then(|d| d.checked_mul(86400))
-        .and_then(|t| t.checked_add(time_of_day))
-        .and_then(|t| t.checked_add(secs))
-        .ok_or_else(out_of_range)
+    shift_timestamp(ts, dur, false)
 }
 
 /// Subtract a duration from a timestamp; `d - dur == d + (-dur)`.
@@ -684,7 +681,32 @@ fn sub_duration_from_timestamp(
     ts: i64,
     dur: &Dur,
 ) -> Result<i64, String> {
-    add_duration_to_timestamp(ts, &negate_duration(dur)?)
+    shift_timestamp(ts, dur, true)
+}
+
+/// Move a timestamp by a duration, forwards or (with `subtract`) backwards.
+/// Subtracting never negates the seconds component, which may be `i64::MIN`.
+fn shift_timestamp(
+    ts: i64,
+    dur: &Dur,
+    subtract: bool,
+) -> Result<i64, String> {
+    let (months, dur_days, secs) = dur.components();
+    let out_of_range = || "Duration out of range".to_string();
+    let sign = if subtract { -1 } else { 1 };
+    // Months and days are bounded well below `i64::MIN`, so negating is safe.
+    let (days, time_of_day) = shift_months(ts, sign * months)?;
+    let shifted = days
+        .checked_add(sign * dur_days)
+        .and_then(|d| d.checked_mul(86400))
+        .and_then(|t| t.checked_add(time_of_day))
+        .ok_or_else(out_of_range)?;
+    let moved = if subtract {
+        shifted.checked_sub(secs)
+    } else {
+        shifted.checked_add(secs)
+    };
+    moved.ok_or_else(out_of_range)
 }
 
 /// Order two durations by their approximate total length (a month counts as
@@ -703,26 +725,26 @@ fn duration_cmp(
         .then(a.components().cmp(&b.components()))
 }
 
-/// Negate every component of a duration.
-fn negate_duration(dur: &Dur) -> Result<Dur, String> {
-    let (months, days, secs) = dur.components();
-    Dur::new(-months, -days, -secs)
-}
-
-/// Add (or, with `sign == -1`, subtract) two durations component by component.
+/// Add (or, with `subtract`, subtract) two durations component by component.
+/// Subtraction uses `checked_sub` directly: negating the right operand would
+/// overflow for a seconds component of `i64::MIN`.
 fn combine_durations(
     a: &Dur,
     b: &Dur,
-    sign: i64,
+    subtract: bool,
 ) -> Result<Dur, String> {
     let (ma, da, sa) = a.components();
     let (mb, db, sb) = b.components();
     let overflow = || "Duration overflow".to_string();
-    Dur::new(
-        ma.checked_add(sign * mb).ok_or_else(overflow)?,
-        da.checked_add(sign * db).ok_or_else(overflow)?,
-        sa.checked_add(sign * sb).ok_or_else(overflow)?,
-    )
+    let combine = |x: i64, y: i64| {
+        let r = if subtract {
+            x.checked_sub(y)
+        } else {
+            x.checked_add(y)
+        };
+        r.ok_or_else(overflow)
+    };
+    Dur::new(combine(ma, mb)?, combine(da, db)?, combine(sa, sb)?)
 }
 
 /// Move `ts` by whole years and months, returning (days since epoch, time of
@@ -1028,7 +1050,7 @@ impl Value {
             }
             // Duration + Duration: add the components independently
             (Self::Duration(a), Self::Duration(b)) => {
-                Ok(Self::Duration(combine_durations(&a, &b, 1)?))
+                Ok(Self::Duration(combine_durations(&a, &b, false)?))
             }
             // Date/Datetime/Time + Duration and Duration + Date/Datetime/Time
             (Self::Date(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Date(d)) => {
@@ -1068,7 +1090,7 @@ impl Sub for Value {
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             // Duration - Duration
             (Self::Duration(a), Self::Duration(b)) => {
-                Ok(Self::Duration(combine_durations(&a, &b, -1)?))
+                Ok(Self::Duration(combine_durations(&a, &b, true)?))
             }
             // Date/Datetime/Time - Duration
             (Self::Date(d), Self::Duration(dur)) => {

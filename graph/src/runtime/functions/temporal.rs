@@ -44,7 +44,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{ordermap::OrderMap, runtime::Runtime, value::Value};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use std::sync::Arc;
+use std::{mem::ManuallyDrop, sync::Arc};
 
 fn get_int_field(
     map: &OrderMap<Arc<String>, Value>,
@@ -563,11 +563,25 @@ impl Dur {
         if self.0 & 1 == 1 { Some(self.0) } else { None }
     }
 
-    /// Rebuild a duration from `inline_bits`.
+    /// Rebuild a duration from `inline_bits`. An even word would be taken for
+    /// an owning pointer, so it is refused in release builds too.
     #[inline]
     pub const fn from_inline_bits(bits: u64) -> Self {
-        debug_assert!(bits & 1 == 1);
+        assert!(bits & 1 == 1, "Dur::from_inline_bits needs the inline tag");
         Self(bits)
+    }
+
+    /// How many holders share the out-of-line allocation, or `None` for an
+    /// inline duration (which owns no heap memory).
+    #[inline]
+    pub fn heap_holders(&self) -> Option<usize> {
+        if self.0 & 1 == 1 {
+            return None;
+        }
+        // SAFETY: bit 0 clear means a live `Arc<[i64; 3]>` pointer; the
+        // `ManuallyDrop` keeps this borrow from releasing it.
+        let arc = ManuallyDrop::new(unsafe { Arc::from_raw(self.0 as usize as *const [i64; 3]) });
+        Some(Arc::strong_count(&arc))
     }
 }
 
@@ -664,7 +678,12 @@ pub fn duration_from_legacy(legacy: i64) -> Result<Dur, String> {
     let (y, m, d) = crate::runtime::value::civil_from_days(days);
     let months = i64::from(y - 1970) * 12 + i64::from(m) - 1;
     let remaining = (i64::from(d) - 1) * 86400 + time_of_day;
+    // A value far past the calendar (`duration({seconds: 9e15})` was storable)
+    // has more months than a duration holds. Keep its length as plain seconds
+    // rather than refusing to load it.
     Dur::new(months, remaining / 86400, remaining % 86400)
+        .or_else(|_| Dur::new(0, 0, legacy))
+        .or_else(|_| Dur::new(0, days, time_of_day))
 }
 
 /// Encode a duration in the legacy epoch-offset form (what the compact
@@ -1463,5 +1482,48 @@ mod duration_tests {
         assert!(lt(v(0, 1, 0), v(0, 0, 90_000)));
         assert!(lt(v(0, 40, 0), v(2, 0, 0)));
         assert!(lt(v(0, 0, 2_000_000_000), v(0, 0, 3_000_000_000)));
+    }
+
+    #[test]
+    fn legacy_value_past_the_calendar_still_loads() {
+        // `duration({seconds: 9000000000000000})` decomposes to more months
+        // than a duration holds; it must keep its length, not fail to load.
+        let big = 9_000_000_000_000_000;
+        assert_eq!(duration_from_legacy(big), Ok(dur(0, 0, big)));
+        assert_eq!(duration_from_legacy(-big), Ok(dur(0, 0, -big)));
+        assert!(duration_from_legacy(i64::MAX).is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "inline tag")]
+    fn inline_bits_without_the_tag_is_refused() {
+        let _ = Dur::from_inline_bits(0);
+    }
+
+    #[test]
+    fn minimum_seconds_survives_subtraction() {
+        // `P1DT-9223372036854775808S` is accepted: the day brings the length in range.
+        let d = v(0, 1, i64::MIN);
+        let Ok(Value::Duration(zero)) = d.clone() - d.clone() else {
+            panic!("d - d must not overflow")
+        };
+        assert_eq!(zero, dur(0, 0, 0));
+        // 0 - (1 day + i64::MIN seconds) is representable; it must not panic.
+        let Ok(Value::Datetime(t)) = Value::Datetime(0) - d else {
+            panic!("datetime - d is in range")
+        };
+        assert_eq!(t, i64::MAX - 86_400 + 1);
+    }
+
+    #[test]
+    fn out_of_line_duration_counts_its_heap() {
+        let big = v(0, 0, 3_000_000_000);
+        assert_eq!(v(1, 2, 3).heap_size(), 0);
+        assert_eq!(v(1, 2, 3).amortized_heap_size(), 0);
+        assert_eq!(big.heap_size(), 24);
+        assert_eq!(big.amortized_heap_size(), 40);
+        let shared = big.clone();
+        assert_eq!(big.amortized_heap_size(), 20);
+        drop(shared);
     }
 }
