@@ -435,12 +435,9 @@ impl Binder {
                 // later MATCH without a WITH in between).  Nodes the CREATE
                 // itself introduces keep their labels, so a following MERGE
                 // can still reject new labels on them (VariableAlreadyBound).
-                let mut saved_labels = self.node_labels.clone();
-                let bound = self.bind_graph_create(&pattern);
-                for (key, labels) in self.node_labels.drain() {
-                    saved_labels.entry(key).or_insert(labels);
-                }
-                self.node_labels = saved_labels;
+                let bound = self.with_node_labels_rolled_back(true, |binder| {
+                    binder.bind_graph_create(&pattern)
+                });
                 Ok(QueryIR::Create(bound?))
             }
             QueryIR::CreateIndex {
@@ -1570,6 +1567,27 @@ impl Binder {
         Ok(bound)
     }
 
+    /// Runs `bind`, then puts `node_labels` back as it was before the call, so
+    /// the labels it wrote constrain only what it bound and not the MATCH that
+    /// bound a shared node. With `keep_new`, entries `bind` introduced for
+    /// nodes that had none are kept; entries that already existed are always
+    /// restored.
+    fn with_node_labels_rolled_back<T>(
+        &mut self,
+        keep_new: bool,
+        bind: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let mut saved = self.node_labels.clone();
+        let result = bind(self);
+        if keep_new {
+            for (key, labels) in self.node_labels.drain() {
+                saved.entry(key).or_insert(labels);
+            }
+        }
+        self.node_labels = saved;
+        result
+    }
+
     fn bind_graph_create(
         &mut self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
@@ -1926,10 +1944,9 @@ impl Binder {
                 // fresh variables only for new aliases (anonymous nodes/rels).
                 // Labels inside a pattern comprehension constrain it only,
                 // not the outer MATCH that bound a shared node.
-                let saved_labels = self.node_labels.clone();
-                let bound_graph = self.bind_graph(graph, false);
-                self.node_labels = saved_labels;
-                let bound_graph = bound_graph?;
+                let bound_graph = self.with_node_labels_rolled_back(false, |binder| {
+                    binder.bind_graph(graph, false)
+                })?;
 
                 let children = node_ref
                     .children()
