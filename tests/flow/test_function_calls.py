@@ -1138,6 +1138,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ("0.1+0.2", "0.30000000000000004"), ("1234567.0", "1234567.0"),
             ("1e7", "1.0E7"), ("1e20", "1.0E20"), ("1.5e300", "1.5E300"),
             ("1e-7", "1.0E-7"), ("0.001", "0.001"), ("0.0/0", "NaN"),
+            ("toFloat('5e-324')", "4.9E-324"), ("toFloat('1e-323')", "9.9E-324"),
         ]:
             for fn in ("toString", "toStringOrNull"):
                 res = self.graph.query(f"RETURN {fn}({expr})")

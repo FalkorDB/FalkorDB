@@ -307,10 +307,18 @@ fn float_to_string(f: f64) -> String {
     let sci = format!("{f:e}");
     let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
     if mantissa.contains('.') {
-        format!("{mantissa}E{exp}")
-    } else {
-        format!("{mantissa}.0E{exp}")
+        return format!("{mantissa}E{exp}");
     }
+    // A one-digit shortest mantissa needs a second digit. Padding with `.0`
+    // is wrong for the smallest subnormals (`5e-324` is `4.9E-324` in Java),
+    // so format the original value with one fractional digit and keep it
+    // when it still round-trips.
+    let two = format!("{f:.1e}");
+    if two.parse::<f64>() == Ok(f) {
+        let (m, e) = two.split_once('e').unwrap_or((&two, "0"));
+        return format!("{m}E{e}");
+    }
+    format!("{mantissa}.0E{exp}")
 }
 
 #[cfg(test)]
@@ -334,6 +342,9 @@ mod float_to_string_tests {
             (1e-4, "1.0E-4"),
             (1e-7, "1.0E-7"),
             (1.25e-5, "1.25E-5"),
+            (5e-324, "4.9E-324"),
+            (1e-323, "9.9E-324"),
+            (1.5e-323, "1.5E-323"),
             (f64::NAN, "NaN"),
             (f64::INFINITY, "inf"),
             (f64::NEG_INFINITY, "-inf"),
