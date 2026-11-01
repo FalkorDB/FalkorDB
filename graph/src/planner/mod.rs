@@ -42,6 +42,7 @@ use std::{
 
 use crate::planner::hop_order::{HopShape, self_loops_after_binders};
 use crate::planner::optimizer::collect_expr_scoped_variables;
+use crate::planner::optimizer::collect_single_variable_conjuncts;
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -1826,6 +1827,13 @@ impl Planner {
             .as_ref()
             .map(|f| collect_expr_scoped_variables(f))
             .unwrap_or_default();
+        // The subset of those a promoted walk can start from: variables a WHERE
+        // conjunct constrains by itself, evaluable as soon as the endpoint is
+        // scanned (`p.id = length(r)` waits for the path, so it anchors nothing).
+        let anchor_vars: HashSet<(u32, u32)> = filter
+            .as_ref()
+            .map(|f| collect_single_variable_conjuncts(f))
+            .unwrap_or_default();
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
         // filters rather than as plan components, so they don't interfere
@@ -1864,7 +1872,7 @@ impl Planner {
             // scan rather than every node of a label.
             let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
                 n.attrs.root().num_children() > 0
-                    || filter_vars.contains(&(n.alias.scope_id, n.alias.id))
+                    || anchor_vars.contains(&(n.alias.scope_id, n.alias.id))
             };
             let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
                 is_constrained(&r.from) || is_constrained(&r.to)
@@ -1884,14 +1892,17 @@ impl Planner {
             //     (`select_var_len_scan_node` does not reverse it).
             // Any other walk keeps its place after the fixed-length hops, where
             // its endpoints are bound by the hops before it.
-            let var_len_anchor_leads = !relationships.iter().any(|r| {
-                self.visited
-                    .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                    || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
-                    || (r.min_hops.is_none()
-                        && r.all_shortest_paths == AllShortestPaths::No
-                        && anchored(r))
-            });
+            // Nothing is bound at all, not just no endpoint: reversing the walk
+            // rebuilds its scan and would drop an earlier clause's input.
+            let var_len_anchor_leads = self.visited.is_empty()
+                && !relationships.iter().any(|r| {
+                    self.visited
+                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
+                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
+                        || (r.min_hops.is_none()
+                            && r.all_shortest_paths == AllShortestPaths::No
+                            && anchored(r))
+                });
             let references_variable =
                 |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
                     [&r.attrs, &r.from.attrs, &r.to.attrs]

@@ -638,6 +638,31 @@ class testTraversalConstruction():
         self.env.assertEqual(g.query(q).result_set, g.query(single).result_set)
         g.delete()
 
+        # A variable an earlier clause bound (UNWIND's x) is not lost when the
+        # walk is reversed to start from its anchored endpoint.
+        g.query("""CREATE (b:B)-[:S]->(:C), (b)-[:R]->(:A {id: 1})""")
+        q = """UNWIND [1, 2] AS x MATCH (b)-[:S]->(c:C), (b)-[:R*1..2]->(a:A {id: 1})
+               RETURN count(*)"""
+        self.env.assertEqual(g.query(q).result_set, [[2]], message=q)
+        g.delete()
+
+        # A WHERE conjunct that also reads the walk's path cannot run at the
+        # starting endpoint, so it does not anchor the walk.
+        g = self.db.select_graph("VarLenAnchorPathWhere")
+        g.query("CREATE INDEX FOR (p:Person) ON (p.id)")
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 199) AS i CREATE (:Person {id: i})")
+        g.query("UNWIND range(0, 4) AS i CREATE (:City {id: i})")
+        g.query("""UNWIND range(0, 3) AS i
+                   MATCH (p:Person {id: i}), (c:City {id: i}) CREATE (p)-[:LIVES]->(c)""")
+        g.query("""UNWIND range(0, 199) AS i UNWIND [1, 7] AS d
+                   MATCH (a:Person {id: i}), (b:Person {id: (i * d + d) % 200})
+                   CREATE (a)-[:KNOWS]->(b)""")
+        q = """MATCH (p:Person)-[r:KNOWS*2..2]->(f), (f)-[:LIVES]->(c:City)
+               WHERE p.id = length(r) RETURN count(*)"""
+        self.env.assertContains("Node By Label Scan | (c:City)", str(g.explain(q)))
+        g.delete()
+
         # Attribute expressions that read a variable keep their binding hop first.
         g = self.db.select_graph("VarLenAnchorDeps")
         g.query("""CREATE (a:A {id: 1})-[:R {weight: 5}]->(b:B)-[:S]->(c:C {limit: 5, aid: 1})""")

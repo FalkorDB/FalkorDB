@@ -63,7 +63,7 @@ mod utilize_node_by_id;
 
 use std::collections::{HashMap, HashSet};
 
-use orx_tree::{Bfs, DynTree, NodeRef};
+use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -112,6 +112,41 @@ pub(crate) fn collect_expr_scoped_variables(
         }
     }
     vars
+}
+
+/// Collects the `(scope_id, id)` of every variable that a top-level `AND`
+/// conjunct of `expr` reads on its own: a conjunct over a single variable can
+/// run as soon as that variable is bound, one that also reads another
+/// (a path, a second node) has to wait for it.
+pub(crate) fn collect_single_variable_conjuncts(
+    expr: &DynTree<ExprIR<Variable>>
+) -> HashSet<(u32, u32)> {
+    fn walk(
+        node: &DynNode<ExprIR<Variable>>,
+        out: &mut HashSet<(u32, u32)>,
+    ) {
+        match node.data() {
+            ExprIR::And | ExprIR::Paren => {
+                for child in node.children() {
+                    walk(&child, out);
+                }
+            }
+            _ => {
+                let mut vars = HashSet::new();
+                for data in node.walk::<Bfs>() {
+                    if let ExprIR::Variable(var) = data {
+                        vars.insert((var.scope_id, var.id));
+                    }
+                }
+                if vars.len() == 1 {
+                    out.extend(vars);
+                }
+            }
+        }
+    }
+    let mut out = HashSet::new();
+    walk(&expr.root(), &mut out);
+    out
 }
 
 /// Collects all variable IDs provided by a plan subtree.
