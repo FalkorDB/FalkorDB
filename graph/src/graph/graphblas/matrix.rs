@@ -462,6 +462,52 @@ impl Drop for OwnedContainer {
     }
 }
 
+/// The scalar fields of a serialized `GxB_Container_struct`, validated.
+struct ContainerHeader {
+    nrows: u64,
+    ncols: u64,
+    nrows_nonempty: i64,
+    ncols_nonempty: i64,
+    nvals: u64,
+    format: i32,
+    orientation: i32,
+    iso: bool,
+    jumbled: bool,
+}
+
+impl ContainerHeader {
+    /// Read the fields at their struct offsets. `bytes` is at least
+    /// `CONTAINER_STRUCT_SIZE` long (the caller checks).
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
+        use super::GxB_Container_struct as C;
+        use std::mem::offset_of;
+
+        fn field<const N: usize>(
+            bytes: &[u8],
+            offset: usize,
+        ) -> [u8; N] {
+            bytes[offset..offset + N].try_into().expect("N bytes")
+        }
+        let flag = |offset: usize, name: &str| match bytes[offset] {
+            0 => Ok(false),
+            1 => Ok(true),
+            b => Err(format!("container field {name} is {b}, expected 0 or 1")),
+        };
+
+        Ok(Self {
+            nrows: u64::from_ne_bytes(field(bytes, offset_of!(C, nrows))),
+            ncols: u64::from_ne_bytes(field(bytes, offset_of!(C, ncols))),
+            nrows_nonempty: i64::from_ne_bytes(field(bytes, offset_of!(C, nrows_nonempty))),
+            ncols_nonempty: i64::from_ne_bytes(field(bytes, offset_of!(C, ncols_nonempty))),
+            nvals: u64::from_ne_bytes(field(bytes, offset_of!(C, nvals))),
+            format: i32::from_ne_bytes(field(bytes, offset_of!(C, format))),
+            orientation: i32::from_ne_bytes(field(bytes, offset_of!(C, orientation))),
+            iso: flag(offset_of!(C, iso), "iso")?,
+            jumbled: flag(offset_of!(C, jumbled), "jumbled")?,
+        })
+    }
+}
+
 impl<T> Decode<19> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
@@ -474,9 +520,11 @@ impl<T> Decode<19> for Matrix<T> {
                 CONTAINER_STRUCT_SIZE
             ));
         }
-        // Read unaligned: the buffer is only byte-aligned.
-        let header: super::GxB_Container_struct =
-            unsafe { std::ptr::read_unaligned(container_bytes.as_ptr().cast()) };
+        // Only the scalar description is read, field by field: the buffer is
+        // only byte-aligned, and reading it as a whole `GxB_Container_struct`
+        // would build a Rust `bool` from whatever byte the payload holds, which
+        // is undefined behaviour for anything but 0 or 1.
+        let header = ContainerHeader::parse(&container_bytes)?;
 
         // GraphBLAS sanity-checks the components against the format it is
         // given, but loads an unknown format unchecked.
@@ -2064,6 +2112,28 @@ mod tests {
             err.contains("GxB_load_Matrix_from_Container"),
             "unexpected error: {err}"
         );
+    }
+
+    /// A flag byte that is neither 0 nor 1 would be an invalid Rust `bool`;
+    /// the header is parsed field by field and refuses it.
+    #[test]
+    fn decode_refuses_a_flag_byte_that_is_not_a_bool() {
+        use super::super::GxB_Container_struct as C;
+        use super::Decode;
+        ensure_init();
+        for (name, at) in [
+            ("iso", std::mem::offset_of!(C, iso)),
+            ("jumbled", std::mem::offset_of!(C, jumbled)),
+        ] {
+            let mut bad = encoded();
+            if let Some(TapeOp::Buffer(header)) = bad.ops.front_mut() {
+                header[at] = 2;
+            }
+            let err = Matrix::<bool>::decode(&mut bad)
+                .err()
+                .unwrap_or_else(|| panic!("{name} = 2 accepted"));
+            assert!(err.contains(name), "unexpected error: {err}");
+        }
     }
 
     /// The encoded container header must not carry this process's heap

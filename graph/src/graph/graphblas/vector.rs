@@ -821,7 +821,7 @@ mod decode_tests {
     fn decode_rejects_type_name_with_only_interior_nul() {
         // NUL present but not the final byte: rejected so the buffer matches what
         // the encoder writes (name followed by a single trailing NUL).
-        let mut r = reader(Vec::new(), vec![b'I', 0, b'X'], 0, 0, 0);
+        let mut r = reader(Vec::new(), vec![b'I', 0, b'X', 0], 0, 0, 0);
         match <Vector<Untyped> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
