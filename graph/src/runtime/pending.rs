@@ -1448,7 +1448,7 @@ impl Pending {
     /// [`Self::update_node_labels`] semantics; `set_labels` and `remove_labels`
     /// are disjoint per node (see [`Self::stage_node_labels`]), so the two
     /// branches below cannot both match.
-    fn constraint_node_has_label(
+    pub(crate) fn constraint_node_has_label(
         &self,
         g: &Graph,
         node_id: u64,

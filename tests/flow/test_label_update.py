@@ -252,6 +252,18 @@ class testLabelUpdate():
         self.env.assertEqual(res.labels_added, 2)
         self.env.assertEqual(res.labels_removed, 1)
 
+    def test_labels_added_after_node_id_reuse(self):
+        # the node CREATEd after the DELETE takes the deleted node's ID: its
+        # own labels count, not the deleted node's
+        res = self.master_graph.query("CREATE (n:A) WITH n DELETE n WITH 1 AS z CREATE (m) SET m:A")
+        self.env.assertEqual(res.labels_added, 2)
+
+        # the same across a commit: the deleted node was committed with :A
+        self.master_graph.query("MATCH (n) DELETE n")
+        self.master_graph.query("CREATE (:A)")
+        res = self.master_graph.query("MATCH (n:A) DELETE n WITH 1 AS z CREATE (m) SET m:A")
+        self.env.assertEqual(res.labels_added, 1)
+
     def test_remove_nonexisting_label(self):
         # Try to remove a non existing label
         self.query_master_and_wait("CREATE (:A {v: 1})")

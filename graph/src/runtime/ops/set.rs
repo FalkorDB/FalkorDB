@@ -385,13 +385,24 @@ impl Runtime<'_> {
                             // on this node — including labels staged by an
                             // earlier clause in this same query, so a repeated
                             // `SET n:L` or a `SET n:L:L` counts once.
-                            // `Runtime::node_has_label_id` consults pending
-                            // before the committed matrix, so this stays
-                            // correct inside a transaction.
+                            // This node is live, so ask the pending state
+                            // and then the committed matrix. Not
+                            // `Runtime::node_has_label_id`: that answers from
+                            // `deleted_nodes` first, which would read the
+                            // labels of an earlier node whose ID this one
+                            // reuses.
                             let mut new_assignments = 0usize;
-                            for label in labels.iter() {
-                                if !self.node_has_label_id(id, *label) {
-                                    new_assignments += 1;
+                            {
+                                let pending = self.pending.borrow();
+                                let g = self.graph();
+                                for label in labels.iter() {
+                                    if !pending.constraint_node_has_label(
+                                        &g,
+                                        id.into(),
+                                        usize::from(*label) as u64,
+                                    ) {
+                                        new_assignments += 1;
+                                    }
                                 }
                             }
                             self.pending.borrow_mut().set_node_labels(id, labels);
